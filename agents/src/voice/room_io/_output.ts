@@ -379,6 +379,27 @@ export class ParticipantAudioOutput extends AudioOutput {
 
   /** Duration of audio pushed to the source, in seconds */
   private pushedDuration: number = 0;
+  private sourcePushedDuration: number = 0;
+  private sourceDiscardedDuration: number = 0;
+  private captureSequence: number = 0;
+  private captureSegment: number = 0;
+  private playbackStartedSegment?: number;
+  private captureDurations: Map<
+    number,
+    { pushedDuration: number; sourcePushedDuration: number; sourceDiscardedDuration: number }
+  > = new Map();
+  private interruptionGeneration: number = 0;
+  private interruptionSnapshot?: {
+    future: Future<void>;
+    sourcePushedDuration: number;
+    sourceDiscardedDuration: number;
+    queuedDuration: number;
+    pendingSegments: number;
+    captureCutoff: number;
+  };
+  private forwardingCount: number = 0;
+  /** Resolved only while no capture is held or being submitted to AudioSource. */
+  private forwardingIdleFuture: Future<void> = new Future();
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
   // playbackStarted fires once per segment; a mid-segment pause/resume does not re-arm this.
@@ -396,14 +417,13 @@ export class ParticipantAudioOutput extends AudioOutput {
       options.queueSizeMs,
     );
     this.playbackEnabledFuture.resolve();
+    this.forwardingIdleFuture.resolve();
   }
 
   pause(): void {
     if (this.playbackEnabledFuture.done) {
       this.playbackEnabledFuture = new Future();
     }
-    // Drop already-buffered audio so playback stops promptly instead of draining the prebuffer.
-    this.audioSource.clearQueue();
     super.pause();
   }
 
@@ -423,39 +443,85 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
-    await this.startedFuture.await;
+    if (!this.startedFuture.done) {
+      await this.startedFuture.await;
+    }
 
-    if (!this.playbackEnabledFuture.done) {
-      this.audioSource.clearQueue();
-      // Race against interruption so a cancel-while-paused can't deadlock an in-flight frame.
-      await Promise.race([this.playbackEnabledFuture.await, this.interruptedFuture.await]);
-      if (this.interruptedFuture.done) {
+    const segmentCapture = super.captureFrame(frame);
+    const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+    this.captureSegment ??= 0;
+    const captureSegment = this.captureSegment;
+    this.captureSequence = (this.captureSequence ?? 0) + 1;
+    const captureSequence = this.captureSequence;
+    this.captureDurations ??= new Map();
+    const captureDuration = {
+      pushedDuration: frameDuration,
+      sourcePushedDuration: 0,
+      sourceDiscardedDuration: 0,
+    };
+    this.captureDurations.set(captureSequence, captureDuration);
+    this.pushedDuration += frameDuration;
+    this.interruptionGeneration ??= 0;
+    const interruptionGeneration = this.interruptionGeneration;
+    const interruptionFuture = this.interruptedFuture;
+    this.forwardingCount = (this.forwardingCount ?? 0) + 1;
+    if (
+      this.forwardingCount === 1 &&
+      (!this.forwardingIdleFuture || this.forwardingIdleFuture.done)
+    ) {
+      this.forwardingIdleFuture = new Future();
+    }
+
+    try {
+      await segmentCapture;
+      if (interruptionGeneration !== this.interruptionGeneration || interruptionFuture.done) {
         return;
       }
+      if (!this.playbackEnabledFuture.done) {
+        const queuedDuration = this.audioSource.queuedDuration ?? 0;
+        let remainingDiscardedDuration = queuedDuration / 1000;
+        for (const duration of [...this.captureDurations.values()].reverse()) {
+          const availableDuration = Math.max(
+            duration.sourcePushedDuration - duration.sourceDiscardedDuration,
+            0,
+          );
+          const discardedDuration = Math.min(availableDuration, remainingDiscardedDuration);
+          duration.sourceDiscardedDuration += discardedDuration;
+          remainingDiscardedDuration -= discardedDuration;
+          if (remainingDiscardedDuration <= 0) {
+            break;
+          }
+        }
+        this.sourceDiscardedDuration = (this.sourceDiscardedDuration ?? 0) + queuedDuration / 1000;
+        this.audioSource.clearQueue();
+        await Promise.race([this.playbackEnabledFuture.await, interruptionFuture.await]);
+        if (interruptionGeneration !== this.interruptionGeneration || interruptionFuture.done) {
+          return;
+        }
+      }
+
+      if (this.playbackStartedSegment !== captureSegment) {
+        this.playbackStartedSegment = captureSegment;
+        this.firstFrameEmitted = true;
+        this.onPlaybackStarted(Date.now());
+      }
+
+      captureDuration.sourcePushedDuration += frameDuration;
+      this.sourcePushedDuration = (this.sourcePushedDuration ?? 0) + frameDuration;
+      await this.audioSource.captureFrame(frame);
+    } finally {
+      this.forwardingCount--;
+      if (this.forwardingCount === 0) {
+        this.forwardingIdleFuture?.resolve();
+      }
     }
-
-    // Count the playback segment only after the pause/interrupt gate above. super.captureFrame
-    // bumps playbackSegmentsCount; if a frame interrupted-while-paused bailed at the gate after
-    // that bump, the count would strand ahead of playbackFinishedCount and the next
-    // waitForPlayout() would hang forever. See #1662.
-    super.captureFrame(frame);
-
-    if (!this.firstFrameEmitted) {
-      this.firstFrameEmitted = true;
-      this.onPlaybackStarted(Date.now());
-    }
-
-    // TODO(AJS-102): use frame.durationMs once available in rtc-node
-    this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
-    await this.audioSource.captureFrame(frame);
   }
 
   private async waitForPlayoutTask(abortController: AbortController): Promise<void> {
-    // Snapshot duration for this flush so overlapping next-segment frames are not erased on completion.
     const accountedDuration = this.pushedDuration;
+    const captureCutoff = this.captureSequence ?? 0;
+    const interruptionFuture = this.interruptedFuture;
     const abortFuture = new Future<boolean>();
-    // Reset before the race so a stale clearBuffer() from before this segment doesn't fire it.
-    this.interruptedFuture = new Future();
 
     const resolveAbort = () => {
       if (!abortFuture.done) abortFuture.resolve(true);
@@ -463,31 +529,100 @@ export class ParticipantAudioOutput extends AudioOutput {
 
     abortController.signal.addEventListener('abort', resolveAbort);
 
-    this.audioSource.waitForPlayout().finally(() => {
+    const waitForForwardingAndPlayout = async () => {
+      await this.forwardingIdleFuture?.await;
+      await this.audioSource.waitForPlayout();
+    };
+
+    waitForForwardingAndPlayout().finally(() => {
       abortController.signal.removeEventListener('abort', resolveAbort);
       if (!abortFuture.done) abortFuture.resolve(false);
     });
 
     const aborted = await Promise.race([
       abortFuture.await,
-      this.interruptedFuture.await.then(() => true),
+      interruptionFuture.await.then(() => true),
     ]);
-    const interrupted = this.interruptedFuture.done || aborted;
+    const interrupted = interruptionFuture.done || aborted;
+    const interruptionSnapshot =
+      interrupted && this.interruptionSnapshot?.future === interruptionFuture
+        ? this.interruptionSnapshot
+        : undefined;
+    const captureDurations = [...(this.captureDurations?.entries() ?? [])]
+      .filter(([sequence]) => sequence <= captureCutoff)
+      .map(([, duration]) => duration);
+    const capturedSourcePushedDuration = captureDurations.reduce(
+      (total, duration) => total + duration.sourcePushedDuration,
+      0,
+    );
+    const capturedSourceDiscardedDuration = captureDurations.reduce(
+      (total, duration) => total + duration.sourceDiscardedDuration,
+      0,
+    );
 
-    let pushedDuration = accountedDuration;
+    let pushedDuration = Math.max(
+      (interruptionSnapshot?.sourcePushedDuration ??
+        (captureDurations.length > 0 ? capturedSourcePushedDuration : this.sourcePushedDuration) ??
+        accountedDuration) -
+        (interruptionSnapshot?.sourceDiscardedDuration ??
+          (captureDurations.length > 0
+            ? capturedSourceDiscardedDuration
+            : this.sourceDiscardedDuration) ??
+          0),
+      0,
+    );
 
     if (interrupted) {
-      pushedDuration = Math.max(accountedDuration - this.audioSource.queuedDuration / 1000, 0);
-      this.audioSource.clearQueue();
+      pushedDuration = Math.max(
+        pushedDuration -
+          (interruptionSnapshot?.queuedDuration ?? this.audioSource.queuedDuration ?? 0) / 1000,
+        0,
+      );
+      if (!interruptionSnapshot) {
+        this.audioSource.clearQueue();
+      }
     }
 
-    this.pushedDuration = 0;
-    this.firstFrameEmitted = false;
+    const finishedCaptureCutoff = interruptionSnapshot?.captureCutoff ?? captureCutoff;
+    for (const sequence of this.captureDurations?.keys() ?? []) {
+      if (sequence <= finishedCaptureCutoff) {
+        this.captureDurations.delete(sequence);
+      }
+    }
+    if (!interruptionSnapshot) {
+      const remainingDurations = [...(this.captureDurations?.values() ?? [])];
+      this.pushedDuration = remainingDurations.reduce(
+        (total, duration) => total + duration.pushedDuration,
+        0,
+      );
+      this.sourcePushedDuration = remainingDurations.reduce(
+        (total, duration) => total + duration.sourcePushedDuration,
+        0,
+      );
+      this.sourceDiscardedDuration = remainingDurations.reduce(
+        (total, duration) => total + duration.sourceDiscardedDuration,
+        0,
+      );
+      if (remainingDurations.length === 0) {
+        this.firstFrameEmitted = false;
+      }
+    }
+    if (this.interruptedFuture === interruptionFuture) {
+      this.interruptedFuture = new Future();
+    }
 
-    this.onPlaybackFinished({
-      playbackPosition: pushedDuration,
-      interrupted,
-    });
+    const pendingSegments = interruptionSnapshot?.pendingSegments ?? this.pendingPlayoutSegments;
+    const finishes =
+      interrupted && Number.isFinite(pendingSegments) ? Math.max(pendingSegments, 1) : 1;
+    for (let i = 0; i < finishes; i++) {
+      this.onPlaybackFinished({
+        playbackPosition: i === 0 ? pushedDuration : 0,
+        interrupted,
+      });
+    }
+    if (this.interruptionSnapshot === interruptionSnapshot) {
+      this.interruptionSnapshot = undefined;
+    }
   }
 
   /**
@@ -496,7 +631,7 @@ export class ParticipantAudioOutput extends AudioOutput {
   flush(): void {
     super.flush();
 
-    if (!this.pushedDuration) {
+    if (!this.pushedDuration && this.pendingPlayoutSegments === 0) {
       return;
     }
 
@@ -509,6 +644,7 @@ export class ParticipantAudioOutput extends AudioOutput {
       this.flushTask.cancel();
     }
 
+    this.captureSegment = (this.captureSegment ?? 0) + 1;
     this.flushPushedDuration = this.pushedDuration;
     const flushTask = Task.from((controller) => this.waitForPlayoutTask(controller));
     this.flushTask = flushTask;
@@ -522,7 +658,51 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   clearBuffer(): void {
-    // Signal interruption even if no frame has been pushed yet, so a gated captureFrame can bail.
+    this.interruptionGeneration = (this.interruptionGeneration ?? 0) + 1;
+    if (!this.playbackEnabledFuture.done) {
+      this.playbackEnabledFuture.resolve();
+      this.playbackEnabledFuture = new Future();
+    }
+    if (
+      this.interruptedFuture.done ||
+      (this.pushedDuration === 0 && this.pendingPlayoutSegments === 0)
+    ) {
+      return;
+    }
+    if (
+      (this.pushedDuration > 0 || this.pendingPlayoutSegments > 0) &&
+      (!this.flushTask || this.flushTask.done)
+    ) {
+      this.flush();
+    }
+    if (this.pendingPlayoutSegments > 0) {
+      const captureCutoff = this.captureSequence ?? 0;
+      const captureDurations = [...(this.captureDurations?.entries() ?? [])]
+        .filter(([sequence]) => sequence <= captureCutoff)
+        .map(([, duration]) => duration);
+      this.interruptionSnapshot = {
+        future: this.interruptedFuture,
+        sourcePushedDuration:
+          captureDurations.length > 0
+            ? captureDurations.reduce((total, duration) => total + duration.sourcePushedDuration, 0)
+            : this.sourcePushedDuration,
+        sourceDiscardedDuration:
+          captureDurations.length > 0
+            ? captureDurations.reduce(
+                (total, duration) => total + duration.sourceDiscardedDuration,
+                0,
+              )
+            : this.sourceDiscardedDuration,
+        queuedDuration: this.audioSource.queuedDuration ?? 0,
+        pendingSegments: this.pendingPlayoutSegments,
+        captureCutoff,
+      };
+      this.pushedDuration = 0;
+      this.sourcePushedDuration = 0;
+      this.sourceDiscardedDuration = 0;
+      this.firstFrameEmitted = false;
+      this.audioSource.clearQueue();
+    }
     if (!this.interruptedFuture.done) {
       this.interruptedFuture.resolve();
     }
