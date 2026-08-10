@@ -532,10 +532,10 @@ export class LLMStream extends llm.LLMStream {
           this.queue.put({
             id: chunk.id,
             usage: {
-              completionTokens: usage.completion_tokens,
-              promptTokens: usage.prompt_tokens,
+              completionTokens: usage.completion_tokens || 0,
+              promptTokens: usage.prompt_tokens || 0,
               promptCachedTokens: usage.prompt_tokens_details?.cached_tokens || 0,
-              totalTokens: usage.total_tokens,
+              totalTokens: usage.total_tokens || 0,
             },
           });
         }
