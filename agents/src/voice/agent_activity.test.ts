@@ -317,6 +317,30 @@ describe('AgentActivity - mainTask', () => {
     expect(result).toBe('resolved');
   });
 
+  it('interrupts queued speech behind a cancelled protected handle', () => {
+    type HeapItem = [number, number, SpeechHandle];
+    const speechQueue = new Heap<HeapItem>(
+      (a: HeapItem, b: HeapItem) => b[0] - a[0] || a[1] - b[1],
+    );
+    const protectedHandle = SpeechHandle.create({ allowInterruptions: false });
+    const behind = SpeechHandle.create({ allowInterruptions: true });
+    speechQueue.push([SpeechHandle.SPEECH_PRIORITY_NORMAL, 1, protectedHandle]);
+    speechQueue.push([SpeechHandle.SPEECH_PRIORITY_NORMAL, 2, behind]);
+    protectedHandle.interrupt(true);
+
+    const activity = Object.assign(Object.create(AgentActivity.prototype), {
+      cancelPreemptiveGeneration: () => {},
+      _interruptBackgroundSpeeches: () => [],
+      _currentSpeech: undefined,
+      speechQueue,
+      realtimeSession: undefined,
+    }) as AgentActivity;
+
+    activity.interrupt();
+
+    expect(behind.interrupted).toBe(true);
+  });
+
   it('should hold queued speech while reply authorization is paused', async () => {
     const { fakeActivity, mainTask, speechQueue, q_updated } = buildMainTaskRunner();
 

@@ -186,6 +186,25 @@ describe('SpeechHandle._markDone - generation completion', () => {
   });
 });
 
+describe('SpeechHandle.interrupt - protected completed speech', () => {
+  it('leaves an interrupted protected handle alone', () => {
+    const handle = SpeechHandle.create({ allowInterruptions: false });
+    handle.interrupt(true);
+
+    expect(handle.interrupt()).toBe(handle);
+    expect(handle.interrupted).toBe(true);
+    handle._markDone();
+  });
+
+  it('leaves a done protected handle alone', () => {
+    const handle = SpeechHandle.create({ allowInterruptions: false });
+    handle._markDone();
+
+    expect(handle.interrupt()).toBe(handle);
+    expect(handle.interrupted).toBe(false);
+  });
+});
+
 describe('SpeechHandle interruption watchdog (#2065)', () => {
   it('cancels the owned tasks and marks the handle done when an interrupt is ignored', async () => {
     vi.useFakeTimers();
