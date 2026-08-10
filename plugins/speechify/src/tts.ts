@@ -81,10 +81,10 @@ export class TTS extends tts.TTS {
    * `apiKey` must be set, either via the constructor or the `SPEECHIFY_API_KEY`
    * environment variable.
    *
-   * Synthesis uses the Speechify `/audio/stream` endpoint, which returns raw PCM
-   * (24 kHz mono) plus word-level speech marks with timestamps. `stream()` chunks
-   * input into sentences and issues one request per sentence, emitting audio and
-   * aligned word timestamps as each sentence completes.
+   * Synthesis uses the Speechify `/v1/audio/stream/with-timestamps` endpoint,
+   * which returns raw PCM (24 kHz mono) plus word-level speech marks with timestamps.
+   * `stream()` chunks input into sentences and issues one request per sentence,
+   * emitting audio and aligned word timestamps as each sentence completes.
    *
    * Defaults to the `dominic_32` voice and the `simba-3.2` model. The voice must
    * support the chosen model; see the `/v1/voices` endpoint.
@@ -129,13 +129,34 @@ export class TTS extends tts.TTS {
     offsetSeconds: number,
     params: { abortSignal: AbortSignal; timeoutInSeconds?: number },
   ): Promise<{ audio: Buffer; timed: ReturnType<typeof createTimedString>[] }> {
-    const response = await this.#client.audio.stream(buildSpeechRequest(text, opts), {
-      ...params,
-      headers: { [CALLER_HEADER]: 'livekit' },
+    const baseUrl = opts.baseUrl ?? 'https://api.sws.speechify.com';
+    const url = `${baseUrl}/v1/audio/stream/with-timestamps`;
+    
+    const requestBody = buildSpeechRequest(text, opts);
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${opts.apiKey ?? process.env.SPEECHIFY_API_KEY}`,
+        'Content-Type': 'application/json',
+        [CALLER_HEADER]: 'livekit',
+      },
+      body: JSON.stringify(requestBody),
+      signal: params.abortSignal,
     });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      throw new APIStatusError({ 
+        message: error, 
+        options: { statusCode: response.status } 
+      });
+    }
+    
+    const data = await response.json();
     return {
-      audio: Buffer.from(response.audio_data, 'base64'),
-      timed: timedStringsFromMarks(response.speech_marks, offsetSeconds),
+      audio: Buffer.from(data.audio_data, 'base64'),
+      timed: timedStringsFromMarks(data.speech_marks, offsetSeconds),
     };
   }
 
