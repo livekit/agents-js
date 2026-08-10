@@ -156,7 +156,7 @@ export class TTS extends tts.TTS {
     // Parse SSE stream
     const textData = await response.text();
     const audioChunks: string[] = [];
-    let speechMarks: Speechify.SpeechMarks | undefined;
+    const allSpeechMarks: any[] = [];
     
     // Parse SSE format: "event: <type>\ndata: <json>\n\n"
     const events = textData.split('\n\n');
@@ -180,10 +180,13 @@ export class TTS extends tts.TTS {
       try {
         const parsed = JSON.parse(data);
         
-        if (eventType === 'speech.chunk' && parsed.audio) {
-          audioChunks.push(parsed.audio);
-        } else if (eventType === 'speech.done' && parsed.speech_marks) {
-          speechMarks = parsed.speech_marks;
+        if (eventType === 'speech.chunk') {
+          if (parsed.audio) {
+            audioChunks.push(parsed.audio);
+          }
+          if (parsed.speech_marks && Array.isArray(parsed.speech_marks)) {
+            allSpeechMarks.push(...parsed.speech_marks);
+          }
         }
       } catch (e) {
         // Skip malformed JSON
@@ -192,6 +195,10 @@ export class TTS extends tts.TTS {
     
     // Concatenate base64 audio chunks
     const fullAudioBase64 = audioChunks.join('');
+    
+    // Reconstruct speech marks structure
+    const speechMarks: Speechify.SpeechMarks | undefined = 
+      allSpeechMarks.length > 0 ? { chunks: allSpeechMarks } : undefined;
     
     return {
       audio: Buffer.from(fullAudioBase64, 'base64'),
