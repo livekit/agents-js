@@ -78,8 +78,8 @@ export interface TTSOptions {
 }
 
 const defaultTTSOptions: TTSOptions = {
-  modelId: 'arcana',
-  speaker: 'luna',
+  modelId: 'coda',
+  speaker: 'wawona',
   apiKey: process.env.RIME_API_KEY,
   baseURL: RIME_BASE_URL,
   useWebsocket: false,
@@ -191,13 +191,11 @@ function resolveOptions(opts: Partial<TTSOptions>): TTSOptions {
   };
 
   if (opts.speaker === undefined && opts.modelId === 'coda') {
-    resolved.speaker = 'lyra';
+    resolved.speaker = 'wawona';
   }
 
   if (resolved.modelId === 'mistv2' && resolved.timeScaleFactor !== undefined) {
-    throw new Error(
-      'timeScaleFactor is not supported by the mistv2 model; use arcana, mistv3, or coda.',
-    );
+    throw new Error('timeScaleFactor is not supported by the mistv2 model; use mistv3 or coda.');
   }
 
   return resolved;

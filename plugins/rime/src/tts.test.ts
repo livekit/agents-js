@@ -35,6 +35,11 @@ describe('Rime TTS streaming', () => {
     vi.restoreAllMocks();
   });
 
+  it('defaults to Coda', () => {
+    const rimeTTS = new TTS({ apiKey: 'test-rime-key' });
+    expect(rimeTTS.model).toBe('coda');
+  });
+
   it('emits audio before the Rime response body closes', async () => {
     let bodyController!: ReadableStreamDefaultController<Uint8Array>;
     const body = new ReadableStream<Uint8Array>({
@@ -43,7 +48,7 @@ describe('Rime TTS streaming', () => {
       },
     });
 
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(body, {
         status: 200,
         headers: { 'Content-Type': 'audio/pcm' },
@@ -53,8 +58,7 @@ describe('Rime TTS streaming', () => {
     const rimeTTS = new TTS({
       apiKey: 'test-rime-key',
       baseURL: 'https://rime.test/v1/rime-tts',
-      modelId: 'arcana',
-      speaker: 'luna',
+      modelId: 'coda',
       samplingRate: 16000,
     });
 
@@ -71,6 +75,12 @@ describe('Rime TTS streaming', () => {
     expect(firstResult.done).toBe(false);
     expect(firstResult.value.final).toBe(false);
     expect(firstResult.value.frame.samplesPerChannel).toBe(1600);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const request = fetchSpy.mock.calls[0]?.[1];
+    expect(JSON.parse(request?.body as string)).toMatchObject({
+      modelId: 'coda',
+      speaker: 'wawona',
+    });
 
     bodyController.close();
 
