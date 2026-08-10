@@ -153,10 +153,49 @@ export class TTS extends tts.TTS {
       });
     }
     
-    const data = await response.json();
+    // Parse SSE stream
+    const textData = await response.text();
+    const audioChunks: string[] = [];
+    let speechMarks: Speechify.SpeechMarks | undefined;
+    
+    // Parse SSE format: "event: <type>\ndata: <json>\n\n"
+    const events = textData.split('\n\n');
+    for (const event of events) {
+      if (!event.trim()) continue;
+      
+      const lines = event.split('\n');
+      let eventType = '';
+      let data = '';
+      
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.substring(7).trim();
+        } else if (line.startsWith('data: ')) {
+          data = line.substring(6).trim();
+        }
+      }
+      
+      if (!data) continue;
+      
+      try {
+        const parsed = JSON.parse(data);
+        
+        if (eventType === 'speech.chunk' && parsed.audio) {
+          audioChunks.push(parsed.audio);
+        } else if (eventType === 'speech.done' && parsed.speech_marks) {
+          speechMarks = parsed.speech_marks;
+        }
+      } catch (e) {
+        // Skip malformed JSON
+      }
+    }
+    
+    // Concatenate base64 audio chunks
+    const fullAudioBase64 = audioChunks.join('');
+    
     return {
-      audio: Buffer.from(data.audio_data, 'base64'),
-      timed: timedStringsFromMarks(data.speech_marks, offsetSeconds),
+      audio: Buffer.from(fullAudioBase64, 'base64'),
+      timed: timedStringsFromMarks(speechMarks, offsetSeconds),
     };
   }
 
