@@ -247,11 +247,16 @@ export class SpeechHandle {
   /**
    * Interrupt the current speech generation.
    *
-   * @throws Error If this speech handle does not allow interruptions.
+   * @throws Error If this speech handle is still running and does not allow interruptions.
    *
    * @returns The same speech handle that was interrupted.
    */
   interrupt(force: boolean = false): SpeechHandle {
+    if (this.interrupted || this.done()) {
+      // Already cancelled or finished: nothing to interrupt, and protection is moot.
+      return this;
+    }
+
     if (!force && !this.allowInterruptions) {
       throw new Error('This generation handle does not allow interruptions');
     }
