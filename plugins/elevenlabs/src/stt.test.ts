@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { mergeFrames, stt as sttLib } from '@livekit/agents';
+import { log, mergeFrames, stt as sttLib } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { type RequestListener, type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT } from './stt.js';
 
@@ -233,6 +233,59 @@ describe('ElevenLabs STT', () => {
     expect(stt.model).toBe('scribe_v2_realtime');
     expect(stt.capabilities.streaming).toBe(true);
     expect(stt.capabilities.alignedTranscript).toBe('word');
+  });
+
+  it('keeps previousText for realtime model', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const receivedMessages: Record<string, unknown>[] = [];
+
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        receivedMessages.push(JSON.parse(raw.toString()) as Record<string, unknown>);
+      });
+    });
+
+    try {
+      const eleven = new STT({
+        apiKey: 'test-key',
+        baseURL,
+        model: 'scribe_v2_realtime',
+        previousText: 'prior context',
+      });
+      const stream = eleven.stream();
+
+      await waitUntil(() => receivedMessages.length > 0);
+      stream.close();
+
+      expect(receivedMessages[0]).toMatchObject({
+        message_type: 'input_audio_chunk',
+        audio_base_64: '',
+        commit: false,
+        sample_rate: 16000,
+        previous_text: 'prior context',
+      });
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('ignores previousText for non-realtime model', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    try {
+      const eleven = new STT({
+        apiKey: 'test-key',
+        model: 'scribe_v2',
+        previousText: 'prior context',
+      });
+
+      expect(eleven.model).toBe('scribe_v2');
+      expect(warn).toHaveBeenCalledWith(
+        '`previousText` is only supported for Scribe v2 realtime model and will be ignored',
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('sends batch recognition form fields and maps word metadata', async () => {
