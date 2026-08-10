@@ -342,6 +342,7 @@ export class SpeechStream extends stt.SpeechStream {
           cleanup();
           ws.on('error', () => {});
           ws.close();
+          // Authentication headers can appear in WebSocket handshake errors.
           const statusCode = response.statusCode ?? -1;
           reject(
             new APIStatusError({
@@ -352,6 +353,7 @@ export class SpeechStream extends stt.SpeechStream {
         };
         const onError = (err: Error) => {
           cleanup();
+          // Transport errors can contain credentials in URLs.
           reject(
             new APIConnectionError({
               message: sanitizedErrorName(err),

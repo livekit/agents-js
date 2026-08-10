@@ -227,7 +227,7 @@ export class ConnectionPool<T> {
 
     // Start prewarm in background
     this._prewarmImpl(controller.signal).catch(() => {
-      // Ignore errors during prewarm
+      // Exception details can contain request headers or URL credentials.
     });
   }
 

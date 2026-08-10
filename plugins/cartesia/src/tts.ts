@@ -780,6 +780,7 @@ const waitForWsOpen = async ({
   const onOpen = () => fut.resolve();
   const onError = (err: Error) => fut.reject(asError(err));
   const onUnexpectedResponse = (_request: unknown, response: { statusCode?: number }) => {
+    // Authentication headers can appear in WebSocket handshake errors.
     const statusCode = response.statusCode ?? -1;
     fut.reject(
       new APIStatusError({
@@ -911,6 +912,7 @@ const connectCartesiaWebSocket = async ({
   if (isTimeout) {
     throw new APITimeoutError({ message: 'Cartesia WebSocket connection timed out' });
   }
+  // Transport errors can contain credentials in URLs.
   throw new APIConnectionError({ message: sanitizedErrorName(error) });
 };
 
