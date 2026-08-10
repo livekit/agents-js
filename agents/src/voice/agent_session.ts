@@ -1006,6 +1006,16 @@ export class AgentSession<
     return handle;
   }
 
+  /**
+   * Interrupt the current speech generation.
+   *
+   * A queued speech created with `allowInterruptions: false` keeps playing, along with the ones
+   * behind it, unless `force` is set.
+   *
+   * @returns A future that completes when the interruption is fully processed.
+   * @throws Error if the session is not running, or if the speech currently playing disallows
+   * interruptions and `force` is false.
+   */
   interrupt(options?: { force?: boolean }) {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
