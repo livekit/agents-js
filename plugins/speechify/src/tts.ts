@@ -7,15 +7,13 @@ import {
   APIError,
   APIStatusError,
   AudioByteStream,
-  USERDATA_TIMED_TRANSCRIPT,
   createTimedString,
   shortuuid,
   tokenize,
   tts,
 } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
+import { SpeechifyClient } from '@speechify/api';
 import type { Speechify } from '@speechify/api';
-import { SpeechifyClient, SpeechifyError } from '@speechify/api';
 import type { TTSModels } from './models.js';
 
 const NUM_CHANNELS = 1;
@@ -131,42 +129,56 @@ export class TTS extends tts.TTS {
   ): Promise<{ audio: Buffer; timed: ReturnType<typeof createTimedString>[] }> {
     const baseUrl = opts.baseUrl ?? 'https://api.sws.speechify.com';
     const url = `${baseUrl}/v1/audio/stream/with-timestamps`;
-    
+
     const requestBody = buildSpeechRequest(text, opts);
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${opts.apiKey ?? process.env.SPEECHIFY_API_KEY}`,
-        'Content-Type': 'application/json',
-        [CALLER_HEADER]: 'livekit',
-      },
-      body: JSON.stringify(requestBody),
-      signal: params.abortSignal,
-    });
-    
-    if (!response.ok) {
-      const error = await response.text();
-      throw new APIStatusError({ 
-        message: error, 
-        options: { statusCode: response.status } 
+
+    // Combine caller's abort signal with timeout
+    const timeoutMs = (params.timeoutInSeconds ?? 30) * 1000;
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const combinedSignal = AbortSignal.any([params.abortSignal, timeoutSignal]);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.#client.options.token}`,
+          'Content-Type': 'application/json',
+          [CALLER_HEADER]: 'livekit',
+        },
+        body: JSON.stringify(requestBody),
+        signal: combinedSignal,
       });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new APIStatusError({
+          message: error,
+          options: { statusCode: response.status },
+        });
+      }
+    } catch (e) {
+      if (e instanceof Error && e.name === 'TimeoutError') {
+        throw new APIConnectionError({ message: 'Request timed out' });
+      }
+      throw e;
     }
-    
+
     // Parse SSE stream
     const textData = await response.text();
-    const audioChunks: string[] = [];
-    const allSpeechMarks: any[] = [];
-    
+    const audioBuffers: Buffer[] = [];
+    const allSpeechMarks: Speechify.SpeechMark[] = [];
+
     // Parse SSE format: "event: <type>\ndata: <json>\n\n"
-    const events = textData.split('\n\n');
+    // Normalize CRLF to LF for consistent splitting
+    const normalizedData = textData.replace(/\r\n/g, '\n');
+    const events = normalizedData.split('\n\n');
     for (const event of events) {
       if (!event.trim()) continue;
-      
+
       const lines = event.split('\n');
-      let eventType = '';
+      let eventType = 'message'; // Default SSE event type
       let data = '';
-      
+
       for (const line of lines) {
         if (line.startsWith('event: ')) {
           eventType = line.substring(7).trim();
@@ -174,34 +186,46 @@ export class TTS extends tts.TTS {
           data = line.substring(6).trim();
         }
       }
-      
+
       if (!data) continue;
-      
+
       try {
         const parsed = JSON.parse(data);
-        
+
+        if (eventType === 'error') {
+          throw new APIError({
+            message: parsed.message || parsed.error || 'Speechify API error',
+          });
+        }
+
         if (eventType === 'speech.chunk') {
           if (parsed.audio) {
-            audioChunks.push(parsed.audio);
+            // Decode each chunk separately to avoid base64 padding issues
+            audioBuffers.push(Buffer.from(parsed.audio, 'base64'));
           }
-          if (parsed.speech_marks && Array.isArray(parsed.speech_marks)) {
-            allSpeechMarks.push(...parsed.speech_marks);
+          if (parsed.speech_marks) {
+            // Handle both nested object and flat array formats
+            const marks = Array.isArray(parsed.speech_marks)
+              ? parsed.speech_marks
+              : parsed.speech_marks.chunks || [];
+            allSpeechMarks.push(...marks);
           }
         }
       } catch (e) {
+        if (e instanceof APIError) throw e;
         // Skip malformed JSON
       }
     }
-    
-    // Concatenate base64 audio chunks
-    const fullAudioBase64 = audioChunks.join('');
-    
+
+    // Concatenate decoded audio buffers
+    const audio = Buffer.concat(audioBuffers);
+
     // Reconstruct speech marks structure
-    const speechMarks: Speechify.SpeechMarks | undefined = 
+    const speechMarks: Speechify.SpeechMarks | undefined =
       allSpeechMarks.length > 0 ? { chunks: allSpeechMarks } : undefined;
-    
+
     return {
-      audio: Buffer.from(fullAudioBase64, 'base64'),
+      audio,
       timed: timedStringsFromMarks(speechMarks, offsetSeconds),
     };
   }
@@ -233,7 +257,7 @@ const timedStringsFromMarks = (
     if (!chunk.value || chunk.start_time === undefined) continue;
     out.push(
       createTimedString({
-        text: chunk.value,
+        text: chunk.value + ' ', // Add trailing space to prevent run-together words
         startTime: chunk.start_time / 1000 + offsetSeconds,
         endTime: chunk.end_time !== undefined ? chunk.end_time / 1000 + offsetSeconds : undefined,
       }),
@@ -272,20 +296,17 @@ export class ChunkedStream extends tts.ChunkedStream {
         abortSignal: this.abortSignal,
         timeoutInSeconds: this.#timeoutInSeconds,
       });
-      let attached = false;
 
-      const putFrames = (frames: ReturnType<AudioByteStream['write']>) => {
-        for (const frame of frames) {
-          if (!attached && timed.length > 0) {
-            frame.userdata[USERDATA_TIMED_TRANSCRIPT] = timed;
-            attached = true;
-          }
-          this.queue.put({ requestId, frame, final: false, segmentId: requestId });
-        }
-      };
-
-      putFrames(bstream.write(audio));
-      putFrames(bstream.flush());
+      const frames = [...bstream.write(audio), ...bstream.flush()];
+      for (const frame of frames) {
+        this.queue.put({
+          requestId,
+          frame,
+          final: false,
+          segmentId: requestId,
+          timedTranscripts: timed.length > 0 ? timed : undefined,
+        });
+      }
       this.queue.close();
     } catch (e) {
       if (this.abortSignal.aborted) return;
@@ -318,6 +339,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     // once on the last frame of the entire stream (mirrors elevenlabs/cartesia).
     let lastFrame: AudioFrame | undefined;
     let lastRequestId: string | undefined;
+    let lastTimedTranscripts: ReturnType<typeof createTimedString>[] | undefined;
     const sendFrame = (final: boolean) => {
       if (!lastFrame || !lastRequestId) return;
       this.queue.put({
@@ -325,8 +347,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         frame: lastFrame,
         final,
         segmentId: lastRequestId,
+        timedTranscripts: lastTimedTranscripts,
       });
       lastFrame = undefined;
+      lastTimedTranscripts = undefined;
     };
 
     const forwardInput = async () => {
@@ -352,15 +376,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
 
       const frames = [...bstream.write(audio), ...bstream.flush()];
-      if (timed.length > 0 && frames.length > 0) {
-        frames[0]!.userdata[USERDATA_TIMED_TRANSCRIPT] = timed;
-      }
       offsetSeconds += frames.reduce((sum, f) => sum + f.samplesPerChannel / f.sampleRate, 0);
 
-      for (const frame of frames) {
+      for (let i = 0; i < frames.length; i++) {
         sendFrame(false);
-        lastFrame = frame;
+        lastFrame = frames[i];
         lastRequestId = requestId;
+        // Attach timed transcripts to the first frame only
+        if (i === 0 && timed.length > 0) {
+          lastTimedTranscripts = timed;
+        } else {
+          lastTimedTranscripts = undefined;
+        }
       }
     };
 
