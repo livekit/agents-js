@@ -340,8 +340,13 @@ export class VADStream extends baseStream {
 
           const copySpeechBuffer = (): AudioFrame => {
             if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
+            // slice() (a copy), not subarray() (a view): the emitted frame
+            // must not alias `#speechBuffer`, which resetWriteCursor()
+            // mutates right after END_OF_SPEECH — sliding the segment tail
+            // over the head of the buffer and corrupting any frame that
+            // still points into it.
             return new AudioFrame(
-              this.#speechBuffer.subarray(0, speechBufferIndex),
+              this.#speechBuffer.slice(0, speechBufferIndex),
               this.#inputSampleRate,
               1,
               speechBufferIndex,

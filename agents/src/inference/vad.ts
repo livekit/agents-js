@@ -239,8 +239,12 @@ class InferenceVADStream extends BaseVADStream {
       if (this._speechBuffer === null) {
         return new AudioFrame(new Int16Array(0), this._inputSampleRate, 1, 0);
       }
+      // slice() (a copy), not subarray() (a view): the emitted frame must not
+      // alias `_speechBuffer`, which resetWriteCursor() mutates right after
+      // END_OF_SPEECH — sliding the segment tail over the head of the buffer
+      // and corrupting any frame that still points into it.
       return new AudioFrame(
-        this._speechBuffer.subarray(0, speechBufferIndex),
+        this._speechBuffer.slice(0, speechBufferIndex),
         this._inputSampleRate,
         1,
         speechBufferIndex,
