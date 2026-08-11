@@ -169,7 +169,11 @@ function dropUnsupportedParams(
   return result;
 }
 
-export type InferenceClass = 'priority' | 'standard';
+/**
+ * Scheduling class for a request. `low` yields to voice traffic, so it is only
+ * appropriate for work no caller is waiting on.
+ */
+export type InferenceClass = 'priority' | 'standard' | 'low';
 
 export interface InferenceLLMOptions {
   model: LLMModels;
