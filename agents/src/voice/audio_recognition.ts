@@ -818,7 +818,12 @@ export class AudioRecognition {
     if (!this.isInterruptionEnabled) {
       return;
     }
-    if (userSpeakingSpan && userSpeakingSpan.isRecording()) {
+    if (
+      this.overlapInCurrentTurn &&
+      this.interruptionDetected !== true &&
+      userSpeakingSpan &&
+      userSpeakingSpan.isRecording()
+    ) {
       userSpeakingSpan.setAttribute(traceTypes.ATTR_IS_INTERRUPTION, 'false');
     }
 
