@@ -1180,6 +1180,11 @@ export function performToolExecutions({
           },
           `unknown AI function ${toolCall.name}`,
         );
+        try {
+          toolCall.args = JSON.stringify(parseFunctionArguments(toolCall.args || '{}'));
+        } catch {
+          toolCall.args = '{}';
+        }
         toolStarted(toolCall);
         toolCompleted(
           createToolOutput({

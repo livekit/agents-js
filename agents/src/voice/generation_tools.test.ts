@@ -382,9 +382,13 @@ describe('Generation + Tool Execution', () => {
     await task1.result;
   }, 20_000);
 
-  it('commits an unknown tool call before its error output', async () => {
+  it('normalizes and commits an unknown tool call before its error output', async () => {
     const events: string[] = [];
-    const fc = FunctionCall.create({ callId: 'call_unknown', name: 'missing', args: '{}' });
+    const fc = FunctionCall.create({
+      callId: 'call_unknown',
+      name: 'missing',
+      args: 'definitely not json',
+    });
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as AgentSession,
       speechHandle: { id: 'speech_unknown', _itemAdded: () => {} } as unknown as SpeechHandle,
@@ -398,6 +402,7 @@ describe('Generation + Tool Execution', () => {
     await execTask.result;
 
     expect(events).toEqual(['call:call_unknown', 'output:call_unknown']);
+    expect(fc.args).toBe('{}');
     expect(toolOutput.firstToolStartedFuture.done).toBe(true);
     expect(toolOutput.output[0]?.toolCallOutput).toMatchObject({
       callId: 'call_unknown',
