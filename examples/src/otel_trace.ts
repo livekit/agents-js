@@ -168,7 +168,7 @@ export default defineAgent({
       tts: new tts.FallbackAdapter({
         ttsInstances: [
           new inference.TTS({ model: 'cartesia/sonic-3' }),
-          new inference.TTS({ model: 'rime/coda', voice: 'wawona' }),
+          new inference.TTS({ model: 'rime/coda', voice: 'luna' }),
         ],
       }),
     });

@@ -35,9 +35,17 @@ describe('Rime TTS streaming', () => {
     vi.restoreAllMocks();
   });
 
-  it('defaults to Coda', () => {
-    const rimeTTS = new TTS({ apiKey: 'test-rime-key' });
-    expect(rimeTTS.model).toBe('coda');
+  it('preserves model-specific default speakers', () => {
+    const defaultTTS = new TTS({ apiKey: 'test-rime-key' });
+    const explicitCodaTTS = new TTS({ apiKey: 'test-rime-key', modelId: 'coda' });
+    const explicitArcanaTTS = new TTS({ apiKey: 'test-rime-key', modelId: 'arcana' });
+
+    expect(defaultTTS).toHaveProperty('opts.modelId', 'coda');
+    expect(defaultTTS).toHaveProperty('opts.speaker', 'luna');
+    expect(explicitCodaTTS).toHaveProperty('opts.modelId', 'coda');
+    expect(explicitCodaTTS).toHaveProperty('opts.speaker', 'lyra');
+    expect(explicitArcanaTTS).toHaveProperty('opts.modelId', 'arcana');
+    expect(explicitArcanaTTS).toHaveProperty('opts.speaker', 'luna');
   });
 
   it('emits audio before the Rime response body closes', async () => {
@@ -79,7 +87,7 @@ describe('Rime TTS streaming', () => {
     const request = fetchSpy.mock.calls[0]?.[1];
     expect(JSON.parse(request?.body as string)).toMatchObject({
       modelId: 'coda',
-      speaker: 'wawona',
+      speaker: 'lyra',
     });
 
     bodyController.close();

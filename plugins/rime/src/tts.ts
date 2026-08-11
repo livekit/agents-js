@@ -79,7 +79,7 @@ export interface TTSOptions {
 
 const defaultTTSOptions: TTSOptions = {
   modelId: 'coda',
-  speaker: 'wawona',
+  speaker: 'luna',
   apiKey: process.env.RIME_API_KEY,
   baseURL: RIME_BASE_URL,
   useWebsocket: false,
@@ -191,7 +191,7 @@ function resolveOptions(opts: Partial<TTSOptions>): TTSOptions {
   };
 
   if (opts.speaker === undefined && opts.modelId === 'coda') {
-    resolved.speaker = 'wawona';
+    resolved.speaker = 'lyra';
   }
 
   if (resolved.modelId === 'mistv2' && resolved.timeScaleFactor !== undefined) {
