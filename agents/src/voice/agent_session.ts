@@ -30,7 +30,7 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
-import { getJobContext } from '../job.js';
+import { currentSimulation, getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import {
   AgentHandoffItem,
@@ -382,8 +382,7 @@ type ActivityTransitionOptions = {
 /** True when the surrounding job runs under a text simulation (the simulated
  * user interacts over text streams only). */
 function resolveTextOnly(): boolean {
-  const jobCtx = getJobContext(false);
-  const simCtx = jobCtx?.simulationContext();
+  const simCtx = currentSimulation();
   return simCtx !== undefined && simCtx.simulationMode === SimulationMode.TEXT;
 }
 

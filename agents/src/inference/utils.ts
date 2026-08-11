@@ -57,11 +57,15 @@ export async function createAccessToken(
  * Build metadata headers for inference requests.
  * Includes SDK version/platform, and optionally room/job/agent IDs from the current job context.
  * Includes X-LiveKit-Worker-Token when LIVEKIT_WORKER_TOKEN is set (hosted agents).
+ * A job's inference headers are merged last so they override a model's configured class.
  */
-export function buildMetadataHeaders(): Record<string, string> {
+export function buildMetadataHeaders(inferenceClass?: string): Record<string, string> {
   const headers: Record<string, string> = {
     'User-Agent': `livekit-agents-js/${version} (node ${process.version})`,
   };
+  if (inferenceClass) {
+    headers[INFERENCE_PRIORITY_HEADER] = inferenceClass;
+  }
 
   const ctx = getJobContext(false);
   if (ctx) {
@@ -83,6 +87,7 @@ export function buildMetadataHeaders(): Record<string, string> {
     if (ctx.room.isConnected && agentSid) {
       headers['X-LiveKit-Agent-Id'] = agentSid;
     }
+    Object.assign(headers, ctx.inferenceHeaders);
   }
 
   return headers;

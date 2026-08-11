@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from 'zod';
 import { UnexpectedModelBehavior } from '../../_exceptions.js';
+import { LLM as InferenceLLM } from '../../inference/llm.js';
 import type { AgentHandoffItem, ChatItem, ChatRole } from '../../llm/chat_context.js';
 import { ChatContext } from '../../llm/chat_context.js';
 import type { LLM } from '../../llm/llm.js';
@@ -57,6 +58,10 @@ export type RunOutputOptions = {
 
 // Environment variable for verbose output
 const evalsVerbose = parseInt(process.env.LIVEKIT_EVALS_VERBOSE || '0', 10);
+
+function judgeChatOptions(llm: LLM): { inferenceClass: 'low' } | Record<string, never> {
+  return llm instanceof InferenceLLM ? { inferenceClass: 'low' } : {};
+}
 
 /**
  * Result of a test run containing recorded events and assertion utilities.
@@ -940,6 +945,7 @@ export class MessageAssert extends EventAssert {
       toolCtx: [checkIntentTool],
       toolChoice: 'required',
       extraKwargs: { temperature: 0 },
+      ...judgeChatOptions(llm),
     });
 
     for await (const chunk of stream) {

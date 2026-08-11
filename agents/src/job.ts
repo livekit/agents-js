@@ -20,7 +20,7 @@ import * as path from 'node:path';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
-import { SimulationContext, parseSimulationDispatch } from './simulation.js';
+import { SimulationContext, SimulationMode, parseSimulationDispatch } from './simulation.js';
 import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import {
   ATTRIBUTE_REDACTION_ENABLED,
@@ -57,6 +57,11 @@ export function getJobContext<ProcessUserData = Record<string, unknown>>(
     throw new Error('no job context found, are you running this code inside a job entrypoint?');
   }
   return ctx as JobContext<ProcessUserData> | undefined;
+}
+
+/** Returns the simulation context for the current job, if any. */
+export function currentSimulation(): SimulationContext | undefined {
+  return getJobContext(false)?.simulationContext();
 }
 
 /**
@@ -230,6 +235,19 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       this as JobContext<unknown> as JobContext,
     );
     return this.#simulationCtx;
+  }
+
+  /** Extra headers this job puts on every LiveKit Inference request it makes. */
+  get inferenceHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+
+    // Text simulations are batch load and must not compete with live traffic.
+    // Audio simulations stay representative of production latency.
+    if (this.simulationContext()?.simulationMode === SimulationMode.TEXT) {
+      headers['X-LiveKit-Inference-Priority'] = 'low';
+    }
+
+    return headers;
   }
 
   get workerId(): string {
