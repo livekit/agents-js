@@ -807,32 +807,38 @@ describe('RecorderAudioOutput', () => {
   });
 
   it('keeps the audio a finish reports as played while the first frame was parked', async () => {
-    const writes: AudioFrame[][] = [];
-    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
-    const recorderState = recorder as unknown as {
-      started: boolean;
-      writeCb: (buf: AudioFrame[]) => void;
-    };
-    recorderState.started = true;
-    recorderState.writeCb = (buf) => writes.push(buf);
-    const downstream = new ParkFirstFrameOutput();
-    const output = recorder.recordOutput(downstream);
+    vi.useFakeTimers();
+    try {
+      const writes: AudioFrame[][] = [];
+      const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+      const recorderState = recorder as unknown as {
+        started: boolean;
+        writeCb: (buf: AudioFrame[]) => void;
+      };
+      recorderState.started = true;
+      recorderState.writeCb = (buf) => writes.push(buf);
+      const downstream = new ParkFirstFrameOutput();
+      const output = recorder.recordOutput(downstream);
 
-    const capture = output.captureFrame(makeFrame(100));
-    await downstream.frameParked.await;
-    // Wall-clock advances well past the position the sink is about to report.
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    downstream.reportFinished(0.05);
-    downstream.releaseGate();
-    await capture;
-    output.flush();
+      vi.setSystemTime(10_000);
+      const capture = output.captureFrame(makeFrame(100));
+      await downstream.frameParked.await;
+      // Wall-clock advances well past the position the sink is about to report.
+      vi.setSystemTime(10_150);
+      downstream.reportFinished(0.05);
+      downstream.releaseGate();
+      await capture;
+      output.flush();
 
-    const capturedSamples = writes
-      .flat()
-      .reduce((total, frame) => total + frame.samplesPerChannel, 0);
-    expect(capturedSamples).toBe(0.05 * 48000);
-    recorderState.started = false;
-    await recorder.close();
+      const capturedSamples = writes
+        .flat()
+        .reduce((total, frame) => total + frame.samplesPerChannel, 0);
+      expect(capturedSamples).toBe(0.05 * 48000);
+      recorderState.started = false;
+      await recorder.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('accepts a retried capture after a rejection without an explicit flush', async () => {
