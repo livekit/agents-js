@@ -21,6 +21,8 @@ export type LLMModelUsage = {
   inputTokens: number;
   /** Input tokens served from cache. */
   inputCachedTokens: number;
+  /** Input tokens used to write to the prompt cache. */
+  inputCacheCreationTokens?: number;
   /** Input audio tokens (for multimodal models). */
   inputAudioTokens: number;
   /** Cached input audio tokens. */
@@ -151,6 +153,7 @@ export class ModelUsageCollector {
         model,
         inputTokens: 0,
         inputCachedTokens: 0,
+        inputCacheCreationTokens: 0,
         inputAudioTokens: 0,
         inputCachedAudioTokens: 0,
         inputTextTokens: 0,
@@ -241,6 +244,8 @@ export class ModelUsageCollector {
       const usage = this.getLLMUsage(provider, model);
       usage.inputTokens += metrics.promptTokens;
       usage.inputCachedTokens += metrics.promptCachedTokens;
+      usage.inputCacheCreationTokens =
+        (usage.inputCacheCreationTokens ?? 0) + (metrics.cacheCreationTokens ?? 0);
       usage.outputTokens += metrics.completionTokens;
     } else if (metrics.type === 'realtime_model_metrics') {
       const [provider, model] = this.extractProviderModel(metrics);

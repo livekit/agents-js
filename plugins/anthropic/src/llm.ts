@@ -426,6 +426,7 @@ export class LLMStream extends llm.LLMStream {
           promptTokens,
           totalTokens: promptTokens + this.#outputTokens,
           promptCachedTokens: this.#cacheReadTokens,
+          cacheCreationTokens: this.#cacheCreationTokens,
         },
       });
     } catch (e: unknown) {
