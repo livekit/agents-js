@@ -19,7 +19,11 @@ export {
   AgentSession,
   type AgentSessionOptions,
   type AgentSessionUsage,
+  type ExpressiveOptions,
   type VoiceOptions,
+  DEFAULT_EXPRESSIVE_OPTIONS,
+  TTS_INSTRUCTIONS_PLACEHOLDER,
+  resolveExpressiveOptions,
 } from './agent_session.js';
 export * from './avatar/index.js';
 export * from './background_audio.js';

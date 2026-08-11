@@ -17,6 +17,7 @@ import {
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
+import { TTS as InferenceTTS } from '../inference/tts.js';
 import {
   AgentConfigUpdate,
   type ChatContext,
@@ -93,7 +94,14 @@ import {
   _setActivityTaskInfo,
   speechHandleStorage,
 } from './agent.js';
-import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
+import {
+  type AgentSession,
+  DEFAULT_EXPRESSIVE_OPTIONS,
+  type ExpressiveOptions,
+  TTS_INSTRUCTIONS_PLACEHOLDER,
+  type TurnDetectionMode,
+  resolveExpressiveOptions,
+} from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
@@ -132,7 +140,10 @@ import {
   performTTSInference,
   performTextForwarding,
   performToolExecutions,
+  removeExpressiveInstructions,
   removeInstructions,
+  stripAssistantMarkup,
+  updateExpressiveInstructions,
   updateInstructions,
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
@@ -1017,6 +1028,63 @@ export class AgentActivity implements RecognitionHooks {
         instructions,
         addIfMissing: true,
       });
+    }
+  }
+
+  /**
+   * Resolve the session's expressive setting. Returns `undefined` if disabled.
+   *
+   * Expressive mode requires two things:
+   * - the inference gateway TTS ({@link inference.TTS}): the markup normalization/conversion
+   *   and expressive chunking run there, so direct provider plugins would receive
+   *   unconverted markup.
+   * - a TTS that actually declares a markup dialect (`llmInstructions()` is not
+   *   `undefined`): gateway providers without one (e.g. `rime`, `deepgram`) get no markup
+   *   instructions, so no tags can appear in the stream — leaving it "active" would enable
+   *   xml-aware chunking with nothing to chunk and re-introduce the stray-`<` streaming
+   *   stall.
+   *
+   * @internal
+   */
+  _resolveExpressiveOptions(): ExpressiveOptions | undefined {
+    if (!(this.tts instanceof InferenceTTS) || this.tts.markup.llmInstructions() === undefined) {
+      return undefined;
+    }
+
+    const expr = this.agentSession._expressive;
+    if (!expr && typeof expr !== 'object') {
+      return undefined;
+    }
+    // speechSteering renders per-provider delivery guidelines on top of the
+    // provider-agnostic default; explicit templates override
+    return resolveExpressiveOptions(typeof expr === 'object' ? expr : {}, {
+      providerKey: this.tts.markup.providerKey,
+      defaults: DEFAULT_EXPRESSIVE_OPTIONS,
+    });
+  }
+
+  /** Inject the TTS markup guide into the chat context. */
+  private injectExpressiveInstructions(
+    chatCtx: ChatContext,
+    options: ExpressiveOptions,
+    speechHandle: SpeechHandle | undefined,
+  ): void {
+    const turnModality = speechHandle?.inputDetails.modality;
+
+    const ttsInstructions = this.tts?.markup.llmInstructions({
+      speechSteering: options.speechSteering,
+    });
+    if (!ttsInstructions) return;
+
+    const template = options.ttsInstructionsTemplate ?? '';
+    const rendered = renderInstructions(template, turnModality).replaceAll(
+      TTS_INSTRUCTIONS_PLACEHOLDER,
+      ttsInstructions,
+    );
+    if (rendered.trim()) {
+      // keyed message: re-injection replaces last turn's guide instead of stacking
+      // copies, and an expressive-off turn removes it again
+      updateExpressiveInstructions(chatCtx, { text: rendered });
     }
   }
 
@@ -2840,6 +2908,26 @@ export class AgentActivity implements RecognitionHooks {
 
     // apply the correct variant of the instructions for the turn's input modality
     applyInstructionsModality(chatCtx, { modality: speechHandle.inputDetails.modality });
+
+    // inject expressive instructions (TTS markup guide)
+    const expressiveOptions = this._resolveExpressiveOptions();
+    if (expressiveOptions !== undefined) {
+      this.injectExpressiveInstructions(chatCtx, expressiveOptions, speechHandle);
+    } else {
+      // expressive is off for this turn (an agent override, or a handoff to a TTS without
+      // a markup dialect): remove the injected markup guide and scrub markup left in past
+      // assistant turns so the LLM isn't instructed or few-shotted into emitting tags
+      // nothing downstream converts or strips — an unsupported tag would reach the TTS as
+      // literal text and be spoken.
+      removeExpressiveInstructions(chatCtx);
+      stripAssistantMarkup(chatCtx);
+      if (chatCtx !== this.agent._chatCtx) {
+        // user turns run on a copy of the agent's history; clean the stored history too so
+        // stale markup doesn't survive into future snapshots
+        removeExpressiveInstructions(this.agent._chatCtx);
+        stripAssistantMarkup(this.agent._chatCtx);
+      }
+    }
 
     const runningCalls = getRunningTasks(this.agentSession);
     _injectRunningToolCalls(chatCtx, runningCalls);

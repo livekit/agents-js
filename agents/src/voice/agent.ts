@@ -522,11 +522,25 @@ export class Agent<UserData = any> {
         throw new Error('ttsNode called but no TTS node is available');
       }
 
+      const expressiveActive = activity._resolveExpressiveOptions() !== undefined;
       let wrappedTts = activity.tts;
 
       if (!activity.tts.capabilities.streaming) {
-        wrappedTts = new TTSStreamAdapter(wrappedTts, new BasicSentenceTokenizer());
+        wrappedTts = new TTSStreamAdapter(
+          wrappedTts,
+          new BasicSentenceTokenizer({
+            retainFormat: true,
+            // markup only exists in the stream when expressive is active
+            xmlAware: expressiveActive,
+          }),
+        );
       }
+
+      // Mark whether expressive is active for this synthesis, synchronously just before
+      // stream() snapshots it. Doing it here (the single synthesis choke point for both
+      // generateReply and say()) scopes it to this turn rather than leaving stale state on
+      // the instance. The provider's chunk defaults then drive the TTS's input tokenizer.
+      activity.tts._setExpressive(expressiveActive);
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
       const stream = wrappedTts.stream({ connOptions });

@@ -31,6 +31,7 @@ import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
+import { stripAllMarkup } from '../tts/provider_format.js';
 import {
   type FlushSentinel,
   USERDATA_TIMED_TRANSCRIPT,
@@ -537,6 +538,69 @@ export function applyInstructionsModality(
     metrics: item.metrics,
     extra: item.extra,
   });
+}
+
+/**
+ * The ID of the expressive TTS markup-guide message in the chat context.
+ *
+ * The value must not change: it is what lets re-injection replace the previous guide.
+ */
+export const EXPRESSIVE_INSTRUCTIONS_MESSAGE_ID = 'lk.expressive.instructions';
+
+/**
+ * Insert or replace the expressive markup-guide system message.
+ *
+ * Keyed by {@link EXPRESSIVE_INSTRUCTIONS_MESSAGE_ID} so per-turn re-injection replaces the
+ * previous guide instead of accumulating one copy per turn, and a turn that runs with
+ * expressive off can remove it again ({@link removeExpressiveInstructions}).
+ */
+export function updateExpressiveInstructions(chatCtx: ChatContext, options: { text: string }) {
+  const idx = chatCtx.indexById(EXPRESSIVE_INSTRUCTIONS_MESSAGE_ID);
+  if (idx !== undefined) {
+    chatCtx.items[idx] = ChatMessage.create({
+      id: EXPRESSIVE_INSTRUCTIONS_MESSAGE_ID,
+      role: 'system',
+      content: [options.text],
+      createdAt: chatCtx.items[idx]!.createdAt,
+    });
+  } else {
+    chatCtx.addMessage({
+      role: 'system',
+      content: options.text,
+      id: EXPRESSIVE_INSTRUCTIONS_MESSAGE_ID,
+    });
+  }
+}
+
+/**
+ * Remove the expressive markup-guide message added by
+ * {@link updateExpressiveInstructions}, if present.
+ */
+export function removeExpressiveInstructions(chatCtx: ChatContext) {
+  for (;;) {
+    const idx = chatCtx.indexById(EXPRESSIVE_INSTRUCTIONS_MESSAGE_ID);
+    if (idx === undefined) break;
+    chatCtx.items.splice(idx, 1);
+  }
+}
+
+/**
+ * Remove expressive TTS markup from past assistant messages, in place.
+ *
+ * Called when a turn runs with expressive off (toggled off via an agent-level override, or
+ * a handoff to a TTS without a markup dialect): tags left in history would few-shot the
+ * LLM into emitting markup that nothing downstream converts or strips, so an unsupported
+ * tag would reach the TTS as literal text and be spoken. Mutates the stored history: once
+ * a turn runs with expressive off, prior turns' markup is gone even if expressive is
+ * re-enabled later (the re-injected instructions carry the style examples instead).
+ */
+export function stripAssistantMarkup(chatCtx: ChatContext) {
+  for (const item of chatCtx.items) {
+    if (item.type !== 'message' || item.role !== 'assistant') continue;
+    // markup is XML-only here: stripAllMarkup leaves square-bracket spans alone
+    if (!item.content.some((c) => typeof c === 'string' && c.includes('<'))) continue;
+    item.content = item.content.map((c) => (typeof c === 'string' ? stripAllMarkup(c) : c));
+  }
 }
 
 export function performLLMInference(

@@ -7,6 +7,7 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { WordStream, WordTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
+import { TranscriptMarkupStripper } from '../../tts/provider_format.js';
 import { Future, Task, delay } from '../../utils.js';
 import {
   AudioOutput,
@@ -157,6 +158,14 @@ class SegmentSynchronizerImpl {
   private closedFuture: Future = new Future();
   private playbackCompleted: boolean = false;
   private interrupted: boolean = false;
+
+  /**
+   * Paces against the visible text only; stateful because a markup tag with spaces in its
+   * attributes (e.g. `<expr type="expression" label="warm surprise"/>`) is shredded across
+   * word tokens and a per-token strip can't recognize the fragments — each would otherwise
+   * be paced as if it were spoken.
+   */
+  private pacingStripper = new TranscriptMarkupStripper();
 
   private pausedWallTime?: number;
   /** Accumulated paused time in milliseconds; subtracted from wall-clock elapsed. */
@@ -449,9 +458,12 @@ class SegmentSynchronizerImpl {
         continue;
       }
 
-      const cleanWords = this.options.splitWords(word);
-      const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
-      const wordHyphens = this.options.hyphenateWord(cleanWord).length;
+      // forward the raw token (the room output strips markup and surfaces the expression
+      // downstream), but pace against the visible text only so markup adds no delay. The
+      // stripper holds back an unclosed tag across tokens and releases the clean text once
+      // it completes.
+      const cleanWord = this.pacingStripper.push(word);
+      const wordHyphens = cleanWord.trim() ? this.calcHyphens(cleanWord).length : 0;
       const elapsedSeconds = this.synchronizedElapsedSeconds()!;
 
       let dHyphens = 0;
