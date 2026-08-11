@@ -34,6 +34,19 @@ import { Future, Task, shortuuid } from '../../utils.js';
 import { AudioOutput, TextOutput, type TimedString, isTimedString } from '../io.js';
 import { findMicrophoneTrackId } from '../transcription/index.js';
 
+export interface TranscriptionOutputOptions {
+  /**
+   * Whether expressive markup may be present in the text reaching this sink.
+   *
+   * Evaluated per chunk, because the session latches it on the first turn that injects
+   * the markup guide — after this sink is constructed. Defaults to "never", so a session
+   * that doesn't use expressive mode publishes its transcript untouched: the strip works
+   * off the union of every provider's tag names, and an agent that legitimately writes
+   * `<break time="1s"/>` should not have it silently deleted.
+   */
+  expressiveEnabled?: () => boolean;
+}
+
 abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected room: Room;
   protected isDeltaStream: boolean;
@@ -43,11 +56,18 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected latestText: string = '';
   protected currentId: string = this.generateCurrentId();
   protected logger = log();
+  protected expressiveEnabled: () => boolean;
 
-  constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null) {
+  constructor(
+    room: Room,
+    isDeltaStream: boolean,
+    participant: Participant | string | null,
+    options: TranscriptionOutputOptions = {},
+  ) {
     super();
     this.room = room;
     this.isDeltaStream = isDeltaStream;
+    this.expressiveEnabled = options.expressiveEnabled ?? (() => false);
 
     this.room.on(RoomEvent.TrackPublished, this.onTrackPublished);
     this.room.on(RoomEvent.LocalTrackPublished, this.onLocalTrackPublished);
@@ -138,7 +158,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected abstract handleFlush(): void;
 }
 
-export interface ParticipantTranscriptionOutputOptions {
+export interface ParticipantTranscriptionOutputOptions extends TranscriptionOutputOptions {
   /** When true, each chunk sent on the `lk.transcription` datastream topic is serialized
    *  as a JSON object with `text`, and `start_time`/`end_time`/`confidence`/
    *  `start_time_offset` when the captured value is a TimedString. Each object is
@@ -164,7 +184,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     participant: Participant | string | null,
     options: ParticipantTranscriptionOutputOptions = {},
   ) {
-    super(room, isDeltaStream, participant);
+    super(room, isDeltaStream, participant, options);
     this.jsonFormat = options.jsonFormat ?? false;
   }
 
@@ -184,10 +204,13 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
 
     // the raw text (expressive markup intact) arrives here; publish only the visible text.
     // Skip a chunk that strips to nothing (a partial tag still buffering, or a markup-only
-    // token) so the transcript cadence isn't disturbed.
+    // token) so the transcript cadence isn't disturbed. Without expressive there is no
+    // markup to remove, so the text is published exactly as it arrives.
     const rawText = isTimedString(text) ? text.text : text;
     let cleanText: string;
-    if (this.isDeltaStream) {
+    if (!this.expressiveEnabled()) {
+      cleanText = rawText;
+    } else if (this.isDeltaStream) {
       cleanText = this.stripper.push(rawText);
     } else {
       [cleanText, this.segmentTags] = splitAllMarkup(rawText);
@@ -254,9 +277,10 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   protected handleFlush() {
     const currWriter = this.writer;
     this.writer = null;
+    const expressive = this.expressiveEnabled();
     // visible text left in the strip buffer
-    const remaining = this.isDeltaStream ? this.stripper.flush() : '';
-    const tags = this.isDeltaStream ? this.stripper.tags : this.segmentTags;
+    const remaining = expressive && this.isDeltaStream ? this.stripper.flush() : '';
+    const tags = !expressive ? [] : this.isDeltaStream ? this.stripper.tags : this.segmentTags;
     const pendingText = remaining ? this.encode(remaining) : '';
     this.flushTask = Task.from((controller) =>
       this.flushTaskImpl(currWriter, controller.signal, expressionAttribute(tags), pendingText),
@@ -326,11 +350,22 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     try {
       if (this.room.isConnected) {
         if (this.isDeltaStream) {
-          if (writer) {
-            if (pendingText) {
-              await Promise.race([writer.write(pendingText), abortPromise]);
+          // a segment whose every chunk was held back by the stripper (a tag-shaped "<"
+          // never resolves) reaches flush with text but no writer — open one here rather
+          // than dropping the transcript
+          let deltaWriter: TextStreamWriter | null = writer;
+          if (!deltaWriter && pendingText) {
+            const opened = await Promise.race([this.createTextWriter(attributes), abortPromise]);
+            if (signal.aborted || !opened) {
+              return;
             }
-            await Promise.race([writer.close(), abortPromise]);
+            deltaWriter = opened;
+          }
+          if (deltaWriter) {
+            if (pendingText) {
+              await Promise.race([deltaWriter.write(pendingText), abortPromise]);
+            }
+            await Promise.race([deltaWriter.close(), abortPromise]);
           }
         } else {
           const tmpWriter = await Promise.race([this.createTextWriter(attributes), abortPromise]);
@@ -378,7 +413,12 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
     // Stripping the whole accumulation each time avoids partial-tag edge cases; the
     // expression is dropped here — the deprecated rtc Transcription API has no attribute
     // channel (the stream-based output carries lk.expression instead).
-    await this.publishTranscription(this.currentId, stripAllMarkup(this.pushedText), false);
+    await this.publishTranscription(this.currentId, this.visibleText(), false);
+  }
+
+  /** The raw accumulation, with markup removed only when expressive could have written it. */
+  private visibleText(): string {
+    return this.expressiveEnabled() ? stripAllMarkup(this.pushedText) : this.pushedText;
   }
 
   protected handleFlush() {
@@ -386,11 +426,7 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
       return;
     }
 
-    this.flushTask = this.publishTranscription(
-      this.currentId,
-      stripAllMarkup(this.pushedText),
-      true,
-    );
+    this.flushTask = this.publishTranscription(this.currentId, this.visibleText(), true);
     this.resetState();
   }
 

@@ -10,6 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { extractAndStrip } from '../tts/markup_utils.js';
+import { sentenceTokenizer } from '../tts/provider_format.js';
 import { SentenceTokenizer } from './basic/basic.js';
 import { hasUnclosedXmlTags } from './token_stream.js';
 
@@ -167,6 +168,15 @@ describe('batch sentence tokenizer with markup', () => {
   it('emits a tag-only text as a single token', () => {
     expect(tok.tokenize('<emotion value="happy"/>')).toHaveLength(1);
   });
+
+  it('never strands the last character of the final sentence', () => {
+    // regression: the sentence splitter reported `length - 1` as the trailing buffer's
+    // end offset, and the XML wrapper rebuilds sentences from those offsets — so the
+    // last character was remapped into a token of its own and rejoined with a space,
+    // shipping "Bye no w" to the TTS on every expressive turn
+    const sentences = tok.tokenize('<x/> Hello there world how are you today. <y/> Bye now');
+    expect(sentences).toEqual(['<x/> Hello there world how are you today.', '<y/> Bye now']);
+  });
 });
 
 describe('streaming sentence tokenizer with markup', () => {
@@ -291,6 +301,23 @@ describe('plain text with "<" (false-positive guard)', () => {
     const { value } = await stream.next();
     expect(value!.token).toContain('bob@example.com');
     stream.endInput();
+  });
+});
+
+describe('expressive streaming end to end', () => {
+  it('sends the turn to the TTS with its words intact', async () => {
+    // the whole point of the expressive tokenizer: markers ride with their sentence and
+    // no word is mangled on the way to synthesis
+    const stream = sentenceTokenizer('inworld', { expressive: true }).stream();
+    const turn =
+      '<expr type="expression" label="a"/> Welcome to the hotel and thanks for calling us today. ' +
+      '<expr type="expression" label="b"/> How can I help?';
+    stream.pushText(turn);
+    stream.endInput();
+
+    const tokens: string[] = [];
+    for await (const ev of stream) tokens.push(ev.token);
+    expect(tokens.join(' ')).toBe(turn);
   });
 });
 

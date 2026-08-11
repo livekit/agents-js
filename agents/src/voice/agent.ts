@@ -528,11 +528,11 @@ export class Agent<UserData = any> {
       if (!activity.tts.capabilities.streaming) {
         wrappedTts = new TTSStreamAdapter(
           wrappedTts,
-          new BasicSentenceTokenizer({
-            retainFormat: true,
-            // markup only exists in the stream when expressive is active
-            xmlAware: expressiveActive,
-          }),
+          // markup only exists in the stream when expressive is active. Python also
+          // passes retain_format here, but that predates expressive mode and is a
+          // separate gap — turning it on would change tokenization for every
+          // non-streaming TTS plugin, none of which can be expressive today.
+          new BasicSentenceTokenizer({ xmlAware: expressiveActive }),
         );
       }
 

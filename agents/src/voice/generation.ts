@@ -573,6 +573,16 @@ export function updateExpressiveInstructions(chatCtx: ChatContext, options: { te
 }
 
 /**
+ * Whether `chatCtx` carries the expressive markup-guide message.
+ *
+ * Cheap enough to call per turn (an id lookup, no content inspection), so it can gate the
+ * far more expensive — and destructive — {@link stripAssistantMarkup} scrub.
+ */
+export function hasExpressiveInstructions(chatCtx: ChatContext): boolean {
+  return chatCtx.indexById(EXPRESSIVE_INSTRUCTIONS_MESSAGE_ID) !== undefined;
+}
+
+/**
  * Remove the expressive markup-guide message added by
  * {@link updateExpressiveInstructions}, if present.
  */

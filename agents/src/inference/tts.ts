@@ -670,7 +670,9 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           sendTokenizerStream.flush();
           continue;
         }
-        sendTokenizerStream.pushText(this.tts.markup.normalize(data));
+        // only expressive turns can carry markup; without it the text is a plain
+        // utterance and must reach the provider byte-for-byte
+        sendTokenizerStream.pushText(this.expressive ? this.tts.markup.normalize(data) : data);
       }
       // Only call endInput if the stream hasn't been closed by cleanup
       if (!closing) {
@@ -692,7 +694,9 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
 
         // re-normalize at sentence level: tags split across input chunks aren't caught by
         // the per-chunk normalize in the input task
-        const converted = this.tts.markup.convert(this.tts.markup.normalize(ev.token));
+        const converted = this.expressive
+          ? this.tts.markup.convert(this.tts.markup.normalize(ev.token))
+          : ev.token;
 
         this.markStarted();
         await sendClientEvent(

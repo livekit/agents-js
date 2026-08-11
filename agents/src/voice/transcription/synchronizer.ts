@@ -26,6 +26,12 @@ interface TextSyncOptions {
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
   enabled: boolean;
+  /**
+   * Whether expressive markup may be present in the forwarded text, so pacing should
+   * discount it. Evaluated per word, because the session latches expressive on the first
+   * turn that injects the markup guide — after this synchronizer is constructed.
+   */
+  expressiveEnabled: () => boolean;
 }
 
 interface TextData {
@@ -462,7 +468,17 @@ class SegmentSynchronizerImpl {
       // downstream), but pace against the visible text only so markup adds no delay. The
       // stripper holds back an unclosed tag across tokens and releases the clean text once
       // it completes.
-      const cleanWord = this.pacingStripper.push(word);
+      //
+      // `forwardedWord`, not `word`: the word tokenizer emits whitespace-free runs, so a
+      // tag with spaces in its attributes (`<expr type="expression" label="warm surprise"/>`)
+      // would be reassembled without them and no longer match. The forwarded slices are
+      // contiguous over `pushedText`, so feeding those replays the original text exactly.
+      //
+      // Without expressive there is no markup to discount, and the stripper would hold a
+      // tag-shaped "<" in ordinary prose — so it is bypassed entirely.
+      const cleanWord = this.options.expressiveEnabled()
+        ? this.pacingStripper.push(forwardedWord)
+        : forwardedWord;
       const wordHyphens = cleanWord.trim() ? this.calcHyphens(cleanWord).length : 0;
       const elapsedSeconds = this.synchronizedElapsedSeconds()!;
 
@@ -573,6 +589,8 @@ export interface TranscriptionSynchronizerOptions {
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
   enabled: boolean;
+  /** See {@link TextSyncOptions.expressiveEnabled}. Defaults to "never". */
+  expressiveEnabled?: () => boolean;
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
@@ -639,6 +657,7 @@ export class TranscriptionSynchronizer {
       splitWords: options.splitWords,
       wordTokenizer: options.wordTokenizer,
       enabled: options.enabled,
+      expressiveEnabled: options.expressiveEnabled ?? (() => false),
     };
 
     // initial segment/first segment, recreated for each new segment

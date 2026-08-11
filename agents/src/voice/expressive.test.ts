@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
-import { DEFAULT_SPEECH_STEERING_OPTIONS } from '../tts/provider_format.js';
+import { splitWords } from '../tokenize/basic/word.js';
+import {
+  DEFAULT_SPEECH_STEERING_OPTIONS,
+  TranscriptMarkupStripper,
+} from '../tts/provider_format.js';
 import {
   DEFAULT_EXPRESSIVE_OPTIONS,
   type ExpressiveOptions,
@@ -13,6 +17,7 @@ import {
 import { AgentSession } from './agent_session.js';
 import {
   EXPRESSIVE_INSTRUCTIONS_MESSAGE_ID,
+  hasExpressiveInstructions,
   removeExpressiveInstructions,
   stripAssistantMarkup,
   updateExpressiveInstructions,
@@ -69,6 +74,69 @@ describe('expressive instruction message', () => {
 
     removeExpressiveInstructions(ctx);
     expect(ctx.items.every((item) => item.id !== EXPRESSIVE_INSTRUCTIONS_MESSAGE_ID)).toBe(true);
+  });
+});
+
+describe('history-scrub gate', () => {
+  // The scrub is destructive and uses the union of every provider's tag names, and its
+  // branch is the default path for every session that never enabled expressive — so both
+  // signals that license it must stay off until expressive was actually live.
+
+  it('is off for a session that never enabled expressive', () => {
+    expect(new AgentSession()._expressiveEverActive).toBe(false);
+    expect(new AgentSession({ expressive: true })._expressiveEverActive).toBe(
+      false,
+      // still false: the latch flips when the guide is injected, not when the flag is set,
+      // so a TTS with no markup dialect never licenses the scrub
+    );
+  });
+
+  it('detects a restored history carrying the guide', () => {
+    const ctx = ChatContext.empty();
+    expect(hasExpressiveInstructions(ctx)).toBe(false);
+
+    updateExpressiveInstructions(ctx, { text: 'markup guide' });
+    expect(hasExpressiveInstructions(ctx)).toBe(true);
+
+    removeExpressiveInstructions(ctx);
+    expect(hasExpressiveInstructions(ctx)).toBe(false);
+  });
+
+  it('leaves angle-bracketed assistant text alone when nothing licenses a scrub', () => {
+    // what the gate protects: an agent that legitimately writes provider-shaped tags in a
+    // session that never used expressive
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'assistant', content: 'Hold on <break time="1s"/> nearly there.' });
+
+    expect(hasExpressiveInstructions(ctx)).toBe(false);
+    // (the gate skips stripAssistantMarkup entirely; calling it would destroy this)
+    stripAssistantMarkup(ctx);
+    const scrubbed = ctx.items[0]!;
+    expect(scrubbed.type === 'message' && scrubbed.textContent).toBe('Hold on nearly there.');
+  });
+});
+
+describe('transcript pacing', () => {
+  it('recognizes a markup tag shredded across word tokens', () => {
+    // the word tokenizer emits whitespace-free runs, so the synchronizer must replay the
+    // original slices of pushedText — feeding it the bare word tokens reassembles
+    // `<exprtype="expression"label="warm surprise"/>`, which matches nothing and gets
+    // paced as if it were spoken
+    const pushedText = '<expr type="expression" label="warm surprise"/> Hello there';
+    const stripper = new TranscriptMarkupStripper();
+
+    let cursor = 0;
+    let paced = '';
+    for (const [word] of splitWords(pushedText, false)) {
+      let end = pushedText.indexOf(word, cursor) + word.length;
+      while (end < pushedText.length && !/\s/.test(pushedText[end]!)) end++;
+      paced += stripper.push(pushedText.slice(cursor, end));
+      cursor = end;
+    }
+    paced += stripper.flush();
+
+    expect(paced).not.toContain('<expr');
+    expect(paced.trim()).toBe('Hello there');
   });
 });
 

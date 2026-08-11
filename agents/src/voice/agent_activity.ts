@@ -135,6 +135,7 @@ import {
   _stripRunningToolCalls,
   applyInstructionsModality,
   forwardedTextFor,
+  hasExpressiveInstructions,
   performAudioForwarding,
   performLLMInference,
   performTTSInference,
@@ -1085,6 +1086,9 @@ export class AgentActivity implements RecognitionHooks {
       // keyed message: re-injection replaces last turn's guide instead of stacking
       // copies, and an expressive-off turn removes it again
       updateExpressiveInstructions(chatCtx, { text: rendered });
+      // latch: a later expressive-off turn (or a handoff to a TTS without a markup
+      // dialect) needs to know markup may be sitting in history
+      this.agentSession._expressiveEverActive = true;
     }
   }
 
@@ -2913,7 +2917,18 @@ export class AgentActivity implements RecognitionHooks {
     const expressiveOptions = this._resolveExpressiveOptions();
     if (expressiveOptions !== undefined) {
       this.injectExpressiveInstructions(chatCtx, expressiveOptions, speechHandle);
-    } else {
+    } else if (
+      // Only scrub when expressive was actually live at some point: this branch is the
+      // default path for every session that never enabled the feature, and the scrub
+      // mutates stored history using the union of every provider's tag names — so an
+      // agent that legitimately writes `<break time="1s"/>` or `<soft>` would have it
+      // silently deleted. The stored flag covers a handoff to a TTS without a markup
+      // dialect (a fresh activity, same session); the message check covers history
+      // restored from an earlier run.
+      this.agentSession._expressiveEverActive ||
+      hasExpressiveInstructions(chatCtx) ||
+      hasExpressiveInstructions(this.agent._chatCtx)
+    ) {
       // expressive is off for this turn (an agent override, or a handoff to a TTS without
       // a markup dialect): remove the injected markup guide and scrub markup left in past
       // assistant turns so the LLM isn't instructed or few-shotted into emitting tags

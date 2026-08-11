@@ -525,6 +525,18 @@ export class AgentSession<
    */
   _expressive: boolean | ExpressiveOptions = false;
 
+  /**
+   * Whether the markup guide has been injected at least once this session.
+   *
+   * Latches on: it is what licenses the history scrub on a later expressive-off turn
+   * (a handoff to a TTS without a markup dialect builds a fresh `AgentActivity`, so the
+   * flag has to outlive it). Sessions that never enabled expressive keep it `false` and
+   * are never scrubbed.
+   *
+   * @internal
+   */
+  _expressiveEverActive = false;
+
   // Connection options for STT, LLM, and TTS
   private _connOptions: ResolvedSessionConnectOptions;
 
