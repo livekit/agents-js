@@ -202,6 +202,12 @@ function addNullSentinel(jsonSchema: Record<string, unknown>): void {
     return;
   }
 
+  // A const has exactly one legal value, so it must remain non-nullable. Once strict schema
+  // conversion removes `discriminator`, these const tags are what distinguish union variants.
+  if ('const' in jsonSchema) {
+    return;
+  }
+
   for (const unionKey of ['anyOf', 'oneOf'] as const) {
     const variants = jsonSchema[unionKey];
     if (Array.isArray(variants)) {
@@ -212,12 +218,12 @@ function addNullSentinel(jsonSchema: Record<string, unknown>): void {
     }
   }
 
-  const hasValueConstraint = 'const' in jsonSchema || 'enum' in jsonSchema;
-  if (typeof typ === 'string' && !hasValueConstraint) {
+  const hasEnum = 'enum' in jsonSchema;
+  if (typeof typ === 'string' && !hasEnum) {
     jsonSchema.type = [typ, 'null'];
     return;
   }
-  if (Array.isArray(typ) && !hasValueConstraint) {
+  if (Array.isArray(typ) && !hasEnum) {
     jsonSchema.type = [...typ, 'null'];
     return;
   }
