@@ -1151,12 +1151,21 @@ export function performToolExecutions({
       if (done) break;
 
       if (toolChoice === 'none') {
+        const message =
+          `Tool calls are not allowed on this turn because toolChoice is set to 'none'. ` +
+          `${toolCall.name} was not executed.`;
         logger.error(
           {
             function: toolCall.name,
             speech_id: speechHandle.id,
           },
-          "received a tool call with toolChoice set to 'none', ignoring",
+          "received a tool call with toolChoice set to 'none', rejecting",
+        );
+        toolCompleted(
+          createToolOutput({
+            toolCall,
+            exception: new ToolError(message),
+          }),
         );
         continue;
       }

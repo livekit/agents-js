@@ -159,6 +159,50 @@ describe('Generation + Tool Execution', () => {
     expect(out?.toolCallOutput?.output).toContain('echo: hello');
   });
 
+  it("returns an error response when a model calls a tool with toolChoice set to 'none'", async () => {
+    const execute = vi.fn(async () => 'should not run');
+    const forbidden = tool({
+      name: 'forbidden',
+      description: 'must not execute on this turn',
+      parameters: z.object({}),
+      execute,
+    });
+    const fc = FunctionCall.create({
+      callId: 'call_forbidden',
+      name: forbidden.name,
+      args: '{}',
+    });
+    const onToolExecutionStarted = vi.fn();
+    const onToolExecutionCompleted = vi.fn();
+
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as AgentSession,
+      speechHandle: { id: 'speech_forbidden', _itemAdded: () => {} } as unknown as SpeechHandle,
+      toolCtx: new ToolContext([forbidden]) as unknown as ToolContext,
+      toolChoice: 'none',
+      toolCallStream: createFunctionCallStream(fc),
+      controller: new AbortController(),
+      onToolExecutionStarted,
+      onToolExecutionCompleted,
+    });
+
+    await execTask.result;
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(onToolExecutionStarted).not.toHaveBeenCalled();
+    expect(toolOutput.output).toHaveLength(1);
+    expect(onToolExecutionCompleted).toHaveBeenCalledWith(toolOutput.output[0]);
+    expect(toolOutput.output[0]?.toolCall.callId).toBe(fc.callId);
+    expect(toolOutput.output[0]?.toolCallOutput).toEqual(
+      expect.objectContaining({
+        callId: fc.callId,
+        name: fc.name,
+        isError: true,
+      }),
+    );
+    expect(toolOutput.output[0]?.toolCallOutput?.output).toContain("toolChoice is set to 'none'");
+  });
+
   it('should repair and canonicalize leaked template tokens in tool args', async () => {
     const replyAbortController = new AbortController();
 

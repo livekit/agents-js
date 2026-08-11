@@ -34,6 +34,13 @@ class FakeRealtimeSession extends RealtimeSession {
   private _chatCtx = ChatContext.empty();
   private _tools = ToolContext.empty();
 
+  constructor(
+    model: RealtimeModel,
+    private readonly keepTextStreamOpen: boolean = false,
+  ) {
+    super(model);
+  }
+
   get chatCtx(): ChatContext {
     return this._chatCtx;
   }
@@ -55,10 +62,18 @@ class FakeRealtimeSession extends RealtimeSession {
   async truncate(): Promise<void> {}
 
   async generateReply(): Promise<GenerationCreatedEvent> {
+    const textStream = this.keepTextStreamOpen
+      ? new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue('Let me check that.');
+          },
+        })
+      : stream('Let me check that.');
+
     return {
       messageStream: stream({
         messageId: 'message-1',
-        textStream: stream('Let me check that.'),
+        textStream,
         audioStream: stream<AudioFrame>(),
         modalities: Promise.resolve(['text']),
       }),
@@ -72,9 +87,9 @@ class FakeRealtimeSession extends RealtimeSession {
 }
 
 class FakeRealtimeModel extends RealtimeModel {
-  readonly activeSession = new FakeRealtimeSession(this);
+  readonly activeSession: FakeRealtimeSession;
 
-  constructor() {
+  constructor(options: { keepTextStreamOpen?: boolean } = {}) {
     // autoToolReplyGeneration keeps the run to a single generation.
     super({
       messageTruncation: false,
@@ -85,6 +100,7 @@ class FakeRealtimeModel extends RealtimeModel {
       manualFunctionCalls: false,
       midSessionChatCtxUpdate: true,
     } satisfies RealtimeCapabilities);
+    this.activeSession = new FakeRealtimeSession(this, options.keepTextStreamOpen);
   }
 
   get model(): string {
@@ -133,5 +149,50 @@ describe('Realtime tool output commit', () => {
     expect(output?.output).toBe(JSON.stringify('ships tomorrow'));
     // The output must follow its call so summarization renders them in order.
     expect(items.indexOf(output!)).toBeGreaterThan(items.indexOf(call!));
+  });
+
+  it('commits completed tool outputs when realtime generation is interrupted', async () => {
+    const llm = new FakeRealtimeModel({ keepTextStreamOpen: true });
+    const session = new AgentSession({
+      llm,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    const agent = new Agent({
+      instructions: 'test',
+      tools: { lookup_order: tool({ description: 'x', execute: async () => 'ships tomorrow' }) },
+    });
+
+    await session.start({ agent });
+    try {
+      const speech = session.generateReply();
+
+      await vi.waitFor(() =>
+        expect(
+          speech.chatItems.some(
+            (item) => item.type === 'function_call_output' && item.callId === TOOL_CALL_ID,
+          ),
+        ).toBe(true),
+      );
+
+      speech.interrupt();
+      await speech.waitForPlayout();
+
+      await vi.waitFor(() =>
+        expect(
+          llm.activeSession.chatCtx.items.some(
+            (item) => item.type === 'function_call_output' && item.callId === TOOL_CALL_ID,
+          ),
+        ).toBe(true),
+      );
+    } finally {
+      await session.close();
+    }
+
+    expect(
+      agent.chatCtx.items.some(
+        (item) => item.type === 'function_call_output' && item.callId === TOOL_CALL_ID,
+      ),
+    ).toBe(true);
   });
 });
