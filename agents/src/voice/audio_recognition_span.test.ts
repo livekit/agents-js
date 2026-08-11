@@ -53,6 +53,23 @@ function createFakeSession(rootSpanContext = ROOT_CONTEXT): AgentSession {
   } as unknown as AgentSession;
 }
 
+function createRecognitionHooks(): RecognitionHooks {
+  return {
+    onInterruption: vi.fn(),
+    onBackchannelConfirmed: vi.fn(),
+    onStartOfSpeech: vi.fn(),
+    onVADInferenceDone: vi.fn(),
+    onEndOfSpeech: vi.fn(),
+    onInterimTranscript: vi.fn(),
+    onFinalTranscript: vi.fn(),
+    onPreemptiveGeneration: vi.fn(),
+    onEotPrediction: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
+    retrieveChatCtx: () => ChatContext.empty(),
+    onEndOfTurn: vi.fn(async () => true),
+  };
+}
+
 class FakeVADStream extends (Object as unknown as { new (): VADStream }) {
   // We intentionally avoid extending the real VADStream (it is not exported as a value in JS output
   // in some bundling contexts). Instead we emulate the async iterator shape used by AudioRecognition.
@@ -493,5 +510,73 @@ describe('AudioRecognition user_turn span', () => {
       throw new Error('expected user_speaking span');
     }
     expect(userSpeaking.parentSpanContext?.spanId).toBe(sessionSpan.spanContext().spanId);
+  });
+
+  it('does not mark a normal user_speaking span as a non-interruption', async () => {
+    const { exporter } = setupInMemoryTracing();
+    const recognition = new AudioRecognition({
+      recognitionHooks: createRecognitionHooks(),
+    });
+    const internals = recognition as unknown as {
+      isInterruptionEnabled: boolean;
+      trySendInterruptionSentinel: ReturnType<typeof vi.fn>;
+    };
+    internals.isInterruptionEnabled = true;
+    internals.trySendInterruptionSentinel = vi.fn(async () => true);
+    const userSpeaking = tracer.startSpan({ name: 'user_speaking', context: ROOT_CONTEXT });
+
+    await recognition.onEndOfOverlapSpeech(Date.now(), userSpeaking);
+    userSpeaking.end();
+
+    const exportedSpan = spanByName(exporter.getFinishedSpans(), 'user_speaking');
+    expect(exportedSpan?.attributes['lk.is_interruption']).toBeUndefined();
+  });
+
+  it('marks an ended overlap as a non-interruption', async () => {
+    const { exporter } = setupInMemoryTracing();
+    const recognition = new AudioRecognition({
+      recognitionHooks: createRecognitionHooks(),
+    });
+    const internals = recognition as unknown as {
+      isInterruptionEnabled: boolean;
+      isAgentSpeaking: boolean;
+      trySendInterruptionSentinel: ReturnType<typeof vi.fn>;
+    };
+    internals.isInterruptionEnabled = true;
+    internals.isAgentSpeaking = true;
+    internals.trySendInterruptionSentinel = vi.fn(async () => true);
+    const userSpeaking = tracer.startSpan({ name: 'user_speaking', context: ROOT_CONTEXT });
+
+    await recognition.onStartOfOverlapSpeech(0, Date.now(), userSpeaking);
+    await recognition.onEndOfOverlapSpeech(Date.now(), userSpeaking);
+    userSpeaking.end();
+
+    const exportedSpan = spanByName(exporter.getFinishedSpans(), 'user_speaking');
+    expect(exportedSpan?.attributes['lk.is_interruption']).toBe('false');
+  });
+
+  it('does not overwrite an interruption verdict when overlap speech ends', async () => {
+    const { exporter } = setupInMemoryTracing();
+    const recognition = new AudioRecognition({
+      recognitionHooks: createRecognitionHooks(),
+    });
+    const internals = recognition as unknown as {
+      isInterruptionEnabled: boolean;
+      overlapInCurrentTurn: boolean;
+      interruptionDetected: boolean;
+      trySendInterruptionSentinel: ReturnType<typeof vi.fn>;
+    };
+    internals.isInterruptionEnabled = true;
+    internals.overlapInCurrentTurn = true;
+    internals.interruptionDetected = true;
+    internals.trySendInterruptionSentinel = vi.fn(async () => true);
+    const userSpeaking = tracer.startSpan({ name: 'user_speaking', context: ROOT_CONTEXT });
+    userSpeaking.setAttribute('lk.is_interruption', 'true');
+
+    await recognition.onEndOfOverlapSpeech(Date.now(), userSpeaking);
+    userSpeaking.end();
+
+    const exportedSpan = spanByName(exporter.getFinishedSpans(), 'user_speaking');
+    expect(exportedSpan?.attributes['lk.is_interruption']).toBe('true');
   });
 });
