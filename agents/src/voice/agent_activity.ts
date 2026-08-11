@@ -2780,7 +2780,6 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController,
     instructions,
     newMessage,
-    toolsMessages,
     span,
     _previousUserMetrics,
   }: {
@@ -2791,7 +2790,6 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController: AbortController;
     instructions?: string | Instructions;
     newMessage?: ChatMessage;
-    toolsMessages?: ChatItem[];
     span: Span;
     _previousUserMetrics?: MetricsReport;
   }): Promise<void> => {
@@ -3213,24 +3211,6 @@ export class AgentActivity implements RecognitionHooks {
     span.setAttribute(traceTypes.ATTR_SPEECH_INTERRUPTED, speechHandle.interrupted);
     let hasSpeechMessage = false;
 
-    // add the tools messages that triggers this reply to the chat context
-    if (toolsMessages) {
-      for (const msg of toolsMessages) {
-        msg.createdAt = replyStartedAt;
-      }
-      // Only insert FunctionCallOutput items into agent._chatCtx since FunctionCall items
-      // were already added by onToolExecutionStarted when the tool execution began.
-      // Inserting function_calls again would create duplicates that break provider APIs
-      // (e.g. Google's "function response parts != function call parts" error).
-      const toolCallOutputs = toolsMessages.filter(
-        (m): m is FunctionCallOutput => m.type === 'function_call_output',
-      );
-      if (toolCallOutputs.length > 0) {
-        this.agent._chatCtx.insert(toolCallOutputs);
-        this.agentSession._toolItemsAdded(toolCallOutputs);
-      }
-    }
-
     if (speechHandle.interrupted) {
       this.logger.debug(
         { speech_id: speechHandle.id },
@@ -3364,6 +3344,15 @@ export class AgentActivity implements RecognitionHooks {
       ...functionToolsExecutedEvent.functionCalls,
       ...functionToolsExecutedEvent.functionCallOutputs,
     ] as ChatItem[];
+
+    // Function calls were committed when execution started. Commit their outputs before
+    // scheduling a reply so overlapping turns observe the completed tool context.
+    const toolCallOutputs = functionToolsExecutedEvent.functionCallOutputs;
+    if (toolCallOutputs.length > 0) {
+      this.agent._chatCtx.insert(toolCallOutputs);
+      this.agentSession._toolItemsAdded(toolCallOutputs);
+    }
+
     if (shouldGenerateToolReply) {
       _stripRunningToolCalls(chatCtx);
       chatCtx.insert(toolMessages);
@@ -3389,7 +3378,6 @@ export class AgentActivity implements RecognitionHooks {
             replyAbortController,
             instructions,
             undefined,
-            toolMessages,
             hasSpeechMessage ? undefined : userMetrics,
           ),
         ownedSpeechHandle: speechHandle,
@@ -3399,19 +3387,6 @@ export class AgentActivity implements RecognitionHooks {
       toolResponseTask.result.finally(() => this.onPipelineReplyDone());
 
       this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
-    } else if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
-      for (const msg of toolMessages) {
-        msg.createdAt = replyStartedAt;
-      }
-
-      const toolCallOutputs = toolMessages.filter(
-        (m): m is FunctionCallOutput => m.type === 'function_call_output',
-      );
-
-      if (toolCallOutputs.length > 0) {
-        this.agent._chatCtx.insert(toolCallOutputs);
-        this.agentSession._toolItemsAdded(toolCallOutputs);
-      }
     }
   };
 
@@ -3423,7 +3398,6 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController: AbortController,
     instructions?: string | Instructions,
     newMessage?: ChatMessage,
-    toolsMessages?: ChatItem[],
     _previousUserMetrics?: MetricsReport,
   ): Promise<void> =>
     tracer.startActiveSpan(
@@ -3436,7 +3410,6 @@ export class AgentActivity implements RecognitionHooks {
           replyAbortController,
           instructions,
           newMessage,
-          toolsMessages,
           span,
           _previousUserMetrics,
         }),
