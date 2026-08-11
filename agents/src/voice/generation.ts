@@ -967,6 +967,7 @@ async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: AudioOutput,
   out: _AudioOut,
+  reconcilePlayoutPause: () => void,
   idleTimeout: number,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -984,7 +985,8 @@ async function forwardAudio(
   }
 
   try {
-    audioOutput.resume();
+    // Reconcile any start-of-speech pause before forwarding audio.
+    reconcilePlayoutPause();
 
     while (true) {
       if (signal?.aborted) {
@@ -1066,6 +1068,7 @@ export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: AudioOutput,
   controller: AbortController,
+  reconcilePlayoutPause: () => void,
   idleTimeout: number = DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS,
 ): [Task<void>, _AudioOut] {
   const out: _AudioOut = {
@@ -1100,7 +1103,15 @@ export function performAudioForwarding(
 
   return [
     Task.from(
-      (controller) => forwardAudio(ttsStream, audioOutput, out, idleTimeout, controller.signal),
+      (controller) =>
+        forwardAudio(
+          ttsStream,
+          audioOutput,
+          out,
+          reconcilePlayoutPause,
+          idleTimeout,
+          controller.signal,
+        ),
       controller,
       'performAudioForwarding',
     ),

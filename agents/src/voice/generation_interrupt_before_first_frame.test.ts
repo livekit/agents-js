@@ -119,7 +119,9 @@ describe('interruption before the first audio frame (#1909)', () => {
 
     const audioOutput = new PausableMockAudioOutput();
     const controller = new AbortController();
-    const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller);
+    const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     // User barges in during the thinking state, before the first frame has played.
     audioOutput.pause();
@@ -161,7 +163,9 @@ describe('interruption before the first audio frame (#1909)', () => {
 
     const audioOutput = new PausableMockAudioOutput();
     const controller = new AbortController();
-    const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller);
+    const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     // Paused in the thinking state before the first frame; frames buffer.
     audioOutput.pause();
@@ -213,6 +217,7 @@ describe('interruption before the first audio frame (#1909)', () => {
       makeStream([createSilentFrame()]),
       audioOutput,
       new AbortController(),
+      () => audioOutput.resume(),
     );
     expect(audioOutput.listenerCount(AudioOutput.EVENT_PLAYBACK_STARTED)).toBe(baseline + 1);
     await task1.result;
@@ -227,6 +232,7 @@ describe('interruption before the first audio frame (#1909)', () => {
       makeStream([]),
       audioOutput,
       new AbortController(),
+      () => audioOutput.resume(),
     );
     expect(audioOutput.listenerCount(AudioOutput.EVENT_PLAYBACK_STARTED)).toBe(baseline + 1);
     await task2.result;
