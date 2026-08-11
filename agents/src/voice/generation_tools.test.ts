@@ -435,6 +435,7 @@ describe('Generation + Tool Execution', () => {
 
     await execTask.result;
     expect(onToolExecutionStarted).toHaveBeenCalledWith(fc);
+    expect(JSON.parse(fc.args)).toEqual({ msg: 123 });
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);
@@ -474,6 +475,7 @@ describe('Generation + Tool Execution', () => {
     });
 
     await execTask.result;
+    expect(fc.args).toBe('{}');
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);

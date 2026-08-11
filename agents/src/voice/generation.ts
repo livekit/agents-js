@@ -1202,6 +1202,7 @@ export function performToolExecutions({
       }
 
       let parsedArgs: object | undefined;
+      let argumentsParsed = false;
 
       // Ensure valid arguments
       try {
@@ -1211,6 +1212,7 @@ export function performToolExecutions({
         if (canonicalArgs !== rawArgs) {
           toolCall.args = canonicalArgs;
         }
+        argumentsParsed = true;
 
         if (isZodSchema(tool.parameters)) {
           const result = await parseZodSchema<object>(tool.parameters, jsonArgs);
@@ -1233,6 +1235,9 @@ export function performToolExecutions({
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
+        if (!argumentsParsed) {
+          toolCall.args = '{}';
+        }
         // Surface argument-validation errors to the LLM via ToolError so it can correct
         // its arguments instead of looping on the same invalid call. The argument schema
         // and the validator's error message do not contain server-side internals.
