@@ -1118,10 +1118,6 @@ export class SessionHost {
         error = e instanceof Error ? e.message : String(e);
       }
       items = chatItemsToProto(result.events.map((ev) => ev.item));
-
-      if (items.length === 0 && !error) {
-        error = 'agent produced no response items';
-      }
     }
 
     return this.sendResponse(
