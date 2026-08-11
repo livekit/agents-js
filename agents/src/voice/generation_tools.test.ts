@@ -159,7 +159,7 @@ describe('Generation + Tool Execution', () => {
     expect(out?.toolCallOutput?.output).toContain('echo: hello');
   });
 
-  it("returns an error response when a model calls a tool with toolChoice set to 'none'", async () => {
+  it("returns a non-replying error response when a model calls a tool with toolChoice set to 'none'", async () => {
     const execute = vi.fn(async () => 'should not run');
     const forbidden = tool({
       name: 'forbidden',
@@ -189,7 +189,8 @@ describe('Generation + Tool Execution', () => {
     await execTask.result;
 
     expect(execute).not.toHaveBeenCalled();
-    expect(onToolExecutionStarted).not.toHaveBeenCalled();
+    expect(onToolExecutionStarted).toHaveBeenCalledOnce();
+    expect(onToolExecutionStarted).toHaveBeenCalledWith(fc);
     expect(toolOutput.output).toHaveLength(1);
     expect(onToolExecutionCompleted).toHaveBeenCalledWith(toolOutput.output[0]);
     expect(toolOutput.output[0]?.toolCall.callId).toBe(fc.callId);
@@ -201,6 +202,7 @@ describe('Generation + Tool Execution', () => {
       }),
     );
     expect(toolOutput.output[0]?.toolCallOutput?.output).toContain("toolChoice is set to 'none'");
+    expect(toolOutput.output[0]?.replyRequired).toBe(false);
   });
 
   it('should repair and canonicalize leaked template tokens in tool args', async () => {
