@@ -253,7 +253,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
           this.queue.put(chunk);
           // a retry only duplicates output the caller has already seen; the
           // stream-opening event and the usage-bearing one are neither
-          if (llm.carriesGeneration(chunk)) {
+          if (llm.hasResponse(chunk)) {
             retryable = false;
           }
         }

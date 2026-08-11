@@ -16,7 +16,7 @@ import {
   isInstructions,
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
-import { carriesGeneration } from '../llm/llm.js';
+import { hasResponse } from '../llm/llm.js';
 import {
   type JSONObject,
   type ToolChoice,
@@ -604,7 +604,7 @@ export function performLLMInference(
         if (typeof chunk === 'string') {
           generated = chunk.length > 0;
         } else if (!isFlushSentinel(chunk)) {
-          generated = carriesGeneration(chunk);
+          generated = hasResponse(chunk);
         }
 
         // measured against generation, not the first chunk: a retry that follows a

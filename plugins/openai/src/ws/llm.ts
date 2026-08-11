@@ -541,7 +541,7 @@ export class WSLLMStream extends llm.LLMStream {
 
         if (chunk) {
           this.queue.put(chunk);
-          if (llm.carriesGeneration(chunk)) {
+          if (llm.hasResponse(chunk)) {
             this.#retryable = false;
           }
         }
