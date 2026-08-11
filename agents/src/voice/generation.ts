@@ -1126,6 +1126,12 @@ export function performToolExecutions({
     onToolExecutionCompleted(out);
     toolOutput.output.push(out);
   };
+  const toolStarted = (toolCall: FunctionCall) => {
+    if (!toolOutput.firstToolStartedFuture.done) {
+      toolOutput.firstToolStartedFuture.resolve();
+    }
+    onToolExecutionStarted(toolCall);
+  };
 
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
@@ -1174,6 +1180,7 @@ export function performToolExecutions({
           },
           `unknown AI function ${toolCall.name}`,
         );
+        toolStarted(toolCall);
         toolCompleted(
           createToolOutput({
             toolCall,
@@ -1229,6 +1236,7 @@ export function performToolExecutions({
         // Surface argument-validation errors to the LLM via ToolError so it can correct
         // its arguments instead of looping on the same invalid call. The argument schema
         // and the validator's error message do not contain server-side internals.
+        toolStarted(toolCall);
         toolCompleted(
           createToolOutput({
             toolCall,
@@ -1241,11 +1249,7 @@ export function performToolExecutions({
       // Resolve right after argument parsing and before execution (including the
       // executor's duplicate-check). This ensures a tool that gets duplicate-rejected
       // by the executor doesn't leave callers awaiting `firstToolStartedFuture` hanging forever.
-      if (!toolOutput.firstToolStartedFuture.done) {
-        toolOutput.firstToolStartedFuture.resolve();
-      }
-
-      onToolExecutionStarted(toolCall);
+      toolStarted(toolCall);
 
       logger.info(
         {

@@ -3260,7 +3260,7 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle._markGenerationDone();
       }
       await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
-      this._commitInterruptedToolOutputs(toolOutput, speechHandle, replyStartedAt);
+      this._commitInterruptedToolOutputs(toolOutput, speechHandle);
       return;
     }
 
@@ -3310,7 +3310,6 @@ export class AgentActivity implements RecognitionHooks {
       executeToolsTask,
       toolOutput,
       speechHandle,
-      createdAt: replyStartedAt,
     });
     if (!toolExecutionCompleted) return;
 
@@ -4059,16 +4058,14 @@ export class AgentActivity implements RecognitionHooks {
     executeToolsTask,
     toolOutput,
     speechHandle,
-    createdAt,
   }: {
     executeToolsTask: Pick<Task<void>, 'result' | 'cancelAndWait'>;
     toolOutput: ToolOutput;
     speechHandle: SpeechHandle;
-    createdAt: number;
   }): Promise<boolean> {
     if (speechHandle.interrupted) {
       await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
-      this._commitInterruptedToolOutputs(toolOutput, speechHandle, createdAt);
+      this._commitInterruptedToolOutputs(toolOutput, speechHandle);
       return false;
     }
 
@@ -4080,18 +4077,14 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (speechHandle.interrupted) {
-      this._commitInterruptedToolOutputs(toolOutput, speechHandle, createdAt);
+      this._commitInterruptedToolOutputs(toolOutput, speechHandle);
       return false;
     }
     return true;
   }
 
   /** @internal */
-  _commitInterruptedToolOutputs(
-    toolOutput: ToolOutput,
-    speechHandle: SpeechHandle,
-    createdAt: number,
-  ): void {
+  _commitInterruptedToolOutputs(toolOutput: ToolOutput, speechHandle: SpeechHandle): void {
     const interruptedHandoffCallIds = toolOutput.output
       .filter((output) => output.agentTask !== undefined)
       .map((output) => output.toolCall.callId);
@@ -4114,9 +4107,6 @@ export class AgentActivity implements RecognitionHooks {
       functionToolsExecutedEvent,
     );
     const outputs = functionToolsExecutedEvent.functionCallOutputs;
-    for (const output of outputs) {
-      output.createdAt = createdAt;
-    }
     if (outputs.length > 0) {
       this.agent._chatCtx.insert(outputs);
       this.agentSession._toolItemsAdded(outputs);

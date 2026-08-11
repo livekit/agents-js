@@ -1013,6 +1013,9 @@ describe('AgentActivity - interrupted tool completion', () => {
       output: 'charged',
       isError: false,
     });
+    call.createdAt = 200;
+    output.createdAt = 300;
+    chatCtx.insert(call);
     const toolOutput = {
       output: [
         ToolExecutionOutput.create({
@@ -1030,12 +1033,13 @@ describe('AgentActivity - interrupted tool completion', () => {
         _commitInterruptedToolOutputs: (
           toolOutput: typeof toolOutput,
           speechHandle: SpeechHandle,
-          createdAt: number,
         ) => void;
       }
-    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create());
 
     expect(chatCtx.items).toContain(output);
+    expect(output.createdAt).toBe(300);
+    expect(chatCtx.items).toEqual([call, output]);
     expect(toolItemsAdded).toHaveBeenCalledWith([output]);
     expect(generateReply).not.toHaveBeenCalled();
   });
@@ -1086,10 +1090,9 @@ describe('AgentActivity - interrupted tool completion', () => {
         _commitInterruptedToolOutputs: (
           toolOutput: typeof toolOutput,
           speechHandle: SpeechHandle,
-          createdAt: number,
         ) => void;
       }
-    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create());
 
     expect(chatCtx.items).not.toContain(call);
     expect(chatCtx.items).not.toContain(output);
@@ -1157,10 +1160,9 @@ describe('AgentActivity - interrupted tool completion', () => {
         _commitInterruptedToolOutputs: (
           toolOutput: typeof toolOutput,
           speechHandle: SpeechHandle,
-          createdAt: number,
         ) => void;
       }
-    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create());
 
     expect(chatCtx.items).toHaveLength(2);
     expect(chatCtx.items).toEqual(expect.arrayContaining([completedCall, completedOutput]));
@@ -1306,7 +1308,6 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     };
     toolOutput: ReturnType<typeof buildToolOutput>;
     speechHandle: SpeechHandle;
-    createdAt: number;
   }) => Promise<boolean>;
 
   function buildActivity() {
@@ -1334,12 +1335,11 @@ describe('AgentActivity - interruption while waiting for tools', () => {
       executeToolsTask: { result: Promise.resolve(), cancelAndWait },
       toolOutput,
       speechHandle,
-      createdAt: 123,
     });
 
     expect(shouldContinue).toBe(false);
     expect(cancelAndWait).toHaveBeenCalledOnce();
-    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 123);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle);
     expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
   });
 
@@ -1356,7 +1356,6 @@ describe('AgentActivity - interruption while waiting for tools', () => {
       },
       toolOutput,
       speechHandle,
-      createdAt: 456,
     });
     expect(activity['_backgroundSpeeches']).toContain(speechHandle);
 
@@ -1364,7 +1363,7 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     executionFinished.resolve();
 
     await expect(waiting).resolves.toBe(false);
-    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 456);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle);
     expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
   });
 
@@ -1386,11 +1385,10 @@ describe('AgentActivity - interruption while waiting for tools', () => {
       },
       toolOutput,
       speechHandle,
-      createdAt: 789,
     });
 
     expect(shouldContinue).toBe(false);
-    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 789);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle);
   });
 });
 

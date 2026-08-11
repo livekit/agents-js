@@ -382,6 +382,29 @@ describe('Generation + Tool Execution', () => {
     await task1.result;
   }, 20_000);
 
+  it('commits an unknown tool call before its error output', async () => {
+    const events: string[] = [];
+    const fc = FunctionCall.create({ callId: 'call_unknown', name: 'missing', args: '{}' });
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as AgentSession,
+      speechHandle: { id: 'speech_unknown', _itemAdded: () => {} } as unknown as SpeechHandle,
+      toolCtx: ToolContext.empty(),
+      toolCallStream: createFunctionCallStream(fc),
+      controller: new AbortController(),
+      onToolExecutionStarted: (call) => events.push(`call:${call.callId}`),
+      onToolExecutionCompleted: (output) => events.push(`output:${output.toolCall.callId}`),
+    });
+
+    await execTask.result;
+
+    expect(events).toEqual(['call:call_unknown', 'output:call_unknown']);
+    expect(toolOutput.firstToolStartedFuture.done).toBe(true);
+    expect(toolOutput.output[0]?.toolCallOutput).toMatchObject({
+      callId: 'call_unknown',
+      isError: true,
+    });
+  });
+
   it('should surface zod validation errors to the LLM with field-level detail', async () => {
     const replyAbortController = new AbortController();
 
@@ -399,6 +422,7 @@ describe('Generation + Tool Execution', () => {
       args: JSON.stringify({ msg: 123 }),
     });
     const toolCallStream = createFunctionCallStream(fc);
+    const onToolExecutionStarted = vi.fn();
 
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
@@ -406,9 +430,11 @@ describe('Generation + Tool Execution', () => {
       toolCtx: new ToolContext([echo]) as any,
       toolCallStream,
       controller: replyAbortController,
+      onToolExecutionStarted,
     });
 
     await execTask.result;
+    expect(onToolExecutionStarted).toHaveBeenCalledWith(fc);
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);
