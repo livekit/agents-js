@@ -33,6 +33,8 @@ export type LLMMetrics = {
   completionTokens: number;
   promptTokens: number;
   promptCachedTokens: number;
+  /** Tokens used to write to the prompt cache. Not all providers report this. */
+  cacheCreationTokens?: number;
   totalTokens: number;
   tokensPerSecond: number;
   speechId?: string;

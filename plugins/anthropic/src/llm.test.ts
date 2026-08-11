@@ -273,6 +273,7 @@ describe('Anthropic LLM', () => {
       completionTokens: 0,
       promptTokens: 0,
       promptCachedTokens: 0,
+      cacheCreationTokens: 0,
       totalTokens: 0,
     });
   });
