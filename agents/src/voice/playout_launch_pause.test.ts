@@ -5,7 +5,9 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { Event } from '../utils.js';
+import { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
+import { AgentSession } from './agent_session.js';
 import { performAudioForwarding } from './generation.js';
 import { AudioOutput } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
@@ -87,6 +89,24 @@ function testActivity(): [TestActivity, PausableAudioOutput] {
 }
 
 describe('playout launch pause', () => {
+  it('releases the silence gate when audio input is disabled', () => {
+    const session = new AgentSession({ vad: null });
+    const activity = new AgentActivity(new Agent({ instructions: 'test' }), session);
+    const sessionInternals = session as unknown as {
+      activity: AgentActivity;
+      _userState: 'speaking' | 'listening';
+    };
+    const activityInternals = activity as unknown as { userSilenceEvent: Event };
+    sessionInternals.activity = activity;
+    sessionInternals._userState = 'speaking';
+    activityInternals.userSilenceEvent.clear();
+
+    session.input.setAudioEnabled(false);
+
+    expect(activityInternals.userSilenceEvent.isSet).toBe(true);
+    expect(session.userState).toBe('listening');
+  });
+
   it('preserves an existing pause', () => {
     const [activity, audioOutput] = testActivity();
     const speechHandle = SpeechHandle.create();

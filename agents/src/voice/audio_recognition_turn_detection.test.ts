@@ -316,6 +316,21 @@ function runScriptedVad(internals: RecognitionInternals): {
   };
 }
 
+describe('VAD task lifecycle', () => {
+  it('ends speech when the VAD task closes mid-speech', async () => {
+    const { internals, hooks } = makeRecognition();
+    const vad = runScriptedVad(internals);
+
+    await vad.feed(startOfSpeech());
+    expect(internals.speaking).toBe(true);
+
+    await vad.stop();
+
+    expect(hooks.onEndOfSpeech).toHaveBeenCalledWith(undefined);
+    expect(internals.speaking).toBe(false);
+  });
+});
+
 describe('TestResumedSpeechAbortsCommit', () => {
   it('cancels the in-flight bounce when VAD start-of-speech arrives during endpointing', async () => {
     const { internals, hooks } = makeRecognition();

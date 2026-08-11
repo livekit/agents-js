@@ -320,7 +320,10 @@ export class AgentInput {
   // enabled by default
   private _audioEnabled: boolean = true;
 
-  constructor(private readonly audioChanged: () => void) {}
+  constructor(
+    private readonly audioChanged: () => void,
+    private readonly audioEnabledChanged?: (enabled: boolean) => void,
+  ) {}
 
   setAudioEnabled(enable: boolean): void {
     if (enable === this._audioEnabled) {
@@ -328,6 +331,7 @@ export class AgentInput {
     }
 
     this._audioEnabled = enable;
+    this.audioEnabledChanged?.(enable);
 
     if (!this._audioStream) {
       return;

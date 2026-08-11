@@ -1480,7 +1480,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  onEndOfSpeech(ev: VADEvent): void {
+  onEndOfSpeech(ev?: VADEvent): void {
     let speechEndTime = Date.now();
     let silenceDurationMs = 0;
     if (ev) {
