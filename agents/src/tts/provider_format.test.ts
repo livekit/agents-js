@@ -249,7 +249,9 @@ describe('transcript stripping (provider-agnostic)', () => {
       out += stripper.push(chunk);
     }
     out += stripper.flush();
-    expect(out).toBe(' Hello world!');
+    // no leading space: the marker opened the segment, so the space it left behind is
+    // trimmed (Python leaves it, and its own tests .strip() around it)
+    expect(out).toBe('Hello world!');
     expect(stripper.tags[0]).toEqual({ type: 'expression', value: 'say playfully' });
     expect(stripper.tags).toContainEqual({ type: 'prosody', value: 'whisper' });
   });

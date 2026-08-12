@@ -285,7 +285,7 @@ describe('ParticipantAudioOutput publishTrack', () => {
 });
 
 describe('ParticipantTranscriptionOutput markup stripping', () => {
-  const makeOutput = (expressive = true) => {
+  const makeOutput = (expressive = true, isDeltaStream = true) => {
     const writes: string[] = [];
     const writers: Array<{ attributes: Record<string, string>; closed: boolean }> = [];
 
@@ -295,7 +295,7 @@ describe('ParticipantTranscriptionOutput markup stripping', () => {
 
     output.expressiveEnabled = () => expressive;
     output.participantIdentity = 'agent';
-    output.isDeltaStream = true;
+    output.isDeltaStream = isDeltaStream;
     output.jsonFormat = false;
     output.writer = null;
     output.flushTask = null;
@@ -358,10 +358,60 @@ describe('ParticipantTranscriptionOutput markup stripping', () => {
     output.flush();
     await output.flushTask.result;
 
-    expect(writes.join('')).toBe(' Hello there');
+    // no leading space: the marker opened the segment, so the space it left is trimmed
+    expect(writes.join('')).toBe('Hello there');
     expect(writers[0]!.attributes[ATTRIBUTE_TRANSCRIPTION_EXPRESSION]).toBe(
       '{"expression":"happy","mood":"happy"}',
     );
+  });
+
+  describe('a marker opening the segment', () => {
+    // the dedup drops the whitespace *before* a removed tag; at position 0 there is none,
+    // so the space that followed the marker survived and every turn opened with it
+    const TURN = '<expr type="expression" label="warm"/> Hey, good to hear from you!';
+
+    it('does not leave a leading space on the delta path', async () => {
+      const { output, writes } = makeOutput(true, true);
+
+      // chunked the way an LLM streams, so the marker and the text can split apart
+      for (const c of TURN.match(/.{1,14}/gs) ?? []) await output.captureText(c);
+      output.flush();
+      await output.flushTask.result;
+
+      expect(writes.join('')).toBe('Hey, good to hear from you!');
+    });
+
+    it('does not leave a leading space on the non-delta path', async () => {
+      const { output, writes } = makeOutput(true, false);
+
+      await output.captureText(TURN);
+      output.flush();
+      await output.flushTask?.result;
+
+      expect(writes[writes.length - 1]).toBe('Hey, good to hear from you!');
+    });
+
+    it('leaves leading whitespace alone when expressive is off', async () => {
+      // nothing was stripped, so the text is the agent's own and is published verbatim
+      const { output, writes } = makeOutput(false, true);
+
+      await output.captureText('  spaced out');
+      output.flush();
+      await output.flushTask.result;
+
+      expect(writes.join('')).toBe('  spaced out');
+    });
+
+    it('only trims the head, not later chunk boundaries', async () => {
+      const { output, writes } = makeOutput(true, true);
+
+      await output.captureText('<expr type="expression" label="warm"/> Hey there.');
+      await output.captureText(' And also this.');
+      output.flush();
+      await output.flushTask.result;
+
+      expect(writes.join('')).toBe('Hey there. And also this.');
+    });
   });
 
   describe('with expressive off', () => {

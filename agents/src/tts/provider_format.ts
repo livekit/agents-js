@@ -1261,6 +1261,7 @@ export class TranscriptMarkupStripper {
   #buf = '';
   #tags: ExpressiveTag[] = [];
   #seamAfterStrip = false;
+  #emittedVisible = false;
 
   /**
    * Strip `text`, record its tags, and keep a removed tag from doubling a space.
@@ -1288,7 +1289,17 @@ export class TranscriptMarkupStripper {
     // stripped earlier in the chunk leaves whitespace the LLM itself wrote, which is
     // passed through rather than collapsed
     this.#seamAfterStrip = tags.length > 0 && held.length > 0 && trimEndSpaces(input).endsWith('>');
-    return clean.slice(0, clean.length - held.length);
+
+    let emit = clean.slice(0, clean.length - held.length);
+    if (!this.#emittedVisible) {
+      // A marker opening the segment leaves the space that followed it behind: the dedup
+      // drops the whitespace *before* a removed tag, and at position 0 there is none. The
+      // instructions ask for a leading expression marker, so this is the common case —
+      // without this the transcript would open with a space on nearly every turn.
+      emit = emit.replace(/^\s+/, '');
+    }
+    if (emit) this.#emittedVisible = true;
+    return emit;
   }
 
   #hasOpenTag(): boolean {

@@ -214,6 +214,10 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       cleanText = this.stripper.push(rawText);
     } else {
       [cleanText, this.segmentTags] = splitAllMarkup(rawText);
+      // a marker opening the segment leaves the space that followed it behind (see
+      // TranscriptMarkupStripper); this path re-strips the whole accumulation each time,
+      // so trimming the head is idempotent
+      cleanText = cleanText.replace(/^\s+/, '');
     }
     if (!cleanText) {
       return;
@@ -247,9 +251,17 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
         if (this.isDeltaStream) {
           // reuse the existing writer
           if (this.writer === null) {
-            // the leading expression is stripped before any visible text, so it is already
-            // known here. Put it on the opening header, or a frontend can't colour the turn
-            // until the agent stops talking.
+            // Whatever markup was stripped ahead of the first visible text goes on the
+            // opening header — a frontend can't colour the turn until the agent stops
+            // talking otherwise. The instructions ask for a leading expression marker, so
+            // this is normally already populated.
+            //
+            // If the model puts prose before its first expression marker, the tag arrives
+            // after this header and the segment carries no lk.expression: rtc-node's
+            // `TextStreamWriter.close()` takes no attributes, so unlike Python (which
+            // passes them to `aclose()`) there is no trailing header to fall back on. The
+            // same limitation is why the delta path can't send lk.transcription_final
+            // either. Audio and transcript text are unaffected — only the UI hint.
             this.writer = await this.createTextWriter(
               undefined,
               expressionAttribute(this.stripper.tags),
@@ -418,7 +430,9 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
 
   /** The raw accumulation, with markup removed only when expressive could have written it. */
   private visibleText(): string {
-    return this.expressiveEnabled() ? stripAllMarkup(this.pushedText) : this.pushedText;
+    if (!this.expressiveEnabled()) return this.pushedText;
+    // trimStart: a marker opening the segment leaves the space that followed it behind
+    return stripAllMarkup(this.pushedText).replace(/^\s+/, '');
   }
 
   protected handleFlush() {
