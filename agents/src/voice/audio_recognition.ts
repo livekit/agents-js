@@ -146,7 +146,7 @@ export interface RecognitionHooks {
   onBackchannelConfirmed: () => void;
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
-  onEndOfSpeech: (ev: VADEvent) => void;
+  onEndOfSpeech: (ev?: VADEvent) => void;
   onInterimTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
@@ -1993,6 +1993,14 @@ export class AudioRecognition {
       this.logger.debug('VAD task closed');
       if (this.vadStream === vadStream) {
         this.vadStream = undefined;
+      }
+
+      if (this.speaking) {
+        const span = this.ensureUserTurnSpan();
+        const ctx = this.userTurnContext(span);
+        otelContext.with(ctx, () => this.hooks.onEndOfSpeech(undefined));
+        this.speaking = false;
+        this.vadSpeechStarted = false;
       }
     }
   }

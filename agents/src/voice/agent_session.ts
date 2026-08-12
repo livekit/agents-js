@@ -597,7 +597,9 @@ export class AgentSession<
     this._asyncToolOptions = resolveAsyncToolOptions(toolHandling?.asyncOptions);
 
     // configurable IO
-    this._input = new AgentInput(this.onAudioInputChanged);
+    this._input = new AgentInput(this.onAudioInputChanged, (enabled) =>
+      this.onAudioEnabledChanged(enabled),
+    );
     this._output = new AgentOutput(this.onAudioOutputChanged, this.onTextOutputChanged);
 
     // This is the "global" chat context, it holds the entire conversation history
@@ -1629,6 +1631,16 @@ export class AgentSession<
 
     if (this.activity && this._input.audio) {
       this.activity.attachAudioInput(this._input.audio.stream);
+    }
+  }
+
+  private onAudioEnabledChanged(enabled: boolean): void {
+    if (!enabled && this._userState === 'speaking') {
+      if (this.activity) {
+        this.activity.onEndOfSpeech(undefined);
+      } else {
+        this._updateUserState('listening');
+      }
     }
   }
 

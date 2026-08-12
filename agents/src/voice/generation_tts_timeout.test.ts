@@ -46,7 +46,9 @@ describe('TTS stream idle timeout', () => {
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
 
-    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller);
+    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     vi.useFakeTimers();
 
@@ -70,7 +72,13 @@ describe('TTS stream idle timeout', () => {
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
 
-    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, 500);
+    const [task, audioOut] = performAudioForwarding(
+      stalledStream,
+      audioOutput,
+      controller,
+      () => audioOutput.resume(),
+      500,
+    );
 
     vi.useFakeTimers();
 
@@ -97,7 +105,9 @@ describe('TTS stream idle timeout', () => {
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
 
-    const [task, audioOut] = performAudioForwarding(normalStream, audioOutput, controller);
+    const [task, audioOut] = performAudioForwarding(normalStream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     await task.result;
 
@@ -113,7 +123,13 @@ describe('TTS stream idle timeout', () => {
 
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
-    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, 500);
+    const [task, audioOut] = performAudioForwarding(
+      stalledStream,
+      audioOutput,
+      controller,
+      () => audioOutput.resume(),
+      500,
+    );
 
     vi.useFakeTimers();
 
@@ -149,7 +165,9 @@ describe('TTS stream idle timeout', () => {
 
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
-    const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller);
+    const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     // Stray event before the loop captures anything must not skip resampling.
     audioOutput.onPlaybackStarted(Date.now());
@@ -179,7 +197,9 @@ describe('TTS stream idle timeout', () => {
     });
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
-    const [task] = performAudioForwarding(stream, audioOutput, controller);
+    const [task] = performAudioForwarding(stream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     // Let forwarding enter reader.read(), which cannot be cancelled by the task's
     // AbortSignal. The read resolves only after the task has already been aborted.

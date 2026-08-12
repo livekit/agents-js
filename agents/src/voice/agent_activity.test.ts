@@ -34,7 +34,7 @@ import {
 import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { Future, Task } from '../utils.js';
+import { Event, Future, Task } from '../utils.js';
 import { AgentTask, _getActivityTaskInfo } from './agent.js';
 import { AgentActivity, onEnterStorage, transcriptsEquivalent } from './agent_activity.js';
 import type { EndOfTurnInfo, PreemptiveGenerationInfo } from './audio_recognition.js';
@@ -1484,6 +1484,8 @@ describe('AgentActivity - interrupted tool completion', () => {
 
 describe('AgentActivity - realtime reply chat context push', () => {
   function buildRealtimeReplyActivity(updateError?: unknown) {
+    const userSilenceEvent = new Event();
+    userSilenceEvent.set();
     const generationEvent = {} as GenerationCreatedEvent;
     const realtimeSession = {
       chatCtx: ChatContext.empty(),
@@ -1506,6 +1508,7 @@ describe('AgentActivity - realtime reply chat context push', () => {
       agentSession: {
         _conversationItemAdded: vi.fn(),
       },
+      userSilenceEvent,
       realtimeGenerationTask: vi.fn(async () => {}),
       logger: { info() {}, debug() {}, warn: vi.fn(), error: vi.fn() },
     };

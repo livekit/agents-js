@@ -73,6 +73,7 @@ import { TTS, type TTSError } from '../tts/tts.js';
 import { isFlushSentinel } from '../types.js';
 import {
   AsyncIterableQueue,
+  Event,
   Future,
   IdleTimeoutError,
   Task,
@@ -313,6 +314,7 @@ export class AgentActivity implements RecognitionHooks {
   private _drainBlockedTasks: Task<any>[] = [];
   private _currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
+  private userSilenceEvent = new Event();
   private q_updated: Future<void, never>;
   private speechTasks: Set<Task<void>> = new Set();
   // Handles whose TTS playout has finished but whose tool execution is still running.
@@ -517,6 +519,7 @@ export class AgentActivity implements RecognitionHooks {
       this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
 
     this.isDefaultInterruptionByAudioActivityEnabled = this.isInterruptionByAudioActivityEnabled;
+    this.userSilenceEvent.set();
   }
 
   async start(options?: { reuseResources?: ReusableResources }): Promise<void> {
@@ -1447,6 +1450,7 @@ export class AgentActivity implements RecognitionHooks {
     });
     // Mirrors python AudioRecognition._on_vad_event → amd._on_user_speech_started().
     this.agentSession.amd?.onUserSpeechStarted();
+    this.userSilenceEvent.clear();
     if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
       // Pass speechStartTime as the absolute startedAt timestamp.
       this.audioRecognition.onStartOfOverlapSpeech(
@@ -1468,16 +1472,15 @@ export class AgentActivity implements RecognitionHooks {
       this._currentSpeech.allowInterruptions &&
       (!this.pausedSpeech || this.pausedSpeech.handle !== this._currentSpeech)
     ) {
-      // pause the audio output if agent is not speaking (in thinking state);
-      // resume immediately when user stops speaking, the timeout will be updated
-      // by interruptByAudioActivity
+      // EOS arms false-interruption resume. A final transcript or a
+      // replying turn commit interrupts the paused handle.
       const audioOutput = this.agentSession.output.audio!;
       this.updatePausedSpeech(this._currentSpeech, 0);
       audioOutput.pause();
     }
   }
 
-  onEndOfSpeech(ev: VADEvent): void {
+  onEndOfSpeech(ev?: VADEvent): void {
     let speechEndTime = Date.now();
     let silenceDurationMs = 0;
     if (ev) {
@@ -1498,6 +1501,7 @@ export class AgentActivity implements RecognitionHooks {
     });
     // Mirrors python AudioRecognition._on_vad_event → amd._on_user_speech_ended(ev.silence_duration).
     this.agentSession.amd?.onUserSpeechEnded(silenceDurationMs);
+    this.userSilenceEvent.set();
 
     if (this.pausedSpeech) {
       this.startFalseInterruptionTimer(this.pausedSpeech.timeout);
@@ -1514,6 +1518,16 @@ export class AgentActivity implements RecognitionHooks {
       ev.speechDuration >= this.agentSession.sessionOptions.turnHandling.interruption?.minDuration
     ) {
       this.interruptByAudioActivity();
+    }
+
+    if (
+      ev.speaking &&
+      ev.rawAccumulatedSilence <=
+        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay / 2
+    ) {
+      this.userSilenceEvent.clear();
+    } else {
+      this.userSilenceEvent.set();
     }
   }
 
@@ -2648,7 +2662,11 @@ export class AgentActivity implements RecognitionHooks {
       ? this.agentSession.output.audio
       : null;
 
-    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+    const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
+    if (speechHandle.allowInterruptions) {
+      authorizationTasks.push(this.userSilenceEvent.wait());
+    }
+    await speechHandle.waitIfNotInterrupted(authorizationTasks);
 
     if (speechHandle.interrupted) {
       return;
@@ -2728,6 +2746,7 @@ export class AgentActivity implements RecognitionHooks {
           ttsGenData.audioStream,
           audioOutput,
           replyAbortController,
+          () => this.reconcilePlayoutPause(speechHandle),
           this.agentSession.sessionOptions.forwardAudioIdleTimeout,
         );
         tasks.push(forwardTask);
@@ -2738,6 +2757,7 @@ export class AgentActivity implements RecognitionHooks {
           audio,
           audioOutput,
           replyAbortController,
+          () => this.reconcilePlayoutPause(speechHandle),
           this.agentSession.sessionOptions.forwardAudioIdleTimeout,
         );
         tasks.push(forwardTask);
@@ -3023,7 +3043,11 @@ export class AgentActivity implements RecognitionHooks {
 
     this.agentSession._updateAgentState('thinking');
 
-    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+    const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
+    if (speechHandle.allowInterruptions) {
+      authorizationTasks.push(this.userSilenceEvent.wait());
+    }
+    await speechHandle.waitIfNotInterrupted(authorizationTasks);
     speechHandle._clearAuthorization();
 
     const replyStartedAt = Date.now();
@@ -3097,6 +3121,7 @@ export class AgentActivity implements RecognitionHooks {
             segment.ttsGenData.audioStream,
             audioOutput,
             segmentAbortController,
+            () => this.reconcilePlayoutPause(speechHandle),
             this.agentSession.sessionOptions.forwardAudioIdleTimeout,
           );
           forwardTasks.push(forwardTask);
@@ -3571,7 +3596,11 @@ export class AgentActivity implements RecognitionHooks {
       : null;
     const toolCtx = realtimeSession.tools;
 
-    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+    const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
+    if (speechHandle.allowInterruptions) {
+      authorizationTasks.push(this.userSilenceEvent.wait());
+    }
+    await speechHandle.waitIfNotInterrupted(authorizationTasks);
     speechHandle._clearAuthorization();
 
     if (speechHandle.interrupted) {
@@ -3672,6 +3701,7 @@ export class AgentActivity implements RecognitionHooks {
               realtimeAudioResult,
               audioOutput,
               messageAbortController,
+              () => this.reconcilePlayoutPause(speechHandle),
               this.agentSession.sessionOptions.forwardAudioIdleTimeout,
             );
             forwardTasks.push(forwardTask);
@@ -4263,7 +4293,11 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('realtime session is not available');
     }
 
-    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+    const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
+    if (speechHandle.allowInterruptions) {
+      authorizationTasks.push(this.userSilenceEvent.wait());
+    }
+    await speechHandle.waitIfNotInterrupted(authorizationTasks);
     if (speechHandle.interrupted) {
       return;
     }
@@ -4662,9 +4696,39 @@ export class AgentActivity implements RecognitionHooks {
     return !!(
       interruptionOptions.resumeFalseInterruption &&
       interruptionOptions.falseInterruptionTimeout !== undefined &&
+      this.agentSession.output.audioEnabled &&
       this.agentSession.output.audio &&
       this.agentSession.output.audio.canPause
     );
+  }
+
+  /** Preserve, apply, or release a speech pause before forwarding audio. */
+  private reconcilePlayoutPause(speechHandle: SpeechHandle): void {
+    const audioOutput = this.agentSession.output.audio;
+    const pauseIsAllowed =
+      this.pauseEnabled() && !speechHandle.interrupted && speechHandle.allowInterruptions;
+    const pauseIsValid = this.pausedSpeech?.handle === speechHandle && pauseIsAllowed;
+    if (pauseIsValid) {
+      // A paused playout stays paused regardless of forwarding status.
+      return;
+    }
+
+    if (this.pausedSpeech) {
+      this.cancelFalseInterruptionTimer();
+      this.pausedSpeech = undefined;
+    }
+
+    if (
+      pauseIsAllowed &&
+      this.agentSession.agentState !== 'speaking' &&
+      !this.userSilenceEvent.isSet
+    ) {
+      this.updatePausedSpeech(speechHandle, 0);
+      audioOutput!.pause();
+      return;
+    }
+
+    audioOutput?.resume();
   }
 
   private cancelFalseInterruptionTimer(): void {
@@ -4758,6 +4822,12 @@ export class AgentActivity implements RecognitionHooks {
     }, timeout);
   }
 
+  /**
+   * Clear a speech pause and optionally interrupt its handle.
+   *
+   * Final STT transcripts and committed turns that generate replies interrupt the paused
+   * handle. Activity shutdown does not because the scheduling task owns the speech.
+   */
   private async cancelSpeechPause(options?: { interrupt?: boolean }): Promise<void> {
     const { interrupt = true } = options ?? {};
 
