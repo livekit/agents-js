@@ -151,7 +151,7 @@ describe('AgentSession recording state', () => {
     // Defaults to all-off until start() resolves the record argument.
     expect(session._enableRecording).toBe(false);
 
-    session._recordingOptions = resolveRecordingOptions({
+    session.sessionOptions.recordingOptions = resolveRecordingOptions({
       audio: false,
       traces: false,
       logs: true,
@@ -160,7 +160,7 @@ describe('AgentSession recording state', () => {
     });
     expect(session._enableRecording).toBe(true);
 
-    session._recordingOptions = resolveRecordingOptions({
+    session.sessionOptions.recordingOptions = resolveRecordingOptions({
       audio: false,
       traces: false,
       logs: false,
@@ -169,7 +169,7 @@ describe('AgentSession recording state', () => {
     });
     expect(session._enableRecording).toBe(false);
 
-    session._recordingOptions = resolveRecordingOptions(false);
+    session.sessionOptions.recordingOptions = resolveRecordingOptions(false);
     expect(session._enableRecording).toBe(false);
   });
 });

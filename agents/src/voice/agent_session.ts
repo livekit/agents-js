@@ -204,6 +204,8 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
   ttsTextTransforms: readonly TextTransform[] | null;
+  /** Resolved per-category recording options for this session. */
+  recordingOptions: ResolvedRecordingOptions;
 }
 
 export const defaultAgentSessionOptions = {
@@ -482,9 +484,6 @@ export class AgentSession<
   /** @internal */
   _recordedEvents: AgentEvent[] = [];
 
-  /** @internal Resolved per-category recording options for this session. */
-  _recordingOptions: ResolvedRecordingOptions = { ...RECORDING_ALL_OFF };
-
   /** @internal */
   _asyncToolOptions: AsyncToolOptions = resolveAsyncToolOptions();
 
@@ -493,7 +492,7 @@ export class AgentSession<
 
   /** @internal True when any recording category is enabled. */
   get _enableRecording(): boolean {
-    return recordingEnabled(this._recordingOptions);
+    return recordingEnabled(this.sessionOptions.recordingOptions);
   }
 
   /** @internal - Timestamp when the session started (milliseconds) */
@@ -780,7 +779,7 @@ export class AgentSession<
       if (
         this.input.audio &&
         this.output.audio &&
-        (this._recordingOptions.audio || consoleForcesRecord)
+        (this.sessionOptions.recordingOptions.audio || consoleForcesRecord)
       ) {
         this._recorderIO = new RecorderIO({ agentSession: this });
         this.input.audio = this._recorderIO.recordInput(this.input.audio);
@@ -863,9 +862,9 @@ export class AgentSession<
         record = ctx.job.enableRecording;
       }
 
-      this._recordingOptions = resolveRecordingOptions(record);
+      this.sessionOptions.recordingOptions = resolveRecordingOptions(record);
       if (this._textOnly) {
-        this._recordingOptions.audio = false;
+        this.sessionOptions.recordingOptions.audio = false;
       }
 
       // Only one AgentSession per job can be the primary (and therefore record).
@@ -873,18 +872,18 @@ export class AgentSession<
       // never configures cloud recording. Mirrors Python's start() ordering.
       if (ctx._primaryAgentSession === undefined || ctx._primaryAgentSession === this) {
         ctx._primaryAgentSession = this;
-      } else if (recordingEnabled(this._recordingOptions)) {
+      } else if (recordingEnabled(this.sessionOptions.recordingOptions)) {
         if (recordIsGiven) {
           throw new Error(
             'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
           );
         }
         // record was not given: silently disable recording for the secondary session
-        this._recordingOptions = resolveRecordingOptions(false);
+        this.sessionOptions.recordingOptions = resolveRecordingOptions(false);
       }
 
       if (this._enableRecording) {
-        await ctx.initRecording(this._recordingOptions);
+        await ctx.initRecording(this.sessionOptions.recordingOptions);
       }
     }
 

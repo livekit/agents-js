@@ -11,7 +11,8 @@ import type {
 } from './agent_session.js';
 import type { AgentEvent } from './events.js';
 
-type ReportOptions = AgentSessionOptions & Partial<VoiceOptions>;
+type ReportOptions = AgentSessionOptions &
+  Partial<VoiceOptions> & { recordingOptions: ResolvedRecordingOptions };
 
 export interface SessionReport {
   jobId: string;
@@ -21,8 +22,6 @@ export interface SessionReport {
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableRecording: boolean;
-  /** Resolved per-category recording options for this session. */
-  recordingOptions: ResolvedRecordingOptions;
   /** Timestamp when the session started (milliseconds) */
   startedAt: number;
   /** Timestamp when the session report was created (milliseconds), typically at the end of the session */
@@ -45,8 +44,6 @@ export interface SessionReportOptions {
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableRecording?: boolean;
-  /** Resolved per-category recording options for this session. */
-  recordingOptions?: ResolvedRecordingOptions;
   /** Timestamp when the session started (milliseconds) */
   startedAt?: number;
   /** Timestamp when the session report was created (milliseconds) */
@@ -71,13 +68,6 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     events: opts.events,
     chatHistory: opts.chatHistory,
     enableRecording: opts.enableRecording ?? false,
-    recordingOptions: opts.recordingOptions ?? {
-      audio: false,
-      traces: false,
-      logs: false,
-      transcript: false,
-      redaction: false,
-    },
     startedAt: opts.startedAt ?? Date.now(),
     timestamp,
     audioRecordingPath: opts.audioRecordingPath,
@@ -277,6 +267,7 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       max_tool_steps: options.maxToolSteps,
       user_away_timeout: options.userAwayTimeout ?? null,
       preemptive_generation: options.turnHandling?.preemptiveGeneration ?? {},
+      recording_options: { ...options.recordingOptions },
     },
     chat_history: toSnakeCaseDeep(report.chatHistory.toJSON({ excludeTimestamp: false })),
     enable_user_data_training: report.enableRecording,

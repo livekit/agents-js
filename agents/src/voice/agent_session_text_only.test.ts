@@ -135,14 +135,14 @@ describe('AgentSession text-only gating', () => {
       });
     });
 
-    expect(session._recordingOptions).toEqual({
+    expect(session.sessionOptions.recordingOptions).toEqual({
       audio: false,
       traces: true,
       logs: true,
       transcript: true,
       redaction: false,
     });
-    expect(initRecording).toHaveBeenCalledWith(session._recordingOptions);
+    expect(initRecording).toHaveBeenCalledWith(session.sessionOptions.recordingOptions);
     await session.close();
   });
 });
