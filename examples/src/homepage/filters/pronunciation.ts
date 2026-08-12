@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ReadableStream } from 'node:stream/web';
 
-/** Inworld custom pronunciation for the word "LiveKit". */
-export const LIVEKIT_IPA = '/ˈlaɪvkɪt/';
-const LIVEKIT_RE = /\blivekit\b/gi;
+export const LIVEKIT_PRONUNCIATION = 'Lyve Kit';
+export const LIVEKITS_PRONUNCIATION = "Lyve Kit's";
+const LIVEKIT_RE = /\blivekit(?<possessive>['’]s)?\b/gi;
+
+function replaceLiveKit(match: string, possessive: string | undefined): string {
+  return possessive ? LIVEKITS_PRONUNCIATION : LIVEKIT_PRONUNCIATION;
+}
 
 async function* wholeWords(chunks: AsyncIterable<string>): AsyncIterable<string> {
   let buffer = '';
@@ -20,8 +25,17 @@ async function* wholeWords(chunks: AsyncIterable<string>): AsyncIterable<string>
 }
 
 /** Rewrite only complete words while preserving arbitrary LLM chunk boundaries. */
-export async function* pronounceLiveKit(text: AsyncIterable<string>): AsyncIterable<string> {
-  for await (const word of wholeWords(text)) {
-    yield word.replace(LIVEKIT_RE, LIVEKIT_IPA);
-  }
+export function pronounceLiveKit(text: ReadableStream<string>): ReadableStream<string> {
+  return new ReadableStream<string>({
+    async start(controller) {
+      try {
+        for await (const word of wholeWords(text)) {
+          controller.enqueue(word.replace(LIVEKIT_RE, replaceLiveKit));
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+  });
 }

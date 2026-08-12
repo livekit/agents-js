@@ -14,6 +14,7 @@ import * as krisp from '@livekit/agents-plugin-krisp';
 import { fileURLToPath } from 'node:url';
 import { publishFrontendAttributes } from './behaviors/frontend_attributes.js';
 import { checkInWhenUserAway } from './behaviors/user_away.js';
+import { pronounceLiveKit } from './filters/pronunciation.js';
 import { KnowledgeBase } from './knowledge_base/index.js';
 import { prompt } from './prompts/index.js';
 
@@ -75,6 +76,7 @@ export default defineAgent({
         preemptiveGeneration: { enabled: true },
       },
       expressive: true,
+      ttsTextTransforms: ['filter_markdown', 'filter_emoji', pronounceLiveKit],
     });
 
     checkInWhenUserAway(session);
