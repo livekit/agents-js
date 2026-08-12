@@ -786,7 +786,7 @@ export class ChatContext {
     const itemId = typeof item === 'string' ? item : item.id;
     const idx = this.indexById(itemId);
     if (idx === undefined) {
-      throw new Error(`Item not found: ${typeof item === 'string' ? item : item.id}`);
+      throw new Error(`Item not found: ${itemId}`);
     }
     this._items.splice(idx, 1);
   }
