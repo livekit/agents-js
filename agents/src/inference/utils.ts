@@ -20,6 +20,26 @@ export const STAGING_INFERENCE_URL = 'https://agent-gateway.staging.livekit.clou
 export const INFERENCE_PROVIDER_HEADER = 'X-LiveKit-Inference-Provider';
 export const INFERENCE_PRIORITY_HEADER = 'X-LiveKit-Inference-Priority';
 
+// Quota telemetry headers stamped by the inference gateway on LLM responses,
+// including 429 rejections. Missing dimensions are not enforced or unknown.
+const QUOTA_HEADER_FIELDS = {
+  'X-LiveKit-Inference-RPM-Limit': 'rpmLimit',
+  'X-LiveKit-Inference-RPM-Used': 'rpmUsed',
+  'X-LiveKit-Inference-TPM-Limit': 'tpmLimit',
+  'X-LiveKit-Inference-TPM-Used': 'tpmUsed',
+  'X-LiveKit-Inference-Credits-Limit': 'creditsLimit',
+  'X-LiveKit-Inference-Credits-Used': 'creditsUsed',
+} as const;
+
+export function extractQuotaUsage(headers: Headers): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(QUOTA_HEADER_FIELDS).flatMap(([header, field]) => {
+      const value = headers.get(header);
+      return value ? [[field, value]] : [];
+    }),
+  );
+}
+
 /**
  * Get the default inference URL based on the environment.
  *
