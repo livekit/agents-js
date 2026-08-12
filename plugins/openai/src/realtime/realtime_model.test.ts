@@ -113,6 +113,45 @@ describe('RealtimeSession.generateReply', () => {
   });
 });
 
+describe('RealtimeSession.truncate', () => {
+  type TruncateInternals = {
+    audioCapableItemIds: Set<string>;
+    sendEvent: (event: api_proto.ClientEvent) => void;
+    truncate: RealtimeSession['truncate'];
+  };
+
+  function createTruncateSession(sent: api_proto.ClientEvent[]): TruncateInternals {
+    const session = Object.create(RealtimeSession.prototype) as TruncateInternals;
+    session.audioCapableItemIds = new Set(['item_1']);
+    session.sendEvent = (event) => {
+      sent.push(event);
+    };
+    return session;
+  }
+
+  it('deletes the item when no audio played', async () => {
+    const sent: api_proto.ClientEvent[] = [];
+    const session = createTruncateSession(sent);
+
+    await session.truncate({ messageId: 'item_1', audioEndMs: 0, modalities: ['audio', 'text'] });
+
+    expect(sent.map((event) => event.type)).toEqual(['conversation.item.delete']);
+    expect((sent[0] as api_proto.ConversationItemDeleteEvent).item_id).toBe('item_1');
+  });
+
+  it('truncates the item when audio played', async () => {
+    const sent: api_proto.ClientEvent[] = [];
+    const session = createTruncateSession(sent);
+
+    await session.truncate({ messageId: 'item_1', audioEndMs: 500, modalities: ['audio', 'text'] });
+
+    expect(sent.map((event) => event.type)).toEqual(['conversation.item.truncate']);
+    const event = sent[0] as api_proto.ConversationItemTruncateEvent;
+    expect(event.item_id).toBe('item_1');
+    expect(event.audio_end_ms).toBe(500);
+  });
+});
+
 describe('RealtimeSession response.done status handling', () => {
   afterEach(() => {
     vi.restoreAllMocks();

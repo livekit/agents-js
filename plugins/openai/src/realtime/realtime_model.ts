@@ -964,6 +964,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           audio_end_ms: audioEndMs,
         } as api_proto.ConversationItemTruncateEvent);
       } else {
+        // The API rejects truncating an item when no audio was played, so delete it instead.
         this.sendEvent({
           type: 'conversation.item.delete',
           item_id: _options.messageId,
