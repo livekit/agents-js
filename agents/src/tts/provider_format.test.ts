@@ -474,6 +474,31 @@ describe('universal transcript stripping', () => {
     expect(tags).toContainEqual({ type: 'sound', value: 'giggle' });
   });
 
+  it('takes the attribute, not the wrapped words, as a delivery label', () => {
+    // the model writes `<expression value="warm">…</expression>` often enough that
+    // normalizeMarkup repairs it — but that runs on the audio path only, so the sinks see
+    // the raw shape. Recording the inner text here published the agent's own sentence as
+    // lk.expression, and matchMood then fell back to `calm`.
+    const [clean, tags] = splitAllMarkup('<expression value="warm">Hello there</expression>');
+    expect(clean).toBe('Hello there');
+    expect(tags).toEqual([{ type: 'expression', value: 'warm' }]);
+    expect(expressionAttribute(tags)).toEqual({
+      'lk.expression': '{"expression":"warm","mood":"happy"}',
+    });
+  });
+
+  it('still reads a content tag from its inner text', () => {
+    // the inverse must keep working: spell/emphasis and xAI's wrapping emotion tags carry
+    // no attribute, so their content is the value
+    expect(splitAllMarkup('<spell>A7X9</spell>')[1]).toEqual([{ type: 'spell', value: 'A7X9' }]);
+    expect(splitAllMarkup('<emphasis>wow</emphasis>')[1]).toEqual([
+      { type: 'emphasis', value: 'wow' },
+    ]);
+    expect(splitAllMarkup('<happy>Great to hear!</happy>')[1]).toEqual([
+      { type: 'happy', value: 'Great to hear!' },
+    ]);
+  });
+
   it('produces the documented lk.expression payload shape', () => {
     let [, tags] = splitAllMarkup('<emotion value="sad"/>oh no');
     expect(expressionAttribute(tags)).toEqual({

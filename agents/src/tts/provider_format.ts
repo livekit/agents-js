@@ -1084,6 +1084,20 @@ function convertExpr(provider: string, text: string): string {
   return out;
 }
 
+// Providers with an expr instruction block. Kept as a set so "does this voice speak
+// markup?" is answerable without rendering the block — the answer is needed on the
+// per-segment speech path, and the blocks run to several kilobytes.
+const MARKUP_DIALECTS = new Set(['cartesia', 'inworld', 'xai', 'fishaudio']);
+
+/**
+ * Whether `provider` has an expr instruction block, i.e. whether expressive can do
+ * anything for it. Allocation-free: prefer this over testing
+ * `llmInstructions(...) !== undefined`.
+ */
+export function hasMarkupDialect(provider: string): boolean {
+  return MARKUP_DIALECTS.has(provider);
+}
+
 /**
  * LLM instruction text for a TTS provider, or `undefined` when it has no markup dialect.
  *
@@ -1098,6 +1112,9 @@ export function llmInstructions(
   provider: string,
   steering?: SpeechSteeringOptions,
 ): string | undefined {
+  if (!hasMarkupDialect(provider)) {
+    return undefined;
+  }
   if (provider === 'cartesia') {
     return CARTESIA_EXPR_LLM_INSTRUCTIONS;
   }
@@ -1135,6 +1152,20 @@ const PROVIDER_MARKUP: Record<string, string[]> = {
 // without knowing which provider produced it (see TranscriptMarkupStripper).
 const ALL_MARKUP_TAGS: string[] = [...new Set(Object.values(PROVIDER_MARKUP).flat())].sort();
 
+// Tags whose payload lives in an attribute rather than in their content. They are
+// self-closing by definition, but models do write `<expression value="warm">words</expression>`
+// (which is exactly why `normalizeMarkup` repairs that shape) — and the transcript sinks
+// strip the raw text, before any repair. Without this, the wrapped sentence would be
+// recorded as the delivery label and published as `lk.expression`.
+const ATTRIBUTE_MARKUP_TAGS: ReadonlySet<string> = new Set([
+  'expression',
+  'emotion',
+  'sound',
+  'break',
+  'speed',
+  'volume',
+]);
+
 /**
  * Strip the union of every provider's expressive XML markup (provider-agnostic).
  *
@@ -1156,7 +1187,7 @@ export function splitAllMarkup(text: string): [string, ExpressiveTag[]] {
   }
 
   const [withoutExpr, exprTags] = splitExpr(text);
-  const [clean, rawTags] = extractAndStrip(withoutExpr, ALL_MARKUP_TAGS);
+  const [clean, rawTags] = extractAndStrip(withoutExpr, ALL_MARKUP_TAGS, ATTRIBUTE_MARKUP_TAGS);
   return [clean, [...exprTags, ...rawTags.map(([type, value]) => ({ type, value }))]];
 }
 

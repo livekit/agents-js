@@ -113,17 +113,27 @@ export type StrippedTag = [tag: string, value: string];
  * appearance:
  *
  * - `type` is the XML tag name.
- * - `value` is a wrapping tag's inner text (`<spell>A7X9</spell>` -> `"A7X9"`), else its
+ * - `value` is a content tag's inner text (`<spell>A7X9</spell>` -> `"A7X9"`), else its
  *   first quoted attribute value (`<emotion value="happy"/>` -> `"happy"`), falling back
- *   to `""`.
+ *   to `""`. Names in `attributeTags` invert that preference — see the parameter.
  *
  * Wrapping tags keep their inner content in `cleanText` (only the delimiters are
  * removed); self-closing and lone tags are removed entirely.
  *
  * @param text - The text containing markup.
  * @param xmlTags - XML tag names to handle (e.g. `['emotion', 'sound']`).
+ * @param attributeTags - Tag names whose payload is an attribute, never their content
+ *   (`expression`, `emotion`, ...). These are self-closing by definition, but a model
+ *   that writes `<expression value="warm">Hello there</expression>` would otherwise have
+ *   the spoken sentence recorded as the delivery label and published as `lk.expression`.
+ *   `normalizeMarkup` repairs that tag shape only on the audio path, so the transcript
+ *   sinks see the raw form and have to handle it here.
  */
-export function extractAndStrip(text: string, xmlTags: string[]): [string, StrippedTag[]] {
+export function extractAndStrip(
+  text: string,
+  xmlTags: string[],
+  attributeTags: ReadonlySet<string> = new Set(),
+): [string, StrippedTag[]] {
   if (xmlTags.length === 0) {
     return [text, []];
   }
@@ -171,12 +181,17 @@ export function extractAndStrip(text: string, xmlTags: string[]): [string, Strip
     const tag = groups.tag;
     if (tag !== undefined) {
       const inner = groups.inner;
+      const attrMatch = VALUE_ATTR_RE.exec(groups.attrs ?? '');
+      const attrValue = attrMatch ? attrMatch[1]! : '';
+      // an attribute-carrying tag's payload is the attribute even when the model wrapped
+      // text in it; everything else is a content tag, whose inner text wins
       let value: string;
-      if (inner !== undefined && inner.trim()) {
+      if (attributeTags.has(tag)) {
+        value = attrValue || (inner?.trim() ?? '');
+      } else if (inner !== undefined && inner.trim()) {
         value = inner.trim();
       } else {
-        const attrMatch = VALUE_ATTR_RE.exec(groups.attrs ?? '');
-        value = attrMatch ? attrMatch[1]! : '';
+        value = attrValue;
       }
       tags.push([tag, value]);
       // wrapping tags keep their inner content; lone open tags vanish

@@ -24,6 +24,7 @@ import {
   type MarkupInfo,
   type SpeechSteeringOptions,
   convertMarkup,
+  hasMarkupDialect,
   llmInstructions,
   normalizeMarkup,
   supportedNonverbals,
@@ -82,6 +83,16 @@ export class TTSMarkup {
   /** Key into the shared `provider_format` markup tables, or `''` for none. */
   get providerKey(): string {
     return this.#providerKey();
+  }
+
+  /**
+   * Whether this voice speaks a markup dialect at all.
+   *
+   * Allocation-free, unlike testing {@link llmInstructions} for `undefined` — which the
+   * expressive gate does once per speech segment.
+   */
+  get supported(): boolean {
+    return hasMarkupDialect(this.providerKey);
   }
 
   /** The queryable markup matrix for this voice. */

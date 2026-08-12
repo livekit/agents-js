@@ -1035,25 +1035,28 @@ export class AgentActivity implements RecognitionHooks {
   /**
    * Resolve the session's expressive setting. Returns `undefined` if disabled.
    *
-   * Expressive mode requires two things:
+   * Expressive mode requires three things, checked cheapest-first because this runs once
+   * per speech segment:
+   * - the session opted in.
    * - the inference gateway TTS ({@link inference.TTS}): the markup normalization/conversion
    *   and expressive chunking run there, so direct provider plugins would receive
    *   unconverted markup.
-   * - a TTS that actually declares a markup dialect (`llmInstructions()` is not
-   *   `undefined`): gateway providers without one (e.g. `rime`, `deepgram`) get no markup
-   *   instructions, so no tags can appear in the stream — leaving it "active" would enable
-   *   xml-aware chunking with nothing to chunk and re-introduce the stray-`<` streaming
-   *   stall.
+   * - a TTS that actually declares a markup dialect: gateway providers without one (e.g.
+   *   `rime`, `deepgram`) get no markup instructions, so no tags can appear in the stream
+   *   — leaving it "active" would enable xml-aware chunking with nothing to chunk and
+   *   re-introduce the stray-`<` streaming stall. Asked via `markup.supported` rather than
+   *   by rendering `llmInstructions()` and testing it for `undefined`: the blocks are
+   *   several kilobytes, and every ordinary session would build and discard one per turn.
    *
    * @internal
    */
   _resolveExpressiveOptions(): ExpressiveOptions | undefined {
-    if (!(this.tts instanceof InferenceTTS) || this.tts.markup.llmInstructions() === undefined) {
+    const expr = this.agentSession._expressive;
+    if (!expr && typeof expr !== 'object') {
       return undefined;
     }
 
-    const expr = this.agentSession._expressive;
-    if (!expr && typeof expr !== 'object') {
+    if (!(this.tts instanceof InferenceTTS) || !this.tts.markup.supported) {
       return undefined;
     }
     // speechSteering renders per-provider delivery guidelines on top of the
