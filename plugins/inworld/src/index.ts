@@ -5,6 +5,7 @@ import { Plugin } from '@livekit/agents';
 import './stt.js';
 import './tts.js';
 
+export * as realtime from './realtime/index.js';
 export * from './stt.js';
 export * from './tts.js';
 

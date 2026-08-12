@@ -38,7 +38,15 @@ const MOCK_AUDIO_ID_PREFIX = 'lk_mock_audio_item_';
 
 type Modality = 'text' | 'audio';
 
-interface RealtimeOptions {
+/**
+ * Resolved per-session Realtime options.
+ *
+ * Exported because {@link RealtimeSession._options} is `protected` and therefore appears in the
+ * emitted declarations. Not part of the stable public API.
+ *
+ * @internal
+ */
+export interface RealtimeOptions {
   model: api_proto.Model;
   voice: api_proto.Voice;
   toolChoice?: llm.ToolChoice;
@@ -450,11 +458,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   private messageChannel = new Queue<api_proto.ClientEvent>();
   private inputResampler?: AudioResampler;
   private instructions?: string;
-  private oaiRealtimeModel: RealtimeModel;
-  // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py - 795-797 lines
-  // per-session copy of options so updateOptions can diff against the session's
-  // own state instead of the shared model-level state.
-  private _options: RealtimeOptions;
+
+  protected oaiRealtimeModel: RealtimeModel;
+  protected _options: RealtimeOptions;
   private currentGeneration?: ResponseGeneration | DiscardedGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
   private discardedEventIds = new Set<string>();
@@ -508,7 +514,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.messageChannel.put(command);
   }
 
-  private createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
+  protected createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
     const opts = this._options;
     const maxOutputTokens =
       opts.maxResponseOutputTokens === Infinity ? 'inf' : opts.maxResponseOutputTokens;
@@ -1050,7 +1056,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.responseCreatedFutures = {};
   }
 
-  private async createWsConn(): Promise<WebSocket> {
+  protected async createWsConn(): Promise<WebSocket> {
     const headers: Record<string, string> = {
       'User-Agent': 'LiveKit-Agents-JS',
     };
