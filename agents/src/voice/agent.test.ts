@@ -415,8 +415,10 @@ describe('Agent', () => {
           capabilities: { streaming: true },
           stream: () => ttsStream,
           close: async () => {},
+          _setExpressive: () => {},
         },
         agentSession: { connOptions: { ttsConnOptions: {} } },
+        _resolveExpressiveOptions: () => undefined,
       };
 
       async function* textInput() {

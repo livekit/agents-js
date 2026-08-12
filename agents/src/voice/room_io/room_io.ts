@@ -394,14 +394,19 @@ export class RoomIO {
     isDeltaStream: boolean;
     participant: Participant | string | null;
   }) {
+    // markup only ever reaches these sinks once expressive has injected its guide; until
+    // then they publish the agent's text verbatim
+    const expressiveEnabled = () => this.agentSession._expressiveEverActive;
     return new ParalellTextOutput([
       new ParticipantLegacyTranscriptionOutput(
         this.room,
         options.isDeltaStream,
         options.participant,
+        { expressiveEnabled },
       ),
       new ParticipantTranscriptionOutput(this.room, options.isDeltaStream, options.participant, {
         jsonFormat: this.outputOptions.jsonFormat,
+        expressiveEnabled,
       }),
     ]);
   }
@@ -557,7 +562,11 @@ export class RoomIO {
         this.transcriptionSynchronizer = new TranscriptionSynchronizer(
           audioOutput,
           this.agentTranscriptOutput,
-          { ...defaultTextSyncOptions, enabled: !nativeTranscriptSync },
+          {
+            ...defaultTextSyncOptions,
+            enabled: !nativeTranscriptSync,
+            expressiveEnabled: () => this.agentSession._expressiveEverActive,
+          },
         );
       }
     }

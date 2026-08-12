@@ -37,6 +37,7 @@ import {
   ChatContext,
   ChatMessage,
   type Instructions,
+  concatInstructions,
 } from '../llm/chat_context.js';
 import type {
   LLM,
@@ -55,6 +56,11 @@ import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
+import {
+  DEFAULT_SPEECH_STEERING_OPTIONS,
+  type SpeechSteeringOptions,
+  steeringInstructions,
+} from '../tts/provider_format.js';
 import type { TTS, TTSError } from '../tts/tts.js';
 import {
   DEFAULT_API_CONNECT_OPTIONS,
@@ -342,7 +348,92 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * and `filter_emoji`; pass `null` to disable text transforms.
    */
   ttsTextTransforms?: readonly TextTransform[] | null;
+
+  /**
+   * Let the LLM steer how the agent sounds.
+   *
+   * When enabled, the provider's markup guide is injected into the LLM prompt so it can
+   * emit inline delivery tags (emotion, pacing, non-verbal sounds), which are rendered by
+   * the TTS and stripped from the transcript. Pass an {@link ExpressiveOptions} object to
+   * steer or override the injected instructions. Requires an
+   * {@link inference.TTS | inference TTS} with a model that declares a markup dialect; it
+   * stays off otherwise.
+   *
+   * @defaultValue false
+   */
+  expressive?: boolean | ExpressiveOptions;
 };
+
+/**
+ * Configuration for the expressive pipeline, passed as `AgentSession({ expressive: ... })`.
+ *
+ * Controls how TTS markup instructions are injected into the LLM when expressive is
+ * enabled. All keys are optional; common shapes:
+ *
+ * - `{ speechSteering: {...} }` — steer delivery and non-verbal sounds on top of the
+ *   provider-agnostic default instructions.
+ * - `{ ttsInstructionsTemplate: '...' }` — a fully custom prompt.
+ * - `{ ttsInstructionsAppend: '...' }` — your own rules appended to the template.
+ *
+ * Any explicit template overrides the default; unset parts fall back to the
+ * provider-agnostic default.
+ */
+export interface ExpressiveOptions {
+  speechSteering?: SpeechSteeringOptions;
+  ttsInstructionsTemplate?: Instructions | string;
+  ttsInstructionsAppend?: string;
+}
+
+/** The placeholder the expressive template substitutes the provider's markup guide into. */
+export const TTS_INSTRUCTIONS_PLACEHOLDER = '{tts.markup.llm_instructions}';
+
+export const DEFAULT_EXPRESSIVE_OPTIONS: ExpressiveOptions = {
+  ttsInstructionsTemplate:
+    'You can control how you speak using the following formatting tags. ' +
+    'Use them when appropriate to make your speech more expressive and natural:\n\n' +
+    TTS_INSTRUCTIONS_PLACEHOLDER,
+  speechSteering: DEFAULT_SPEECH_STEERING_OPTIONS,
+};
+
+function appendInstructions(template: Instructions | string, extra: string): Instructions | string {
+  // concatenate the *raw* template text so any {placeholders} survive until render
+  return concatInstructions(template, '\n\n' + extra);
+}
+
+/**
+ * Resolve a user {@link ExpressiveOptions} to a concrete options object for a provider.
+ *
+ * Starts from `defaults`, renders `speechSteering` into per-provider delivery guidelines
+ * appended to the template, then applies any explicit `ttsInstructionsTemplate` override
+ * and `ttsInstructionsAppend` (last, so the user's free-form rules always win). Steering
+ * fields the user doesn't set fall back to `defaults`' `speechSteering`, so an explicit
+ * value always wins over a default. The returned object always has
+ * `ttsInstructionsTemplate` and `speechSteering` (never `ttsInstructionsAppend`);
+ * `speechSteering` passes through so injection can filter the advertised markup vocabulary
+ * (`TTSMarkup.llmInstructions`) with it.
+ */
+export function resolveExpressiveOptions(
+  expr: ExpressiveOptions,
+  options: { providerKey: string; defaults: ExpressiveOptions },
+): ExpressiveOptions {
+  const { providerKey, defaults } = options;
+  let ttsTemplate = expr.ttsInstructionsTemplate ?? defaults.ttsInstructionsTemplate!;
+
+  const steering: SpeechSteeringOptions = {
+    ...(defaults.speechSteering ?? {}),
+    ...(expr.speechSteering ?? {}),
+  };
+  const fragment = steeringInstructions(providerKey, steering);
+  if (fragment) {
+    ttsTemplate = appendInstructions(ttsTemplate, fragment);
+  }
+
+  if (expr.ttsInstructionsAppend) {
+    ttsTemplate = appendInstructions(ttsTemplate, expr.ttsInstructionsAppend);
+  }
+
+  return { ttsInstructionsTemplate: ttsTemplate, speechSteering: steering };
+}
 
 export type AgentSessionUpdateOptions = {
   /** Configuration updates for turn handling. */
@@ -429,6 +520,34 @@ export class AgentSession<
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
   private readonly _aecWarmupDurationExplicit: boolean;
+
+  /**
+   * The session's expressive setting, as the user passed it.
+   * @internal
+   */
+  _expressive: boolean | ExpressiveOptions = false;
+
+  /**
+   * Whether the markup guide has been injected at least once this session.
+   *
+   * Latches on: it is what licenses the history scrub on a later expressive-off turn
+   * (a handoff to a TTS without a markup dialect builds a fresh `AgentActivity`, so the
+   * flag has to outlive it). Sessions that never enabled expressive keep it `false` and
+   * are never scrubbed.
+   *
+   * @internal
+   */
+  _expressiveEverActive = false;
+
+  /**
+   * Whether the "template has no markup-guide placeholder" warning has been emitted.
+   *
+   * Session-scoped so a misconfigured template warns once rather than once per turn, and
+   * survives a handoff (which builds a fresh `AgentActivity`).
+   *
+   * @internal
+   */
+  _warnedExpressiveTemplate = false;
 
   // Connection options for STT, LLM, and TTS
   private _connOptions: ResolvedSessionConnectOptions;
@@ -532,8 +651,10 @@ export class AgentSession<
       connOptions,
       tools,
       toolHandling,
+      expressive,
       ...resolvedSessionOptions
     } = opts;
+    this._expressive = expressive ?? false;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
