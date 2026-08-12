@@ -313,6 +313,54 @@ describe('TranscriptionSynchronizer attachment warnings', () => {
   });
 });
 
+class RemotePlaybackAudioOutput extends AudioOutput {
+  constructor() {
+    super(8000);
+  }
+
+  async captureFrame(frame: AudioFrame): Promise<void> {
+    await super.captureFrame(frame);
+  }
+
+  /** A remote renderer reports playback well after the frame was handed over. */
+  startPlayback(): void {
+    this.onPlaybackStarted(Date.now());
+  }
+
+  clearBuffer(): void {}
+}
+
+describe('TranscriptionSynchronizer remote playback anchor', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('anchors a rotated segment to reported playback, not the first pushed frame', async () => {
+    const warn = vi.fn();
+    vi.spyOn(logModule, 'log').mockReturnValue({
+      warn,
+      debug: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+    } as unknown as ReturnType<typeof logModule.log>);
+
+    const audio = new RemotePlaybackAudioOutput();
+    const synchronizer = new TranscriptionSynchronizer(audio, new MockTextOutput());
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    synchronizer.rotateSegment();
+    await synchronizer.audioOutput.captureFrame(frame);
+    audio.startPlayback();
+
+    expect(
+      warn.mock.calls.filter(
+        (c) => c[0] === 'SegmentSynchronizerImpl.onPlaybackStarted called after startFuture is set',
+      ),
+    ).toHaveLength(0);
+    await synchronizer.close();
+  });
+});
+
 class DroppingAudioOutput extends AudioOutput {
   constructor() {
     super(8000);

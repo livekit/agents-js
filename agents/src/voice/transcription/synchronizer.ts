@@ -707,7 +707,7 @@ export class TranscriptionSynchronizer {
     }
 
     await this._impl.close();
-    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
+    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain);
 
     if (this._paused) {
       this._impl.pause();
