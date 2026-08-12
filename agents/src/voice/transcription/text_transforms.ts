@@ -15,19 +15,37 @@ const linePatterns: Array<[RegExp, string]> = [
   [/^\s*>\s+/gm, ''],
 ];
 
+const fullLinePatterns: Array<[RegExp, string]> = [
+  [/^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/gm, ''],
+];
+
+// These scripts can put emphasis delimiters flush against a word character.
+const flushEmphasisScripts = String.raw`\u0e00-\u0e7f\u1100-\u11ff\u3040-\u30ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff66-\uff9d`;
+const unicodeWord = String.raw`[\p{L}\p{N}_]`;
+const intraword = String.raw`(?:(?![${flushEmphasisScripts}])${unicodeWord})`;
+const asteriskEmphasis = new RegExp(
+  String.raw`(?<!${intraword})(?<!\*)(\*{1,3})(?!\s)([^*\n]+?)(?<!\s)\1(?!${intraword})(?!\*)`,
+  'gu',
+);
+const underscoreEmphasis = new RegExp(
+  String.raw`(?<!${unicodeWord})(_{1,3})(?!\s)([^_\n]+?)(?<!\s)\1(?!${unicodeWord})`,
+  'gu',
+);
+
 const inlinePatterns: Array<[RegExp, string]> = [
   [/!\[([^\]]*)\]\([^)]*\)/g, '$1'],
   [/\[([^\]]*)\]\([^)]*\)/g, '$1'],
-  [/(?<![\w*])\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*(?![\w*])/g, '$1'],
-  [/(?<![\w*])\*(?!\s|\*)([^*\n]+?)(?<!\s)\*(?![\w*])/g, '$1'],
-  [/(?<!\w)__([^_]+?)__(?!\w)/g, '$1'],
-  [/(?<!\w)_([^_]+?)_(?!\w)/g, '$1'],
+  [asteriskEmphasis, '$2'],
+  [underscoreEmphasis, '$2'],
+  // nesting is order-dependent, so the asterisks get a second look once the underscores are gone
+  [asteriskEmphasis, '$2'],
   [/`{3,4}[\S]*/g, ''],
   [/`([^`]+?)`/g, '$1'],
-  [/~~(?!\s)([^~]*?)(?<!\s)~~/g, ''],
+  [/~~(?!\s)[^~]*?(?<!\s)~~/g, ''],
 ];
 
 const inlineSplitTokens = ' ,.?!;，。？！；';
+const inlineMarkers = /[*_`~\[]/;
 const completeLinksPattern = /\[[^\]]*\]\([^)]*\)/g;
 const completeImagesPattern = /!\[[^\]]*\]\([^)]*\)/g;
 const emojiPattern =
@@ -52,28 +70,29 @@ function countMatches(text: string, pattern: RegExp): number {
   return Array.from(text.matchAll(pattern)).length;
 }
 
+function countOccurrences(text: string, token: string): number {
+  return text.split(token).length - 1;
+}
+
+// Delimiters are literals, so counting by split keeps callers free of regex escaping
+// and compiles no pattern per buffer on the streaming path.
+function unbalanced(buffer: string, delimiter: string): boolean {
+  const doubles = countOccurrences(buffer, delimiter.repeat(2));
+  if (doubles % 2 === 1) return true;
+  return (countOccurrences(buffer, delimiter) - doubles * 2) % 2 === 1;
+}
+
 function hasIncompletePattern(buffer: string): boolean {
-  if (['#', '-', '+', '*', '>', '!', '`', '~', ' '].some((token) => buffer.endsWith(token))) {
+  if (['#', '-', '+', '*', '_', '>', '!', '`', '~', ' '].some((token) => buffer.endsWith(token))) {
     return true;
   }
 
-  const doubleAsterisks = countMatches(buffer, /\*\*/g);
-  if (doubleAsterisks % 2 === 1) return true;
+  if (unbalanced(buffer, '*') || unbalanced(buffer, '_')) return true;
 
-  const singleAsterisks = countMatches(buffer, /\*/g) - doubleAsterisks * 2;
-  if (singleAsterisks % 2 === 1) return true;
-
-  const doubleUnderscores = countMatches(buffer, /__/g);
-  if (doubleUnderscores % 2 === 1) return true;
-
-  const singleUnderscores = countMatches(buffer, /_/g) - doubleUnderscores * 2;
-  if (singleUnderscores % 2 === 1) return true;
-
-  const backticks = countMatches(buffer, /`/g);
-  if (backticks % 2 === 1) return true;
-
-  const doubleTildes = countMatches(buffer, /~~/g);
-  if (doubleTildes % 2 === 1) return true;
+  // incomplete code (`text`) or strikethrough (~~text~~)
+  if (countOccurrences(buffer, '`') % 2 === 1 || countOccurrences(buffer, '~~') % 2 === 1) {
+    return true;
+  }
 
   const openBrackets = countMatches(buffer, /\[/g);
   const completeLinks = countMatches(buffer, completeLinksPattern);
@@ -82,12 +101,20 @@ function hasIncompletePattern(buffer: string): boolean {
   return openBrackets - completeLinks - completeImages > 0;
 }
 
-function processCompleteText(text: string, isNewline = false): string {
+function processCompleteText(text: string, isNewline: boolean, isLineEnd: boolean): string {
   if (isNewline) {
+    if (isLineEnd) {
+      for (const [pattern, replacement] of fullLinePatterns) {
+        text = text.replace(pattern, replacement);
+      }
+    }
+
     for (const [pattern, replacement] of linePatterns) {
       text = text.replace(pattern, replacement);
     }
   }
+
+  if (!inlineMarkers.test(text)) return text;
 
   for (const [pattern, replacement] of inlinePatterns) {
     text = text.replace(pattern, replacement);
@@ -111,24 +138,22 @@ export function filterMarkdown(text: ReadableStream<string>): ReadableStream<str
 
           for (const [index, line] of lines.slice(0, -1).entries()) {
             const isNewline = index === 0 ? bufferIsNewline : true;
-            yield `${processCompleteText(line, isNewline)}\n`;
+            yield `${processCompleteText(line, isNewline, true)}\n`;
           }
 
           bufferIsNewline = true;
           continue;
         }
 
-        let lastSplitPos = 0;
-        for (const token of inlineSplitTokens) {
-          lastSplitPos = Math.max(lastSplitPos, buffer.lastIndexOf(token));
-          if (lastSplitPos >= buffer.length - 1) break;
-        }
+        const lastSplitPos = Math.max(
+          ...Array.from(inlineSplitTokens, (token) => buffer.lastIndexOf(token)),
+        );
 
         if (lastSplitPos >= 1) {
           const processable = buffer.slice(0, lastSplitPos);
           const rest = buffer.slice(lastSplitPos);
           if (!hasIncompletePattern(processable)) {
-            yield processCompleteText(processable, bufferIsNewline);
+            yield processCompleteText(processable, bufferIsNewline, false);
             buffer = rest;
             bufferIsNewline = false;
           }
@@ -136,7 +161,7 @@ export function filterMarkdown(text: ReadableStream<string>): ReadableStream<str
       }
 
       if (buffer) {
-        yield processCompleteText(buffer, bufferIsNewline);
+        yield processCompleteText(buffer, bufferIsNewline, true);
       }
     })(),
   );

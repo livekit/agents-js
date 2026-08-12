@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
-import { applyTextTransforms, replace } from './text_transforms.js';
+import { applyTextTransforms, filterMarkdown, replace } from './text_transforms.js';
 
 function streamText(text: string, chunkSize: number): ReadableStream<string> {
   return new ReadableStream<string>({
@@ -56,6 +56,121 @@ async function collectChunks(stream: ReadableStream<string>): Promise<string[]> 
   }
   return result;
 }
+
+async function filtered(text: string, chunkSize: number): Promise<string> {
+  return collect(filterMarkdown(streamText(text, chunkSize)));
+}
+
+const emphasisCases = [
+  ['He said *hello* again.', 'He said hello again.'],
+  ['This is **bold** text.', 'This is bold text.'],
+  ['_underscore italic_ here.', 'underscore italic here.'],
+  ['__underscore bold__ here.', 'underscore bold here.'],
+  ['This is ***very important*** text.', 'This is very important text.'],
+  ['Call ***now***!', 'Call now!'],
+  ['___Totally___ critical.', 'Totally critical.'],
+  ['Use ***both*** and **bold** and *italic*.', 'Use both and bold and italic.'],
+  ['Hi **Frankie**!', 'Hi Frankie!'],
+  ['See **Dr. Smith**.', 'See Dr. Smith.'],
+  ['Scheduled for **Monday**, at 9am.', 'Scheduled for Monday, at 9am.'],
+  ['Press (**1**) to confirm.', 'Press (1) to confirm.'],
+  ['Try "**this**" first.', 'Try "this" first.'],
+  ['Options: **a**, **b**, or **c**?', 'Options: a, b, or c?'],
+  ['He said *hello*!', 'He said hello!'],
+  ['It was *amazing*, really.', 'It was amazing, really.'],
+  ['Hi ***Frankie***!', 'Hi Frankie!'],
+  ['Press (***1***) to confirm.', 'Press (1) to confirm.'],
+  ['**_mixed_** here.', 'mixed here.'],
+  ['_**mixed**_ here.', 'mixed here.'],
+  ['这是**很重要**的文本。', '这是很重要的文本。'],
+  ['这是***非常重要***的文本。', '这是非常重要的文本。'],
+  ['这是*重要*的文本。', '这是重要的文本。'],
+  ['テスト**強調**です。', 'テスト強調です。'],
+  ['**中文**开头。', '中文开头。'],
+  ['นี่คือ**ข้อความ**สำคัญ', 'นี่คือข้อความสำคัญ'],
+  ['이것은 **중요**합니다.', '이것은 중요합니다.'],
+  ['한국어**강조**입니다.', '한국어강조입니다.'],
+  ['한국어***강조***입니다.', '한국어강조입니다.'],
+  ['이것은 *중요*합니다.', '이것은 중요합니다.'],
+] as const;
+
+const preserveCases = [
+  '2 * 3 = 6',
+  'Use *.py files',
+  'x**2 + y**2 = z**2',
+  'a ** b evaluated right-to-left',
+  'cost = a *** b',
+  '__dunder_method__ stays',
+  'a___b and MAX___VALUE',
+  'snake___case___name',
+  'call some_function_name here',
+  'テスト__強調__です。',
+  '变量__name__的值',
+  '한국어__강조__입니다.',
+  '****quad****',
+  '____quad____',
+  '**bold***italic*',
+  '*italic***bold**',
+  'see ***** here',
+  'unterminated ***open',
+  'unterminated ___open',
+] as const;
+
+const horizontalRuleCases = [
+  ['before\n---\nafter', 'before\n\nafter'],
+  ['before\n***\nafter', 'before\n\nafter'],
+  ['before\n___\nafter', 'before\n\nafter'],
+  ['before\n-----\nafter', 'before\n\nafter'],
+  ['before\n  ---  \nafter', 'before\n\nafter'],
+  ['*****', ''],
+  ['before\n* * *\nafter', 'before\n\nafter'],
+  ['before\n- - -\nafter', 'before\n\nafter'],
+  ['before\n_ _ _\nafter', 'before\n\nafter'],
+  ['before\n   - - - \nafter', 'before\n\nafter'],
+  ['wait --- what?', 'wait --- what?'],
+  ['a -- b', 'a -- b'],
+  ['before\n    ---\nafter', 'before\n    ---\nafter'],
+  ['before\n\t---\nafter', 'before\n\t---\nafter'],
+] as const;
+
+describe('textTransforms.filterMarkdown', () => {
+  for (const [text, expected] of emphasisCases) {
+    for (const chunkSize of [1, 2, 3, 7, 50]) {
+      it(`strips emphasis from ${JSON.stringify(text)} with chunk size ${chunkSize}`, async () => {
+        expect(await filtered(text, chunkSize)).toBe(expected);
+      });
+    }
+  }
+
+  for (const text of preserveCases) {
+    for (const chunkSize of [1, 3, 7, 50]) {
+      it(`preserves ${JSON.stringify(text)} with chunk size ${chunkSize}`, async () => {
+        expect(await filtered(text, chunkSize)).toBe(text);
+      });
+    }
+  }
+
+  for (const [text, expected] of horizontalRuleCases) {
+    for (const chunkSize of [1, 3, 50]) {
+      it(`handles horizontal rule ${JSON.stringify(text)} with chunk size ${chunkSize}`, async () => {
+        expect(await filtered(text, chunkSize)).toBe(expected);
+      });
+    }
+  }
+
+  for (const text of [
+    ...emphasisCases.map(([input]) => input),
+    ...preserveCases,
+    ...horizontalRuleCases.map(([input]) => input),
+  ]) {
+    it(`produces chunk-independent output for ${JSON.stringify(text)}`, async () => {
+      const outputs = await Promise.all(
+        [1, 2, 3, 5, 7, 11, 50, 1_000].map((chunkSize) => filtered(text, chunkSize)),
+      );
+      expect(new Set(outputs).size).toBe(1);
+    });
+  }
+});
 
 describe('textTransforms.replace', () => {
   for (const chunkSize of [1, 2, 5, 11, 50]) {
