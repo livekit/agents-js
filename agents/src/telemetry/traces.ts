@@ -744,7 +744,7 @@ export async function uploadSessionReport(options: {
   const { agentName, cloudHostname, report } = options;
   const metadata = options.metadata ?? {};
 
-  if (!recordingEnabled(report.recordingOptions)) {
+  if (!recordingEnabled(report.options.recordingOptions)) {
     return;
   }
 
@@ -793,7 +793,7 @@ export async function uploadSessionReport(options: {
   // This fixes the issue where function_call and function_call_output with same timestamp
   // get reordered by the dashboard
   let lastTimestamp = 0;
-  const chatItems = report.recordingOptions.transcript ? report.chatHistory.items : [];
+  const chatItems = report.options.recordingOptions.transcript ? report.chatHistory.items : [];
   for (const item of chatItems) {
     // Skip null/undefined items
     if (!item) continue;
@@ -830,11 +830,13 @@ export async function uploadSessionReport(options: {
   await logExporter.export(logRecords);
 
   const hasAudio = Boolean(
-    report.recordingOptions.audio && report.audioRecordingPath && report.audioRecordingStartedAt,
+    report.options.recordingOptions.audio &&
+      report.audioRecordingPath &&
+      report.audioRecordingStartedAt,
   );
   // Nothing to send to the recordings endpoint when neither the transcript nor
   // audio is being captured.
-  if (!report.recordingOptions.transcript && !hasAudio) {
+  if (!report.options.recordingOptions.transcript && !hasAudio) {
     return;
   }
 
@@ -882,7 +884,7 @@ export async function uploadSessionReport(options: {
   // snake_case conversion lives only in sessionReportToJSON (toSnakeCaseDeep). Serializing
   // raw toJSON() here would send camelCase and fail the Python consumer's pydantic validation
   // (e.g. call_id/arguments/is_error/new_agent_id reported as missing).
-  if (report.recordingOptions.transcript) {
+  if (report.options.recordingOptions.transcript) {
     const chatHistoryJson = JSON.stringify(sessionReportToJSON(report).chat_history);
     const chatHistoryBuffer = Buffer.from(chatHistoryJson, 'utf-8');
     formData.append('chat_history', chatHistoryBuffer, {
@@ -898,7 +900,7 @@ export async function uploadSessionReport(options: {
 
   // Add audio recording file if available
   if (
-    report.recordingOptions.audio &&
+    report.options.recordingOptions.audio &&
     report.audioRecordingPath &&
     report.audioRecordingStartedAt
   ) {

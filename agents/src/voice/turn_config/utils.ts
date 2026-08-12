@@ -6,6 +6,7 @@ import { log } from '../../log.js';
 import {
   type AgentSessionOptions,
   type InternalSessionOptions,
+  type ResolvedRecordingOptions,
   type TurnDetectionMode,
   type VoiceOptions,
 } from '../agent_session.js';
@@ -28,7 +29,14 @@ const defaultSessionOptions = {
   turnHandling: {},
   useTtsAlignedTranscript: true,
   ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
-} as const satisfies AgentSessionOptions;
+  recordingOptions: {
+    audio: false,
+    traces: false,
+    logs: false,
+    transcript: false,
+    redaction: false,
+  },
+} as const satisfies AgentSessionOptions & { recordingOptions: ResolvedRecordingOptions };
 
 const defaultLegacyVoiceOptions: VoiceOptions = {
   minEndpointingDelay: defaultTurnHandlingOptions.endpointing.minDelay,

@@ -25,7 +25,8 @@ import {
 import type { AgentSessionUsage } from './index.js';
 import { createSessionReport, sessionReportToJSON } from './report.js';
 
-type ReportOptions = AgentSessionOptions & Partial<VoiceOptions>;
+type ReportOptions = AgentSessionOptions &
+  Partial<VoiceOptions> & { recordingOptions: ResolvedRecordingOptions };
 
 function baseOptions(): ReportOptions {
   return {
@@ -34,6 +35,13 @@ function baseOptions(): ReportOptions {
     useTtsAlignedTranscript: true,
     turnHandling: {
       preemptiveGeneration: { enabled: false },
+    },
+    recordingOptions: {
+      audio: false,
+      traces: false,
+      logs: false,
+      transcript: false,
+      redaction: false,
     },
   };
 }
@@ -395,36 +403,36 @@ describe('sessionReportToJSON', () => {
 });
 
 describe('createSessionReport recordingOptions', () => {
-  function makeReport(recordingOptions?: ResolvedRecordingOptions) {
+  function makeReport(recordingOptions: ResolvedRecordingOptions) {
+    const options = baseOptions();
+    options.recordingOptions = recordingOptions;
     return createSessionReport({
       jobId: 'job',
       roomId: 'room-id',
       room: 'room',
-      options: baseOptions(),
+      options,
       events: [],
       chatHistory: ChatContext.empty(),
-      recordingOptions,
     });
   }
 
-  it('defaults every recording category to off when omitted', () => {
-    expect(makeReport().recordingOptions).toEqual({
-      audio: false,
-      traces: false,
-      logs: false,
-      transcript: false,
-      redaction: false,
-    });
-  });
-
-  it('passes provided recording options through', () => {
+  it('includes recording options in report options and serializes a defensive copy', () => {
     const recordingOptions: ResolvedRecordingOptions = {
-      audio: true,
+      audio: false,
       traces: false,
       logs: true,
       transcript: false,
       redaction: true,
     };
-    expect(makeReport(recordingOptions).recordingOptions).toEqual(recordingOptions);
+    const report = makeReport(recordingOptions);
+    expect(report.options.recordingOptions).toEqual(recordingOptions);
+
+    const serializedRecordingOptions = (
+      sessionReportToJSON(report).options as Record<string, unknown>
+    ).recording_options as ResolvedRecordingOptions;
+    expect(serializedRecordingOptions).toEqual(recordingOptions);
+
+    serializedRecordingOptions.audio = true;
+    expect(report.options.recordingOptions.audio).toBe(false);
   });
 });

@@ -339,16 +339,15 @@ describe('setupCloudTracer with a user-configured provider', () => {
   });
 });
 
-function makeReport(recordingOptions: SessionReport['recordingOptions']): SessionReport {
+function makeReport(recordingOptions: SessionReport['options']['recordingOptions']): SessionReport {
   return {
     jobId: 'job1',
     roomId: 'room1',
     room: 'room-name',
-    options: {},
+    options: { recordingOptions },
     events: [],
     chatHistory: ChatContext.empty(),
     enableRecording: true,
-    recordingOptions,
     startedAt: 1_700_000_000_000,
     timestamp: 1_700_000_001_000,
   };
