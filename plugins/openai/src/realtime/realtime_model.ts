@@ -721,7 +721,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const events: (
-      api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent
+      | api_proto.ConversationItemCreateEvent
+      | api_proto.ConversationItemDeleteEvent
     )[] = [];
 
     const remoteCtx = this.chatCtx;
