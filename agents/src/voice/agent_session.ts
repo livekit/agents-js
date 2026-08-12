@@ -204,6 +204,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
   ttsTextTransforms: readonly TextTransform[] | null;
+  /** Resolved per-category recording options for this session. */
   recordingOptions: ResolvedRecordingOptions;
 }
 
