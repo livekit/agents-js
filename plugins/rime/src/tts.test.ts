@@ -38,14 +38,11 @@ describe('Rime TTS streaming', () => {
   it('preserves model-specific default speakers', () => {
     const defaultTTS = new TTS({ apiKey: 'test-rime-key' });
     const explicitCodaTTS = new TTS({ apiKey: 'test-rime-key', modelId: 'coda' });
-    const explicitArcanaTTS = new TTS({ apiKey: 'test-rime-key', modelId: 'arcana' });
 
     expect(defaultTTS).toHaveProperty('opts.modelId', 'coda');
     expect(defaultTTS).toHaveProperty('opts.speaker', 'luna');
     expect(explicitCodaTTS).toHaveProperty('opts.modelId', 'coda');
     expect(explicitCodaTTS).toHaveProperty('opts.speaker', 'lyra');
-    expect(explicitArcanaTTS).toHaveProperty('opts.modelId', 'arcana');
-    expect(explicitArcanaTTS).toHaveProperty('opts.speaker', 'luna');
   });
 
   it('emits audio before the Rime response body closes', async () => {
@@ -68,6 +65,11 @@ describe('Rime TTS streaming', () => {
       baseURL: 'https://rime.test/v1/rime-tts',
       modelId: 'coda',
       samplingRate: 16000,
+      repetition_penalty: 1.1,
+      temperature: 0.5,
+      top_p: 0.9,
+      max_tokens: 200,
+      timeScaleFactor: 1.2,
     });
 
     const stream = rimeTTS.synthesize('This should stream before the response ends.');
@@ -88,6 +90,11 @@ describe('Rime TTS streaming', () => {
     expect(JSON.parse(request?.body as string)).toMatchObject({
       modelId: 'coda',
       speaker: 'lyra',
+      repetition_penalty: 1.1,
+      temperature: 0.5,
+      top_p: 0.9,
+      max_tokens: 200,
+      timeScaleFactor: 1.2,
     });
 
     bodyController.close();

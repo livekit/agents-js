@@ -3,4 +3,4 @@
 '@livekit/agents-plugin-rime': minor
 ---
 
-Use Rime Coda while preserving the established default speakers, and stop advertising Arcana in model types. Explicit Arcana strings continue to use the existing runtime compatibility path.
+⚠️ Remove Rime Arcana model support before Rime's cloud cutoff on August 15, 2026 at 12:00 UTC. Set `modelId` to `coda` when you upgrade. The default paths keep their established speakers for voice continuity.

@@ -32,7 +32,7 @@ const RIME_TTS_CHANNELS = 1;
  *
  * @param opts - Optional TTS configuration options
  * @returns The sample rate in Hz. Returns the explicit samplingRate if provided,
- *          otherwise returns model-specific defaults (24000 for arcana, 16000 for mistv2,
+ *          otherwise returns model-specific defaults (24000 for coda, 16000 for mistv2,
  *          or the default RIME_TTS_SAMPLE_RATE for other models)
  */
 function getSampleRate(opts?: Partial<TTSOptions>): number {
@@ -40,7 +40,6 @@ function getSampleRate(opts?: Partial<TTSOptions>): number {
     return opts.samplingRate;
   }
   switch (opts?.modelId) {
-    case 'arcana':
     case 'coda':
       return 24000;
     case 'mistv2':
@@ -90,13 +89,10 @@ function modelParams(opts: TTSOptions): Record<string, string | number | boolean
   const params: Record<string, string | number | boolean> = {};
   if (opts.lang !== undefined) params.lang = opts.lang;
 
-  if (opts.modelId === 'arcana') {
+  if (opts.modelId === 'coda') {
     if (opts.repetition_penalty !== undefined) params.repetition_penalty = opts.repetition_penalty;
     if (opts.temperature !== undefined) params.temperature = opts.temperature;
     if (opts.top_p !== undefined) params.top_p = opts.top_p;
-    if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
-    if (opts.timeScaleFactor !== undefined) params.timeScaleFactor = opts.timeScaleFactor;
-  } else if (opts.modelId === 'coda') {
     if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
     if (opts.timeScaleFactor !== undefined) params.timeScaleFactor = opts.timeScaleFactor;
   } else if (opts.modelId.includes('mist')) {
