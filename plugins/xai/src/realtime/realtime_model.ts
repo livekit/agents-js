@@ -29,9 +29,7 @@ export type GrokVoices = 'eve' | 'ara' | 'rex' | 'sal' | 'leo';
 
 // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/types.py - 39-42 lines
 export type GrokRealtimeModels =
-  | 'grok-voice-fast-1.0'
-  | 'grok-voice-think-fast-1.0'
-  | 'grok-voice-think-fast-2.0';
+  'grok-voice-fast-1.0' | 'grok-voice-think-fast-1.0' | 'grok-voice-think-fast-2.0';
 
 export interface RealtimeModelOptions extends Omit<OpenAIRealtimeModelOptions, 'model'> {
   model?: GrokRealtimeModels | string;

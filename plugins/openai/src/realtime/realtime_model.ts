@@ -721,8 +721,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const events: (
-      | api_proto.ConversationItemCreateEvent
-      | api_proto.ConversationItemDeleteEvent
+      api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent
     )[] = [];
 
     const remoteCtx = this.chatCtx;
@@ -732,23 +731,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
 
     const diffOps = llm.computeChatCtxDiff(remoteCtx, newChatCtx);
-    for (const [index, item] of newChatCtx.items.entries()) {
-      const remoteItem = remoteCtx.getById(item.id);
-      if (
-        remoteItem &&
-        JSON.stringify(remoteItem.toJSON(true)) !== JSON.stringify(item.toJSON(true)) &&
-        !diffOps.toRemove.includes(item.id) &&
-        !diffOps.toCreate.some(([, id]) => id === item.id)
-      ) {
-        diffOps.toRemove.push(item.id);
-        diffOps.toCreate.push([newChatCtx.items[index - 1]?.id ?? null, item.id]);
-      }
-    }
-    diffOps.toCreate.sort(
-      ([, left], [, right]) =>
-        (newChatCtx.indexById(left) ?? Number.MAX_SAFE_INTEGER) -
-        (newChatCtx.indexById(right) ?? Number.MAX_SAFE_INTEGER),
-    );
     for (const op of diffOps.toRemove) {
       events.push({
         type: 'conversation.item.delete',
