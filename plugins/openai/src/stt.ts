@@ -118,7 +118,7 @@ export function buildRealtimeTranscriptionConfig(options: {
   const languages = normalizedLanguages(options.languages);
   return {
     model: options.model,
-    prompt: options.prompt ?? '',
+    ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
     ...(supportsHints
       ? {
           keywords: options.keywords ?? [],
@@ -338,8 +338,7 @@ export class STT extends stt.STT {
    * `OPENAI_API_KEY` environment variable.
    */
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
-    const useRealtime =
-      opts.useRealtime ?? (opts.model ? isRealtimeOnly(opts.model) : defaultSTTOptions.useRealtime);
+    const useRealtime = opts.useRealtime ?? defaultSTTOptions.useRealtime;
     const model = opts.model ?? (useRealtime ? DEFAULT_REALTIME_MODEL : 'whisper-1');
     super({
       streaming: useRealtime,
@@ -375,6 +374,13 @@ export class STT extends stt.STT {
     const keywords = [...(opts.keywords ?? [])];
     validateContext(model, languages, keywords);
     this.#userKeywords = keywords;
+    let temperature = opts.temperature;
+    if (useRealtime && temperature !== undefined) {
+      console.warn(
+        'temperature is not supported for realtime transcription; ignoring the provided value',
+      );
+      temperature = undefined;
+    }
 
     this.#opts = {
       ...defaultSTTOptions,
@@ -386,6 +392,7 @@ export class STT extends stt.STT {
       useRealtime,
       turnDetection,
       vad: resolvedVad,
+      temperature,
     };
 
     this.#client =
@@ -534,6 +541,8 @@ export class STT extends stt.STT {
               this.#specifiedLanguages)
             : this.#opts.languages;
     const userKeywords = opts.keywords !== undefined ? [...opts.keywords] : this.#userKeywords;
+    const vad = opts.vad !== undefined ? opts.vad : this.#opts.vad;
+    const vadOptedOut = opts.vad === null || (opts.vad === undefined && this.#vadOptedOut);
     validateContext(model, languages, userKeywords);
     if (opts.language === undefined) {
       for (const stream of this.#streams) {
@@ -541,13 +550,13 @@ export class STT extends stt.STT {
       }
     }
     if (opts.model !== undefined && isRealtimeOnly(opts.model)) {
-      if (!this.capabilities.streaming) {
+      if (!useRealtime) {
         throw new Error(
           `${model} is served only over the realtime API, and this STT was created for the ` +
             'transcriptions endpoint; pass useRealtime: true to the constructor to reach it',
         );
       }
-      if (!this.#opts.vad && !this.#vadOptedOut) {
+      if (!vad && !vadOptedOut) {
         throw new Error(
           `${model} has no server-side endpointing, so it needs a vad to commit the audio buffer`,
         );
@@ -563,8 +572,15 @@ export class STT extends stt.STT {
             ? DEFAULT_REALTIME_TURN_DETECTION
             : this.#opts.turnDetection,
     );
-    if (useRealtime && !this.#vadOptedOut) {
-      _validateRealtimeVad(model, turnDetection, opts.vad ?? this.#opts.vad ?? undefined);
+    if (useRealtime && !vadOptedOut) {
+      _validateRealtimeVad(model, turnDetection, vad ?? undefined);
+    }
+    let temperature = opts.temperature ?? this.#opts.temperature;
+    if (useRealtime && temperature !== undefined) {
+      console.warn(
+        'temperature is not supported for realtime transcription; ignoring the provided value',
+      );
+      temperature = undefined;
     }
     const languagesChanged =
       languages.some((value, index) => value !== this.#opts.languages[index]) ||
@@ -572,6 +588,7 @@ export class STT extends stt.STT {
     const languageGiven = opts.language !== undefined || languagesChanged;
     if (languages.length > 0) this.#specifiedLanguages = languages;
     this.#userKeywords = userKeywords;
+    this.#vadOptedOut = vadOptedOut;
     const keywords = supportsContextHints(model)
       ? [...new Set([...userKeywords, ...this.#sessionKeyterms])]
       : [];
@@ -584,6 +601,8 @@ export class STT extends stt.STT {
       model,
       useRealtime,
       turnDetection,
+      temperature,
+      vad,
     };
     this.updateCapabilities({
       streaming: useRealtime,
@@ -699,7 +718,10 @@ export class SpeechStream extends stt.SpeechStream {
     if (!this.#ws) return;
     if (modelChanged || clearedLanguage) {
       this.#reconnectRequested = true;
-      this.#ws.close();
+      const ws = this.#ws;
+      this.#ws = undefined;
+      this.#wsReady.clear();
+      ws.close();
       return;
     }
     try {
@@ -823,7 +845,10 @@ export class SpeechStream extends stt.SpeechStream {
         for (const frame of audioStream.flush()) {
           this.#sendAudioFrame(ws, frame);
         }
-        if (isRealtimeOnly(this.#options.model) && !this.#options.vad) {
+        if (
+          _requiresRealtimeVad(this.#options.model, this.#options.turnDetection) &&
+          !this.#options.vad
+        ) {
           ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
         }
         continue;
@@ -843,7 +868,7 @@ export class SpeechStream extends stt.SpeechStream {
         this.#emitStartOfSpeech();
       } else if (event.type === VADEventType.END_OF_SPEECH) {
         this.#emitEndOfSpeech();
-        if (isRealtimeOnly(this.#options.model)) {
+        if (_requiresRealtimeVad(this.#options.model, this.#options.turnDetection)) {
           ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
         }
       }

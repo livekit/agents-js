@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { VAD as BaseVAD, type VADStream } from '@livekit/agents';
+import { VAD as BaseVAD, VADEventType, type VADStream } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { AudioFrame } from '@livekit/rtc-node';
@@ -26,12 +26,44 @@ class FakeVAD extends BaseVAD {
   }
 }
 
+class EndOnFrameVAD extends BaseVAD {
+  label = 'end-on-frame-vad';
+
+  stream(): VADStream {
+    let resolveNext: ((result: IteratorResult<{ type: VADEventType }>) => void) | undefined;
+    const stream = {
+      [Symbol.asyncIterator]() {
+        return stream;
+      },
+      next() {
+        return new Promise<IteratorResult<{ type: VADEventType }>>((resolve) => {
+          resolveNext = resolve;
+        });
+      },
+      pushFrame() {
+        resolveNext?.({ done: false, value: { type: VADEventType.END_OF_SPEECH } });
+        resolveNext = undefined;
+      },
+      endInput() {},
+      close() {},
+    };
+    return stream as unknown as VADStream;
+  }
+}
+
 async function waitFor(ready: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt++) {
     if (ready()) return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error('timed out waiting for condition');
+}
+
+function transcriptionOf(message: Record<string, unknown>): Record<string, unknown> | undefined {
+  const session = message.session as Record<string, unknown> | undefined;
+  const audio = session?.audio as Record<string, unknown> | undefined;
+  const input = audio?.input as Record<string, unknown> | undefined;
+  return input?.transcription as Record<string, unknown> | undefined;
 }
 
 describe('OpenAI STT options', () => {
@@ -102,6 +134,12 @@ describe('OpenAI STT options', () => {
       keywords: ['premium plan', 'AC-42'],
       languages: ['en', 'fr'],
     });
+  });
+
+  it('omits a prompt that was not set', () => {
+    expect(
+      buildRealtimeTranscriptionConfig({ model: 'gpt-transcribe', languages: ['en'] }),
+    ).not.toHaveProperty('prompt');
   });
 
   it('normalizes context-hint languages to unique ISO-639 base codes', () => {
@@ -182,13 +220,14 @@ describe('OpenAI STT options', () => {
   });
 
   it.each([
-    ['gpt-live-transcribe', true],
-    ['gpt-realtime-whisper', true],
-    ['gpt-4o-mini-transcribe', false],
-    ['whisper-1', false],
-  ])('defaults %s to its supported transport', (model, realtime) => {
+    'gpt-live-transcribe',
+    'gpt-realtime-whisper',
+    'gpt-4o-transcribe',
+    'gpt-4o-mini-transcribe',
+    'whisper-1',
+  ])('preserves the target realtime default for %s', (model) => {
     const openai = new STT({ apiKey: 'test-key', model, vad: null });
-    expect(openai.capabilities.streaming).toBe(realtime);
+    expect(openai.capabilities.streaming).toBe(true);
   });
 
   it('requires realtime transport when switching to a realtime-only model', () => {
@@ -206,6 +245,34 @@ describe('OpenAI STT options', () => {
   it('loads the bundled VAD for realtime-only models', () => {
     const openai = new STT({ apiKey: 'test-key', model: 'gpt-live-transcribe' });
     expect(() => openai.stream().close()).not.toThrow();
+  });
+
+  it('accepts realtime transport and VAD supplied with a realtime-only model switch', () => {
+    const vad = new FakeVAD({ updateInterval: 1 });
+    const openai = new STT({
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini-transcribe',
+      useRealtime: false,
+    });
+
+    expect(() =>
+      openai.updateOptions({ model: 'gpt-live-transcribe', useRealtime: true, vad }),
+    ).not.toThrow();
+    expect(openai.capabilities.streaming).toBe(true);
+  });
+
+  it('warns and drops temperature for realtime transcription', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    new STT({
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini-transcribe',
+      temperature: 0.2,
+      vad: null,
+    });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('temperature is not supported'));
+    warn.mockRestore();
   });
 
   it('fills in server_vad when turn detection omits its discriminator', () => {
@@ -340,8 +407,17 @@ describe('OpenAI realtime STT context', () => {
     ).not.toHaveProperty('languages');
 
     openai.updateOptions({ model: 'gpt-4o-mini-transcribe', keywords: [], language: 'fr' });
-    await waitFor(() => connections === 3 && messages.length === 5);
-    expect(messages[4]).toMatchObject({
+    const samples = 24000 / 20;
+    stream.pushFrame(new AudioFrame(new Int16Array(samples), 24000, 1, samples));
+    await waitFor(
+      () =>
+        connections === 3 &&
+        messages.some((message) => message.type === 'input_audio_buffer.append'),
+    );
+    const modelUpdate = messages.find(
+      (message) => transcriptionOf(message)?.model === 'gpt-4o-mini-transcribe',
+    );
+    expect(modelUpdate).toMatchObject({
       session: {
         audio: {
           input: {
@@ -351,6 +427,33 @@ describe('OpenAI realtime STT context', () => {
         },
       },
     });
+
+    stream.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('commits from client VAD when server turn detection is disabled', async () => {
+    const server = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    if (typeof address === 'string' || address === null) throw new Error('missing server address');
+    const messages: Record<string, unknown>[] = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (data) => messages.push(JSON.parse(data.toString())));
+    });
+    const openai = new STT({
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${address.port}/v1`,
+      model: 'gpt-4o-transcribe',
+      turnDetection: null,
+      vad: new EndOnFrameVAD({ updateInterval: 1 }),
+    });
+    const stream = openai.stream();
+    await waitFor(() => messages.length === 1);
+
+    const samples = 24000 / 20;
+    stream.pushFrame(new AudioFrame(new Int16Array(samples), 24000, 1, samples));
+    await waitFor(() => messages.some((message) => message.type === 'input_audio_buffer.commit'));
 
     stream.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
