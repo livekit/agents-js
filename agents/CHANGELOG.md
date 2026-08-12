@@ -1,5 +1,87 @@
 # @livekit/agents
 
+## 1.6.3
+
+### Patch Changes
+
+- Include resolved recording options under session report options instead of as a top-level field. - [#2274](https://github.com/livekit/agents-js/pull/2274) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Use the active agent endpointing delay while holding pending replies during user speech. - [#2276](https://github.com/livekit/agents-js/pull/2276) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Default null token counts in OpenAI-compatible streaming usage payloads to zero. - [#2250](https://github.com/livekit/agents-js/pull/2250) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `ChatContext.remove()` for removing chat items by item or ID. - [#1963](https://github.com/livekit/agents-js/pull/1963) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix: wait 100ms before the first retry, not 0.1ms - [#2219](https://github.com/livekit/agents-js/pull/2219) ([@u9g](https://github.com/u9g))
+
+  `intervalForRetry` returned `0.1` for the first retry — Python's 0.1 _seconds_, carried over
+  without converting to the milliseconds every caller passes to `setTimeout`/`delay`. Its other
+  branch returns `retryIntervalMs`, so the two return paths were in different units. Measured,
+  the first retry waited ~3ms (scheduling overhead alone) against Python's 100ms.
+
+  This affects every retrying component — LLM, STT, TTS, avatars, and the turn-detector
+  transport — where a first retry reattempted essentially instantly.
+
+- Expose prompt-cache creation token counts in LLM metrics and model usage. - [#2257](https://github.com/livekit/agents-js/pull/2257) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(inference): keep a stream retryable until it emits generation - [#2219](https://github.com/livekit/agents-js/pull/2219) ([@u9g](https://github.com/u9g))
+
+  `retryable` was cleared by any chunk reaching the caller, including ones that carry no
+  output: a usage block, or provider metadata such as the LiveKit inference gateway's
+  deployment/tier stamp or a Gemini thought signature. The gateway stamps its leading
+  (contentless) delta, so every streamed response went unretryable from its first chunk — a
+  mid-stream stall then failed the turn outright rather than retrying, with nothing generated
+  and nothing for a retry to duplicate. Only failures landing before the very first chunk
+  still recovered.
+
+  `retryable` is now cleared on text or a tool call, the output a retry would actually repeat.
+
+- fix(llm): measure ttft against generation, not the first chunk to arrive - [#2219](https://github.com/livekit/agents-js/pull/2219) ([@u9g](https://github.com/u9g))
+
+  The time-to-first-token clock started on whatever chunk arrived first. That was harmless
+  while a stream went unretryable at its first chunk, because a retry then implied nothing had
+  arrived. Now that a contentless chunk keeps a stream retryable, the metadata chunk of a
+  _failed_ attempt starts the clock, and the turn reports a near-zero ttft for a wait that
+  spanned a stall and a retry — so retried turns read as faster than a normal one rather than
+  slower.
+
+  The clock now starts on generation, in both the metrics monitor and the voice pipeline's
+  span. A response that generates nothing continues to report `ttftMs` as -1.
+
+- Support low-priority LiveKit inference requests. - [#2268](https://github.com/livekit/agents-js/pull/2268) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add expressive mode: `AgentSession({ expressive: true })` injects the TTS provider's markup guide into the LLM prompt so the model emits inline `<expr/>` delivery markers (emotion, pacing, non-verbal sounds). The markers are lowered to each provider's native syntax before synthesis (Cartesia, Inworld TTS 2, xAI, Fish Audio) and stripped from transcripts, with the segment's leading expression surfaced as the `lk.expression` transcription attribute. Steer delivery with `ExpressiveOptions.speechSteering` or override the injected prompt entirely. - [#2267](https://github.com/livekit/agents-js/pull/2267) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Fix worker cleanup after LiveKit connection retries are exhausted. - [#1889](https://github.com/livekit/agents-js/pull/1889) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Avoid throwing when interrupting protected speech that was already interrupted or completed. - [#2252](https://github.com/livekit/agents-js/pull/2252) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Hold pending agent replies when user speech overlaps their playout launch. - [#2263](https://github.com/livekit/agents-js/pull/2263) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(agents): stop a terminally failed stream leaving an unhandled rejection - [#2219](https://github.com/livekit/agents-js/pull/2219) ([@u9g](https://github.com/u9g))
+
+  `LLMStream` and `STTStream` dropped the promise from their fire-and-forget main task, so a
+  stream that exhausted its retries rejected with no handler attached — reaching the job
+  process's `unhandledRejection` hook as a spurious crash report for a failure already
+  delivered through the `error` event, and failing any test run that exercises the path.
+
+  The task is now awaited inside a `try`/`finally` that closes the queue either way, matching
+  what `TTSStream` already does.
+
+- Avoid dropping realtime turns or resuming agent speech before a paused turn decision settles. - [#2204](https://github.com/livekit/agents-js/pull/2204) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  A turn decision that is cancelled no longer resumes the paused speech, and one that fails no
+  longer leaves the agent's audio output paused indefinitely.
+
+- Keep defaulted const fields non-nullable in strict tool schemas. - [#2262](https://github.com/livekit/agents-js/pull/2262) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Stop interrupting queued speech at the first live speech that disallows interruptions, preserving - [#2251](https://github.com/livekit/agents-js/pull/2251) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+  it and the queued speech behind it.
+
+- Strip markdown emphasis from CJK, kana, Thai, and Korean text before TTS. - [#2175](https://github.com/livekit/agents-js/pull/2175) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix: omit interruption telemetry from normal user turns - [#2265](https://github.com/livekit/agents-js/pull/2265) ([@chenghao-mou](https://github.com/chenghao-mou))
+
 ## 1.6.2
 
 ### Patch Changes

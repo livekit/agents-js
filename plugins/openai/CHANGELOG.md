@@ -1,5 +1,32 @@
 # @livekit/agents-plugin-openai
 
+## 1.6.3
+
+### Patch Changes
+
+- Support context hints and code-switched language lists in OpenAI STT. - [#2233](https://github.com/livekit/agents-js/pull/2233) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(openai): delete the realtime item instead of truncating it when no audio played - [#1903](https://github.com/livekit/agents-js/pull/1903) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(openai): keep a Responses stream retryable until it emits generation - [#2219](https://github.com/livekit/agents-js/pull/2219) ([@u9g](https://github.com/u9g))
+
+  `retryable` was cleared by every event the HTTP stream processed, including events that
+  emit no chunk at all. `response.created` opens every stream, so a Responses request went
+  unretryable from its first event regardless of provider — a mid-stream stall then failed
+  the turn outright with nothing generated and nothing for a retry to duplicate. The
+  WebSocket path had the mirror defect: it never cleared `retryable`, so a socket dropping
+  after text had already streamed retried and regenerated it.
+
+  Both paths now clear `retryable` on text or a tool call, the output a retry would actually
+  repeat. The phase marker and the usage-bearing completion event are not.
+
+- Update the Cerebras model catalog and default to currently available models. - [#2193](https://github.com/livekit/agents-js/pull/2193) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Emit one final xAI user transcript per turn and settle rejected realtime chat context updates. - [#2238](https://github.com/livekit/agents-js/pull/2238) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`127b100`](https://github.com/livekit/agents-js/commit/127b10037ad405f89ba423c8f6b425106272021b), [`5ed9d72`](https://github.com/livekit/agents-js/commit/5ed9d7289f7ae73976378c21d3b1c7c4627f08d1), [`7e9f46e`](https://github.com/livekit/agents-js/commit/7e9f46ef021700279db1c16ef652354239ffec92), [`4b35349`](https://github.com/livekit/agents-js/commit/4b353492f903c4bce34c917ec27ec4750ece122d), [`ce2d287`](https://github.com/livekit/agents-js/commit/ce2d28778b7105848beed7e57b0c5384ca4c30cf), [`98831f7`](https://github.com/livekit/agents-js/commit/98831f71d5dbdb94c9722e87aaa5ab07ba2a3525), [`ce2d287`](https://github.com/livekit/agents-js/commit/ce2d28778b7105848beed7e57b0c5384ca4c30cf), [`ce2d287`](https://github.com/livekit/agents-js/commit/ce2d28778b7105848beed7e57b0c5384ca4c30cf), [`57e017d`](https://github.com/livekit/agents-js/commit/57e017d3838656679caf0fff22229ca54afcd132), [`7e36727`](https://github.com/livekit/agents-js/commit/7e367279cb62c608e25b844a1dc16914583310a1), [`355718b`](https://github.com/livekit/agents-js/commit/355718be277e1138b63013577aabebc1e8043728), [`ed706fa`](https://github.com/livekit/agents-js/commit/ed706fa3fe69bc5289fe2d73c536d567fab3ad2d), [`5c8cd1e`](https://github.com/livekit/agents-js/commit/5c8cd1e76d39186ef23674e0bcc621bc9c143b27), [`ce2d287`](https://github.com/livekit/agents-js/commit/ce2d28778b7105848beed7e57b0c5384ca4c30cf), [`b16f198`](https://github.com/livekit/agents-js/commit/b16f1984dc58b2117050647f51d0a1ad654d6504), [`54edf88`](https://github.com/livekit/agents-js/commit/54edf88dd173c825eb6ced25170e950c9d7845d6), [`4c08ddb`](https://github.com/livekit/agents-js/commit/4c08ddbcbc7e230f00512606fb00b53206e6b76b), [`4d46bcf`](https://github.com/livekit/agents-js/commit/4d46bcfd4a555e2a42abb1c9ee7cd2e44a666641), [`15932fa`](https://github.com/livekit/agents-js/commit/15932fa403d98ca4e93bef8bd453b83e5e453c0c)]:
+  - @livekit/agents@1.6.3
+
 ## 1.6.2
 
 ### Patch Changes
