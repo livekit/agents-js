@@ -133,8 +133,12 @@ export function extractAndStrip(text: string, xmlTags: string[]): [string, Strip
     // leading space is part of the match so removing a tag can't double the separator
     LEADING_WS +
       '(?:' +
-      // <tag .../> or <tag ...> optionally followed by inner</tag>
-      `<(?<tag>${tagPattern})\\b(?<attrs>[^>]*?)\\s*/?\\s*>` +
+      // self-closing `<tag .../>`, matched first and terminal: it has no span, so it must
+      // never consume a following `</tag>` — that would swallow whatever sat between the
+      // two and record it as this tag's value
+      `<(?<selfTag>${tagPattern})\\b(?<selfAttrs>[^>]*?)\\s*/\\s*>` +
+      // `<tag ...>` optionally followed by inner</tag>
+      `|<(?<tag>${tagPattern})\\b(?<attrs>[^>]*?)\\s*>` +
       '(?:(?<inner>.*?)</\\k<tag>\\s*>)?' +
       // lone closing tag: </tag>
       `|</(?:${tagPattern})\\s*>` +
@@ -157,6 +161,13 @@ export function extractAndStrip(text: string, xmlTags: string[]): [string, Strip
   }): string => {
     const pre = groups.pre ?? '';
     const end = offset + match.length;
+
+    if (groups.selfTag !== undefined) {
+      const attrMatch = VALUE_ATTR_RE.exec(groups.selfAttrs ?? '');
+      tags.push([groups.selfTag, attrMatch ? attrMatch[1]! : '']);
+      return dedupRemovalSpace(pre, '', source, end); // self-closing tags vanish
+    }
+
     const tag = groups.tag;
     if (tag !== undefined) {
       const inner = groups.inner;
@@ -168,7 +179,7 @@ export function extractAndStrip(text: string, xmlTags: string[]): [string, Strip
         value = attrMatch ? attrMatch[1]! : '';
       }
       tags.push([tag, value]);
-      // wrapping tags keep their inner content; self-closing/lone tags vanish
+      // wrapping tags keep their inner content; lone open tags vanish
       return dedupRemovalSpace(pre, inner || '', source, end);
     }
     return dedupRemovalSpace(pre, '', source, end); // lone closing tag

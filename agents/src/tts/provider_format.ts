@@ -893,9 +893,15 @@ const EXPR_OPEN_RE = new RegExp(LEADING_WS + '<expr\\b(?<attrs>[^>]*?)/?\\s*>', 
 const EXPR_CLOSE_RE = new RegExp(LEADING_WS + '</expr\\s*>', 'g');
 // self-closing markers only (the trailing / is required)
 const EXPR_SELF_RE = new RegExp(LEADING_WS + '<expr\\b(?<attrs>[^>]*?)/\\s*>', 'g');
-// a wrapping marker (prosody/spell) and its span; non-greedy, instructed not to nest
+// a wrapping marker (prosody/spell) and its span; non-greedy, instructed not to nest.
+// The `(?<!/)` is load-bearing: Cartesia's prosody markers are self-closing point
+// controls, so without it `<expr type="prosody" label="slow"/>` reads as an *opening*
+// tag whose span runs to the next `</expr>` — swallowing every marker in between. A
+// `<expr type="spell">` caught that way is discarded, and the confirmation code it
+// wrapped is spoken as a word instead of spelled out.
 const EXPR_WRAP_RE = new RegExp(
-  LEADING_WS + '<expr\\b(?=[^>]*type="(?:prosody|spell)")(?<attrs>[^>]*?)>(?<inner>.*?)</expr\\s*>',
+  LEADING_WS +
+    '<expr\\b(?=[^>]*type="(?:prosody|spell)")(?<attrs>[^>]*?)(?<!/)>(?<inner>.*?)</expr\\s*>',
   'gs',
 );
 // a non-wrapping type the LLM forgot to self-close (normalizeMarkup fixes these)

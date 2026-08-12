@@ -128,6 +128,26 @@ describe('convertMarkup: expr -> Cartesia', () => {
     const text = '<expr type="prosody" label="whisper">keep it secret</expr>';
     expect(convertMarkup('cartesia', text)).toBe('keep it secret');
   });
+
+  it('does not let a self-closing prosody marker swallow a later span', () => {
+    // Cartesia's prosody markers are self-closing point controls. Read as an opening tag,
+    // one would run to the next </expr> and eat the spell marker with it — the code would
+    // reach the TTS as a bare word and be pronounced instead of spelled out.
+    const text =
+      '<expr type="prosody" label="slow"/> One moment. ' +
+      'Your code is <expr type="spell">A7X9</expr>.';
+    expect(convertMarkup('cartesia', text)).toBe(
+      '<speed ratio="0.85"/> One moment. Your code is <spell>A7X9</spell>.',
+    );
+  });
+
+  it('keeps each self-closing marker distinct across a sentence', () => {
+    const text =
+      '<expr type="prosody" label="loud"/> Big news! <expr type="prosody" label="soft"/> Or not.';
+    expect(convertMarkup('cartesia', text)).toBe(
+      '<volume ratio="1.3"/> Big news! <volume ratio="0.9"/> Or not.',
+    );
+  });
 });
 
 describe('convertMarkup: expr -> Fish Audio', () => {

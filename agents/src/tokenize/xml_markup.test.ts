@@ -105,6 +105,21 @@ describe('extractAndStrip', () => {
     ]);
   });
 
+  it('does not let a self-closing tag swallow a later wrapping span', () => {
+    // a self-closing tag has no span, so it must not consume a following </tag>: that
+    // recorded the whole swallowed stretch as the first tag's value, which is what
+    // reaches clients as lk.expression
+    const [clean, tags] = extractAndStrip(
+      '<expression value="excited"/> Great! <expression value="sad">oh no</expression>',
+      ['expression'],
+    );
+    expect(clean).toBe(' Great! oh no');
+    expect(tags).toEqual([
+      ['expression', 'excited'],
+      ['expression', 'oh no'],
+    ]);
+  });
+
   it('fully removes nested wrapping tags', () => {
     // a single pass strips only the outer tag, so the fixed-point loop is what keeps
     // inner markup from leaking
