@@ -37,6 +37,7 @@ const inlinePatterns: Array<[RegExp, string]> = [
   [/\[([^\]]*)\]\([^)]*\)/g, '$1'],
   [asteriskEmphasis, '$2'],
   [underscoreEmphasis, '$2'],
+  // nesting is order-dependent, so the asterisks get a second look once the underscores are gone
   [asteriskEmphasis, '$2'],
   [/`{3,4}[\S]*/g, ''],
   [/`([^`]+?)`/g, '$1'],
