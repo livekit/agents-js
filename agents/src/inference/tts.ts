@@ -581,6 +581,14 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
   protected async run(): Promise<void> {
     let closing = false;
     let lastFrame: AudioFrame | undefined;
+    // Only a `done` from the gateway proves the session owes us no more audio, and a socket
+    // recycled before that hands the leftover audio to whichever SynthesizeStream picks it
+    // up next. `session.closed` is the exit that reaches the pool: it returns from this run
+    // normally, so nothing else evicts the socket. The remaining non-`done` exits — a closed
+    // event channel, a swallowed abort — are only ever reached after `onClose` / `onAbort`
+    // has already removed the socket, so gating reuse on `done` is what keeps reuse tied to
+    // the one event that proves the session is drained rather than to each exit remembering.
+    let sessionDrained = false;
     // Timestamps are delivered in their own WS message; buffer them and attach
     // to the next audio frame that we forward to the output emitter. This
     // mirrors the semantics of `output_emitter.push_timed_transcript` on the
@@ -631,13 +639,21 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     };
 
     const createInputTask = async (signal: AbortSignal) => {
-      for await (const data of this.input) {
-        if (signal.aborted || closing) break;
-        if (data === SynthesizeStream.FLUSH_SENTINEL) {
+      while (!signal.aborted && !closing) {
+        // Read with the signal so a cancelled attempt stops waiting instead of taking —
+        // and dropping — the next chunk of text, which belongs to the retry.
+        const { done, value } = await this.input.next({ signal });
+        // `resourceCleanup` can land while that read is parked; it closes
+        // `sendTokenizerStream` synchronously, so pushing the chunk that just arrived would
+        // throw a plain `Error('Stream is closed')`. That is not an `APIError`, so
+        // `SynthesizeStream` would report the whole request as unrecoverable instead of
+        // retrying the attempt.
+        if (done || closing || signal.aborted) break;
+        if (value === SynthesizeStream.FLUSH_SENTINEL) {
           sendTokenizerStream.flush();
           continue;
         }
-        sendTokenizerStream.pushText(data);
+        sendTokenizerStream.pushText(value);
       }
       // Only call endInput if the stream hasn't been closed by cleanup
       if (!closing) {
@@ -830,12 +846,29 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               }
               sendLastFrame(currentSessionId!, true);
               this.queue.put(SynthesizeStream.END_OF_STREAM);
+              sessionDrained = true;
               await resourceCleanup();
               completionFuture.resolve();
               return;
             case 'session.closed':
+              // The gateway dropped the session before it finished the reply. Hand over
+              // the audio it did produce, then fail the attempt: Python has no
+              // `session.closed` branch at all, so the dropped session surfaces there as
+              // a read timeout or a closed socket, i.e. an error that evicts the socket
+              // and lets the retry machinery resynthesize what is left. Resolving here
+              // instead reports a truncated reply as a completed one.
+              for (const frame of bstream.flush()) {
+                sendLastFrame(currentSessionId!, false);
+                lastFrame = frame;
+              }
+              sendLastFrame(currentSessionId!, true);
               await resourceCleanup();
-              completionFuture.resolve();
+              completionFuture.reject(
+                new APIStatusError({
+                  message: 'Gateway closed the TTS session before synthesis completed',
+                  options: { requestId },
+                }),
+              );
               return;
             case 'error':
               this.#logger.error(
@@ -920,6 +953,9 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               await resourceCleanup();
               await cancelAndWait(tasks, 5000);
               this.abortController.signal.removeEventListener('abort', onStreamAbort);
+              if (!sessionDrained) {
+                this.tts.pool.remove(ws);
+              }
             }
           } catch (e) {
             // If aborted, don't throw - let cleanup handle it
