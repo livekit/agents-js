@@ -7,6 +7,7 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { WordStream, WordTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
+import { TranscriptMarkupStripper } from '../../tts/provider_format.js';
 import { Future, Task, delay } from '../../utils.js';
 import {
   AudioOutput,
@@ -25,6 +26,12 @@ interface TextSyncOptions {
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
   enabled: boolean;
+  /**
+   * Whether expressive markup may be present in the forwarded text, so pacing should
+   * discount it. Evaluated per word, because the session latches expressive on the first
+   * turn that injects the markup guide — after this synchronizer is constructed.
+   */
+  expressiveEnabled: () => boolean;
 }
 
 interface TextData {
@@ -157,6 +164,14 @@ class SegmentSynchronizerImpl {
   private closedFuture: Future = new Future();
   private playbackCompleted: boolean = false;
   private interrupted: boolean = false;
+
+  /**
+   * Paces against the visible text only; stateful because a markup tag with spaces in its
+   * attributes (e.g. `<expr type="expression" label="warm surprise"/>`) is shredded across
+   * word tokens and a per-token strip can't recognize the fragments — each would otherwise
+   * be paced as if it were spoken.
+   */
+  private pacingStripper = new TranscriptMarkupStripper();
 
   private pausedWallTime?: number;
   /** Accumulated paused time in milliseconds; subtracted from wall-clock elapsed. */
@@ -449,9 +464,22 @@ class SegmentSynchronizerImpl {
         continue;
       }
 
-      const cleanWords = this.options.splitWords(word);
-      const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
-      const wordHyphens = this.options.hyphenateWord(cleanWord).length;
+      // forward the raw token (the room output strips markup and surfaces the expression
+      // downstream), but pace against the visible text only so markup adds no delay. The
+      // stripper holds back an unclosed tag across tokens and releases the clean text once
+      // it completes.
+      //
+      // `forwardedWord`, not `word`: the word tokenizer emits whitespace-free runs, so a
+      // tag with spaces in its attributes (`<expr type="expression" label="warm surprise"/>`)
+      // would be reassembled without them and no longer match. The forwarded slices are
+      // contiguous over `pushedText`, so feeding those replays the original text exactly.
+      //
+      // Without expressive there is no markup to discount, and the stripper would hold a
+      // tag-shaped "<" in ordinary prose — so it is bypassed entirely.
+      const cleanWord = this.options.expressiveEnabled()
+        ? this.pacingStripper.push(forwardedWord)
+        : forwardedWord;
+      const wordHyphens = cleanWord.trim() ? this.calcHyphens(cleanWord).length : 0;
       const elapsedSeconds = this.synchronizedElapsedSeconds()!;
 
       let dHyphens = 0;
@@ -561,6 +589,8 @@ export interface TranscriptionSynchronizerOptions {
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
   enabled: boolean;
+  /** See {@link TextSyncOptions.expressiveEnabled}. Defaults to "never". */
+  expressiveEnabled?: () => boolean;
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
@@ -627,6 +657,7 @@ export class TranscriptionSynchronizer {
       splitWords: options.splitWords,
       wordTokenizer: options.wordTokenizer,
       enabled: options.enabled,
+      expressiveEnabled: options.expressiveEnabled ?? (() => false),
     };
 
     // initial segment/first segment, recreated for each new segment
