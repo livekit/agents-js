@@ -5,19 +5,15 @@ import {
   Agent,
   AgentSession,
   type JobContext,
-  type ModelSettings,
   ServerOptions,
   cli,
   defineAgent,
   inference,
 } from '@livekit/agents';
 import * as krisp from '@livekit/agents-plugin-krisp';
-import type { AudioFrame } from '@livekit/rtc-node';
-import type { ReadableStream } from 'node:stream/web';
 import { fileURLToPath } from 'node:url';
 import { publishFrontendAttributes } from './behaviors/frontend_attributes.js';
 import { checkInWhenUserAway } from './behaviors/user_away.js';
-import { pronounceLiveKit } from './filters/pronunciation.js';
 import { KnowledgeBase } from './knowledge_base/index.js';
 import { prompt } from './prompts/index.js';
 
@@ -28,14 +24,16 @@ export class AgentConfig {
   readonly sttLanguage: string;
   readonly ttsModel: string;
   readonly ttsVoice: string;
+  readonly ttsVoiceLabel: string;
 
   constructor({
     name = 'homepage_agent_v3',
     llmModel = 'google/gemma-4-31b-it',
     sttModel = 'deepgram/nova-3',
     sttLanguage = 'multi',
-    ttsModel = 'inworld/inworld-tts-2',
-    ttsVoice = 'Nate',
+    ttsModel = 'fishaudio/s2.1-pro',
+    ttsVoice = '51b44863613e405a896f7f4294c6e6d0',
+    ttsVoiceLabel = 'Marley',
   }: Partial<AgentConfig> = {}) {
     this.name = name;
     this.llmModel = llmModel;
@@ -43,6 +41,7 @@ export class AgentConfig {
     this.sttLanguage = sttLanguage;
     this.ttsModel = ttsModel;
     this.ttsVoice = ttsVoice;
+    this.ttsVoiceLabel = ttsVoiceLabel;
     Object.freeze(this);
   }
 }
@@ -61,13 +60,6 @@ export class Assistant extends Agent {
     });
   }
 
-  override async ttsNode(
-    text: ReadableStream<string> | AsyncIterable<string>,
-    modelSettings: ModelSettings,
-  ): Promise<ReadableStream<AudioFrame> | null> {
-    return Agent.default.ttsNode(this, pronounceLiveKit(text), modelSettings);
-  }
-
   override async onEnter(): Promise<void> {
     await this.session.generateReply({ instructions: GREETING, allowInterruptions: true });
   }
@@ -82,6 +74,7 @@ export default defineAgent({
         turnDetection: new inference.TurnDetector(),
         preemptiveGeneration: { enabled: true },
       },
+      expressive: true,
     });
 
     checkInWhenUserAway(session);
@@ -91,7 +84,7 @@ export default defineAgent({
       room: ctx.room,
       inputOptions: { noiseCancellation: krisp.voiceIsolation() },
     });
-    await publishFrontendAttributes({ ttsVoice: CONFIG.ttsVoice });
+    await publishFrontendAttributes({ ttsVoice: CONFIG.ttsVoiceLabel });
   },
 });
 

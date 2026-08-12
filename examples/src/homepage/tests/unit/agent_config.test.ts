@@ -8,7 +8,8 @@ describe('agent config', () => {
   it('is the single source of runtime identity', () => {
     expect(new AgentConfig()).toEqual(CONFIG);
     expect(CONFIG.name).toBe('homepage_agent_v3');
-    expect(CONFIG.ttsVoice).toBe('Nate');
+    expect(CONFIG.ttsModel).toBe('fishaudio/s2.1-pro');
+    expect(CONFIG.ttsVoiceLabel).toBe('Marley');
     expect(Object.isFrozen(CONFIG)).toBe(true);
     expect(() => Object.assign(CONFIG, { ttsVoice: 'Alex' })).toThrow(TypeError);
   });
