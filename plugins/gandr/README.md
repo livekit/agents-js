@@ -50,8 +50,7 @@ alias onto those voices automatically, so an unmodified OpenAI client pointed at
 
 Word error rate 1.982% against a 2.171% human reference, scored by one
 `whisper-large-v3` configuration across everything including the human baseline,
-n=1,088. Numbers, dates and order IDs are read correctly rather than
-approximated, which is the failure that actually breaks phone agents.
+n=1,088.
 
 Every render carries an inaudible watermark.
 
