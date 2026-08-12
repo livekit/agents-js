@@ -75,8 +75,6 @@ const DEFAULT_REALTIME_TURN_DETECTION: api_proto.TurnDetectionType = {
   prefix_padding_ms: 600,
   silence_duration_ms: 350,
 };
-const REALTIME_MODELS_WITHOUT_SERVER_TURN_DETECTION = new Set(REALTIME_ONLY_MODELS);
-
 function isRealtimeOnly(model: string): boolean {
   return REALTIME_ONLY_MODELS.some((candidate) => model.startsWith(candidate));
 }
@@ -232,14 +230,14 @@ export function _requiresRealtimeVad(
   model: string,
   turnDetection: api_proto.TurnDetectionType | null | undefined,
 ): boolean {
-  return turnDetection === null || REALTIME_MODELS_WITHOUT_SERVER_TURN_DETECTION.has(model);
+  return turnDetection === null || isRealtimeOnly(model);
 }
 
 export function _normalizeRealtimeTurnDetection(
   model: string,
   turnDetection: SessionTurnDetection | null | undefined,
 ): api_proto.TurnDetectionType | null | undefined {
-  if (turnDetection !== null && REALTIME_MODELS_WITHOUT_SERVER_TURN_DETECTION.has(model)) {
+  if (turnDetection !== null && isRealtimeOnly(model)) {
     console.warn(
       `Turn detection is not supported for ${model}; ignoring the provided turnDetection and ` +
         'using plugin-side VAD commits instead.',

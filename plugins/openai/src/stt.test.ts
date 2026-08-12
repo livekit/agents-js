@@ -289,6 +289,14 @@ describe('OpenAI STT options', () => {
     ).toBeNull();
   });
 
+  it('rejects turn detection for versioned realtime-only model names', () => {
+    expect(
+      _normalizeRealtimeTurnDetection('gpt-live-transcribe-2026-01-01', {
+        type: 'server_vad',
+      }),
+    ).toBeNull();
+  });
+
   it('merges session keyterms behind user keywords', () => {
     const openai = new STT({
       apiKey: 'test-key',
