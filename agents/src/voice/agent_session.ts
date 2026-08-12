@@ -440,6 +440,9 @@ export class AgentSession<
 
   private _interruptionDetection?: InterruptionOptions['mode'];
 
+  /** @internal True when the user explicitly supplied `turnDetection`. */
+  _turnDetectionExplicit = false;
+
   /**
    * True iff this session auto-provisioned the bundled silero VAD because the
    * caller passed no `vad=`. Set once in the constructor; immutable from then
@@ -588,6 +591,7 @@ export class AgentSession<
     // out of the box. An explicit `null` opts out entirely — no detector is
     // built.
     const configuredTurnDetection = resolvedSessionOptions.turnHandling.turnDetection;
+    this._turnDetectionExplicit = configuredTurnDetection !== undefined;
     this.turnDetection =
       configuredTurnDetection === null
         ? undefined
@@ -1117,6 +1121,7 @@ export class AgentSession<
     if (hasTurnDetection) {
       this.turnDetection = normalizedTurnDetection;
       this.sessionOptions.turnHandling.turnDetection = normalizedTurnDetection;
+      this._turnDetectionExplicit = turnDetection !== null;
     }
 
     if (this.activity) {

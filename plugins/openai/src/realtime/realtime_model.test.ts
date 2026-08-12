@@ -47,6 +47,12 @@ type ErrorSessionInternals = {
   on: (event: 'error', listener: (error: llm.RealtimeModelError) => void) => void;
 };
 
+type TurnDetectionSessionInternals = {
+  _options: {
+    turnDetection?: api_proto.TurnDetectionType | null;
+  };
+};
+
 function createSessionForTest(): RealtimeSessionInternals {
   const session = Object.create(RealtimeSession.prototype) as RealtimeSessionInternals;
   session.responseCreatedFutures = {};
@@ -64,6 +70,55 @@ function stubTaskRuntime(): void {
     result: Promise.resolve(undefined),
   } as unknown as Task<void>);
 }
+
+describe('RealtimeModel turn detection disabling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('marks default server turn detection as disable-capable', () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+
+    expect(model.capabilities.turnDetection).toBe(true);
+    expect(model.capabilities.canDisableTurnDetection).toBe(true);
+  });
+
+  it('respects explicitly disabled model turn detection', () => {
+    const model = new RealtimeModel({ apiKey: 'test-key', turnDetection: null });
+
+    expect(model.capabilities.turnDetection).toBe(false);
+    expect(model.capabilities.canDisableTurnDetection).toBe(false);
+  });
+
+  it('creates a session with server turn detection disabled', () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session({
+      turnDetectionDisabled: true,
+    }) as unknown as TurnDetectionSessionInternals;
+
+    expect(session._options.turnDetection).toBeNull();
+  });
+
+  it('withAzure preserves canDisableTurnDetection for defaulted turn detection', () => {
+    const defaultTurnDetection = RealtimeModel.withAzure({
+      azureDeployment: 'dep',
+      apiKey: 'test-key',
+      baseURL: 'https://example.com/openai',
+    });
+    expect(defaultTurnDetection.capabilities.turnDetection).toBe(true);
+    expect(defaultTurnDetection.capabilities.canDisableTurnDetection).toBe(true);
+
+    const explicitOff = RealtimeModel.withAzure({
+      azureDeployment: 'dep',
+      apiKey: 'test-key',
+      baseURL: 'https://example.com/openai',
+      turnDetection: null,
+    });
+    expect(explicitOff.capabilities.turnDetection).toBe(false);
+    expect(explicitOff.capabilities.canDisableTurnDetection).toBe(false);
+  });
+});
 
 describe('RealtimeSession.generateReply', () => {
   it('preserves session instructions when generating with per-response instructions', async () => {

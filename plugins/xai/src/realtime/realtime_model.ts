@@ -46,5 +46,7 @@ export class RealtimeModel extends OpenAIRealtimeModel {
       turnDetection: XAI_DEFAULT_TURN_DETECTION,
       ...options,
     });
+    // client turn-taking is not stable during testing, mark it as unsupported for now
+    this.capabilities.canDisableTurnDetection = false;
   }
 }

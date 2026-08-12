@@ -207,6 +207,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     super({
       messageTruncation: true,
       turnDetection: options.turnDetection !== null,
+      canDisableTurnDetection: options.turnDetection === undefined,
       userTranscription: options.inputAudioTranscription !== null,
       autoToolReplyGeneration: false,
       audioOutput: modalities.includes('audio'),
@@ -286,7 +287,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     temperature, // eslint-disable-line @typescript-eslint/no-unused-vars
     inputAudioTranscription = AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
     inputAudioNoiseReduction,
-    turnDetection = AZURE_DEFAULT_TURN_DETECTION,
+    turnDetection,
     speed,
     tracing,
   }: {
@@ -301,10 +302,17 @@ export class RealtimeModel extends llm.RealtimeModel {
     temperature?: number;
     inputAudioTranscription?: api_proto.InputAudioTranscription;
     inputAudioNoiseReduction?: api_proto.NoiseReduction;
-    turnDetection?: api_proto.TurnDetectionType;
+    turnDetection?: api_proto.TurnDetectionType | null;
     speed?: number;
     tracing?: api_proto.TracingConfig;
   }) {
+    // capture intent before applying the azure default, so the framework can still
+    // auto-disable server-side turn detection when the user didn't configure it
+    const canDisableTurnDetection = turnDetection === undefined;
+    if (turnDetection === undefined) {
+      turnDetection = AZURE_DEFAULT_TURN_DETECTION;
+    }
+
     apiKey = apiKey || process.env.AZURE_OPENAI_API_KEY;
     if (!apiKey && !entraToken) {
       throw new Error(
@@ -330,7 +338,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       baseURL = `${azureEndpoint.replace(/\/$/, '')}/openai`;
     }
 
-    return new RealtimeModel({
+    const model = new RealtimeModel({
       voice,
       inputAudioTranscription,
       inputAudioNoiseReduction,
@@ -343,10 +351,12 @@ export class RealtimeModel extends llm.RealtimeModel {
       entraToken,
       baseURL,
     });
+    model.capabilities.canDisableTurnDetection = canDisableTurnDetection;
+    return model;
   }
 
-  session() {
-    return new RealtimeSession(this);
+  session(options: llm.RealtimeSessionOptions = {}) {
+    return new RealtimeSession(this, options);
   }
 
   async close() {
@@ -482,7 +492,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   #task: Task<void>;
   #closed = false;
 
-  constructor(realtimeModel: RealtimeModel) {
+  constructor(realtimeModel: RealtimeModel, options: llm.RealtimeSessionOptions = {}) {
     super(realtimeModel);
 
     this.oaiRealtimeModel = realtimeModel;
@@ -491,7 +501,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     // session has independent option state. Without this, updateOptions would
     // mutate the shared model._options before computing its diff, causing the
     // diff to always see "no change" and never send session.update.
-    this._options = { ...realtimeModel._options };
+    this._options = {
+      ...realtimeModel._options,
+      turnDetection: options.turnDetectionDisabled ? null : realtimeModel._options.turnDetection,
+    };
 
     this.#task = Task.from(({ signal }) => this.#mainTask(signal));
 
