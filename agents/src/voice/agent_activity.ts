@@ -2296,6 +2296,15 @@ export class AgentActivity implements RecognitionHooks {
     return handle;
   }
 
+  /**
+   * Interrupt the current speech generation and any queued speeches.
+   *
+   * A queued speech that disallows interruptions keeps playing, along with the ones behind it,
+   * unless `force` is set.
+   *
+   * @returns A future that completes when the interruption is fully processed.
+   * @throws Error if the speech currently playing disallows interruptions and `force` is false.
+   */
   interrupt(options: { force?: boolean } = {}): Future<void> {
     const { force = false } = options;
     this.cancelPreemptiveGeneration();
@@ -2307,11 +2316,23 @@ export class AgentActivity implements RecognitionHooks {
 
     currentSpeech?.interrupt(force);
 
-    for (const [_, __, speech] of this.speechQueue) {
+    this.realtimeSession?.interrupt();
+
+    // Heap iteration pops in playout order. Walk a clone so retained speeches stay queued and
+    // interrupted ones remain for mainTask to drain.
+    for (const [, , speech] of this.speechQueue.clone()) {
+      if (speech.interrupted || speech.done()) continue;
+
+      if (!force && !speech.allowInterruptions) {
+        this.logger.warn(
+          { speech_id: speech.id },
+          'a queued speech does not allow interruptions and will play after the interruption, use interrupt({ force: true }) to interrupt it as well',
+        );
+        break;
+      }
+
       speech.interrupt(force);
     }
-
-    this.realtimeSession?.interrupt();
 
     if (force) {
       // Force-interrupt (used during shutdown): cancel all speech tasks so they
