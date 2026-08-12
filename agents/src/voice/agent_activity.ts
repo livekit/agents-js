@@ -1520,11 +1520,7 @@ export class AgentActivity implements RecognitionHooks {
       this.interruptByAudioActivity();
     }
 
-    if (
-      ev.speaking &&
-      ev.rawAccumulatedSilence <=
-        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay / 2
-    ) {
+    if (ev.speaking && ev.rawAccumulatedSilence <= this.endpointingOpts.minDelay / 2) {
       this.userSilenceEvent.clear();
     } else {
       this.userSilenceEvent.set();
