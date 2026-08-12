@@ -1395,6 +1395,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
+      '@livekit/local-inference':
+        specifier: ^0.2.6
+        version: 0.2.6
       '@livekit/rtc-node':
         specifier: 'catalog:'
         version: 0.13.33
