@@ -10,6 +10,8 @@ import {
   type VAD,
   VADEventType,
   type VADStream,
+  getBaseLanguage,
+  inference,
   mergeFrames,
   normalizeLanguage,
   stt,
@@ -18,12 +20,14 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { OpenAI } from 'openai';
 import { type MessageEvent, WebSocket } from 'ws';
 import { z } from 'zod';
-import type { GroqAudioModels, WhisperModels } from './models.js';
+import type { GroqAudioModels, STTModels } from './models.js';
 import type * as api_proto from './realtime/api_proto.js';
 
 const REALTIME_SAMPLE_RATE = 24000;
 const REALTIME_NUM_CHANNELS = 1;
 const DEFAULT_REALTIME_MODEL = 'gpt-realtime-whisper';
+const REALTIME_ONLY_MODELS = ['gpt-realtime-whisper', 'gpt-live-transcribe'];
+const CONTEXT_HINT_MODELS = ['gpt-transcribe', 'gpt-live-transcribe'];
 
 /**
  * Build the realtime transcription WebSocket URL.
@@ -71,7 +75,58 @@ const DEFAULT_REALTIME_TURN_DETECTION: api_proto.TurnDetectionType = {
   prefix_padding_ms: 600,
   silence_duration_ms: 350,
 };
-const REALTIME_MODELS_WITHOUT_SERVER_TURN_DETECTION = new Set([DEFAULT_REALTIME_MODEL]);
+function isRealtimeOnly(model: string): boolean {
+  return REALTIME_ONLY_MODELS.some((candidate) => model.startsWith(candidate));
+}
+
+function supportsContextHints(model: string): boolean {
+  return CONTEXT_HINT_MODELS.some((candidate) => model.startsWith(candidate));
+}
+
+function asLanguages(language: string | string[]): string[] {
+  return (typeof language === 'string' ? [language] : language).filter(Boolean);
+}
+
+function normalizedLanguages(languages: string[]): string[] {
+  return [...new Set(languages.map(getBaseLanguage))];
+}
+
+function transcriptLanguage(languages: string[]): ReturnType<typeof normalizeLanguage> {
+  return normalizeLanguage(languages.length === 1 ? languages[0]! : '');
+}
+
+function validateContext(model: string, languages: string[], keywords: string[]): void {
+  if (supportsContextHints(model)) return;
+  const supported = CONTEXT_HINT_MODELS.join(' and ');
+  if (keywords.length > 0) {
+    throw new Error(`keywords are only supported by ${supported}, not ${model}`);
+  }
+  if (languages.length > 1) {
+    throw new Error(`${model} accepts a single language; only ${supported} accept a list`);
+  }
+}
+
+export function buildRealtimeTranscriptionConfig(options: {
+  model: string;
+  languages: string[];
+  keywords?: string[];
+  prompt?: string;
+}): api_proto.InputAudioTranscription {
+  const supportsHints = supportsContextHints(options.model);
+  const languages = normalizedLanguages(options.languages);
+  return {
+    model: options.model,
+    ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
+    ...(supportsHints
+      ? {
+          keywords: options.keywords ?? [],
+          ...(languages.length > 0 ? { languages } : {}),
+        }
+      : languages.length > 0
+        ? { language: languages[0] }
+        : {}),
+  };
+}
 
 const realtimeTranscriptionSpeechStartedEventSchema = z.object({
   type: z.literal('input_audio_buffer.speech_started'),
@@ -95,6 +150,7 @@ const realtimeTranscriptionCompletedEventSchema = z.object({
   type: z.literal('conversation.item.input_audio_transcription.completed'),
   item_id: z.string().optional(),
   transcript: z.string().optional(),
+  languages: z.array(z.object({ code: z.string() })).optional(),
   usage: z
     .object({
       input_tokens: z.number().optional(),
@@ -174,21 +230,23 @@ export function _requiresRealtimeVad(
   model: string,
   turnDetection: api_proto.TurnDetectionType | null | undefined,
 ): boolean {
-  return turnDetection === null || REALTIME_MODELS_WITHOUT_SERVER_TURN_DETECTION.has(model);
+  return turnDetection === null || isRealtimeOnly(model);
 }
 
 export function _normalizeRealtimeTurnDetection(
   model: string,
-  turnDetection: api_proto.TurnDetectionType | null | undefined,
+  turnDetection: SessionTurnDetection | null | undefined,
 ): api_proto.TurnDetectionType | null | undefined {
-  if (turnDetection !== null && REALTIME_MODELS_WITHOUT_SERVER_TURN_DETECTION.has(model)) {
+  if (turnDetection !== null && isRealtimeOnly(model)) {
     console.warn(
       `Turn detection is not supported for ${model}; ignoring the provided turnDetection and ` +
         'using plugin-side VAD commits instead.',
     );
     return null;
   }
-  return turnDetection;
+  return turnDetection
+    ? ({ type: 'server_vad', ...turnDetection } as api_proto.TurnDetectionType)
+    : turnDetection;
 }
 
 export function _validateRealtimeVad(
@@ -206,17 +264,27 @@ export function _validateRealtimeVad(
 
 export interface STTOptions {
   apiKey?: string;
-  language: string;
+  language: string | string[];
   prompt?: string;
+  /** Literal terms expected in the audio. Supported by gpt-transcribe and gpt-live-transcribe. */
+  keywords?: string[];
   detectLanguage: boolean;
-  model: WhisperModels | string;
+  model: STTModels | string;
   baseURL?: string;
   client?: OpenAI;
   useRealtime: boolean;
-  turnDetection?: api_proto.TurnDetectionType | null;
+  turnDetection?: SessionTurnDetection | null;
   noiseReductionType?: api_proto.NoiseReductionType;
-  vad?: VAD;
+  /** Pass null to opt out of the default client VAD and commit audio manually. */
+  vad?: VAD | null;
+  temperature?: number;
 }
+
+export type SessionTurnDetection =
+  | (Omit<Extract<api_proto.TurnDetectionType, { type: 'server_vad' }>, 'type'> & {
+      type?: 'server_vad';
+    })
+  | Extract<api_proto.TurnDetectionType, { type: 'semantic_vad' }>;
 
 const defaultSTTOptions: STTOptions = {
   apiKey: process.env.OPENAI_API_KEY,
@@ -226,12 +294,21 @@ const defaultSTTOptions: STTOptions = {
   useRealtime: true,
 };
 
-type ResolvedSTTOptions = Omit<STTOptions, 'apiKey'> & { apiKey: string };
+type ResolvedSTTOptions = Omit<STTOptions, 'apiKey' | 'language' | 'keywords' | 'turnDetection'> & {
+  apiKey: string;
+  languages: string[];
+  keywords: string[];
+  turnDetection?: api_proto.TurnDetectionType | null;
+};
 
 export class STT extends stt.STT {
   #opts: ResolvedSTTOptions;
   #client: OpenAI;
   #streams = new Set<SpeechStream>();
+  #specifiedLanguages: string[];
+  #userKeywords: string[];
+  #sessionKeyterms: string[] = [];
+  #vadOptedOut: boolean;
   label = 'openai.STT';
 
   get model(): string {
@@ -265,6 +342,7 @@ export class STT extends stt.STT {
       streaming: useRealtime,
       interimResults: useRealtime,
       alignedTranscript: false,
+      keyterms: supportsContextHints(model),
     });
 
     const apiKey = opts.apiKey ?? defaultSTTOptions.apiKey;
@@ -276,22 +354,43 @@ export class STT extends stt.STT {
       model,
       opts.turnDetection !== undefined
         ? opts.turnDetection
-        : model === DEFAULT_REALTIME_MODEL
+        : isRealtimeOnly(model)
           ? null
           : DEFAULT_REALTIME_TURN_DETECTION,
     );
-    if (useRealtime) {
-      _validateRealtimeVad(model, turnDetection, opts.vad);
+    let resolvedVad = opts.vad;
+    this.#vadOptedOut = opts.vad === null;
+    if (useRealtime && isRealtimeOnly(model) && opts.vad === undefined) {
+      resolvedVad = new inference.VAD();
+    }
+    if (useRealtime && !this.#vadOptedOut) {
+      _validateRealtimeVad(model, turnDetection, resolvedVad ?? undefined);
+    }
+
+    this.#specifiedLanguages = asLanguages(opts.language ?? defaultSTTOptions.language);
+    const languages = opts.detectLanguage ? [] : this.#specifiedLanguages;
+    const keywords = [...(opts.keywords ?? [])];
+    validateContext(model, languages, keywords);
+    this.#userKeywords = keywords;
+    let temperature = opts.temperature;
+    if (useRealtime && temperature !== undefined) {
+      console.warn(
+        'temperature is not supported for realtime transcription; ignoring the provided value',
+      );
+      temperature = undefined;
     }
 
     this.#opts = {
       ...defaultSTTOptions,
       ...opts,
       apiKey,
-      language: normalizeLanguage(opts.language ?? defaultSTTOptions.language),
+      languages,
+      keywords,
       model,
       useRealtime,
       turnDetection,
+      vad: resolvedVad,
+      temperature,
     };
 
     this.#client =
@@ -316,7 +415,7 @@ export class STT extends stt.STT {
       apiKey?: string;
       baseURL?: string;
       client: OpenAI;
-      language: string;
+      language: string | string[];
       detectLanguage: boolean;
     }> = {},
   ): STT {
@@ -346,7 +445,7 @@ export class STT extends stt.STT {
       apiKey?: string;
       baseURL?: string;
       client: OpenAI;
-      language: string;
+      language: string | string[];
       detectLanguage: boolean;
     }> = {},
   ): STT {
@@ -363,14 +462,6 @@ export class STT extends stt.STT {
       ...opts,
       useRealtime: false,
     });
-  }
-
-  #sanitizeOptions(language?: string): ResolvedSTTOptions {
-    if (language) {
-      return { ...this.#opts, language: normalizeLanguage(language) };
-    } else {
-      return this.#opts;
-    }
   }
 
   #createWav(frame: AudioFrame): Buffer {
@@ -396,30 +487,35 @@ export class STT extends stt.STT {
   }
 
   async _recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent> {
-    const config = this.#sanitizeOptions();
+    const config = this.#opts;
     buffer = mergeFrames(buffer);
     const wavBuffer = this.#createWav(buffer);
     const file = new File([new Uint8Array(wavBuffer)], 'audio.wav', { type: 'audio/wav' });
 
-    const resp = await this.#client.audio.transcriptions.create(
-      {
-        file,
-        model: this.#opts.model,
-        language: config.language,
-        prompt: config.prompt,
-        response_format: 'json',
-      },
-      {
-        signal: abortSignal,
-      },
-    );
+    const contextHints = supportsContextHints(config.model);
+    const languages = normalizedLanguages(config.languages);
+    const transcriptionParams = {
+      file,
+      model: config.model,
+      ...(contextHints
+        ? { languages: languages.length > 0 ? languages : undefined, keywords: config.keywords }
+        : { language: languages[0] }),
+      prompt: config.prompt,
+      response_format: 'json' as const,
+      temperature: config.temperature,
+    };
+    const resp = (await this.#client.audio.transcriptions.create(transcriptionParams as never, {
+      signal: abortSignal,
+    })) as { text: string; languages?: { code: string }[] };
 
     return {
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
       alternatives: [
         {
           text: resp.text || '',
-          language: normalizeLanguage(config.language || ''),
+          language: resp.languages?.[0]?.code
+            ? normalizeLanguage(resp.languages[0].code)
+            : transcriptLanguage(config.languages),
           startTime: 0,
           endTime: 0,
           confidence: 0,
@@ -431,47 +527,128 @@ export class STT extends stt.STT {
   updateOptions(opts: Partial<STTOptions>): void {
     const useRealtime = opts.useRealtime ?? this.#opts.useRealtime;
     const model = opts.model ?? this.#opts.model;
+    const languages =
+      opts.language !== undefined
+        ? asLanguages(opts.language)
+        : opts.detectLanguage
+          ? []
+          : opts.detectLanguage === false && this.#opts.languages.length === 0
+            ? (console.warn(
+                `detectLanguage: false names no language; falling back to ${this.#specifiedLanguages.join(', ')}`,
+              ),
+              this.#specifiedLanguages)
+            : this.#opts.languages;
+    const userKeywords = opts.keywords !== undefined ? [...opts.keywords] : this.#userKeywords;
+    const vad = opts.vad !== undefined ? opts.vad : this.#opts.vad;
+    const vadOptedOut = opts.vad === null || (opts.vad === undefined && this.#vadOptedOut);
+    validateContext(model, languages, userKeywords);
+    if (opts.language === undefined) {
+      for (const stream of this.#streams) {
+        validateContext(model, stream.languages, userKeywords);
+      }
+    }
+    if (opts.model !== undefined && isRealtimeOnly(opts.model)) {
+      if (!useRealtime) {
+        throw new Error(
+          `${model} is served only over the realtime API, and this STT was created for the ` +
+            'transcriptions endpoint; pass useRealtime: true to the constructor to reach it',
+        );
+      }
+      if (!vad && !vadOptedOut) {
+        throw new Error(
+          `${model} has no server-side endpointing, so it needs a vad to commit the audio buffer`,
+        );
+      }
+    }
     const turnDetection = _normalizeRealtimeTurnDetection(
       model,
       opts.turnDetection !== undefined
         ? opts.turnDetection
-        : opts.model === DEFAULT_REALTIME_MODEL
+        : isRealtimeOnly(model)
           ? null
-          : this.#opts.turnDetection,
+          : opts.model !== undefined && isRealtimeOnly(this.#opts.model)
+            ? DEFAULT_REALTIME_TURN_DETECTION
+            : this.#opts.turnDetection,
     );
-    if (useRealtime) {
-      _validateRealtimeVad(model, turnDetection, opts.vad ?? this.#opts.vad);
+    if (useRealtime && !vadOptedOut) {
+      _validateRealtimeVad(model, turnDetection, vad ?? undefined);
     }
+    let temperature = opts.temperature ?? this.#opts.temperature;
+    if (useRealtime && temperature !== undefined) {
+      console.warn(
+        'temperature is not supported for realtime transcription; ignoring the provided value',
+      );
+      temperature = undefined;
+    }
+    const languagesChanged =
+      languages.some((value, index) => value !== this.#opts.languages[index]) ||
+      languages.length !== this.#opts.languages.length;
+    const languageGiven = opts.language !== undefined || languagesChanged;
+    if (languages.length > 0) this.#specifiedLanguages = languages;
+    this.#userKeywords = userKeywords;
+    this.#vadOptedOut = vadOptedOut;
+    const keywords = supportsContextHints(model)
+      ? [...new Set([...userKeywords, ...this.#sessionKeyterms])]
+      : [];
     this.#opts = {
       ...this.#opts,
       ...opts,
       apiKey: opts.apiKey ?? this.#opts.apiKey,
-      language: opts.language ? normalizeLanguage(opts.language) : this.#opts.language,
+      languages,
+      keywords,
       model,
       useRealtime,
       turnDetection,
+      temperature,
+      vad,
     };
     this.updateCapabilities({
       streaming: useRealtime,
       interimResults: useRealtime,
+      keyterms: supportsContextHints(model),
     });
     for (const stream of this.#streams) {
       if (stream.isClosed) {
         this.#streams.delete(stream);
         continue;
       }
-      stream.updateOptions(this.#opts);
+      stream._updateOptions(this.#opts, languageGiven ? languages : undefined);
     }
   }
 
-  stream(options: { connOptions?: APIConnectOptions } = {}): stt.SpeechStream {
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    if (!this.capabilities.keyterms) {
+      super._updateSessionKeyterms(keyterms);
+      return;
+    }
+    if (
+      keyterms.length === this.#sessionKeyterms.length &&
+      keyterms.every((term, index) => term === this.#sessionKeyterms[index])
+    ) {
+      return;
+    }
+    this.#sessionKeyterms = [...keyterms];
+    this.#opts.keywords = [...new Set([...this.#userKeywords, ...keyterms])];
+    for (const stream of this.#streams) stream._updateOptions(this.#opts);
+  }
+
+  stream(
+    options: { connOptions?: APIConnectOptions; language?: string | string[] } = {},
+  ): stt.SpeechStream {
     if (!this.#opts.useRealtime) {
       throw new Error('Streaming is not supported on OpenAI STT unless useRealtime is enabled');
     }
 
+    const streamOptions = {
+      ...this.#opts,
+      languages:
+        options.language !== undefined ? asLanguages(options.language) : [...this.#opts.languages],
+      keywords: [...this.#opts.keywords],
+    };
+    validateContext(streamOptions.model, streamOptions.languages, streamOptions.keywords);
     const stream = new SpeechStream(
       this,
-      { ...this.#opts },
+      streamOptions,
       options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       () => this.#streams.delete(stream),
     );
@@ -495,6 +672,10 @@ export class SpeechStream extends stt.SpeechStream {
   #currentItemId = '';
   #itemAudioTiming = new Map<string, { startMs?: number; endMs?: number }>();
   #speaking = false;
+  #ws?: WebSocket;
+  #wsReady = new AsyncEvent();
+  #vadStream?: VADStream;
+  #reconnectRequested = false;
 
   constructor(
     stt: STT,
@@ -507,8 +688,45 @@ export class SpeechStream extends stt.SpeechStream {
     this.#onClose = onClose;
   }
 
-  updateOptions(options: ResolvedSTTOptions): void {
-    this.#options = { ...options };
+  get languages(): string[] {
+    return this.#options.languages;
+  }
+
+  updateOptions(options: { language?: string | string[] }): void {
+    const languages =
+      options.language !== undefined ? asLanguages(options.language) : this.#options.languages;
+    validateContext(this.#options.model, languages, this.#options.keywords);
+    this.#applyOptions(this.#options, languages);
+  }
+
+  /** @internal */
+  _updateOptions(options: ResolvedSTTOptions, languages?: string[]): void {
+    this.#applyOptions(options, languages ?? this.#options.languages);
+  }
+
+  #applyOptions(options: ResolvedSTTOptions, languages: string[]): void {
+    const previous = this.#options;
+    this.#options = {
+      ...options,
+      languages: [...languages],
+      keywords: [...options.keywords],
+    };
+    const modelChanged = previous.model !== this.#options.model;
+    const clearedLanguage = previous.languages.length > 0 && this.#options.languages.length === 0;
+    if (!this.#ws) return;
+    if (modelChanged || clearedLanguage) {
+      this.#reconnectRequested = true;
+      const ws = this.#ws;
+      this.#ws = undefined;
+      this.#wsReady.clear();
+      ws.close();
+      return;
+    }
+    try {
+      this.#ws.send(JSON.stringify(this.#sessionUpdateEvent()));
+    } catch (error) {
+      console.warn('failed to update the OpenAI transcription session', error);
+    }
   }
 
   get isClosed(): boolean {
@@ -523,41 +741,43 @@ export class SpeechStream extends stt.SpeechStream {
   protected async run(): Promise<void> {
     // Avoid fusing an open segment into the next connection attempt after a retry.
     this.#emitEndOfSpeech();
-
-    _validateRealtimeVad(this.#options.model, this.#options.turnDetection, this.#options.vad);
-    const vad = _requiresRealtimeVad(this.#options.model, this.#options.turnDetection)
-      ? await _loadRealtimeVad(this.#options.vad)
-      : undefined;
-
-    if (vad) {
-      this.#options.vad = vad;
-    }
-
-    const vadStream = vad?.stream();
-    const ws = await this.#connect();
-    const abort = () => {
-      if (ws.readyState < WebSocket.CLOSING) {
-        ws.close();
-      }
-    };
-    this.abortSignal.addEventListener('abort', abort, { once: true });
-
+    const inputTask = this.#forwardInput();
     try {
-      ws.send(JSON.stringify(this.#sessionUpdateEvent()));
-      const tasks = [
-        this.#forwardInput(ws, vadStream),
-        this.#forwardEvents(ws, Boolean(vadStream)),
-      ];
-      if (vadStream) {
-        tasks.push(this.#forwardVadEvents(ws, vadStream));
+      while (!this.abortSignal.aborted) {
+        const vad = _requiresRealtimeVad(this.#options.model, this.#options.turnDetection)
+          ? this.#options.vad
+            ? await _loadRealtimeVad(this.#options.vad)
+            : undefined
+          : undefined;
+        const vadStream = vad?.stream();
+        const ws = await this.#connect();
+        this.#ws = ws;
+        this.#vadStream = vadStream;
+        this.#wsReady.set();
+        const abort = () => {
+          if (ws.readyState < WebSocket.CLOSING) ws.close();
+        };
+        this.abortSignal.addEventListener('abort', abort, { once: true });
+
+        try {
+          ws.send(JSON.stringify(this.#sessionUpdateEvent()));
+          const connectionTasks: Promise<void>[] = [this.#forwardEvents(ws, Boolean(vadStream))];
+          if (vadStream) connectionTasks.push(this.#forwardVadEvents(ws, vadStream));
+          await Promise.race([inputTask, ...connectionTasks]);
+        } finally {
+          this.#ws = undefined;
+          this.#vadStream = undefined;
+          this.#wsReady.clear();
+          this.abortSignal.removeEventListener('abort', abort);
+          vadStream?.close();
+          if (ws.readyState < WebSocket.CLOSING) ws.close();
+        }
+
+        if (!this.#reconnectRequested) return;
+        this.#reconnectRequested = false;
+        this.#emitEndOfSpeech();
       }
-      await Promise.all(tasks);
     } finally {
-      this.abortSignal.removeEventListener('abort', abort);
-      vadStream?.close();
-      if (ws.readyState < WebSocket.CLOSING) {
-        ws.close();
-      }
       this.#onClose();
     }
   }
@@ -582,13 +802,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   #sessionUpdateEvent(): api_proto.SessionUpdateEvent {
-    const transcription: api_proto.InputAudioTranscription = {
-      model: this.#options.model,
-      ...(this.#options.prompt ? { prompt: this.#options.prompt } : {}),
-      ...(!this.#options.detectLanguage && this.#options.language
-        ? { language: this.#options.language }
-        : {}),
-    };
+    const transcription = buildRealtimeTranscriptionConfig(this.#options);
 
     return {
       type: 'session.update',
@@ -601,7 +815,9 @@ export class SpeechStream extends stt.SpeechStream {
               rate: REALTIME_SAMPLE_RATE,
             },
             transcription,
-            turn_detection: this.#options.turnDetection,
+            ...(!isRealtimeOnly(this.#options.model)
+              ? { turn_detection: this.#options.turnDetection }
+              : {}),
             ...(this.#options.noiseReductionType
               ? { noise_reduction: { type: this.#options.noiseReductionType } }
               : {}),
@@ -611,7 +827,7 @@ export class SpeechStream extends stt.SpeechStream {
     };
   }
 
-  async #forwardInput(ws: WebSocket, vadStream?: VADStream): Promise<void> {
+  async #forwardInput(): Promise<void> {
     const audioStream = new AudioByteStream(
       REALTIME_SAMPLE_RATE,
       REALTIME_NUM_CHANNELS,
@@ -619,11 +835,18 @@ export class SpeechStream extends stt.SpeechStream {
     );
 
     for await (const item of this.input) {
+      while (!this.#ws && !this.abortSignal.aborted) await this.#wsReady.wait();
+      const ws = this.#ws;
+      if (!ws) return;
+      const vadStream = this.#vadStream;
       if (item === SpeechStream.FLUSH_SENTINEL) {
         for (const frame of audioStream.flush()) {
           this.#sendAudioFrame(ws, frame);
         }
-        if (this.#options.turnDetection === null) {
+        if (
+          _requiresRealtimeVad(this.#options.model, this.#options.turnDetection) &&
+          !this.#options.vad
+        ) {
           ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
         }
         continue;
@@ -634,7 +857,7 @@ export class SpeechStream extends stt.SpeechStream {
         this.#sendAudioFrame(ws, frame);
       }
     }
-    vadStream?.endInput();
+    this.#vadStream?.endInput();
   }
 
   async #forwardVadEvents(ws: WebSocket, vadStream: VADStream): Promise<void> {
@@ -643,7 +866,7 @@ export class SpeechStream extends stt.SpeechStream {
         this.#emitStartOfSpeech();
       } else if (event.type === VADEventType.END_OF_SPEECH) {
         this.#emitEndOfSpeech();
-        if (this.#options.turnDetection === null) {
+        if (_requiresRealtimeVad(this.#options.model, this.#options.turnDetection)) {
           ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
         }
       }
@@ -687,7 +910,13 @@ export class SpeechStream extends stt.SpeechStream {
           const transcript = event.transcript ?? '';
           if (transcript) {
             this.#targetTranscript = transcript;
-            this.queue.put(this.#speechEvent(stt.SpeechEventType.FINAL_TRANSCRIPT, itemId));
+            this.queue.put(
+              this.#speechEvent(
+                stt.SpeechEventType.FINAL_TRANSCRIPT,
+                itemId,
+                event.languages?.[0]?.code,
+              ),
+            );
           }
           this.#emitRecognitionUsage(event, itemId);
           this.#targetTranscript = '';
@@ -768,14 +997,20 @@ export class SpeechStream extends stt.SpeechStream {
     this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
   }
 
-  #speechEvent(type: stt.SpeechEventType, requestId = this.#currentItemId): stt.SpeechEvent {
+  #speechEvent(
+    type: stt.SpeechEventType,
+    requestId = this.#currentItemId,
+    detectedLanguage?: string,
+  ): stt.SpeechEvent {
     return {
       type,
       requestId,
       alternatives: [
         {
           text: this.#targetTranscript,
-          language: normalizeLanguage(this.#options.language || ''),
+          language: detectedLanguage
+            ? normalizeLanguage(detectedLanguage)
+            : transcriptLanguage(this.#options.languages),
           startTime: 0,
           endTime: 0,
           confidence: 1,
