@@ -525,14 +525,15 @@ export class LLMStream extends llm.LLMStream {
         for (const choice of chunk.choices) {
           const chatChunk = this.parseChoice(chunk.id, choice, thinkingFilter);
           if (chatChunk) {
-            retryable = false;
+            if (llm.hasResponse(chatChunk)) {
+              retryable = false;
+            }
             this.queue.put(chatChunk);
           }
         }
 
         if (chunk.usage) {
           const usage = chunk.usage;
-          retryable = false;
           this.queue.put({
             id: chunk.id,
             usage: {

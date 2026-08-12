@@ -42,6 +42,17 @@ export interface ChatChunk {
   usage?: CompletionUsage;
 }
 
+/**
+ * Whether this chunk delivered generation the caller can see.
+ *
+ * Token counts and provider metadata (a gateway deployment stamp, a thought
+ * signature) reach the caller without being output: they neither start the clock
+ * on time-to-first-token nor give a retry anything to duplicate.
+ */
+export function hasResponse(chunk: ChatChunk): boolean {
+  return Boolean(chunk.delta?.content || chunk.delta?.toolCalls?.length);
+}
+
 export interface CollectedResponse {
   text: string;
   toolCalls: FunctionCall[];
@@ -210,7 +221,15 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
+    startSoon(async () => {
+      try {
+        await this.mainTask();
+      } catch {
+        // already surfaced via emitError; swallow to avoid unhandled rejection.
+      } finally {
+        this.queue.close();
+      }
+    });
   }
 
   private _mainTaskImpl = async (span: Span) => {
@@ -305,7 +324,9 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       if (requestId && !this.#providerRequestIds.includes(requestId)) {
         this.#providerRequestIds.push(requestId);
       }
-      if (ttft === BigInt(-1)) {
+      // measured against generation, not the first chunk: a retry that follows a
+      // contentless chunk would otherwise latch the clock on the failed attempt
+      if (ttft === BigInt(-1) && hasResponse(ev)) {
         ttft = process.hrtime.bigint() - startTime;
         completionStartTime = new Date().toISOString();
       }
