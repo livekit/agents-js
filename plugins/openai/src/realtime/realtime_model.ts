@@ -61,7 +61,8 @@ interface RealtimeOptions {
   modalities: Modality[];
 }
 
-interface MessageGeneration {
+/** @internal */
+export interface MessageGeneration {
   messageId: string;
   textChannel: stream.StreamChannel<string | TimedString>;
   audioChannel: stream.StreamChannel<AudioFrame>;
@@ -69,7 +70,8 @@ interface MessageGeneration {
   modalities: Future<('text' | 'audio')[]>;
 }
 
-interface ResponseGeneration {
+/** @internal */
+export interface ResponseGeneration {
   messageChannel: stream.StreamChannel<llm.MessageGeneration>;
   functionChannel: stream.StreamChannel<llm.FunctionCall>;
   messages: Map<string, MessageGeneration>;
@@ -82,7 +84,8 @@ interface ResponseGeneration {
   _firstTokenTimestamp?: number;
 }
 
-class DiscardedGeneration {
+/** @internal */
+export class DiscardedGeneration {
   readonly discarded = true;
 }
 
@@ -446,7 +449,7 @@ export function processBaseURL({
  */
 export class RealtimeSession extends llm.RealtimeSession {
   private _tools: llm.ToolContext = llm.ToolContext.empty();
-  private remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
+  protected remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
   private messageChannel = new Queue<api_proto.ClientEvent>();
   private inputResampler?: AudioResampler;
   private instructions?: string;
@@ -455,7 +458,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   // per-session copy of options so updateOptions can diff against the session's
   // own state instead of the shared model-level state.
   private _options: RealtimeOptions;
-  private currentGeneration?: ResponseGeneration | DiscardedGeneration;
+  protected currentGeneration?: ResponseGeneration | DiscardedGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
   private discardedEventIds = new Set<string>();
 
@@ -463,6 +466,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
+  private chatCtxEventFutures: { [id: string]: Future } = {};
 
   private inputTranscriptAccumulators = new Map<string, Map<number, string>>();
 
@@ -616,10 +620,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       const futures: Future<void>[] = [];
       const ownedCreateFutures: { [id: string]: Future<void> } = {};
       const ownedDeleteFutures: { [id: string]: Future<void> } = {};
+      const ownedEventFutures: { [id: string]: Future<void> } = {};
 
-      const cleanupTimedOutFutures = () => {
-        // remove timed-out entries so late server acks
-        // don't resolve stale futures from a previous updateChatCtx call.
+      const cleanupFutures = () => {
         for (const [itemId, future] of Object.entries(ownedDeleteFutures)) {
           if (this.itemDeleteFutures[itemId] === future) {
             delete this.itemDeleteFutures[itemId];
@@ -630,11 +633,17 @@ export class RealtimeSession extends llm.RealtimeSession {
             delete this.itemCreateFutures[itemId];
           }
         }
+        for (const [eventId, future] of Object.entries(ownedEventFutures)) {
+          if (this.chatCtxEventFutures[eventId] === future) {
+            delete this.chatCtxEventFutures[eventId];
+          }
+        }
       };
 
       for (const event of events) {
+        let future: Future<void>;
         if (event.type === 'conversation.item.create') {
-          const future = new Future<void>();
+          future = new Future<void>();
           futures.push(future);
           this.itemCreateFutures[event.item.id] = future;
           ownedCreateFutures[event.item.id] = future;
@@ -644,10 +653,17 @@ export class RealtimeSession extends llm.RealtimeSession {
             futures.push(existingDeleteFuture);
             continue;
           }
-          const future = new Future<void>();
+          future = new Future<void>();
           futures.push(future);
           this.itemDeleteFutures[event.item_id] = future;
           ownedDeleteFutures[event.item_id] = future;
+        } else {
+          continue;
+        }
+
+        if (event.event_id) {
+          this.chatCtxEventFutures[event.event_id] = future;
+          ownedEventFutures[event.event_id] = future;
         }
 
         this.sendEvent(event);
@@ -661,13 +677,23 @@ export class RealtimeSession extends llm.RealtimeSession {
       // Cancel the timeout branch once futures resolve to avoid stale cleanup.
       const timeoutController = new AbortController();
       const timeoutPromise = delay(5000, { signal: timeoutController.signal }).then(() => {
-        cleanupTimedOutFutures();
         throw new llm.RealtimeError('update_chat_ctx timed out.');
       });
 
       try {
-        await Promise.race([Promise.all(futures), timeoutPromise]);
+        const results = await Promise.race([
+          Promise.allSettled(futures.map((fut) => fut.await)),
+          timeoutPromise,
+        ]);
+        const rejected = results.filter((result) => result.status === 'rejected');
+        if (rejected.length > 0) {
+          this.#logger.warn(
+            { errors: rejected.map((result) => String(result.reason)) },
+            `${this.oaiRealtimeModel.label()} rejected part of a chat context update`,
+          );
+        }
       } finally {
+        cleanupFutures();
         if (!timeoutController.signal.aborted) {
           timeoutController.abort();
         }
@@ -680,7 +706,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private async createChatCtxUpdateEvents(
+  protected async createChatCtxUpdateEvents(
     chatCtx: llm.ChatContext,
     addMockAudio: boolean = false,
   ): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]> {
@@ -1015,7 +1041,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     return untypedEvent;
   }
 
-  private closeCurrentGeneration(reason: string): void {
+  protected closeCurrentGeneration(reason: string = 'provider abandonment'): void {
     if (this.currentGeneration instanceof DiscardedGeneration) {
       this.currentGeneration = undefined;
       return;
@@ -1143,7 +1169,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       // Clear audio-capable item tracking - restored items are text-only on the server
       this.audioCapableItemIds.clear();
-      this.inputTranscriptAccumulators.clear();
+      this.resetInputTurnState();
 
       const events: api_proto.ClientEvent[] = [];
 
@@ -1262,7 +1288,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             break;
           }
 
-          if (lkOaiDebug) {
+          if (lkOaiDebug && event.type !== 'input_audio_buffer.append') {
             this.#logger.debug(this.loggableEvent(event), `(client) -> ${event.type}`);
           }
 
@@ -1423,6 +1449,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async close() {
+    this.resetInputTurnState();
     super.close();
     this.#closed = true;
     await this.#task;
@@ -1446,14 +1473,17 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     this.inputTranscriptAccumulators.clear();
 
-    // Clean up current generation if exists
     this.closeCurrentGeneration('Session closed');
 
     // Clear the message queue
     this.messageChannel.items.length = 0;
   }
 
-  private handleInputAudioBufferSpeechStarted(
+  protected resetInputTurnState(): void {
+    this.inputTranscriptAccumulators.clear();
+  }
+
+  protected handleInputAudioBufferSpeechStarted(
     _event: api_proto.InputAudioBufferSpeechStartedEvent,
   ): void {
     this.emit('input_speech_started', {} as llm.InputSpeechStartedEvent);
@@ -1467,7 +1497,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     } as llm.InputSpeechStoppedEvent);
   }
 
-  private handleResponseCreated(event: api_proto.ResponseCreatedEvent): void {
+  protected handleResponseCreated(event: api_proto.ResponseCreatedEvent): void {
     if (!event.response.id) {
       throw new Error('response.id is missing');
     }
@@ -1567,7 +1597,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.currentGeneration.messages.set(itemId, itemGeneration);
   }
 
-  private handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {
+  protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {
     if (!event.item.id) {
       throw new Error('item.id is not set');
     }
@@ -1591,7 +1621,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const fut = pendingCreateFuture;
     if (fut) {
-      fut.resolve();
+      if (!fut.done) fut.resolve();
       delete this.itemCreateFutures[event.item.id];
     }
   }
@@ -1613,7 +1643,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const fut = this.itemDeleteFutures[event.item_id];
     if (fut) {
-      fut.resolve();
+      if (!fut.done) fut.resolve();
       delete this.itemDeleteFutures[event.item_id];
     }
   }
@@ -1648,9 +1678,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     return partial;
   }
 
-  private handleConversationItemInputAudioTranscriptionCompleted(
+  protected handleConversationItemInputAudioTranscriptionCompleted(
     event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
   ): void {
+    if (event.status === 'in_progress') {
+      this.emit('input_audio_transcription_completed', {
+        itemId: event.item_id,
+        transcript: event.transcript,
+        isFinal: false,
+      });
+      return;
+    }
+
     this.clearAccumulator(event.item_id, event.content_index ?? 0);
 
     const remoteItem = this.remoteChatCtx.get(event.item_id);
@@ -1744,7 +1783,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     // TODO(shubhra): handle text mode recovery
   }
 
-  private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
+  protected handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
     if (this.currentGeneration instanceof DiscardedGeneration) return;
 
     if (!this.currentGeneration) {
@@ -1801,7 +1840,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
+  protected handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
     if (this.currentGeneration instanceof DiscardedGeneration) return;
 
     if (!this.currentGeneration) {
@@ -2029,12 +2068,21 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleError(event: api_proto.ErrorEvent): void {
+    const eventId = event.error.event_id;
+    if (eventId) {
+      const future = this.chatCtxEventFutures[eventId];
+      if (future) {
+        delete this.chatCtxEventFutures[eventId];
+        if (!future.done) future.reject(new Error(event.error.message));
+        if (!isFatalError(event.error)) return;
+      }
+    }
+
     if (event.error.message.startsWith('Cancellation failed')) {
       return;
     }
     this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
 
-    const eventId = event.error.event_id;
     if (eventId) {
       const handle = this.responseCreatedFutures[eventId];
       if (handle) {
