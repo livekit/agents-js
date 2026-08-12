@@ -689,7 +689,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (rejected.length > 0) {
           this.#logger.warn(
             { errors: rejected.map((result) => String(result.reason)) },
-            'OpenAI rejected part of a chat context update',
+            `${this.oaiRealtimeModel.label()} rejected part of a chat context update`,
           );
         }
       } finally {
