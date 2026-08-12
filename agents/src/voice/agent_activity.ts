@@ -2312,16 +2312,17 @@ export class AgentActivity implements RecognitionHooks {
     const future = new Future<void>();
     const currentSpeech = this._currentSpeech;
 
-    const interruptedSpeeches = this._interruptBackgroundSpeeches(force);
+    this._interruptBackgroundSpeeches(force);
 
-    if (currentSpeech) {
-      interruptedSpeeches.push(currentSpeech.interrupt(force));
-    }
+    currentSpeech?.interrupt(force);
 
     this.realtimeSession?.interrupt();
 
-    // Heap iteration pops in playout order, so walk a clone to leave retained speech queued.
-    for (const [_, __, speech] of this.speechQueue.clone()) {
+    // Heap iteration pops in playout order. Walk a clone so retained speeches stay queued and
+    // interrupted ones remain for mainTask to drain.
+    for (const [, , speech] of this.speechQueue.clone()) {
+      if (speech.interrupted || speech.done()) continue;
+
       if (!force && !speech.allowInterruptions) {
         this.logger.warn(
           { speech_id: speech.id },
@@ -2331,7 +2332,6 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       speech.interrupt(force);
-      interruptedSpeeches.push(speech);
     }
 
     if (force) {
@@ -2351,17 +2351,13 @@ export class AgentActivity implements RecognitionHooks {
       }
       this.speechQueue.clear();
       future.resolve();
-    } else if (interruptedSpeeches.length === 0) {
+    } else if (currentSpeech === undefined) {
       future.resolve();
     } else {
-      const onPlayoutDone = () => {
-        if (!future.done && interruptedSpeeches.every((speech) => speech.done())) {
-          future.resolve();
-        }
-      };
-      for (const speech of interruptedSpeeches) {
-        speech.addDoneCallback(onPlayoutDone);
-      }
+      currentSpeech.addDoneCallback(() => {
+        if (future.done) return;
+        future.resolve();
+      });
     }
 
     return future;
