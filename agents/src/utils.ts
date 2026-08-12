@@ -497,6 +497,8 @@ export class Task<T> {
   private static readonly currentTaskStorage = new AsyncLocalStorage<Task<unknown>>();
   private resultFuture: Future<T>;
   private doneCallbacks: Set<() => void> = new Set();
+  /** Snapshot of the cancellation disposition, taken once at settlement. See {@link cancelled}. */
+  private settledCancelled = false;
 
   #logger = log();
 
@@ -558,10 +560,18 @@ export class Task<T> {
     return Task.currentTaskStorage
       .run(this as Task<unknown>, run)
       .then((value) => {
+        // Snapshot before resolving: `done` flips synchronously inside resolve(), so the
+        // disposition has to be in place before any observer can see the task as settled.
+        this.settledCancelled = this.controller.signal.aborted;
         this.resultFuture.resolve(value);
         return value;
       })
       .catch((error) => {
+        // Failing for a reason unrelated to the abort is an exceptional completion, not a
+        // cancellation — asyncio reports the same when a task swallows CancelledError and
+        // raises something else.
+        this.settledCancelled =
+          this.controller.signal.aborted && (error as Error | undefined)?.name === 'AbortError';
         this.resultFuture.reject(error);
       })
       .finally(() => {
@@ -625,6 +635,34 @@ export class Task<T> {
    */
   get done(): boolean {
     return this.resultFuture.done;
+  }
+
+  /**
+   * Whether this task settled under a cancellation, the near-equivalent of asyncio's
+   * `Task.cancelled()`. Needed because a cancelled body usually observes the abort signal and
+   * returns normally rather than rejecting, so {@link result} alone cannot distinguish a task
+   * that was torn down from one that ran to a real answer.
+   *
+   * Guarantees exactly: `true` if and only if the task is {@link done}, its controller was
+   * already aborted at the instant it settled, and it did not fail with an error unrelated to
+   * that abort (it either returned a value or rejected with an `AbortError`). The value is
+   * captured once at settlement, so it is immutable afterwards — aborting the controller later
+   * cannot reclassify a task that already finished.
+   *
+   * Does *not* guarantee:
+   * - that the body was actually interrupted. A body that observes the abort and returns
+   *   normally anyway still reports `true`; the abort, not the return, is the disposition.
+   * - that this task specifically was the cancellation target. Controllers are intentionally
+   *   shareable (see the class example), so an abort raised for a sibling before this task
+   *   settles also marks it cancelled. Read this as "a cancellation was in effect for this
+   *   task when it settled", not "someone called cancel() on this task".
+   *
+   * `false` while a cancelled task is still winding down, matching asyncio.
+   *
+   * @internal
+   */
+  get cancelled(): boolean {
+    return this.done && this.settledCancelled;
   }
 
   addDoneCallback(callback: () => void) {
