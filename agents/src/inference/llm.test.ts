@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import * as agents from '../index.js';
 import { ChatContext } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
+import type { LLMMetrics } from '../metrics/base.js';
 import { type InferenceClass, LLM } from './llm.js';
 import { describeLiveKitInference } from './test_utils.js';
 
@@ -246,6 +247,69 @@ describe('inference.LLM reported latency', () => {
     const ttftMs = await ttftAcrossARetry();
 
     expect(ttftMs).toBeGreaterThanOrEqual(STALL_MS);
+  });
+});
+
+const USAGE_CHUNK: CompletionChunk = {
+  id: 'chatcmpl_test',
+  choices: [],
+  usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+};
+
+// A model told to end the call without speaking answers with no content at all.
+async function runResponseThatGeneratesNothing(): Promise<{
+  attempts: number;
+  metrics: LLMMetrics[];
+}> {
+  const llm = new LLM({
+    model: 'google/gemma-4-31b-it',
+    apiKey: 'test-key',
+    apiSecret: 'test-secret',
+    baseURL: 'https://example.livekit.cloud',
+  });
+  llm.on('error', () => {});
+
+  const metrics: LLMMetrics[] = [];
+  llm.on('metrics_collected', (m) => metrics.push(m));
+
+  let attempts = 0;
+  const stub = async () => {
+    attempts++;
+    return {
+      async *[Symbol.asyncIterator]() {
+        yield METADATA_ONLY_CHUNK;
+        yield USAGE_CHUNK;
+      },
+    };
+  };
+
+  const internal = llm as unknown as {
+    client: { chat: { completions: { create: typeof stub } } };
+  };
+  internal.client.chat.completions.create = stub;
+
+  const stream = llm.chat({
+    chatCtx: new ChatContext(),
+    connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 5000 },
+  });
+  for await (const _chunk of stream) {
+    void _chunk;
+  }
+  // metrics are emitted just after the output stream closes
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  return { attempts, metrics };
+}
+
+describe('inference.LLM response that generates nothing', () => {
+  it('completes on the first attempt, reporting no ttft and the tokens it used', async () => {
+    const { attempts, metrics } = await runResponseThatGeneratesNothing();
+
+    expect(attempts).toBe(1);
+    expect(metrics).toHaveLength(1);
+    expect(metrics[0]!.ttftMs).toBe(-1);
+    expect(metrics[0]!.completionTokens).toBe(7);
+    expect(metrics[0]!.totalTokens).toBe(18);
   });
 });
 
