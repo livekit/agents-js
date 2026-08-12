@@ -32,6 +32,12 @@ interface TokenizerOptions {
    */
   minTokenLength?: number;
   /**
+   * Minimum length for the *first* token of each segment, when it should differ from
+   * `minTokenLength`. Lets a batching consumer still emit its opening chunk as soon as one
+   * sentence is ready, so batching costs nothing at the head of a segment.
+   */
+  firstTokenLength?: number;
+  /**
    * Treat XML markup as atomic — never split a tag across tokens and keep tags attached to
    * the following sentence. Only enable when the input actually carries markup (e.g.
    * expressive TTS): a stray "<" in plain text can otherwise hold back streaming until
@@ -75,6 +81,7 @@ export class SentenceTokenizer extends tokenizer.SentenceTokenizer {
       this.#config.streamContextLength,
       {
         maxTokenLength: this.#config.maxTokenLength,
+        firstTokenLength: this.#config.firstTokenLength,
         xmlAware: this.#config.xmlAware,
       },
     );

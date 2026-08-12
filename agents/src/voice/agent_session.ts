@@ -537,6 +537,16 @@ export class AgentSession<
    */
   _expressiveEverActive = false;
 
+  /**
+   * Whether the "template has no markup-guide placeholder" warning has been emitted.
+   *
+   * Session-scoped so a misconfigured template warns once rather than once per turn, and
+   * survives a handoff (which builds a fresh `AgentActivity`).
+   *
+   * @internal
+   */
+  _warnedExpressiveTemplate = false;
+
   // Connection options for STT, LLM, and TTS
   private _connOptions: ResolvedSessionConnectOptions;
 

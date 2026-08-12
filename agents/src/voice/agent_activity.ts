@@ -1081,10 +1081,30 @@ export class AgentActivity implements RecognitionHooks {
     if (!ttsInstructions) return;
 
     const template = options.ttsInstructionsTemplate ?? '';
-    const rendered = renderInstructions(template, turnModality).replaceAll(
-      TTS_INSTRUCTIONS_PLACEHOLDER,
-      ttsInstructions,
-    );
+    const raw = renderInstructions(template, turnModality);
+
+    if (
+      !raw.includes(TTS_INSTRUCTIONS_PLACEHOLDER) &&
+      !this.agentSession._warnedExpressiveTemplate
+    ) {
+      // The placeholder is the only channel the provider's markup vocabulary has. Without
+      // it the model is never taught the tags, yet the rest of the pipeline still runs as
+      // if it were: xml-aware chunking, markup conversion on the audio path, and markup
+      // stripping in the transcript sinks. Not an error — a template may legitimately
+      // hardcode the vocabulary — but silently shipping expressive with no guide is far
+      // more often a mistake.
+      this.agentSession._warnedExpressiveTemplate = true;
+      this.logger.warn(
+        { placeholder: TTS_INSTRUCTIONS_PLACEHOLDER },
+        'expressive is enabled but the tts instructions template does not contain the markup ' +
+          "guide placeholder, so the LLM is never given the provider's markup vocabulary. " +
+          'Include the placeholder in `expressive.ttsInstructionsTemplate`, use ' +
+          '`expressive.ttsInstructionsAppend` to add rules on top of the default template, ' +
+          'or ignore this if the template spells out the vocabulary itself.',
+      );
+    }
+
+    const rendered = raw.replaceAll(TTS_INSTRUCTIONS_PLACEHOLDER, ttsInstructions);
     if (rendered.trim()) {
       // keyed message: re-injection replaces last turn's guide instead of stacking
       // copies, and an expressive-off turn removes it again

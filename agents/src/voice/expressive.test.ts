@@ -150,6 +150,46 @@ describe('AgentSession expressive option', () => {
   });
 });
 
+describe('custom template without the markup-guide placeholder', () => {
+  // The placeholder is the only channel the provider's vocabulary has. A template that
+  // omits it still injects a message and still turns on xml-aware chunking, markup
+  // conversion and transcript stripping — the model just never learns the tags.
+
+  const render = (expr: ExpressiveOptions) => {
+    const resolved = resolveExpressiveOptions(expr, {
+      providerKey: 'inworld',
+      defaults: DEFAULT_EXPRESSIVE_OPTIONS,
+    });
+    return String(resolved.ttsInstructionsTemplate);
+  };
+
+  it('drops the vocabulary when the placeholder is missing', () => {
+    const text = render({ ttsInstructionsTemplate: 'Be expressive, please.' });
+    expect(text).not.toContain(TTS_INSTRUCTIONS_PLACEHOLDER);
+    // ...yet it still renders to a non-empty guide message, so nothing downstream notices
+    expect(text.trim()).not.toBe('');
+  });
+
+  it('still renders non-empty for an empty template, via the steering fragment', () => {
+    // the appended delivery guidelines make `rendered.trim()` truthy even here
+    const text = render({ ttsInstructionsTemplate: '' });
+    expect(text).not.toContain(TTS_INSTRUCTIONS_PLACEHOLDER);
+    expect(text.trim()).not.toBe('');
+    expect(text).toContain('Delivery guidelines:');
+  });
+
+  it('keeps the placeholder when only appending', () => {
+    // the documented way to add your own rules keeps the guide intact
+    const text = render({ ttsInstructionsAppend: 'Stay upbeat.' });
+    expect(text).toContain(TTS_INSTRUCTIONS_PLACEHOLDER);
+    expect(text.endsWith('Stay upbeat.')).toBe(true);
+  });
+
+  it('warns at most once per session', () => {
+    expect(new AgentSession()._warnedExpressiveTemplate).toBe(false);
+  });
+});
+
 describe('resolveExpressiveOptions', () => {
   const resolve = (expr: ExpressiveOptions, providerKey = 'inworld') =>
     resolveExpressiveOptions(expr, { providerKey, defaults: DEFAULT_EXPRESSIVE_OPTIONS });

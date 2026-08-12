@@ -21,7 +21,9 @@ import {
   dropBracketCues,
   expressionAttribute,
   llmInstructions,
+  maxInputLen,
   normalizeMarkup,
+  sentenceTokenizer,
   splitAllMarkup,
   steeringInstructions,
   stripAllMarkup,
@@ -633,6 +635,74 @@ describe('speech steering', () => {
     for (const provider of ['fishaudio', 'inworld', 'xai', 'cartesia']) {
       expect(llmInstructions(provider), provider).toContain('REGISTER of the moment');
     }
+  });
+});
+
+describe('expressive chunking', () => {
+  // a typical expressive reply: three short sentences with markers, ~270 chars — well
+  // under every provider's request cap
+  const REPLY =
+    '<expr type="expression" label="really amiable and welcoming"/> Hey, good to hear from you! ' +
+    '<expr type="expression" label="gently inquisitive"/> How did the interview go? ' +
+    '<expr type="expression" label="really bright, upbeat energy"/> I have been thinking about it all week.';
+
+  /** Feed the reply in LLM-sized chunks; report what the TTS would have received and when. */
+  async function synthesisRequests(provider: string, expressive: boolean) {
+    const stream = sentenceTokenizer(provider, { expressive }).stream();
+    const tokens: string[] = [];
+    const reader = (async () => {
+      for await (const ev of stream) tokens.push(ev.token);
+    })();
+
+    for (const chunk of REPLY.match(/.{1,12}/gs) ?? []) stream.pushText(chunk);
+    await new Promise((r) => setImmediate(r));
+    // everything emitted at this point went out while the LLM was still generating
+    const duringStream = [...tokens];
+
+    stream.endInput();
+    await reader;
+    return { duringStream, total: tokens.length, first: tokens[0] ?? '' };
+  }
+
+  it.each(['inworld', 'xai', 'cartesia'])(
+    'leaves time-to-first-audio unchanged for %s',
+    async (provider) => {
+      const plain = await synthesisRequests(provider, false);
+      const expressive = await synthesisRequests(provider, true);
+
+      // regression: the batch target used to be the provider's request cap (400–1000
+      // chars). A typical reply never reaches it, so nothing was sent until generation
+      // finished and the whole turn was synthesized in one request — first audio waited
+      // for the full completion.
+      expect(expressive.duringStream.length).toBeGreaterThan(0);
+      expect(expressive.first).toBe(plain.first);
+
+      // ...while still batching the body of the turn into fewer requests than per-sentence
+      expect(expressive.total).toBeLessThan(plain.total);
+    },
+  );
+
+  it('keeps fishaudio per-sentence', async () => {
+    // its markers are sentence-scoped, so batching would cost first-audio and buy no
+    // steering — it is deliberately absent from the chunk-limit table
+    const plain = await synthesisRequests('fishaudio', false);
+    const expressive = await synthesisRequests('fishaudio', true);
+    expect(expressive.total).toBe(plain.total);
+  });
+
+  it('never exceeds the provider request cap', async () => {
+    const long = Array.from({ length: 40 }, (_, i) => `This is sentence number ${i}.`).join(' ');
+    const stream = sentenceTokenizer('cartesia', { expressive: true }).stream();
+    const tokens: string[] = [];
+    const reader = (async () => {
+      for await (const ev of stream) tokens.push(ev.token);
+    })();
+    stream.pushText(long);
+    stream.endInput();
+    await reader;
+
+    expect(tokens.length).toBeGreaterThan(1);
+    for (const t of tokens) expect(t.length).toBeLessThanOrEqual(maxInputLen('cartesia')!);
   });
 });
 

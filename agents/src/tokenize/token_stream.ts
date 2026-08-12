@@ -159,6 +159,16 @@ export interface BufferedTokenStreamOptions {
    */
   maxTokenLength?: number;
   /**
+   * Minimum length for the *first* token of each segment, when it should differ from
+   * `minTokenLength`.
+   *
+   * Batching trades time-to-first-result for larger chunks. Setting this lets the opening
+   * token go out as soon as it is ready while later tokens still accumulate to
+   * `minTokenLength` — so a consumer that batches pays nothing at the head of a segment.
+   * Reset by `flush()`, since each segment gets its own first token.
+   */
+  firstTokenLength?: number;
+  /**
    * Treat XML markup as atomic — never split a tag across tokens and merge
    * tag-only/unclosed spans forward. Only enable when the input actually carries markup
    * (e.g. expressive TTS): a stray "<" in plain text can otherwise hold back streaming
@@ -175,6 +185,8 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
   #minTokenLength: number;
   #minContextLength: number;
   #maxTokenLength?: number;
+  #firstTokenLength?: number;
+  #emittedThisSegment = 0;
   #xmlAware: boolean;
   #inBuf = '';
   #outBuf = '';
@@ -191,8 +203,22 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
     this.#minTokenLength = minTokenLength;
     this.#minContextLength = minContextLength;
     this.#maxTokenLength = options.maxTokenLength;
+    this.#firstTokenLength = options.firstTokenLength;
 
     this.#currentSegmentId = shortuuid();
+  }
+
+  /** The length the running token must reach before it is emitted. */
+  get #emitThreshold(): number {
+    return this.#emittedThisSegment === 0 && this.#firstTokenLength !== undefined
+      ? this.#firstTokenLength
+      : this.#minTokenLength;
+  }
+
+  #emit() {
+    this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
+    this.#outBuf = '';
+    this.#emittedThisSegment += 1;
   }
 
   /** Push a string of text into the token stream */
@@ -223,16 +249,14 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
         this.#outBuf &&
         this.#outBuf.length + 1 + tokText.length > this.#maxTokenLength
       ) {
-        this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
-        this.#outBuf = '';
+        this.#emit();
       }
 
       if (this.#outBuf) this.#outBuf += ' ';
       this.#outBuf += tokText;
 
-      if (this.#outBuf.length >= this.#minTokenLength) {
-        this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
-        this.#outBuf = '';
+      if (this.#outBuf.length >= this.#emitThreshold) {
+        this.#emit();
       }
 
       if (Array.isArray(tok)) {
@@ -263,8 +287,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
           this.#outBuf &&
           this.#outBuf.length + 1 + tokText.length > this.#maxTokenLength
         ) {
-          this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
-          this.#outBuf = '';
+          this.#emit();
         }
 
         if (this.#outBuf) this.#outBuf += ' ';
@@ -272,10 +295,12 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       }
 
       if (this.#outBuf) {
-        this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
+        this.#emit();
       }
 
       this.#currentSegmentId = shortuuid();
+      // a new segment gets its own fast first token
+      this.#emittedThisSegment = 0;
     }
 
     this.#inBuf = '';

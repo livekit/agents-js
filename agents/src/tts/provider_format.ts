@@ -863,22 +863,47 @@ export function maxInputLen(provider: string): number | undefined {
 }
 
 /**
+ * How much text an expressive turn batches before emitting, in characters — roughly two
+ * sentences.
+ *
+ * Deliberately far below the providers' request caps. The cap is a transport limit
+ * (400–1000 chars); using it as the batch target means a typical reply never reaches it,
+ * so nothing is emitted while the LLM streams and the whole turn is synthesized in one
+ * request once generation ends — time-to-first-audio becomes "wait for the full
+ * completion". Batching a couple of sentences is all continuous prosody needs.
+ */
+const EXPRESSIVE_BATCH_LEN = 200;
+
+/**
+ * Minimum length of the first chunk of an expressive turn — the tokenizer's per-sentence
+ * default, so the opening sentence is sent the moment it is complete.
+ *
+ * Batching starts from the second chunk, which keeps prosody continuous over the body of
+ * the turn while leaving time-to-first-audio identical to a non-expressive turn.
+ */
+const EXPRESSIVE_FIRST_CHUNK_LEN = 20;
+
+/**
  * Default sentence tokenizer for a provider's streamed TTS input.
  *
  * The provider's hard max chunk length caps every emitted token. When `expressive` is set,
- * it also raises the *minimum* so consecutive sentences are batched up to that size,
- * keeping prosody continuous across the turn; otherwise tokens emit per sentence (the
- * unchanged default). Providers with no configured limit are uncapped and always
- * per-sentence.
+ * it also raises the *minimum* to {@link EXPRESSIVE_BATCH_LEN} so a couple of consecutive
+ * sentences ride one request, keeping prosody continuous across the turn; otherwise tokens
+ * emit per sentence (the unchanged default). Providers with no configured limit are
+ * uncapped and stay per-sentence even under expressive — Fish Audio's markers are
+ * sentence-scoped, so batching would cost time-to-first-audio and buy no steering.
  */
 export function sentenceTokenizer(
   provider: string,
   options: { expressive: boolean },
 ): SentenceTokenizer {
   const maxLen = MAX_INPUT_LEN[provider];
+  const batching = options.expressive && maxLen !== undefined;
   return new tokenizeBasic.SentenceTokenizer({
     maxTokenLength: maxLen,
-    minTokenLength: options.expressive ? maxLen : undefined,
+    // the batch target is independent of the cap; clamped so it can never exceed it
+    minTokenLength: batching ? Math.min(EXPRESSIVE_BATCH_LEN, maxLen!) : undefined,
+    firstTokenLength: batching ? EXPRESSIVE_FIRST_CHUNK_LEN : undefined,
     // markup only exists in the stream when expressive is active; xml-aware
     // tokenization would otherwise hold streaming on a stray "<" in plain text
     xmlAware: options.expressive,
