@@ -1221,6 +1221,12 @@ export function performToolExecutions({
     onToolExecutionCompleted(out);
     toolOutput.output.push(out);
   };
+  const toolStarted = (toolCall: FunctionCall) => {
+    if (!toolOutput.firstToolStartedFuture.done) {
+      toolOutput.firstToolStartedFuture.resolve();
+    }
+    onToolExecutionStarted(toolCall);
+  };
 
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
@@ -1269,6 +1275,12 @@ export function performToolExecutions({
           },
           `unknown AI function ${toolCall.name}`,
         );
+        try {
+          toolCall.args = JSON.stringify(parseFunctionArguments(toolCall.args || '{}'));
+        } catch {
+          toolCall.args = '{}';
+        }
+        toolStarted(toolCall);
         toolCompleted(
           createToolOutput({
             toolCall,
@@ -1290,6 +1302,7 @@ export function performToolExecutions({
       }
 
       let parsedArgs: object | undefined;
+      let argumentsParsed = false;
 
       // Ensure valid arguments
       try {
@@ -1299,6 +1312,7 @@ export function performToolExecutions({
         if (canonicalArgs !== rawArgs) {
           toolCall.args = canonicalArgs;
         }
+        argumentsParsed = true;
 
         if (isZodSchema(tool.parameters)) {
           const result = await parseZodSchema<object>(tool.parameters, jsonArgs);
@@ -1321,9 +1335,13 @@ export function performToolExecutions({
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
+        if (!argumentsParsed) {
+          toolCall.args = '{}';
+        }
         // Surface argument-validation errors to the LLM via ToolError so it can correct
         // its arguments instead of looping on the same invalid call. The argument schema
         // and the validator's error message do not contain server-side internals.
+        toolStarted(toolCall);
         toolCompleted(
           createToolOutput({
             toolCall,
@@ -1336,11 +1354,7 @@ export function performToolExecutions({
       // Resolve right after argument parsing and before execution (including the
       // executor's duplicate-check). This ensures a tool that gets duplicate-rejected
       // by the executor doesn't leave callers awaiting `firstToolStartedFuture` hanging forever.
-      if (!toolOutput.firstToolStartedFuture.done) {
-        toolOutput.firstToolStartedFuture.resolve();
-      }
-
-      onToolExecutionStarted(toolCall);
+      toolStarted(toolCall);
 
       logger.info(
         {
