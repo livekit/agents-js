@@ -414,6 +414,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.client = new PhonicClient({
       apiKey: this.options.apiKey,
       baseUrl: this.options.baseUrl,
+      reconnectConversationOnAbnormalDisconnect: true,
     });
     this.bstream = new AudioByteStream(
       PHONIC_INPUT_SAMPLE_RATE,

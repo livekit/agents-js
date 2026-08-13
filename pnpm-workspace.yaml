@@ -6,6 +6,8 @@ packages:
 minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
   - '@livekit/*'
+  # Reconnectable conversation close handling fix
+  - phonic@0.32.14
   # Renovate security update: vite@7.3.2 || 7.3.5
   - vite@7.3.2 || 7.3.5
   # Renovate security update: ws@8.20.1
