@@ -60,6 +60,11 @@ export interface STTOptions {
   model?: ElevenLabsSTTModels | string;
   /** @deprecated Use `model` instead. */
   modelId?: ElevenLabsSTTModels | string;
+  /**
+   * Keywords or phrases to bias transcription towards. Scribe v2 batch accepts up to 1000
+   * keyterms of at most 50 characters each; realtime accepts up to 50 keyterms of at most 20
+   * characters each. Usage incurs additional costs.
+   */
   keyterms?: string[];
   noVerbatim?: boolean;
   enableLogging?: boolean;
@@ -490,7 +495,11 @@ export class STT extends stt.STT {
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
-        stream.updateOptions({ serverVad: opts.serverVad, noVerbatim: opts.noVerbatim });
+        stream.updateOptions({
+          serverVad: opts.serverVad,
+          noVerbatim: opts.noVerbatim,
+          keyterms: opts.keyterms,
+        });
       } else {
         this.#streams.delete(ref);
       }
@@ -540,7 +549,11 @@ export class SpeechStream extends stt.SpeechStream {
     );
   }
 
-  updateOptions(opts: { serverVad?: VADOptions | null; noVerbatim?: boolean }): void {
+  updateOptions(opts: {
+    serverVad?: VADOptions | null;
+    noVerbatim?: boolean;
+    keyterms?: string[];
+  }): void {
     if (opts.serverVad !== undefined) {
       this.#opts.serverVad = opts.serverVad;
       if (!this.#reconnectEvent.done) {
@@ -549,6 +562,12 @@ export class SpeechStream extends stt.SpeechStream {
     }
     if (opts.noVerbatim !== undefined) {
       this.#opts.noVerbatim = opts.noVerbatim;
+      if (!this.#reconnectEvent.done) {
+        this.#reconnectEvent.resolve();
+      }
+    }
+    if (opts.keyterms !== undefined) {
+      this.#opts.keyterms = opts.keyterms;
       if (!this.#reconnectEvent.done) {
         this.#reconnectEvent.resolve();
       }
@@ -751,6 +770,12 @@ export class SpeechStream extends stt.SpeechStream {
 
     if (this.#opts.noVerbatim) {
       params.push('no_verbatim=true');
+    }
+
+    if (this.#opts.keyterms !== undefined) {
+      params.push(
+        ...this.#opts.keyterms.map((keyterm) => `keyterms=${encodeURIComponent(keyterm)}`),
+      );
     }
 
     const baseURL = this.#opts.baseURL.replace('https://', 'wss://').replace('http://', 'ws://');

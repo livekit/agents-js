@@ -514,6 +514,126 @@ describe('ElevenLabs STT', () => {
     }
   });
 
+  it('includes keyterms in the realtime connection URL', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let requestUrl = '';
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      keyterms: ['nginx', 'Grafana Loki', 'Ærø'],
+    }).stream();
+    try {
+      await waitUntil(() => requestUrl !== '');
+
+      expect(requestUrl).toContain('keyterms=nginx');
+      expect(requestUrl).toContain('keyterms=Grafana%20Loki');
+      expect(requestUrl).toContain('keyterms=%C3%86r%C3%B8');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('escapes query delimiters in realtime keyterms', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let requestUrl = '';
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      keyterms: ['Smith & Sons', 'C#'],
+    }).stream();
+    try {
+      await waitUntil(() => requestUrl !== '');
+
+      expect(requestUrl).toContain('keyterms=Smith%20%26%20Sons');
+      expect(requestUrl).toContain('keyterms=C%23');
+      expect(new URL(`ws://127.0.0.1${requestUrl}`).searchParams.getAll('keyterms')).toEqual([
+        'Smith & Sons',
+        'C#',
+      ]);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('omits realtime keyterms when not provided', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let requestUrl = '';
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+
+    const stream = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' }).stream();
+    try {
+      await waitUntil(() => requestUrl !== '');
+
+      expect(requestUrl).not.toContain('keyterms=');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('forwards keyterm updates to active streams', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_ws, req) => {
+      urls.push(req.url ?? '');
+    });
+
+    const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+    const stream = eleven.stream();
+    try {
+      await waitUntil(() => urls.length === 1);
+      eleven.updateOptions({ keyterms: ['nginx'] });
+      await waitUntil(() => urls.length === 2, 2000);
+
+      expect(new URL(`ws://127.0.0.1${urls[1]}`).searchParams.getAll('keyterms')).toEqual([
+        'nginx',
+      ]);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('updates stream keyterms and reconnects', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_ws, req) => {
+      urls.push(req.url ?? '');
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      await waitUntil(() => urls.length === 1);
+      stream.updateOptions({ keyterms: ['nginx'] });
+      await waitUntil(() => urls.length === 2, 2000);
+
+      expect(new URL(`ws://127.0.0.1${urls[1]}`).searchParams.getAll('keyterms')).toEqual([
+        'nginx',
+      ]);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('updates server VAD on active streams and reconnects in place', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     const urls: string[] = [];
