@@ -1,11 +1,11 @@
 # Expressive agent
 
-A free-form voice agent that demonstrates [Expressive Mode](https://docs.livekit.io/agents/build/expressive/).
+A free-form voice agent that demonstrates [expressive mode](https://docs.livekit.io/agents/models/tts/expressive/).
 There is no task and no tool: you talk to it like a friend, and it matches your
 register. Tell it good news and it gets excited; tell it something went wrong
 and it drops the energy.
 
-Expressive Mode is the single `expressive: true` flag on `AgentSession`. With it
+Expressive mode is the single `expressive: true` flag on `AgentSession`. With it
 enabled the framework injects the TTS provider's markup guide into the LLM
 prompt, so the model emits inline delivery tags (emotion, pacing, non-verbal
 sounds) that the TTS renders and the transcript never shows.
@@ -16,8 +16,8 @@ sounds) that the TTS renders and the transcript never shows.
 - `prompt.ts` holds the persona only. It steers _what_ the agent says, and
   expressive mode owns _how_ it sounds, so the two never restate each other.
 
-The pipeline uses LiveKit Inference with Gemini 2.5 Flash, AssemblyAI Universal
-Streaming, Fish Audio S2.1 Pro, and the LiveKit turn detector.
+The pipeline uses LiveKit Inference with Gemini 2.5 Flash, AssemblyAI Universal-3.5 Pro,
+Fish Audio S2.1 Pro, and the LiveKit turn detector.
 
 ## Run locally
 
@@ -37,7 +37,7 @@ The comparison is the point of the demo. Run it once with `expressive: true` and
 once with `expressive: false`, and say the same thing to each. The words come out
 much the same; the delivery does not.
 
-Expressive Mode requires an `inference.TTS` model that declares a markup
+Expressive mode requires an `inference.TTS` model that declares a markup
 dialect. Fish Audio, Inworld TTS 2, Cartesia Sonic 3, and xAI qualify; providers
 without a dialect synthesize normally and the flag stays inert. To hear another
 one, swap the `tts` model in `expressive_agent.ts`:
