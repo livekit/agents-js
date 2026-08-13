@@ -845,7 +845,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               let aligned: TimedString[] = [];
               if (serverEvent.words && serverEvent.words.length > 0) {
                 aligned = serverEvent.words.map((w) =>
-                  createTimedString({ text: w.word, startTime: w.start, endTime: w.end }),
+                  createTimedString({
+                    text: provider === 'cartesia' ? `${w.word} ` : w.word,
+                    startTime: w.start,
+                    endTime: w.end,
+                  }),
                 );
               } else if (serverEvent.chars && serverEvent.chars.length > 0) {
                 aligned = serverEvent.chars.map((c) =>
