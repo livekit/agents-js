@@ -544,6 +544,15 @@ describe('STT session keyterms', () => {
 
     stream.close();
   });
+
+  it('passes Cartesia keyterms through to the gateway extra', () => {
+    const stt = makeStt({ model: 'cartesia/ink-2', modelOptions: { keyterm: ['Acme'] } });
+    const stream = stt.stream();
+
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Acme']);
+
+    stream.close();
+  });
 });
 
 describe('STT VAD handling for Speechmatics models', () => {
