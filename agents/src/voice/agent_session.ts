@@ -100,6 +100,7 @@ import {
   type UserInputTranscribedEvent,
   type UserState,
   type UserStateChangedEvent,
+  type UserTranscriptionTimeoutEvent,
   createAgentStateChangedEvent,
   createCloseEvent,
   createConversationItemAddedEvent,
@@ -207,6 +208,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   useTtsAlignedTranscript: boolean;
   maxToolSteps: number;
   userAwayTimeout: number | null;
+  transcriptionTimeout: number | null;
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
   ttsTextTransforms: readonly TextTransform[] | null;
@@ -217,6 +219,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
 export const defaultAgentSessionOptions = {
   maxToolSteps: 3,
   userAwayTimeout: 15.0,
+  transcriptionTimeout: null,
   aecWarmupDuration: 3000,
   ttsReadIdleTimeout: 10_000,
   forwardAudioIdleTimeout: 10_000,
@@ -255,6 +258,7 @@ export type TurnDetectionMode =
 
 export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
+  [AgentSessionEventTypes.UserTranscriptionTimeout]: (ev: UserTranscriptionTimeoutEvent) => void;
   [AgentSessionEventTypes.AgentStateChanged]: (ev: AgentStateChangedEvent) => void;
   [AgentSessionEventTypes.UserStateChanged]: (ev: UserStateChangedEvent) => void;
   [AgentSessionEventTypes.ConversationItemAdded]: (ev: ConversationItemAddedEvent) => void;
@@ -304,6 +308,17 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * @defaultValue 15.0
    */
   userAwayTimeout?: number | null;
+
+  /**
+   * Emit `user_transcription_timeout` when VAD detects user speech during the user's turn but no
+   * non-empty final transcript arrives within this many milliseconds after the speech ends. This
+   * can happen because STT failed or because audio was intentionally withheld from STT, such as
+   * during AEC warmup or uninterruptible agent speech. A non-empty final transcript satisfies the
+   * timeout for the current turn even if adaptive interruption detection later discards it as a
+   * backchannel. Requires both VAD and STT. Set to `null` to disable.
+   * @defaultValue null
+   */
+  transcriptionTimeout?: number | null;
 
   /**
    * Duration in milliseconds for AEC (Acoustic Echo Cancellation) warmup, during which
