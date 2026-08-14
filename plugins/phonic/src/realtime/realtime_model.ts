@@ -77,6 +77,14 @@ export interface RealtimeModelOptions {
   instructions?: string;
 }
 
+// Phonic's built-in tools, referenced by name in `phonicTools`. A configsForTools entry for one of
+// these carries its built-in config (below) so it is sent to Phonic as an inline object, not a name.
+const BUILT_IN_TOOL_NAMES = new Set([
+  'choose_not_to_respond',
+  'keypad_input',
+  'natural_conversation_ending',
+]);
+
 /**
  * Per-tool behavior overrides for `configsForTools` (see README). `name` is required; every other
  * field is optional and falls back to the plugin default when omitted. Keys are snake_case to match
@@ -87,6 +95,9 @@ export interface PhonicToolConfig {
   require_speech_before_tool_call?: boolean;
   forbid_speech_after_tool_call?: boolean;
   forbid_tool_call_after_speech?: boolean;
+  // Built-in tools only (set on the matching `phonicTools` entry):
+  respond_after_sec?: number; // choose_not_to_respond: seconds to wait before a follow-up (or omit)
+  speech_before_tool_call?: string; // keypad_input / natural_conversation_ending: required|optional|suppressed
 }
 
 export class RealtimeModel extends llm.RealtimeModel {
@@ -573,6 +584,33 @@ export class RealtimeSession extends llm.RealtimeSession {
       });
   }
 
+  // A phonicTools entry: an inline built-in object when it's a built-in with a config in
+  // configsForTools (so respond_after_sec / speech_before_tool_call reach Phonic), else the bare name
+  // (which uses the tool's default config).
+  private serializePhonicTools(): Phonic.ToolDefinition[] {
+    return (this.options.phonicTools ?? []).map((name): Phonic.ToolDefinition => {
+      if (!BUILT_IN_TOOL_NAMES.has(name)) return name;
+      const cfg = this.configsForTools.get(name);
+      if (name === 'choose_not_to_respond') {
+        if (cfg?.respond_after_sec === undefined) return name;
+        // The published Phonic SDK does not yet type choose_not_to_respond / respond_after_sec on
+        // BuiltInToolDefinition (added in Phonic's fern-config); cast until the SDK is regenerated.
+        return {
+          type: 'built_in',
+          name,
+          tool_config: { respond_after_sec: cfg.respond_after_sec },
+        } as unknown as Phonic.ToolDefinition;
+      }
+      // keypad_input, natural_conversation_ending
+      if (cfg?.speech_before_tool_call === undefined) return name;
+      return {
+        type: 'built_in',
+        name,
+        tool_config: { speech_before_tool_call: cfg.speech_before_tool_call },
+      } as Phonic.ToolDefinition;
+    });
+  }
+
   override async _updateSession(
     instructions?: string,
     chatCtx?: llm.ChatContext,
@@ -606,7 +644,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pendingUserText = undefined;
 
     const toolsPayload: Phonic.ToolDefinition[] = [
-      ...(this.options.phonicTools ?? []),
+      ...this.serializePhonicTools(),
       ...this.toolDefinitions,
     ];
 
@@ -796,7 +834,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       model: this.options.model as Phonic.ConfigPayload['model'],
       ...this.buildConfigOptions({
         systemPrompt: this.options.instructions + this.systemPromptPostfix,
-        toolsPayload: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
+        toolsPayload: [...this.serializePhonicTools(), ...this.toolDefinitions],
       }),
     });
   }
