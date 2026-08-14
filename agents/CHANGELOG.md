@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 1.6.4
+
+### Patch Changes
+
+- Preserve spaces in Cartesia inference TTS aligned transcripts. - [#2285](https://github.com/livekit/agents-js/pull/2285) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Commit completed tool outputs before starting the post-tool reply so overlapping turns cannot reuse stale preemptive generations. Preserve tool completion timestamps, pair tool-error outputs with their calls, and normalize unparseable call arguments before saving them. - [#2261](https://github.com/livekit/agents-js/pull/2261) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add an optional `transcriptionTimeout` session option and a `user_transcription_timeout` event, emitted for VAD speech that produces no final transcript. - [#2208](https://github.com/livekit/agents-js/pull/2208) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.6.3
 
 ### Patch Changes
