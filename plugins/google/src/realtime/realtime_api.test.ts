@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Behavior, FunctionResponseScheduling } from '@google/genai';
-import { llm } from '@livekit/agents';
+import { llm, log } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
 import { historyConfigForSetup } from './live_setup.js';
 import { RealtimeModel, RealtimeSession } from './realtime_api.js';
@@ -113,6 +113,27 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     },
   );
 
+  it.each([
+    { replyRequired: false, expected: FunctionResponseScheduling.SILENT },
+    { replyRequired: true, expected: FunctionResponseScheduling.WHEN_IDLE },
+  ])('schedules a final response from replyRequired', ({ replyRequired, expected }) => {
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(
+      llm.FunctionCallOutput.create({
+        callId: 'call_123',
+        name: 'getWeather',
+        output: 'sunny',
+        isError: false,
+        replyRequired,
+      }),
+    );
+
+    expect(session.getToolResultsForRealtime(ctx, false)?.functionResponses[0]?.scheduling).toBe(
+      expected,
+    );
+  });
+
   it.each(schedulingModes)(
     'sends %s on the final non-blocking tool response',
     (toolResponseScheduling) => {
@@ -172,13 +193,37 @@ describe('Google Realtime non-blocking tool scheduling', () => {
       {
         name: 'getWeather',
         response: { output: 'The weather in Seattle is sunny today.' },
-        scheduling: FunctionResponseScheduling.WHEN_IDLE,
       },
     ]);
 
     session.clearPendingToolCallIdsForResponses(result?.functionResponses ?? []);
 
     expect(session.pendingToolCallIds.has('call_123')).toBe(false);
+  });
+});
+
+describe('Google Realtime Vertex scheduling', () => {
+  it('warns when tool response scheduling is configured for Vertex AI', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new RealtimeModel({
+      vertexai: true,
+      project: 'p',
+      location: 'us-central1',
+      toolResponseScheduling: FunctionResponseScheduling.SILENT,
+    });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not supported by Vertex AI'));
+    warn.mockRestore();
+  });
+
+  it('does not warn for Gemini API scheduling', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new RealtimeModel({ toolResponseScheduling: FunctionResponseScheduling.SILENT });
+
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('not supported by Vertex AI'));
+    warn.mockRestore();
   });
 });
 

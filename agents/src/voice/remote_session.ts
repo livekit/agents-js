@@ -821,17 +821,15 @@ export class SessionHost {
     const pbCalls = event.functionCalls.map(
       (fc: FCItem) => new pb.FunctionCall({ name: fc.name, arguments: fc.args, callId: fc.callId }),
     );
-    const pbOutputs = event.functionCallOutputs
-      .filter((fco): fco is FCOItem => fco != null)
-      .map(
-        (fco: FCOItem) =>
-          new pb.FunctionCallOutput({
-            callId: fco.callId,
-            name: fco.name,
-            output: fco.output,
-            isError: fco.isError,
-          }),
-      );
+    const pbOutputs = event.functionCallOutputs.map(
+      (fco: FCOItem) =>
+        new pb.FunctionCallOutput({
+          callId: fco.callId,
+          name: fco.name,
+          output: fco.output,
+          isError: fco.isError,
+        }),
+    );
     this.emitEvent(
       {
         case: 'functionToolsExecuted',

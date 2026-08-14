@@ -54,6 +54,12 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
+
+function warnVertexSchedulingUnsupported(): void {
+  log().warn(
+    'toolResponseScheduling is not supported by Vertex AI and will be ignored; tool responses use the default scheduling there.',
+  );
+}
 /**
  * Default image encoding options for Google Realtime API
  */
@@ -328,8 +334,7 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * The scheduling for tool responses. Default scheduling is `WHEN_IDLE`.
-       * Note: Vertex AI currently does not support the scheduling parameter; the user is
-       * responsible for avoiding this parameter when using Vertex AI.
+       * Note: Vertex AI currently does not support the scheduling parameter.
        */
       toolResponseScheduling?: types.FunctionResponseScheduling;
     } = {},
@@ -348,6 +353,9 @@ export class RealtimeModel extends llm.RealtimeModel {
     const project = options.project || process.env.GOOGLE_CLOUD_PROJECT;
     const location = options.location || process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
     const vertexai = options.vertexai ?? false;
+    if (vertexai && options.toolResponseScheduling !== undefined) {
+      warnVertexSchedulingUnsupported();
+    }
 
     // Model selection based on API type
     const defaultModel = vertexai
@@ -438,6 +446,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     }
     if (options.toolResponseScheduling !== undefined) {
       this._options.toolResponseScheduling = options.toolResponseScheduling;
+      if (this._options.vertexai) warnVertexSchedulingUnsupported();
     }
 
     // TODO: Notify active sessions of option changes
@@ -600,23 +609,24 @@ export class RealtimeSession extends llm.RealtimeSession {
     vertexai: boolean,
   ): types.LiveClientToolResponse | undefined {
     const toolResponses: types.FunctionResponse[] = [];
+    const supportsSilentScheduling =
+      !vertexai && this.options.toolBehavior === types.Behavior.NON_BLOCKING;
 
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
         const response: types.FunctionResponse = {
           name: item.name,
-          response: { output: item.output },
+          response: item.isError ? { error: item.output } : { output: item.output },
         };
 
-        if (this.options.toolResponseScheduling !== undefined) {
-          // vertexai currently doesn't support the scheduling parameter, gemini api defaults to idle
-          // it's the user's responsibility to avoid this parameter when using vertexai
-          response.scheduling = this.options.toolResponseScheduling;
-        }
-
         if (!vertexai) {
-          // vertexai does not support id in FunctionResponse
+          // Vertex AI supports neither scheduling nor id in FunctionResponse.
           response.id = item.callId;
+          if (supportsSilentScheduling && !item.replyRequired) {
+            response.scheduling = types.FunctionResponseScheduling.SILENT;
+          } else if (this.options.toolResponseScheduling !== undefined) {
+            response.scheduling = this.options.toolResponseScheduling;
+          }
         }
         this.toolResponseCallIds.set(response, item.callId);
 
@@ -663,6 +673,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.options.toolResponseScheduling !== options.toolResponseScheduling
     ) {
       this.options.toolResponseScheduling = options.toolResponseScheduling;
+      if (this.options.vertexai) warnVertexSchedulingUnsupported();
       // no need to restart
     }
 
@@ -739,6 +750,21 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (appendCtx.items.length > 0) {
+      const supportsSilentScheduling =
+        !this.options.vertexai && this.options.toolBehavior === types.Behavior.NON_BLOCKING;
+      const silenced = appendCtx.items
+        .filter(
+          (item): item is llm.FunctionCallOutput =>
+            item.type === 'function_call_output' && !item.replyRequired,
+        )
+        .map((item) => item.name);
+      if (!supportsSilentScheduling && silenced.length > 0) {
+        this.#logger.warn(
+          { functions: silenced },
+          'a tool result wants no reply, but Gemini will answer it anyway; declare the tools NON_BLOCKING on the Gemini API to keep it silent. Sending it regardless, since an unanswered call blocks the session.',
+        );
+      }
+
       const [turns] = await appendCtx
         .copy({
           excludeFunctionCall: true,
