@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-phonic
 
+## 1.6.4
+
+### Patch Changes
+
+- Reconnect Phonic conversations after abnormal WebSocket disconnects - [#2281](https://github.com/livekit/agents-js/pull/2281) ([@qionghuang6](https://github.com/qionghuang6))
+
+- Support Phonic's built-in tools (`choose_not_to_respond`, `keypad_input`, `natural_conversation_ending`) in the realtime model. Enable them by name via `phonicTools` and configure them with a matching `configsForTools` entry (`respond_after_sec` for `choose_not_to_respond`; `speech_before_tool_call` for the other two) — a built-in with a config is sent to Phonic as an inline object, otherwise as a bare name using its defaults. - [#2287](https://github.com/livekit/agents-js/pull/2287) ([@arunwpm-work](https://github.com/arunwpm-work))
+
+- Updated dependencies [[`b4d35f0`](https://github.com/livekit/agents-js/commit/b4d35f0306c0b39c8b9639d0c484ae4eaf7b75f5), [`e2f34e4`](https://github.com/livekit/agents-js/commit/e2f34e475fcdea280686a11dc3537451ec32d958), [`5f58bb6`](https://github.com/livekit/agents-js/commit/5f58bb64118f5476a03f642b0531895af0b05770)]:
+  - @livekit/agents@1.6.4
+
 ## 1.6.3
 
 ### Patch Changes
