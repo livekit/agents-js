@@ -34,6 +34,7 @@ type ChatCtxUpdateInternals = {
   itemCreateFutures: Record<string, Future<void>>;
   itemDeleteFutures: Record<string, Future<void>>;
   remoteChatCtx: llm.RemoteChatContext;
+  responseCreatedFutures: Record<string, { doneFut: Future<void>; timeout?: NodeJS.Timeout }>;
   sendEvent: (event: api_proto.ClientEvent) => void;
   updateChatCtx: RealtimeSession['updateChatCtx'];
 };
@@ -216,6 +217,40 @@ describe('RealtimeSession response.done status handling', () => {
       code: 'rate_limit_exceeded',
       message: 'rate limited',
     });
+  });
+
+  it('throws a fatal APIError when response.done reports a billing failure', () => {
+    const session = createResponseDoneSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    let thrown: unknown;
+    try {
+      session.handleResponseDone({
+        type: 'response.done',
+        event_id: 'evt_response_fatal',
+        response: {
+          id: 'resp_fatal',
+          object: 'realtime.response',
+          status: 'failed',
+          status_details: {
+            type: 'failed',
+            error: {
+              code: 'billing_hard_limit_reached',
+              message: 'billing hard limit reached',
+            },
+          },
+          output: [],
+        },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(APIError);
+    expect((thrown as APIError).retryable).toBe(false);
+    // terminal errors are thrown so the recv loop breaks; the main task emits them instead
+    expect(errors).toHaveLength(0);
   });
 
   it('handles string response.done status details', () => {
@@ -535,6 +570,38 @@ describe('RealtimeSession chat context event rejection handling', () => {
 
     expect(sibling.done).toBe(false);
     expect(session.itemCreateFutures.item_1).toBe(sibling);
+  });
+
+  it('settles a rejected response.create future instead of orphaning it', () => {
+    const session = createChatCtxUpdateSession();
+    (session as unknown as RealtimeSession).on('error', () => {});
+    const doneFut = new Future<void>();
+    session.responseCreatedFutures = { resp_evt: { doneFut } };
+
+    session.handleError(rejection('resp_evt'));
+
+    expect(doneFut.rejected).toBe(true);
+    expect(session.responseCreatedFutures.resp_evt).toBeUndefined();
+  });
+
+  it('ignores an empty commit error when server turn detection is enabled', () => {
+    const session = createChatCtxUpdateSession();
+    const errors: llm.RealtimeModelError[] = [];
+    (session as unknown as RealtimeSession).on('error', (error) => errors.push(error));
+
+    session.handleError({
+      type: 'error',
+      event_id: 'evt_commit_empty',
+      error: {
+        message: 'Error committing input audio buffer: the buffer is empty.',
+        type: 'invalid_request_error',
+        code: 'input_audio_buffer_commit_empty',
+        event_id: '',
+        param: '',
+      },
+    });
+
+    expect(errors).toHaveLength(0);
   });
 
   it('still throws a fatal error tied to a chat context event', () => {

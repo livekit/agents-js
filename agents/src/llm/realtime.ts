@@ -69,6 +69,8 @@ export interface RealtimeCapabilities {
    * @deprecated Native transcript synchronization is no longer used by built-in models.
    */
   nativeTranscriptSync?: boolean;
+  /** Whether the realtime session can speak scripted text without a separate TTS model. */
+  supportsSay?: boolean;
 }
 
 /**
@@ -167,6 +169,13 @@ export abstract class RealtimeSession extends EventEmitter {
     instructions?: string,
     options?: { signal?: AbortSignal },
   ): Promise<GenerationCreatedEvent>;
+
+  say(
+    _text: string | ReadableStream<string>,
+    _options: { signal?: AbortSignal } = {},
+  ): Promise<GenerationCreatedEvent> {
+    throw new Error(`${this.constructor.name} does not implement say(); use a TTS model instead`);
+  }
 
   /**
    * Commit the input audio buffer to the server

@@ -1300,15 +1300,31 @@ export class AgentActivity implements RecognitionHooks {
       allowInterruptions: defaultAllowInterruptions,
       addToChatCtx = true,
     } = options ?? {};
-    const allowInterruptions = defaultAllowInterruptions;
+    let allowInterruptions = defaultAllowInterruptions;
+
+    if (
+      this.llm instanceof RealtimeModel &&
+      this.llm.capabilities.turnDetection &&
+      allowInterruptions === false
+    ) {
+      this.logger.warn(
+        'the RealtimeModel uses server-side turn detection, allowInterruptions cannot be false when using VoiceAgent.say(), ' +
+          'disable turnDetection in the RealtimeModel and use VAD on the AgentSession instead',
+      );
+      allowInterruptions = undefined;
+    }
 
     if (
       !audio &&
       !this.tts &&
+      !(this.llm instanceof RealtimeModel && this.llm.capabilities.supportsSay) &&
       this.agentSession.output.audio &&
       this.agentSession.output.audioEnabled
     ) {
-      throw new Error('trying to generate speech from text without a TTS model');
+      throw new Error(
+        'trying to generate speech from text without a TTS model or a RealtimeSession that supports say(); ' +
+          'add a TTS model to AgentSession to enable say()',
+      );
     }
 
     const handle = SpeechHandle.create({
@@ -1324,16 +1340,52 @@ export class AgentActivity implements RecognitionHooks {
       }),
     );
 
-    const task = this.createSpeechTask({
-      taskFn: (abortController: AbortController) =>
-        this.ttsTask(handle, text, addToChatCtx, {}, abortController, audio),
-      ownedSpeechHandle: handle,
-      name: 'AgentActivity.tts_say',
-    });
-
-    task.result.finally(() => this.onPipelineReplyDone());
+    if (
+      this.realtimeSession &&
+      !audio &&
+      !this.tts &&
+      this.llm instanceof RealtimeModel &&
+      this.llm.capabilities.supportsSay
+    ) {
+      if (!addToChatCtx) {
+        this.logger.warn(
+          'addToChatCtx=false is not supported when say() uses a RealtimeModel; ' +
+            'the message will still be added to the chat context',
+        );
+      }
+      this.createSpeechTask({
+        taskFn: (abortController) => this.realtimeSayTask(handle, text, abortController),
+        ownedSpeechHandle: handle,
+        name: 'AgentActivity.realtime_say',
+      });
+    } else {
+      const task = this.createSpeechTask({
+        taskFn: (abortController: AbortController) =>
+          this.ttsTask(handle, text, addToChatCtx, {}, abortController, audio),
+        ownedSpeechHandle: handle,
+        name: 'AgentActivity.tts_say',
+      });
+      task.result.finally(() => this.onPipelineReplyDone());
+    }
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
+  }
+
+  private async realtimeSayTask(
+    speechHandle: SpeechHandle,
+    text: string | ReadableStream<string>,
+    abortController: AbortController,
+  ): Promise<void> {
+    const realtimeSession = this.realtimeSession;
+    if (!realtimeSession) {
+      throw new Error('realtime session is not initialized');
+    }
+
+    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+    if (speechHandle.interrupted) return;
+
+    const generation = await realtimeSession.say(text, { signal: abortController.signal });
+    await this.realtimeGenerationTask(speechHandle, generation, {}, abortController);
   }
 
   // -- Metrics and errors --
