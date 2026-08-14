@@ -849,6 +849,7 @@ export class SessionHost {
   };
 
   private onOverlappingSpeech = (event: OverlappingSpeechEvent): void => {
+    // TODO(AGT-3180): Forward agentEnded when the remote-session protocol supports it.
     const value = new pb.AgentSessionEvent_OverlappingSpeech({
       isInterruption: event.isInterruption,
       detectionDelay: event.detectionDelayInS,

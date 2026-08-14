@@ -1695,7 +1695,6 @@ export class AgentActivity implements RecognitionHooks {
           if (this.audioRecognition) {
             this.audioRecognition.onEndOfAgentSpeech(
               options?.ignoreUserTranscriptUntil ?? Date.now(),
-              { paused: true },
             );
           }
           if (this.isInterruptionDetectionEnabled) {
@@ -1719,9 +1718,7 @@ export class AgentActivity implements RecognitionHooks {
       ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,
     });
     if (this.audioRecognition) {
-      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt, {
-        paused: this.pausedSpeech !== undefined,
-      });
+      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
   }
 
@@ -3485,6 +3482,12 @@ export class AgentActivity implements RecognitionHooks {
 
     if (!speechHandle.interrupted && toolOutput.output.length > 0) {
       this.agentSession._updateAgentState('thinking');
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
+      }
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
       if (this.audioRecognition) {
@@ -4069,6 +4072,12 @@ export class AgentActivity implements RecognitionHooks {
 
     if (toolOutput.output.length > 0) {
       this.agentSession._updateAgentState('thinking');
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
+      }
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
       if (this.audioRecognition) {
@@ -4850,7 +4859,7 @@ export class AgentActivity implements RecognitionHooks {
           otelContext: this.pausedSpeech.handle._agentTurnContext,
         });
         if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
-          this.audioRecognition.onStartOfAgentSpeech(Date.now(), { resumed: true });
+          this.audioRecognition.onStartOfAgentSpeech(Date.now());
         }
         if (this.isInterruptionDetectionEnabled) {
           this.disableVadInterruptionSoon();
@@ -4930,16 +4939,6 @@ export class AgentActivity implements RecognitionHooks {
 
     if (!this.pausedSpeech) {
       return;
-    }
-
-    // The pause withheld end-of-agent-speech for a resume. Interrupting ends the turn instead;
-    // audio stopped when it was paused, so no playout is left to wait for.
-    if (interrupt && this.audioRecognition) {
-      void this.audioRecognition
-        .onEndOfAgentSpeech(Date.now())
-        .catch((error) =>
-          this.logger.warn({ error }, 'failed to report end of agent speech on pause cancel'),
-        );
     }
 
     if (
