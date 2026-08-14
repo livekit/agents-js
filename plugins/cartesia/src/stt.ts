@@ -7,6 +7,7 @@ import {
   APIStatusError,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
+  asError,
   asLanguageCode,
   calculateAudioDurationSeconds,
   getBaseLanguage,
@@ -307,13 +308,21 @@ export class SpeechStream extends stt.SpeechStream {
       const url = this.#getCartesiaUrl();
       this.#logger.debug(`Connecting to Cartesia STT: ${url}`);
 
-      const ws = new WebSocket(url, {
-        handshakeTimeout: this.#connectTimeout,
-        headers: {
-          [AUTHORIZATION_HEADER]: this.#opts.apiKey,
-          [VERSION_HEADER]: API_VERSION,
-        },
-      });
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(url, {
+          handshakeTimeout: this.#connectTimeout,
+          headers: {
+            [AUTHORIZATION_HEADER]: this.#opts.apiKey,
+            [VERSION_HEADER]: API_VERSION,
+          },
+        });
+      } catch (error) {
+        throw new APIConnectionError({
+          message: sanitizedErrorName(asError(error)),
+          options: { retryable: true },
+        });
+      }
       this.#ws = ws;
 
       // Cartesia returns the request id on the WS upgrade response, before any
