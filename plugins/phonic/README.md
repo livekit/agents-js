@@ -1,6 +1,6 @@
 # @livekit/agents-plugin-phonic
 
-Realtime voice AI integration for [Phonic](https://phonic.co/) with LiveKit Agents.
+Realtime voice AI integration for [Phonic](https://phonic.ai/) with LiveKit Agents.
 
 ## Usage
 
@@ -76,7 +76,7 @@ Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `Rea
 | `additionalLanguages`                | `string[]`                                 | Further ISO 639-1 codes (must not repeat `defaultLanguage`)                                                                                                                                                                                                 |
 | `multilingualMode`                   | `'auto'` \| `'request'`                    | Per-utterance language detection vs. change on user request (recommended: `request`)                                                                                                                                                                        |
 | `audioSpeed`                         | `number`                                   | Audio playback speed                                                                                                                                                                                                                                        |
-| `phonicTools`                        | `string[]`                                 | Names of Phonic-side tools available to the assistant: [Webhook tools](https://docs.phonic.co/docs/using-tools/tools_overview#webhook-tools) and [built-in tools](#built-in-tools) (`choose_not_to_respond`, `keypad_input`, `natural_conversation_ending`) |
+| `phonicTools`                        | `string[]`                                 | Names of Phonic-side tools available to the assistant: [Webhook tools](https://docs.phonic.ai/docs/using-tools/tools_overview#webhook-tools) and [built-in tools](#built-in-tools) (`choose_not_to_respond`, `keypad_input`, `natural_conversation_ending`) |
 | `boostedKeywords`                    | `string[]`                                 | Keywords to boost in speech recognition                                                                                                                                                                                                                     |
 | `minWordsToInterrupt`                | `number`                                   | Minimum number of user words required to interrupt the assistant                                                                                                                                                                                            |
 | `generateNoInputPokeText`            | `boolean`                                  | Auto-generate poke text when user is silent                                                                                                                                                                                                                 |
