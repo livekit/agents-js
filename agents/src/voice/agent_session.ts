@@ -1032,6 +1032,12 @@ export class AgentSession<
     }
   }
 
+  /**
+   * Generate an agent reply and return a handle to the speech.
+   *
+   * Awaiting the handle waits for the reply to finish and never throws; check
+   * `handle.exception()` for the failure instead.
+   */
   generateReply(options?: {
     userInput?: string | ChatMessage;
     chatCtx?: ChatContext;

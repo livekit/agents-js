@@ -13,8 +13,16 @@ import {
 
 type RealtimeSessionInternals = {
   generateReply: RealtimeSession['generateReply'];
+  handleError: (event: api_proto.ErrorEvent) => void;
+  on: (event: 'error', listener: (error: llm.RealtimeModelError) => void) => void;
   updateInstructions: RealtimeSession['updateInstructions'];
-  responseCreatedFutures: Record<string, unknown>;
+  responseCreatedFutures: Record<
+    string,
+    {
+      doneFut: Future<llm.GenerationCreatedEvent>;
+      timeout?: ReturnType<typeof setTimeout>;
+    }
+  >;
   sendEvent: ReturnType<typeof vi.fn>;
   textModeRecoveryRetries: number;
   instructions?: string;
@@ -37,6 +45,13 @@ type ResponseDoneSessionInternals = {
   };
 };
 
+type ErrorSessionInternals = {
+  generateReply: RealtimeSession['generateReply'];
+  handleError: (event: api_proto.ErrorEvent) => void;
+  on: (event: 'error', listener: (error: llm.RealtimeModelError) => void) => void;
+  responseCreatedFutures: RealtimeSessionInternals['responseCreatedFutures'];
+};
+
 function createSessionForTest(): RealtimeSessionInternals {
   const session = Object.create(RealtimeSession.prototype) as RealtimeSessionInternals;
   session.responseCreatedFutures = {};
@@ -53,6 +68,20 @@ function stubTaskRuntime(): void {
     done: true,
     result: Promise.resolve(undefined),
   } as unknown as Task<void>);
+}
+
+function activeResponseRejection(eventId: string): api_proto.ErrorEvent {
+  return {
+    type: 'error',
+    event_id: eventId,
+    error: {
+      message: 'Conversation already has an active response',
+      type: 'invalid_request_error',
+      code: 'conversation_already_has_active_response',
+      event_id: eventId,
+      param: '',
+    },
+  };
 }
 
 describe('RealtimeSession.generateReply', () => {
@@ -100,6 +129,56 @@ describe('RealtimeSession.generateReply', () => {
       expect.objectContaining({ type: 'response.create' }),
     );
     expect(session.sendEvent).toHaveBeenCalledWith({ type: 'response.cancel' });
+  });
+});
+
+describe('RealtimeSession error handling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function createErrorSession(): ErrorSessionInternals {
+    stubTaskRuntime();
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    return model.session() as unknown as ErrorSessionInternals;
+  }
+
+  it('fails fast when an active response rejection matches the pending response', async () => {
+    const session = createErrorSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+    const promise = session.generateReply();
+    const eventId = Object.keys(session.responseCreatedFutures)[0]!;
+    const handle = session.responseCreatedFutures[eventId]!;
+
+    session.handleError(activeResponseRejection(eventId));
+
+    expect(handle.doneFut.done).toBe(true);
+    await expect(promise).rejects.toBeInstanceOf(llm.RealtimeError);
+    await expect(promise).rejects.toMatchObject({
+      code: 'conversation_already_has_active_response',
+    });
+    expect(session.responseCreatedFutures[eventId]).toBeUndefined();
+    expect(errors[0]?.recoverable).toBe(true);
+  });
+
+  it('leaves pending responses untouched when an error has an unknown event ID', async () => {
+    const session = createErrorSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+    const abortController = new AbortController();
+    const promise = session.generateReply(undefined, { signal: abortController.signal });
+    const eventId = Object.keys(session.responseCreatedFutures)[0]!;
+    const handle = session.responseCreatedFutures[eventId]!;
+
+    session.handleError(activeResponseRejection('response_create_other'));
+
+    expect(handle.doneFut.done).toBe(false);
+    expect(session.responseCreatedFutures[eventId]).toBe(handle);
+    expect(errors[0]?.recoverable).toBe(true);
+
+    abortController.abort();
+    await expect(promise).rejects.toThrow('generateReply aborted');
   });
 });
 
