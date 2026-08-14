@@ -43,6 +43,19 @@ export interface RealtimeModelError {
   recoverable: boolean;
 }
 
+/** Error raised by a realtime session when a request fails. */
+export class RealtimeError extends Error {
+  /** Provider error code when the failure mirrors one. */
+  readonly code?: string;
+
+  constructor(message: string, { code }: { code?: string } = {}) {
+    super(message);
+    this.name = 'RealtimeError';
+    this.code = code;
+    Error.captureStackTrace(this, RealtimeError);
+  }
+}
+
 export interface RealtimeCapabilities {
   /** Whether generated assistant messages can be truncated after interruption. */
   messageTruncation: boolean;

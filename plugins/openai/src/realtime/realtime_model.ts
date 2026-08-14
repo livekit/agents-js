@@ -1969,7 +1969,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         delete this.responseCreatedFutures[eventId];
         if (handle.timeout) clearTimeout(handle.timeout);
         if (!handle.doneFut.done) {
-          handle.doneFut.reject(new Error(event.error.message));
+          handle.doneFut.reject(
+            new llm.RealtimeError(event.error.message, { code: event.error.code }),
+          );
         }
       }
     }
