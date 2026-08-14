@@ -593,21 +593,23 @@ export class RealtimeSession extends llm.RealtimeSession {
       const cfg = this.configsForTools.get(name);
       if (name === 'choose_not_to_respond') {
         if (cfg?.respond_after_sec === undefined) return name;
-        // The published Phonic SDK does not yet type choose_not_to_respond / respond_after_sec on
-        // BuiltInToolDefinition (added in Phonic's fern-config); cast until the SDK is regenerated.
         return {
           type: 'built_in',
           name,
           tool_config: { respond_after_sec: cfg.respond_after_sec },
-        } as unknown as Phonic.ToolDefinition;
+        };
       }
-      // keypad_input, natural_conversation_ending
+      // keypad_input, natural_conversation_ending. name is a string here (not narrowed to the
+      // literal union), so cast it to the built-in name type; the config is passed through as-is.
       if (cfg?.speech_before_tool_call === undefined) return name;
       return {
         type: 'built_in',
-        name,
-        tool_config: { speech_before_tool_call: cfg.speech_before_tool_call },
-      } as Phonic.ToolDefinition;
+        name: name as Phonic.BuiltInToolDefinition.Name,
+        tool_config: {
+          speech_before_tool_call:
+            cfg.speech_before_tool_call as Phonic.BuiltInToolConfig['speech_before_tool_call'],
+        },
+      };
     });
   }
 
