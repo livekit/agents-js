@@ -44,10 +44,12 @@ function startTaskHarness(options?: { abortSignal?: AbortSignal }) {
     on: vi.fn(),
     off: vi.fn(),
   };
+  const deleteRoom = vi.fn().mockResolvedValue(undefined);
   const jobCtx = {
     room: callerRoom,
     job: { enableRecording: false },
     simulationContext: () => undefined,
+    deleteRoom,
     info: {
       url: 'wss://example.invalid',
       apiKey: 'test-api-key',
@@ -105,6 +107,7 @@ function startTaskHarness(options?: { abortSignal?: AbortSignal }) {
   );
 
   return {
+    deleteRoom,
     onEnterStarted,
     session,
     sessionStarted,
@@ -266,7 +269,7 @@ describe('warm transfer abortSignal lifecycle', () => {
     }
   });
 
-  it('holds run() until the human agent session shutdown finishes', async () => {
+  it('resolves a successful run() without waiting for consult teardown', async () => {
     const controller = new AbortController();
     const harness = await startPendingMergeHarness(controller.signal);
 
@@ -276,22 +279,98 @@ describe('warm transfer abortSignal lifecycle', () => {
 
       harness.pendingMove.resolve();
       await expect(harness.merge).resolves.toBeUndefined();
+
+      // Success hands control back immediately, with caller I/O restored,
+      // even though the consult session is still shutting down.
+      await expect(harness.taskSettled).resolves.toEqual({
+        type: 'completed',
+        value: { humanAgentIdentity: 'human-agent-sip' },
+        callerAudioEnabled: true,
+      });
+      expect(harness.shutdown).toHaveBeenCalled();
+
+      pendingShutdown.resolve();
+    } finally {
+      await harness.session.close().catch(() => undefined);
+    }
+  });
+
+  it('holds a failed run() and caller I/O until the human agent session shutdown finishes', async () => {
+    const controller = new AbortController();
+    const harness = await startPendingMergeHarness(controller.signal);
+
+    try {
+      const pendingShutdown = createDeferred();
+      harness.shutdown.mockReturnValue(pendingShutdown.promise);
+
+      const reason = new Error('consult timed out');
+      controller.abort(reason);
+      harness.pendingMove.reject(new Error('move participant failed'));
+      await expect(harness.merge).resolves.toBeUndefined();
       await vi.waitFor(() => expect(harness.shutdown).toHaveBeenCalled());
 
       const taskSettledSpy = vi.fn();
       void harness.taskSettled.then(taskSettledSpy);
       await Promise.resolve();
       await Promise.resolve();
-      // run() is the teardown-complete boundary: the result is known, but it
-      // must not settle while the human agent session is still closing.
+      // A failed run() is the teardown boundary: the result is known, but it
+      // must not settle while the human agent session is still closing —
+      // and caller I/O stays disabled so the resumed agent cannot react to
+      // the caller before the application has the outcome.
       expect(taskSettledSpy).not.toHaveBeenCalled();
+      expect(harness.session.output.audioEnabled).toBe(false);
 
       pendingShutdown.resolve();
       await expect(harness.taskSettled).resolves.toEqual({
-        type: 'completed',
-        value: { humanAgentIdentity: 'human-agent-sip' },
+        type: 'failed',
+        error: reason,
         callerAudioEnabled: true,
       });
+    } finally {
+      await harness.session.close().catch(() => undefined);
+    }
+  });
+
+  it('deletes the consult room when a cancelled dial answers late', async () => {
+    const pendingRoomConnection = createDeferred();
+    const roomConnect = vi
+      .spyOn(Room.prototype, 'connect')
+      .mockReturnValue(pendingRoomConnection.promise);
+    vi.spyOn(Room.prototype, 'disconnect').mockResolvedValue(undefined);
+    const controller = new AbortController();
+    const harness = startTaskHarness({ abortSignal: controller.signal });
+
+    try {
+      await harness.onEnterStarted;
+      await vi.waitFor(() => expect(roomConnect).toHaveBeenCalledOnce());
+
+      // Mocked only after the caller session is live: a prototype-level start
+      // mock applied earlier would stub the caller session's own start.
+      vi.spyOn(AgentSession.prototype, 'start').mockResolvedValue(undefined);
+      let answerDial!: (value: unknown) => void;
+      const dialPromise = new Promise((resolve) => {
+        answerDial = resolve;
+      });
+      const dial = vi
+        .spyOn(SipClient.prototype, 'createSipParticipant')
+        .mockReturnValue(dialPromise as never);
+
+      pendingRoomConnection.resolve();
+      await vi.waitFor(() => expect(dial).toHaveBeenCalledOnce());
+
+      controller.abort(new Error('consult timed out'));
+      await expect(harness.taskSettled).resolves.toMatchObject({
+        type: 'failed',
+      });
+      expect(harness.deleteRoom).not.toHaveBeenCalled();
+
+      // The server request cannot be aborted; a dial that answers after
+      // cleanup can recreate the consult room, so the task deletes it again.
+      answerDial({});
+      await vi.waitFor(() =>
+        expect(harness.deleteRoom).toHaveBeenCalledWith('caller-room-human-agent'),
+      );
+      await expect(harness.sessionStarted).resolves.toBeUndefined();
     } finally {
       await harness.session.close().catch(() => undefined);
     }

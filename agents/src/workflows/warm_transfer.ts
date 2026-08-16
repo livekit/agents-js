@@ -135,9 +135,13 @@ type IoState = {
  * signal's reason, while a participant move that has already committed wins over a
  * concurrent abort.
  *
- * `run()` settles only once teardown has completed: caller hold audio stopped, caller
- * I/O restored, any human-agent notification finished, and the human agent session —
- * including its SDK-owned room cleanup — shut down.
+ * On success, `run()` resolves as soon as the participant move commits, with caller
+ * I/O already restored; consult-room teardown finishes in the background and never
+ * touches the caller room. On failure or cancellation, `run()` rejects only after
+ * teardown has finished (bounded by an internal deadline): caller hold audio stopped,
+ * any human-agent notification finished, the human agent session — including its
+ * SDK-owned room cleanup — shut down, and caller I/O restored last so the agent
+ * cannot engage the caller before the application has observed the outcome.
  *
  * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
  */
@@ -206,6 +210,9 @@ export function createWarmTransferTask({
   let hangupNotifySession: AgentSession | null = null;
   let holdAudioHandle: PlayHandle | null = null;
   let originalIoState: IoState | null = null;
+  // The caller session, captured before the task's activity can close so the
+  // failure-path I/O restore in run() has a valid reference.
+  let callerSession: AgentSession | null = null;
   // Abort arbitration: an abort that lands while `moveParticipant` is in
   // flight is deferred here. A committed move wins over the abort; a failed
   // move lets the deferred abort own the task's result.
@@ -219,12 +226,13 @@ export function createWarmTransferTask({
   // is ringing).
   const preMergeCancellationFut = new Future<void>();
 
-  // run() settles only once every step here has finished (the
-  // teardown-complete boundary): human agent session shutdown, background
-  // audio, the human-agent notification, and onEnter's dial cleanup. Steps
-  // are collected instead of awaited in place because several completion
-  // paths run inside the human agent session's own tool call, where awaiting
-  // that session's shutdown would deadlock. Tracked promises never reject.
+  // A failed run() rejects only once every step here has finished (bounded
+  // by TEARDOWN_TIMEOUT_MS): human agent session shutdown, background audio,
+  // the human-agent notification, and onEnter's dial cleanup. A successful
+  // run() resolves immediately and leaves these detached. Steps are
+  // collected instead of awaited in place because several completion paths
+  // run inside the human agent session's own tool call, where awaiting that
+  // session's shutdown would deadlock. Tracked promises never reject.
   const teardownSteps: Promise<unknown>[] = [];
   const trackTeardown = (step: Promise<unknown> | void): void => {
     teardownSteps.push(
@@ -240,8 +248,12 @@ export function createWarmTransferTask({
   // only read it at runtime (inside their bodies), long after it's assigned, so
   // the forward reference is safe.
   const setIoEnabled = (enabled: boolean): void => {
-    const input = task.session.input;
-    const output = task.session.output;
+    // Captured on first use: `task.session` throws once the task's activity
+    // has closed, and the deferred restore in run()'s failure path runs after
+    // that point.
+    callerSession ??= task.session;
+    const input = callerSession.input;
+    const output = callerSession.output;
 
     originalIoState ??= {
       audioInput: input.audioEnabled,
@@ -286,7 +298,13 @@ export function createWarmTransferTask({
       }),
     );
 
-    setIoEnabled(true);
+    if (!(result instanceof Error)) {
+      // The merge committed: the caller is live with the human agent, so hand
+      // caller I/O back immediately. On failure paths the restore is deferred
+      // to run()'s teardown boundary so the resumed agent cannot react to the
+      // caller before the application has observed the outcome.
+      setIoEnabled(true);
+    }
     task.complete(result);
   };
 
@@ -557,25 +575,40 @@ export function createWarmTransferTask({
       }
 
       const sip = new SipClient(ctx.info.url);
-      const dialed = await waitUntilAborted(
-        sip.createSipParticipant(
-          sipTrunkId ?? '',
-          sipCallTo,
-          humanAgentRoomName,
-          {
-            participantIdentity: humanAgentIdentity,
-            waitUntilAnswered: true,
-            fromNumber: sipNumber || undefined,
-            headers: sipHeaders,
-            dtmf: dtmf ?? undefined,
-            // SIP API takes whole seconds (BigInt coercion throws on fractional input).
-            ringingTimeout: ringingTimeout != null ? Math.round(ringingTimeout / 1000) : undefined,
-          },
-          sipConnection,
-        ),
-        signal,
+      const sipDial = sip.createSipParticipant(
+        sipTrunkId ?? '',
+        sipCallTo,
+        humanAgentRoomName,
+        {
+          participantIdentity: humanAgentIdentity,
+          waitUntilAnswered: true,
+          fromNumber: sipNumber || undefined,
+          headers: sipHeaders,
+          dtmf: dtmf ?? undefined,
+          // SIP API takes whole seconds (BigInt coercion throws on fractional input).
+          ringingTimeout: ringingTimeout != null ? Math.round(ringingTimeout / 1000) : undefined,
+        },
+        sipConnection,
       );
+      const dialed = await waitUntilAborted(sipDial, signal);
       if (dialed.isAborted) {
+        // The server request cannot be aborted and has already initiated the
+        // outbound call. Cleanup deletes the room (ending a pending dial), but
+        // a dial that answers in the deletion race can auto-recreate it — so
+        // delete the room again once the abandoned request settles. Detached
+        // on purpose: the request can take the whole ringing timeout, and the
+        // teardown boundary must not wait on it.
+        void sipDial
+          .then(() => {
+            logger.info(
+              { humanAgentRoomName },
+              'cancelled dial answered late, deleting the consult room',
+            );
+            return ctx.deleteRoom(humanAgentRoomName);
+          })
+          .catch(() => {
+            // A rejected dial never joined the room; nothing to compensate.
+          });
         throw new Error('dial cancelled');
       }
 
@@ -771,7 +804,15 @@ export function createWarmTransferTask({
       settled = batch.length;
       const { isAborted } = await waitUntilAborted(Promise.all(batch), deadline);
       if (isAborted) {
-        logger.warn('warm transfer teardown did not finish before the deadline');
+        // The boundary is bounded, not absolute: settle anyway so a stuck
+        // step (e.g. a hanging playout) cannot block the caller session.
+        logger.warn(
+          {
+            timeoutMs: TEARDOWN_TIMEOUT_MS,
+            trackedSteps: teardownSteps.length,
+          },
+          'warm transfer teardown did not finish before the deadline, settling with cleanup still pending',
+        );
         return;
       }
     }
@@ -781,9 +822,22 @@ export function createWarmTransferTask({
   return Object.assign(task, {
     run: async (): Promise<WarmTransferResult> => {
       try {
+        // Success: the merge is committed and the caller is live with the
+        // human agent — hand control back immediately so the application can
+        // act on the bridged call. Consult-room teardown continues detached;
+        // it never touches the caller room.
         return await runTask();
-      } finally {
+      } catch (error) {
+        // Failure or cancellation: hold run() until teardown finishes
+        // (bounded by TEARDOWN_TIMEOUT_MS) so the application resumes with
+        // cleanup done, and restore caller I/O only at the end — an agent
+        // that can hear the caller before the application has the outcome
+        // could reply without knowing the transfer failed.
         await waitForTeardownComplete();
+        if (originalIoState) {
+          setIoEnabled(true);
+        }
+        throw error;
       }
     },
   });
@@ -803,8 +857,9 @@ export function createWarmTransferTask({
  * }).run();
  * ```
  *
- * `run()` is the single lifecycle boundary: it settles with the result (or the
- * abort reason) only after teardown has completed.
+ * `run()` is the single lifecycle boundary: it resolves as soon as the transfer
+ * commits, and on failure or cancellation rejects (with the abort reason
+ * preserved) only after teardown has completed, bounded by an internal deadline.
  */
 export class WarmTransferTask extends AgentTask<WarmTransferResult> {
   readonly #task: AgentTask<WarmTransferResult>;
