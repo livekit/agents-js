@@ -1600,10 +1600,16 @@ export class AgentSession<
     await this.closeImpl(CloseReason.USER_INITIATED);
   }
 
-  shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): void {
+  /**
+   * Initiate session shutdown. The returned promise resolves once the session
+   * has fully closed — activity drained, inputs/outputs detached, and room IO
+   * cleanup (including `deleteRoomOnClose`) finished. If a close is already in
+   * flight, the same promise is returned; awaiting is optional.
+   */
+  shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): Promise<void> {
     const { drain = true, reason = CloseReason.USER_INITIATED } = options ?? {};
 
-    this._closeSoon({
+    return this._closeSoon({
       reason,
       drain,
     });
@@ -1618,13 +1624,15 @@ export class AgentSession<
     reason: ShutdownReason;
     drain?: boolean;
     error?: RealtimeModelError | STTError | TTSError | LLMError | null;
-  }): void {
+  }): Promise<void> {
     if (this.closingTask) {
-      return;
+      return this.closingTask;
     }
-    this.closingTask = this.closeImpl(reason, error, drain).finally(() => {
+    const closingTask = this.closeImpl(reason, error, drain).finally(() => {
       this.closingTask = null;
     });
+    this.closingTask = closingTask;
+    return closingTask;
   }
 
   /** @internal */

@@ -92,6 +92,18 @@ export interface WarmTransferTaskOptions {
    * keeping the built-in template and auto-formatted conversation history.
    */
   instructions?: InstructionParts | string;
+  /**
+   * Signal that cancels the transfer when aborted. Aborting cooperatively
+   * stops dialing, ringing, or consulting: a pending SIP dial is torn down, a
+   * human agent who already answered is told the transfer ended before their
+   * call is ended, and the task completes with the signal's reason (e.g. a
+   * `TimeoutError` from `AbortSignal.timeout()`).
+   *
+   * A participant move that has already committed wins over a concurrent
+   * abort — cancellation never turns a bridged transfer into a failure.
+   * Behavior is unchanged when no signal is provided.
+   */
+  abortSignal?: AbortSignal;
   chatCtx?: ChatContext;
   turnDetection?: TurnDetectionMode | null;
   tools?: readonly ToolContextEntry[];
@@ -118,6 +130,15 @@ type IoState = {
  * A human agent who already answered is told the caller left (a reply generated from
  * {@link WarmTransferTaskOptions.callerHangupInstruction}) before their call is ended.
  *
+ * {@link WarmTransferTaskOptions.abortSignal} adds cooperative cancellation on top of
+ * this: aborting stops dialing, ringing, or consulting and completes the task with the
+ * signal's reason, while a participant move that has already committed wins over a
+ * concurrent abort.
+ *
+ * `run()` settles only once teardown has completed: caller hold audio stopped, caller
+ * I/O restored, any human-agent notification finished, and the human agent session —
+ * including its SDK-owned room cleanup — shut down.
+ *
  * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
  */
 export function createWarmTransferTask({
@@ -131,6 +152,7 @@ export function createWarmTransferTask({
   roomName: rawRoomName,
   holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
   callerHangupInstruction,
+  abortSignal,
   instructions,
   chatCtx,
   turnDetection,
@@ -184,12 +206,35 @@ export function createWarmTransferTask({
   let hangupNotifySession: AgentSession | null = null;
   let holdAudioHandle: PlayHandle | null = null;
   let originalIoState: IoState | null = null;
+  // Abort arbitration: an abort that lands while `moveParticipant` is in
+  // flight is deferred here. A committed move wins over the abort; a failed
+  // move lets the deferred abort own the task's result.
+  let isMergeInProgress = false;
+  let pendingAbortError: Error | null = null;
 
   // Resolves when the human agent room/session fails, so onEnter stops waiting.
   const humanAgentFailedFut = new Future<void>();
-  // Resolves when the caller hangs up before the merge, so onEnter cancels a
-  // still-pending dial (e.g. while the human agent's phone is ringing).
-  const callerHangupFut = new Future<void>();
+  // Resolves when a pre-merge cancellation wins (caller hangup or abort), so
+  // onEnter cancels a still-pending dial (e.g. while the human agent's phone
+  // is ringing).
+  const preMergeCancellationFut = new Future<void>();
+
+  // run() settles only once every step here has finished (the
+  // teardown-complete boundary): human agent session shutdown, background
+  // audio, the human-agent notification, and onEnter's dial cleanup. Steps
+  // are collected instead of awaited in place because several completion
+  // paths run inside the human agent session's own tool call, where awaiting
+  // that session's shutdown would deadlock. Tracked promises never reject.
+  const teardownSteps: Promise<unknown>[] = [];
+  const trackTeardown = (step: Promise<unknown> | void): void => {
+    teardownSteps.push(
+      Promise.resolve(step).catch(() => {
+        // Failures are logged where they occur; the boundary only waits.
+      }),
+    );
+  };
+  let onEnterStarted = false;
+  const onEnterFinishedFut = new Future<void>();
 
   // `task` is created at the end of this function. The helpers and tools below
   // only read it at runtime (inside their bodies), long after it's assigned, so
@@ -213,6 +258,8 @@ export function createWarmTransferTask({
   const setResult = (result: WarmTransferResult | Error): void => {
     if (task.done) return;
 
+    abortSignal?.removeEventListener('abort', onAbort);
+
     // Every completion path (merge, decline, voicemail, failure, hangup) ends
     // the pre-merge hangup watch; connect_to_caller re-attaches its own
     // post-merge cleanup listener.
@@ -221,8 +268,10 @@ export function createWarmTransferTask({
     if (transferAgentSession) {
       // shutdown() triggers deleteRoomOnClose, which disconnects the human agent
       // room and frees its WebSocket. The human agent is already moved out
-      // (mergeCalls) or torn down (failure) by now.
-      transferAgentSession.shutdown();
+      // (mergeCalls) or torn down (failure) by now. The returned promise gates
+      // run()'s teardown boundary; it can't be awaited here because this may
+      // run inside that session's own tool call.
+      trackTeardown(transferAgentSession.shutdown());
       transferAgentSession = null;
       humanAgentRoom = null;
     }
@@ -231,9 +280,11 @@ export function createWarmTransferTask({
       holdAudioHandle.stop();
       holdAudioHandle = null;
     }
-    void backgroundAudio.close().catch((error) => {
-      logger.warn({ error }, 'failed to close background audio');
-    });
+    trackTeardown(
+      backgroundAudio.close().catch((error) => {
+        logger.warn({ error }, 'failed to close background audio');
+      }),
+    );
 
     setIoEnabled(true);
     task.complete(result);
@@ -255,24 +306,29 @@ export function createWarmTransferTask({
     return false;
   };
 
-  // Announces the caller hangup to the human agent, then hangs up on them by
-  // shutting the session down (deleteRoomOnClose ends the SIP call).
-  const notifyHumanAgentOfHangup = async (session: AgentSession): Promise<void> => {
+  // Announces the end of the transfer to the human agent, then hangs up on
+  // them by shutting the session down (deleteRoomOnClose ends the SIP call).
+  // Resolves once the session has fully closed, so the teardown boundary
+  // covers the notification and the SDK-owned room cleanup.
+  const notifyHumanAgentOfTransferEnd = async (
+    session: AgentSession,
+    instructions: string,
+  ): Promise<void> => {
     try {
       session.interrupt();
       const handle = session.generateReply({
-        instructions: callerHangupInstruction ?? CALLER_HANGUP_INSTRUCTION,
+        instructions,
         allowInterruptions: false,
-        // The transfer is already cancelled; the reply must speak, not call
+        // The transfer is already over; the reply must speak, not call
         // connect_to_caller/decline_transfer.
         toolChoice: 'none',
       });
       // Cap the wait so teardown can't hang on a stuck playout.
       await waitUntilAborted(handle.waitForPlayout(), AbortSignal.timeout(10_000));
     } catch (error) {
-      logger.warn({ error }, 'failed to notify human agent of caller hangup');
+      logger.warn({ error }, 'failed to notify human agent before ending the transfer');
     } finally {
-      session.shutdown();
+      await session.shutdown();
     }
   };
 
@@ -282,7 +338,7 @@ export function createWarmTransferTask({
       { participantIdentity },
       'caller hung up before the transfer completed, cancelling transfer',
     );
-    callerHangupFut.resolve();
+    preMergeCancellationFut.resolve();
 
     // If the human agent already answered, take the session out of setResult's
     // reach and let them know before hanging up, instead of dropping the call
@@ -292,9 +348,56 @@ export function createWarmTransferTask({
       transferAgentSession = null;
       humanAgentRoom = null;
       hangupNotifySession = session;
-      void notifyHumanAgentOfHangup(session);
+      trackTeardown(
+        notifyHumanAgentOfTransferEnd(
+          session,
+          callerHangupInstruction ?? CALLER_HANGUP_INSTRUCTION,
+        ),
+      );
     }
     setResult(new ToolError('caller hung up before the transfer completed'));
+  };
+
+  // Converts the abort signal's reason into the task's terminal error while
+  // keeping the reason observable: an Error reason (e.g. the `TimeoutError`
+  // from `AbortSignal.timeout()`) is used as-is.
+  const toAbortError = (reason: unknown): Error => {
+    if (reason instanceof Error) return reason;
+    return new ToolError(
+      reason === undefined
+        ? 'the transfer was aborted'
+        : `the transfer was aborted: ${String(reason)}`,
+    );
+  };
+
+  // Cooperative cancellation from `abortSignal`: stops dialing, ringing, or
+  // consulting. A human agent who already answered is told the transfer ended
+  // before their call is ended.
+  const cancelForAbort = (reason: unknown): void => {
+    if (task.done) return;
+    logger.info({ reason }, 'transfer aborted, cancelling transfer');
+    preMergeCancellationFut.resolve();
+
+    const session = transferAgentSession;
+    if (session) {
+      transferAgentSession = null;
+      humanAgentRoom = null;
+      hangupNotifySession = session;
+      trackTeardown(notifyHumanAgentOfTransferEnd(session, TRANSFER_ABORTED_INSTRUCTION));
+    }
+    setResult(toAbortError(reason));
+  };
+
+  const onAbort = (): void => {
+    if (task.done) return;
+    if (isMergeInProgress) {
+      // A participant move that has already committed wins over a concurrent
+      // abort; connect_to_caller applies the deferred abort only if the move
+      // fails.
+      pendingAbortError = toAbortError(abortSignal?.reason);
+      return;
+    }
+    cancelForAbort(abortSignal?.reason);
   };
 
   // Pre-merge watch: cancels the transfer if the caller leaves while the human
@@ -503,7 +606,28 @@ export function createWarmTransferTask({
           throw new ToolError('the transfer was already cancelled');
         }
 
-        await mergeCalls();
+        isMergeInProgress = true;
+        try {
+          await mergeCalls();
+        } catch (error) {
+          if (pendingAbortError && !task.done) {
+            // The move never committed, so the abort that arrived mid-merge
+            // owns the result.
+            setResult(pendingAbortError);
+            return;
+          }
+          throw error;
+        } finally {
+          isMergeInProgress = false;
+          pendingAbortError = null;
+        }
+
+        if (task.done) {
+          // Another terminal event (e.g. the human agent room closing) won
+          // while the move was in flight.
+          return;
+        }
+        // The move committed: the transfer wins over any concurrent abort.
         setResult({ humanAgentIdentity });
         callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerParticipantDisconnected);
       },
@@ -543,77 +667,144 @@ export function createWarmTransferTask({
     tts: tts ?? undefined,
     allowInterruptions,
     onEnter: async () => {
-      jobCtx = getJobContext();
-      callerRoom = jobCtx.room;
-
-      callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerLeftBeforeMerge);
-      if (!hasCallerParticipant()) {
-        // The caller was already gone before the listener could attach.
-        cancelForCallerHangup();
-        return;
-      }
-
-      if (holdAudio !== null) {
-        await backgroundAudio.start({ room: callerRoom });
-        if (task.done) {
-          // The caller hung up while the hold audio was starting; setResult
-          // already closed the player, so don't create an orphaned play handle.
-          return;
-        }
-        holdAudioHandle = backgroundAudio.play(holdAudio, true);
-      }
-
-      setIoEnabled(false);
-
-      // Race the dial against a human-agent-room failure or a caller hangup.
-      // AbortController lets the `finally` cancel a still-pending dial when
-      // either of those wins the race.
-      const abortController = new AbortController();
-      const dialPromise = dialHumanAgent(abortController.signal);
+      onEnterStarted = true;
       try {
-        const result = await Promise.race([
-          dialPromise.then((session) => ({ session, callerHungUp: false })),
-          humanAgentFailedFut.await.then(() => ({ session: null, callerHungUp: false })),
-          callerHangupFut.await.then(() => ({ session: null, callerHungUp: true })),
-        ]);
+        jobCtx = getJobContext();
+        callerRoom = jobCtx.room;
 
-        if (result.callerHungUp) {
-          // cancelForCallerHangup already completed the task; the `finally`
-          // below aborts the pending dial and tears down the half-built room.
+        if (abortSignal?.aborted) {
+          // Aborted before the transfer started: complete without dialing.
+          cancelForAbort(abortSignal.reason);
           return;
         }
-        if (!result.session) {
-          throw new Error('human agent room closed');
-        }
-        if (task.done) {
-          // The caller hung up in the same tick the dial completed; leave
-          // `transferAgentSession` unset so the `finally` discards the session.
+        abortSignal?.addEventListener('abort', onAbort);
+
+        callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerLeftBeforeMerge);
+        if (!hasCallerParticipant()) {
+          // The caller was already gone before the listener could attach.
+          cancelForCallerHangup();
           return;
         }
-        transferAgentSession = result.session;
-      } catch (error) {
-        logger.error({ error }, 'could not dial human agent');
-        setResult(new ToolError('could not dial human agent'));
+
+        if (holdAudio !== null) {
+          await backgroundAudio.start({ room: callerRoom });
+          if (task.done) {
+            // The task was cancelled (caller hangup or abort) while the hold
+            // audio was starting; setResult already closed the player, so
+            // don't create an orphaned play handle.
+            return;
+          }
+          holdAudioHandle = backgroundAudio.play(holdAudio, true);
+        }
+
+        setIoEnabled(false);
+
+        // Race the dial against a human-agent-room failure or a pre-merge
+        // cancellation (caller hangup or abort). AbortController lets the
+        // `finally` cancel a still-pending dial when either wins the race.
+        const abortController = new AbortController();
+        const dialPromise = dialHumanAgent(abortController.signal);
+        try {
+          const result = await Promise.race([
+            dialPromise.then((session) => ({ session, cancelled: false })),
+            humanAgentFailedFut.await.then(() => ({
+              session: null,
+              cancelled: false,
+            })),
+            preMergeCancellationFut.await.then(() => ({
+              session: null,
+              cancelled: true,
+            })),
+          ]);
+
+          if (result.cancelled) {
+            // The cancellation path already completed the task; the `finally`
+            // below aborts the pending dial and tears down the half-built room.
+            return;
+          }
+          if (!result.session) {
+            throw new Error('human agent room closed');
+          }
+          if (task.done) {
+            // The task completed in the same tick the dial finished; leave
+            // `transferAgentSession` unset so the `finally` discards the
+            // session.
+            return;
+          }
+          transferAgentSession = result.session;
+        } catch (error) {
+          logger.error({ error }, 'could not dial human agent');
+          setResult(new ToolError('could not dial human agent'));
+        } finally {
+          abortController.abort();
+          // If the dial won the race we kept its session; if the hangup-notify
+          // flow took it, that flow shuts it down; otherwise discard it.
+          const session = await dialPromise.catch(() => null);
+          if (session && transferAgentSession !== session && hangupNotifySession !== session) {
+            await cleanupHumanAgentDial(session, humanAgentRoom);
+            humanAgentRoom = null;
+          }
+        }
       } finally {
-        abortController.abort();
-        // If the dial won the race we kept its session; if the hangup-notify
-        // flow took it, that flow shuts it down; otherwise discard it.
-        const session = await dialPromise.catch(() => null);
-        if (session && transferAgentSession !== session && hangupNotifySession !== session) {
-          await cleanupHumanAgentDial(session, humanAgentRoom);
-          humanAgentRoom = null;
-        }
+        // Gates run()'s teardown boundary: the dial cleanup above is finished.
+        onEnterFinishedFut.resolve();
       }
     },
   });
 
-  return task;
+  // One lifecycle boundary: run() settles with the task's result only after
+  // teardown has finished — hold audio stopped, caller I/O restored, any
+  // human-agent notification spoken, and the human agent session (including
+  // its SDK-owned room cleanup) shut down. The wait is capped so a stuck
+  // teardown step cannot block the caller session indefinitely.
+  const waitForTeardownComplete = async (): Promise<void> => {
+    if (onEnterStarted) {
+      trackTeardown(onEnterFinishedFut.await);
+    }
+
+    const deadline = AbortSignal.timeout(TEARDOWN_TIMEOUT_MS);
+    let settled = 0;
+    // Teardown steps can enqueue more steps (e.g. onEnter's dial cleanup
+    // closes a session); keep waiting until the list stops growing.
+    while (settled < teardownSteps.length) {
+      const batch = teardownSteps.slice();
+      settled = batch.length;
+      const { isAborted } = await waitUntilAborted(Promise.all(batch), deadline);
+      if (isAborted) {
+        logger.warn('warm transfer teardown did not finish before the deadline');
+        return;
+      }
+    }
+  };
+
+  const runTask = task.run.bind(task);
+  return Object.assign(task, {
+    run: async (): Promise<WarmTransferResult> => {
+      try {
+        return await runTask();
+      } finally {
+        await waitForTeardownComplete();
+      }
+    },
+  });
 }
 
 /**
  * Class wrapper around {@link createWarmTransferTask}, preserving the
  * `new WarmTransferTask(options).run()` API. It composes the functional task and
  * delegates `run()` to it.
+ *
+ * Pass {@link WarmTransferTaskOptions.abortSignal} for cooperative cancellation:
+ *
+ * ```ts
+ * const result = await new WarmTransferTask({
+ *   ...options,
+ *   abortSignal: AbortSignal.timeout(120_000),
+ * }).run();
+ * ```
+ *
+ * `run()` is the single lifecycle boundary: it settles with the result (or the
+ * abort reason) only after teardown has completed.
  */
 export class WarmTransferTask extends AgentTask<WarmTransferResult> {
   readonly #task: AgentTask<WarmTransferResult>;
@@ -695,6 +886,14 @@ export function resolveHumanAgentRoomName(callerRoomName: string, override?: str
   }
   return override;
 }
+
+// Upper bound on how long run() keeps waiting for teardown after the task's
+// result is known. Generous enough for the capped human-agent notification
+// plus session drain and room deletion; only a stuck step ever hits it.
+const TEARDOWN_TIMEOUT_MS = 30_000;
+
+const TRANSFER_ABORTED_INSTRUCTION = `The transfer has been cancelled before it could be completed.
+Briefly inform the human agent that their help is no longer needed and that you are ending the call now.`;
 
 const CALLER_HANGUP_INSTRUCTION = `The caller has hung up before the transfer could be completed.
 Briefly inform the human agent that the caller has left and that you are ending the call now.`;
