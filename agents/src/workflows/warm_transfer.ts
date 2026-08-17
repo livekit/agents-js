@@ -29,6 +29,7 @@ import {
   BuiltinAudioClip,
   type PlayHandle,
 } from '../voice/background_audio.js';
+import { AgentSessionEventTypes } from '../voice/events.js';
 import { DEFAULT_PARTICIPANT_KINDS } from '../voice/room_io/index.js';
 import type { InstructionParts } from './utils.js';
 
@@ -234,15 +235,44 @@ export function createWarmTransferTask({
   // run inside the human agent session's own tool call, where awaiting that
   // session's shutdown would deadlock. Tracked promises never reject.
   const teardownSteps: Promise<unknown>[] = [];
-  const trackTeardown = (step: Promise<unknown> | void): void => {
+  const trackTeardown = (label: string, step: Promise<unknown> | void): void => {
     teardownSteps.push(
-      Promise.resolve(step).catch(() => {
-        // Failures are logged where they occur; the boundary only waits.
+      Promise.resolve(step).catch((error) => {
+        // The boundary only waits; a failed step must not reject it, but it
+        // should not pass silently either.
+        logger.warn({ error, step: label }, 'warm transfer teardown step failed');
       }),
     );
   };
   let onEnterStarted = false;
   const onEnterFinishedFut = new Future<void>();
+  // Resolves once the human agent session has emitted its Close event. The
+  // session's shutdown() is fire-and-forget by design (awaiting it from
+  // inside that session's own tool call would deadlock), so closure is
+  // observed through the event instead; the listener is attached at session
+  // creation, before any close can be missed.
+  let transferSessionClosedFut: Future<void> | null = null;
+
+  // Tracks "the consult session is gone" for the failure-path boundary:
+  // waits for the session's Close event, then deletes the consult room
+  // best-effort. RoomIO's deleteRoomOnClose usually deletes it first (this
+  // call then fails fast and is swallowed); doing it here too means the
+  // boundary settles only once the room name is safe to reuse.
+  const trackConsultCleanup = (): void => {
+    const closed = transferSessionClosedFut?.await ?? Promise.resolve();
+    trackTeardown(
+      'consult session close',
+      closed.then(async () => {
+        const roomName = callerRoom?.name
+          ? resolveHumanAgentRoomName(callerRoom.name, rawRoomName)
+          : null;
+        if (!roomName || !jobCtx) return;
+        await jobCtx.deleteRoom(roomName).catch(() => {
+          // Already deleted by deleteRoomOnClose, or never created.
+        });
+      }),
+    );
+  };
 
   // `task` is created at the end of this function. The helpers and tools below
   // only read it at runtime (inside their bodies), long after it's assigned, so
@@ -280,10 +310,11 @@ export function createWarmTransferTask({
     if (transferAgentSession) {
       // shutdown() triggers deleteRoomOnClose, which disconnects the human agent
       // room and frees its WebSocket. The human agent is already moved out
-      // (mergeCalls) or torn down (failure) by now. The returned promise gates
-      // run()'s teardown boundary; it can't be awaited here because this may
-      // run inside that session's own tool call.
-      trackTeardown(transferAgentSession.shutdown());
+      // (mergeCalls) or torn down (failure) by now. Closure is tracked via the
+      // session's Close event; shutdown() can't be awaited here because this
+      // may run inside that session's own tool call.
+      transferAgentSession.shutdown();
+      trackConsultCleanup();
       transferAgentSession = null;
       humanAgentRoom = null;
     }
@@ -292,11 +323,7 @@ export function createWarmTransferTask({
       holdAudioHandle.stop();
       holdAudioHandle = null;
     }
-    trackTeardown(
-      backgroundAudio.close().catch((error) => {
-        logger.warn({ error }, 'failed to close background audio');
-      }),
-    );
+    trackTeardown('background audio close', backgroundAudio.close());
 
     if (!(result instanceof Error)) {
       // The merge committed: the caller is live with the human agent, so hand
@@ -326,8 +353,8 @@ export function createWarmTransferTask({
 
   // Announces the end of the transfer to the human agent, then hangs up on
   // them by shutting the session down (deleteRoomOnClose ends the SIP call).
-  // Resolves once the session has fully closed, so the teardown boundary
-  // covers the notification and the SDK-owned room cleanup.
+  // Resolves once the notification attempt is over; session closure is
+  // tracked separately via the Close event (see trackConsultCleanup).
   const notifyHumanAgentOfTransferEnd = async (
     session: AgentSession,
     instructions: string,
@@ -346,7 +373,9 @@ export function createWarmTransferTask({
     } catch (error) {
       logger.warn({ error }, 'failed to notify human agent before ending the transfer');
     } finally {
-      await session.shutdown();
+      // Fire-and-forget by design; callers observe closure through the
+      // session's Close event (see trackConsultCleanup).
+      session.shutdown();
     }
   };
 
@@ -367,11 +396,13 @@ export function createWarmTransferTask({
       humanAgentRoom = null;
       hangupNotifySession = session;
       trackTeardown(
+        'human agent notification',
         notifyHumanAgentOfTransferEnd(
           session,
           callerHangupInstruction ?? CALLER_HANGUP_INSTRUCTION,
         ),
       );
+      trackConsultCleanup();
     }
     setResult(new ToolError('caller hung up before the transfer completed'));
   };
@@ -401,7 +432,11 @@ export function createWarmTransferTask({
       transferAgentSession = null;
       humanAgentRoom = null;
       hangupNotifySession = session;
-      trackTeardown(notifyHumanAgentOfTransferEnd(session, TRANSFER_ABORTED_INSTRUCTION));
+      trackTeardown(
+        'human agent notification',
+        notifyHumanAgentOfTransferEnd(session, TRANSFER_ABORTED_INSTRUCTION),
+      );
+      trackConsultCleanup();
     }
     setResult(toAbortError(reason));
   };
@@ -555,6 +590,12 @@ export function createWarmTransferTask({
         turnDetection: task.session.turnDetection,
       });
 
+      // Attached before start so no close can be missed: this is the only
+      // public completion signal for the session's shutdown.
+      const sessionClosedFut = new Future<void>();
+      session.on(AgentSessionEventTypes.Close, () => sessionClosedFut.resolve());
+      transferSessionClosedFut = sessionClosedFut;
+
       const started = await waitUntilAborted(
         session.start({
           agent: transferAgent,
@@ -590,16 +631,29 @@ export function createWarmTransferTask({
         },
         sipConnection,
       );
-      const dialed = await waitUntilAborted(sipDial, signal);
+      // The claim scopes late-answer compensation to this dial attempt: the
+      // default consult room name is stable across attempts, so a retry may
+      // reuse it before an abandoned request settles, and only the current
+      // claim holder may delete the room.
+      const dialClaim = claimConsultRoomDial(humanAgentRoomName);
+      const dialed = await waitUntilAborted(sipDial, signal).catch((error) => {
+        releaseConsultRoomDial(humanAgentRoomName, dialClaim);
+        throw error;
+      });
       if (dialed.isAborted) {
         // The server request cannot be aborted and has already initiated the
         // outbound call. Cleanup deletes the room (ending a pending dial), but
         // a dial that answers in the deletion race can auto-recreate it — so
-        // delete the room again once the abandoned request settles. Detached
-        // on purpose: the request can take the whole ringing timeout, and the
-        // teardown boundary must not wait on it.
+        // delete the room again once the abandoned request settles, unless a
+        // newer attempt has claimed the name. Detached on purpose: the
+        // request can take the whole ringing timeout, and the teardown
+        // boundary must not wait on it.
         void sipDial
           .then(() => {
+            if (!ownsConsultRoomDial(humanAgentRoomName, dialClaim)) {
+              // A retry owns the room now; deleting would tear it down.
+              return;
+            }
             logger.info(
               { humanAgentRoomName },
               'cancelled dial answered late, deleting the consult room',
@@ -607,10 +661,19 @@ export function createWarmTransferTask({
             return ctx.deleteRoom(humanAgentRoomName);
           })
           .catch(() => {
-            // A rejected dial never joined the room; nothing to compensate.
+            // A rejected request usually never joined the room. It could have
+            // committed server-side before the response was lost, but deleting
+            // on rejection would widen the cross-attempt race, so accept that
+            // residual (it matches the behavior before compensation existed).
+          })
+          .finally(() => {
+            releaseConsultRoomDial(humanAgentRoomName, dialClaim);
           });
         throw new Error('dial cancelled');
       }
+      // The dial settled while we were still waiting: no late answer is
+      // possible, so the claim has served its purpose.
+      releaseConsultRoomDial(humanAgentRoomName, dialClaim);
 
       humanAgentRoom = room;
       completed = true;
@@ -792,7 +855,7 @@ export function createWarmTransferTask({
   // teardown step cannot block the caller session indefinitely.
   const waitForTeardownComplete = async (): Promise<void> => {
     if (onEnterStarted) {
-      trackTeardown(onEnterFinishedFut.await);
+      trackTeardown('dial cleanup', onEnterFinishedFut.await);
     }
 
     const deadline = AbortSignal.timeout(TEARDOWN_TIMEOUT_MS);
@@ -940,6 +1003,33 @@ export function resolveHumanAgentRoomName(callerRoomName: string, override?: str
     throw new Error('`roomName` must differ from the caller room name');
   }
   return override;
+}
+
+// Current dial-attempt claim per consult room name. Consult room names are
+// stable across attempts by default, so an abandoned dial's late-answer
+// compensation must not delete a room a newer attempt is using. Entries are
+// removed when a claim is released, so the map only holds in-flight dials.
+const consultRoomDialClaims = new Map<string, symbol>();
+
+/**
+ * Claim a consult room name for a dial attempt, superseding any older claim.
+ *
+ * Exported for testing; not re-exported from the package index.
+ */
+export function claimConsultRoomDial(roomName: string): symbol {
+  const claim = Symbol('warm-transfer-dial');
+  consultRoomDialClaims.set(roomName, claim);
+  return claim;
+}
+
+function ownsConsultRoomDial(roomName: string, claim: symbol): boolean {
+  return consultRoomDialClaims.get(roomName) === claim;
+}
+
+function releaseConsultRoomDial(roomName: string, claim: symbol): void {
+  if (consultRoomDialClaims.get(roomName) === claim) {
+    consultRoomDialClaims.delete(roomName);
+  }
 }
 
 // Upper bound on how long run() keeps waiting for teardown after the task's

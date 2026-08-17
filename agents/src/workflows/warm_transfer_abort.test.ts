@@ -9,11 +9,21 @@ import { initializeLogger } from '../log.js';
 import { Agent } from '../voice/agent.js';
 import { AgentSession } from '../voice/agent_session.js';
 import { AudioInput, AudioOutput } from '../voice/io.js';
-import { type WarmTransferResult, createWarmTransferTask } from './warm_transfer.js';
+import {
+  type WarmTransferResult,
+  claimConsultRoomDial,
+  createWarmTransferTask,
+} from './warm_transfer.js';
 
 class TestAudioInput extends AudioInput {}
 class TestAudioOutput extends AudioOutput {
   override clearBuffer(): void {}
+}
+
+// A session whose start() is mocked never emits Close on its own; tests emit
+// it to simulate the session finishing its close.
+function emitClose(session: AgentSession) {
+  (session as unknown as { emit: (event: string, payload: unknown) => void }).emit('close', {});
 }
 
 function createDeferred() {
@@ -129,8 +139,16 @@ async function startPendingMergeHarness(abortSignal: AbortSignal) {
   await vi.waitFor(() => expect(roomConnect).toHaveBeenCalledOnce());
   expect(harness.session.output.audioEnabled).toBe(false);
 
-  vi.spyOn(AgentSession.prototype, 'start').mockResolvedValue(undefined);
-  const shutdown = vi.spyOn(AgentSession.prototype, 'shutdown').mockResolvedValue(undefined);
+  const innerSessions: AgentSession[] = [];
+  vi.spyOn(AgentSession.prototype, 'start').mockImplementation(function (this: AgentSession) {
+    innerSessions.push(this);
+    return Promise.resolve();
+  });
+  const shutdown = vi.spyOn(AgentSession.prototype, 'shutdown').mockImplementation(function (
+    this: AgentSession,
+  ) {
+    emitClose(this);
+  });
   const dialHumanAgent = vi
     .spyOn(SipClient.prototype, 'createSipParticipant')
     .mockResolvedValue({} as never);
@@ -149,7 +167,7 @@ async function startPendingMergeHarness(abortSignal: AbortSignal) {
     expect(moveParticipant).toHaveBeenCalledWith('consult-room', 'human-agent-sip', 'caller-room'),
   );
 
-  return { ...harness, merge, pendingMove, shutdown };
+  return { ...harness, innerSessions, merge, pendingMove, shutdown };
 }
 
 describe('warm transfer abortSignal lifecycle', () => {
@@ -274,8 +292,8 @@ describe('warm transfer abortSignal lifecycle', () => {
     const harness = await startPendingMergeHarness(controller.signal);
 
     try {
-      const pendingShutdown = createDeferred();
-      harness.shutdown.mockReturnValue(pendingShutdown.promise);
+      // The consult session never observably closes in this test.
+      harness.shutdown.mockImplementation(() => undefined);
 
       harness.pendingMove.resolve();
       await expect(harness.merge).resolves.toBeUndefined();
@@ -288,8 +306,6 @@ describe('warm transfer abortSignal lifecycle', () => {
         callerAudioEnabled: true,
       });
       expect(harness.shutdown).toHaveBeenCalled();
-
-      pendingShutdown.resolve();
     } finally {
       await harness.session.close().catch(() => undefined);
     }
@@ -300,8 +316,9 @@ describe('warm transfer abortSignal lifecycle', () => {
     const harness = await startPendingMergeHarness(controller.signal);
 
     try {
-      const pendingShutdown = createDeferred();
-      harness.shutdown.mockReturnValue(pendingShutdown.promise);
+      // Defer the Close event so the session's closure stays observable
+      // pending until the test emits it.
+      harness.shutdown.mockImplementation(() => undefined);
 
       const reason = new Error('consult timed out');
       controller.abort(reason);
@@ -320,12 +337,17 @@ describe('warm transfer abortSignal lifecycle', () => {
       expect(taskSettledSpy).not.toHaveBeenCalled();
       expect(harness.session.output.audioEnabled).toBe(false);
 
-      pendingShutdown.resolve();
+      const consultSession = harness.innerSessions[0];
+      if (!consultSession) throw new Error('consult session not captured');
+      emitClose(consultSession);
       await expect(harness.taskSettled).resolves.toEqual({
         type: 'failed',
         error: reason,
         callerAudioEnabled: true,
       });
+      // The boundary also deleted the consult room (best-effort, after the
+      // Close event) so the name is safe to reuse.
+      expect(harness.deleteRoom).toHaveBeenCalledWith('caller-room-human-agent');
     } finally {
       await harness.session.close().catch(() => undefined);
     }
@@ -370,6 +392,49 @@ describe('warm transfer abortSignal lifecycle', () => {
       await vi.waitFor(() =>
         expect(harness.deleteRoom).toHaveBeenCalledWith('caller-room-human-agent'),
       );
+      await expect(harness.sessionStarted).resolves.toBeUndefined();
+    } finally {
+      await harness.session.close().catch(() => undefined);
+    }
+  });
+
+  it('skips late-answer deletion when a newer dial attempt owns the room', async () => {
+    const pendingRoomConnection = createDeferred();
+    const roomConnect = vi
+      .spyOn(Room.prototype, 'connect')
+      .mockReturnValue(pendingRoomConnection.promise);
+    vi.spyOn(Room.prototype, 'disconnect').mockResolvedValue(undefined);
+    const controller = new AbortController();
+    const harness = startTaskHarness({ abortSignal: controller.signal });
+
+    try {
+      await harness.onEnterStarted;
+      await vi.waitFor(() => expect(roomConnect).toHaveBeenCalledOnce());
+
+      vi.spyOn(AgentSession.prototype, 'start').mockResolvedValue(undefined);
+      let answerDial!: (value: unknown) => void;
+      const dialPromise = new Promise((resolve) => {
+        answerDial = resolve;
+      });
+      const dial = vi
+        .spyOn(SipClient.prototype, 'createSipParticipant')
+        .mockReturnValue(dialPromise as never);
+
+      pendingRoomConnection.resolve();
+      await vi.waitFor(() => expect(dial).toHaveBeenCalledOnce());
+
+      controller.abort(new Error('consult timed out'));
+      await expect(harness.taskSettled).resolves.toMatchObject({
+        type: 'failed',
+      });
+
+      // A retry claims the same consult room name before the abandoned dial
+      // settles; the old attempt's compensation must not delete the retry's
+      // room out from under it.
+      claimConsultRoomDial('caller-room-human-agent');
+      answerDial({});
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(harness.deleteRoom).not.toHaveBeenCalled();
       await expect(harness.sessionStarted).resolves.toBeUndefined();
     } finally {
       await harness.session.close().catch(() => undefined);
