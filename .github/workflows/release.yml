@@ -111,6 +111,14 @@ jobs:
           SOURCE_REPO: ${{ github.repository }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
+          if [ -z "$TARGET_REPO" ]; then
+            echo "::error::TARGET_REPO repository variable is not configured"
+            exit 1
+          fi
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::SYNC_DISPATCH_TOKEN repository secret is not configured"
+            exit 1
+          fi
           jq -n \
             --arg source_repo "$SOURCE_REPO" \
             --arg source_sha "$SOURCE_SHA" \
