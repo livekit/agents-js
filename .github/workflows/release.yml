@@ -88,3 +88,18 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.DOCS_DEPLOY_AWS_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.DOCS_DEPLOY_AWS_API_SECRET }}
           AWS_DEFAULT_REGION: 'us-east-1'
+      - name: Dispatch downstream bumps
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_DISPATCH_TOKEN }}
+          TARGET_REPO: ${{ vars.TARGET_REPO }}
+          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+          SOURCE_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          jq -n \
+            --arg source_repo "$SOURCE_REPO" \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson published_packages "$PUBLISHED_PACKAGES" \
+            '{event_type: "agents-js-published", client_payload: {source_repo: $source_repo, source_sha: $source_sha, published_packages: $published_packages}}' \
+            | gh api -X POST "repos/${TARGET_REPO}/dispatches" --input -
