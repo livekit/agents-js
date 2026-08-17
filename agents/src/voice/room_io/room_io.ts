@@ -521,7 +521,9 @@ export class RoomIO {
       }
     }
 
-    if (this.inputOptions.audioEnabled) {
+    // if the user pre-set an input, keep it instead of creating (and later attaching) our own
+    const externalAudioInput = this.agentSession.input.audio ?? undefined;
+    if (this.inputOptions.audioEnabled && !externalAudioInput) {
       this.audioInput = new ParticipantAudioInputStream({
         room: this.room,
         sampleRate: this.inputOptions.audioSampleRate,
@@ -540,7 +542,11 @@ export class RoomIO {
         queueSizeMs: this.outputOptions.queueSizeMs,
       });
     }
-    if (this.outputOptions.transcriptionEnabled) {
+    // if the user pre-set a transcription output, keep it: skip the room transcription
+    // outputs and the transcript synchronizer entirely (matches the python implementation,
+    // where a pre-set output disables RoomIO's text output)
+    const externalTranscriptionOutput = this.agentSession.output.transcription ?? undefined;
+    if (this.outputOptions.transcriptionEnabled && !externalTranscriptionOutput) {
       this.userTranscriptOutput = this.createTranscriptionOutput({
         isDeltaStream: false,
         participant: this.participantIdentity,
