@@ -111,6 +111,12 @@ jobs:
           SOURCE_REPO: ${{ github.repository }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
+          is_stable=$(jq -r 'length > 0 and all(.[]; .version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
+            <<< "$PUBLISHED_PACKAGES")
+          if [ "$is_stable" != "true" ]; then
+            echo "::notice::Published packages are not all stable versions; skipping downstream bump."
+            exit 0
+          fi
           if [ -z "$TARGET_REPO" ]; then
             echo "::error::TARGET_REPO repository variable is not configured"
             exit 1
