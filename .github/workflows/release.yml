@@ -98,6 +98,7 @@ jobs:
     needs: [release]
     if: >-
       always() &&
+      github.ref == 'refs/heads/main' &&
       needs.release.outputs.publish_outcome == 'success' &&
       needs.release.outputs.published == 'true'
     runs-on: ubuntu-latest
