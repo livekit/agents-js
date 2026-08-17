@@ -60,7 +60,7 @@
    * This would direct API Extractor to embed those types directly in the .d.ts rollup, as if they had been
    * local files for library1.
    */
-  "bundledPackages": [],
+  "bundledPackages": ["@livekit/agents"],
 
   /**
    * Specifies what type of newlines API Extractor should use when writing output files.  By default, the output files
@@ -69,7 +69,7 @@
    *
    * DEFAULT VALUE: "crlf"
    */
-  // "newlineKind": "crlf",
+  "newlineKind": "lf",
 
   /**
    * Set to true when invoking API Extractor's test harness. When `testMode` is true, the `toolVersion` field in the
@@ -391,8 +391,12 @@
      */
     "extractorMessageReporting": {
       "default": {
-        "logLevel": "warning"
-        // "addToApiReportFile": false
+        "logLevel": "warning",
+        "addToApiReportFile": true
+      },
+
+      "ae-setter-with-docs": {
+        "logLevel": "none"
       }
 
       // "ae-extra-release-tag": {
@@ -412,8 +416,28 @@
      */
     "tsdocMessageReporting": {
       "default": {
-        "logLevel": "warning"
-        // "addToApiReportFile": false
+        "logLevel": "warning",
+        "addToApiReportFile": true
+      },
+
+      "tsdoc-malformed-html-name": {
+        "logLevel": "none"
+      },
+
+      "tsdoc-escape-greater-than": {
+        "logLevel": "none"
+      },
+
+      "tsdoc-escape-right-brace": {
+        "logLevel": "none"
+      },
+
+      "tsdoc-malformed-inline-tag": {
+        "logLevel": "none"
+      },
+
+      "tsdoc-undefined-tag": {
+        "logLevel": "none"
       }
 
       // "tsdoc-link-tag-unescaped-text": {

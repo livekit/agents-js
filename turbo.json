@@ -138,10 +138,11 @@
     },
     "api:check": {
       "cache": false,
-      "dependsOn": ["^build"]
+      "dependsOn": ["build"]
     },
     "api:update": {
-      "dependsOn": ["^build"]
+      "cache": false,
+      "dependsOn": ["build"]
     },
     "throws:check": {
       "outputs": []
