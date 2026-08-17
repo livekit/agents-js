@@ -6,6 +6,8 @@ import {
   type APIConnectOptions,
   type AudioBuffer,
   AudioByteStream,
+  ChatMessage,
+  type ConversationItemAddedEvent,
   Future,
   Task,
   createTimedString,
@@ -18,7 +20,14 @@ import {
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { RawData } from 'ws';
 import { WebSocket } from 'ws';
-import type { STTEncoding, STTModels } from './models.js';
+import type { STTEncoding, STTModels, VoiceFocus } from './models.js';
+
+// Speech models in the Universal-3 Pro family, which share the same parameter support.
+const U3_PRO_MODELS = ['u3-rt-pro', 'u3-rt-pro-beta-1', 'universal-3-5-pro'] as const;
+
+function isU3ProModel(model: STTModels): boolean {
+  return U3_PRO_MODELS.includes(model as (typeof U3_PRO_MODELS)[number]);
+}
 
 // AssemblyAI Universal-Streaming (v3) message envelope. All fields are optional
 // since we narrow on `type` before reading anything else.
@@ -34,6 +43,7 @@ interface StreamEventMessage {
   end_of_turn_confidence?: number;
   turn_is_formatted?: boolean;
   language_code?: string;
+  language_confidence?: number;
   speaker_label?: string;
   words?: Array<{
     text?: string;
@@ -45,6 +55,18 @@ interface StreamEventMessage {
   // Termination
   audio_duration_seconds?: number;
   session_duration_seconds?: number;
+}
+
+function speechDataMetadata(data: StreamEventMessage): stt.SpeechData['metadata'] | undefined {
+  const assemblyai: Record<string, number> = {};
+
+  if (typeof data.language_confidence === 'number') {
+    assemblyai.languageConfidence = data.language_confidence;
+  }
+
+  if (Object.keys(assemblyai).length === 0) return undefined;
+
+  return { assemblyai };
 }
 
 export interface STTOptions {
@@ -59,6 +81,11 @@ export interface STTOptions {
   encoding: STTEncoding;
   speechModel: STTModels;
   languageDetection?: boolean;
+  /**
+   * Session inactivity timeout in seconds. AssemblyAI accepts integer values
+   * from 5 to 3600; when unset, no inactivity timeout is applied.
+   */
+  inactivityTimeout?: number;
   endOfTurnConfidenceThreshold?: number;
   /** Minimum silence (ms) before a confident end-of-turn is finalized. */
   minTurnSilence?: number;
@@ -66,8 +93,12 @@ export interface STTOptions {
   maxTurnSilence?: number;
   formatTurns?: boolean;
   keytermsPrompt?: string[];
-  /** Only supported with the `u3-rt-pro` model. */
+  /** Only supported with the Universal-3 Pro model family. */
   prompt?: string;
+  /** Only supported with the Universal-3 Pro model family. */
+  agentContext?: string;
+  /** Only supported with the Universal-3 Pro model family. Set at connection time only. */
+  previousContextNTurns?: number;
   vadThreshold?: number;
   /**
    * Enable speaker diarization. Note: AssemblyAI will return per-word speaker
@@ -80,6 +111,22 @@ export interface STTOptions {
   speakerLabels?: boolean;
   maxSpeakers?: number;
   domain?: string;
+  /** Isolate the primary voice and suppress background noise. Connect-time only. */
+  voiceFocus?: VoiceFocus;
+  /** Background audio suppression aggressiveness, from 0.0 to 1.0. Connect-time only. */
+  voiceFocusThreshold?: number;
+  /**
+   * Accuracy/latency preset for the Universal-3 Pro model family: `min_latency`, `balanced`,
+   * or `max_accuracy`. Explicit turn-silence values still take precedence over mode defaults.
+   */
+  mode?: 'min_latency' | 'balanced' | 'max_accuracy';
+  /**
+   * When the model supports it, let an `AgentSession` push each assistant reply into
+   * `agentContext` so it is carried into the model's conversation context. Defaults to false;
+   * set true to enable. Prior user turns are carried automatically by the model regardless of
+   * this flag. Ignored on models without context support.
+   */
+  agentContextCarryover?: boolean;
   baseUrl: string;
 }
 
@@ -88,13 +135,16 @@ const defaultSTTOptions: STTOptions = {
   sampleRate: 16000,
   bufferSizeMs: 50,
   encoding: 'pcm_s16le',
-  speechModel: 'universal-streaming-english',
+  speechModel: 'universal-3-5-pro',
   baseUrl: 'wss://streaming.assemblyai.com',
 };
 
 export class STT extends stt.STT {
   #opts: STTOptions;
   #streams = new Set<WeakRef<SpeechStream>>();
+  // set (user + session))
+  #userKeyterms: string[];
+  #sessionKeyterms: string[] = [];
   label = 'assemblyai.STT';
 
   get model(): string {
@@ -106,19 +156,43 @@ export class STT extends stt.STT {
   }
 
   constructor(opts: Partial<STTOptions> = {}) {
+    // u3-rt-pro family — "u3-pro" is normalized below — and is opt-in via the user)
+    const rawModel = opts.speechModel ?? defaultSTTOptions.speechModel;
+    const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
+    if (opts.agentContextCarryover && !supportsCarryover) {
+      log().warn(
+        `agentContextCarryover is enabled but model '${rawModel}' does not support it; ignoring`,
+      );
+    }
     super({
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
+      keyterms: true,
+      chatContext: (opts.agentContextCarryover ?? false) && supportsCarryover,
     });
 
     if (opts.speechModel === 'u3-pro') {
-      log().warn("'u3-pro' is deprecated, use 'u3-rt-pro' instead.");
-      opts.speechModel = 'u3-rt-pro';
+      log().warn("'u3-pro' is deprecated, use 'universal-3-5-pro' instead.");
+      opts.speechModel = 'universal-3-5-pro';
     }
 
-    if (opts.prompt !== undefined && opts.speechModel !== 'u3-rt-pro') {
-      throw new Error("The 'prompt' parameter is only supported with the 'u3-rt-pro' model.");
+    const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;
+    if (!isU3ProModel(speechModel)) {
+      for (const param of [
+        'prompt',
+        'agentContext',
+        'previousContextNTurns',
+        'voiceFocus',
+        'voiceFocusThreshold',
+        'mode',
+      ] as const) {
+        if (opts[param] !== undefined) {
+          throw new Error(
+            `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
+          );
+        }
+      }
     }
 
     const apiKey = opts.apiKey ?? defaultSTTOptions.apiKey;
@@ -128,8 +202,8 @@ export class STT extends stt.STT {
       );
     }
 
-    // Minimize latency; matches LK's end-of-turn detector well.
-    const minTurnSilence = opts.minTurnSilence ?? 100;
+    // Minimize latency by default, but let AssemblyAI's mode preset control silence tuning.
+    const minTurnSilence = opts.minTurnSilence ?? (opts.mode === undefined ? 100 : undefined);
 
     this.#opts = {
       ...defaultSTTOptions,
@@ -137,6 +211,7 @@ export class STT extends stt.STT {
       apiKey,
       minTurnSilence,
     };
+    this.#userKeyterms = [...(this.#opts.keytermsPrompt ?? [])];
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -145,14 +220,48 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    this.#opts = { ...this.#opts, ...opts };
+    // session keyterms so a user update doesn't drop them)
+    const nextOpts = { ...opts };
+    if (nextOpts.keytermsPrompt !== undefined) {
+      this.#userKeyterms = [...nextOpts.keytermsPrompt];
+      nextOpts.keytermsPrompt = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
+    }
+    this.#opts = { ...this.#opts, ...nextOpts };
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
-        stream.updateOptions(opts);
+        stream.updateOptions(nextOpts);
       } else {
         this.#streams.delete(ref);
       }
+    }
+  }
+
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    if (
+      keyterms.length === this.#sessionKeyterms.length &&
+      keyterms.every((t, i) => t === this.#sessionKeyterms[i])
+    ) {
+      return;
+    }
+    this.#sessionKeyterms = [...keyterms];
+    const merged = [...new Set([...this.#userKeyterms, ...keyterms])];
+    this.#opts.keytermsPrompt = merged;
+    // applied live via the stream's UpdateConfiguration (no reconnect)
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (stream) {
+        stream.updateOptions({ keytermsPrompt: merged });
+      } else {
+        this.#streams.delete(ref);
+      }
+    }
+  }
+
+  override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    const chatItem = ev.item;
+    if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
+      this.updateOptions({ agentContext: chatItem.textContent });
     }
   }
 
@@ -204,6 +313,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     const configMsg: Record<string, unknown> = { type: 'UpdateConfiguration' };
     if (opts.prompt !== undefined) configMsg.prompt = opts.prompt;
+    if (opts.agentContext !== undefined) configMsg.agent_context = opts.agentContext;
     if (opts.keytermsPrompt !== undefined) configMsg.keyterms_prompt = opts.keytermsPrompt;
     if (opts.maxTurnSilence !== undefined) configMsg.max_turn_silence = opts.maxTurnSilence;
     if (opts.minTurnSilence !== undefined) configMsg.min_turn_silence = opts.minTurnSilence;
@@ -262,17 +372,19 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   async #connectWS(): Promise<WebSocket> {
-    // u3-rt-pro has different silence defaults — if unset, both min and max default to 100ms.
+    // Universal-3 Pro family models default both min and max silence to 100ms when unset.
+    // When a mode preset is selected, leave them unset unless explicitly provided so the
+    // server's per-mode silence tuning is not overridden by the latency-optimized default.
     let minSilence = this.#opts.minTurnSilence;
     let maxSilence = this.#opts.maxTurnSilence;
-    if (this.#opts.speechModel === 'u3-rt-pro') {
-      if (minSilence === undefined) minSilence = 100;
+    if (isU3ProModel(this.#opts.speechModel)) {
+      if (minSilence === undefined && this.#opts.mode === undefined) minSilence = 100;
       if (maxSilence === undefined) maxSilence = minSilence;
     }
 
-    // Default language_detection to true for multilingual / u3-rt-pro models, false otherwise.
+    // Default language_detection to true for multilingual / u3-rt-pro-family models, false otherwise.
     const defaultLanguageDetection =
-      this.#opts.speechModel.includes('multilingual') || this.#opts.speechModel === 'u3-rt-pro';
+      this.#opts.speechModel.includes('multilingual') || isU3ProModel(this.#opts.speechModel);
     const languageDetection = this.#opts.languageDetection ?? defaultLanguageDetection;
 
     const liveConfig: Record<string, unknown> = {
@@ -284,15 +396,21 @@ export class SpeechStream extends stt.SpeechStream {
       min_turn_silence: minSilence,
       max_turn_silence: maxSilence,
       keyterms_prompt:
-        this.#opts.keytermsPrompt !== undefined
+        this.#opts.keytermsPrompt !== undefined && this.#opts.keytermsPrompt.length > 0
           ? JSON.stringify(this.#opts.keytermsPrompt)
           : undefined,
       language_detection: languageDetection,
+      inactivity_timeout: this.#opts.inactivityTimeout,
       prompt: this.#opts.prompt,
+      agent_context: this.#opts.agentContext,
+      previous_context_n_turns: this.#opts.previousContextNTurns,
       vad_threshold: this.#opts.vadThreshold,
       speaker_labels: this.#opts.speakerLabels,
       max_speakers: this.#opts.maxSpeakers,
       domain: this.#opts.domain,
+      voice_focus: this.#opts.voiceFocus,
+      voice_focus_threshold: this.#opts.voiceFocusThreshold,
+      mode: this.#opts.mode,
     };
 
     const url = new URL(`${this.#opts.baseUrl}/v3/ws`);
@@ -483,6 +601,7 @@ export class SpeechStream extends stt.SpeechStream {
     const utterance = data.utterance ?? '';
     const transcript = data.transcript ?? '';
     const language = normalizeLanguage(data.language_code ?? 'en');
+    const metadata = speechDataMetadata(data);
 
     // Word timestamps are in milliseconds:
     // https://www.assemblyai.com/docs/api-reference/streaming-api/streaming-api#receive.receiveTurn.words
@@ -517,6 +636,7 @@ export class SpeechStream extends stt.SpeechStream {
             endTime,
             confidence,
             words: timedWords,
+            ...(metadata ? { metadata } : {}),
           },
         ],
       });
@@ -544,6 +664,7 @@ export class SpeechStream extends stt.SpeechStream {
             endTime,
             confidence: utteranceConfidence,
             words: utteranceWords,
+            ...(metadata ? { metadata } : {}),
           },
         ],
       });
@@ -564,6 +685,7 @@ export class SpeechStream extends stt.SpeechStream {
             endTime,
             confidence,
             words: timedWords,
+            ...(metadata ? { metadata } : {}),
           },
         ],
       });

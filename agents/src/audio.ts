@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { AudioFrame } from '@livekit/rtc-node';
 import ffmpeg from 'fluent-ffmpeg';
 import type { ReadableStream } from 'node:stream/web';
+import { configureFfmpeg } from './ffmpeg.js';
 import { log } from './log.js';
 import { createStreamChannel } from './stream/stream_channel.js';
 import { type AudioBuffer, isFfmpegTeardownError } from './utils.js';
 
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+configureFfmpeg();
 
 export interface AudioDecodeOptions {
   sampleRate?: number;
@@ -74,6 +74,10 @@ export class AudioByteStream {
   }
 
   flush(): AudioFrame[] {
+    if (this.#buf.length === 0) {
+      return [];
+    }
+
     if (this.#buf.length % (2 * this.#numChannels) !== 0) {
       this.#logger.warn('AudioByteStream: incomplete frame during flush, dropping');
       return [];

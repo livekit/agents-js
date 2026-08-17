@@ -46,7 +46,9 @@ describe('TTS stream idle timeout', () => {
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
 
-    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller);
+    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     vi.useFakeTimers();
 
@@ -70,7 +72,13 @@ describe('TTS stream idle timeout', () => {
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
 
-    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, 500);
+    const [task, audioOut] = performAudioForwarding(
+      stalledStream,
+      audioOutput,
+      controller,
+      () => audioOutput.resume(),
+      500,
+    );
 
     vi.useFakeTimers();
 
@@ -97,12 +105,115 @@ describe('TTS stream idle timeout', () => {
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
 
-    const [task, audioOut] = performAudioForwarding(normalStream, audioOutput, controller);
+    const [task, audioOut] = performAudioForwarding(normalStream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     await task.result;
 
     expect(audioOutput.capturedFrames.length).toBe(3);
     expect(audioOut.firstFrameFut.done).toBe(true);
+  });
+
+  it('ignores PLAYBACK_STARTED from another segment before its own first frame', async () => {
+    // Stalled stream so the forwarder is still waiting on its first read when a
+    // stray event (from an interrupted overlapping segment) arrives; the idle
+    // timeout then ends the loop without this segment ever capturing a frame.
+    const stalledStream = new ReadableStream<AudioFrame>({ start() {} });
+
+    const audioOutput = new MockAudioOutput();
+    const controller = new AbortController();
+    const [task, audioOut] = performAudioForwarding(
+      stalledStream,
+      audioOutput,
+      controller,
+      () => audioOutput.resume(),
+      500,
+    );
+
+    vi.useFakeTimers();
+
+    // Stray PLAYBACK_STARTED before this segment captures anything must be ignored.
+    audioOutput.onPlaybackStarted(Date.now());
+    expect(audioOut.firstFrameFut.done).toBe(false);
+
+    const taskPromise = task.result;
+    await vi.advanceTimersByTimeAsync(600);
+    await taskPromise;
+
+    vi.useRealTimers();
+
+    expect(audioOutput.capturedFrames.length).toBe(0);
+    // Forwarding ended without capturing a frame. The future stays pending —
+    // playback-started may legitimately arrive after forwarding completes
+    // (deferred avatar notification), so the caller settles it when the
+    // segment's playout window ends. Stray events must still be ignored.
+    audioOutput.onPlaybackStarted(Date.now());
+    expect(audioOut.firstFrameFut.done).toBe(false);
+  });
+
+  it('resamples a rate-mismatched frame even after a stray PLAYBACK_STARTED', async () => {
+    // Output is 24kHz; frames are 16kHz and must be resampled regardless of any
+    // stray PLAYBACK_STARTED resolving firstFrameFut early.
+    const stream = new ReadableStream<AudioFrame>({
+      start(controller) {
+        controller.enqueue(createSilentFrame(16000));
+        controller.enqueue(createSilentFrame(16000));
+        controller.close();
+      },
+    });
+
+    const audioOutput = new MockAudioOutput();
+    const controller = new AbortController();
+    const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
+
+    // Stray event before the loop captures anything must not skip resampling.
+    audioOutput.onPlaybackStarted(Date.now());
+
+    await task.result;
+
+    expect(audioOut.firstFrameFut.done).toBe(true);
+    // Every captured frame must match the output sample rate (i.e. was resampled).
+    expect(audioOutput.capturedFrames.length).toBeGreaterThan(0);
+    for (const f of audioOutput.capturedFrames) {
+      expect(f.sampleRate).toBe(24000);
+    }
+  });
+
+  it('does not capture a frame returned by an in-flight read after abort', async () => {
+    let enqueue!: (frame: AudioFrame) => void;
+    let close!: () => void;
+    let streamCancelled = false;
+    const stream = new ReadableStream<AudioFrame>({
+      start(controller) {
+        enqueue = (frame) => controller.enqueue(frame);
+        close = () => controller.close();
+      },
+      cancel() {
+        streamCancelled = true;
+      },
+    });
+    const audioOutput = new MockAudioOutput();
+    const controller = new AbortController();
+    const [task] = performAudioForwarding(stream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
+
+    // Let forwarding enter reader.read(), which cannot be cancelled by the task's
+    // AbortSignal. The read resolves only after the task has already been aborted.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (!streamCancelled) {
+      enqueue(createSilentFrame());
+      close();
+    }
+    await task.result;
+
+    expect(streamCancelled).toBe(true);
+    expect(audioOutput.capturedFrames).toHaveLength(0);
   });
 
   it('performTTSInference completes when TTS node returns stalled stream', async () => {

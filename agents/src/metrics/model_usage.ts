@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type {
   AgentMetrics,
+  EOTInferenceMetrics,
   InterruptionMetrics,
   LLMMetrics,
   RealtimeModelMetrics,
@@ -20,6 +21,8 @@ export type LLMModelUsage = {
   inputTokens: number;
   /** Input tokens served from cache. */
   inputCachedTokens: number;
+  /** Input tokens used to write to the prompt cache. */
+  inputCacheCreationTokens?: number;
   /** Input audio tokens (for multimodal models). */
   inputAudioTokens: number;
   /** Cached input audio tokens. */
@@ -84,7 +87,23 @@ export type InterruptionModelUsage = {
   totalRequests: number;
 };
 
-export type ModelUsage = LLMModelUsage | TTSModelUsage | STTModelUsage | InterruptionModelUsage;
+/** Aggregate per-provider usage for the audio EOT detector. */
+export type EOTModelUsage = {
+  type: 'eot_usage';
+  /** The provider name (e.g., 'livekit'). */
+  provider: string;
+  /** The model name (e.g., 'turn-detector-v1' for cloud, 'turn-detector-v1-mini' for local). */
+  model: string;
+  /** Total number of EOT prediction requests served. */
+  totalRequests: number;
+};
+
+export type ModelUsage =
+  | LLMModelUsage
+  | TTSModelUsage
+  | STTModelUsage
+  | InterruptionModelUsage
+  | EOTModelUsage;
 
 export function filterZeroValues<T extends ModelUsage>(usage: T): Partial<T> {
   const result: Partial<T> = {} as Partial<T>;
@@ -102,10 +121,17 @@ export class ModelUsageCollector {
   private sttUsage: Map<string, STTModelUsage> = new Map();
 
   private interruptionUsage: Map<string, InterruptionModelUsage> = new Map();
+  private eotUsage: Map<string, EOTModelUsage> = new Map();
 
   /** Extract provider and model from metrics metadata. */
   private extractProviderModel(
-    metrics: LLMMetrics | STTMetrics | TTSMetrics | RealtimeModelMetrics | InterruptionMetrics,
+    metrics:
+      | LLMMetrics
+      | STTMetrics
+      | TTSMetrics
+      | RealtimeModelMetrics
+      | InterruptionMetrics
+      | EOTInferenceMetrics,
   ): [string, string] {
     let provider = '';
     let model = '';
@@ -127,6 +153,7 @@ export class ModelUsageCollector {
         model,
         inputTokens: 0,
         inputCachedTokens: 0,
+        inputCacheCreationTokens: 0,
         inputAudioTokens: 0,
         inputCachedAudioTokens: 0,
         inputTextTokens: 0,
@@ -195,6 +222,21 @@ export class ModelUsageCollector {
     return usage;
   }
 
+  private getEotUsage(provider: string, model: string): EOTModelUsage {
+    const key = `${provider}:${model}`;
+    let usage = this.eotUsage.get(key);
+    if (!usage) {
+      usage = {
+        type: 'eot_usage',
+        provider,
+        model,
+        totalRequests: 0,
+      };
+      this.eotUsage.set(key, usage);
+    }
+    return usage;
+  }
+
   /** Collect metrics and aggregate usage by model/provider. */
   collect(metrics: AgentMetrics): void {
     if (metrics.type === 'llm_metrics') {
@@ -202,6 +244,8 @@ export class ModelUsageCollector {
       const usage = this.getLLMUsage(provider, model);
       usage.inputTokens += metrics.promptTokens;
       usage.inputCachedTokens += metrics.promptCachedTokens;
+      usage.inputCacheCreationTokens =
+        (usage.inputCacheCreationTokens ?? 0) + (metrics.cacheCreationTokens ?? 0);
       usage.outputTokens += metrics.completionTokens;
     } else if (metrics.type === 'realtime_model_metrics') {
       const [provider, model] = this.extractProviderModel(metrics);
@@ -239,8 +283,13 @@ export class ModelUsageCollector {
       const [provider, model] = this.extractProviderModel(metrics);
       const usage = this.getInterruptionUsage(provider, model);
       usage.totalRequests += metrics.numRequests;
+    } else if (metrics.type === 'eot_inference_metrics') {
+      const [provider, model] = this.extractProviderModel(metrics);
+      const usage = this.getEotUsage(provider, model);
+      usage.totalRequests += metrics.numRequests;
     }
-    // VAD and EOU metrics are not aggregated for usage tracking.
+    // VAD and EOU (session-level summary) metrics are not aggregated for
+    // usage tracking; only per-prediction EOT inference metrics are.
   }
 
   flatten(): ModelUsage[] {
@@ -255,6 +304,9 @@ export class ModelUsageCollector {
       result.push({ ...u });
     }
     for (const u of this.interruptionUsage.values()) {
+      result.push({ ...u });
+    }
+    for (const u of this.eotUsage.values()) {
       result.push({ ...u });
     }
     return result;

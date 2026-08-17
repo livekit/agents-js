@@ -3,7 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { log, loggerOptions } from './log.js';
 import { waitForAbort } from './utils.js';
+
+const safeErrorType = (error: unknown): string => {
+  if (error instanceof AggregateError) return 'AggregateError';
+  if (error instanceof EvalError) return 'EvalError';
+  if (error instanceof RangeError) return 'RangeError';
+  if (error instanceof ReferenceError) return 'ReferenceError';
+  if (error instanceof SyntaxError) return 'SyntaxError';
+  if (error instanceof TypeError) return 'TypeError';
+  if (error instanceof URIError) return 'URIError';
+  return error instanceof Error ? 'Error' : typeof error;
+};
 
 /**
  * Helper class to manage persistent connections like websockets.
@@ -226,8 +238,10 @@ export class ConnectionPool<T> {
     this.prewarmController = controller;
 
     // Start prewarm in background
-    this._prewarmImpl(controller.signal).catch(() => {
-      // Ignore errors during prewarm
+    this._prewarmImpl(controller.signal).catch((error: unknown) => {
+      if (loggerOptions()) {
+        log().warn({ exceptionType: safeErrorType(error) }, 'failed to prewarm connection pool');
+      }
     });
   }
 

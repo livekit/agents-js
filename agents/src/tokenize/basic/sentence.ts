@@ -82,7 +82,10 @@ export const splitSentences = (
   }
 
   if (buf) {
-    sentences.push([buf.slice(prePad.length), start, text.length - 1]);
+    // the trailing buffer runs to the end of the text — an end offset of `length - 1`
+    // leaves the last character stranded for any caller that slices by these offsets
+    // (see `xmlWrapTokenizer`, which rebuilds sentences from them)
+    sentences.push([buf.slice(prePad.length), start, text.length]);
   }
 
   return sentences;

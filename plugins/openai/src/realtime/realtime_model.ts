@@ -48,6 +48,7 @@ interface RealtimeOptions {
   maxResponseOutputTokens?: number | 'inf';
   speed?: number;
   tracing?: api_proto.TracingConfig | null;
+  reasoning?: api_proto.Reasoning;
   apiKey?: string;
   baseURL: string;
   isAzure: boolean;
@@ -60,7 +61,8 @@ interface RealtimeOptions {
   modalities: Modality[];
 }
 
-interface MessageGeneration {
+/** @internal */
+export interface MessageGeneration {
   messageId: string;
   textChannel: stream.StreamChannel<string | TimedString>;
   audioChannel: stream.StreamChannel<AudioFrame>;
@@ -68,7 +70,8 @@ interface MessageGeneration {
   modalities: Future<('text' | 'audio')[]>;
 }
 
-interface ResponseGeneration {
+/** @internal */
+export interface ResponseGeneration {
   messageChannel: stream.StreamChannel<llm.MessageGeneration>;
   functionChannel: stream.StreamChannel<llm.FunctionCall>;
   messages: Map<string, MessageGeneration>;
@@ -81,10 +84,31 @@ interface ResponseGeneration {
   _firstTokenTimestamp?: number;
 }
 
+/** @internal */
+export class DiscardedGeneration {
+  readonly discarded = true;
+}
+
+// These server-side errors cannot be fixed by reconnecting; retrying only loops forever.
+const FATAL_ERROR_CODES = new Set([
+  'insufficient_quota',
+  'invalid_api_key',
+  'account_deactivated',
+  'billing_hard_limit_reached',
+]);
+
+/** @internal Exported for testing purposes */
+export function isFatalError(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const { code, type } = error as { code?: unknown; type?: unknown };
+  const errorCode = typeof code === 'string' && code.length > 0 ? code : type;
+  return typeof errorCode === 'string' && FATAL_ERROR_CODES.has(errorCode);
+}
+
 class CreateResponseHandle {
   instructions?: string;
   doneFut: Future<llm.GenerationCreatedEvent>;
-  // TODO(shubhra): add timeout
+  timeout?: ReturnType<typeof setTimeout>;
   constructor({ instructions }: { instructions?: string }) {
     this.instructions = instructions;
     this.doneFut = new Future();
@@ -160,6 +184,7 @@ export class RealtimeModel extends llm.RealtimeModel {
   constructor(
     options: {
       model?: string;
+      reasoning?: api_proto.Reasoning;
       voice?: string;
       /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
       temperature?: number;
@@ -242,7 +267,7 @@ export class RealtimeModel extends llm.RealtimeModel {
    * @param apiKey - Azure OpenAI API key. If undefined, will attempt to read from the environment variable AZURE_OPENAI_API_KEY.
    * @param entraToken - Azure Entra authentication token. Required if not using API key authentication.
    * @param baseURL - Base URL for the API endpoint. If undefined, constructed from the azure_endpoint.
-   * @param voice - Voice setting for audio outputs. Defaults to "alloy".
+   * @param voice - Voice setting for audio outputs. Defaults to "marin".
    * @param inputAudioTranscription - Options for transcribing input audio. Defaults to @see DEFAULT_INPUT_AUDIO_TRANSCRIPTION.
    * @param inputAudioNoiseReduction - Options for noise reduction. Defaults to undefined.
    * @param turnDetection - Options for server-based voice activity detection (VAD). Defaults to @see DEFAULT_SERVER_VAD_OPTIONS.
@@ -260,7 +285,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     apiKey,
     entraToken,
     baseURL,
-    voice = 'alloy',
+    voice = 'marin',
     temperature, // eslint-disable-line @typescript-eslint/no-unused-vars
     inputAudioTranscription = AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
     inputAudioNoiseReduction,
@@ -423,8 +448,8 @@ export function processBaseURL({
  * - openai_client_event_queued: expose the raw client events sent to the OpenAI Realtime API
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private _tools: llm.ToolContext = {};
-  private remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
+  private _tools: llm.ToolContext = llm.ToolContext.empty();
+  protected remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
   private messageChannel = new Queue<api_proto.ClientEvent>();
   private inputResampler?: AudioResampler;
   private instructions?: string;
@@ -433,13 +458,15 @@ export class RealtimeSession extends llm.RealtimeSession {
   // per-session copy of options so updateOptions can diff against the session's
   // own state instead of the shared model-level state.
   private _options: RealtimeOptions;
-  private currentGeneration?: ResponseGeneration;
+  protected currentGeneration?: ResponseGeneration | DiscardedGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
+  private discardedEventIds = new Set<string>();
 
   private textModeRecoveryRetries: number = 0;
 
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
+  private chatCtxEventFutures: { [id: string]: Future } = {};
 
   private inputTranscriptAccumulators = new Map<string, Map<number, string>>();
 
@@ -516,6 +543,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     // GA format (OpenAI or Azure GA)
     const audioFormat: api_proto.AudioFormat = { type: 'audio/pcm', rate: SAMPLE_RATE };
     const modality: Modality = opts.modalities.includes('audio') ? 'audio' : 'text';
+    const includeReasoning = opts.reasoning && opts.model.startsWith('gpt-realtime-2');
     return {
       type: 'session.update',
       session: {
@@ -539,6 +567,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         tool_choice: toOaiToolChoice(opts.toolChoice),
         tracing: opts.tracing,
         instructions: this.instructions,
+        ...(includeReasoning ? { reasoning: opts.reasoning } : {}),
       },
     };
   }
@@ -548,7 +577,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools() {
-    return { ...this._tools } as llm.ToolContext;
+    return this._tools.copy();
   }
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
@@ -591,10 +620,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       const futures: Future<void>[] = [];
       const ownedCreateFutures: { [id: string]: Future<void> } = {};
       const ownedDeleteFutures: { [id: string]: Future<void> } = {};
+      const ownedEventFutures: { [id: string]: Future<void> } = {};
 
-      const cleanupTimedOutFutures = () => {
-        // remove timed-out entries so late server acks
-        // don't resolve stale futures from a previous updateChatCtx call.
+      const cleanupFutures = () => {
         for (const [itemId, future] of Object.entries(ownedDeleteFutures)) {
           if (this.itemDeleteFutures[itemId] === future) {
             delete this.itemDeleteFutures[itemId];
@@ -605,11 +633,17 @@ export class RealtimeSession extends llm.RealtimeSession {
             delete this.itemCreateFutures[itemId];
           }
         }
+        for (const [eventId, future] of Object.entries(ownedEventFutures)) {
+          if (this.chatCtxEventFutures[eventId] === future) {
+            delete this.chatCtxEventFutures[eventId];
+          }
+        }
       };
 
       for (const event of events) {
+        let future: Future<void>;
         if (event.type === 'conversation.item.create') {
-          const future = new Future<void>();
+          future = new Future<void>();
           futures.push(future);
           this.itemCreateFutures[event.item.id] = future;
           ownedCreateFutures[event.item.id] = future;
@@ -619,10 +653,17 @@ export class RealtimeSession extends llm.RealtimeSession {
             futures.push(existingDeleteFuture);
             continue;
           }
-          const future = new Future<void>();
+          future = new Future<void>();
           futures.push(future);
           this.itemDeleteFutures[event.item_id] = future;
           ownedDeleteFutures[event.item_id] = future;
+        } else {
+          continue;
+        }
+
+        if (event.event_id) {
+          this.chatCtxEventFutures[event.event_id] = future;
+          ownedEventFutures[event.event_id] = future;
         }
 
         this.sendEvent(event);
@@ -636,13 +677,23 @@ export class RealtimeSession extends llm.RealtimeSession {
       // Cancel the timeout branch once futures resolve to avoid stale cleanup.
       const timeoutController = new AbortController();
       const timeoutPromise = delay(5000, { signal: timeoutController.signal }).then(() => {
-        cleanupTimedOutFutures();
-        throw new Error('Chat ctx update events timed out');
+        throw new llm.RealtimeError('update_chat_ctx timed out.');
       });
 
       try {
-        await Promise.race([Promise.all(futures), timeoutPromise]);
+        const results = await Promise.race([
+          Promise.allSettled(futures.map((fut) => fut.await)),
+          timeoutPromise,
+        ]);
+        const rejected = results.filter((result) => result.status === 'rejected');
+        if (rejected.length > 0) {
+          this.#logger.warn(
+            { errors: rejected.map((result) => String(result.reason)) },
+            `${this.oaiRealtimeModel.label()} rejected part of a chat context update`,
+          );
+        }
       } finally {
+        cleanupFutures();
         if (!timeoutController.signal.aborted) {
           timeoutController.abort();
         }
@@ -655,7 +706,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private async createChatCtxUpdateEvents(
+  protected async createChatCtxUpdateEvents(
     chatCtx: llm.ChatContext,
     addMockAudio: boolean = false,
   ): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]> {
@@ -674,7 +725,13 @@ export class RealtimeSession extends llm.RealtimeSession {
       | api_proto.ConversationItemDeleteEvent
     )[] = [];
 
-    const diffOps = llm.computeChatCtxDiff(this.chatCtx, newChatCtx);
+    const remoteCtx = this.chatCtx;
+    const remoteIds = new Set(remoteCtx.items.map((item) => item.id));
+    newChatCtx.items = newChatCtx.items.filter(
+      (item) => item.type !== 'message' || item.content.length > 0 || remoteIds.has(item.id),
+    );
+
+    const diffOps = llm.computeChatCtxDiff(remoteCtx, newChatCtx);
     for (const op of diffOps.toRemove) {
       events.push({
         type: 'conversation.item.delete',
@@ -683,7 +740,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       } as api_proto.ConversationItemDeleteEvent);
     }
 
-    for (const [previousId, id] of diffOps.toCreate) {
+    const createItem = async (previousId: string | null, id: string) => {
       const chatItem = newChatCtx.getById(id);
       if (!chatItem) {
         throw new Error(`Chat item ${id} not found`);
@@ -694,6 +751,27 @@ export class RealtimeSession extends llm.RealtimeSession {
         previous_item_id: previousId ?? undefined,
         event_id: shortuuid('chat_ctx_create_'),
       } as api_proto.ConversationItemCreateEvent);
+    };
+
+    const isContentEmpty = (id: string) => {
+      const remoteItem = remoteCtx.getById(id);
+      return remoteItem?.type === 'message' && remoteItem.content.length === 0;
+    };
+
+    for (const [previousId, id] of diffOps.toCreate) {
+      await createItem(previousId, id);
+    }
+
+    for (const [previousId, id] of diffOps.toUpdate) {
+      if (isContentEmpty(id)) {
+        continue;
+      }
+      events.push({
+        type: 'conversation.item.delete',
+        item_id: id,
+        event_id: shortuuid('chat_ctx_delete_'),
+      } as api_proto.ConversationItemDeleteEvent);
+      await createItem(previousId, id);
     }
     return events;
   }
@@ -707,16 +785,14 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('Tools are missing in the session update event');
     }
 
-    // TODO(brian): these logics below are noops I think, leaving it here to keep
-    // parity with the python but we should remove them later
+    // TODO(brian): these logics below are noops I think; remove them later.
     const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
-    const retainedTools = Object.fromEntries(
-      Object.entries(_tools).filter(
-        ([name, tool]) => llm.isFunctionTool(tool) && retainedToolNames.has(name),
-      ),
+    // Keep provider tools and Toolsets as-is; only drop function tools the server didn't accept.
+    const retainedEntries = _tools.tools.filter(
+      (entry) => !llm.isFunctionTool(entry) || retainedToolNames.has(entry.name),
     );
 
-    this._tools = retainedTools as llm.ToolContext;
+    this._tools = new llm.ToolContext(retainedEntries);
 
     unlock();
   }
@@ -724,26 +800,26 @@ export class RealtimeSession extends llm.RealtimeSession {
   private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
     const oaiTools: api_proto.Tool[] = [];
 
-    for (const [name, tool] of Object.entries(_tools)) {
-      if (!llm.isFunctionTool(tool)) {
-        this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
-        continue;
-      }
+    for (const t of _tools.flatten()) {
+      // TODO: support provider tools in the Realtime session-update schema.
+      if (!llm.isFunctionTool(t)) continue;
 
-      const { parameters: toolParameters, description } = tool;
       try {
         const parameters = llm.toJsonSchema(
-          toolParameters,
+          t.parameters,
         ) as unknown as api_proto.Tool['parameters'];
 
         oaiTools.push({
-          name,
-          description,
+          name: t.name,
+          description: t.description,
           parameters: parameters,
           type: 'function',
         });
       } catch (e) {
-        this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
+        this.#logger.error(
+          { name: t.name, tool: t },
+          "OpenAI Realtime API doesn't support this tool type",
+        );
         continue;
       }
     }
@@ -833,7 +909,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     instructions?: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<llm.GenerationCreatedEvent> {
-    const handle = this.createResponse({ instructions, userInitiated: true });
+    // In OpenAI realtime, the session-level instructions are completely replaced by the
+    // per-response instructions for this response. Prepend the session instructions so they
+    // are preserved (parity with the Python implementation).
+    let responseInstructions = instructions;
+    if (instructions && this.instructions) {
+      responseInstructions = `${this.instructions}\n${instructions}`;
+    }
+
+    const handle = this.createResponse({
+      instructions: responseInstructions,
+      userInitiated: true,
+    });
     this.textModeRecoveryRetries = 0;
 
     const onAbort = () => {
@@ -842,7 +929,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       )?.[0];
       if (eventId) {
         delete this.responseCreatedFutures[eventId];
+        this.discardedEventIds.add(eventId);
       }
+      if (handle.timeout) clearTimeout(handle.timeout);
       if (!handle.doneFut.done) {
         handle.doneFut.reject(new Error('generateReply aborted'));
         this.sendEvent({
@@ -886,12 +975,28 @@ export class RealtimeSession extends llm.RealtimeSession {
     const hasServerSideAudio = this.audioCapableItemIds.has(_options.messageId);
 
     if (hasAudioModality && hasServerSideAudio) {
-      this.sendEvent({
-        type: 'conversation.item.truncate',
-        content_index: 0,
-        item_id: _options.messageId,
-        audio_end_ms: _options.audioEndMs,
-      } as api_proto.ConversationItemTruncateEvent);
+      // Guard against a non-finite audioEndMs (e.g. NaN from an unreported avatar
+      // playback position): JSON.stringify would serialize it as `null`, which the
+      // Realtime API rejects with an `invalid_type` error. Clamp to a valid
+      // non-negative integer (ms).
+      const audioEndMs = Number.isFinite(_options.audioEndMs)
+        ? Math.max(0, Math.floor(_options.audioEndMs))
+        : 0;
+      if (audioEndMs > 0) {
+        this.sendEvent({
+          type: 'conversation.item.truncate',
+          content_index: 0,
+          item_id: _options.messageId,
+          audio_end_ms: audioEndMs,
+        } as api_proto.ConversationItemTruncateEvent);
+      } else {
+        // The API rejects truncating an item when no audio was played, so delete it instead.
+        this.sendEvent({
+          type: 'conversation.item.delete',
+          item_id: _options.messageId,
+          event_id: shortuuid('chat_ctx_delete_'),
+        } as api_proto.ConversationItemDeleteEvent);
+      }
     } else if (_options.audioTranscript !== undefined) {
       // sync it to the remote chat context
       const chatCtx = this.chatCtx.copy();
@@ -934,6 +1039,41 @@ export class RealtimeSession extends llm.RealtimeSession {
       return { ...untypedEvent, delta: '...' };
     }
     return untypedEvent;
+  }
+
+  protected closeCurrentGeneration(reason: string = 'provider abandonment'): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) {
+      this.currentGeneration = undefined;
+      return;
+    }
+
+    if (!this.currentGeneration) return;
+
+    for (const gen of this.currentGeneration.messages.values()) {
+      gen.textChannel.close();
+      gen.audioChannel.close();
+      if (!gen.modalities.done) {
+        gen.modalities.resolve(this._options.modalities);
+      }
+    }
+    this.currentGeneration.messages.clear();
+    this.currentGeneration.messageChannel.close();
+    this.currentGeneration.functionChannel.close();
+    if (!this.currentGeneration._doneFut.done) {
+      this.currentGeneration._doneFut.resolve();
+    }
+    this.#logger.warn(`In-progress generation discarded due to ${reason}`);
+    this.currentGeneration = undefined;
+  }
+
+  private rejectResponseCreatedFutures(reason: string): void {
+    for (const handle of Object.values(this.responseCreatedFutures)) {
+      if (!handle.doneFut.done) {
+        handle.doneFut.reject(new Error(reason));
+      }
+      if (handle.timeout) clearTimeout(handle.timeout);
+    }
+    this.responseCreatedFutures = {};
   }
 
   private async createWsConn(): Promise<WebSocket> {
@@ -1023,16 +1163,13 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       this.itemDeleteFutures = {};
 
-      for (const handle of Object.values(this.responseCreatedFutures)) {
-        if (!handle.doneFut.done) {
-          handle.doneFut.reject(new Error('Session reconnected'));
-        }
-      }
-      this.responseCreatedFutures = {};
+      this.rejectResponseCreatedFutures('Session reconnected');
+      this.discardedEventIds.clear();
+      this.closeCurrentGeneration('session reconnection');
 
       // Clear audio-capable item tracking - restored items are text-only on the server
       this.audioCapableItemIds.clear();
-      this.inputTranscriptAccumulators.clear();
+      this.resetInputTurnState();
 
       const events: api_proto.ClientEvent[] = [];
 
@@ -1040,7 +1177,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       events.push(this.createSessionUpdateEvent());
 
       // tools
-      if (Object.keys(this._tools).length > 0) {
+      if (Object.keys(this._tools.functionTools).length > 0) {
         events.push(this.createToolsUpdateEvent(this._tools));
       }
 
@@ -1076,61 +1213,66 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
 
     reconnecting = false;
-    while (!this.#closed && !signal.aborted) {
-      this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
-      wsConn = await this.createWsConn();
-      if (signal.aborted) break;
-
-      try {
-        if (reconnecting) {
-          await reconnect();
-          if (signal.aborted) break;
-          numRetries = 0;
-        }
-
-        await this.runWs(wsConn);
+    try {
+      while (!this.#closed && !signal.aborted) {
+        this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
+        wsConn = await this.createWsConn();
         if (signal.aborted) break;
-      } catch (error) {
-        if (!isAPIError(error)) {
-          this.emitError({ error: error as Error, recoverable: false });
-          throw error;
-        }
 
-        if (maxRetries === 0 || !error.retryable) {
-          this.emitError({ error: error as Error, recoverable: false });
-          throw error;
-        }
+        try {
+          if (reconnecting) {
+            await reconnect();
+            if (signal.aborted) break;
+            numRetries = 0;
+          }
 
-        if (numRetries === maxRetries) {
-          this.emitError({ error: error as Error, recoverable: false });
-          throw new APIConnectionError({
-            message: `OpenAI Realtime API connection failed after ${numRetries} attempts`,
-            options: {
-              body: error,
-              retryable: false,
+          await this.runWs(wsConn);
+          if (signal.aborted) break;
+        } catch (error) {
+          if (!isAPIError(error)) {
+            this.emitError({ error: error as Error, recoverable: false });
+            throw error;
+          }
+
+          if (maxRetries === 0 || !error.retryable) {
+            this.emitError({ error: error as Error, recoverable: false });
+            throw error;
+          }
+
+          if (numRetries === maxRetries) {
+            this.emitError({ error: error as Error, recoverable: false });
+            throw new APIConnectionError({
+              message: `OpenAI Realtime API connection failed after ${numRetries} attempts`,
+              options: {
+                body: error,
+                retryable: false,
+              },
+            });
+          }
+
+          this.emitError({ error: error as Error, recoverable: true });
+          const retryInterval =
+            numRetries === 0
+              ? DEFAULT_FIRST_RETRY_INTERVAL_MS
+              : this._options.connOptions.retryIntervalMs;
+          this.#logger.warn(
+            {
+              attempt: numRetries,
+              maxRetries,
+              error,
             },
-          });
+            `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
+          );
+
+          await delay(retryInterval);
+          numRetries++;
         }
 
-        this.emitError({ error: error as Error, recoverable: true });
-        const retryInterval =
-          numRetries === 0
-            ? DEFAULT_FIRST_RETRY_INTERVAL_MS
-            : this._options.connOptions.retryIntervalMs;
-        this.#logger.warn(
-          {
-            attempt: numRetries,
-            maxRetries,
-            error,
-          },
-          `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
-        );
-
-        await delay(retryInterval);
-        numRetries++;
+        reconnecting = true;
       }
-
-      reconnecting = true;
+    } finally {
+      this.closeCurrentGeneration('session close');
+      this.rejectResponseCreatedFutures('Realtime session closed');
     }
   }
 
@@ -1146,7 +1288,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             break;
           }
 
-          if (lkOaiDebug) {
+          if (lkOaiDebug && event.type !== 'input_audio_buffer.append') {
             this.#logger.debug(this.loggableEvent(event), `(client) -> ${event.type}`);
           }
 
@@ -1181,79 +1323,88 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.#logger.debug(this.loggableEvent(event), `(server) <- ${event.type}`);
       }
 
-      switch (event.type) {
-        case 'input_audio_buffer.speech_started':
-          this.handleInputAudioBufferSpeechStarted(event);
-          break;
-        case 'input_audio_buffer.speech_stopped':
-          this.handleInputAudioBufferSpeechStopped(event);
-          break;
-        case 'response.created':
-          this.handleResponseCreated(event);
-          break;
-        case 'response.output_item.added':
-          this.handleResponseOutputItemAdded(event);
-          break;
-        case 'conversation.item.added':
-        case 'conversation.item.created': // Beta: kept for backward compatibility
-          this.handleConversationItemCreated(event);
-          break;
-        case 'conversation.item.deleted':
-          this.handleConversationItemDeleted(event);
-          break;
-        case 'conversation.item.input_audio_transcription.delta':
-          this.handleConversationItemInputAudioTranscriptionDelta(event);
-          break;
-        case 'conversation.item.input_audio_transcription.completed':
-          this.handleConversationItemInputAudioTranscriptionCompleted(event);
-          break;
-        case 'conversation.item.input_audio_transcription.failed':
-          this.handleConversationItemInputAudioTranscriptionFailed(event);
-          break;
-        case 'response.content_part.added':
-          this.handleResponseContentPartAdded(event);
-          break;
-        case 'response.content_part.done':
-          this.handleResponseContentPartDone(event);
-          break;
-        case 'response.output_text.delta':
-        case 'response.text.delta': // Beta: kept for backward compatibility
-          this.handleResponseTextDelta(event);
-          break;
-        case 'response.output_text.done':
-        case 'response.text.done': // Beta: kept for backward compatibility
-          this.handleResponseTextDone(event);
-          break;
-        case 'response.output_audio_transcript.delta':
-        case 'response.audio_transcript.delta': // Beta: kept for backward compatibility
-          this.handleResponseAudioTranscriptDelta(event);
-          break;
-        case 'response.output_audio.delta':
-        case 'response.audio.delta': // Beta: kept for backward compatibility
-          this.handleResponseAudioDelta(event);
-          break;
-        case 'response.output_audio_transcript.done':
-        case 'response.audio_transcript.done': // Beta: kept for backward compatibility
-          this.handleResponseAudioTranscriptDone(event);
-          break;
-        case 'response.output_audio.done':
-        case 'response.audio.done': // Beta: kept for backward compatibility
-          this.handleResponseAudioDone(event);
-          break;
-        case 'response.output_item.done':
-          this.handleResponseOutputItemDone(event);
-          break;
-        case 'response.done':
-          this.handleResponseDone(event);
-          break;
-        case 'error':
-          this.handleError(event);
-          break;
-        default:
-          if (lkOaiDebug) {
-            this.#logger.debug(`unhandled event: ${event.type}`);
-          }
-          break;
+      try {
+        switch (event.type) {
+          case 'input_audio_buffer.speech_started':
+            this.handleInputAudioBufferSpeechStarted(event);
+            break;
+          case 'input_audio_buffer.speech_stopped':
+            this.handleInputAudioBufferSpeechStopped(event);
+            break;
+          case 'response.created':
+            this.handleResponseCreated(event);
+            break;
+          case 'response.output_item.added':
+            this.handleResponseOutputItemAdded(event);
+            break;
+          case 'conversation.item.added':
+          case 'conversation.item.created': // Beta: kept for backward compatibility
+            this.handleConversationItemCreated(event);
+            break;
+          case 'conversation.item.deleted':
+            this.handleConversationItemDeleted(event);
+            break;
+          case 'conversation.item.input_audio_transcription.delta':
+            this.handleConversationItemInputAudioTranscriptionDelta(event);
+            break;
+          case 'conversation.item.input_audio_transcription.completed':
+            this.handleConversationItemInputAudioTranscriptionCompleted(event);
+            break;
+          case 'conversation.item.input_audio_transcription.failed':
+            this.handleConversationItemInputAudioTranscriptionFailed(event);
+            break;
+          case 'response.content_part.added':
+            this.handleResponseContentPartAdded(event);
+            break;
+          case 'response.content_part.done':
+            this.handleResponseContentPartDone(event);
+            break;
+          case 'response.output_text.delta':
+          case 'response.text.delta': // Beta: kept for backward compatibility
+            this.handleResponseTextDelta(event);
+            break;
+          case 'response.output_text.done':
+          case 'response.text.done': // Beta: kept for backward compatibility
+            this.handleResponseTextDone(event);
+            break;
+          case 'response.output_audio_transcript.delta':
+          case 'response.audio_transcript.delta': // Beta: kept for backward compatibility
+            this.handleResponseAudioTranscriptDelta(event);
+            break;
+          case 'response.output_audio.delta':
+          case 'response.audio.delta': // Beta: kept for backward compatibility
+            this.handleResponseAudioDelta(event);
+            break;
+          case 'response.output_audio_transcript.done':
+          case 'response.audio_transcript.done': // Beta: kept for backward compatibility
+            this.handleResponseAudioTranscriptDone(event);
+            break;
+          case 'response.output_audio.done':
+          case 'response.audio.done': // Beta: kept for backward compatibility
+            this.handleResponseAudioDone(event);
+            break;
+          case 'response.output_item.done':
+            this.handleResponseOutputItemDone(event);
+            break;
+          case 'response.done':
+            this.handleResponseDone(event);
+            break;
+          case 'error':
+            this.handleError(event);
+            break;
+          default:
+            if (lkOaiDebug) {
+              this.#logger.debug(`unhandled event: ${event.type}`);
+            }
+            break;
+        }
+      } catch (error) {
+        if (isAPIError(error) && !error.retryable) {
+          wsCloseFuture.resolve(error);
+          wsConn.close();
+          return;
+        }
+        this.#logger.error({ error, event }, 'Failed to handle OpenAI Realtime API event');
       }
     };
 
@@ -1279,8 +1430,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     try {
       const result = await Promise.race([wsTask.result, sendTask.result, waitReconnectTask.result]);
 
-      if (waitReconnectTask.done && this.currentGeneration) {
-        await this.currentGeneration._doneFut.await;
+      const currentGeneration = this.currentGeneration;
+      if (waitReconnectTask.done && currentGeneration) {
+        if (currentGeneration instanceof DiscardedGeneration) {
+          this.currentGeneration = undefined;
+        } else {
+          await currentGeneration._doneFut.await;
+        }
       }
 
       if (result instanceof Error) {
@@ -1293,17 +1449,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async close() {
+    this.resetInputTurnState();
     super.close();
     this.#closed = true;
     await this.#task;
 
     // Clean up pending futures to prevent memory leaks
-    for (const handle of Object.values(this.responseCreatedFutures)) {
-      if (!handle.doneFut.done) {
-        handle.doneFut.reject(new Error('Session closed'));
-      }
-    }
-    this.responseCreatedFutures = {};
+    this.rejectResponseCreatedFutures('Session closed');
 
     for (const fut of Object.values(this.itemCreateFutures)) {
       if (!fut.done) {
@@ -1321,29 +1473,17 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     this.inputTranscriptAccumulators.clear();
 
-    // Clean up current generation if exists
-    if (this.currentGeneration) {
-      for (const gen of this.currentGeneration.messages.values()) {
-        gen.textChannel.close();
-        gen.audioChannel.close();
-        if (!gen.modalities.done) {
-          gen.modalities.resolve(this._options.modalities);
-        }
-      }
-      this.currentGeneration.messages.clear();
-      this.currentGeneration.messageChannel.close();
-      this.currentGeneration.functionChannel.close();
-      if (!this.currentGeneration._doneFut.done) {
-        this.currentGeneration._doneFut.resolve();
-      }
-      this.currentGeneration = undefined;
-    }
+    this.closeCurrentGeneration('Session closed');
 
     // Clear the message queue
     this.messageChannel.items.length = 0;
   }
 
-  private handleInputAudioBufferSpeechStarted(
+  protected resetInputTurnState(): void {
+    this.inputTranscriptAccumulators.clear();
+  }
+
+  protected handleInputAudioBufferSpeechStarted(
     _event: api_proto.InputAudioBufferSpeechStartedEvent,
   ): void {
     this.emit('input_speech_started', {} as llm.InputSpeechStartedEvent);
@@ -1357,33 +1497,46 @@ export class RealtimeSession extends llm.RealtimeSession {
     } as llm.InputSpeechStoppedEvent);
   }
 
-  private handleResponseCreated(event: api_proto.ResponseCreatedEvent): void {
+  protected handleResponseCreated(event: api_proto.ResponseCreatedEvent): void {
     if (!event.response.id) {
       throw new Error('response.id is missing');
     }
 
-    this.currentGeneration = {
+    const clientEventId = event.response.metadata?.client_event_id;
+    if (clientEventId && this.discardedEventIds.has(clientEventId)) {
+      this.discardedEventIds.delete(clientEventId);
+      this.sendEvent({
+        type: 'response.cancel',
+        response_id: event.response.id,
+      } as api_proto.ResponseCancelEvent);
+      this.currentGeneration = new DiscardedGeneration();
+      this.#logger.warn('discarding response that arrived after it was timed out or interrupted');
+      return;
+    }
+
+    const currentGeneration: ResponseGeneration = {
       messageChannel: stream.createStreamChannel<llm.MessageGeneration>(),
       functionChannel: stream.createStreamChannel<llm.FunctionCall>(),
       messages: new Map(),
       _doneFut: new Future(),
       _createdTimestamp: Date.now(),
     };
+    this.currentGeneration = currentGeneration;
 
     // Build generation event and resolve client future (if any) before emitting,
     // matching Python behavior.
     const generationEv = {
-      messageStream: this.currentGeneration.messageChannel.stream(),
-      functionStream: this.currentGeneration.functionChannel.stream(),
+      messageStream: currentGeneration.messageChannel.stream(),
+      functionStream: currentGeneration.functionChannel.stream(),
       userInitiated: false,
       responseId: event.response.id,
     } as llm.GenerationCreatedEvent;
 
-    const clientEventId = event.response.metadata?.client_event_id;
     if (clientEventId) {
       const handle = this.responseCreatedFutures[clientEventId];
       if (handle) {
         delete this.responseCreatedFutures[clientEventId];
+        if (handle.timeout) clearTimeout(handle.timeout);
         generationEv.userInitiated = true;
         if (!handle.doneFut.done) {
           handle.doneFut.resolve(generationEv);
@@ -1395,6 +1548,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1442,7 +1597,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.currentGeneration.messages.set(itemId, itemGeneration);
   }
 
-  private handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {
+  protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {
     if (!event.item.id) {
       throw new Error('item.id is not set');
     }
@@ -1466,7 +1621,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const fut = pendingCreateFuture;
     if (fut) {
-      fut.resolve();
+      if (!fut.done) fut.resolve();
       delete this.itemCreateFutures[event.item.id];
     }
   }
@@ -1488,7 +1643,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const fut = this.itemDeleteFutures[event.item_id];
     if (fut) {
-      fut.resolve();
+      if (!fut.done) fut.resolve();
       delete this.itemDeleteFutures[event.item_id];
     }
   }
@@ -1523,9 +1678,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     return partial;
   }
 
-  private handleConversationItemInputAudioTranscriptionCompleted(
+  protected handleConversationItemInputAudioTranscriptionCompleted(
     event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
   ): void {
+    if (event.status === 'in_progress') {
+      this.emit('input_audio_transcription_completed', {
+        itemId: event.item_id,
+        transcript: event.transcript,
+        isFinal: false,
+      });
+      return;
+    }
+
     this.clearAccumulator(event.item_id, event.content_index ?? 0);
 
     const remoteItem = this.remoteChatCtx.get(event.item_id);
@@ -1567,6 +1731,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1601,6 +1767,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!event.part) {
       return;
     }
@@ -1615,7 +1783,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     // TODO(shubhra): handle text mode recovery
   }
 
-  private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
+  protected handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1637,6 +1807,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseTextDone(_event: api_proto.ResponseTextDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1645,6 +1817,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private handleResponseAudioTranscriptDelta(
     event: api_proto.ResponseAudioTranscriptDeltaEvent,
   ): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1666,7 +1840,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
+  protected handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1704,18 +1880,24 @@ export class RealtimeSession extends llm.RealtimeSession {
   private handleResponseAudioTranscriptDone(
     _event: api_proto.ResponseAudioTranscriptDoneEvent,
   ): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
   }
 
   private handleResponseAudioDone(_event: api_proto.ResponseAudioDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
   }
 
   private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1751,6 +1933,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseDone(_event: api_proto.ResponseDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) {
+      this.currentGeneration = undefined;
+      return;
+    }
+
     if (!this.currentGeneration) {
       // OpenAI has a race condition where we could receive response.done without any
       // previous response.created (This happens generally during interruption)
@@ -1836,21 +2023,35 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const statusDetails = event.response.status_details;
     if (event.response.status === 'failed') {
-      const errorBody = statusDetails?.type === 'failed' ? statusDetails.error : undefined;
+      const errorBody =
+        typeof statusDetails !== 'string' && statusDetails?.type === 'failed'
+          ? statusDetails.error
+          : undefined;
       const errorTypeValue = errorBody && 'type' in errorBody ? errorBody.type : undefined;
       const errorType = typeof errorTypeValue === 'string' ? errorTypeValue : 'unknown';
 
-      this.emitError({
-        error: new APIError(`OpenAI Realtime API response failed with error type: ${errorType}`, {
+      const recoverable = !isFatalError(errorBody);
+      const error = new APIError(
+        `OpenAI Realtime API response failed with error type: ${errorType}`,
+        {
           body: errorBody ?? null,
-          retryable: true,
-        }),
-        recoverable: true,
-      });
+          retryable: recoverable,
+        },
+      );
+      if (!recoverable) {
+        throw error;
+      }
+      this.emitError({ error, recoverable: true });
     } else if (event.response.status === 'cancelled' || event.response.status === 'incomplete') {
-      const statusType = statusDetails?.type;
-      const statusReason =
-        statusDetails && 'reason' in statusDetails ? statusDetails.reason : undefined;
+      let statusType: string | undefined;
+      let statusReason: string | undefined;
+      if (typeof statusDetails === 'string') {
+        statusType = statusDetails;
+      } else {
+        statusType = statusDetails?.type;
+        statusReason =
+          statusDetails && 'reason' in statusDetails ? statusDetails.reason : undefined;
+      }
 
       this.#logger.debug(
         {
@@ -1867,29 +2068,41 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleError(event: api_proto.ErrorEvent): void {
+    const eventId = event.error.event_id;
+    if (eventId) {
+      const future = this.chatCtxEventFutures[eventId];
+      if (future) {
+        delete this.chatCtxEventFutures[eventId];
+        if (!future.done) future.reject(new Error(event.error.message));
+        if (!isFatalError(event.error)) return;
+      }
+    }
+
     if (event.error.message.startsWith('Cancellation failed')) {
       return;
     }
     this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
 
-    const eventId = event.error.event_id;
     if (eventId) {
       const handle = this.responseCreatedFutures[eventId];
       if (handle) {
         delete this.responseCreatedFutures[eventId];
+        if (handle.timeout) clearTimeout(handle.timeout);
         if (!handle.doneFut.done) {
           handle.doneFut.reject(new Error(event.error.message));
         }
       }
     }
 
-    this.emitError({
-      error: new APIError(event.error.message, {
-        body: event.error,
-        retryable: true,
-      }),
-      recoverable: true,
+    const recoverable = !isFatalError(event.error);
+    const error = new APIError(event.error.message, {
+      body: event.error,
+      retryable: recoverable,
     });
+    if (!recoverable) {
+      throw error;
+    }
+    this.emitError({ error, recoverable: true });
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
@@ -1923,8 +2136,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const eventId = shortuuid('response_create_');
+    this.discardedEventIds ??= new Set<string>();
     if (userInitiated) {
       this.responseCreatedFutures[eventId] = handle;
+      handle.timeout = setTimeout(() => {
+        if (this.responseCreatedFutures[eventId] === handle) {
+          delete this.responseCreatedFutures[eventId];
+        }
+        if (!handle.doneFut.done) {
+          this.discardedEventIds.add(eventId);
+          handle.doneFut.reject(new Error('generateReply timed out.'));
+        }
+      }, 10000);
     }
 
     const response: api_proto.ResponseCreateEvent['response'] = {};

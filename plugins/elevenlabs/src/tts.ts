@@ -56,6 +56,10 @@ export interface TTSOptions {
   voiceId?: string;
   voiceSettings?: VoiceSettings;
   model?: TTSModels | string;
+  /**
+   * Language code used to enforce a language for the model and text normalization. If the
+   * model does not support language overrides, it will be ignored.
+   */
   language?: string;
   // Legacy interface (backward compatibility)
   voice?: Voice;
@@ -136,8 +140,8 @@ function sampleRateFromFormat(encoding: TTSEncoding): number {
 }
 
 function synthesizeUrl(opts: ResolvedTTSOptions): string {
-  const { baseURL, voiceId, model, encoding, streamingLatency } = opts;
-  let url = `${baseURL}/text-to-speech/${voiceId}/stream?model_id=${model}&output_format=${encoding}`;
+  const { baseURL, voiceId, encoding, streamingLatency } = opts;
+  let url = `${baseURL}/text-to-speech/${voiceId}/stream?output_format=${encoding}&enable_logging=${String(opts.enableLogging).toLowerCase()}`;
   if (streamingLatency !== undefined) {
     url += `&optimize_streaming_latency=${streamingLatency}`;
   }
@@ -837,6 +841,13 @@ export class ChunkedStream extends tts.ChunkedStream {
     const voiceSettings = this.#opts.voiceSettings
       ? stripUndefined(this.#opts.voiceSettings)
       : undefined;
+    const extraParams: Record<string, string | boolean> = {};
+    if (this.#opts.language) {
+      extraParams.language_code = getBaseLanguage(this.#opts.language);
+    }
+    if (this.#opts.applyLanguageTextNormalization !== undefined) {
+      extraParams.apply_language_text_normalization = this.#opts.applyLanguageTextNormalization;
+    }
 
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
@@ -852,6 +863,8 @@ export class ChunkedStream extends tts.ChunkedStream {
           text: this.inputText,
           model_id: this.#opts.model,
           voice_settings: voiceSettings,
+          apply_text_normalization: this.#opts.applyTextNormalization,
+          ...extraParams,
         }),
         signal: this.abortSignal,
       });
@@ -881,7 +894,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         const { done, value } = await reader.read();
         if (done) break;
 
-        for (const frame of bstream.write(value.buffer)) {
+        for (const frame of bstream.write(value)) {
           if (lastFrame) {
             this.queue.put({ requestId, segmentId: requestId, frame: lastFrame, final: false });
           }
@@ -1039,6 +1052,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
 
         const formattedText = `${text} `; // must always end with a space
+        this.markStarted();
         connection.sendContent({
           contextId: this.#contextId,
           text: formattedText,
@@ -1084,7 +1098,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         // Process audio queue
         while (this.#audioQueue.length > 0) {
           const audioData = this.#audioQueue.shift()!;
-          for (const frame of bstream.write(audioData.buffer)) {
+          for (const frame of bstream.write(audioData)) {
             sendLastFrame(false);
             lastFrame = frame;
           }

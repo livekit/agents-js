@@ -147,6 +147,7 @@ export class RoomIO {
 
   private audioInput?: ParticipantAudioInputStream;
   private participantAudioOutput?: ParticipantAudioOutput;
+  private externalAudioOutput?: AudioOutput;
   private userTranscriptOutput?: ParalellTextOutput;
   private agentTranscriptOutput?: ParalellTextOutput;
   private transcriptionSynchronizer?: TranscriptionSynchronizer;
@@ -258,6 +259,7 @@ export class RoomIO {
     }
 
     this.participantAvailableFuture.resolve(participant);
+    this.agentSession._onRoomIOParticipantLinked(participant);
   };
 
   private onParticipantDisconnected = (participant: RemoteParticipant) => {
@@ -392,14 +394,19 @@ export class RoomIO {
     isDeltaStream: boolean;
     participant: Participant | string | null;
   }) {
+    // markup only ever reaches these sinks once expressive has injected its guide; until
+    // then they publish the agent's text verbatim
+    const expressiveEnabled = () => this.agentSession._expressiveEverActive;
     return new ParalellTextOutput([
       new ParticipantLegacyTranscriptionOutput(
         this.room,
         options.isDeltaStream,
         options.participant,
+        { expressiveEnabled },
       ),
       new ParticipantTranscriptionOutput(this.room, options.isDeltaStream, options.participant, {
         jsonFormat: this.outputOptions.jsonFormat,
+        expressiveEnabled,
       }),
     ]);
   }
@@ -427,7 +434,7 @@ export class RoomIO {
 
   get audioOutput(): AudioOutput | undefined {
     if (!this.transcriptionSynchronizer) {
-      return this.participantAudioOutput;
+      return this.participantAudioOutput ?? this.externalAudioOutput;
     }
 
     return this.transcriptionSynchronizer.audioOutput;
@@ -524,7 +531,8 @@ export class RoomIO {
     }
 
     // -- create outputs --
-    if (this.outputOptions.audioEnabled) {
+    this.externalAudioOutput = this.agentSession.output.audio ?? undefined;
+    if (this.outputOptions.audioEnabled && !this.externalAudioOutput) {
       this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
         sampleRate: this.outputOptions.audioSampleRate,
         numChannels: this.outputOptions.audioNumChannels,
@@ -546,9 +554,7 @@ export class RoomIO {
         participant: null,
       });
 
-      // use the RoomIO's audio output if available, otherwise use the agent's audio output
-      // TODO(AJS-176): check for agent output
-      const audioOutput = this.participantAudioOutput;
+      const audioOutput = this.participantAudioOutput ?? this.externalAudioOutput;
       if (this.outputOptions.syncTranscription && audioOutput) {
         const sessionLlm = this.agentSession.currentAgent?.llm ?? this.agentSession.llm;
         const nativeTranscriptSync =
@@ -556,7 +562,11 @@ export class RoomIO {
         this.transcriptionSynchronizer = new TranscriptionSynchronizer(
           audioOutput,
           this.agentTranscriptOutput,
-          { ...defaultTextSyncOptions, enabled: !nativeTranscriptSync },
+          {
+            ...defaultTextSyncOptions,
+            enabled: !nativeTranscriptSync,
+            expressiveEnabled: () => this.agentSession._expressiveEverActive,
+          },
         );
       }
     }

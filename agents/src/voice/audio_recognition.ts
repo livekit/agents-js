@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
-import { AudioFrame, type ParticipantKind } from '@livekit/rtc-node';
+import type { AudioFrame, ParticipantKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Context,
@@ -14,6 +14,12 @@ import {
 import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
+import {
+  BaseStreamingTurnDetector,
+  BaseStreamingTurnDetectorStream,
+  MIN_SILENCE_DURATION_MS,
+  type TurnDetectionEvent,
+} from '../inference/eot/base.js';
 import { apiConnectDefaults, intervalForRetry } from '../inference/interruption/defaults.js';
 import { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
@@ -23,7 +29,7 @@ import {
   type OverlappingSpeechEvent,
 } from '../inference/interruption/types.js';
 import type { LanguageCode } from '../language.js';
-import { type ChatContext } from '../llm/chat_context.js';
+import { ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
@@ -32,11 +38,20 @@ import { type StreamChannel, createStreamChannel } from '../stream/stream_channe
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
+import type { Future } from '../utils.js';
 import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
-import { type UserTurnExceededEvent, createUserTurnExceededEvent } from './events.js';
+import {
+  type EotPredictionEvent,
+  type UserTurnExceededEvent,
+  type _AgentBackchannelOpportunityEvent,
+  _createAgentBackchannelOpportunityEvent,
+  createEotPredictionEvent,
+  createUserTurnExceededEvent,
+} from './events.js';
 import type { STTNode } from './io.js';
+import { toSnakeCaseDeep } from './report.js';
 import {
   type BaseEndpointing,
   createEndpointing,
@@ -49,19 +64,74 @@ import {
   setParticipantSpanAttributes,
 } from './utils.js';
 
+// Maximum number of chat items included in the `lk.chat_ctx` attribute of the
+// `eou_detection` span (mirrors Python's `_EOU_MAX_HISTORY_TURNS`).
+const EOU_MAX_HISTORY_TURNS = 6;
+const MIN_LANGUAGE_DETECTION_LENGTH = 5;
+const NON_SPECIFIC_LANGUAGE_CODES = new Set(['auto', 'multi']);
+
 export interface EndOfTurnInfo {
   /** The new transcript text from the user's speech. */
   newTranscript: string;
   /** Confidence score of the transcript (0-1). */
   transcriptConfidence: number;
   /** Delay from speech stop to final transcription in milliseconds. */
-  transcriptionDelay: number;
+  transcriptionDelay: number | undefined;
   /** Delay from speech stop to end of utterance detection in milliseconds. */
-  endOfUtteranceDelay: number;
+  endOfUtteranceDelay: number | undefined;
   /** Timestamp when user started speaking (milliseconds since epoch). */
   startedSpeakingAt: number | undefined;
   /** Timestamp when user stopped speaking (milliseconds since epoch). */
   stoppedSpeakingAt: number | undefined;
+  /**
+   * When `true`, the agent activity commits the user turn to chat context but
+   * skips generating the normal auto-reply. Mirrors python `_EndOfTurnInfo.skip_reply`.
+   * Set, for example, when AMD has taken over the turn with a machine verdict and the
+   * caller drives its own `generateReply` (e.g. leaving a voicemail).
+   */
+  skipReply?: boolean;
+  /** The turn's speech overlapped agent speech and was classified a backchannel. */
+  backchannelOverAgent?: boolean;
+}
+
+type EndOfTurnMetrics = {
+  startedSpeakingAt: number | undefined;
+  stoppedSpeakingAt: number | undefined;
+  transcriptionDelay: number | undefined;
+  endOfUtteranceDelay: number | undefined;
+};
+
+function computeEndOfTurnMetrics({
+  speechStartTime,
+  lastSpeakingTime,
+  lastFinalTranscriptTime,
+  now,
+}: {
+  speechStartTime: number | undefined;
+  lastSpeakingTime: number | undefined;
+  lastFinalTranscriptTime: number;
+  now: number;
+}): EndOfTurnMetrics {
+  if (
+    lastFinalTranscriptTime === 0 ||
+    lastSpeakingTime === undefined ||
+    speechStartTime === undefined ||
+    lastSpeakingTime < speechStartTime
+  ) {
+    return {
+      startedSpeakingAt: undefined,
+      stoppedSpeakingAt: undefined,
+      transcriptionDelay: undefined,
+      endOfUtteranceDelay: undefined,
+    };
+  }
+
+  return {
+    startedSpeakingAt: speechStartTime,
+    stoppedSpeakingAt: lastSpeakingTime,
+    transcriptionDelay: Math.max(lastFinalTranscriptTime - lastSpeakingTime, 0),
+    endOfUtteranceDelay: Math.max(now - lastSpeakingTime, 0),
+  };
 }
 
 export interface PreemptiveGenerationInfo {
@@ -73,12 +143,16 @@ export interface PreemptiveGenerationInfo {
 
 export interface RecognitionHooks {
   onInterruption: (ev: OverlappingSpeechEvent) => void;
+  onBackchannelConfirmed: () => void;
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
-  onEndOfSpeech: (ev: VADEvent) => void;
+  onEndOfSpeech: (ev?: VADEvent) => void;
   onInterimTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
+  onTranscriptionTimeout: (speechDuration: number, turnStart: number) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
+  onEotPrediction: (ev: EotPredictionEvent) => void;
+  onAgentBackchannelOpportunity: (ev: _AgentBackchannelOpportunityEvent) => void;
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
   onUserTurnExceeded: (ev: UserTurnExceededEvent) => void;
 
@@ -98,6 +172,8 @@ export class STTPipeline {
   private _audioChannel: StreamChannel<AudioFrame> = createStreamChannel();
   private _eventChannel: StreamChannel<SpeechEvent> = createStreamChannel();
   private _pumpTask: Task<void>;
+  /** Wall-clock anchor for this stream, used with STT-relative timestamps. */
+  inputStartedAt?: number;
 
   constructor(sttNode: STTNode) {
     this.sttNode = sttNode;
@@ -141,7 +217,10 @@ export interface _TurnDetector {
   readonly provider: string;
   unlikelyThreshold: (language?: LanguageCode) => Promise<number | undefined>;
   supportsLanguage: (language?: LanguageCode) => Promise<boolean>;
-  predictEndOfTurn(chatCtx: ChatContext, timeout?: number): Promise<number>;
+  /**
+   * Text-based detectors own their inference timeout behavior internally.
+   */
+  predictEndOfTurn(chatCtx: ChatContext, timeoutMs?: number): Promise<number>;
 }
 
 export interface AudioRecognitionOptions {
@@ -151,8 +230,17 @@ export interface AudioRecognitionOptions {
   stt?: STTNode;
   /** Voice activity detection. */
   vad?: VAD;
-  /** Turn detector for end-of-turn prediction. */
-  turnDetector?: _TurnDetector;
+  /**
+   * True iff the wired VAD was auto-provisioned by `AgentSession` rather than
+   * supplied by the caller. Read at every "is VAD configured?" call site so
+   * a framework-default VAD behaves like no VAD for downstream eligibility
+   * decisions (e.g. STT-hook `speaking=` payload).
+   */
+  usingDefaultVad?: boolean;
+  /** Turn detector for end-of-turn prediction. Accepts text-based detectors
+   * via `_TurnDetector` (e.g. plugins/livekit) or audio-based detectors via
+   * `TurnDetector` (e.g. `inference.TurnDetector`). */
+  turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
   /** Turn detection mode. */
   turnDetectionMode?: TurnDetectionMode;
   interruptionDetection?: AdaptiveInterruptionDetector;
@@ -181,6 +269,8 @@ export interface AudioRecognitionOptions {
   getLinkedParticipant?: () => ParticipantLike | undefined;
   /** Predicate used to substitute silence for STT while still forwarding real audio elsewhere. */
   shouldDiscardAudioForStt?: (frame: AudioFrame) => boolean;
+  /** User transcription timeout in milliseconds. `null` or `undefined` disables it. */
+  transcriptionTimeout?: number | null;
 }
 
 /**
@@ -199,7 +289,31 @@ export class AudioRecognition {
   private stt?: STTNode;
   private sttPipeline?: STTPipeline;
   private vad?: VAD;
-  private turnDetector?: _TurnDetector;
+  private usingDefaultVad: boolean;
+  private turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
+  private turnDetectorStream?: BaseStreamingTurnDetectorStream;
+  /**
+   * Future for the in-flight audio-EOT inference request. Recognition owns the
+   * request lifecycle: it starts a request on the VAD silence tick, holds the
+   * future here, awaits it (with the model prediction timeout) in the eou bounce, and
+   * clears it on turn boundaries / superseding speech.
+   */
+  private turnDetectorPredictionFut?: Future<TurnDetectionEvent>;
+  /**
+   * True between a turn flush (commit / clearUserTurn) and the next VAD
+   * start-of-speech. While set, a late stt final won't start a fresh request;
+   * the eou bounce short-circuits via `onMissingEotPrediction`.
+   */
+  private turnDetectorFlushed = false;
+  /** Warn once per recognition when the eou bounce runs after a flush. */
+  private turnDetectorLatePredictionWarned = false;
+  /**
+   * The last `TurnDetectionEvent` we forwarded via `onEotPrediction`, kept
+   * by reference to dedupe: both EOU triggers in a turn read the same
+   * resolved prediction future, but the event should fire once per request.
+   */
+  private lastEmittedEotPrediction?: TurnDetectionEvent;
+  private warnedTurnDetectorPushFailure = false;
   private turnDetectionMode?: TurnDetectionMode;
   private endpointing: BaseEndpointing;
   private userTurnLimit?: UserTurnLimitOptions;
@@ -222,6 +336,10 @@ export class AudioRecognition {
   private userTurnCommitted = false;
   private speaking = false;
   private vadSpeechStarted = false;
+  private transcriptionTimeout?: number;
+  private transcriptionTimeoutTimer?: ReturnType<typeof setTimeout>;
+  private turnSpeechDuration = 0;
+  private turnTranscriptReceived = false;
   private sampleRate?: number;
 
   private userTurnSpan?: Span;
@@ -261,12 +379,16 @@ export class AudioRecognition {
 
   // interruption detection
   private interruptionDetection?: AdaptiveInterruptionDetector;
-  private _inputStartedAt?: number;
   private ignoreUserTranscriptUntil?: number;
   private transcriptBuffer: SpeechEvent[];
   private isInterruptionEnabled: boolean;
   private isAgentSpeaking: boolean;
+  private agentSpeechStartedAt?: number;
   private interruptionDetected?: boolean;
+  private overlapInCurrentTurn = false;
+  private turnBackchannelOverAgent = false;
+  // An overlap is open right now, awaiting a verdict; several can occur within one turn.
+  private overlapOpen = false;
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
   private closed = false;
 
@@ -280,7 +402,12 @@ export class AudioRecognition {
     this.hooks = opts.recognitionHooks;
     this.stt = opts.stt;
     this.vad = opts.vad;
+    this.usingDefaultVad = opts.usingDefaultVad ?? false;
     this.turnDetector = opts.turnDetector;
+    this.checkVadSilenceRequirement();
+    // The FSM stream is opened on `start()` so callers can hand off the
+    // previous activity's stream (cloud↔local fallback state, in-flight
+    // inference) instead of forcing a cold restart.
     this.turnDetectionMode = opts.turnDetectionMode;
     this.userTurnLimit = opts.userTurnLimit;
     this.endpointing =
@@ -295,6 +422,7 @@ export class AudioRecognition {
     this.sttModel = opts.sttModel;
     this.sttProvider = opts.sttProvider;
     this.getLinkedParticipant = opts.getLinkedParticipant;
+    this.transcriptionTimeout = opts.transcriptionTimeout ?? undefined;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.interruptionDetection = opts.interruptionDetection;
@@ -329,6 +457,26 @@ export class AudioRecognition {
       {
         transform: (chunk, controller) => {
           controller.enqueue(chunk);
+          // Fan the same frame into the audio EOT detector stream when
+          // one is attached. The FSM accepts arbitrary-rate input and
+          // resamples internally. `pushAudio` is a no-op when the stream's
+          // internal channel is closed; any actual throw indicates a bug
+          // (e.g. resampler init failure, sample-rate mismatch). Log once
+          // when we hit that path so a regression doesn't silently drop
+          // every audio frame.
+          if (this.turnDetectorStream !== undefined) {
+            try {
+              this.turnDetectorStream.pushAudio(chunk);
+            } catch (err) {
+              if (!this.warnedTurnDetectorPushFailure) {
+                this.warnedTurnDetectorPushFailure = true;
+                this.logger.warn(
+                  { err: err instanceof Error ? err.message : String(err) },
+                  'audio EOT stream pushAudio failed; dropping frames for this turn',
+                );
+              }
+            }
+          }
           if (this.subscriberWriters.length === 0) return;
           for (const writer of this.subscriberWriters) {
             writer.write(chunk).catch(() => {
@@ -391,7 +539,17 @@ export class AudioRecognition {
 
   /** @internal */
   get inputStartedAt() {
-    return this._inputStartedAt;
+    return this.sttPipeline?.inputStartedAt;
+  }
+
+  /** @internal */
+  get endOfTurnTask(): Task<void> | undefined {
+    return this.bounceEOUTask;
+  }
+
+  /** @internal */
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   /** @internal */
@@ -407,7 +565,113 @@ export class AudioRecognition {
     }
   }
 
-  async start(options?: { sttPipeline?: STTPipeline }) {
+  /** True iff the user supplied their own VAD (default-VAD is treated as
+   * absent at sites that decide between "use VAD signal" and "STT-derived
+   * speaking"). */
+  private get hasUserVad(): boolean {
+    return this.vad !== undefined && !this.usingDefaultVad;
+  }
+
+  /**
+   * Swap the active turn detector at runtime. When an `BaseStreamingTurnDetector`
+   * is provided, opens a per-turn FSM stream after retiring the prior one.
+   *
+   * When `stream` is provided it is adopted as-is (handoff reuse) instead of
+   * opening a fresh stream on `detector`; the live transport stream — and its
+   * per-session cloud→local fallback state — survives the handoff.
+   */
+  updateTurnDetector(
+    detector: _TurnDetector | BaseStreamingTurnDetector | undefined,
+    options?: { stream?: BaseStreamingTurnDetectorStream },
+  ): void {
+    // Validate against the incoming detector before swapping in so the error
+    // — when raised — names the configuration that failed.
+    this.checkVadSilenceRequirement(detector);
+    this.turnDetector = detector;
+
+    const reuseStream = options?.stream;
+    // Retire the prior stream before creating the new one. `detach()` frees
+    // the detector's single-stream slot synchronously (so `stream()` below
+    // won't throw if the same detector is reused), while the network teardown
+    // runs in the background.
+    const oldStream = this.turnDetectorStream;
+    if (oldStream !== undefined && oldStream !== reuseStream) {
+      oldStream.detach();
+      void oldStream.aclose().catch(() => undefined);
+    }
+    const newStream =
+      reuseStream !== undefined
+        ? reuseStream
+        : detector instanceof BaseStreamingTurnDetector
+          ? detector.stream()
+          : undefined;
+    // A different stream means a fresh request lifecycle: drop any held
+    // prediction future and re-arm so the adopting recognition starts its own
+    // request on the next VAD event.
+    if (this.turnDetectorStream !== newStream) {
+      this.turnDetectorPredictionFut = undefined;
+      this.turnDetectorFlushed = false;
+    }
+    this.turnDetectorStream = newStream;
+  }
+
+  /**
+   * Detach the turn detector stream for handoff to another AudioRecognition.
+   *
+   * Returns the live stream (transport run loop intact) without closing it.
+   * The caller passes it to the new AudioRecognition via
+   * `start({ turnDetectorStream })`. The stream stays attached to its
+   * detector, retaining the detector's single-stream slot, so the new
+   * AudioRecognition must adopt it rather than open a second stream.
+   */
+  detachTurnDetector(): BaseStreamingTurnDetectorStream | undefined {
+    const stream = this.turnDetectorStream;
+    this.turnDetectorStream = undefined;
+    // The adopting recognition starts a fresh request on its next VAD event,
+    // superseding any request that survived the handoff.
+    this.turnDetectorPredictionFut = undefined;
+    return stream;
+  }
+
+  /**
+   * The audio EOT detector needs a wider silence window than typical VAD
+   * defaults. Rather than mutate the VAD's knob, require the caller to
+   * configure it: raise if the bound VAD exposes `minSilenceDuration` and it
+   * is below the floor. VADs that don't expose the knob are left untouched.
+   */
+  private checkVadSilenceRequirement(
+    detector: _TurnDetector | BaseStreamingTurnDetector | undefined = this.turnDetector,
+  ): void {
+    if (!(detector instanceof BaseStreamingTurnDetector) || this.vad === undefined) {
+      return;
+    }
+    const current = this.vad.minSilenceDuration;
+    if (current === null) {
+      return;
+    }
+    const required = MIN_SILENCE_DURATION_MS + 50;
+    if (current < required) {
+      throw new Error(
+        `vad minSilenceDuration=${current}ms is too low for the TurnDetector. ` +
+          `Raise the VAD's minSilenceDuration to at least ${required}ms.`,
+      );
+    }
+  }
+
+  private updateLastLanguage(language: LanguageCode | undefined, transcript: string): void {
+    if (!language || NON_SPECIFIC_LANGUAGE_CODES.has(language)) {
+      return;
+    }
+
+    if (!this.lastLanguage || transcript.length > MIN_LANGUAGE_DETECTION_LENGTH) {
+      this.lastLanguage = language;
+    }
+  }
+
+  async start(options?: {
+    sttPipeline?: STTPipeline;
+    turnDetectorStream?: BaseStreamingTurnDetectorStream;
+  }) {
     this.startSttTasks(options?.sttPipeline);
 
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
@@ -421,6 +685,14 @@ export class AudioRecognition {
     this.interruptionTask.result.catch((err) => {
       this.logger.error(`Error running interruption task: ${err}`);
     });
+
+    // Open (or adopt) the audio EOT detector stream now that the activity is
+    // running. We only call `updateTurnDetector` for BaseStreamingTurnDetector /
+    // undefined detectors — plugin-based `_TurnDetector` instances are
+    // text-only and don't carry a stream.
+    if (this.turnDetector instanceof BaseStreamingTurnDetector || this.turnDetector === undefined) {
+      this.updateTurnDetector(this.turnDetector, { stream: options?.turnDetectorStream });
+    }
   }
 
   async stop() {
@@ -428,11 +700,17 @@ export class AudioRecognition {
     await this.sttForwardTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
+    if (this.turnDetectorStream !== undefined) {
+      const stream = this.turnDetectorStream;
+      this.turnDetectorStream = undefined;
+      await stream.aclose().catch(() => undefined);
+    }
   }
 
   async disableInterruptionDetection(): Promise<void> {
     this.isInterruptionEnabled = false;
     this.interruptionDetection = undefined;
+    this.overlapOpen = false;
     await this.interruptionTask?.cancelAndWait();
     this.interruptionTask = undefined;
     await this.interruptionStreamChannel?.close();
@@ -470,8 +748,9 @@ export class AudioRecognition {
     this.backchannelBoundaryCallback = undefined;
   }
 
-  async onStartOfAgentSpeech(startedAt: number) {
+  async onStartOfAgentSpeech(startedAt: number, options?: { resumed?: boolean }) {
     this.isAgentSpeaking = true;
+    this.agentSpeechStartedAt = startedAt;
     this.endpointing.onStartOfAgentSpeech(startedAt);
     this.userTurnTracker = { words: 0, transcript: '' };
 
@@ -484,10 +763,13 @@ export class AudioRecognition {
       );
     }
 
-    return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
+    // A resume re-enters the same agent turn; restarting would discard the open overlap.
+    if (!options?.resumed) {
+      return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
+    }
   }
 
-  async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
+  async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number, options?: { paused?: boolean }) {
     this.cancelBackchannelBoundary();
 
     const now = Date.now();
@@ -519,21 +801,31 @@ export class AudioRecognition {
     // flight are not buffered.
     this.isAgentSpeaking = false;
 
-    const inputOpen = await this.trySendInterruptionSentinel(
-      InterruptionStreamSentinel.agentSpeechEnded(),
-    );
-    if (!inputOpen) {
-      return;
+    if (!options?.paused) {
+      const inputOpen = await this.trySendInterruptionSentinel(
+        InterruptionStreamSentinel.agentSpeechEnded(),
+      );
+      if (!inputOpen) {
+        // Python has no early return here and always reaches the clear below. The stream the
+        // overlap belonged to is gone, so clear before bailing rather than leaking the flag.
+        this.overlapOpen = false;
+        return;
+      }
     }
 
     if (wasAgentSpeaking) {
       // Notify overlap end after the agent-speech-ended sentinel resets the inference stream
       // so it does not emit a synthetic `isInterruption: false` event following a real
       // interruption.
-      if (priorIgnoreUserTranscriptUntil === undefined) {
-        this.onEndOfOverlapSpeech(Date.now());
+      if (!options?.paused && priorIgnoreUserTranscriptUntil === undefined) {
+        this.onEndOfOverlapSpeech(Date.now(), undefined, true);
       }
       await this.flushHeldTranscripts(endCooldown);
+    }
+
+    if (!options?.paused) {
+      // The sentinel sent above resets the detector stream, dropping any open overlap.
+      this.overlapOpen = false;
     }
   }
 
@@ -543,6 +835,9 @@ export class AudioRecognition {
       if (!this.endpointing.overlapping) {
         this.endpointing.onStartOfSpeech(startedAt, true);
       }
+      this.turnBackchannelOverAgent = false;
+      this.overlapInCurrentTurn = true;
+      this.overlapOpen = true;
       this.trySendInterruptionSentinel(
         InterruptionStreamSentinel.overlapSpeechStarted(
           speechDuration,
@@ -554,15 +849,25 @@ export class AudioRecognition {
   }
 
   /** End interruption inference when overlap speech ends. */
-  async onEndOfOverlapSpeech(endedAt: number, userSpeakingSpan?: Span) {
-    if (!this.isInterruptionEnabled) {
+  async onEndOfOverlapSpeech(endedAt: number, userSpeakingSpan?: Span, agentEnded = false) {
+    // The overlap ends once, on the first of a verdict, the user stopping, the agent stopping,
+    // or teardown, so a call can arrive with it already closed.
+    if (!this.isInterruptionEnabled || !this.overlapOpen) {
       return;
     }
-    if (userSpeakingSpan && userSpeakingSpan.isRecording()) {
+    this.overlapOpen = false;
+    if (
+      this.overlapInCurrentTurn &&
+      this.interruptionDetected !== true &&
+      userSpeakingSpan &&
+      userSpeakingSpan.isRecording()
+    ) {
       userSpeakingSpan.setAttribute(traceTypes.ATTR_IS_INTERRUPTION, 'false');
     }
 
-    return this.trySendInterruptionSentinel(InterruptionStreamSentinel.overlapSpeechEnded(endedAt));
+    return this.trySendInterruptionSentinel(
+      InterruptionStreamSentinel.overlapSpeechEnded(endedAt, agentEnded),
+    );
   }
 
   /**
@@ -589,7 +894,7 @@ export class AudioRecognition {
     if (
       !this.isInterruptionEnabled ||
       this.ignoreUserTranscriptUntil === undefined ||
-      this._inputStartedAt === undefined
+      this.inputStartedAt === undefined
     ) {
       this.resetInterruptionDetection();
       return;
@@ -613,7 +918,7 @@ export class AudioRecognition {
         return;
       }
 
-      if (this.#alternativeEndsBeforeIgnoreWindow(firstAlternative)) {
+      if (this.#alternativeEndsWithinIgnoreWindow(firstAlternative)) {
         emitFromIndex = null;
       } else {
         emitFromIndex = Math.min(emitFromIndex ?? i, i);
@@ -628,7 +933,7 @@ export class AudioRecognition {
     // Snapshot the ignore-until before resetting so the added-delay diagnostic below mirrors
     // the value the holding decision was made against.
     const prevIgnoreUserTranscriptUntil = this.ignoreUserTranscriptUntil;
-    const prevInputStartedAt = this._inputStartedAt;
+    const prevInputStartedAt = this.inputStartedAt;
     this.resetInterruptionDetection();
 
     for (const event of eventsToEmit) {
@@ -659,22 +964,31 @@ export class AudioRecognition {
   private resetInterruptionDetection(): void {
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;
+    // Keep the anchor while a newer agent-speech cycle is active, so a stale flush
+    // can't clear an anchor that cycle has already set.
+    if (!this.isAgentSpeaking) {
+      this.agentSpeechStartedAt = undefined;
+    }
   }
 
-  #alternativeEndsBeforeIgnoreWindow(
-    alternative: NonNullable<SpeechEvent['alternatives']>[number],
-  ): boolean {
-    if (
-      this.ignoreUserTranscriptUntil === undefined ||
-      !this._inputStartedAt ||
-      alternative.endTime <= 0
-    ) {
+  private withinIgnoreWindow(eventTime: number): boolean {
+    if (this.ignoreUserTranscriptUntil === undefined) {
       return false;
     }
 
-    // `SpeechData.endTime` is in seconds relative to audio start, while `inputStartedAt` and
-    // `ignoreUserTranscriptUntil` are epoch milliseconds.
-    return alternative.endTime * 1000 + this._inputStartedAt < this.ignoreUserTranscriptUntil;
+    const lower = this.agentSpeechStartedAt ?? 0;
+    const upper = Math.min(Date.now(), this.ignoreUserTranscriptUntil);
+    return lower < eventTime && eventTime < upper;
+  }
+
+  #alternativeEndsWithinIgnoreWindow(
+    alternative: NonNullable<SpeechEvent['alternatives']>[number],
+  ) {
+    return (
+      alternative.endTime > 0 &&
+      this.inputStartedAt !== undefined &&
+      this.withinIgnoreWindow(alternative.endTime * 1000 + this.inputStartedAt)
+    );
   }
 
   private shouldHoldSttEvent(ev: SpeechEvent): boolean {
@@ -687,8 +1001,7 @@ export class AudioRecognition {
 
     // reset when the user starts speaking after the agent speech
     if (ev.type === SpeechEventType.START_OF_SPEECH) {
-      this.ignoreUserTranscriptUntil = undefined;
-      this.transcriptBuffer = [];
+      this.resetInterruptionDetection();
       return false;
     }
 
@@ -704,7 +1017,9 @@ export class AudioRecognition {
 
     if (
       alternative.startTime !== alternative.endTime &&
-      this.#alternativeEndsBeforeIgnoreWindow(alternative)
+      this.inputStartedAt !== undefined &&
+      alternative.startTime > 0 &&
+      this.withinIgnoreWindow(alternative.startTime * 1000 + this.inputStartedAt)
     ) {
       return true;
     }
@@ -796,6 +1111,11 @@ export class AudioRecognition {
       return;
     }
 
+    // Interim and preflight transcripts may never be followed by a final transcript.
+    if (ev.type === SpeechEventType.FINAL_TRANSCRIPT && ev.alternatives?.[0]?.text) {
+      this.markTurnTranscribed();
+    }
+
     // handle interruption detection
     // - hold the event until the ignore_user_transcript_until expires
     // - release only relevant events
@@ -817,20 +1137,25 @@ export class AudioRecognition {
     }
 
     const firstAlternative = ev.alternatives?.[0];
-    const inputStartedAt = this._inputStartedAt;
+    const inputStartedAt = this.inputStartedAt;
     const hasSTTEndTime =
       firstAlternative !== undefined &&
       firstAlternative.endTime > 0 &&
       inputStartedAt !== undefined;
+    // clamp to now: a reused STT stream's clock can be far ahead of this
+    // activity's input epoch (e.g. after a handoff), and a future
+    // lastSpeakingTime would stall the EOU bounce task for that long
+    // (1.4.5 silence regression from #1603; see audio_recognition_eou.test.ts)
     const sttLastSpeakingTime = hasSTTEndTime
-      ? firstAlternative.endTime * 1000 + inputStartedAt
+      ? Math.min(firstAlternative.endTime * 1000 + inputStartedAt, Date.now())
       : Date.now();
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
-        const transcript = ev.alternatives?.[0]?.text;
+        const transcript = ev.alternatives?.[0]?.text ?? '';
         const confidence = ev.alternatives?.[0]?.confidence ?? 0;
-        this.lastLanguage = ev.alternatives?.[0]?.language;
+        const language = ev.alternatives?.[0]?.language;
+        this.updateLastLanguage(language, transcript);
 
         if (!transcript) {
           // stt final transcript received but no transcript
@@ -839,7 +1164,7 @@ export class AudioRecognition {
 
         this.hooks.onFinalTranscript(
           ev,
-          this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+          this.hasUserVad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
         );
 
         this.logger.debug(
@@ -858,7 +1183,7 @@ export class AudioRecognition {
         this.audioInterimTranscript = '';
         this.audioPreflightTranscript = '';
 
-        if (!this.vad || this.lastSpeakingTime === undefined) {
+        if (!this.hasUserVad || this.lastSpeakingTime === undefined) {
           // vad disabled or missed a speech, use stt timestamp
           this.lastSpeakingTime = sttLastSpeakingTime;
         }
@@ -885,26 +1210,20 @@ export class AudioRecognition {
           if (!this.speaking) {
             const chatCtx = this.hooks.retrieveChatCtx();
             this.logger.debug('running EOU detection on stt FINAL_TRANSCRIPT');
-            this.runEOUDetection(chatCtx);
+            this.runEOUDetection(chatCtx, 'stt');
           }
         }
         break;
       case SpeechEventType.PREFLIGHT_TRANSCRIPT:
         this.hooks.onInterimTranscript(
           ev,
-          this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+          this.hasUserVad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
         );
         const preflightTranscript = ev.alternatives?.[0]?.text ?? '';
         const preflightConfidence = ev.alternatives?.[0]?.confidence ?? 0;
         const preflightLanguage = ev.alternatives?.[0]?.language;
 
-        const MIN_LANGUAGE_DETECTION_LENGTH = 5;
-        if (
-          !this.lastLanguage ||
-          (preflightLanguage && preflightTranscript.length > MIN_LANGUAGE_DETECTION_LENGTH)
-        ) {
-          this.lastLanguage = preflightLanguage;
-        }
+        this.updateLastLanguage(preflightLanguage, preflightTranscript);
 
         if (!preflightTranscript) {
           return;
@@ -925,7 +1244,7 @@ export class AudioRecognition {
           `${this.audioTranscript} ${preflightTranscript}`.trimStart();
         this.audioInterimTranscript = preflightTranscript;
 
-        if (!this.vad || this.lastSpeakingTime === undefined) {
+        if (!this.hasUserVad || this.lastSpeakingTime === undefined) {
           // vad disabled or missed a speech, use stt timestamp
           this.lastSpeakingTime = sttLastSpeakingTime;
         }
@@ -955,7 +1274,7 @@ export class AudioRecognition {
         this.logger.debug({ transcript: ev.alternatives?.[0]?.text }, 'interim transcript');
         this.hooks.onInterimTranscript(
           ev,
-          this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+          this.hasUserVad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
         );
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
@@ -967,6 +1286,8 @@ export class AudioRecognition {
           const ctx = this.userTurnContext(span);
           this.endpointing.onStartOfSpeech(speechStartTime, this.isAgentSpeaking);
           this.interruptionDetected = undefined;
+          this.turnBackchannelOverAgent = false;
+          this.overlapInCurrentTurn = this.isAgentSpeaking;
           otelContext.with(ctx, () => {
             this.hooks.onStartOfSpeech({
               type: VADEventType.START_OF_SPEECH,
@@ -985,7 +1306,6 @@ export class AudioRecognition {
         }
         this.speaking = true;
         this.lastSpeakingTime = sttLastSpeakingTime;
-
         this.bounceEOUTask?.cancel();
         break;
       case SpeechEventType.END_OF_SPEECH:
@@ -1021,7 +1341,9 @@ export class AudioRecognition {
         // and user state won't be updated until a new VAD SOS is received.
         // Reset VAD so that incorrect end of turn from STT can be corrected by VAD interruption.
         // If user is still speaking (an immediate VAD SOS will interrupt the agent).
-        if (this.vad && this.vadSpeechStarted) {
+        // Default-bundled VAD is treated as absent here — only user-supplied VADs
+        // are reset/flushed, matching the matrix in PR_DESCRIPTION.
+        if (this.hasUserVad && this.vadSpeechStarted) {
           if (this.vadStream) {
             this.vadStream.flush();
           } else {
@@ -1038,7 +1360,7 @@ export class AudioRecognition {
         }
         this.speaking = false;
         this.userTurnCommitted = true;
-        if (!this.vad || this.lastSpeakingTime === undefined) {
+        if (!this.hasUserVad || this.lastSpeakingTime === undefined) {
           // vad disabled or missed a speech, use stt timestamp
           this.lastSpeakingTime = sttLastSpeakingTime;
         }
@@ -1046,12 +1368,15 @@ export class AudioRecognition {
         if (!this.speaking) {
           const chatCtx = this.hooks.retrieveChatCtx();
           this.logger.debug('running EOU detection on stt END_OF_SPEECH');
-          this.runEOUDetection(chatCtx);
+          this.runEOUDetection(chatCtx, 'stt');
         }
     }
   }
 
   private onOverlapSpeechEvent(ev: OverlappingSpeechEvent) {
+    // Every verdict is terminal for its overlap, including one the cooldown then ignores.
+    this.overlapOpen = false;
+
     if (this.backchannelBoundaryActive && !ev.isInterruption) {
       this.logger.trace(
         'ignoring backchannel event during backchannel boundary cooldown, falling back to vad',
@@ -1061,12 +1386,36 @@ export class AudioRecognition {
 
     this.interruptionDetected = ev.isInterruption;
 
+    if (this.overlapInCurrentTurn && !ev.agentEnded) {
+      this.turnBackchannelOverAgent = !ev.isInterruption;
+      if (!ev.isInterruption && !this.speaking) {
+        this.hooks.onBackchannelConfirmed();
+      }
+    }
+
     if (ev.isInterruption) {
       this.hooks.onInterruption(ev);
     }
   }
 
-  private runEOUDetection(chatCtx: ChatContext) {
+  private onMissingEotPrediction(): void {
+    if (this.turnDetectorFlushed) {
+      if (!this.turnDetectorLatePredictionWarned) {
+        this.turnDetectorLatePredictionWarned = true;
+        this.logger.warn(
+          'transcript arrives after turn has been committed. consider raising `minDelay` in the ' +
+            'endpointing options to accommodate a slow stt. subsequent ' +
+            'occurrences will log at debug level.',
+        );
+      } else {
+        this.logger.debug('stt transcript arrived after a turn flush, skipping eot prediction');
+      }
+    } else {
+      this.logger.debug('no eot inference request in flight, skipping eot prediction');
+    }
+  }
+
+  private runEOUDetection(chatCtx: ChatContext, trigger: 'vad' | 'stt' | 'manual' = 'vad') {
     this.logger.debug(
       {
         stt: this.stt,
@@ -1083,11 +1432,32 @@ export class AudioRecognition {
     }
 
     chatCtx = chatCtx.copy();
-    chatCtx.addMessage({ role: 'user', content: this.audioTranscript });
+    if (this.audioTranscript) {
+      chatCtx.addMessage({ role: 'user', content: this.audioTranscript });
+    }
 
-    const turnDetector =
-      // disable EOU model if manual turn detection enabled
-      this.audioTranscript && this.turnDetectionMode !== 'manual' ? this.turnDetector : undefined;
+    // Pick the right detector:
+    //  - manual mode: no detector (turn boundary decided externally)
+    //  - audio EOT detector: prefer the per-turn stream (it caches the
+    //    prediction for the current inference window so the bounce task
+    //    can short-circuit on cache)
+    //  - text-based detector: only run when we have a transcript to score
+    const hasAudioDetector = this.turnDetector instanceof BaseStreamingTurnDetector;
+    const useDetector =
+      this.turnDetectionMode !== 'manual' && (this.audioTranscript || hasAudioDetector);
+    // The unified type only covers the predict surface; the audio
+    // detector's per-turn stream stands in for the parent when one is
+    // attached so the cached prediction is available.
+    let turnDetector: _TurnDetector | BaseStreamingTurnDetectorStream | undefined;
+    if (!useDetector) {
+      turnDetector = undefined;
+    } else if (hasAudioDetector) {
+      turnDetector = this.turnDetectorStream;
+    } else {
+      // text-based detector — `this.turnDetector` cannot be the audio
+      // base class here, because `hasAudioDetector` already screened it.
+      turnDetector = this.turnDetector as _TurnDetector | undefined;
+    }
 
     const bounceEOUTask =
       (
@@ -1102,47 +1472,196 @@ export class AudioRecognition {
         const userTurnCtx = this.userTurnContext(userTurnSpan);
 
         if (turnDetector) {
-          await tracer.startActiveSpan(
-            async (span) => {
-              this.logger.debug('Running turn detector model');
+          if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
+            // Unsupported language: produce no span and emit no prediction event.
+            this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
+          } else {
+            await tracer.startActiveSpan(
+              async (span) => {
+                this.logger.debug('Running turn detector model');
 
-              let endOfTurnProbability = 0.0;
-              let unlikelyThreshold: number | undefined;
+                // undefined => the prediction never resolved (e.g. timed out
+                // or inference threw); gates the span attributes and the emit
+                // below.
+                let endOfTurnProbability: number | undefined;
+                let unlikelyThreshold: number | undefined;
+                let backchannelThreshold: number | undefined;
+                // True when the held future was already resolved when this
+                // bounce started — i.e. the prediction was served from the
+                // request the silence tick warmed, not awaited fresh.
+                let fromCache = false;
+                // The resolved prediction event for this turn, shared by
+                // reference across both EOU triggers (vad + stt final) so the
+                // emit can dedupe.
+                let predictionEvent: TurnDetectionEvent | undefined;
 
-              if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
-                this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
-              } else {
-                try {
-                  endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
-                  unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
+                if (turnDetector instanceof BaseStreamingTurnDetectorStream) {
+                  const fut = this.turnDetectorPredictionFut;
+                  if (fut === undefined) {
+                    if (trigger === 'stt') {
+                      this.onMissingEotPrediction();
+                    }
+                  } else {
+                    fromCache = fut.done;
+                    // Await the held future against the model prediction timeout.
+                    const predictionTimeout = turnDetector.predictionTimeout;
+                    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+                    const winner = await Promise.race([
+                      fut.await.then((ev) => ({ kind: 'value', ev }) as const),
+                      new Promise<{ kind: 'timeout' }>((resolve) => {
+                        timeoutId = setTimeout(
+                          () => resolve({ kind: 'timeout' }),
+                          predictionTimeout,
+                        );
+                      }),
+                    ]);
+                    if (timeoutId !== undefined) clearTimeout(timeoutId);
 
-                  this.logger.debug(
-                    { endOfTurnProbability, unlikelyThreshold, language: this.lastLanguage },
-                    'end of turn probability',
+                    // A newer trigger calls `bounceEOUTask?.cancel()`. A JS abort
+                    // does NOT interrupt the await above, so bail here before
+                    // touching shared state so the superseded bounce doesn't
+                    // clobber a freshly-armed future or double-emit.
+                    if (controller.signal.aborted) return;
+
+                    if (winner.kind === 'value') {
+                      predictionEvent = winner.ev;
+                      endOfTurnProbability = predictionEvent.endOfTurnProbability;
+                      unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
+                      backchannelThreshold = await turnDetector.backchannelThreshold(
+                        this.lastLanguage,
+                      );
+                    } else {
+                      this.logger.warn(
+                        { timeoutMs: predictionTimeout },
+                        'eot prediction timed out, committing without a prediction',
+                      );
+                      turnDetector.cancelInference({ timedOut: true });
+                      this.turnDetectorPredictionFut = undefined;
+                    }
+                  }
+                } else {
+                  try {
+                    endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
+                    unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
+                  } catch (error) {
+                    this.logger.error(error, 'Error predicting end of turn');
+                  }
+                  // See the streaming-branch note: bail if a newer trigger
+                  // superseded this bounce while it awaited.
+                  if (controller.signal.aborted) return;
+                }
+
+                if (
+                  endOfTurnProbability !== undefined &&
+                  unlikelyThreshold !== undefined &&
+                  endOfTurnProbability < unlikelyThreshold
+                ) {
+                  endpointingDelay = this.endpointing.maxDelay;
+                }
+
+                this.logger.debug(
+                  {
+                    endOfTurnProbability,
+                    unlikelyThreshold,
+                    endpointingDelay,
+                    language: this.lastLanguage,
+                    trigger,
+                    fromCache,
+                  },
+                  'eot prediction',
+                );
+
+                const prediction = predictionEvent;
+
+                span.setAttribute(
+                  traceTypes.ATTR_CHAT_CTX,
+                  // snake_case wire shape, matching Python's EOU span: trim to the last
+                  // few items and drop function calls, instructions, empty messages,
+                  // handoffs, and config updates, so the span doesn't re-emit the whole
+                  // conversation on every EOU inference.
+                  JSON.stringify(
+                    toSnakeCaseDeep(
+                      new ChatContext(chatCtx.items.slice(-EOU_MAX_HISTORY_TURNS))
+                        .copy({
+                          excludeFunctionCall: true,
+                          excludeInstructions: true,
+                          excludeEmptyMessage: true,
+                          excludeHandoff: true,
+                          excludeConfigUpdate: true,
+                        })
+                        .toJSON({ excludeTimestamp: false }),
+                    ),
+                  ),
+                );
+                if (endOfTurnProbability !== undefined) {
+                  span.setAttribute(traceTypes.ATTR_EOU_PROBABILITY, endOfTurnProbability);
+                }
+                if (unlikelyThreshold !== undefined) {
+                  span.setAttribute(traceTypes.ATTR_EOU_UNLIKELY_THRESHOLD, unlikelyThreshold);
+                }
+                span.setAttribute(traceTypes.ATTR_EOU_DELAY, endpointingDelay);
+                span.setAttribute(traceTypes.ATTR_EOU_LANGUAGE, this.lastLanguage ?? '');
+                span.setAttribute(traceTypes.ATTR_EOU_FROM_CACHE, fromCache);
+                span.setAttribute(traceTypes.ATTR_EOU_SOURCE, trigger);
+
+                // Emit once the prediction resolved (a timeout / failed
+                // inference emits nothing). Both EOU triggers in a turn (vad +
+                // stt final) read the same resolved `TurnDetectionEvent`; dedupe
+                // by reference so the event fires once per request. The abort
+                // guard above drops a superseded bounce; this reference check
+                // catches the race where the first bounce completes (and emits)
+                // just before the second trigger fires. Text detectors have no
+                // shared event (`prediction === undefined`), so they always emit.
+                if (
+                  endOfTurnProbability !== undefined &&
+                  unlikelyThreshold !== undefined &&
+                  (prediction === undefined || prediction !== this.lastEmittedEotPrediction)
+                ) {
+                  this.lastEmittedEotPrediction = prediction;
+                  const inferenceDurationMs = prediction?.inferenceDuration ?? 0;
+                  const delayMs =
+                    lastSpeakingTime !== undefined ? Date.now() - lastSpeakingTime : 0;
+                  this.hooks.onEotPrediction(
+                    createEotPredictionEvent({
+                      probability: endOfTurnProbability,
+                      threshold: unlikelyThreshold,
+                      inferenceDurationMs,
+                      delayMs,
+                    }),
                   );
 
-                  if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
-                    endpointingDelay = this.endpointing.maxDelay;
+                  // Surface the backchannel opportunity whenever it clears its
+                  // threshold, regardless of end-of-turn; AgentActivity decides
+                  // whether to acknowledge mid-turn or let it lead the reply.
+                  // Shares the eot-emit dedupe so it fires once per request.
+                  const backchannelProbability = prediction?.backchannelProbability;
+                  if (
+                    backchannelProbability !== undefined &&
+                    backchannelThreshold !== undefined &&
+                    backchannelProbability >= backchannelThreshold
+                  ) {
+                    this.hooks.onAgentBackchannelOpportunity(
+                      _createAgentBackchannelOpportunityEvent({
+                        probability: backchannelProbability,
+                        threshold: backchannelThreshold,
+                        endOfTurnProbability,
+                        endOfTurnThreshold: unlikelyThreshold,
+                        language: this.lastLanguage,
+                      }),
+                    );
                   }
-                } catch (error) {
-                  this.logger.error(error, 'Error predicting end of turn');
                 }
-              }
 
-              span.setAttribute(
-                traceTypes.ATTR_CHAT_CTX,
-                JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
-              );
-              span.setAttribute(traceTypes.ATTR_EOU_PROBABILITY, endOfTurnProbability);
-              span.setAttribute(traceTypes.ATTR_EOU_UNLIKELY_THRESHOLD, unlikelyThreshold ?? 0);
-              span.setAttribute(traceTypes.ATTR_EOU_DELAY, endpointingDelay);
-              span.setAttribute(traceTypes.ATTR_EOU_LANGUAGE, this.lastLanguage ?? '');
-            },
-            {
-              name: 'eou_detection',
-              context: userTurnCtx,
-            },
-          );
+                if (prediction?.detectionDelay !== undefined) {
+                  span.setAttribute(traceTypes.ATTR_EOU_DETECTION_DELAY, prediction.detectionDelay);
+                }
+              },
+              {
+                name: 'eou_detection',
+                context: userTurnCtx,
+              },
+            );
+          }
         }
 
         let extraSleep = endpointingDelay;
@@ -1155,6 +1674,22 @@ export class AudioRecognition {
           await delay(Math.max(extraSleep, 0), { signal: controller.signal });
         }
 
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        // Re-check the creation-time transcript guard at fire time. The commit path
+        // (`onEndOfTurn`) awaits, so another bounce can be created in the window between
+        // an earlier bounce reading the transcript and resetting it — that newer bounce
+        // passes the guard at creation, then wakes up here after the transcript was
+        // already committed and cleared. Without this check it commits a duplicate,
+        // empty user turn (with stale metrics) and triggers a spurious reply. Python
+        // avoids this via preemptive task cancellation and a synchronous commit.
+        if (this.stt && !this.audioTranscript && this.turnDetectionMode !== 'manual') {
+          this.logger.debug('skipping EOU commit, transcript was already committed');
+          return;
+        }
+
         this.logger.debug({ transcript: this.audioTranscript }, 'end of user turn');
 
         const confidenceAvg =
@@ -1163,39 +1698,32 @@ export class AudioRecognition {
               this.finalTranscriptConfidence.length
             : 0;
 
-        let startedSpeakingAt: number | undefined;
-        let stoppedSpeakingAt: number | undefined;
-        let transcriptionDelay: number | undefined;
-        let endOfUtteranceDelay: number | undefined;
-
-        // sometimes, we can't calculate the metrics because VAD was unreliable.
-        // in this case, we just ignore the calculation, it's better than providing likely wrong values
-        if (
-          lastFinalTranscriptTime !== 0 &&
-          lastSpeakingTime !== undefined &&
-          speechStartTime !== undefined
-        ) {
-          startedSpeakingAt = speechStartTime;
-          stoppedSpeakingAt = lastSpeakingTime;
-          transcriptionDelay = Math.max(lastFinalTranscriptTime - lastSpeakingTime, 0);
-          endOfUtteranceDelay = Date.now() - lastSpeakingTime;
-        }
+        // sometimes, we can't calculate the metrics because VAD was unreliable or
+        // the speaking anchor is stale/out-of-order. in this case, we just ignore the
+        // calculation, it's better than providing likely wrong values
+        const metrics = computeEndOfTurnMetrics({
+          speechStartTime,
+          lastSpeakingTime,
+          lastFinalTranscriptTime,
+          now: Date.now(),
+        });
 
         const committed = await this.hooks.onEndOfTurn({
           newTranscript: this.audioTranscript,
           transcriptConfidence: confidenceAvg,
-          transcriptionDelay: transcriptionDelay ?? 0,
-          endOfUtteranceDelay: endOfUtteranceDelay ?? 0,
-          startedSpeakingAt,
-          stoppedSpeakingAt,
+          transcriptionDelay: metrics.transcriptionDelay,
+          endOfUtteranceDelay: metrics.endOfUtteranceDelay,
+          startedSpeakingAt: metrics.startedSpeakingAt,
+          stoppedSpeakingAt: metrics.stoppedSpeakingAt,
+          backchannelOverAgent: this.turnBackchannelOverAgent,
         });
 
         if (committed) {
           this._endUserTurnSpan({
             transcript: this.audioTranscript,
             confidence: confidenceAvg,
-            transcriptionDelay: transcriptionDelay ?? 0,
-            endOfUtteranceDelay: endOfUtteranceDelay ?? 0,
+            transcriptionDelay: metrics.transcriptionDelay ?? 0,
+            endOfUtteranceDelay: metrics.endOfUtteranceDelay ?? 0,
           });
 
           // clear the transcript if the user turn was committed
@@ -1208,16 +1736,32 @@ export class AudioRecognition {
             this.vadSpeechStarted = false;
             this.lastSpeakingTime = undefined;
           }
+
+          // Flush the in-flight request and write the turn-boundary sentinel to
+          // the transport so the next turn's predict starts fresh — the normal
+          // EOU-commit path, mirroring clearUserTurn()'s flush on interrupt.
+          if (this.turnDetectorStream !== undefined) {
+            this.turnDetectorStream.flush('turn committed');
+            this.turnDetectorPredictionFut = undefined;
+            this.turnDetectorFlushed = true;
+          }
+          this.resetTranscriptionTimeout();
         }
 
+        this.turnBackchannelOverAgent = false;
+        this.overlapInCurrentTurn = false;
         this.userTurnCommitted = false;
       };
 
     // cancel any existing EOU task
     this.bounceEOUTask?.cancel();
     // copy the values before awaiting (the values can change)
+    const lastSpeakingTime = this.lastSpeakingTime;
+    const lastFinalTranscriptTime = this.lastFinalTranscriptTime;
+    const speechStartTime = this.userTurnStart;
+
     this.bounceEOUTask = Task.from(
-      bounceEOUTask(this.lastSpeakingTime, this.lastFinalTranscriptTime, this.userTurnStart),
+      bounceEOUTask(lastSpeakingTime, lastFinalTranscriptTime, speechStartTime),
     );
 
     this.bounceEOUTask.result
@@ -1286,7 +1830,6 @@ export class AudioRecognition {
 
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;
-    this._inputStartedAt = undefined;
     this.sttOwnershipTransferred = false;
 
     const pipeline = this.sttPipeline;
@@ -1327,6 +1870,8 @@ export class AudioRecognition {
 
   private async forwardInputAudioToStt(pipeline: STTPipeline, signal: AbortSignal) {
     for await (const frame of readStream(this.sttInputStream, signal)) {
+      const frameDurationMs = (frame.samplesPerChannel / frame.sampleRate) * 1000;
+      pipeline.inputStartedAt ??= Date.now() - frameDurationMs;
       await pipeline.audioChannel.write(frame);
     }
   }
@@ -1368,9 +1913,18 @@ export class AudioRecognition {
               const ctx = this.userTurnContext(span);
               this.endpointing.onStartOfSpeech(startTime, this.isAgentSpeaking);
               this.interruptionDetected = undefined;
+              this.turnBackchannelOverAgent = false;
+              this.overlapInCurrentTurn = this.isAgentSpeaking;
               otelContext.with(ctx, () => this.hooks.onStartOfSpeech(ev));
             }
             this.speaking = true;
+            this.cancelTranscriptionTimeout();
+
+            // Audio EOT: tear down any in-flight inference for the now-stale
+            // prior window and re-arm so the next silence tick starts fresh.
+            this.turnDetectorStream?.cancelInference();
+            this.turnDetectorPredictionFut = undefined;
+            this.turnDetectorFlushed = false;
 
             // Capture sample rate from the first VAD event if not already set
             if (ev.frames.length > 0 && ev.frames[0]) {
@@ -1390,10 +1944,33 @@ export class AudioRecognition {
                 // ev.rawAccumulatedSpeech is in ms (VADEvent durations are all ms in TS).
                 this.speechStartTime = Date.now() - ev.rawAccumulatedSpeech;
               }
+              // A short intra-segment pause can resolve a request before VAD
+              // emits END_OF_SPEECH. When speech resumes (without a new SOS),
+              // drop that request so the next pause gets a fresh window.
+              if (this.speaking && this.turnDetectorPredictionFut !== undefined) {
+                this.turnDetectorStream?.cancelInference();
+                this.turnDetectorPredictionFut = undefined;
+              }
+            }
+
+            // Audio EOT: start an inference request once we've seen enough
+            // trailing silence (`MIN_SILENCE_DURATION_MS`), but only when no
+            // request is already in flight. The silence tick
+            // is the sole request trigger — and it warms even while the agent
+            // is speaking so an overlapping/interrupting turn still gets a
+            // window.
+            if (
+              ev.rawAccumulatedSilence >= MIN_SILENCE_DURATION_MS &&
+              this.speaking &&
+              this.turnDetectorStream !== undefined &&
+              this.turnDetectorPredictionFut === undefined
+            ) {
+              this.turnDetectorPredictionFut = this.turnDetectorStream.predict();
             }
             break;
           case VADEventType.END_OF_SPEECH:
             this.logger.debug('VAD task: END_OF_SPEECH');
+            const vadSpeechStarted = this.vadSpeechStarted;
             {
               const endTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
               const span = this.ensureUserTurnSpan();
@@ -1410,13 +1987,26 @@ export class AudioRecognition {
             // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
             this.vadSpeechStarted = false;
             this.speaking = false;
+            this.lastSpeakingTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
+
+            // A committed turn clears vadSpeechStarted before its late VAD EOS arrives.
+            if (this.sttPipeline !== undefined && vadSpeechStarted) {
+              this.armTranscriptionTimeout(
+                ev.speechDuration,
+                ev.silenceDuration + ev.inferenceDuration,
+              );
+            }
+
+            // Audio EOT: the silence tick owns request-starting, not
+            // END_OF_SPEECH. EOS consumes the already-armed future (if any)
+            // and runs the eou bounce.
 
             if (
               this.vadBaseTurnDetection ||
               (this.turnDetectionMode === 'stt' && this.userTurnCommitted)
             ) {
               const chatCtx = this.hooks.retrieveChatCtx();
-              this.runEOUDetection(chatCtx);
+              this.runEOUDetection(chatCtx, 'vad');
             }
             break;
         }
@@ -1427,6 +2017,14 @@ export class AudioRecognition {
       this.logger.debug('VAD task closed');
       if (this.vadStream === vadStream) {
         this.vadStream = undefined;
+      }
+
+      if (this.speaking) {
+        const span = this.ensureUserTurnSpan();
+        const ctx = this.userTurnContext(span);
+        otelContext.with(ctx, () => this.hooks.onEndOfSpeech(undefined));
+        this.speaking = false;
+        this.vadSpeechStarted = false;
       }
     }
   }
@@ -1478,13 +2076,6 @@ export class AudioRecognition {
               const { value, done } = res;
               if (done) break;
 
-              if (value instanceof AudioFrame) {
-                const frameDurationMs = (value.samplesPerChannel / value.sampleRate) * 1000;
-                this._inputStartedAt ??= Date.now() - frameDurationMs;
-              } else {
-                this._inputStartedAt ??= Date.now();
-              }
-
               await stream.pushFrame(value);
             }
           } finally {
@@ -1499,6 +2090,9 @@ export class AudioRecognition {
           if (!res) break;
           const { done, value: ev } = res;
           if (done) break;
+          // A healthy stream delivering events recovers the failover budget, so a later transient
+          // failure isn't charged against earlier ones.
+          numRetries = 0;
           this.onOverlapSpeechEvent(ev);
         }
         break;
@@ -1613,12 +2207,19 @@ export class AudioRecognition {
     this.speaking = false;
     this.userTurnCommitted = false;
     this.userTurnTracker = { words: 0, transcript: '' };
+    this.resetTranscriptionTimeout();
+    // New turn → allow the next window's prediction to emit.
+    this.lastEmittedEotPrediction = undefined;
 
-    if (this.userTurnSpan?.isRecording()) {
-      this.userTurnSpan.end();
+    // Any in-flight request on the audio stream belongs to the turn we
+    // just cleared — flush it so the next predict starts fresh.
+    if (this.turnDetectorStream !== undefined) {
+      this.turnDetectorStream.flush('clear_user_turn');
+      this.turnDetectorPredictionFut = undefined;
+      this.turnDetectorFlushed = true;
     }
-    this.userTurnSpan = undefined;
-    this.sttRequestIds = [];
+
+    this._endUserTurnSpan();
 
     const restartStt = async () => {
       const unlock = await this.sttLifecycleLock.lock();
@@ -1686,7 +2287,7 @@ export class AudioRecognition {
 
         const chatCtx = this.hooks.retrieveChatCtx();
         this.logger.debug('running EOU detection on commitUserTurn');
-        this.runEOUDetection(chatCtx);
+        this.runEOUDetection(chatCtx, 'manual');
         this.userTurnCommitted = true;
       };
 
@@ -1709,6 +2310,7 @@ export class AudioRecognition {
 
   async close() {
     this.closed = true;
+    this.overlapOpen = false;
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();
     await this.commitUserTurnTask?.cancelAndWait();
@@ -1733,35 +2335,90 @@ export class AudioRecognition {
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
+
+    if (this.turnDetectorStream !== undefined) {
+      const stream = this.turnDetectorStream;
+      this.turnDetectorStream = undefined;
+      await stream.aclose().catch(() => undefined);
+    }
+
     await this.interruptionStreamChannel?.close();
     this.cancelBackchannelBoundary();
+    // Cancel last, after the VAD consumer is torn down: a buffered
+    // END_OF_SPEECH processed earlier in close() can otherwise re-arm the timer.
+    this.cancelTranscriptionTimeout();
+
+    // A speech segment may never produce a transcript or committed turn. End
+    // its span after all recognition tasks stop so it is still exported.
+    this._endUserTurnSpan();
   }
 
-  private _endUserTurnSpan({
-    transcript,
-    confidence,
-    transcriptionDelay,
-    endOfUtteranceDelay,
-  }: {
+  private cancelTranscriptionTimeout(): void {
+    if (this.transcriptionTimeoutTimer !== undefined) {
+      clearTimeout(this.transcriptionTimeoutTimer);
+      this.transcriptionTimeoutTimer = undefined;
+    }
+  }
+
+  private resetTranscriptionTimeout(): void {
+    this.cancelTranscriptionTimeout();
+    this.turnSpeechDuration = 0;
+    this.turnTranscriptReceived = false;
+  }
+
+  private markTurnTranscribed(): void {
+    this.turnTranscriptReceived = true;
+    this.cancelTranscriptionTimeout();
+  }
+
+  private armTranscriptionTimeout(speechDuration: number, elapsedDelay: number): void {
+    if (this.closed) {
+      return;
+    }
+
+    if (this.transcriptionTimeout === undefined || this.turnTranscriptReceived) {
+      return;
+    }
+
+    this.turnSpeechDuration += speechDuration;
+    this.cancelTranscriptionTimeout();
+    const remainingTimeout = Math.max(0, this.transcriptionTimeout - elapsedDelay);
+    this.transcriptionTimeoutTimer = setTimeout(
+      () => this.onTranscriptionTimeout(),
+      remainingTimeout,
+    );
+  }
+
+  private onTranscriptionTimeout(): void {
+    this.transcriptionTimeoutTimer = undefined;
+    if (this.userTurnStart === undefined || this.turnTranscriptReceived) {
+      return;
+    }
+    this.hooks.onTranscriptionTimeout(this.turnSpeechDuration, this.userTurnStart);
+  }
+
+  private _endUserTurnSpan(info?: {
     transcript: string;
     confidence: number;
     transcriptionDelay: number;
     endOfUtteranceDelay: number;
   }): void {
-    if (this.userTurnSpan) {
+    if (this.userTurnSpan && info) {
       this.userTurnSpan.setAttributes({
-        [traceTypes.ATTR_USER_TRANSCRIPT]: transcript,
-        [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: confidence,
-        [traceTypes.ATTR_TRANSCRIPTION_DELAY]: transcriptionDelay,
-        [traceTypes.ATTR_END_OF_TURN_DELAY]: endOfUtteranceDelay,
+        [traceTypes.ATTR_USER_TRANSCRIPT]: info.transcript,
+        [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: info.confidence,
+        [traceTypes.ATTR_TRANSCRIPTION_DELAY]: info.transcriptionDelay,
+        [traceTypes.ATTR_END_OF_TURN_DELAY]: info.endOfUtteranceDelay,
       });
       if (this.sttRequestIds.length) {
         this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
       }
-      this.userTurnSpan.end();
-      this.userTurnSpan = undefined;
-      this.userTurnStart = undefined;
     }
+    if (this.userTurnSpan?.isRecording()) {
+      this.userTurnSpan.end();
+    }
+    this.userTurnSpan = undefined;
+    this.userTurnStart = undefined;
     this.sttRequestIds = [];
   }
 

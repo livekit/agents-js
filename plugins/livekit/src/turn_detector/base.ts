@@ -231,8 +231,11 @@ export abstract class EOUModel {
     return (await this.unlikelyThreshold(language)) !== undefined;
   }
 
+  // `_timeoutMs` is part of the unified `_TurnDetector` contract (milliseconds,
+  // matching the audio EOT detector). Text-based inference is bounded by the IPC
+  // executor itself, so this detector does not use the value.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async predictEndOfTurn(chatCtx: llm.ChatContext, timeout: number = 3): Promise<number> {
+  async predictEndOfTurn(chatCtx: llm.ChatContext, _timeoutMs?: number): Promise<number> {
     let messages: RawChatItem[] = [];
 
     for (const message of chatCtx.items) {
@@ -241,13 +244,12 @@ export abstract class EOUModel {
         continue;
       }
 
-      for (const content of message.content) {
-        if (typeof content === 'string') {
-          messages.push({
-            role: message.role === 'assistant' ? 'assistant' : 'user',
-            content: content,
-          });
-        }
+      const content = message.textContent;
+      if (content) {
+        messages.push({
+          role: message.role === 'assistant' ? 'assistant' : 'user',
+          content,
+        });
       }
     }
 

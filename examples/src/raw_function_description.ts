@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -11,15 +10,14 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 
 function createRawFunctionAgent() {
   return new voice.Agent({
     instructions: 'You are a helpful assistant.',
-    tools: {
-      openGate: llm.tool({
+    tools: [
+      llm.tool({
+        name: 'openGate',
         description: 'Opens a specified gate from a predefined set of access points.',
         parameters: {
           type: 'object',
@@ -43,19 +41,13 @@ function createRawFunctionAgent() {
           return `The gate ${gateId} is now open.`;
         },
       }),
-    },
+    ],
   });
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
-    const vad = ctx.proc.userData.vad! as silero.VAD;
-
     const session = new voice.AgentSession({
-      vad,
       stt: new inference.STT({
         model: 'deepgram/nova-3',
         language: 'en',
@@ -68,7 +60,6 @@ export default defineAgent({
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       userData: { number: 0 },
-      turnDetection: new livekit.turnDetector.EnglishModel(),
     });
 
     await session.start({

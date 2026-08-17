@@ -44,7 +44,7 @@ export const wsFunctionCallItemSchema = z.object({
 
 export const wsOutputItemSchema = z.discriminatedUnion('type', [
   wsFunctionCallItemSchema,
-  z.object({ type: z.literal('message') }).passthrough(),
+  z.object({ type: z.literal('message'), phase: z.string().optional() }).passthrough(),
   z.object({ type: z.literal('reasoning') }).passthrough(),
   z.object({ type: z.literal('file') }).passthrough(),
   z.object({ type: z.literal('computer_call') }).passthrough(),
@@ -101,6 +101,8 @@ export const wsResponseFailedEventSchema = z.object({
 export const wsErrorEventSchema = z.object({
   type: z.literal('error'),
   status: z.number().optional(),
+  code: z.string().optional(),
+  param: z.string().optional(),
   error: z
     .object({
       type: z.string().optional(),

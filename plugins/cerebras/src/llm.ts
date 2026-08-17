@@ -22,7 +22,7 @@ export interface LLMOptions {
 }
 
 const defaultLLMOptions: LLMOptions = {
-  model: 'llama-4-scout-17b-16e-instruct',
+  model: 'gpt-oss-120b',
   baseURL: 'https://api.cerebras.ai/v1',
   gzipCompression: true,
   msgpackEncoding: true,
@@ -75,6 +75,7 @@ export class LLM extends OpenAILLM {
       merged.client = new OpenAI({
         apiKey: merged.apiKey,
         baseURL: merged.baseURL,
+        maxRetries: 0,
         fetch: createCompressedFetch({
           useMsgpack: merged.msgpackEncoding ?? true,
           useGzip: merged.gzipCompression ?? true,

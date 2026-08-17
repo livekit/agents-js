@@ -6,8 +6,14 @@ import type { Room } from '@livekit/rtc-node';
 import { TrackKind } from '@livekit/rtc-node';
 import { AccessToken, type VideoGrant } from 'livekit-server-sdk';
 import { AnamAPI } from './api.js';
-import { type APIConnectOptions, AnamException, type PersonaConfig } from './types.js';
+import {
+  type APIConnectOptions,
+  AnamException,
+  type PersonaConfig,
+  type SessionOptions,
+} from './types.js';
 
+/** @public */
 export async function mintAvatarJoinToken({
   roomName,
   avatarIdentity,
@@ -37,12 +43,14 @@ export async function mintAvatarJoinToken({
 const AVATAR_IDENTITY = 'anam-avatar-agent';
 const _AVATAR_NAME = 'anam-avatar-agent';
 
+/** @public */
 export class AvatarSession extends voice.AvatarSession {
   private sessionId?: string;
 
   constructor(
     private opts: {
       personaConfig: PersonaConfig;
+      sessionOptions?: SessionOptions;
       apiUrl?: string;
       apiKey?: string;
       avatarParticipantIdentity?: string;
@@ -91,6 +99,7 @@ export class AvatarSession extends voice.AvatarSession {
       {
         personaName: this.opts.personaConfig?.name,
         avatarId: this.opts.personaConfig?.avatarId,
+        personaId: this.opts.personaConfig?.personaId,
         apiUrl: apiUrl ?? '(default https://api.anam.ai)',
         livekitUrl,
         avatarParticipantIdentity: this.opts.avatarParticipantIdentity ?? 'anam-avatar-agent',
@@ -111,12 +120,10 @@ export class AvatarSession extends voice.AvatarSession {
     logger.debug({ livekitUrl }, 'requesting Anam session token');
 
     const { sessionToken } = await anam.createSessionToken({
-      personaConfig: {
-        name: this.opts.personaConfig?.name,
-        avatarId: this.opts.personaConfig?.avatarId,
-      },
+      personaConfig: this.opts.personaConfig,
       livekitUrl,
       livekitToken: jwt,
+      sessionOptions: this.opts.sessionOptions,
     });
     logger.debug('starting Anam engine session');
     const started = await anam.startEngineSession({ sessionToken });

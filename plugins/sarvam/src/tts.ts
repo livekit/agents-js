@@ -563,6 +563,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (this.abortController.signal.aborted) break;
 
         const text = event.token;
+        this.markStarted();
         await sendWsJson(ws, { type: 'text', data: { text } }, this.abortController.signal);
       }
 

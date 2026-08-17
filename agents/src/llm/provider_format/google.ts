@@ -31,8 +31,8 @@ export async function toChatCtx(
 
   for (const msg of flattenedItems) {
     // Handle system messages separately
-    if (msg.type === 'message' && msg.role === 'system' && msg.textContent) {
-      systemMessages.push(msg.textContent);
+    if (msg.type === 'message' && msg.role === 'system' && msg.rawTextContent) {
+      systemMessages.push(msg.rawTextContent);
       continue;
     }
 

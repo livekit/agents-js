@@ -22,7 +22,7 @@ describe('DynamicEndpointing', () => {
     expect(endpointing.minDelay).toBeCloseTo(350);
   });
 
-  it('updates maxDelay from pauses before a new turn', () => {
+  it('does not change fixed maxDelay from pauses before a new turn', () => {
     const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000, alpha: 0.5 });
 
     endpointing.onEndOfSpeech(100_000);
@@ -30,7 +30,41 @@ describe('DynamicEndpointing', () => {
     endpointing.onStartOfSpeech(101_500);
     endpointing.onEndOfSpeech(102_000);
 
-    expect(endpointing.maxDelay).toBeCloseTo(800);
+    expect(endpointing.maxDelay).toBeCloseTo(1000);
+  });
+
+  it('keeps maxDelay at the configured value regardless of observed pauses', () => {
+    const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000, alpha: 1 });
+
+    endpointing.onEndOfSpeech(100_000);
+    endpointing.onStartOfAgentSpeech(102_000);
+    endpointing.onStartOfSpeech(105_000);
+    endpointing.onEndOfSpeech(105_500);
+
+    expect(endpointing.maxDelay).toBeCloseTo(1000);
+  });
+
+  it('clamps minDelay to the fixed maxDelay ceiling', () => {
+    const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000 });
+
+    endpointing.updateOptions({ minDelay: 1500 });
+
+    expect(endpointing.minDelay).toBeCloseTo(1000);
+    expect(endpointing.maxDelay).toBeCloseTo(1000);
+  });
+
+  it('clamps an already-learned minDelay when maxDelay is lowered', () => {
+    const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000, alpha: 0.5 });
+
+    endpointing.onEndOfSpeech(100_000);
+    endpointing.onStartOfSpeech(101_000);
+    endpointing.onEndOfSpeech(101_500);
+    expect(endpointing.minDelay).toBeCloseTo(650);
+
+    endpointing.updateOptions({ maxDelay: 500 });
+
+    expect(endpointing.minDelay).toBeCloseTo(500);
+    expect(endpointing.maxDelay).toBeCloseTo(500);
   });
 
   it('skips updates for ignored overlapping speech outside the grace period', () => {
@@ -57,12 +91,52 @@ describe('DynamicEndpointing', () => {
 
     expect(endpointing.minDelay).toBeCloseTo(500);
 
-    endpointing.onEndOfSpeech(101_000);
-    endpointing.onStartOfAgentSpeech(102_800);
-    endpointing.onStartOfSpeech(103_500);
+    expect(endpointing.maxDelay).toBeCloseTo(2000);
+  });
 
-    expect(endpointing.maxDelay).toBeGreaterThan(1000);
-    expect(endpointing.maxDelay).toBeLessThanOrEqual(2000);
+  it('leaves delays unchanged for delayed interruptions', () => {
+    const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000, alpha: 0.5 });
+
+    endpointing.onEndOfSpeech(100_000);
+    endpointing.onStartOfAgentSpeech(100_900);
+    endpointing.onStartOfSpeech(101_800);
+    endpointing.onEndOfSpeech(102_000);
+
+    expect(endpointing.minDelay).toBeCloseTo(300);
+    expect(endpointing.maxDelay).toBeCloseTo(1000);
+  });
+
+  it('leaves delays unchanged when the next user turn starts after agent speech ends', () => {
+    const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000, alpha: 0.5 });
+
+    endpointing.onEndOfSpeech(100_000);
+    endpointing.onStartOfAgentSpeech(100_600);
+    endpointing.onEndOfAgentSpeech(101_200);
+    const previousMinDelay = endpointing.minDelay;
+    const previousMaxDelay = endpointing.maxDelay;
+
+    endpointing.onStartOfSpeech(101_500);
+    endpointing.onEndOfSpeech(102_000);
+
+    expect(endpointing.minDelay).toBe(previousMinDelay);
+    expect(endpointing.maxDelay).toBe(previousMaxDelay);
+  });
+
+  it('updates alpha in place without resetting learned state', () => {
+    const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000, alpha: 0.5 });
+
+    endpointing.onEndOfSpeech(100_000);
+    endpointing.onStartOfSpeech(101_000);
+    endpointing.onEndOfSpeech(101_500);
+    const learnedMinDelay = endpointing.minDelay;
+    expect(learnedMinDelay).toBeCloseTo(650);
+
+    endpointing.updateOptions({ alpha: 0.2 });
+
+    expect(endpointing.minDelay).toBeCloseTo(learnedMinDelay);
+    endpointing.onStartOfSpeech(102_500);
+    endpointing.onEndOfSpeech(103_000);
+    expect(endpointing.minDelay).toBeCloseTo(930);
   });
 });
 

@@ -45,8 +45,9 @@ Response rules:
 - After ordering, confirm what was added (e.g., "I've added the burger to your order").
 - When asked about sizes, always ask for clarification if not specified.
 - Be friendly and proactive in suggesting next steps.`,
-      tools: {
-        getWeather: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'getWeather',
           description: 'Get the current weather for a location',
           parameters: z.object({
             location: z.string().describe('The city name'),
@@ -59,14 +60,16 @@ Response rules:
             });
           },
         }),
-        getCurrentTime: llm.tool({
+        llm.tool({
+          name: 'getCurrentTime',
           description: 'Get the current time',
           parameters: z.object({}),
           execute: async () => {
             return '3:00 PM';
           },
         }),
-        orderItem: llm.tool({
+        llm.tool({
+          name: 'orderItem',
           description: 'Add an item to the order',
           parameters: z.object({
             itemId: z.string().describe('The menu item ID'),
@@ -84,7 +87,8 @@ Response rules:
             });
           },
         }),
-        getOrderStatus: llm.tool({
+        llm.tool({
+          name: 'getOrderStatus',
           description: 'Get the current order status',
           parameters: z.object({}),
           execute: async () => {
@@ -98,7 +102,8 @@ Response rules:
             });
           },
         }),
-        getMenuItems: llm.tool({
+        llm.tool({
+          name: 'getMenuItems',
           description: 'Get available menu items and prices',
           parameters: z.object({
             category: z
@@ -128,7 +133,7 @@ Response rules:
             return JSON.stringify(menu);
           },
         }),
-      },
+      ],
     });
   }
 }

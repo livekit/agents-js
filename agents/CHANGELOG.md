@@ -1,5 +1,647 @@
 # @livekit/agents
 
+## 1.6.4
+
+### Patch Changes
+
+- Preserve spaces in Cartesia inference TTS aligned transcripts. - [#2285](https://github.com/livekit/agents-js/pull/2285) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Commit completed tool outputs before starting the post-tool reply so overlapping turns cannot reuse stale preemptive generations. Preserve tool completion timestamps, pair tool-error outputs with their calls, and normalize unparseable call arguments before saving them. - [#2261](https://github.com/livekit/agents-js/pull/2261) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add an optional `transcriptionTimeout` session option and a `user_transcription_timeout` event, emitted for VAD speech that produces no final transcript. - [#2208](https://github.com/livekit/agents-js/pull/2208) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.6.3
+
+### Patch Changes
+
+- Include resolved recording options under session report options instead of as a top-level field. - [#2274](https://github.com/livekit/agents-js/pull/2274) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Use the active agent endpointing delay while holding pending replies during user speech. - [#2276](https://github.com/livekit/agents-js/pull/2276) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Default null token counts in OpenAI-compatible streaming usage payloads to zero. - [#2250](https://github.com/livekit/agents-js/pull/2250) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `ChatContext.remove()` for removing chat items by item or ID. - [#1963](https://github.com/livekit/agents-js/pull/1963) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix: wait 100ms before the first retry, not 0.1ms - [#2219](https://github.com/livekit/agents-js/pull/2219) ([@u9g](https://github.com/u9g))
+
+  `intervalForRetry` returned `0.1` for the first retry — Python's 0.1 _seconds_, carried over
+  without converting to the milliseconds every caller passes to `setTimeout`/`delay`. Its other
+  branch returns `retryIntervalMs`, so the two return paths were in different units. Measured,
+  the first retry waited ~3ms (scheduling overhead alone) against Python's 100ms.
+
+  This affects every retrying component — LLM, STT, TTS, avatars, and the turn-detector
+  transport — where a first retry reattempted essentially instantly.
+
+- Expose prompt-cache creation token counts in LLM metrics and model usage. - [#2257](https://github.com/livekit/agents-js/pull/2257) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(inference): keep a stream retryable until it emits generation - [#2219](https://github.com/livekit/agents-js/pull/2219) ([@u9g](https://github.com/u9g))
+
+  `retryable` was cleared by any chunk reaching the caller, including ones that carry no
+  output: a usage block, or provider metadata such as the LiveKit inference gateway's
+  deployment/tier stamp or a Gemini thought signature. The gateway stamps its leading
+  (contentless) delta, so every streamed response went unretryable from its first chunk — a
+  mid-stream stall then failed the turn outright rather than retrying, with nothing generated
+  and nothing for a retry to duplicate. Only failures landing before the very first chunk
+  still recovered.
+
+  `retryable` is now cleared on text or a tool call, the output a retry would actually repeat.
+
+- fix(llm): measure ttft against generation, not the first chunk to arrive - [#2219](https://github.com/livekit/agents-js/pull/2219) ([@u9g](https://github.com/u9g))
+
+  The time-to-first-token clock started on whatever chunk arrived first. That was harmless
+  while a stream went unretryable at its first chunk, because a retry then implied nothing had
+  arrived. Now that a contentless chunk keeps a stream retryable, the metadata chunk of a
+  _failed_ attempt starts the clock, and the turn reports a near-zero ttft for a wait that
+  spanned a stall and a retry — so retried turns read as faster than a normal one rather than
+  slower.
+
+  The clock now starts on generation, in both the metrics monitor and the voice pipeline's
+  span. A response that generates nothing continues to report `ttftMs` as -1.
+
+- Support low-priority LiveKit inference requests. - [#2268](https://github.com/livekit/agents-js/pull/2268) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add expressive mode: `AgentSession({ expressive: true })` injects the TTS provider's markup guide into the LLM prompt so the model emits inline `<expr/>` delivery markers (emotion, pacing, non-verbal sounds). The markers are lowered to each provider's native syntax before synthesis (Cartesia, Inworld TTS 2, xAI, Fish Audio) and stripped from transcripts, with the segment's leading expression surfaced as the `lk.expression` transcription attribute. Steer delivery with `ExpressiveOptions.speechSteering` or override the injected prompt entirely. - [#2267](https://github.com/livekit/agents-js/pull/2267) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Fix worker cleanup after LiveKit connection retries are exhausted. - [#1889](https://github.com/livekit/agents-js/pull/1889) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Avoid throwing when interrupting protected speech that was already interrupted or completed. - [#2252](https://github.com/livekit/agents-js/pull/2252) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Hold pending agent replies when user speech overlaps their playout launch. - [#2263](https://github.com/livekit/agents-js/pull/2263) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(agents): stop a terminally failed stream leaving an unhandled rejection - [#2219](https://github.com/livekit/agents-js/pull/2219) ([@u9g](https://github.com/u9g))
+
+  `LLMStream` and `STTStream` dropped the promise from their fire-and-forget main task, so a
+  stream that exhausted its retries rejected with no handler attached — reaching the job
+  process's `unhandledRejection` hook as a spurious crash report for a failure already
+  delivered through the `error` event, and failing any test run that exercises the path.
+
+  The task is now awaited inside a `try`/`finally` that closes the queue either way, matching
+  what `TTSStream` already does.
+
+- Avoid dropping realtime turns or resuming agent speech before a paused turn decision settles. - [#2204](https://github.com/livekit/agents-js/pull/2204) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  A turn decision that is cancelled no longer resumes the paused speech, and one that fails no
+  longer leaves the agent's audio output paused indefinitely.
+
+- Keep defaulted const fields non-nullable in strict tool schemas. - [#2262](https://github.com/livekit/agents-js/pull/2262) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Stop interrupting queued speech at the first live speech that disallows interruptions, preserving - [#2251](https://github.com/livekit/agents-js/pull/2251) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+  it and the queued speech behind it.
+
+- Strip markdown emphasis from CJK, kana, Thai, and Korean text before TTS. - [#2175](https://github.com/livekit/agents-js/pull/2175) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix: omit interruption telemetry from normal user turns - [#2265](https://github.com/livekit/agents-js/pull/2265) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+## 1.6.2
+
+### Patch Changes
+
+- Forward agent false interruption events through remote sessions. - [#2214](https://github.com/livekit/agents-js/pull/2214) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Apply tool defaults when models return null sentinels for defaulted schema fields. - [#2150](https://github.com/livekit/agents-js/pull/2150) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Keep audio input mute independent of overridable attach hooks - [#2232](https://github.com/livekit/agents-js/pull/2232) ([@toubatbrian](https://github.com/toubatbrian))
+
+  `AgentInput` now flips mute via `AudioInput.setAttached()` before calling `onAttached`/`onDetached`, and `ParticipantAudioInputStream` gates on that state. Subclasses that override lifecycle hooks without `super` no longer silently break hold mute.
+
+- Prewarm LLM provider connections before the first inference request. - [#2106](https://github.com/livekit/agents-js/pull/2106) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Stop forwarding participant audio while agent input is disabled. - [#2222](https://github.com/livekit/agents-js/pull/2222) ([@dtran26](https://github.com/dtran26))
+
+- Disable the default AEC warmup for outbound SIP calls while preserving explicit settings. - [#2202](https://github.com/livekit/agents-js/pull/2202) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Commit realtime tool call outputs to the agent chat context. Previously the realtime path only sent them to the provider and to `session.history`, leaving `agent.chatCtx` with function calls that had no matching outputs — which broke action-aware history summarization and agent handoff merges. - [#2230](https://github.com/livekit/agents-js/pull/2230) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Reuse preemptive generations when final transcripts differ only in formatting. - [#2209](https://github.com/livekit/agents-js/pull/2209) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.6.1
+
+### Patch Changes
+
+- Add cloud agent id and deployment to telemetry resource attributes (`lk.cloud_agent_id` / `lk.deployment_id`) when running on LiveKit Cloud. - [#2137](https://github.com/livekit/agents-js/pull/2137) ([@jmcclanahan](https://github.com/jmcclanahan))
+
+- Let the inference gateway mint avatar worker tokens instead of signing them locally. - [#2152](https://github.com/livekit/agents-js/pull/2152) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): defer interim transcript interruptions to local VAD when configured - [#2159](https://github.com/livekit/agents-js/pull/2159) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Deprecate direct dev mode in favor of `lk agent dev`. - [#2194](https://github.com/livekit/agents-js/pull/2194) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): stop an interrupted reply from muting the session forever - [#2127](https://github.com/livekit/agents-js/pull/2127) ([@toubatbrian](https://github.com/toubatbrian))
+
+  A reply interrupted before its audio started playing could leave its pipeline reply task
+  parked in the post-interrupt `waitForPlayout()`, which races only the reply's own abort
+  signal — a signal nothing on the ordinary interrupt path ever fires. The speech scheduling
+  loop waits on that reply's generation, so `_currentSpeech` stayed pinned on the interrupted
+  handle and every later turn was queued but never authorized: the agent went silent for the
+  rest of the session. On the evidence so far this needs an audio sink whose playback-finished
+  event the pipeline does not produce itself — remote avatar outputs (`DataStreamAudioOutput`
+  and the avatar plugins built on it) and user-supplied `AudioOutput`s; a plain room output
+  settled both of the affected waits on its own across six live runs.
+
+  `SpeechHandle` now arms a 5s watchdog when a speech is interrupted (a port of python's
+  `INTERRUPTION_TIMEOUT`): if the speech has not finished by then, its tasks are cancelled —
+  firing exactly the abort signal those waits are already watching — and the handle is marked
+  done, releasing the scheduler.
+
+  Fixes #2065.
+
+- Send turn finalization messages when flushing streaming STT with no buffered audio. - [#2172](https://github.com/livekit/agents-js/pull/2172) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve concrete STT language hints when later transcripts report non-specific language codes. - [#2149](https://github.com/livekit/agents-js/pull/2149) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix realtime user turns appearing after the reply they prompted, by placing the user message at the time its turn began rather than at the time the provider delivered the transcript - [#2165](https://github.com/livekit/agents-js/pull/2165) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Report speech onset immediately when an inference STT provider detects it server-side. - [#2182](https://github.com/livekit/agents-js/pull/2182) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- stamp a tool call's `createdAt` when its execution begins rather than when it was parsed off the model stream, so it no longer sorts ahead of the assistant message that requested it - [#2171](https://github.com/livekit/agents-js/pull/2171) ([@u9g](https://github.com/u9g))
+
+- Avoid emitting `playbackStarted` again when room audio resumes mid-segment. - [#2184](https://github.com/livekit/agents-js/pull/2184) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Report word-aligned transcripts only when the inference STT model and every fallback are verified - [#2181](https://github.com/livekit/agents-js/pull/2181) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+  to provide word timings.
+
+- Handle list-shaped content parts in streamed LLM deltas when stripping thinking tokens. - [#2188](https://github.com/livekit/agents-js/pull/2188) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Type Cartesia turn-detection parameters in inference STT model options. - [#2173](https://github.com/livekit/agents-js/pull/2173) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- chore(deps): update @livekit/rtc-node to 0.13.33 - [#2191](https://github.com/livekit/agents-js/pull/2191) ([@theomonnom](https://github.com/theomonnom))
+
+  Picks up livekit-ffi 0.12.73 and a fix for the dual package hazard (livekit/node-sdks#700, livekit/node-sdks#698).
+
+## 1.6.0
+
+### Minor Changes
+
+- Require OpenTelemetry JS SDK 2.x and experimental packages 0.2xx. Migrate resources to - [#2105](https://github.com/livekit/agents-js/pull/2105) ([@davidzhao](https://github.com/davidzhao))
+  `resourceFromAttributes`, configure processors with `spanProcessors`, and pass
+  `registerSpanProcessor` when using a custom tracer provider.
+
+### Patch Changes
+
+- Include agent identity in telemetry resource attributes: stamp `lk.agent_name` when the job carries an agent name, and honor `OTEL_RESOURCE_ATTRIBUTES` (via the standard env detector) so environment-provided resource attributes reach cloud tracing. - [#2110](https://github.com/livekit/agents-js/pull/2110) ([@jmcclanahan](https://github.com/jmcclanahan))
+
+- Add agent-simulation support: resolve the scenario dispatch from the job's `lk.simulator.dispatch` attribute into a `SimulationContext`, end the job when the simulator participant leaves, run the new `defineAgent` `onSimulationEnd` callback on `finalizeSimulation`, and disable STT/TTS/VAD and audio I/O under text simulations. - [#2075](https://github.com/livekit/agents-js/pull/2075) ([@u9g](https://github.com/u9g))
+
+- Expose realtime provider response IDs on assistant message metrics as `providerRequestIds`. - [#2084](https://github.com/livekit/agents-js/pull/2084) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix a deadlock where a recorder-wrapped audio output could leave `waitForPlayout` stranded when - [#2114](https://github.com/livekit/agents-js/pull/2114) ([@toubatbrian](https://github.com/toubatbrian))
+  an interrupt arrived before the recorder had registered its segment. `RecorderAudioOutput` now
+  registers its own segment before forwarding a frame downstream, and attributes each playback
+  finish to the segment it belongs to instead of relying on a global counter.
+
+  A recorded segment is also timestamped when it opens rather than when the wrapped output accepts
+  its first frame, so a finish that lands while that frame is parked no longer clamps the segment's
+  playback position to zero and drop the audio the sink reported as played. And a segment whose
+  downstream capture throws now releases the capture latch on both the recorder and the wrapped
+  output, so a caller that retries after a transient rejection is no longer rejected forever with
+  `recorder capture has no active segment`.
+
+  A finish reported by the wrapped output settles its segment whether or not the recorder has been
+  flushed. The `AudioOutput` contract lets a sink report a finish as soon as its playout ends, and
+  `TranscriptionSynchronizer` does exactly that when it reconciles a dropped segment from
+  `waitForPlayout`, so requiring a flush first would strand the caller.
+
+  `waitForPlayout` no longer depends on a flush either. A segment the wrapped output never counted
+  is settled once that output reports its own playout complete, since at that point no finish can
+  ever arrive for it. Waiting for a flush instead only worked because `performAudioForwarding` — the
+  one thing that captures frames — happens to flush in a `finally`; a caller that waited without
+  flushing hung forever.
+
+  Behavior change: `waitForPlayout` now blocks while a frame is still in flight inside the wrapped
+  output. Previously it could return immediately with a fabricated
+  `{ playbackPosition: 0, interrupted: false }`, reporting a turn as completed while its audio had
+  not been handed to the sink yet. Callers that relied on the early return will now wait for the
+  real playback result.
+
+- Add Fish Audio model and option types to inference TTS. - [#2102](https://github.com/livekit/agents-js/pull/2102) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Support adaptive interruption gating for realtime models without server-side turn detection. - [#2099](https://github.com/livekit/agents-js/pull/2099) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `inference.AvatarSession` for provisioning avatar sessions through the LiveKit Inference gateway. - [#2101](https://github.com/livekit/agents-js/pull/2101) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Use required tool choice for message judge LLM calls. - [#2128](https://github.com/livekit/agents-js/pull/2128) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Allow failed inference avatar provisioning to be retried safely without duplicate provider sessions or cleanup callbacks, fall back to the connected room SID when dispatch metadata omits it, refresh gateway authentication across retries, and preserve the avatar audio output in RoomIO so synchronized transcription and avatar playback share the same output. - [#2103](https://github.com/livekit/agents-js/pull/2103) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Do not drop realtime replies when the pre-reply chat context update times out. - [#2083](https://github.com/livekit/agents-js/pull/2083) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix updateAgent handoffs so run() captures onEnter output without waiting indefinitely on long-lived onEnter flows. - [#2098](https://github.com/livekit/agents-js/pull/2098) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.5.5
+
+### Patch Changes
+
+- Default AMD to wait for endpointing backstop before settling after speech. - [#2089](https://github.com/livekit/agents-js/pull/2089) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Prevent interrupted voice replies from deadlocking when audio recording wraps synchronized playout. - [#2091](https://github.com/livekit/agents-js/pull/2091) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add raw chat message text access and strip LiveKit expression markup from assistant text content. - [#2087](https://github.com/livekit/agents-js/pull/2087) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve custom OpenTelemetry tracer providers when LiveKit Cloud tracing is enabled, and support sharing an OpenTelemetry 2.x provider with LiveKit Cloud via the `registerSpanProcessor` and `createCloudSpanProcessor` options of `setTracerProvider` together with the new `FanoutSpanProcessor` helper. - [#2051](https://github.com/livekit/agents-js/pull/2051) ([@dtran26](https://github.com/dtran26))
+
+- Prevent in-flight tool calls from being re-issued on later turns and preserve completed tool outputs when a turn is interrupted. - [#2077](https://github.com/livekit/agents-js/pull/2077) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(stt): propagate fallback stream start offset - [#1928](https://github.com/livekit/agents-js/pull/1928) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add job, simulation, and redaction telemetry metadata to session recording uploads. - [#2079](https://github.com/livekit/agents-js/pull/2079) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.5.4
+
+### Patch Changes
+
+- Skip warning when avatar participant removal finds no participant in the room. - [#2072](https://github.com/livekit/agents-js/pull/2072) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- End uncommitted `user_turn` spans when audio recognition closes so speech detected without a transcript is still exported to observability. - [#2062](https://github.com/livekit/agents-js/pull/2062) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Keep dynamic endpointing maxDelay fixed while learning minDelay. - [#2073](https://github.com/livekit/agents-js/pull/2073) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Include function names in remote session function call output protos. - [#2078](https://github.com/livekit/agents-js/pull/2078) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Reset the user-away timer when a final STT transcript arrives while the user and agent are listening. - [#2063](https://github.com/livekit/agents-js/pull/2063) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Respect `outputOptions.audioPublishOptions` when publishing the agent's audio track. `ParticipantAudioOutput.publishTrack()` previously ignored the configured `trackPublishOptions` and always published with hardcoded defaults, making it impossible to disable DTX/RED on the output track. - [#2076](https://github.com/livekit/agents-js/pull/2076) ([@adaro](https://github.com/adaro))
+
+- Strip Gemma reasoning markers from streamed inference output. - [#2071](https://github.com/livekit/agents-js/pull/2071) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add an optional `roomName` option to `WarmTransferTask`, allowing the human-agent briefing room to be pre-created with custom configuration (e.g. an egress request to record the transfer leg) before the task dials the human agent. - [#2056](https://github.com/livekit/agents-js/pull/2056) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.5.3
+
+### Patch Changes
+
+- Export the `AudioInput` base class from the `voice` module so plugins and applications can implement custom agent audio inputs. - [#2036](https://github.com/livekit/agents-js/pull/2036) ([@aweitz](https://github.com/aweitz))
+
+- Commit the in-flight assistant turn (interrupted: true, partially-forwarded text) when the session closes mid-playout — previously a room disconnect during playback dropped the turn from chatCtx entirely, with no ConversationItemAdded emitted (#2041) - [#2042](https://github.com/livekit/agents-js/pull/2042) ([@Sarfaraz85](https://github.com/Sarfaraz85))
+
+- Restart chunked TTS retries with a fresh attempt queue so retried synthesis uses a fresh request ID and does not write to a closed failed-attempt queue. - [#1994](https://github.com/livekit/agents-js/pull/1994) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Honor `ToolFlag.IGNORE_ON_ENTER` for tools nested inside `Toolset`s. - [#2011](https://github.com/livekit/agents-js/pull/2011) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix modality-aware instruction templates to collapse identical variants and avoid duplicate rendered output. - [#2030](https://github.com/livekit/agents-js/pull/2030) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): stop dropping agent turns whose playback starts after audio forwarding completes (#1909, #1960; port of livekit/agents#5039). - [#1966](https://github.com/livekit/agents-js/pull/1966) ([@toubatbrian](https://github.com/toubatbrian))
+
+  `forwardAudio` used to reject `firstFrameFut` (and detach its `PLAYBACK_STARTED` listener) in its `finally` block whenever no frame had played by the time forwarding finished. Two real scenarios hit this window: a speech paused in the thinking state by a brief user sound, whose buffered first frame only plays after the false interruption clears (#1909), and DataStream avatar outputs with `waitPlaybackStart: true`, which deliver `lk.playback_started` ~1s after frames were captured (#1960). In both cases the late playback-started event found nothing listening, the reply was classified "skipped", and the turn was silently removed from the chat context while the agent never entered the `speaking` state.
+
+  The `PLAYBACK_STARTED` listener now lives in `performAudioForwarding` so it outlives the forwarding task, and `forwardAudio` no longer settles the future; the reply tasks (including the `say()` path) settle it once the playout window ends, which also detaches the listener. A reported non-zero playback position on interruption is additionally honored as evidence of partial playback — but only when the segment actually captured a frame into the output (tracked via the output's segment count, which is also what makes the reported position fresh rather than stale) — covering avatars whose playback-started RPC races the interruption itself.
+
+- Preserve partial LLM response telemetry and generated function calls on every inference exit path. - [#2048](https://github.com/livekit/agents-js/pull/2048) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(voice): stop RecorderIO from dropping the final agent speech at session teardown. A force-interrupted shutdown marks the current speech done before playout settles, so the recorder could close and fence out the in-flight playbackFinished flush, silently losing the last agent turn and trailing mic audio from the recording. RecorderIO.close() now waits (bounded) for the pending playback event — which carries the authoritative playback position — before fencing, flushes any input captured since the last write, and warns if unflushed agent audio had to be dropped. - [#2037](https://github.com/livekit/agents-js/pull/2037) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Deprecate the `nativeTranscriptSync` realtime model capability while preserving its existing transcript synchronization behavior for third-party models. Remove Phonic's redundant explicit opt-out now that it uses `stream_ahead_of_real_time` mode. - [#2044](https://github.com/livekit/agents-js/pull/2044) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Avoid splitting streamed replacement output mid-word when no replacement key prefix is pending. - [#2050](https://github.com/livekit/agents-js/pull/2050) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add a beta DTMF sending tool that publishes to the active agent session room. - [#2010](https://github.com/livekit/agents-js/pull/2010) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `speed` to xAI TTS inference options. - [#2028](https://github.com/livekit/agents-js/pull/2028) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.5.2
+
+## 1.5.1
+
+### Patch Changes
+
+- Replace @ffmpeg-installer/ffmpeg with @livekit/av, LiveKit's own minimal LGPL FFmpeg build shipped as platform-specific npm packages. - [#1999](https://github.com/livekit/agents-js/pull/1999) ([@u9g](https://github.com/u9g))
+
+- Conversation-aware STT recognition (keyterms + chat context), ported from python livekit-agents PR #6039. Adds `keytermsOptions` on `AgentSession` with static `keyterms` and LLM-based `keytermDetection` (confirmation-gated), new `STTCapabilities.keyterms`/`chatContext` flags with `_updateSessionKeyterms()`/`_pushConversationItem()` hooks (forwarded by the fallback and stream adapters), keyterm support for deepgram (v1/v2), assemblyai, and livekit inference STT, and native conversation-context carryover (`agentContextCarryover`) for assemblyai u3-rt-pro. - [#1967](https://github.com/livekit/agents-js/pull/1967) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Disable OpenAI SDK retries for LiveKit inference and OpenAI SDK-based plugin requests. - [#1981](https://github.com/livekit/agents-js/pull/1981) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Export the `AnonFunctionTool` type so callers can annotate return types for name-less `tool()` factories used in object-map tool registration. - [#2014](https://github.com/livekit/agents-js/pull/2014) ([@jonh-1](https://github.com/jonh-1))
+
+- Fix duplicated user chat items in observability: a superseding EOU bounce created while an earlier bounce was mid-commit could fire after the transcript was already committed and cleared, committing a second empty user turn with stale metrics. The transcript guard is now re-checked at fire time. Also, session-report chat items now only upload string content (matching Python), so non-string content can no longer render as garbage in the dashboard. - [#1955](https://github.com/livekit/agents-js/pull/1955) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix TTS TTFB attribution: `tts_node` TTFB is now anchored on the time the first sentence is sent to the TTS provider instead of the time the first LLM token arrives, so upstream text generation and tokenization latency is no longer counted as TTS latency. - [#1955](https://github.com/livekit/agents-js/pull/1955) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix `session.run()` stalling or racing the activity transition when an AgentTask handoff is triggered by a speech that predates the run (e.g. created in `onEnter`): the blocked handoff tasks are now watched by the active run for the duration of the transition. - [#1961](https://github.com/livekit/agents-js/pull/1961) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add output retries for AgentSession.run structured outputs. - [#1978](https://github.com/livekit/agents-js/pull/1978) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- implement CLI serverInfo protocol - [#2015](https://github.com/livekit/agents-js/pull/2015) ([@davidzhao](https://github.com/davidzhao))
+
+- Tighten audio EOT cancellation to rely on speech activity start events. - [#1939](https://github.com/livekit/agents-js/pull/1939) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Trim the chat context recorded on the `eou_detection` span to the last 6 items and exclude function calls, instructions, empty messages, handoffs, and config updates (matching Python), so the span no longer re-emits the whole conversation on every end-of-turn inference. - [#1955](https://github.com/livekit/agents-js/pull/1955) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- chore(deps): update @livekit/rtc-node to 0.13.31 - [#1992](https://github.com/livekit/agents-js/pull/1992) ([@toubatbrian](https://github.com/toubatbrian))
+
+  Fixes AudioSource.waitForPlayout resolving early with audio still queued (livekit/node-sdks#693).
+
+- fix(workflows): cancel a warm transfer when the caller hangs up before the merge. `WarmTransferTask` now watches the caller room from `onEnter`: if the caller disconnects while the human agent's phone is still ringing or during the briefing, the pending SIP dial is aborted, the human agent room is torn down (ending the call), and the task completes with a `ToolError` — instead of the human agent being connected into an empty room. A human agent who already answered is told the caller left — a reply generated from the new `callerHangupInstruction` option (built-in default when not provided) — before their call is ended. - [#2008](https://github.com/livekit/agents-js/pull/2008) ([@toubatbrian](https://github.com/toubatbrian))
+
+- chore(example): update otel trace example - [#1864](https://github.com/livekit/agents-js/pull/1864) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.5.0
+
+### Minor Changes
+
+- Port async tool execution semantics from Python: tools can release their turn with `ctx.update()`, - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+  `AsyncToolset` controls session/activity scope, and cancellable tools expose task-management helpers.
+
+- **BREAKING**: `Agent({ tools })` and `agent.updateTools()` now accept a flat list `(FunctionTool | ProviderTool | Toolset)[]` instead of a `Record<string, FunctionTool>` map, and `llm.tool({ ... })` requires a `name` field. `ToolContext` is now a Python-parity class with `functionTools` / `providerTools` / `toolsets` accessors, plus `flatten()`, `hasTool(id)`, `getFunctionTool(id)`, `updateTools()`, `copy()`, and `equals()`. To match the Python reference, registering two **different** function-tool instances under the same `name` now throws `duplicate function name: <name>` instead of silently overriding the earlier entry; passing the **same instance** twice is a no-op. `agent.toolCtx` returns a defensive copy so callers can no longer mutate the agent's internal state. `LLM.chat({ toolCtx })` accepts either a `ToolContext` instance or a raw `(FunctionTool | ProviderTool | Toolset)[]` array (`ToolCtxInput`) and normalizes it internally, so callers don't have to construct a `ToolContext` themselves. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+  Tools also expose an `id: string` field on the base `Tool` interface (parity with Python's `Tool.id` property): for `FunctionTool` it mirrors `name`, for `ProviderTool` it is the provider tool id. `ToolContext` keys and equality now use `tool.id` consistently.
+
+  **BREAKING**: Provider tools are now modeled to match Python's `ProviderTool`:
+
+  - `ProviderDefinedTool` is renamed to `ProviderTool`, and `isProviderDefinedTool` is renamed to `isProviderTool`.
+  - `ProviderTool` is now an **abstract class** (Python parity). Plugins must subclass it (`class WebSearch extends ProviderTool { ... }`) to attach provider-specific fields and serializers; bare `new ProviderTool(...)` is rejected at compile time.
+  - The `tool({ id })` factory overload is removed; `tool({ ... })` only creates function tools now. Construct provider tools by instantiating a `ProviderTool` subclass.
+  - The `ToolType` literal for provider tools is renamed from `'provider-defined'` to `'provider'`.
+
+  `Toolset` now carries a `TOOLSET_SYMBOL` marker and is detected via a new `isToolset()` guard (consistent with `isFunctionTool` / `isProviderTool`). Existing `instanceof Toolset` checks still work, but symbol-based detection is preferred for cross-realm safety.
+
+- Add beta EndCallTool for ending calls from agent tools - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Promote the `TaskGroup` workflow out of beta. It now lives in the stable `workflows` namespace — import it as `workflows.TaskGroup` (with `workflows.TaskCompletedEvent`, `workflows.TaskGroupOptions`, and `workflows.TaskGroupResult`) instead of `beta.TaskGroup`. The `beta` namespace continues to re-export these symbols as deprecated aliases for backward compatibility; they will be removed in a future release. This is an intentional Node.js-only change; in Python `TaskGroup` remains under `beta.workflows`. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Promote the `WarmTransferTask` workflow out of beta. It now lives in the stable `workflows` namespace — import it as `workflows.WarmTransferTask` (with `workflows.WarmTransferResult`, `workflows.WarmTransferTaskOptions`, and `workflows.InstructionParts`) instead of `beta.WarmTransferTask`. The `beta` namespace continues to re-export these symbols as deprecated aliases for backward compatibility; they will be removed in a future release. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- Add `Agent.updateInstructions()` to update an agent's instructions mid-session (parity with Python). The change propagates the new instructions through the active `AgentActivity`, records an `AgentConfigUpdate` in the chat and session history, and syncs the realtime/stateless contexts. For OpenAI realtime, per-response instructions now preserve the session-level instructions instead of replacing them. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Adaptive interruption detection now omits the threshold from `session.create` unless the user explicitly overrides it, letting the gateway apply its fetched default (surfaced via `default_threshold` on `session.created`). The HTTP transport has been dropped — detection always connects over WebSocket and always requires LiveKit credentials, and its base URL now defaults from `LIVEKIT_INFERENCE_URL` instead of `LIVEKIT_REMOTE_EOT_URL`. Inference requests also send an `X-LiveKit-Worker-Token` header when `LIVEKIT_WORKER_TOKEN` is set (hosted agents); a token supplied via the `--worker-token` CLI flag is now re-exported into the environment so forked job subprocesses inherit it and include the header. The `X-LiveKit-Agent-Id` header is now only attached once the room is connected to avoid leaking an unset local-participant SID. The interruption WebSocket is now closed deterministically on stream teardown (including error and cancel paths) instead of only on graceful completion — previously an orphaned socket leaked per session/activity and accumulated for the worker's lifetime. Mid-session threshold/duration changes via `updateOptions` now reconnect the WebSocket in place rather than closing it and letting the next send error the stream — so option changes no longer consume a failover retry (previously enough updates in a session could exhaust the retry budget and stop interruption detection). - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add Agent.create method - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add scoped filler support to RunContext - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Don't retain recorded events when recording is disabled - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add Inworld `delivery_mode` to inference TTS model options. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- List available tools in unknown-function error output. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add `LLMStream.collect()` for awaiting the full response of a chat stream as a single object (text, tool calls, usage, extra). - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- feat(testing): add `mockTools` utility to override an Agent's tool implementations within an async context, mirroring the Python `mock_tools` API - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add object-map tool syntax compatibility. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix interrupted assistant speech being dropped from chat history when the audio output provides no playback-aligned transcript. On a mid-playout interruption, `forwardedTextFor` (and the realtime reply path) returned `synchronizedTranscript ?? ''`, so an interrupted-but-heard reply produced no `conversation_item_added` and was missing from `chatCtx` — common with avatar outputs that don't emit a synchronized transcript. The commit now falls back to the forwarded generation text (`textOut.text`), matching the Python SDK's `_ForwardOutput.forwarded_text` behavior. - [#1916](https://github.com/livekit/agents-js/pull/1916) ([@ShayneP](https://github.com/ShayneP))
+
+- Adds base `Toolset` support: a stateful container for a group of tools with `setup()` / `aclose()` lifecycle hooks. Toolsets can be passed directly into `Agent({ tools: [...] })` alongside individual function tools; their tools are flattened into the agent's `ToolContext` and the runtime drives `setup()` on activity start, `aclose()` on close, and a setup/close diff when `agent.updateTools()` adds or removes Toolsets mid-session. Per-toolset `setup()` errors are logged but do not abort the activity. The `IGNORE_ON_ENTER` flag is also respected for function tools nested inside a Toolset. Every LLM and realtime plugin tool builder iterates `ToolContext.flatten()` so toolset-contributed tools are correctly advertised. Also exports `ToolCalledEvent` / `ToolCompletedEvent` payload types. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(voice): scope forwardAudio's playback-started listener to its own segment - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+  When a speech is interrupted, the scheduling loop immediately authorizes the next
+  speech, so the new segment's `forwardAudio` registers its `playback_started`
+  listener on the shared audio output while the interrupted segment is still
+  emitting events during teardown. The stray event resolved the new segment's
+  `firstFrameFut` before its first frame was captured, which skipped resampler
+  creation and pushed an unresampled frame straight to the `AudioSource`
+  (`RtcError: sample_rate and num_channels don't match`) and corrupted playback
+  bookkeeping. The listener now only resolves `firstFrameFut` after the segment has
+  captured its own first frame.
+
+- chore(deps): update livekit dependency - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Increase the default worker drain timeout to one hour. - [#1930](https://github.com/livekit/agents-js/pull/1930) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(eot): disable retries for eot connections and errors - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Pipeline nodes (`ttsNode`, `sttNode`, `transcriptionNode`, `realtimeAudioOutputNode`) now accept an async generator/iterable as their stream input end-to-end. This includes the static `Agent.default.*` helpers and the `Agent.create()` / `AgentTask.create()` hook overrides, so overrides can pass a generator directly to `voice.Agent.default.<node>(ctx.agent, generator, settings)` without wrapping it in `toStream()` first. Also fixes a `getReader is not a function` crash when an `Agent.create`/`AgentTask.create` stream hook received a plain `AsyncIterable`. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(warm-transfer): capture job context for post-merge caller-room cleanup - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+  `WarmTransferTask`'s post-merge `RoomEvent.ParticipantDisconnected` listener called `getJobContext()` to build a `RoomServiceClient` and delete the caller room. That handler runs from a native rtc-node FFI callback whose `AsyncLocalStorage` context is pinned to `FfiClient`-singleton creation, not to the job's context — so `getJobContext()` read an empty (or stale) store and threw, surfacing as an unhandled promise rejection and leaving the 2-party SIP room undeleted when a participant hung up after the bridge. The task now captures the `JobContext` eagerly in `onEnter()` (while the live context is available) and uses `jobCtx.deleteRoom()` in the late handler, which also passes the job's API credentials instead of relying on environment variables.
+
+## 1.4.11
+
+## 1.4.10
+
+### Patch Changes
+
+- Add Deepgram `keyterm` to inference STT model options and support batch recognition in the Deepgram STT plugin. - [#1766](https://github.com/livekit/agents-js/pull/1766) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(llm): log silent error from performLLMInference - [#1880](https://github.com/livekit/agents-js/pull/1880) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve realtime transcription item IDs on user input transcription events. - [#1902](https://github.com/livekit/agents-js/pull/1902) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- chore(dep): update local-inference dep - [#1873](https://github.com/livekit/agents-js/pull/1873) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Simulation fixes: do not start the worker HTTP server, disable the worker load limit so runs can saturate the agent, and honor `LIVEKIT_AGENT_NAME_OVERRIDE` so the worker registers under the name `lk simulate` dispatches to. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Emit the `lk.chat_ctx` span attribute (on LLM-generation and EOU-prediction spans) in snake_case to match the Python framework, which serializes the same attribute via `chat_ctx.to_dict()`. The JS side was stringifying `chatCtx.toJSON()` directly, which emits camelCase field names (`callId`, `args`, `isError`, `createdAt`), so traces from JS agents diverged from Python agents. The chat context is now run through the shared `toSnakeCaseDeep` conversion (exported from the report layer), and the timestamp exclusion is aligned with Python (`toJSON()` defaults exclude image/audio/timestamps). Note: the Python EOU path additionally trims to the last N turns and excludes function calls — aligning that behavior is left to a follow-up. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Serialize chat-item `toJSON()` output in snake_case (e.g. `new_agent_id`, `call_id`, `arguments`, `is_error`, `created_at`) to match the Python session-report schema. The uploaded `chat_history.json` previously used camelCase keys, so LiveKit Cloud's parser rejected required fields (e.g. `agent_handoff.new_agent_id`). Constructor/`create()` APIs are unchanged. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Serialize the session report's `events` and `usage` arrays in snake_case to match the Python session-report schema. Event fields (`old_state`, `new_state`, `is_final`, `speaker_id`, `function_calls`, `created_at`, …) and model-usage fields (`input_tokens`, `session_duration`, `audio_duration`, `characters_count`, `total_requests`, …) previously leaked camelCase keys, so LiveKit Cloud's Python parser dropped them. Usage durations are now emitted in seconds (matching the proto wire format and Python model). Also adds the `audio_recording_path`, `audio_recording_started_at`, `sdk_version`, and `options.user_away_timeout` fields to match Python's `SessionReport.to_dict()`. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Serialize the uploaded session-recording `chat_history` in snake_case to match the Python wire schema. `uploadSessionReport` was stringifying `chatHistory.toJSON()` directly, which emits camelCase field names; the snake_case conversion lives only in `sessionReportToJSON` (`toSnakeCaseDeep`). As a result the uploaded chat history carried camelCase keys (`callId`, `args`, `isError`, `newAgentId`, `createdAt`), and the Python consumer's pydantic validation rejected the chat items with "field required" errors for `call_id`, `arguments`, `is_error`, and `new_agent_id`. The upload now reuses `sessionReportToJSON(report).chat_history` so the two serializations can't drift. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Keep the STT input timestamp anchor attached to reused STT pipelines across agent handoff. - [#1870](https://github.com/livekit/agents-js/pull/1870) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.4.9
+
+### Patch Changes
+
+- Add AssemblyAI inference STT parameters for agent context, Voice Focus, Voice Focus threshold, and streaming mode. - [#1852](https://github.com/livekit/agents-js/pull/1852) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(eot): restore inference prediction timeout - [#1853](https://github.com/livekit/agents-js/pull/1853) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Sanitize turn detector for session reports: the OTLP attribute serializer now honors `toJSON()`, and the audio turn detector exposes a credential-free config snapshot. - [#1847](https://github.com/livekit/agents-js/pull/1847) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+## 1.4.8
+
+### Patch Changes
+
+- Add `assemblyai/universal-3-5-pro` to the inference STT model type hints. - [#1840](https://github.com/livekit/agents-js/pull/1840) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.4.7
+
+### Patch Changes
+
+- feat(core): audio end-of-turn detection with cloud → local fallback (AGT-2520) - [#1719](https://github.com/livekit/agents-js/pull/1719) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+  - New `inference.TurnDetector`: WebSocket cloud EOT transport (`version: 'v1'`, model name `turn-detector-v1`) with automatic fallback to the local native model (`version: 'v1-mini'`, model name `turn-detector-v1-mini`) via `@livekit/local-inference`. Auto-selects `'v1'` when `LIVEKIT_REMOTE_EOT_URL` is set, `'v1-mini'` otherwise. The `version` is the constructor knob; telemetry/billing report the full model name via `detector.model`.
+  - The local EOT model runs in the shared inference process (the same `InferenceProcExecutor` the text turn detector uses), loaded once per worker host (~138 MB) instead of in every job worker. The runner is registered by default when the native binding is available, so the inference process spawns on worker startup; on platforms where the binding can't load, local EOT degrades to a positive-default prediction and the worker still starts. (This is a JS-specific divergence from Python, which keeps EOT in-process and relies on forkserver COW sharing.)
+  - No prewarm helpers: EOT auto-warms in the inference process; the in-process silero VAD lazy-loads on first stream. (The `inference.prewarm*` helpers added during development were removed before release.)
+  - New `inference.VAD` (local-only streaming VAD via `@livekit/local-inference`).
+  - `AgentSession` now auto-provisions a bundled silero VAD when `vad` is omitted (`isDefault=true`). Pass `vad: null` to opt out.
+  - `livekit-plugins-silero` is deprecated; pass `vad: null` to opt out of the bundled default, or use `inference.VAD({ model: 'silero', ... })` to customise.
+  - `livekit-plugins-livekit` turn detector is deprecated in favor of `inference.TurnDetector`.
+  - Endpointing defaults are now detector-aware: when the resolved turn detector is a streaming ("audio model") detector — the bundled default — unset endpointing keys fall back to tighter defaults (`minDelay: 300`, `maxDelay: 2500`) instead of the legacy `500`/`3000`. Non-streaming modes (`vad`/`stt`/`manual`/`realtime_llm`, or `turnDetection: null`) keep the legacy defaults. Explicit user keys are tracked as sparse overrides and re-resolved per agent activity, so different agents in one session can use different detectors and runtime `updateOptions` changes survive handoffs.
+  - New `EOTInferenceMetrics` and `EOTModelUsage`; new telemetry span attributes (`lk.eou.source`, `lk.eou.from_cache`, `lk.eou.detection_delay`); new `eot_prediction` event forwarded over remote sessions.
+  - Requires `@livekit/protocol` >= 1.46.5 (exposes the `AgentInference` message namespace used by the cloud transport, including the server-provided `SessionCreated` default thresholds).
+
+- Add `TcpAudioInput`/`TcpAudioOutput` for console-mode sessions, porting the Python `tcp_console` audio IO: inbound `audio_input` frames are resampled from the 48 kHz wire rate to the 24 kHz agent rate and fed to the STT pipeline, while the agent's TTS frames are resampled back up and streamed as `audio_output` messages. The output drives the flush/clear playout handshake, blocking the agent turn until the broker reports `audio_playback_finished` (or reporting an interruption when the buffer is cleared). `SessionHost` now accepts optional audio IO and routes inbound `audio_input`/`audio_playback_finished` messages to it. - [#1694](https://github.com/livekit/agents-js/pull/1694) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add a `console` CLI subcommand and in-process console runner, the final piece that lets a local broker (e.g. the LiveKit CLI `lk session` daemon) drive a Node agent over TCP. `runConsole` loads the agent, opens a `TcpSessionTransport` to `--connect-addr`, sets up an `AgentsConsole` singleton, and runs the agent entrypoint in-process (mirroring python's `_run_tcp_console`, which uses `JobExecutorType.THREAD` to share the console singleton with the `AgentSession`). `AgentSession` now wires its `SessionHost` from the `AgentsConsole` singleton when console mode is active, and `JobContext` gained fake-job support (`isFakeJob`, no-op `connect`/`deleteRoom`/recording) so a console job without a backing LiveKit room behaves correctly. Audio IO is attached by default (voice mode); a text-mode driver disables it at runtime via an `update_io` request. - [#1706](https://github.com/livekit/agents-js/pull/1706) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Console mode parity fixes for the `lk agent console` flow: run registered inference runners (e.g. the livekit turn detector) in a supervised child process instead of failing, and write `--record` output (`audio.ogg` + `session_report.json`) to a local `console-recordings/session-<timestamp>/` directory like python, instead of a temp dir with no report. - [#1706](https://github.com/livekit/agents-js/pull/1706) ([@toubatbrian](https://github.com/toubatbrian))
+
+- feat(eot): emit agent backchannel opportunity events (AGT-2520) - [#1719](https://github.com/livekit/agents-js/pull/1719) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+  The multimodal EOT model now returns a backchannel probability alongside the end-of-turn probability. The turn detector compares it to a server-provided threshold and, when it clears, surfaces an internal backchannel _opportunity_ (a window where the agent could say a short "mm-hmm" while the user still holds the floor) to `AgentActivity`.
+
+  - `inference.TurnDetector` gains a `backchannelThreshold` option (and `updateOptions({ backchannelThreshold })`); `ThresholdOptions.lookupBackchannel()` resolves server-provided defaults layered with user overrides, mirroring the existing EOT threshold resolution.
+  - Backchannel thresholds are server-driven and cloud-only — disabled when the gateway sends none, after a cloud→local fallback (the mini model produces no backchannel probability), and for any non-positive threshold.
+  - Internal only: `AgentActivity.onAgentBackchannelOpportunity` is a no-op with a TODO; the event is not surfaced as a public `AgentSession` event (absent from the `AgentEvent` union, `AgentSessionEventTypes`, and package exports), treated the same way as the internal EOT prediction plumbing.
+  - Requires `@livekit/protocol` >= 1.46.8 (adds `EotPrediction.backchannelProbability` and `SessionCreated.defaultBackchannelThresholds` / `defaultBackchannelThreshold`).
+
+- Fix DataStream avatars (Anam, Bey, D-ID, LemonSlice, Runway, Tavus, Trugen) stalling the - [#1795](https://github.com/livekit/agents-js/pull/1795) ([@smorimoto](https://github.com/smorimoto))
+  conversation on user interruption when paired with the OpenAI Realtime API.
+
+  `DataStreamAudioOutput` parsed the `lk.playback_finished` RPC payload with a compile-time-only
+  `as PlaybackFinishedEvent` cast. The LiveKit avatar protocol serializes that payload with
+  snake_case keys (`playback_position`, `synchronized_transcript`) — confirmed against Anam's
+  live engine, which emits `{"playback_position": 2.0, "interrupted": true, "synchronized_transcript": null}`
+  — so the camelCase `playbackPosition` read back `undefined`. That became
+  `Math.floor(undefined * 1000) === NaN`, which `JSON.stringify` serializes as `null` in
+  `conversation.item.truncate`; the OpenAI Realtime API then rejected the truncate with an
+  `invalid_type` error and the interrupted turn could not recover.
+
+  `DataStreamAudioOutput` now normalizes the wire payload (snake_case primary, camelCase
+  fallback), which also restores the previously-dropped `synchronizedTranscript` on interrupted
+  turns. As defense-in-depth, the realtime truncate path now clamps a non-finite `audioEndMs` to
+  a valid non-negative integer in both `AgentActivity` and the OpenAI plugin so a malformed or
+  absent playback position can never again serialize as `null`.
+
+- Fix orphaned WebSocket leak in `connectWs`: when the connection timeout fires, the socket is now terminated so it cannot connect and linger without an owner. Also fixes a hang where a normal (code 1000) close during the handshake left the promise unsettled — it now rejects on any close before the socket opens. Uses `APITimeoutError` instead of `APIConnectionError` for clearer retry semantics. - [#1788](https://github.com/livekit/agents-js/pull/1788) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Avoid clearing newer participant entrypoint tasks after quick reconnects. - [#1723](https://github.com/livekit/agents-js/pull/1723) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Remove the `cartesia/ink-2-latest` alias from the Cartesia inference STT model type hints. The alias still works at runtime; dated and `-latest` Cartesia snapshot aliases are no longer surfaced in the SDK types. - [#1792](https://github.com/livekit/agents-js/pull/1792) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+- `SupervisedProc.initialize()` now fails fast — racing the first IPC message against child exit and the initialize timeout — instead of hanging forever when the child process dies before responding (e.g. an inference runner whose model files are missing). Callers that previously deadlocked (worker startup, console mode) now get an actionable error. - [#1706](https://github.com/livekit/agents-js/pull/1706) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.4.6
+
+### Patch Changes
+
+- Add the agent participant SID as an `X-LiveKit-Agent-Id` header on inference requests, alongside the existing room and job ID headers, when running inside a job context. - [#1687](https://github.com/livekit/agents-js/pull/1687) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+- Defer AMD listening until the participant audio track is subscribed, and for SIP participants until `sip.callStatus` is `active`, so ringback and early media no longer consume the no-speech budget. After AMD settles on a machine verdict with `interruptOnMachine`, skip the normal auto-reply triggered by user-turn completion so it no longer races with — and interrupts — the caller's own `generateReply` (e.g. leaving a voicemail). - [#1639](https://github.com/livekit/agents-js/pull/1639) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  Complete the AMD verdict-emission port: add `waitUntilFinished` and `maxEndpointingDelayMs` options and gate emission on both post-speech silence and end-of-turn (machine/uncertain verdicts wait for the turn detector or a fallback backstop; a confident human releases on silence alone). Settle `no_speech_timeout` as `uncertain` instead of `machine-unavailable`. Treat the classifier LLM's tool calls as authoritative — no longer resurrect a verdict by parsing free-text content emitted alongside an `uncertain`/postpone tool call.
+
+  Wire AMD into the recognition-hook layer the way the Python framework does: `AgentActivity` now drives AMD via `onUserSpeechStarted()`, `onUserSpeechEnded(silenceDurationMs)`, and `onTranscript(text, source)` from its VAD/STT hooks, instead of AMD snooping the derived `UserStateChanged`/`UserInputTranscribed` session events. This gives AMD the VAD's real `silenceDuration` directly, so post-speech timers and reported delays are anchored on the true speech-end time rather than skewed by VAD/event latency.
+
+  Port the AMD classification prompt verbatim from the Python framework — restoring the task description, category definitions (`machine-vm` = leaving a message IS possible; `machine-unavailable` = NOT possible), and the few-shot examples that steer borderline cases (hours-of-operation → uncertain, "press 1" → machine-ivr, call-screening → machine-ivr) — and pass the raw transcript as the user message so it matches the prompt's `Input:`/`Output:` pattern.
+
+- feat(voice/avatar): add avatar join waiting and cleanup participant on close - [#1594](https://github.com/livekit/agents-js/pull/1594) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Adaptive interruption detection now omits the threshold from `session.create` unless the user explicitly overrides it, letting the gateway apply its fetched default (surfaced via `default_threshold` on `session.created`). The HTTP transport has been dropped — detection always connects over WebSocket and always requires LiveKit credentials, and its base URL now defaults from `LIVEKIT_INFERENCE_URL` instead of `LIVEKIT_REMOTE_EOT_URL`. Inference requests also send an `X-LiveKit-Worker-Token` header when `LIVEKIT_WORKER_TOKEN` is set (hosted agents); a token supplied via the `--worker-token` CLI flag is now re-exported into the environment so forked job subprocesses inherit it and include the header. The `X-LiveKit-Agent-Id` header is now only attached once the room is connected to avoid leaking an unset local-participant SID. The interruption WebSocket is now closed deterministically on stream teardown (including error and cancel paths) instead of only on graceful completion — previously an orphaned socket leaked per session/activity and accumulated for the worker's lifetime. Mid-session threshold/duration changes via `updateOptions` now reconnect the WebSocket in place rather than closing it and letting the next send error the stream — so option changes no longer consume a failover retry (previously enough updates in a session could exhaust the retry budget and stop interruption detection). - [#1785](https://github.com/livekit/agents-js/pull/1785) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Bound AgentSession close during job shutdown so shutdown callbacks still run. - [#1638](https://github.com/livekit/agents-js/pull/1638) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Rate-limit IPC high-memory warnings and include process context in memory logs. - [#1717](https://github.com/livekit/agents-js/pull/1717) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Clamp the STT-derived `lastSpeakingTime` to the current wall-clock time. When the STT stream's clock diverged from the activity's input epoch (e.g. a reused STT pipeline after an agent handoff), the transcript `endTime` could map to a timestamp minutes in the future, causing the end-of-turn bounce task to sleep that long before committing the user turn — the agent appeared to go silent mid-call even though LLM preemptive generation kept running. - [#1782](https://github.com/livekit/agents-js/pull/1782) ([@toubatbrian](https://github.com/toubatbrian))
+
+- increase memory warning threshold - [#1778](https://github.com/livekit/agents-js/pull/1778) ([@davidzhao](https://github.com/davidzhao))
+
+- Support `FlushSentinel` in voice LLM nodes to flush audio and text output per segment. - [#1710](https://github.com/livekit/agents-js/pull/1710) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Support granular recording options in `AgentSession.start`. The `record` option now accepts `boolean | RecordingOptions` (`{ audio, traces, logs, transcript }`); a boolean maps to all-on/all-off and a partial object merges onto all-on, so omitted keys default to `true`. Each category independently gates audio capture, trace export, log export, and transcript upload, mirroring the Python SDK and matching the documented granular form. - [#1702](https://github.com/livekit/agents-js/pull/1702) ([@anzemur](https://github.com/anzemur))
+
+- Guard inference agent ID header lookup until the room is connected. - [#1700](https://github.com/livekit/agents-js/pull/1700) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve OpenAI Responses assistant message phase metadata across follow-up requests. - [#1720](https://github.com/livekit/agents-js/pull/1720) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Close active RecorderIO during job session-end cleanup before generating the session report. - [#1682](https://github.com/livekit/agents-js/pull/1682) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Align `AgentSession.start` recording with the Python SDK's primary-session behavior. The primary/secondary designation now happens in `start()` before `initRecording`, so a demoted secondary session never configures cloud recording. A non-primary session whose `record` argument was not explicitly given now silently disables its recording (instead of throwing); it still throws only when `record` was passed explicitly, matching Python's `record_is_given` semantics. - [#1704](https://github.com/livekit/agents-js/pull/1704) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Restrict STT pipeline reuse during handoff to agents using the default sttNode. - [#1605](https://github.com/livekit/agents-js/pull/1605) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): scope forwardAudio's playback-started listener to its own segment - [#1786](https://github.com/livekit/agents-js/pull/1786) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+  When a speech is interrupted, the scheduling loop immediately authorizes the next
+  speech, so the new segment's `forwardAudio` registers its `playback_started`
+  listener on the shared audio output while the interrupted segment is still
+  emitting events during teardown. The stray event resolved the new segment's
+  `firstFrameFut` before its first frame was captured, which skipped resampler
+  creation and pushed an unresampled frame straight to the `AudioSource`
+  (`RtcError: sample_rate and num_channels don't match`) and corrupted playback
+  bookkeeping. The listener now only resolves `firstFrameFut` after the segment has
+  captured its own first frame.
+
+- Add `TcpSessionTransport`, a `SessionTransport` that frames protobuf session messages over a raw TCP socket (4-byte big-endian length prefix, 1 MiB cap, `TCP_NODELAY`), mirroring the Python implementation. Also handle the `updateIo` session request in `SessionHost`, toggling input/output audio and transcription. This is the transport plumbing that lets a local broker (e.g. the LiveKit CLI session daemon) drive a Node agent over TCP. - [#1693](https://github.com/livekit/agents-js/pull/1693) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(voice): emit the wrapper error (with `recoverable`) on session `error` events instead of the inner error - [#1787](https://github.com/livekit/agents-js/pull/1787) ([@u9g](https://github.com/u9g))
+
+## 1.4.5
+
+### Patch Changes
+
+- Fix `AgentActivity.generateReply` defaulting `toolChoice` to `'none'` on a child `AgentSession` spawned inside a tool. The previous check relied on `AsyncLocalStorage`, which leaks the parent function-call context into the child session and caused the framework to drop legitimate tool calls emitted by the child agent (e.g. the supervisor's `connect_to_caller` invocation in `WarmTransferTask`). The check now uses per-task info, matching the Python implementation. - [#1458](https://github.com/livekit/agents-js/pull/1458) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Block user turn exceeded callbacks while an agent handoff is starting. - [#1614](https://github.com/livekit/agents-js/pull/1614) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix: repair leaked chat-template tokens in function call args - [#1604](https://github.com/livekit/agents-js/pull/1604) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix interrupt race that could leak unplayed transcript text. - [#1573](https://github.com/livekit/agents-js/pull/1573) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Wire internal debug messages through remote sessions. - [#1645](https://github.com/livekit/agents-js/pull/1645) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- subscribe to tracks published after connect with AUDIO_ONLY/VIDEO_ONLY - [#1629](https://github.com/livekit/agents-js/pull/1629) ([@toubatbrian](https://github.com/toubatbrian))
+
+- chore(worker): update worker warnings - [#1571](https://github.com/livekit/agents-js/pull/1571) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(inference): stop mislabeling barge-in handler errors as parse failures - [#1619](https://github.com/livekit/agents-js/pull/1619) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+  The interruption WebSocket handler wrapped both `wsMessageSchema.parse` and `handleMessage` in one `try`, so a handler throw (e.g. a late `bargein_detected` prediction enqueued after the readable side was errored/closed) was logged as "Failed to parse WebSocket message" with the real error discarded. Parse and handler errors are now caught separately and log the actual error, and the late barge-in event is dropped quietly (`desiredSize === null`) instead of throwing into a dead stream.
+
+- update rtc sdk to 0.13.29 - [#1652](https://github.com/livekit/agents-js/pull/1652) ([@davidzhao](https://github.com/davidzhao))
+
+- fix(llm): convert per-turn instructions on the first turn for Google provider format - [#1589](https://github.com/livekit/agents-js/pull/1589) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(realtime): process all messages in multi-message realtime generations - [#1628](https://github.com/livekit/agents-js/pull/1628) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+  Reorders audio/text forwarding setup inside `processOneMessage` to match the
+  Python source order (audio first, then text), and tightens the playout-await
+  guard so `playoutPromise` is only awaited when not interrupted. This fixes a
+  case where the second message in a multi-message realtime response (e.g.
+  `gpt-realtime-2` preambles) could be dropped.
+
+  Also stamps assistant `ChatMessage.createdAt` with `startedSpeakingAt` (the
+  first frame's playback start) instead of defaulting to `Date.now()` at
+  end-of-generation. This preserves correct user/assistant ordering in
+  `ChatContext` when user transcription items land during agent playout.
+
+- feat(realtime): support multi-message generation per response - [#1555](https://github.com/livekit/agents-js/pull/1555) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Prevent recorder close from hanging during encode cleanup and clamp recorder frame splits to valid frame bounds. - [#1684](https://github.com/livekit/agents-js/pull/1684) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Remove the `ttsPronunciationMap` Agent option (and the `TTSPronunciationMap` type). Use the general `tts_text_transforms` / `replace` text transform for pre-TTS pronunciation replacements instead. - [#1620](https://github.com/livekit/agents-js/pull/1620) ([@u9g](https://github.com/u9g))
+
+- fix: reset user turn tracker when clearing user turn - [#1615](https://github.com/livekit/agents-js/pull/1615) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): make ParticipantAudioOutput.pause() actually gate audio (port \_playback_enabled + synchronizer pause) - [#1579](https://github.com/livekit/agents-js/pull/1579) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Replace discarded input audio with silence for STT and realtime model streams. - [#1601](https://github.com/livekit/agents-js/pull/1601) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix: make non-transient 4xx API status errors non-retryable - [#1597](https://github.com/livekit/agents-js/pull/1597) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- feat: allow updating dynamic endpointing alpha on active sessions - [#1634](https://github.com/livekit/agents-js/pull/1634) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- feat(google): add Vertex AI Model Garden LLM integration - [#1606](https://github.com/livekit/agents-js/pull/1606) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add Soniox STT support and surface per-run source and target language segments on STT speech data. - [#1602](https://github.com/livekit/agents-js/pull/1602) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(llm): sort function tools to keep tool order invariant. - [#1641](https://github.com/livekit/agents-js/pull/1641) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Update download-files deprecation message - [#1621](https://github.com/livekit/agents-js/pull/1621) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Use STT transcript timestamps for last speaking time when VAD is unavailable or misses speech. - [#1603](https://github.com/livekit/agents-js/pull/1603) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): surface tool-argument validation errors to the LLM instead of returning a generic "internal error" - [#1606](https://github.com/livekit/agents-js/pull/1606) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  When an LLM-generated tool call failed JSON parsing or Zod schema validation, the framework returned `"An internal error occurred"` to the LLM, which left the model with no way to correct itself — causing it to loop on the same invalid call. Argument-validation failures are now wrapped in a `ToolError` whose message includes the tool name and the validator's diagnostic, so the LLM can fix its arguments.
+
+  Behavior is unchanged for exceptions thrown from inside a tool's `execute`: regular `Error`s are still masked as `"An internal error occurred"` to avoid leaking server-side details, and `ToolError` continues to be the supported way to forward a custom message to the LLM.
+
+- Make `ToolOptions.abortSignal` required. The framework always provides an `AbortSignal` to tool execution, so the field is no longer optional. Tool authors can rely on `abortSignal` always being defined and drop defensive `if (abortSignal)` checks. - [#1678](https://github.com/livekit/agents-js/pull/1678) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Reset active VAD streams on flush so STT end-of-speech can recover without recreating streams. STT end-of-speech now preserves the VAD-owned `lastSpeakingTime` instead of overwriting it, keeping the end-of-turn "no new speech" check reliable when VAD is active. - [#1574](https://github.com/livekit/agents-js/pull/1574) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add beta WarmTransferTask workflow for SIP-based human handoffs. - [#1458](https://github.com/livekit/agents-js/pull/1458) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.4.4
 
 ### Patch Changes
@@ -121,7 +763,7 @@
 
 ### Minor Changes
 
-- `voice.AMD` reaches feature parity with python. - [#1390](https://github.com/livekit/agents-js/pull/1390) ([@toubatbrian](https://github.com/toubatbrian))
+- `voice.AMD` reaches feature completion. - [#1390](https://github.com/livekit/agents-js/pull/1390) ([@toubatbrian](https://github.com/toubatbrian))
 
 ### Patch Changes
 
@@ -233,7 +875,7 @@
 
 ### Patch Changes
 
-- replcae sentencetokenizer with wordtokenizer for python parity - [#1312](https://github.com/livekit/agents-js/pull/1312) ([@tinalenguyen](https://github.com/tinalenguyen))
+- replcae sentencetokenizer with wordtokenizer - [#1312](https://github.com/livekit/agents-js/pull/1312) ([@tinalenguyen](https://github.com/tinalenguyen))
 
 - add `preserveFunctionCallHistory` option to `AgentTask` and `TaskGroup` and use function call history in Phonic plugin - [#1285](https://github.com/livekit/agents-js/pull/1285) ([@qionghuang6](https://github.com/qionghuang6))
 

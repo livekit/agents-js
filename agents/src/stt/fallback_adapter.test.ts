@@ -5,9 +5,82 @@ import type { EventEmitter } from 'node:events';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
+import type { APIConnectOptions } from '../types.js';
+import { type AudioBuffer, delay } from '../utils.js';
 import { FallbackAdapter } from './fallback_adapter.js';
-import type { STT, SpeechEvent } from './stt.js';
+import { STT, type SpeechEvent, SpeechEventType, SpeechStream } from './stt.js';
 import { FakeSTT, RecognizeSentinel, emptyAudioFrame } from './testing/fake_stt.js';
+
+type RetryTimelineMode = 'outer' | 'child';
+
+class RetryTimelineSTT extends STT {
+  label = 'retry-timeline-stt';
+  mainStreams: RetryTimelineStream[] = [];
+  private mainAttempts = 0;
+
+  constructor(private readonly mode: RetryTimelineMode) {
+    super({ streaming: true, interimResults: false });
+  }
+
+  protected async _recognize(_frame: AudioBuffer): Promise<SpeechEvent> {
+    throw new APIConnectionError({ message: 'not used' });
+  }
+
+  override stream(options?: { connOptions?: APIConnectOptions }): RetryTimelineStream {
+    const isRecoveryProbe = options?.connOptions?.maxRetry === 0;
+    const mainAttempt = isRecoveryProbe ? 0 : ++this.mainAttempts;
+    const stream = new RetryTimelineStream(this, this.mode, mainAttempt, options?.connOptions);
+    if (!isRecoveryProbe) {
+      this.mainStreams.push(stream);
+    }
+    return stream;
+  }
+}
+
+class RetryTimelineStream extends SpeechStream {
+  label = 'retry-timeline-stream';
+  runOffsets: number[] = [];
+  private runCount = 0;
+
+  constructor(
+    stt: STT,
+    private readonly mode: RetryTimelineMode,
+    private readonly mainAttempt: number,
+    connOptions?: APIConnectOptions,
+  ) {
+    super(stt, undefined, connOptions);
+  }
+
+  protected async run(): Promise<void> {
+    this.runCount += 1;
+    this.runOffsets.push(this.startTimeOffset);
+
+    if (this.mainAttempt === 0) {
+      return;
+    }
+
+    if (this.mode === 'outer' && this.mainAttempt === 1) {
+      await delay(25);
+      throw new APIConnectionError({
+        message: 'first main stream failed',
+        options: { retryable: false },
+      });
+    }
+
+    if (this.mode === 'child' && this.runCount === 1) {
+      await delay(25);
+      throw new APIConnectionError({ message: 'first child run failed' });
+    }
+
+    this.queue.put({
+      type: SpeechEventType.FINAL_TRANSCRIPT,
+      alternatives: [{ text: 'recovered', startTime: 0, endTime: 0, confidence: 1 }],
+    });
+    for await (const _ of this.input) {
+      /* drain */
+    }
+  }
+}
 
 describe('FallbackAdapter', () => {
   beforeAll(() => {
@@ -274,6 +347,72 @@ describe('FallbackSpeechStream (streaming path)', () => {
     // Both providers saw a stream attempt via the observability channel.
     expect((await primary.streamCh.next()).done).toBe(false);
     expect((await fallback.streamCh.next()).done).toBe(false);
+  });
+
+  it('stream fallback propagates startTimeOffset to child streams', async () => {
+    const primary = new FakeSTT({
+      label: 'primary',
+      fakeException: new APIConnectionError({ message: 'primary down' }),
+    });
+    const fallback = new FakeSTT({ label: 'fallback', fakeTranscript: 'hello world' });
+    const adapter = new FallbackAdapter({
+      sttInstances: [primary, fallback],
+      maxRetryPerSTT: 0,
+    });
+
+    const stream = adapter.stream();
+    stream.startTimeOffset = 30;
+    stream.endInput();
+
+    for await (const _ of stream) {
+      /* drain */
+    }
+
+    const primaryStream = (await primary.streamCh.next()).value;
+    const fallbackStream = (await fallback.streamCh.next()).value;
+    expect(primaryStream?.startTimeOffset).toBeGreaterThanOrEqual(30);
+    expect(fallbackStream?.startTimeOffset).toBeGreaterThanOrEqual(30);
+  });
+
+  it('preserves child stream timeline across outer SpeechStream retries', async () => {
+    const stt = new RetryTimelineSTT('outer');
+    const adapter = new FallbackAdapter({ sttInstances: [stt] });
+
+    const stream = adapter.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 10_000 },
+    });
+    stream.startTimeOffset = 30;
+    stream.endInput();
+
+    const events: SpeechEvent[] = [];
+    for await (const ev of stream) events.push(ev);
+
+    expect(events.map((e) => e.alternatives?.[0]?.text)).toEqual(['recovered']);
+    expect(stt.mainStreams).toHaveLength(2);
+    expect(stt.mainStreams[0]?.startTimeOffset).toBeGreaterThanOrEqual(30);
+    expect(stt.mainStreams[1]?.startTimeOffset).toBeGreaterThan(
+      stt.mainStreams[0]!.startTimeOffset,
+    );
+  });
+
+  it('preserves child stream timeline across provider retries', async () => {
+    const stt = new RetryTimelineSTT('child');
+    const adapter = new FallbackAdapter({ sttInstances: [stt] });
+
+    const stream = adapter.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 10_000 },
+    });
+    stream.startTimeOffset = 30;
+    stream.endInput();
+
+    const events: SpeechEvent[] = [];
+    for await (const ev of stream) events.push(ev);
+
+    expect(events.map((e) => e.alternatives?.[0]?.text)).toEqual(['recovered']);
+    expect(stt.mainStreams).toHaveLength(1);
+    expect(stt.mainStreams[0]?.runOffsets).toHaveLength(2);
+    expect(stt.mainStreams[0]?.runOffsets[0]).toBeGreaterThanOrEqual(30);
+    expect(stt.mainStreams[0]!.runOffsets[1]).toBeGreaterThan(stt.mainStreams[0]!.runOffsets[0]!);
   });
 
   it('stream marks every instance unavailable when all children fail', async () => {

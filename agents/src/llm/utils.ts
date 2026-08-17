@@ -5,6 +5,7 @@ import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import type { JSONSchema7 } from 'json-schema';
 import { jsonrepair } from 'jsonrepair';
 import sharp from 'sharp';
+import { log } from '../log.js';
 import type { UnknownUserData } from '../voice/run_context.js';
 import type { ChatContext } from './chat_context.js';
 import {
@@ -14,8 +15,129 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
-import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
-import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
+import {
+  type ToolContext,
+  type ToolInputSchema,
+  type ToolOptions,
+  sortedToolNames,
+} from './tool_context.js';
+import {
+  isZodSchema,
+  jsonSchemaAllowsNull,
+  parseZodSchema,
+  zodSchemaToJsonSchema,
+} from './zod-utils.js';
+
+export const THINK_TAG_START = '<think>';
+export const THINK_TAG_END = '</think>';
+
+export class ThinkingTokenFilter {
+  startTag: string;
+  endTag: string;
+  buffer = '';
+  endMarker?: string;
+
+  constructor(startTag: string = THINK_TAG_START, endTag: string = THINK_TAG_END) {
+    this.startTag = startTag;
+    this.endTag = endTag;
+  }
+}
+
+function partialMarkerLength(content: string, markers: string[]): number {
+  let longest = 0;
+
+  for (const marker of markers) {
+    for (let length = 1; length <= Math.min(content.length, marker.length - 1); length += 1) {
+      if (content.endsWith(marker.slice(0, length))) {
+        longest = Math.max(longest, length);
+      }
+    }
+  }
+
+  return longest;
+}
+
+function flattenDeltaContent(content: string | unknown[] | null | undefined) {
+  if (content === null || content === undefined || typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const part of content) {
+      if (typeof part === 'string') {
+        parts.push(part);
+        continue;
+      }
+
+      const text =
+        typeof part === 'object' && part !== null && 'text' in part ? part.text : undefined;
+      if (typeof text === 'string') {
+        parts.push(text);
+      }
+    }
+
+    // No text part carries no content, unlike a part containing an empty string.
+    return parts.length > 0 ? parts.join('') : undefined;
+  }
+
+  log().warn(
+    { contentType: typeof content },
+    'unexpected streaming delta content type; dropping the chunk',
+  );
+  return undefined;
+}
+
+export function stripThinkingTokens(
+  content: string | unknown[] | null | undefined,
+  state: ThinkingTokenFilter,
+  { final = false }: { final?: boolean } = {},
+): string | undefined {
+  content = flattenDeltaContent(content);
+  if (content !== null && content !== undefined) {
+    state.buffer += content;
+  }
+
+  const visible: string[] = [];
+  while (state.buffer) {
+    if (state.endMarker !== undefined) {
+      const idx = state.buffer.indexOf(state.endMarker);
+      if (idx < 0) {
+        const keep = partialMarkerLength(state.buffer, [state.endMarker]);
+        state.buffer = keep ? state.buffer.slice(-keep) : '';
+        break;
+      }
+
+      state.buffer = state.buffer.slice(idx + state.endMarker.length);
+      state.endMarker = undefined;
+      continue;
+    }
+
+    const idx = state.buffer.indexOf(state.startTag);
+    if (idx >= 0) {
+      visible.push(state.buffer.slice(0, idx));
+      state.buffer = state.buffer.slice(idx + state.startTag.length);
+      state.endMarker = state.endTag;
+      continue;
+    }
+
+    const keep = partialMarkerLength(state.buffer, [state.startTag]);
+    visible.push(keep ? state.buffer.slice(0, -keep) : state.buffer);
+    state.buffer = keep ? state.buffer.slice(-keep) : '';
+    break;
+  }
+
+  if (final) {
+    if (state.endMarker === undefined) {
+      visible.push(state.buffer);
+    }
+    state.buffer = '';
+    state.endMarker = undefined;
+  }
+
+  const result = visible.join('');
+  return result || (content === '' ? '' : undefined);
+}
 
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';
@@ -147,7 +269,11 @@ export const createToolOptions = <UserData extends UnknownUserData>(
   toolCallId: string,
   userData: UserData = {} as UserData,
 ): ToolOptions<UserData> => {
-  return { ctx: { userData }, toolCallId } as unknown as ToolOptions<UserData>;
+  return {
+    ctx: { userData },
+    toolCallId,
+    abortSignal: new AbortController().signal,
+  } as unknown as ToolOptions<UserData>;
 };
 
 /** @internal */
@@ -172,7 +298,7 @@ export const oaiBuildFunctionInfo = (
   toolName: string,
   rawArgs: string,
 ): FunctionCall => {
-  const tool = toolCtx[toolName];
+  const tool = toolCtx.getFunctionTool(toolName);
   if (!tool) {
     throw new Error(`AI tool ${toolName} not found`);
   }
@@ -255,12 +381,211 @@ export function parseFunctionArguments(
   return args as Record<string, unknown>;
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function resolveJsonSchemaRef(root: Record<string, unknown>, ref: string): unknown {
+  if (!ref.startsWith('#/')) {
+    throw new Error(`Unexpected $ref format ${ref}; does not start with #/`);
+  }
+
+  return ref
+    .slice(2)
+    .split('/')
+    .reduce<unknown>((current, part) => {
+      if (!isJsonObject(current)) {
+        throw new Error(`Encountered non-object while resolving ${ref}`);
+      }
+      const key = part.replace(/~1/g, '/').replace(/~0/g, '~');
+      return current[key];
+    }, root);
+}
+
+function jsonTypeMatches(value: unknown, typ: string): boolean {
+  switch (typ) {
+    case 'null':
+      return value === null;
+    case 'object':
+      return isJsonObject(value);
+    case 'array':
+      return Array.isArray(value);
+    case 'boolean':
+      return typeof value === 'boolean';
+    case 'integer':
+      return typeof value === 'number' && Number.isInteger(value);
+    case 'number':
+      return typeof value === 'number';
+    case 'string':
+      return typeof value === 'string';
+    default:
+      return true;
+  }
+}
+
+function jsonSchemaMatches(
+  value: unknown,
+  schema: Record<string, unknown>,
+  root: Record<string, unknown>,
+): boolean {
+  const ref = schema.$ref;
+  if (typeof ref === 'string') {
+    const resolved = resolveJsonSchemaRef(root, ref);
+    if (isJsonObject(resolved)) {
+      schema = { ...resolved, ...schema };
+    }
+  }
+
+  if (value === null && 'default' in schema && !jsonSchemaAllowsNull(schema, root)) {
+    return true;
+  }
+
+  if ('const' in schema && value !== schema.const) {
+    return false;
+  }
+  const enumValues = schema.enum;
+  if (Array.isArray(enumValues) && !enumValues.includes(value)) {
+    return false;
+  }
+
+  const typ = schema.type;
+  if (Array.isArray(typ)) {
+    if (!typ.some((item) => typeof item === 'string' && jsonTypeMatches(value, item))) {
+      return false;
+    }
+  } else if (typeof typ === 'string' && !jsonTypeMatches(value, typ)) {
+    return false;
+  }
+
+  if (isJsonObject(value)) {
+    const required = schema.required;
+    if (
+      Array.isArray(required) &&
+      !required.every((key) => typeof key !== 'string' || key in value)
+    ) {
+      return false;
+    }
+
+    const properties = schema.properties;
+    if (isJsonObject(properties)) {
+      if (
+        (schema.additionalProperties === undefined || schema.additionalProperties === false) &&
+        Object.keys(value).some((key) => !(key in properties))
+      ) {
+        return false;
+      }
+
+      for (const [key, item] of Object.entries(value)) {
+        const propertySchema = properties[key];
+        if (isJsonObject(propertySchema) && !jsonSchemaMatches(item, propertySchema, root)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+function injectSchemaDefaults(
+  value: unknown,
+  schema: Record<string, unknown>,
+  root: Record<string, unknown>,
+): unknown {
+  const ref = schema.$ref;
+  if (typeof ref === 'string') {
+    const resolved = resolveJsonSchemaRef(root, ref);
+    if (isJsonObject(resolved)) {
+      schema = { ...resolved, ...schema };
+    }
+  }
+
+  if (value === null) {
+    if ('default' in schema && !jsonSchemaAllowsNull(schema, root)) {
+      return structuredClone(schema.default);
+    }
+    return null;
+  }
+
+  const allOf = schema.allOf;
+  if (Array.isArray(allOf)) {
+    for (const variant of allOf) {
+      if (isJsonObject(variant)) {
+        value = injectSchemaDefaults(value, variant, root);
+      }
+    }
+  }
+
+  for (const unionKey of ['anyOf', 'oneOf'] as const) {
+    const variants = schema[unionKey];
+    if (Array.isArray(variants)) {
+      for (const variant of variants) {
+        if (isJsonObject(variant) && jsonSchemaMatches(value, variant, root)) {
+          return injectSchemaDefaults(value, variant, root);
+        }
+      }
+    }
+  }
+
+  if (isJsonObject(value)) {
+    const properties = schema.properties;
+    const additional = schema.additionalProperties;
+    if (isJsonObject(properties) || isJsonObject(additional)) {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => {
+          const prop = isJsonObject(properties) ? properties[key] : undefined;
+          if (isJsonObject(prop)) {
+            return [key, injectSchemaDefaults(item, prop, root)];
+          }
+          if (isJsonObject(additional)) {
+            return [key, injectSchemaDefaults(item, additional, root)];
+          }
+          return [key, item];
+        }),
+      );
+    }
+  }
+
+  if (Array.isArray(value)) {
+    const prefixItems = schema.prefixItems;
+    const items = schema.items;
+    if (Array.isArray(prefixItems) || Array.isArray(items) || isJsonObject(items)) {
+      return value.map((item, index) => {
+        const prefixItem = Array.isArray(prefixItems) ? prefixItems[index] : undefined;
+        if (isJsonObject(prefixItem)) {
+          return injectSchemaDefaults(item, prefixItem, root);
+        }
+        const tupleItem = Array.isArray(items) ? items[index] : undefined;
+        if (isJsonObject(tupleItem)) {
+          return injectSchemaDefaults(item, tupleItem, root);
+        }
+        if (isJsonObject(items)) {
+          return injectSchemaDefaults(item, items, root);
+        }
+        return item;
+      });
+    }
+  }
+
+  return value;
+}
+
 export async function executeToolCall(
   toolCall: FunctionCall,
   toolCtx: ToolContext,
 ): Promise<FunctionCallOutput> {
-  const tool = toolCtx[toolCall.name]!;
-  let args: Record<string, unknown> | undefined;
+  const tool = toolCtx.getFunctionTool(toolCall.name);
+  if (!tool) {
+    const availableTools = sortedToolNames(toolCtx).join(', ');
+    return FunctionCallOutput.create({
+      callId: toolCall.callId,
+      name: toolCall.name,
+      output: `Unknown function: ${toolCall.name} - available tools: ${availableTools}`,
+      isError: true,
+    });
+  }
+
+  let args: object | undefined;
   let params: object | undefined;
 
   // Ensure valid JSON
@@ -282,7 +607,9 @@ export async function executeToolCall(
   // Ensure valid arguments schema
   try {
     if (isZodSchema(tool.parameters)) {
-      const result = await parseZodSchema<object>(tool.parameters, args);
+      const schema = zodSchemaToJsonSchema(tool.parameters, false) as Record<string, unknown>;
+      const argsWithDefaults = injectSchemaDefaults(args, schema, schema);
+      const result = await parseZodSchema<object>(tool.parameters, argsWithDefaults);
       if (result.success) {
         params = result.data;
       } else {
@@ -685,26 +1012,37 @@ function computeLCS(oldIds: string[], newIds: string[]): string[] {
 interface DiffOps {
   toRemove: string[];
   toCreate: Array<[string | null, string]>; // (previous_item_id, id), if previous_item_id is null, add to the root
+  toUpdate: Array<[string | null, string]>; // (previous_item_id, id), the items with the same id but different content
 }
 
 /**
- * Compute the minimal list of create/remove operations to transform oldCtx into newCtx.
+ * Compute the minimal list of create/remove/update operations to transform oldCtx into newCtx.
  *
  * @param oldCtx - The old chat context.
  * @param newCtx - The new chat context.
- * @returns The minimal list of create/remove operations to transform oldCtx into newCtx.
+ * @returns The minimal list of create/remove/update operations to transform oldCtx into newCtx.
  */
 export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): DiffOps {
   const oldIds = oldCtx.items.map((item: ChatItem) => item.id);
   const newIds = newCtx.items.map((item: ChatItem) => item.id);
   const lcsIds = new Set(computeLCS(oldIds, newIds));
+  const oldCtxById = new Map(oldCtx.items.map((item) => [item.id, item]));
 
   const toRemove = oldCtx.items.filter((msg) => !lcsIds.has(msg.id)).map((msg) => msg.id);
   const toCreate: Array<[string | null, string]> = [];
+  const toUpdate: Array<[string | null, string]> = [];
 
   let lastIdInSequence: string | null = null;
   for (const newItem of newCtx.items) {
     if (lcsIds.has(newItem.id)) {
+      const oldItem = oldCtxById.get(newItem.id);
+      if (
+        oldItem?.type === 'message' &&
+        newItem.type === 'message' &&
+        oldItem.rawTextContent !== newItem.rawTextContent
+      ) {
+        toUpdate.push([lastIdInSequence, newItem.id]);
+      }
       lastIdInSequence = newItem.id;
     } else {
       const prevId = lastIdInSequence; // null if root
@@ -716,6 +1054,7 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
   return {
     toRemove,
     toCreate,
+    toUpdate,
   };
 }
 

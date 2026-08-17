@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -11,8 +10,6 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -39,11 +36,9 @@ class GameAgent extends voice.Agent<UserData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const getWeather = llm.tool({
+      name: 'getWeather',
       description: ' Called when the user asks about the weather.',
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
@@ -55,6 +50,7 @@ export default defineAgent({
     });
 
     const toggleLight = llm.tool({
+      name: 'toggleLight',
       description: 'Called when the user asks to turn on or off the light.',
       parameters: z.object({
         room: roomNameSchema.describe('The room to turn the light in'),
@@ -70,6 +66,7 @@ export default defineAgent({
     });
 
     const getNumber = llm.tool({
+      name: 'getNumber',
       description:
         'Called when the user wants to get a number value, None if user want a random value',
       parameters: z.object({
@@ -87,6 +84,7 @@ export default defineAgent({
     });
 
     const checkStoredNumber = llm.tool({
+      name: 'checkStoredNumber',
       description: 'Called when the user wants to check the stored number.',
       execute: async (_, { ctx }: llm.ToolOptions<UserData>) => {
         return `The stored number is ${ctx.userData.number}.`;
@@ -94,6 +92,7 @@ export default defineAgent({
     });
 
     const updateStoredNumber = llm.tool({
+      name: 'updateStoredNumber',
       description: 'Called when the user wants to update the stored number.',
       parameters: z.object({
         number: z.number().describe('The number to update the stored number to'),
@@ -106,44 +105,42 @@ export default defineAgent({
 
     const routerAgent = new RouterAgent({
       instructions: 'You are a helpful assistant.',
-      tools: {
+      tools: [
         getWeather,
         toggleLight,
-        playGame: llm.tool({
+        llm.tool({
+          name: 'playGame',
           description: 'Called when the user wants to play a game (transfer user to a game agent).',
           execute: async (): Promise<llm.AgentHandoff> => {
             return llm.handoff({ agent: gameAgent, returns: 'The game is now playing.' });
           },
         }),
-      },
+      ],
     });
 
     const gameAgent = new GameAgent({
       instructions: 'You are a game agent. You are playing a game with the user.',
-      tools: {
+      tools: [
         getNumber,
         checkStoredNumber,
         updateStoredNumber,
-        finishGame: llm.tool({
+        llm.tool({
+          name: 'finishGame',
           description: 'Called when the user wants to finish the game.',
           execute: async () => {
             return llm.handoff({ agent: routerAgent, returns: 'The game is now finished.' });
           },
         }),
-      },
+      ],
     });
 
-    const vad = ctx.proc.userData.vad! as silero.VAD;
-
     const session = new voice.AgentSession({
-      vad,
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       llm: new inference.LLM({ model: 'google/gemini-3-flash-preview' }),
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
       }),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
       userData: { number: 0 },
       voiceOptions: {
         preemptiveGeneration: true,

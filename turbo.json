@@ -7,6 +7,9 @@
     "AZURE_OPENAI_DEPLOYMENT",
     "AZURE_OPENAI_ENDPOINT",
     "AZURE_OPENAI_ENTRA_TOKEN",
+    "AZURE_SPEECH_HOST",
+    "AZURE_SPEECH_KEY",
+    "AZURE_SPEECH_REGION",
     "BEY_API_KEY",
     "BEY_API_URL",
     "BEY_AVATAR_ID",
@@ -18,6 +21,9 @@
     "CEREBRAS_API_KEY",
     "DEEPGRAM_API_KEY",
     "DEEPSEEK_API_KEY",
+    "DID_API_KEY",
+    "DID_API_URL",
+    "DID_AGENT_ID",
     "ELEVEN_API_KEY",
     "FIREWORKS_API_KEY",
     "FISH_API_KEY",
@@ -25,6 +31,9 @@
     "HEDRA_API_KEY",
     "HEDRA_API_URL",
     "HEDRA_AVATAR_ID",
+    "HOTEL_TODAY",
+    "KRISP_VIVA_SDK_LICENSE_KEY",
+    "KRISP_VIVA_FILTER_MODEL_PATH",
     "LEMONSLICE_API_KEY",
     "LEMONSLICE_API_URL",
     "LEMONSLICE_IMAGE_URL",
@@ -33,6 +42,7 @@
     "LIVEAVATAR_AVATAR_ID",
     "LIVEKIT_API_KEY",
     "LIVEKIT_API_SECRET",
+    "LIVEKIT_INFERENCE_TESTS",
     "LIVEKIT_INFERENCE_API_KEY",
     "LIVEKIT_INFERENCE_API_SECRET",
     "LIVEKIT_DEV_MODE",
@@ -41,15 +51,21 @@
     "LIVEKIT_URL",
     "LLAMA_API_KEY",
     "LIVEKIT_AGENT_ID",
+    "LIVEKIT_AGENT_DEPLOYMENT",
     "LIVEKIT_AGENT_NAME",
+    "LIVEKIT_WORKER_TOKEN",
+    "LIVEKIT_AGENT_NAME_OVERRIDE",
     "LOG_LEVEL",
     "OCTOAI_TOKEN",
     "OPENAI_API_KEY",
+    "OTEL_RESOURCE_ATTRIBUTES",
     "OPENAI_API_VERSION",
     "OPENAI_BASE_URL",
     "PERPLEXITY_API_KEY",
     "TELNYX_API_KEY",
     "TAVUS_API_KEY",
+    "TAVUS_FACE_ID",
+    "TAVUS_PAL_ID",
     "TAVUS_PERSONA_ID",
     "TAVUS_REPLICA_ID",
     "TOGETHER_API_KEY",
@@ -57,6 +73,9 @@
     "NEUPHONIC_API_KEY",
     "NUM_CPUS",
     "PHONIC_API_KEY",
+    "PROTOFACE_API_KEY",
+    "PROTOFACE_API_URL",
+    "PROTOFACE_AVATAR_ID",
     "RESEMBLE_API_KEY",
     "LIVEKIT_REMOTE_EOT_URL",
     "LIVEKIT_SIP_NUMBER",
@@ -83,6 +102,9 @@
     "SIP_PHONE_NUMBER",
     "LK_OPENAI_DEBUG",
     "LK_GOOGLE_DEBUG",
+    "LK_KEYTERMS_DEBUG",
+    "KEYTERM_STT",
+    "LK_DRAIN_PLAYOUT_TIMEOUT_MS",
     "LIVEKIT_EVALS_VERBOSE",
     "OVHCLOUD_API_KEY",
     "INWORLD_API_KEY",
@@ -94,20 +116,24 @@
     "MISTRAL_API_KEY",
     "VITEST"
   ],
-  "pipeline": {
+  "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
     "clean": {
       "dependsOn": ["^clean"],
-      "outputs": [""]
+      "outputs": []
     },
     "clean:build": {
       "dependsOn": ["^clean:build"],
       "outputs": ["dist/**"]
     },
     "lint": {
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
       "outputs": []
     },
     "api:check": {

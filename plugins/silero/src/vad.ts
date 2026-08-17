@@ -97,10 +97,14 @@ export class VAD extends baseVAD {
    * @param options -
    * @returns Promise\<{@link VAD}\>: An instance of the VAD class ready for streaming.
    */
-  static async load(opts: Partial<VADOptions> = {}): Promise<VAD> {
+  static async load(opts: Partial<VADOptions> = {}): Promise<baseVAD> {
     const mergedOpts: VADOptions = { ...defaultVADOptions, ...opts };
     const session = await newInferenceSession(mergedOpts.forceCPU);
     return new VAD(session, mergedOpts);
+  }
+
+  override get minSilenceDuration(): number {
+    return this.#opts.minSilenceDuration;
   }
 
   stream(): VADStream {

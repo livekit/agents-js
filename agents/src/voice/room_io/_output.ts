@@ -23,9 +23,29 @@ import {
   TOPIC_TRANSCRIPTION,
 } from '../../constants.js';
 import { log } from '../../log.js';
+import {
+  type ExpressiveTag,
+  TranscriptMarkupStripper,
+  expressionAttribute,
+  splitAllMarkup,
+  stripAllMarkup,
+} from '../../tts/provider_format.js';
 import { Future, Task, shortuuid } from '../../utils.js';
 import { AudioOutput, TextOutput, type TimedString, isTimedString } from '../io.js';
 import { findMicrophoneTrackId } from '../transcription/index.js';
+
+export interface TranscriptionOutputOptions {
+  /**
+   * Whether expressive markup may be present in the text reaching this sink.
+   *
+   * Evaluated per chunk, because the session latches it on the first turn that injects
+   * the markup guide — after this sink is constructed. Defaults to "never", so a session
+   * that doesn't use expressive mode publishes its transcript untouched: the strip works
+   * off the union of every provider's tag names, and an agent that legitimately writes
+   * `<break time="1s"/>` should not have it silently deleted.
+   */
+  expressiveEnabled?: () => boolean;
+}
 
 abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected room: Room;
@@ -36,11 +56,18 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected latestText: string = '';
   protected currentId: string = this.generateCurrentId();
   protected logger = log();
+  protected expressiveEnabled: () => boolean;
 
-  constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null) {
+  constructor(
+    room: Room,
+    isDeltaStream: boolean,
+    participant: Participant | string | null,
+    options: TranscriptionOutputOptions = {},
+  ) {
     super();
     this.room = room;
     this.isDeltaStream = isDeltaStream;
+    this.expressiveEnabled = options.expressiveEnabled ?? (() => false);
 
     this.room.on(RoomEvent.TrackPublished, this.onTrackPublished);
     this.room.on(RoomEvent.LocalTrackPublished, this.onLocalTrackPublished);
@@ -131,7 +158,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected abstract handleFlush(): void;
 }
 
-export interface ParticipantTranscriptionOutputOptions {
+export interface ParticipantTranscriptionOutputOptions extends TranscriptionOutputOptions {
   /** When true, each chunk sent on the `lk.transcription` datastream topic is serialized
    *  as a JSON object with `text`, and `start_time`/`end_time`/`confidence`/
    *  `start_time_offset` when the captured value is a TimedString. Each object is
@@ -143,6 +170,13 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   private writer: TextStreamWriter | null = null;
   private flushTask: Task<void> | null = null;
   private jsonFormat: boolean;
+  /**
+   * Per-segment markup stripping: delta streams strip incrementally (buffering a tag split
+   * across chunks); non-delta streams re-strip the full text each time and keep the latest
+   * tags in {@link segmentTags} for the expression attribute.
+   */
+  private stripper = new TranscriptMarkupStripper();
+  private segmentTags: ExpressiveTag[] = [];
 
   constructor(
     room: Room,
@@ -150,7 +184,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     participant: Participant | string | null,
     options: ParticipantTranscriptionOutputOptions = {},
   ) {
-    super(room, isDeltaStream, participant);
+    super(room, isDeltaStream, participant, options);
     this.jsonFormat = options.jsonFormat ?? false;
   }
 
@@ -159,30 +193,6 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       return;
     }
 
-    // latestText must hold the encoded payload so non-delta flush (FINAL=true) republishes the
-    // same newline-delimited JSON format as the interim chunks.
-    const payload = this.jsonFormat
-      ? this.encodeJsonChunk(text)
-      : isTimedString(text)
-        ? text.text
-        : text;
-    this.latestText = payload;
-    await this.handleCaptureText(payload);
-  }
-
-  private encodeJsonChunk(text: string | TimedString): string {
-    const isTimed = isTimedString(text);
-    const message = new pb.TimedString({
-      text: isTimed ? text.text : text,
-      startTime: isTimed ? text.startTime : undefined,
-      endTime: isTimed ? text.endTime : undefined,
-      confidence: isTimed ? text.confidence : undefined,
-      startTimeOffset: isTimed ? text.startTimeOffset : undefined,
-    });
-    return message.toJsonString({ useProtoFieldName: true }) + '\n';
-  }
-
-  protected async handleCaptureText(text: string): Promise<void> {
     if (this.flushTask && !this.flushTask.done) {
       await this.flushTask.result;
     }
@@ -192,17 +202,78 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       this.capturing = true;
     }
 
+    // the raw text (expressive markup intact) arrives here; publish only the visible text.
+    // Skip a chunk that strips to nothing (a partial tag still buffering, or a markup-only
+    // token) so the transcript cadence isn't disturbed. Without expressive there is no
+    // markup to remove, so the text is published exactly as it arrives.
+    const rawText = isTimedString(text) ? text.text : text;
+    let cleanText: string;
+    if (!this.expressiveEnabled()) {
+      cleanText = rawText;
+    } else if (this.isDeltaStream) {
+      cleanText = this.stripper.push(rawText);
+    } else {
+      [cleanText, this.segmentTags] = splitAllMarkup(rawText);
+      // a marker opening the segment leaves the space that followed it behind (see
+      // TranscriptMarkupStripper); this path re-strips the whole accumulation each time,
+      // so trimming the head is idempotent
+      cleanText = cleanText.replace(/^\s+/, '');
+    }
+    if (!cleanText) {
+      return;
+    }
+
+    // latestText must hold the encoded payload so non-delta flush (FINAL=true) republishes the
+    // same newline-delimited JSON format as the interim chunks.
+    const payload = this.encode(cleanText, text);
+    this.latestText = payload;
+    await this.publish(payload);
+  }
+
+  private encode(cleanText: string, timingSrc?: string | TimedString): string {
+    if (!this.jsonFormat) {
+      return cleanText;
+    }
+    const isTimed = timingSrc !== undefined && isTimedString(timingSrc);
+    const message = new pb.TimedString({
+      text: cleanText,
+      startTime: isTimed ? timingSrc.startTime : undefined,
+      endTime: isTimed ? timingSrc.endTime : undefined,
+      confidence: isTimed ? timingSrc.confidence : undefined,
+      startTimeOffset: isTimed ? timingSrc.startTimeOffset : undefined,
+    });
+    return message.toJsonString({ useProtoFieldName: true }) + '\n';
+  }
+
+  private async publish(payload: string): Promise<void> {
     try {
       if (this.room.isConnected) {
         if (this.isDeltaStream) {
           // reuse the existing writer
           if (this.writer === null) {
-            this.writer = await this.createTextWriter();
+            // Whatever markup was stripped ahead of the first visible text goes on the
+            // opening header — a frontend can't colour the turn until the agent stops
+            // talking otherwise. The instructions ask for a leading expression marker, so
+            // this is normally already populated.
+            //
+            // If the model puts prose before its first expression marker, the tag arrives
+            // after this header and the segment carries no lk.expression: rtc-node's
+            // `TextStreamWriter.close()` takes no attributes, so unlike Python (which
+            // passes them to `aclose()`) there is no trailing header to fall back on. The
+            // same limitation is why the delta path can't send lk.transcription_final
+            // either. Audio and transcript text are unaffected — only the UI hint.
+            this.writer = await this.createTextWriter(
+              undefined,
+              expressionAttribute(this.stripper.tags),
+            );
           }
-          await this.writer.write(text);
+          await this.writer.write(payload);
         } else {
-          const tmpWriter = await this.createTextWriter();
-          await tmpWriter.write(text);
+          const tmpWriter = await this.createTextWriter(
+            undefined,
+            expressionAttribute(this.segmentTags),
+          );
+          await tmpWriter.write(payload);
           await tmpWriter.close();
         }
       }
@@ -211,13 +282,33 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     }
   }
 
+  protected async handleCaptureText(_text: string): Promise<void> {
+    // captureText is overridden above; the base implementation is unused here.
+  }
+
   protected handleFlush() {
     const currWriter = this.writer;
     this.writer = null;
-    this.flushTask = Task.from((controller) => this.flushTaskImpl(currWriter, controller.signal));
+    const expressive = this.expressiveEnabled();
+    // visible text left in the strip buffer
+    const remaining = expressive && this.isDeltaStream ? this.stripper.flush() : '';
+    const tags = !expressive ? [] : this.isDeltaStream ? this.stripper.tags : this.segmentTags;
+    const pendingText = remaining ? this.encode(remaining) : '';
+    this.flushTask = Task.from((controller) =>
+      this.flushTaskImpl(currWriter, controller.signal, expressionAttribute(tags), pendingText),
+    );
   }
 
-  private async createTextWriter(attributes?: Record<string, string>): Promise<TextStreamWriter> {
+  protected override resetState() {
+    super.resetState();
+    this.stripper = new TranscriptMarkupStripper();
+    this.segmentTags = [];
+  }
+
+  private async createTextWriter(
+    attributes?: Record<string, string>,
+    extra?: Record<string, string>,
+  ): Promise<TextStreamWriter> {
     if (!this.participantIdentity) {
       throw new Error('participantIdentity not found');
     }
@@ -235,6 +326,11 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       }
     }
     attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = this.currentId;
+    // overlaid rather than replacing, so the caller can add a key without dropping the
+    // transcription attributes the protocol requires
+    if (extra) {
+      Object.assign(attributes, extra);
+    }
 
     return await this.room.localParticipant.streamText({
       topic: TOPIC_TRANSCRIPTION,
@@ -243,12 +339,20 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     });
   }
 
-  private async flushTaskImpl(writer: TextStreamWriter | null, signal: AbortSignal): Promise<void> {
+  private async flushTaskImpl(
+    writer: TextStreamWriter | null,
+    signal: AbortSignal,
+    extraAttributes?: Record<string, string>,
+    pendingText = '',
+  ): Promise<void> {
     const attributes: Record<string, string> = {
       [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'true',
     };
     if (this.trackId) {
       attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
+    }
+    for (const [key, value] of Object.entries(extraAttributes ?? {})) {
+      attributes[key] ??= value;
     }
 
     const abortPromise = new Promise<void>((resolve) => {
@@ -258,8 +362,22 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     try {
       if (this.room.isConnected) {
         if (this.isDeltaStream) {
-          if (writer) {
-            await Promise.race([writer.close(), abortPromise]);
+          // a segment whose every chunk was held back by the stripper (a tag-shaped "<"
+          // never resolves) reaches flush with text but no writer — open one here rather
+          // than dropping the transcript
+          let deltaWriter: TextStreamWriter | null = writer;
+          if (!deltaWriter && pendingText) {
+            const opened = await Promise.race([this.createTextWriter(attributes), abortPromise]);
+            if (signal.aborted || !opened) {
+              return;
+            }
+            deltaWriter = opened;
+          }
+          if (deltaWriter) {
+            if (pendingText) {
+              await Promise.race([deltaWriter.write(pendingText), abortPromise]);
+            }
+            await Promise.race([deltaWriter.close(), abortPromise]);
           }
         } else {
           const tmpWriter = await Promise.race([this.createTextWriter(attributes), abortPromise]);
@@ -303,7 +421,18 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
       this.pushedText = text;
     }
 
-    await this.publishTranscription(this.currentId, this.pushedText, false);
+    // pushedText keeps the raw text (markup intact); publish the visible text only.
+    // Stripping the whole accumulation each time avoids partial-tag edge cases; the
+    // expression is dropped here — the deprecated rtc Transcription API has no attribute
+    // channel (the stream-based output carries lk.expression instead).
+    await this.publishTranscription(this.currentId, this.visibleText(), false);
+  }
+
+  /** The raw accumulation, with markup removed only when expressive could have written it. */
+  private visibleText(): string {
+    if (!this.expressiveEnabled()) return this.pushedText;
+    // trimStart: a marker opening the segment leaves the space that followed it behind
+    return stripAllMarkup(this.pushedText).replace(/^\s+/, '');
   }
 
   protected handleFlush() {
@@ -311,7 +440,7 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
       return;
     }
 
-    this.flushTask = this.publishTranscription(this.currentId, this.pushedText, true);
+    this.flushTask = this.publishTranscription(this.currentId, this.visibleText(), true);
     this.resetState();
   }
 
@@ -381,6 +510,7 @@ export class ParticipantAudioOutput extends AudioOutput {
   private pushedDuration: number = 0;
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
+  // playbackStarted fires once per segment; a mid-segment pause/resume does not re-arm this.
   private firstFrameEmitted: boolean = false;
   /** Gate held closed while the output is paused; frame forwarding awaits it. */
   private playbackEnabledFuture: Future<void> = new Future();
@@ -410,7 +540,6 @@ export class ParticipantAudioOutput extends AudioOutput {
     if (!this.playbackEnabledFuture.done) {
       this.playbackEnabledFuture.resolve();
     }
-    this.firstFrameEmitted = false;
     super.resume();
   }
 
@@ -425,8 +554,6 @@ export class ParticipantAudioOutput extends AudioOutput {
   async captureFrame(frame: AudioFrame): Promise<void> {
     await this.startedFuture.await;
 
-    super.captureFrame(frame);
-
     if (!this.playbackEnabledFuture.done) {
       this.audioSource.clearQueue();
       // Race against interruption so a cancel-while-paused can't deadlock an in-flight frame.
@@ -435,6 +562,12 @@ export class ParticipantAudioOutput extends AudioOutput {
         return;
       }
     }
+
+    // Count the playback segment only after the pause/interrupt gate above. super.captureFrame
+    // bumps playbackSegmentsCount; if a frame interrupted-while-paused bailed at the gate after
+    // that bump, the count would strand ahead of playbackFinishedCount and the next
+    // waitForPlayout() would hang forever. See #1662.
+    super.captureFrame(frame);
 
     if (!this.firstFrameEmitted) {
       this.firstFrameEmitted = true;
@@ -528,7 +661,8 @@ export class ParticipantAudioOutput extends AudioOutput {
     const track = LocalAudioTrack.createAudioTrack('roomio_audio', this.audioSource);
     this.publication = await this.room.localParticipant?.publishTrack(
       track,
-      new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+      this.options.trackPublishOptions ??
+        new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
     );
 
     if (signal.aborted) {

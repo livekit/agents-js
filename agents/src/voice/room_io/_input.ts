@@ -4,7 +4,7 @@
 import {
   type AudioFrame,
   AudioStream,
-  FrameProcessor,
+  type FrameProcessor,
   type NoiseCancellationOptions,
   RemoteParticipant,
   type RemoteTrack,
@@ -12,8 +12,9 @@ import {
   type Room,
   RoomEvent,
   TrackSource,
+  isFrameProcessor,
 } from '@livekit/rtc-node';
-import type { ReadableStream } from 'node:stream/web';
+import { type ReadableStream, TransformStream } from 'node:stream/web';
 import { log } from '../../log.js';
 import { resampleStream } from '../../utils.js';
 import { AudioInput } from '../io.js';
@@ -27,6 +28,7 @@ export class ParticipantAudioInputStream extends AudioInput {
   private publication: RemoteTrackPublication | null = null;
   private participantIdentity: string | null = null;
   private currentInputId: string | null = null;
+  private attached = true;
   private logger = log();
 
   constructor({
@@ -44,7 +46,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room = room;
     this.sampleRate = sampleRate;
     this.numChannels = numChannels;
-    if (noiseCancellation instanceof FrameProcessor) {
+    if (isFrameProcessor<FrameProcessor<AudioFrame>>(noiseCancellation)) {
       this.frameProcessor = noiseCancellation;
     } else {
       this.noiseCancellation = noiseCancellation;
@@ -52,7 +54,6 @@ export class ParticipantAudioInputStream extends AudioInput {
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
-    this.room.on(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
   }
 
   setParticipant(participant: RemoteParticipant | string | null) {
@@ -98,6 +99,18 @@ export class ParticipantAudioInputStream extends AudioInput {
         }
       }
     }
+  }
+
+  override setAttached(attached: boolean): void {
+    this.attached = attached;
+  }
+
+  override onAttached(): void {
+    this.logger.debug({ participant: this.participantIdentity }, 'input stream attached');
+  }
+
+  override onDetached(): void {
+    this.logger.debug({ participant: this.participantIdentity }, 'input stream detached');
   }
 
   private onTrackUnpublished = (
@@ -147,31 +160,20 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
     this.closeStream();
     this.publication = publication;
-    this.currentInputId = this.multiStream.addInputStream(
-      resampleStream({
-        stream: this.createStream(track),
-        outputRate: this.sampleRate,
+    const attachedStream = resampleStream({
+      stream: this.createStream(track),
+      outputRate: this.sampleRate,
+    }).pipeThrough(
+      new TransformStream<AudioFrame, AudioFrame>({
+        transform: (frame, controller) => {
+          if (this.attached) {
+            controller.enqueue(frame);
+          }
+        },
       }),
     );
-    this.frameProcessor?.onStreamInfoUpdated({
-      participantIdentity: participant.identity,
-      roomName: this.room.name!,
-      publicationSid: publication.sid!,
-    });
-    this.frameProcessor?.onCredentialsUpdated({
-      token: this.room.token!,
-      url: this.room.serverUrl!,
-    });
+    this.currentInputId = this.multiStream.addInputStream(attachedStream);
     return true;
-  };
-
-  private onTokenRefreshed = () => {
-    if (this.room.token && this.room.serverUrl) {
-      this.frameProcessor?.onCredentialsUpdated({
-        token: this.room.token,
-        url: this.room.serverUrl,
-      });
-    }
   };
 
   private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
@@ -179,6 +181,10 @@ export class ParticipantAudioInputStream extends AudioInput {
       sampleRate: this.sampleRate,
       numChannels: this.numChannels,
       noiseCancellation: this.frameProcessor || this.noiseCancellation,
+      // Don't let the AudioStream close the processor when the track switches —
+      // this input stream owns the processor across track changes and closes it
+      // itself in close().
+      autoCloseNoiseCancellation: false,
       // TODO(AJS-269): resolve compatibility issue with node-sdk to remove the forced type casting
     }) as unknown as ReadableStream<AudioFrame>;
   }
@@ -186,7 +192,6 @@ export class ParticipantAudioInputStream extends AudioInput {
   override async close() {
     this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
-    this.room.off(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
     this.closeStream();
     await super.close();
 

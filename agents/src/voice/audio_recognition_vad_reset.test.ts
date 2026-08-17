@@ -27,12 +27,14 @@ interface RecognitionInternals {
 function makeHooks(): RecognitionHooks {
   return {
     onInterruption: vi.fn(),
+    onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
     onEndOfSpeech: vi.fn(),
     onInterimTranscript: vi.fn(),
     onFinalTranscript: vi.fn(),
     onPreemptiveGeneration: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
     onUserTurnExceeded: vi.fn(),
     retrieveChatCtx: () => ChatContext.empty(),
     onEndOfTurn: vi.fn(async () => true),
