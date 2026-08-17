@@ -8770,6 +8770,7 @@ class WarmTransferTask extends AgentTask<WarmTransferResult> {
 //
 // @public (undocumented)
 interface WarmTransferTaskOptions {
+    abortSignal?: AbortSignal;
     // (undocumented)
     allowInterruptions?: boolean;
     callerHangupInstruction?: string | null;

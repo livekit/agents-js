@@ -18,7 +18,7 @@ import { ToolError, ToolFlag, tool } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
-import { Future, waitUntilAborted } from '../utils.js';
+import { Future, asError, waitUntilAborted } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { Agent, AgentTask } from '../voice/agent.js';
 import { AgentSession, type TurnDetectionMode } from '../voice/agent_session.js';
@@ -37,6 +37,11 @@ export interface WarmTransferResult {
 }
 
 export interface WarmTransferTaskOptions {
+  /**
+   * Signal used to cancel the transfer. A successful participant move wins if it completes after
+   * the signal aborts. The task stops waiting for a pending SIP request but cannot cancel it.
+   */
+  abortSignal?: AbortSignal;
   /** The phone number or SIP URI to dial for the human agent. */
   sipCallTo?: string;
   /**
@@ -121,6 +126,7 @@ type IoState = {
  * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
  */
 export function createWarmTransferTask({
+  abortSignal,
   sipCallTo,
   sipTrunkId: rawSipTrunkId,
   sipConnection,
@@ -184,12 +190,13 @@ export function createWarmTransferTask({
   let hangupNotifySession: AgentSession | null = null;
   let holdAudioHandle: PlayHandle | null = null;
   let originalIoState: IoState | null = null;
+  let mergeInProgress = false;
 
   // Resolves when the human agent room/session fails, so onEnter stops waiting.
   const humanAgentFailedFut = new Future<void>();
-  // Resolves when the caller hangs up before the merge, so onEnter cancels a
-  // still-pending dial (e.g. while the human agent's phone is ringing).
-  const callerHangupFut = new Future<void>();
+  // Resolves when the transfer is cancelled before the merge, so onEnter stops
+  // a still-pending dial (e.g. while the human agent's phone is ringing).
+  const cancellationFut = new Future<void>();
 
   // `task` is created at the end of this function. The helpers and tools below
   // only read it at runtime (inside their bodies), long after it's assigned, so
@@ -217,6 +224,7 @@ export function createWarmTransferTask({
     // the pre-merge hangup watch; connect_to_caller re-attaches its own
     // post-merge cleanup listener.
     callerRoom?.off(RoomEvent.ParticipantDisconnected, onCallerLeftBeforeMerge);
+    abortSignal?.removeEventListener('abort', onAbort);
 
     if (transferAgentSession) {
       // shutdown() triggers deleteRoomOnClose, which disconnects the human agent
@@ -282,7 +290,7 @@ export function createWarmTransferTask({
       { participantIdentity },
       'caller hung up before the transfer completed, cancelling transfer',
     );
-    callerHangupFut.resolve();
+    cancellationFut.resolve();
 
     // If the human agent already answered, take the session out of setResult's
     // reach and let them know before hanging up, instead of dropping the call
@@ -295,6 +303,15 @@ export function createWarmTransferTask({
       void notifyHumanAgentOfHangup(session);
     }
     setResult(new ToolError('caller hung up before the transfer completed'));
+  };
+
+  const onAbort = (): void => {
+    if (task.done || mergeInProgress) return;
+
+    const error = asError(abortSignal?.reason ?? new Error('warm transfer aborted'));
+    logger.info({ error }, 'warm transfer aborted');
+    cancellationFut.resolve();
+    setResult(error);
   };
 
   // Pre-merge watch: cancels the transfer if the caller leaves while the human
@@ -503,8 +520,19 @@ export function createWarmTransferTask({
           throw new ToolError('the transfer was already cancelled');
         }
 
-        await mergeCalls();
-        setResult({ humanAgentIdentity });
+        mergeInProgress = true;
+        try {
+          await mergeCalls();
+          setResult({ humanAgentIdentity });
+        } catch (error) {
+          if (abortSignal?.aborted) {
+            setResult(asError(abortSignal.reason ?? new Error('warm transfer aborted')));
+            return;
+          }
+          throw error;
+        } finally {
+          mergeInProgress = false;
+        }
         callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerParticipantDisconnected);
       },
     }),
@@ -546,6 +574,12 @@ export function createWarmTransferTask({
       jobCtx = getJobContext();
       callerRoom = jobCtx.room;
 
+      abortSignal?.addEventListener('abort', onAbort, { once: true });
+      if (abortSignal?.aborted) {
+        onAbort();
+        return;
+      }
+
       callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerLeftBeforeMerge);
       if (!hasCallerParticipant()) {
         // The caller was already gone before the listener could attach.
@@ -565,20 +599,20 @@ export function createWarmTransferTask({
 
       setIoEnabled(false);
 
-      // Race the dial against a human-agent-room failure or a caller hangup.
+      // Race the dial against a human-agent-room failure or cancellation.
       // AbortController lets the `finally` cancel a still-pending dial when
       // either of those wins the race.
       const abortController = new AbortController();
       const dialPromise = dialHumanAgent(abortController.signal);
       try {
         const result = await Promise.race([
-          dialPromise.then((session) => ({ session, callerHungUp: false })),
-          humanAgentFailedFut.await.then(() => ({ session: null, callerHungUp: false })),
-          callerHangupFut.await.then(() => ({ session: null, callerHungUp: true })),
+          dialPromise.then((session) => ({ session, cancelled: false })),
+          humanAgentFailedFut.await.then(() => ({ session: null, cancelled: false })),
+          cancellationFut.await.then(() => ({ session: null, cancelled: true })),
         ]);
 
-        if (result.callerHungUp) {
-          // cancelForCallerHangup already completed the task; the `finally`
+        if (result.cancelled) {
+          // The cancellation handler already completed the task; the `finally`
           // below aborts the pending dial and tears down the half-built room.
           return;
         }

@@ -1,8 +1,119 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
-import { createWarmTransferTask, resolveHumanAgentRoomName } from './warm_transfer.js';
+import { ParticipantKind, Room } from '@livekit/rtc-node';
+import { AccessToken, RoomServiceClient, SipClient } from 'livekit-server-sdk';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as job from '../job.js';
+import type { JobContext } from '../job.js';
+import { ChatContext, type FunctionTool } from '../llm/index.js';
+import { AgentTask } from '../voice/agent.js';
+import { AgentSession } from '../voice/agent_session.js';
+import { BackgroundAudioPlayer } from '../voice/background_audio.js';
+import {
+  type WarmTransferResult,
+  createWarmTransferTask,
+  resolveHumanAgentRoomName,
+} from './warm_transfer.js';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
+const createFakeTask = () => {
+  let done = false;
+  const complete = vi.fn(() => {
+    done = true;
+  });
+  const task = {
+    get done() {
+      return done;
+    },
+    complete,
+    instructions: '',
+    stt: undefined,
+    vad: undefined,
+    llm: undefined,
+    tts: undefined,
+    toolCtx: { tools: [] },
+    chatCtx: ChatContext.empty(),
+    session: {
+      stt: undefined,
+      vad: undefined,
+      llm: undefined,
+      tts: undefined,
+      turnDetection: undefined,
+      input: {
+        audio: {},
+        audioEnabled: true,
+        setAudioEnabled: vi.fn(),
+      },
+      output: {
+        audio: {},
+        audioEnabled: true,
+        transcription: {},
+        transcriptionEnabled: true,
+        setAudioEnabled: vi.fn(),
+        setTranscriptionEnabled: vi.fn(),
+      },
+    },
+  } as unknown as AgentTask<WarmTransferResult>;
+  const create = vi.spyOn(AgentTask, 'create').mockReturnValue(task);
+  return { complete, create };
+};
+
+const createCallerRoom = (): Room =>
+  ({
+    name: 'caller-room',
+    localParticipant: { identity: 'transfer-agent' },
+    remoteParticipants: new Map([
+      ['caller', { identity: 'caller', kind: ParticipantKind.STANDARD }],
+    ]),
+    on: vi.fn(),
+    off: vi.fn(),
+  }) as unknown as Room;
+
+const mockDial = (sipParticipant: Promise<unknown> = Promise.resolve({})) => {
+  vi.stubEnv('LIVEKIT_API_KEY', 'api-key');
+  vi.stubEnv('LIVEKIT_API_SECRET', 'api-secret');
+  vi.spyOn(AccessToken.prototype, 'toJwt').mockResolvedValue('token');
+  vi.spyOn(Room.prototype, 'connect').mockImplementation(async function () {
+    Object.defineProperty(this, 'name', {
+      configurable: true,
+      value: 'caller-room-human-agent',
+    });
+  });
+  const disconnect = vi.spyOn(Room.prototype, 'disconnect').mockResolvedValue();
+  vi.spyOn(AgentSession.prototype, 'start').mockResolvedValue();
+  const close = vi.spyOn(AgentSession.prototype, 'close').mockResolvedValue();
+  const shutdown = vi.spyOn(AgentSession.prototype, 'shutdown').mockImplementation(() => {});
+  const createSipParticipant = vi
+    .spyOn(SipClient.prototype, 'createSipParticipant')
+    .mockReturnValue(sipParticipant as never);
+  vi.spyOn(BackgroundAudioPlayer.prototype, 'close').mockResolvedValue();
+  return { close, createSipParticipant, disconnect, shutdown };
+};
+
+const setupTransfer = (abortSignal: AbortSignal) => {
+  const callerRoom = createCallerRoom();
+  vi.spyOn(job, 'getJobContext').mockReturnValue({
+    room: callerRoom,
+    info: {
+      url: 'ws://localhost:7880',
+      apiKey: 'api-key',
+      apiSecret: 'api-secret',
+    },
+  } as JobContext);
+  const fakeTask = createFakeTask();
+  createWarmTransferTask({
+    abortSignal,
+    sipCallTo: '+15551234567',
+    sipTrunkId: 'ST_dummy',
+    holdAudio: null,
+  });
+  return { callerRoom, ...fakeTask };
+};
 
 describe('resolveHumanAgentRoomName', () => {
   it('defaults to `<callerRoom>-human-agent` when no override is given', () => {
@@ -29,5 +140,91 @@ describe('createWarmTransferTask', () => {
         roomName: '',
       }),
     ).toThrow(/must not be empty/);
+  });
+
+  it('aborts a pending dial with the signal reason', async () => {
+    const controller = new AbortController();
+    const reason = new Error('application shutdown');
+    const dial = new Promise<never>(() => {});
+    const { close, createSipParticipant, disconnect } = mockDial(dial);
+    const { complete, create } = setupTransfer(controller.signal);
+
+    const entering = create.mock.calls[0]![0].onEnter!({} as never);
+    await vi.waitFor(() => expect(createSipParticipant).toHaveBeenCalled());
+    controller.abort(reason);
+    await entering;
+
+    expect(complete).toHaveBeenCalledWith(reason);
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('aborts an active consultation with the signal reason', async () => {
+    const controller = new AbortController();
+    const reason = new Error('consult deadline expired');
+    const { shutdown } = mockDial();
+    const { complete, create } = setupTransfer(controller.signal);
+
+    await create.mock.calls[0]![0].onEnter!({} as never);
+    controller.abort(reason);
+
+    expect(complete).toHaveBeenCalledWith(reason);
+    expect(shutdown).toHaveBeenCalledOnce();
+  });
+
+  it('lets a successful participant move win over an abort', async () => {
+    const controller = new AbortController();
+    mockDial();
+    let finishMove!: () => void;
+    const move = new Promise<void>((resolve) => {
+      finishMove = resolve;
+    });
+    const moveParticipant = vi
+      .spyOn(RoomServiceClient.prototype, 'moveParticipant')
+      .mockReturnValue(move as never);
+    const { complete, create } = setupTransfer(controller.signal);
+
+    const options = create.mock.calls[0]![0];
+    await options.onEnter!({} as never);
+    const connect = (options.tools as FunctionTool[]).find(
+      (entry) => entry.name === 'connect_to_caller',
+    )!;
+    const merging = connect.execute({}, {} as never);
+    await vi.waitFor(() => expect(moveParticipant).toHaveBeenCalled());
+
+    controller.abort(new Error('application shutdown'));
+    expect(complete).not.toHaveBeenCalled();
+    finishMove();
+    await merging;
+
+    expect(complete).toHaveBeenCalledWith({ humanAgentIdentity: 'human-agent-sip' });
+  });
+
+  it('uses the abort reason when the concurrent participant move fails', async () => {
+    const controller = new AbortController();
+    const reason = new Error('application shutdown');
+    mockDial();
+    let failMove!: (error: Error) => void;
+    const move = new Promise<void>((_resolve, reject) => {
+      failMove = reject;
+    });
+    const moveParticipant = vi
+      .spyOn(RoomServiceClient.prototype, 'moveParticipant')
+      .mockReturnValue(move as never);
+    const { complete, create } = setupTransfer(controller.signal);
+
+    const options = create.mock.calls[0]![0];
+    await options.onEnter!({} as never);
+    const connect = (options.tools as FunctionTool[]).find(
+      (entry) => entry.name === 'connect_to_caller',
+    )!;
+    const merging = connect.execute({}, {} as never);
+    await vi.waitFor(() => expect(moveParticipant).toHaveBeenCalled());
+
+    controller.abort(reason);
+    failMove(new Error('move failed'));
+    await merging;
+
+    expect(complete).toHaveBeenCalledWith(reason);
   });
 });
