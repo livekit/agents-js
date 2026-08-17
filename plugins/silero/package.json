@@ -37,7 +37,7 @@
     "@livekit/agents": "workspace:*",
     "@livekit/local-inference": "^0.2.6",
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.12",
     "@types/ws": "catalog:",
     "onnxruntime-common": "1.24.3",
     "tsup": "^8.3.5",
