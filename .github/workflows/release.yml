@@ -27,6 +27,10 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    outputs:
+      publish_outcome: ${{ steps.changesets.outcome }}
+      published: ${{ steps.changesets.outputs.published }}
+      published_packages: ${{ steps.changesets.outputs.publishedPackages }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -88,15 +92,21 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.DOCS_DEPLOY_AWS_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.DOCS_DEPLOY_AWS_API_SECRET }}
           AWS_DEFAULT_REGION: 'us-east-1'
-      - name: Dispatch downstream bumps
-        if: >-
-          always() &&
-          steps.changesets.outcome == 'success' &&
-          steps.changesets.outputs.published == 'true'
+
+  dispatch-downstream-bumps:
+    name: Bump agents-js in downstream repos
+    needs: [release]
+    if: >-
+      always() &&
+      needs.release.outputs.publish_outcome == 'success' &&
+      needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to internal-actions
         env:
           GH_TOKEN: ${{ secrets.SYNC_DISPATCH_TOKEN }}
           TARGET_REPO: ${{ vars.TARGET_REPO }}
-          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+          PUBLISHED_PACKAGES: ${{ needs.release.outputs.published_packages }}
           SOURCE_REPO: ${{ github.repository }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
