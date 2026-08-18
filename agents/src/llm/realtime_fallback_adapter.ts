@@ -165,6 +165,8 @@ export class FallbackRealtimeSession extends RealtimeSession {
   private swapping = false;
   private fallbackLogger = log();
   private forwarders = new Map<string, (ev: unknown) => void>();
+  private extraForwarders = new Map<string, (...args: unknown[]) => void>();
+  private activeBound = false;
 
   constructor(adapter: RealtimeModelFallbackAdapter) {
     super(adapter);
@@ -188,14 +190,44 @@ export class FallbackRealtimeSession extends RealtimeSession {
     for (const [event, forwarder] of this.forwarders) {
       child.on(event, forwarder);
     }
+    for (const [event, forwarder] of this.extraForwarders) {
+      child.on(event, forwarder);
+    }
     child.on('error', this.onChildError);
+    this.activeBound = true;
   }
 
   private unbind(child: RealtimeSession): void {
+    this.activeBound = false;
     for (const [event, forwarder] of this.forwarders) {
       child.off(event, forwarder);
     }
+    for (const [event, forwarder] of this.extraForwarders) {
+      child.off(event, forwarder);
+    }
     child.off('error', this.onChildError);
+  }
+
+  override on(event: string | symbol, listener: Parameters<EventEmitter['on']>[1]): this {
+    if (
+      typeof event === 'string' &&
+      !this.forwarders.has(event) &&
+      event !== 'error' &&
+      event !== 'close' &&
+      event !== 'newListener' &&
+      event !== 'removeListener'
+    ) {
+      let forwarder = this.extraForwarders.get(event);
+      if (!forwarder) {
+        forwarder = (...args: unknown[]) => this.emit(event, ...args);
+        this.extraForwarders.set(event, forwarder);
+        if (this.activeBound) {
+          this.active.on(event, forwarder);
+        }
+      }
+    }
+
+    return super.on(event, listener);
   }
 
   private setAvailable(index: number, available: boolean): void {
