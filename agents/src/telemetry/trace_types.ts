@@ -30,13 +30,13 @@ export const ATTR_RETRY_COUNT = 'lk.retry_count';
 export const ATTR_PROVIDER_REQUEST_IDS = 'lk.provider_request_ids';
 
 export const ATTR_PARTICIPANT_ID = 'lk.participant_id';
-export const ATTR_PARTICIPANT_IDENTITY = 'lk.participant_identity';
+export const ATTR_PARTICIPANT_IDENTITY = 'lk.pii.participant_identity';
 export const ATTR_PARTICIPANT_KIND = 'lk.participant_kind';
 
 // session start
 export const ATTR_JOB_ID = 'lk.job_id';
 export const ATTR_AGENT_NAME = 'lk.agent_name';
-export const ATTR_ROOM_NAME = 'lk.room_name';
+export const ATTR_ROOM_NAME = 'lk.pii.room_name';
 export const ATTR_SESSION_OPTIONS = 'lk.session_options';
 
 // assistant turn

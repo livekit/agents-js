@@ -76,10 +76,11 @@ describe('recordException', () => {
     ).not.toContain('secret transcript');
   });
 
-  it('uses the current job redaction setting by default', () => {
+  it('uses the resolved session redaction setting by default', () => {
     const span = fakeSpan();
     const context = {
-      job: { enableRedaction: true },
+      job: { enableRedaction: false },
+      _redactionEnabled: true,
     } as unknown as JobContext;
 
     runWithJobContext(context, () => captureException(span));
@@ -99,10 +100,10 @@ describe('recordException', () => {
     expect(span.recordException).toHaveBeenCalledOnce();
   });
 
-  it('allows an explicit false override for a redacted job', () => {
+  it('allows an explicit false override for resolved redaction', () => {
     const span = fakeSpan();
     const context = {
-      job: { enableRedaction: true },
+      _redactionEnabled: true,
     } as unknown as JobContext;
 
     runWithJobContext(context, () => captureException(span, { redacted: false }));

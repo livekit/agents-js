@@ -11,8 +11,8 @@ export const REDACTED_EXCEPTION_MESSAGE = 'exception details redacted';
 
 export interface RecordExceptionOptions {
   /**
-   * Whether to omit exception messages and stack traces from telemetry. Defaults to the current
-   * job's redaction setting.
+   * Whether to omit exception messages and stack traces from telemetry. Defaults to the resolved
+   * redaction setting for the current session.
    */
   redacted?: boolean;
 }
@@ -22,7 +22,7 @@ export function recordException(
   error: Error,
   options: RecordExceptionOptions = {},
 ): void {
-  const redacted = options.redacted ?? getJobContext(false)?.job.enableRedaction ?? false;
+  const redacted = options.redacted ?? getJobContext(false)?._redactionEnabled ?? false;
   if (redacted) {
     const attrs = {
       [traceTypes.ATTR_EXCEPTION_TYPE]: error.constructor.name,

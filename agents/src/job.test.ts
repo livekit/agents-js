@@ -279,3 +279,43 @@ describe('JobContext telemetry metadata', () => {
     expect(ctx._otelMetadata()).toEqual({ 'lk.simulation.enabled': true });
   });
 });
+
+describe('JobContext recording redaction', () => {
+  it('tracks project and session redaction in the resolved state', async () => {
+    const { ctx: projectRedacted } = createJobContextWithRoom({}, { enableRedaction: true });
+    const { ctx: sessionRedacted } = createJobContextWithRoom();
+
+    expect(projectRedacted._redactionEnabled).toBe(true);
+    expect(sessionRedacted._redactionEnabled).toBe(false);
+
+    await sessionRedacted.initRecording({
+      audio: false,
+      traces: false,
+      logs: false,
+      transcript: false,
+      redaction: true,
+    });
+
+    expect(sessionRedacted._redactionEnabled).toBe(true);
+  });
+
+  it.each([
+    { source: 'project', projectRedaction: true, sessionRedaction: false },
+    { source: 'session', projectRedaction: false, sessionRedaction: true },
+  ])(
+    'rejects audio without transcripts under $source redaction',
+    async ({ projectRedaction, sessionRedaction }) => {
+      const { ctx } = createJobContextWithRoom({}, { enableRedaction: projectRedaction });
+
+      await expect(
+        ctx.initRecording({
+          audio: true,
+          traces: false,
+          logs: false,
+          transcript: false,
+          redaction: sessionRedaction,
+        }),
+      ).rejects.toThrow('audio upload requires transcript upload when redaction is enabled');
+    },
+  );
+});

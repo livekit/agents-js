@@ -589,10 +589,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (event === 'task_failed') {
           // task_failed denotes a permanent server-side failure (invalid
           // params, unsupported voice, etc.); don't retry.
-          throw new APIError(
-            `MiniMax task failed (trace_id: ${currentTraceId}): ${JSON.stringify(data)}`,
-            { retryable: false },
-          );
+          const errorMessage = `MiniMax task failed (trace_id: ${currentTraceId})`;
+          this.#logger.error({ 'lk.pii.data': data }, errorMessage);
+          throw new APIError(errorMessage, { retryable: false });
         }
         this.#logger.warn({ 'lk.pii.data': data }, 'unexpected MiniMax WS event');
       }

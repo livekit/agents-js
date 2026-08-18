@@ -142,6 +142,9 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** @internal */
   _sessionDirectory: string;
 
+  /** @internal */
+  _redactionEnabled: boolean;
+
   // Lazily built from the job's simulation attributes; undefined when not
   // under a simulation. #simulationResolved guards the one-time parse.
   #simulationCtx?: SimulationContext;
@@ -177,6 +180,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       roomName: this.#info.job.room?.name,
     });
     this.#inferenceExecutor = inferenceExecutor;
+    this._redactionEnabled = Boolean(info.job.enableRedaction);
     // In console mode, recordings land in a local user-visible directory
     // (mirrors python's AgentsConsole); real jobs use a temp dir.
     const agentsConsole = AgentsConsole.getInstance();
@@ -548,6 +552,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     if (this.isFakeJob) {
       return;
     }
+
+    const redactionEnabled = Boolean(this.job.enableRedaction || options.redaction);
+    if (redactionEnabled && options.audio && !options.transcript) {
+      throw new Error('audio upload requires transcript upload when redaction is enabled');
+    }
+    this._redactionEnabled = redactionEnabled;
 
     const url = new URL(this.#info.url);
     if (!isCloud(url)) {
