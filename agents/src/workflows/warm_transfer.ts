@@ -38,11 +38,11 @@ export interface WarmTransferResult {
 }
 
 /**
- * Speech played to the human agent when the caller hangs up before the transfer completes.
+ * Exact text or a callback that starts speech in the consultation session.
  *
  * @public
  */
-export type CallerHangupSpeech = string | ((session: AgentSession) => SpeechHandle);
+export type WarmTransferSpeech = string | ((session: AgentSession) => SpeechHandle);
 
 export interface WarmTransferTaskOptions {
   /**
@@ -99,13 +99,21 @@ export interface WarmTransferTaskOptions {
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
+   * Speech started after the outbound SIP call is answered. A string is spoken with
+   * `session.say()`. A callback runs once after answer with the consultation session and must
+   * return a speech handle. Omit this option to let the destination speak first. The answer signal
+   * does not distinguish a person from voicemail or an IVR, so an enabled greeting can overlap
+   * automated audio.
+   */
+  greetingSpeech?: WarmTransferSpeech;
+  /**
    * Speech played before ending the human agent's call when the caller hangs up after the human
    * agent answers. A string is spoken with `session.say()` and requires a TTS model. For sessions
    * without TTS, use a callback that returns `session.say(text, { audio })` with prerecorded audio.
    * The callback runs only after the caller hangs up, and the task awaits its returned handle.
    * This option takes precedence over `callerHangupInstruction`.
    */
-  callerHangupSpeech?: CallerHangupSpeech;
+  callerHangupSpeech?: WarmTransferSpeech;
   /**
    * Instructions used to generate the reply spoken to the human agent before their call is
    * ended when the caller hangs up mid-transfer (after the human agent answered but before
@@ -160,6 +168,7 @@ export function createWarmTransferTask({
   ringingTimeout,
   roomName: rawRoomName,
   holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
+  greetingSpeech,
   callerHangupSpeech,
   callerHangupInstruction,
   instructions,
@@ -681,6 +690,11 @@ export function createWarmTransferTask({
           return;
         }
         transferAgentSession = result.session;
+        try {
+          createWarmTransferSpeech(transferAgentSession, greetingSpeech);
+        } catch (error) {
+          logger.warn({ error }, 'failed to greet human agent');
+        }
       } catch (error) {
         logger.error({ error }, 'could not dial human agent');
         setResult(new ToolError('could not dial human agent'));
@@ -787,20 +801,34 @@ export function resolveHumanAgentRoomName(callerRoomName: string, override?: str
 }
 
 /** @internal */
-export function createCallerHangupSpeech(
+export function createWarmTransferSpeech(
   session: AgentSession,
-  callerHangupSpeech: CallerHangupSpeech | undefined,
-  callerHangupInstruction: string | null | undefined,
-): SpeechHandle {
-  if (typeof callerHangupSpeech === 'function') {
-    return callerHangupSpeech(session);
+  speech: WarmTransferSpeech | undefined,
+  sayOptions?: Parameters<AgentSession['say']>[1],
+): SpeechHandle | undefined {
+  if (typeof speech === 'function') {
+    return speech(session);
   }
 
-  if (callerHangupSpeech !== undefined) {
-    return session.say(callerHangupSpeech, {
-      allowInterruptions: false,
-      addToChatCtx: false,
-    });
+  if (speech !== undefined) {
+    return session.say(speech, sayOptions);
+  }
+
+  return undefined;
+}
+
+/** @internal */
+export function createCallerHangupSpeech(
+  session: AgentSession,
+  callerHangupSpeech: WarmTransferSpeech | undefined,
+  callerHangupInstruction: string | null | undefined,
+): SpeechHandle {
+  const handle = createWarmTransferSpeech(session, callerHangupSpeech, {
+    allowInterruptions: false,
+    addToChatCtx: false,
+  });
+  if (handle) {
+    return handle;
   }
 
   return session.generateReply({
