@@ -61,6 +61,7 @@ Examples on when the tool should be called:
                 // Give up if the supervisor doesn't pick up within 25s with
                 // `ringingTimeout: 25000`.
                 instructions: { extra: SUMMARY_INSTRUCTIONS },
+                greetingSpeech: (session) => session.generateReply({ toolChoice: 'none' }),
               }).run();
 
               logger.info(
