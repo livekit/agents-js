@@ -22,7 +22,7 @@ minimumReleaseAgeExclude:
   - brace-expansion@5.0.8
 
 catalog:
-  '@livekit/rtc-node': ^0.13.33
+  '@livekit/rtc-node': ^0.13.34
   ws: ^8.21.0
   '@types/ws': ^8.5.10
 
