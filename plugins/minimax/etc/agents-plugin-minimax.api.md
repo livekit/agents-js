@@ -25,13 +25,18 @@ export class ChunkedStream extends tts.ChunkedStream {
 
 // Warning: (ae-missing-release-tag) "DEFAULT_BASE_URL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
-export const DEFAULT_BASE_URL = "https://api-uw.minimax.io";
+// @public
+export const DEFAULT_BASE_URL: string;
 
 // Warning: (ae-missing-release-tag) "DEFAULT_MODEL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export const DEFAULT_MODEL: TTSModel;
+
+// Warning: (ae-missing-release-tag) "DEFAULT_TTS_REGION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export const DEFAULT_TTS_REGION: TTSRegion;
 
 // Warning: (ae-missing-release-tag) "DEFAULT_VOICE_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -56,6 +61,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 // @public (undocumented)
 export class TTS extends tts.TTS {
     constructor(opts?: TTSOptions);
+    get baseUrl(): string;
     // (undocumented)
     label: string;
     // (undocumented)
@@ -71,6 +77,14 @@ export class TTS extends tts.TTS {
     // (undocumented)
     updateOptions(opts: Partial<Pick<TTSOptions, 'model' | 'voice' | 'emotion' | 'speed' | 'vol' | 'pitch' | 'textNormalization' | 'pronunciationDict' | 'intensity' | 'timbre' | 'languageBoost'>>): void;
 }
+
+// Warning: (ae-missing-release-tag) "TTS_REGIONAL_BASE_URLS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export const TTS_REGIONAL_BASE_URLS: {
+    readonly global_en: "https://api.minimax.io";
+    readonly cn_zh: "https://api.minimaxi.com";
+};
 
 // Warning: (ae-missing-release-tag) "TTSEmotion" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -100,6 +114,7 @@ export interface TTSOptions {
     model?: TTSModel | string;
     pitch?: number;
     pronunciationDict?: Record<string, string[]>;
+    region?: TTSRegion;
     sampleRate?: TTSSampleRate;
     speed?: number;
     textNormalization?: boolean;
@@ -109,6 +124,11 @@ export interface TTSOptions {
     voice?: TTSVoice | string;
     vol?: number;
 }
+
+// Warning: (ae-missing-release-tag) "TTSRegion" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type TTSRegion = 'global_en' | 'cn_zh';
 
 // Warning: (ae-missing-release-tag) "TTSSampleRate" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
