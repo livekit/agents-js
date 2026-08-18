@@ -10,8 +10,10 @@ import { ChatContext, type FunctionTool } from '../llm/index.js';
 import { AgentTask } from '../voice/agent.js';
 import { AgentSession } from '../voice/agent_session.js';
 import { BackgroundAudioPlayer } from '../voice/background_audio.js';
+import { SpeechHandle } from '../voice/speech_handle.js';
 import {
   type WarmTransferResult,
+  createCallerHangupSpeech,
   createWarmTransferTask,
   resolveHumanAgentRoomName,
 } from './warm_transfer.js';
@@ -488,5 +490,61 @@ describe('createWarmTransferTask', () => {
     controller.abort(reason);
 
     expect(complete).toHaveBeenCalledWith(reason);
+  });
+});
+
+function completedSpeechHandle(): SpeechHandle {
+  const handle = SpeechHandle.create();
+  handle._markDone();
+  return handle;
+}
+
+function createSession() {
+  const sayHandle = completedSpeechHandle();
+  const generatedHandle = completedSpeechHandle();
+  const say = vi.fn(() => sayHandle);
+  const generateReply = vi.fn(() => generatedHandle);
+  const session = { say, generateReply } as unknown as AgentSession;
+
+  return { session, say, sayHandle, generateReply, generatedHandle };
+}
+
+describe('createCallerHangupSpeech', () => {
+  it('speaks literal text without generating a reply', () => {
+    const { session, say, sayHandle, generateReply } = createSession();
+
+    expect(
+      createCallerHangupSpeech(session, 'The caller disconnected. Hanging up now.', undefined),
+    ).toBe(sayHandle);
+    expect(say).toHaveBeenCalledWith('The caller disconnected. Hanging up now.', {
+      allowInterruptions: false,
+      addToChatCtx: false,
+    });
+    expect(generateReply).not.toHaveBeenCalled();
+  });
+
+  it('uses a lazy factory to create any speech handle', () => {
+    const { session, say, generateReply } = createSession();
+    const customHandle = completedSpeechHandle();
+    const factory = vi.fn(() => customHandle);
+
+    expect(createCallerHangupSpeech(session, factory, undefined)).toBe(customHandle);
+    expect(factory).toHaveBeenCalledWith(session);
+    expect(say).not.toHaveBeenCalled();
+    expect(generateReply).not.toHaveBeenCalled();
+  });
+
+  it('preserves the deprecated generated-reply path when no speech is configured', () => {
+    const { session, say, generateReply, generatedHandle } = createSession();
+
+    expect(
+      createCallerHangupSpeech(session, undefined, 'Generate a short caller hangup message.'),
+    ).toBe(generatedHandle);
+    expect(generateReply).toHaveBeenCalledWith({
+      instructions: 'Generate a short caller hangup message.',
+      allowInterruptions: false,
+      toolChoice: 'none',
+    });
+    expect(say).not.toHaveBeenCalled();
   });
 });
