@@ -1655,7 +1655,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleServerContent(serverContent: types.LiveServerContent): void {
-    if (!this.currentGeneration || (this.currentGeneration._done && this.rejectedToolCalls > 0)) {
+    if (!this.currentGeneration) {
       if (this.rejectedToolCalls > 0) {
         this.#logger.debug(
           { serverContent },
@@ -1901,12 +1901,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleUsageMetadata(usage: types.UsageMetadata): void {
-    if (!this.currentGeneration || (this.currentGeneration._done && this.rejectedToolCalls > 0)) {
-      if (this.rejectedToolCalls > 0) {
-        this.#logger.debug('ignoring usage metadata from a rejected tool call turn');
-      } else {
-        this.#logger.debug('Received usage metadata but no active generation');
-      }
+    if (!this.currentGeneration) {
+      this.#logger.debug('Received usage metadata but no active generation');
       return;
     }
 
