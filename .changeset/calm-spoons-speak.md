@@ -3,4 +3,4 @@
 ---
 
 Add `callerHangupSpeech` for deterministic text or custom speech handles during warm transfers.
-Deprecate `callerHangupInstruction`.
+Export `SpeechHandle` and deprecate `callerHangupInstruction`.

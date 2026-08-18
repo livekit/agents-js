@@ -37,7 +37,11 @@ export interface WarmTransferResult {
   humanAgentIdentity: string;
 }
 
-/** Speech played to the human agent when the caller hangs up before the transfer completes. */
+/**
+ * Speech played to the human agent when the caller hangs up before the transfer completes.
+ *
+ * @public
+ */
 export type CallerHangupSpeech = string | ((session: AgentSession) => SpeechHandle);
 
 export interface WarmTransferTaskOptions {

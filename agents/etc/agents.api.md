@@ -573,8 +573,6 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         outputType?: z.ZodType<T>;
         outputOptions?: RunOutputOptions | null;
     }): RunResult<T>;
-    // Warning: (ae-forgotten-export) The symbol "SpeechHandle" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     say(text: string | ReadableStream_2<string>, options?: {
         audio?: ReadableStream_2<AudioFrame>;
@@ -1972,8 +1970,6 @@ type BuiltinTextTransform = 'filter_markdown' | 'filter_emoji';
 // @public (undocumented)
 export function calculateAudioDurationSeconds(frame: AudioBuffer_2): number;
 
-// Warning: (ae-missing-release-tag) "CallerHangupSpeech" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 type CallerHangupSpeech = string | ((session: AgentSession) => SpeechHandle);
 
@@ -4223,6 +4219,12 @@ export const initializeLogger: (input: LoggerOptions) => void;
 // @public (undocumented)
 function initPinoCloudExporter(config: PinoCloudExporterConfig): void;
 
+// @public
+export interface InputDetails {
+    // (undocumented)
+    modality: 'audio' | 'text';
+}
+
 // Warning: (ae-missing-release-tag) "InputSpeechStartedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -5917,6 +5919,9 @@ export interface ResolvedSessionConnectOptions {
     ttsConnOptions: APIConnectOptions;
 }
 
+// @public
+export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
+
 // Warning: (ae-missing-release-tag) "resolveEnvVar" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -6116,7 +6121,6 @@ export class RunContext<UserData = UnknownUserData> {
     get updates(): readonly [FunctionCall, FunctionCallOutput][];
     // (undocumented)
     get userData(): UserData;
-    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SpeechHandle"
     waitForPlayout(): Promise<void>;
 }
 
@@ -6665,6 +6669,94 @@ enum SpeechEventType {
     PREFLIGHT_TRANSCRIPT = 5,
     RECOGNITION_USAGE = 4,
     START_OF_SPEECH = 0
+}
+
+// @public
+export class SpeechHandle {
+    // @internal
+    readonly [SPEECH_HANDLE_SYMBOL] = true;
+    constructor(_id: string, _allowInterruptions: boolean,
+    _stepIndex: number, _inputDetails?: InputDetails, parent?: SpeechHandle | undefined);
+    // (undocumented)
+    addDoneCallback(callback: (sh: SpeechHandle) => void): void;
+    // @internal (undocumented)
+    _addItemAddedCallback(callback: (item: ChatItem) => void): void;
+    // @internal
+    _agentTurnContext?: Context;
+    // (undocumented)
+    get allowInterruptions(): boolean;
+    set allowInterruptions(value: boolean);
+    // @internal (undocumented)
+    _authorizeGeneration(): void;
+    // @internal (undocumented)
+    _cancel(): SpeechHandle;
+    // (undocumented)
+    get chatItems(): ChatItem[];
+    // @internal (undocumented)
+    _clearAuthorization(): void;
+    // (undocumented)
+    static create(options?: {
+        allowInterruptions?: boolean;
+        stepIndex?: number;
+        inputDetails?: InputDetails;
+        parent?: SpeechHandle;
+    }): SpeechHandle;
+    // (undocumented)
+    done(): boolean;
+    exception(): unknown;
+    // @internal (undocumented)
+    get _hasGenerations(): boolean;
+    // (undocumented)
+    get id(): string;
+    // (undocumented)
+    get inputDetails(): InputDetails;
+    interrupt(force?: boolean): SpeechHandle;
+    // (undocumented)
+    get interrupted(): boolean;
+    // @internal (undocumented)
+    _itemAdded(items: ChatItem[]): void;
+    // @internal (undocumented)
+    _markDone(error?: unknown): void;
+    // @internal (undocumented)
+    _markGenerationDone(): void;
+    // @internal (undocumented)
+    _markScheduled(): void;
+    // @internal
+    _maybeRunFinalOutput?: unknown;
+    // (undocumented)
+    get numSteps(): number;
+    // @internal (undocumented)
+    _numSteps: number;
+    // (undocumented)
+    readonly parent?: SpeechHandle | undefined;
+    // (undocumented)
+    removeDoneCallback(callback: (sh: SpeechHandle) => void): void;
+    // @internal (undocumented)
+    _removeItemAddedCallback(callback: (item: ChatItem) => void): void;
+    // (undocumented)
+    get scheduled(): boolean;
+    static SPEECH_PRIORITY_HIGH: number;
+    static SPEECH_PRIORITY_LOW: number;
+    static SPEECH_PRIORITY_NORMAL: number;
+    // @internal (undocumented)
+    _stepIndex: number;
+    // @internal (undocumented)
+    _tasks: Task<void>[];
+    then<R1 = ResolvedSpeechHandle, R2 = never>(onFulfilled?: ((value: ResolvedSpeechHandle) => R1 | PromiseLike<R1>) | null, onRejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null): Promise<R1 | R2>;
+    // @internal (undocumented)
+    _waitForAuthorization(): Promise<void>;
+    // @internal (undocumented)
+    _waitForGeneration(stepIdx?: number): Promise<void>;
+    waitForPlayout(): Promise<void>;
+    // @internal (undocumented)
+    _waitForScheduled(): Promise<void>;
+    // (undocumented)
+    waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void>;
+}
+
+// @public
+export class SpeechHandleCircularWaitError extends Error {
+    constructor(functionCallName: string);
 }
 
 // Warning: (ae-missing-release-tag) "SpeechmaticsModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -8629,6 +8721,10 @@ declare namespace voice {
         createTimedString,
         isTimedString,
         RunContext,
+        SpeechHandle,
+        SpeechHandleCircularWaitError,
+        InputDetails,
+        ResolvedSpeechHandle,
         testing,
         RunOutputOptions,
         textTransforms,
