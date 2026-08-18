@@ -38,8 +38,13 @@ export interface WarmTransferResult {
 
 export interface WarmTransferTaskOptions {
   /**
-   * Signal used to cancel the transfer. A successful participant move wins if it completes after
-   * the signal aborts. The task stops waiting for a pending SIP request but cannot cancel it.
+   * Signal for application cancellation, such as a consult deadline or application shutdown.
+   *
+   * Do not abort this signal when the caller disconnects. The task handles caller disconnects so
+   * it can play `callerHangupInstruction` before it ends an answered consultation.
+   *
+   * A successful participant move wins if it completes after the signal aborts. The task stops
+   * waiting for a pending SIP request but cannot cancel it.
    */
   abortSignal?: AbortSignal;
   /** The phone number or SIP URI to dial for the human agent. */

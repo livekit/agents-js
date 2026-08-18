@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ParticipantKind, Room } from '@livekit/rtc-node';
+import { ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient } from 'livekit-server-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as job from '../job.js';
@@ -171,6 +171,52 @@ describe('createWarmTransferTask', () => {
     expect(complete).toHaveBeenCalledWith(reason);
     expect(shutdown).toHaveBeenCalledOnce();
   });
+
+  it.each(['completes', 'fails', 'times out'] as const)(
+    'waits until caller-hangup notice playout %s before shutting down an answered agent',
+    async (outcome) => {
+      const controller = new AbortController();
+      const timeoutController = new AbortController();
+      const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutController.signal);
+      let completePlayout!: () => void;
+      let failPlayout!: (error: Error) => void;
+      const playout = new Promise<void>((resolve, reject) => {
+        completePlayout = resolve;
+        failPlayout = reject;
+      });
+      const waitForPlayout = vi.fn().mockReturnValue(playout);
+      vi.spyOn(AgentSession.prototype, 'interrupt').mockReturnValue({} as never);
+      vi.spyOn(AgentSession.prototype, 'generateReply').mockReturnValue({
+        waitForPlayout,
+      } as never);
+      const { shutdown } = mockDial();
+      const { callerRoom, create } = setupTransfer(controller.signal);
+
+      await create.mock.calls[0]![0].onEnter!({} as never);
+      const onCallerLeft = vi
+        .mocked(callerRoom.on)
+        .mock.calls.find(([event]) => event === RoomEvent.ParticipantDisconnected)?.[1];
+      expect(onCallerLeft).toBeDefined();
+      (onCallerLeft as (participant: { identity: string; kind: ParticipantKind }) => void)({
+        identity: 'caller',
+        kind: ParticipantKind.STANDARD,
+      });
+
+      await vi.waitFor(() => expect(waitForPlayout).toHaveBeenCalledOnce());
+      expect(shutdown).not.toHaveBeenCalled();
+
+      if (outcome === 'completes') {
+        completePlayout();
+      } else if (outcome === 'fails') {
+        failPlayout(new Error('playout failed'));
+      } else {
+        expect(timeout).toHaveBeenCalledWith(10_000);
+        timeoutController.abort();
+      }
+
+      await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce());
+    },
+  );
 
   it('lets a successful participant move win over an abort', async () => {
     const controller = new AbortController();
