@@ -33,7 +33,7 @@ import {
 import { Mutex } from '@livekit/mutex';
 import { AudioFrame, AudioResampler, type VideoFrame } from '@livekit/rtc-node';
 import { type LLMTools } from '../tools.js';
-import { toToolsConfig } from '../utils.js';
+import { createFunctionResponse, toToolsConfig } from '../utils.js';
 import type * as api_proto from './api_proto.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
 import {
@@ -608,7 +608,10 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
-        const response = this.createFunctionResponse(item, vertexai);
+        const response = createFunctionResponse(item, {
+          vertexai,
+          toolResponseScheduling: this.options.toolResponseScheduling,
+        });
         this.toolResponseCallIds.set(response, item.callId);
 
         const status = this.toolCallStatuses.get(item.callId);
@@ -623,29 +626,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     return toolResponses.length > 0 ? { functionResponses: toolResponses } : undefined;
-  }
-
-  private createFunctionResponse(
-    output: llm.FunctionCallOutput,
-    vertexai: boolean,
-  ): types.FunctionResponse {
-    const response: types.FunctionResponse = {
-      name: output.name,
-      response: output.isError ? { error: output.output } : { output: output.output },
-    };
-
-    if (this.options.toolResponseScheduling !== undefined) {
-      // vertexai currently doesn't support the scheduling parameter, gemini api defaults to idle
-      // it's the user's responsibility to avoid this parameter when using vertexai
-      response.scheduling = this.options.toolResponseScheduling;
-    }
-
-    if (!vertexai) {
-      // vertexai does not support id in FunctionResponse
-      response.id = output.callId;
-    }
-
-    return response;
   }
 
   updateOptions(options: {
@@ -1810,14 +1790,17 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     this.#logger.warn({ functions }, "rejecting tool call requested while toolChoice='none'");
     const functionResponses = functionCalls.map((fncCall) =>
-      this.createFunctionResponse(
+      createFunctionResponse(
         new llm.FunctionCallOutput({
           name: fncCall.name ?? '',
           callId: fncCall.id ?? '',
           output: 'Tool calls are disabled for this turn, respond to the user directly.',
           isError: true,
         }),
-        this.options.vertexai,
+        {
+          vertexai: this.options.vertexai,
+          toolResponseScheduling: this.options.toolResponseScheduling,
+        },
       ),
     );
 
@@ -2038,16 +2021,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (this.earlyCompletionPending) {
       return false;
     }
-    if (this.rejectedToolCalls > 0 && response.serverContent) {
-      const serverContent = response.serverContent;
-      const hasModelOutput =
-        !!serverContent.modelTurn ||
-        serverContent.outputTranscription != null ||
-        serverContent.inputTranscription != null;
-      if (!hasModelOutput) {
-        return false;
-      }
-    }
     if (response.toolCall) {
       return true;
     }
@@ -2055,11 +2028,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     const serverContent = response.serverContent;
     return (
       !!serverContent &&
-      (serverContent.modelTurn ||
-        serverContent.outputTranscription != null ||
-        serverContent.inputTranscription != null ||
-        serverContent.generationComplete != null ||
-        serverContent.turnComplete != null)
+      (!!serverContent.modelTurn ||
+        !!serverContent.outputTranscription?.text ||
+        !!serverContent.inputTranscription?.text)
     );
   }
 }

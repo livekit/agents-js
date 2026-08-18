@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Behavior, FunctionResponseScheduling } from '@google/genai';
+import { Behavior, FunctionResponseScheduling, type LiveServerMessage } from '@google/genai';
 import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
 import { historyConfigForSetup } from './live_setup.js';
@@ -43,6 +43,11 @@ type RealtimeSessionInternals = {
     }>;
   }): void;
   clearPendingToolCallIdsForResponses(functionResponses: Array<Record<string, unknown>>): void;
+};
+
+type GenerationDetectionInternals = {
+  earlyCompletionPending: boolean;
+  isNewGeneration(response: LiveServerMessage): boolean;
 };
 
 const schedulingModes = [
@@ -179,6 +184,57 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     session.clearPendingToolCallIdsForResponses(result?.functionResponses ?? []);
 
     expect(session.pendingToolCallIds.has('call_123')).toBe(false);
+  });
+
+  it('serializes failed tool outputs as errors', () => {
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(
+      llm.FunctionCallOutput.create({
+        callId: 'call_123',
+        name: 'getWeather',
+        output: 'weather service unavailable',
+        isError: true,
+      }),
+    );
+
+    const result = session.getToolResultsForRealtime(ctx, false);
+
+    expect(result?.functionResponses).toEqual([
+      {
+        id: 'call_123',
+        name: 'getWeather',
+        response: { error: 'weather service unavailable' },
+        scheduling: FunctionResponseScheduling.WHEN_IDLE,
+      },
+    ]);
+  });
+});
+
+describe('Google Realtime generation detection', () => {
+  const session = Object.create(RealtimeSession.prototype) as GenerationDetectionInternals;
+  session.earlyCompletionPending = false;
+
+  it('does not start generations for completion-only server content', () => {
+    expect(
+      session.isNewGeneration({ serverContent: { generationComplete: true } } as LiveServerMessage),
+    ).toBe(false);
+    expect(
+      session.isNewGeneration({ serverContent: { turnComplete: true } } as LiveServerMessage),
+    ).toBe(false);
+  });
+
+  it('starts generations when the server produces model output', () => {
+    expect(
+      session.isNewGeneration({
+        serverContent: { modelTurn: { parts: [{ text: 'hello' }] } },
+      } as LiveServerMessage),
+    ).toBe(true);
+    expect(
+      session.isNewGeneration({
+        serverContent: { outputTranscription: { text: 'hello' } },
+      } as LiveServerMessage),
+    ).toBe(true);
   });
 });
 
