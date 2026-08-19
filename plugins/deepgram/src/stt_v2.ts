@@ -376,6 +376,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
 
     let hasEnded = false;
+    let inputEnded = false;
 
     // Manual Iterator to allow racing against Reconnect Signal
     const iterator = this.input[Symbol.asyncIterator]();
@@ -392,6 +393,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         if (!('abort' in result) && result.done) {
           // Normal stream end
           hasEnded = true;
+          inputEnded = true;
         } else {
           // Reconnect triggered - break loop immediately
           break;
@@ -418,15 +420,15 @@ class SpeechStreamv2 extends stt.SpeechStream {
           if (this.#ws!.readyState === WebSocket.OPEN) {
             this.#ws!.send(frame.data);
           }
-
-          if (hasEnded) {
-            this.#audioDurationCollector.flush();
-            hasEnded = false;
-          }
         }
       }
 
-      if (hasEnded) break;
+      if (hasEnded) {
+        this.#audioDurationCollector.flush();
+        hasEnded = false;
+      }
+
+      if (inputEnded) break;
     }
 
     // Only send CloseStream if we are exiting normally (not reconnecting)

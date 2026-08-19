@@ -4,8 +4,36 @@
 
 ```ts
 
-import type { Room } from '@livekit/rtc-node';
-import { voice } from '@livekit/agents';
+import { AgentSession as AgentSession_2 } from '@livekit/protocol';
+import { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler } from '@livekit/rtc-node';
+import type { Context } from '@opentelemetry/api';
+import { EventEmitter } from 'events';
+import { EventEmitter as EventEmitter_2 } from 'node:events';
+import { FrameProcessor } from '@livekit/rtc-node';
+import { JsonObject } from '@bufbuild/protobuf';
+import type { JSONSchema7 } from 'json-schema';
+import { LocalTrackPublication } from '@livekit/rtc-node';
+import { Logger } from 'pino';
+import { NoiseCancellationOptions } from '@livekit/rtc-node';
+import { Participant } from '@livekit/rtc-node';
+import { ParticipantKind } from '@livekit/rtc-node';
+import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import { RemoteParticipant } from '@livekit/rtc-node';
+import { RemoteTrackPublication } from '@livekit/rtc-node';
+import { Room } from '@livekit/rtc-node';
+import { RpcInvocationData } from '@livekit/rtc-node';
+import type { Span } from '@opentelemetry/api';
+import type { TextStreamInfo } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { TrackKind } from '@livekit/rtc-node';
+import { TrackPublishOptions } from '@livekit/rtc-node';
+import { TransformStream as TransformStream_2 } from 'node:stream/web';
+import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
+import { z } from 'zod';
 
 // @public (undocumented)
 export class AnamAPI {
@@ -38,6 +66,8 @@ export type APIConnectOptions = {
     timeout?: number;
 };
 
+// Warning: (ae-forgotten-export) The symbol "voice" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export class AvatarSession extends voice.AvatarSession {
     constructor(opts: {

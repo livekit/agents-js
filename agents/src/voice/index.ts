@@ -19,8 +19,15 @@ export {
   AgentSession,
   type AgentSessionOptions,
   type AgentSessionUsage,
+  type ExpressiveOptions,
   type VoiceOptions,
+  DEFAULT_EXPRESSIVE_OPTIONS,
+  TTS_INSTRUCTIONS_PLACEHOLDER,
+  resolveExpressiveOptions,
 } from './agent_session.js';
+// re-exported here (they are declared alongside the markup tables) so the expressive
+// option types all sit together on the session surface, as they do in Python
+export type { NonverbalOptions, SpeechSteeringOptions } from '../tts/provider_format.js';
 export * from './avatar/index.js';
 export * from './background_audio.js';
 export { AgentsConsole, TcpAudioInput, TcpAudioOutput } from './console_io.js';

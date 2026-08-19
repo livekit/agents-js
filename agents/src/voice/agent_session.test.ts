@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
 import { AgentSessionEventTypes, createUserInputTranscribedEvent } from './events.js';
@@ -8,9 +9,63 @@ import { SpeechHandle } from './speech_handle.js';
 
 type AgentSessionInternals = AgentSession & {
   _agentState: string;
+  _aecWarmupTimer: NodeJS.Timeout | null;
   _userState: string;
   _setUserAwayTimer: () => void;
 };
+
+describe('AgentSession AEC warmup', () => {
+  it.each([
+    [ParticipantKind.SIP, {}, null],
+    [ParticipantKind.SIP, { 'sip.ruleID': 'SDR_inbound' }, 3000],
+    [ParticipantKind.STANDARD, {}, 3000],
+  ] as const)(
+    'uses the call type default for participant kind %s with attributes %o',
+    (kind, attributes, expectedDuration) => {
+      const session = new AgentSession({ vad: null });
+      const participant = { info: { kind }, attributes } as RemoteParticipant;
+
+      session._onRoomIOParticipantLinked(participant);
+
+      expect(session.sessionOptions.aecWarmupDuration).toBe(expectedDuration);
+      expect(session._aecWarmupRemaining).toBe(expectedDuration ?? 0);
+    },
+  );
+
+  it.each([null, 0, 1500] as const)(
+    'preserves an explicit AEC warmup duration of %s for outbound SIP',
+    (duration) => {
+      const session = new AgentSession({ vad: null, aecWarmupDuration: duration });
+      const participant = {
+        info: { kind: ParticipantKind.SIP },
+        attributes: {},
+      } as RemoteParticipant;
+
+      session._onRoomIOParticipantLinked(participant);
+
+      expect(session.sessionOptions.aecWarmupDuration).toBe(duration);
+      expect(session._aecWarmupRemaining).toBe(duration ?? 0);
+    },
+  );
+
+  it('cancels AEC warmup that already started for outbound SIP', () => {
+    const session = new AgentSession({ vad: null });
+    const internals = session as AgentSessionInternals;
+    const timer = setTimeout(() => {}, 10_000);
+    internals._aecWarmupTimer = timer;
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+    const participant = {
+      info: { kind: ParticipantKind.SIP },
+      attributes: {},
+    } as RemoteParticipant;
+
+    session._onRoomIOParticipantLinked(participant);
+
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(timer);
+    expect(internals._aecWarmupTimer).toBeNull();
+    clearTimeoutSpy.mockRestore();
+  });
+});
 
 describe('AgentSession.run', () => {
   it('forwards inputModality to generateReply', async () => {
@@ -96,7 +151,7 @@ describe('AgentSession recording state', () => {
     // Defaults to all-off until start() resolves the record argument.
     expect(session._enableRecording).toBe(false);
 
-    session._recordingOptions = resolveRecordingOptions({
+    session.sessionOptions.recordingOptions = resolveRecordingOptions({
       audio: false,
       traces: false,
       logs: true,
@@ -105,7 +160,7 @@ describe('AgentSession recording state', () => {
     });
     expect(session._enableRecording).toBe(true);
 
-    session._recordingOptions = resolveRecordingOptions({
+    session.sessionOptions.recordingOptions = resolveRecordingOptions({
       audio: false,
       traces: false,
       logs: false,
@@ -114,7 +169,7 @@ describe('AgentSession recording state', () => {
     });
     expect(session._enableRecording).toBe(false);
 
-    session._recordingOptions = resolveRecordingOptions(false);
+    session.sessionOptions.recordingOptions = resolveRecordingOptions(false);
     expect(session._enableRecording).toBe(false);
   });
 });

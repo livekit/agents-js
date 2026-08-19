@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
+import { stripExprMarkup } from '../tts/provider_format.js';
 import { createImmutableArray, shortuuid } from '../utils.js';
 import type { LLM } from './llm.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
@@ -227,10 +228,6 @@ export function concatInstructions(...parts: Array<string | Instructions>): stri
 }
 
 export type ChatContent = ImageContent | AudioContent | Instructions | string;
-
-function stripExprMarkup(text: string): string {
-  return text.replace(/<expr\b[^>]*>/g, '').replace(/<\/expr\s*>/g, '');
-}
 
 export function createImageContent(params: {
   image: string | VideoFrame;
@@ -797,6 +794,20 @@ export class ChatContext {
       const idx = this.findInsertionIndex(it.createdAt);
       this._items.splice(idx, 0, it);
     }
+  }
+
+  /**
+   * Remove the first item from the chat context by item or item ID.
+   *
+   * Throws if the item or ID is not found.
+   */
+  remove(item: ChatItem | string): void {
+    const itemId = typeof item === 'string' ? item : item.id;
+    const idx = this.indexById(itemId);
+    if (idx === undefined) {
+      throw new Error(`Item not found: ${itemId}`);
+    }
+    this._items.splice(idx, 1);
   }
 
   getById(itemId: string): ChatItem | undefined {

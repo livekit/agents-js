@@ -24,6 +24,8 @@ export interface LLMOptions {
   temperature?: number;
   /** Pre-configured Anthropic client instance. */
   client?: Anthropic;
+  /** Vendor client retries. Defaults to 0 because the framework owns retries. */
+  maxRetries?: number;
   /** Tool selection strategy. */
   toolChoice?: llm.ToolChoice;
   /** Whether to allow parallel tool calls. */
@@ -66,6 +68,7 @@ export class LLM extends llm.LLM {
       new Anthropic({
         baseURL: this.#opts.baseURL,
         apiKey: this.#opts.apiKey,
+        maxRetries: this.#opts.maxRetries ?? 0,
       });
   }
 
@@ -87,6 +90,10 @@ export class LLM extends llm.LLM {
     } catch {
       return 'api.anthropic.com';
     }
+  }
+
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    await this.#client.models.list({ limit: 1 }, { signal });
   }
 
   /**
@@ -419,6 +426,7 @@ export class LLMStream extends llm.LLMStream {
           promptTokens,
           totalTokens: promptTokens + this.#outputTokens,
           promptCachedTokens: this.#cacheReadTokens,
+          cacheCreationTokens: this.#cacheCreationTokens,
         },
       });
     } catch (e: unknown) {

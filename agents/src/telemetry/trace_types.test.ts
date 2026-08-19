@@ -19,6 +19,8 @@ const SAFE_KEYS = new Set([
   'lk.participant_kind',
   'lk.job_id',
   'lk.agent_name',
+  'lk.cloud_agent_id',
+  'lk.deployment_id',
   'lk.session_options',
   'lk.generation_id',
   'lk.parent_generation_id',

@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents",
-  "version": "1.5.5",
+  "version": "1.6.4",
   "description": "LiveKit Agents - Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -41,7 +41,7 @@
   },
   "devDependencies": {
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.12",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^22.5.5",
@@ -53,7 +53,7 @@
   "dependencies": {
     "@bufbuild/protobuf": "^1.10.0",
     "@livekit/av": "^10.0.0",
-    "@livekit/local-inference": "^0.2.6",
+    "@livekit/local-inference": "^0.2.7",
     "@livekit/mutex": "^1.1.1",
     "@livekit/protocol": "^1.50.4",
     "@livekit/throws-transformer": "0.1.8",
@@ -83,7 +83,7 @@
     "pidusage": "^4.0.1",
     "pino": "^8.19.0",
     "pino-pretty": "^11.0.0",
-    "sharp": "0.34.5",
+    "sharp": "0.35.3",
     "ws": "catalog:",
     "zod-to-json-schema": "^3.24.6"
   },

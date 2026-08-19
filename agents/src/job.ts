@@ -415,7 +415,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       options: targetSession.sessionOptions,
       events: targetSession._recordedEvents,
       enableRecording: targetSession._enableRecording,
-      recordingOptions: targetSession._recordingOptions,
       chatHistory: targetSession.history.copy(),
       startedAt: targetSession._startedAt,
       audioRecordingPath: recorderIO?.outputPath,
@@ -457,13 +456,16 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     if (!this.isFakeJob) {
       const url = new URL(this.#info.url);
 
-      if ((recordingEnabled(report.recordingOptions) || report.enableRecording) && isCloud(url)) {
+      if (
+        (recordingEnabled(report.options.recordingOptions) || report.enableRecording) &&
+        isCloud(url)
+      ) {
         try {
           await uploadSessionReport({
             agentName: this.job.agentName,
             cloudHostname: url.hostname,
             report,
-            metadata: this._otelMetadata(report.recordingOptions),
+            metadata: this._otelMetadata(report.options.recordingOptions),
           });
           this.#logger.info(
             {

@@ -4,10 +4,16 @@
 
 ```ts
 
-import { APIConnectOptions } from '@livekit/agents';
-import { AudioBuffer as AudioBuffer_2 } from '@livekit/agents';
+import { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler } from '@livekit/rtc-node';
+import { Logger } from 'pino';
+import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
 import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
-import { stt } from '@livekit/agents';
+import { TransformStream as TransformStream_2 } from 'node:stream/web';
+import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 
 // @internal (undocumented)
 export interface _CanceledEvent {
@@ -21,8 +27,11 @@ export interface _CanceledEvent {
 
 export { speechsdk }
 
+// Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export class SpeechStream extends stt.SpeechStream {
+    // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
     constructor(stt: STT, opts: STTOptions, connOptions: APIConnectOptions);
     // @internal (undocumented)
     _cancellationError: _CanceledEvent | null;
@@ -67,6 +76,8 @@ export class STT extends stt.STT {
     get model(): string;
     // (undocumented)
     get provider(): string;
+    // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
     _recognize(_frame: AudioBuffer_2): Promise<stt.SpeechEvent>;
     // (undocumented)

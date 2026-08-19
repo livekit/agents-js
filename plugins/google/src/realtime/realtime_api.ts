@@ -36,6 +36,11 @@ import { type LLMTools } from '../tools.js';
 import { toToolsConfig } from '../utils.js';
 import type * as api_proto from './api_proto.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
+import {
+  type LiveSocketHost,
+  forwardHistoryConfigToSetup,
+  historyConfigForSetup,
+} from './live_setup.js';
 
 // Input audio constants (matching Python)
 const INPUT_AUDIO_SAMPLE_RATE = 16000;
@@ -137,6 +142,15 @@ interface ToolCallStatus {
   status: 'pending' | 'continuing' | 'completed' | 'cancelled';
   willContinueSent: boolean;
   createdAt: number;
+}
+
+/** Empty unless the turn is pure text, so non-text turns stay where they are. */
+function textOf(turn: types.Content): string {
+  const parts = turn.parts ?? [];
+  if (parts.length === 0 || parts.some((part) => !part.text)) {
+    return '';
+  }
+  return parts.map((part) => part.text).join('');
 }
 
 /**
@@ -473,6 +487,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
   private generationPendingTurnComplete?: ResponseGeneration;
 
+  /**
+   * Whether the server will read the leading `clientContent` as history rather than
+   * as a turn to answer. The prefill is sent the same way either way — after the
+   * session starts — but when this is set it has to close the history phase (see below).
+   */
+  #prefillReadAsHistory = false;
+
   #client: GoogleGenAI;
   #task: Promise<void>;
   #logger = log();
@@ -515,6 +536,23 @@ export class RealtimeSession extends llm.RealtimeSession {
         };
 
     this.#client = new GoogleGenAI(clientOptions);
+
+    // Decided here rather than per connection: the setup frame is written before
+    // the framework seeds the chat context, so the model is the only input.
+    const historyConfig = historyConfigForSetup({
+      // An unstated capability keeps the existing plain-prefill behaviour.
+      mutableChatCtx: realtimeModel.capabilities.midSessionChatCtxUpdate ?? true,
+    });
+    if (historyConfig) {
+      if (forwardHistoryConfigToSetup(this.#client as unknown as LiveSocketHost, historyConfig)) {
+        this.#prefillReadAsHistory = true;
+      } else {
+        this.#logger.warn(
+          'unable to reach the Gemini Live socket factory; an initial chat context will not be seeded with its original roles',
+        );
+      }
+    }
+
     this.#task = this.#mainTask();
   }
 
@@ -985,12 +1023,19 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.#logger.debug('Connecting to Gemini Realtime API...');
 
         const sessionOpened = new Event();
+        // The SDK forwards the queued setupComplete message before connect()
+        // returns, so this callback can fire before we hold the session. Ignoring
+        // those changes nothing: onReceiveMessage already dropped anything
+        // arriving before activeSession was set, a few lines below.
+        const connected: { session?: types.Session } = {};
         const session = await this.#client.live.connect({
           model: this.options.model,
           callbacks: {
             onopen: () => sessionOpened.set(),
             onmessage: (message: types.LiveServerMessage) => {
-              this.onReceiveMessage(session, message);
+              if (connected.session) {
+                this.onReceiveMessage(connected.session, message);
+              }
             },
             // onerror is called for network-level errors (connection refused, DNS failure, TLS errors).
             // Application-level errors (e.g., invalid model name) come through onclose with error codes.
@@ -1033,6 +1078,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           },
           config,
         });
+        connected.session = session;
 
         await sessionOpened.wait();
 
@@ -1048,10 +1094,31 @@ export class RealtimeSession extends llm.RealtimeSession {
             .toProviderFormat('google', false);
 
           if (turns.length > 0) {
-            await session.sendClientContent({
-              turns,
-              turnComplete: false,
-            });
+            if (this.#prefillReadAsHistory) {
+              // https://ai.google.dev/api/live#HistoryConfig: the server reads
+              // clientContent as history until it sees turnComplete, that history
+              // never triggers a model call, and the conversation then starts via
+              // realtimeInput. A context ending on a user question therefore has
+              // to leave the history and arrive as realtime text, or the server
+              // silently files it away and answers nothing.
+              const history = [...(turns as types.Content[])];
+              const question =
+                history[history.length - 1]?.role === 'user'
+                  ? textOf(history[history.length - 1]!)
+                  : '';
+              if (question) {
+                history.pop();
+              }
+
+              if (history.length > 0) {
+                await session.sendClientContent({ turns: history, turnComplete: true });
+              }
+              if (question) {
+                session.sendRealtimeInput({ text: question });
+              }
+            } else {
+              await session.sendClientContent({ turns, turnComplete: false });
+            }
           }
         } finally {
           unlock();
@@ -1397,6 +1464,11 @@ export class RealtimeSession extends llm.RealtimeSession {
         itemId: targetGen.inputId,
         transcript: targetGen.inputTranscription,
         isFinal: true,
+        // This fires once the reply is done generating, seconds after the user
+        // spoke, so hand over when the turn actually began. The generation is
+        // created as soon as the server takes the turn, which is always before
+        // any of its own audio reaches the room.
+        turnStartedAt: targetGen._createdTimestamp,
       } as llm.InputTranscriptionCompleted);
 
       // since gemini doesn't give us a view of the chat history on the server side,

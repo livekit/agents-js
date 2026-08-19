@@ -15,20 +15,29 @@
  * Related: #1124, #1089, #836
  */
 import { Heap } from 'heap-js';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AgentConfigUpdate,
   ChatContext,
+  ChatMessage,
   FunctionCall,
   FunctionCallOutput,
 } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
-import { type GenerationCreatedEvent, RealtimeError } from '../llm/realtime.js';
+import {
+  type GenerationCreatedEvent,
+  type RealtimeCapabilities,
+  RealtimeError,
+  RealtimeModel,
+  type RealtimeSession,
+} from '../llm/realtime.js';
 import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
-import { Future, Task } from '../utils.js';
+import { log } from '../log.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { Event, Future, Task } from '../utils.js';
 import { AgentTask, _getActivityTaskInfo } from './agent.js';
-import { AgentActivity, onEnterStorage } from './agent_activity.js';
-import type { PreemptiveGenerationInfo } from './audio_recognition.js';
+import { AgentActivity, onEnterStorage, transcriptsEquivalent } from './agent_activity.js';
+import type { EndOfTurnInfo, PreemptiveGenerationInfo } from './audio_recognition.js';
 import { AgentSessionEventTypes, type UserInputTranscribedEvent } from './events.js';
 import { ToolExecutionOutput } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
@@ -164,6 +173,58 @@ describe('AgentActivity - mainTask', () => {
     expect(capturedEvents[0]?.itemId).toBe('item_123');
   });
 
+  it.each([
+    { hasLocalVad: false, shouldInterrupt: true },
+    { hasLocalVad: true, shouldInterrupt: false },
+  ])(
+    'interim transcript interrupts only without local VAD: $hasLocalVad',
+    ({ hasLocalVad, shouldInterrupt }) => {
+      const capturedEvents: UserInputTranscribedEvent[] = [];
+      const interruptByAudioActivity = vi.fn();
+      const activity = Object.assign(Object.create(AgentActivity.prototype), {
+        agent: { llm: undefined, vad: undefined, turnHandling: undefined },
+        agentSession: {
+          _textOnly: false,
+          llm: undefined,
+          vad: hasLocalVad ? {} : undefined,
+          turnDetection: undefined,
+          emit: (_type: AgentSessionEventTypes, ev: UserInputTranscribedEvent) => {
+            capturedEvents.push(ev);
+          },
+        },
+        interruptByAudioActivity,
+      });
+      const ev: SpeechEvent = {
+        type: SpeechEventType.INTERIM_TRANSCRIPT,
+        alternatives: [
+          {
+            text: 'hello',
+            language: 'en',
+            startTime: 0,
+            endTime: 0,
+            confidence: 1,
+          },
+        ],
+      };
+
+      (
+        AgentActivity.prototype.onInterimTranscript as (
+          this: unknown,
+          ev: SpeechEvent,
+          speaking: boolean | undefined,
+        ) => void
+      ).call(activity, ev, undefined);
+
+      expect(capturedEvents).toHaveLength(1);
+      expect(capturedEvents[0]?.transcript).toBe('hello');
+      if (shouldInterrupt) {
+        expect(interruptByAudioActivity).toHaveBeenCalledOnce();
+      } else {
+        expect(interruptByAudioActivity).not.toHaveBeenCalled();
+      }
+    },
+  );
+
   it('should recover when speech handle is interrupted after authorization', async () => {
     const { fakeActivity, mainTask, speechQueue, q_updated } = buildMainTaskRunner();
 
@@ -260,6 +321,30 @@ describe('AgentActivity - mainTask', () => {
 
     const result = await raceTimeout(mainTaskPromise, 2000);
     expect(result).toBe('resolved');
+  });
+
+  it('interrupts queued speech behind a cancelled protected handle', () => {
+    type HeapItem = [number, number, SpeechHandle];
+    const speechQueue = new Heap<HeapItem>(
+      (a: HeapItem, b: HeapItem) => b[0] - a[0] || a[1] - b[1],
+    );
+    const protectedHandle = SpeechHandle.create({ allowInterruptions: false });
+    const behind = SpeechHandle.create({ allowInterruptions: true });
+    speechQueue.push([SpeechHandle.SPEECH_PRIORITY_NORMAL, 1, protectedHandle]);
+    speechQueue.push([SpeechHandle.SPEECH_PRIORITY_NORMAL, 2, behind]);
+    protectedHandle.interrupt(true);
+
+    const activity = Object.assign(Object.create(AgentActivity.prototype), {
+      cancelPreemptiveGeneration: () => {},
+      _interruptBackgroundSpeeches: () => [],
+      _currentSpeech: undefined,
+      speechQueue,
+      realtimeSession: undefined,
+    }) as AgentActivity;
+
+    activity.interrupt();
+
+    expect(behind.interrupted).toBe(true);
   });
 
   it('should hold queued speech while reply authorization is paused', async () => {
@@ -374,6 +459,7 @@ describe('AgentActivity - mainTask', () => {
     const fakeActivity = {
       cancelSpeechPauseTask: undefined,
       falseInterruptionTimer: undefined,
+      falseInterruptionPending: false,
       pausedSpeech: {
         handle,
         agentState: 'speaking',
@@ -381,6 +467,9 @@ describe('AgentActivity - mainTask', () => {
       },
       logger: {
         debug: vi.fn(),
+      },
+      audioRecognition: {
+        onEndOfAgentSpeech: vi.fn(async () => {}),
       },
       agentSession: {
         sessionOptions: {
@@ -401,19 +490,315 @@ describe('AgentActivity - mainTask', () => {
         cancelSpeechPause: (options?: { interrupt?: boolean }) => Promise<void>;
       }
     ).cancelSpeechPause.bind(fakeActivity);
+    fakeActivity.cancelFalseInterruptionTimer = (
+      AgentActivity.prototype as unknown as {
+        cancelFalseInterruptionTimer: () => void;
+      }
+    ).cancelFalseInterruptionTimer.bind(fakeActivity);
 
     const result = await raceTimeout(cancelSpeechPause(), 2000);
 
     expect(result).toBe('resolved');
     expect(handle.interrupted).toBe(true);
     expect(fakeActivity.pausedSpeech).toBeUndefined();
+    expect(fakeActivity.audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledOnce();
+  });
+});
+
+type FalseInterruptionActivity = {
+  pausedSpeech?: { handle: SpeechHandle; agentState: 'speaking'; timeout: number };
+  _currentSpeech?: SpeechHandle;
+  falseInterruptionTimer?: NodeJS.Timeout;
+  falseInterruptionPending: boolean;
+  cancelSpeechPauseTask?: Promise<void>;
+  audioRecognition?: {
+    endOfTurnTask?: Task<void>;
+    isClosed: boolean;
+    onStartOfAgentSpeech: ReturnType<typeof vi.fn>;
+    onEndOfAgentSpeech: ReturnType<typeof vi.fn>;
+  };
+  agentSession: {
+    agentState: 'speaking';
+    sessionOptions: {
+      turnHandling: {
+        interruption: { resumeFalseInterruption: boolean; falseInterruptionTimeout: number };
+      };
+    };
+    output: { audio: { canPause: boolean; resume: ReturnType<typeof vi.fn> } };
+    _updateAgentState: ReturnType<typeof vi.fn>;
+    emit: ReturnType<typeof vi.fn>;
+  };
+  isInterruptionDetectionEnabled: boolean;
+  disableVadInterruptionSoon: ReturnType<typeof vi.fn>;
+  logger: { debug: ReturnType<typeof vi.fn> };
+  startFalseInterruptionTimer: (timeout: number) => void;
+  cancelFalseInterruptionTimer: () => void;
+  cancelSpeechPause: (options?: { interrupt?: boolean }) => Promise<void>;
+};
+
+function falseInterruptionActivity(endOfTurnTask?: Task<void>): FalseInterruptionActivity {
+  const handle = SpeechHandle.create({ allowInterruptions: true });
+  const activity = Object.create(AgentActivity.prototype) as FalseInterruptionActivity;
+  Object.assign(activity, {
+    pausedSpeech: { handle, agentState: 'speaking', timeout: 300 },
+    _currentSpeech: handle,
+    falseInterruptionTimer: undefined,
+    falseInterruptionPending: false,
+    cancelSpeechPauseTask: undefined,
+    audioRecognition: {
+      endOfTurnTask,
+      isClosed: false,
+      onStartOfAgentSpeech: vi.fn(),
+      onEndOfAgentSpeech: vi.fn(async () => {}),
+    },
+    agentSession: {
+      agentState: 'speaking',
+      sessionOptions: {
+        turnHandling: {
+          interruption: { resumeFalseInterruption: true, falseInterruptionTimeout: 300 },
+        },
+      },
+      output: { audio: { canPause: true, resume: vi.fn() } },
+      _updateAgentState: vi.fn(),
+      emit: vi.fn(),
+    },
+    isInterruptionDetectionEnabled: false,
+    disableVadInterruptionSoon: vi.fn(),
+    logger: { debug: vi.fn() },
+  });
+  return activity;
+}
+
+function endOfTurnInfo(options: { skipReply?: boolean } = {}): EndOfTurnInfo {
+  return {
+    newTranscript: '',
+    transcriptConfidence: 0,
+    transcriptionDelay: undefined,
+    endOfUtteranceDelay: undefined,
+    startedSpeakingAt: undefined,
+    stoppedSpeakingAt: undefined,
+    backchannelOverAgent: false,
+    skipReply: options.skipReply,
+  };
+}
+
+class ServerTurnRealtimeModel extends RealtimeModel {
+  constructor() {
+    const capabilities: RealtimeCapabilities = {
+      messageTruncation: false,
+      turnDetection: true,
+      userTranscription: false,
+      autoToolReplyGeneration: false,
+      audioOutput: true,
+      manualFunctionCalls: false,
+      midSessionChatCtxUpdate: false,
+      midSessionInstructionsUpdate: false,
+      midSessionToolsUpdate: false,
+    };
+    super(capabilities);
+  }
+
+  get model(): string {
+    return 'server-turn-test';
+  }
+
+  session(): RealtimeSession {
+    throw new Error('not used');
+  }
+
+  async close(): Promise<void> {}
+}
+
+type EndOfTurnActivity = FalseInterruptionActivity & {
+  onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
+  cancelPreemptiveGeneration: ReturnType<typeof vi.fn>;
+  createSpeechTask: ReturnType<typeof vi.fn>;
+};
+
+/**
+ * Builds an activity that can run `onEndOfTurn` on top of a live false-interruption pause, so
+ * the "keeps the resume armed" tests can drive the real `cancelFalseInterruptionTimer` and the
+ * real timer to expiry instead of asserting on a stub.
+ */
+function endOfTurnActivity(llm: unknown): EndOfTurnActivity {
+  const activity = falseInterruptionActivity() as unknown as EndOfTurnActivity;
+  Object.assign(activity.agentSession, {
+    amd: undefined,
+    llm,
+    stt: undefined,
+    _textOnly: false,
+    turnDetection: 'vad',
+  });
+  Object.assign(activity.agentSession.sessionOptions.turnHandling.interruption, { minWords: 0 });
+  Object.assign(activity, {
+    agent: { llm: undefined, stt: undefined, turnHandling: { turnDetection: 'vad' } },
+    _schedulingPaused: false,
+    newTurnsBlocked: false,
+    _userTurnCompletedTask: undefined,
+    isInterruptionDetectionEnabled: false,
+    cancelPreemptiveGeneration: vi.fn(),
+    createSpeechTask: vi.fn(() => ({})),
+  });
+  return activity;
+}
+
+describe('AgentActivity - false interruption resume', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('waits for a dropped turn before resuming', async () => {
+    const decision = new Future<void>();
+    const task = Task.from(async () => decision.await);
+    const activity = falseInterruptionActivity(task);
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.falseInterruptionPending).toBe(true);
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
+
+    decision.resolve();
+    await task.result;
+    await vi.waitFor(() =>
+      expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce(),
+    );
+  });
+
+  it('suppresses the resume when the turn commits', async () => {
+    const decision = new Future<void>();
+    const task = Task.from(async () => decision.await);
+    const activity = falseInterruptionActivity(task);
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+    activity.cancelFalseInterruptionTimer();
+    decision.resolve();
+    await task.result;
+
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
+    expect(activity.falseInterruptionPending).toBe(false);
+  });
+
+  it('does not resume a deferred pause during teardown', async () => {
+    const decision = new Future<void>();
+    const task = Task.from(async () => decision.await);
+    const activity = falseInterruptionActivity(task);
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+    activity.audioRecognition!.isClosed = true;
+    decision.resolve();
+    await task.result;
+
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
+  });
+
+  it('does not resume when the turn decision is cancelled', async () => {
+    const decision = new Future<void>();
+    // Mirrors the real bounce body, which observes the abort and returns normally
+    // instead of rejecting (audio_recognition.ts onEndOfTurn task).
+    const task = Task.from(async (controller) => {
+      await decision.await;
+      if (controller.signal.aborted) return;
+    });
+    const activity = falseInterruptionActivity(task);
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.falseInterruptionPending).toBe(true);
+
+    task.cancel();
+    decision.resolve();
+    await task.result;
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
+    // Python's _on_turn_settled returns without touching _paused_speech on a cancelled
+    // decision; the teardown that cancelled it owns the release.
+    expect(activity.pausedSpeech).toBeDefined();
+    expect(activity.falseInterruptionPending).toBe(false);
+  });
+
+  it('resumes when the turn decision fails', async () => {
+    const decision = new Future<void>();
+    const task = Task.from(async () => decision.await);
+    const activity = falseInterruptionActivity(task);
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.falseInterruptionPending).toBe(true);
+
+    decision.reject(new Error('turn decision failed'));
+    await task.result.catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // An errored decision is a completed one in Python (add_done_callback fires and
+    // cancelled() is False), so the pause must still be released.
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.pausedSpeech).toBeUndefined();
+  });
+
+  it('keeps the resume armed when the reply is skipped', async () => {
+    const activity = endOfTurnActivity(undefined);
+    activity.startFalseInterruptionTimer(300);
+
+    expect(await activity.onEndOfTurn(endOfTurnInfo({ skipReply: true }))).toBe(true);
+
+    // The timer must survive the turn and still release the pause, not merely go uncancelled.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.pausedSpeech).toBeUndefined();
+  });
+
+  it('keeps the resume armed when the realtime server owns turn detection', async () => {
+    const activity = endOfTurnActivity(new ServerTurnRealtimeModel());
+    activity.startFalseInterruptionTimer(300);
+
+    expect(await activity.onEndOfTurn(endOfTurnInfo())).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.pausedSpeech).toBeUndefined();
+  });
+
+  it('cancels the resume when a replying turn will interrupt the pause', async () => {
+    const activity = endOfTurnActivity(undefined);
+    activity.startFalseInterruptionTimer(300);
+
+    expect(await activity.onEndOfTurn(endOfTurnInfo())).toBe(true);
+
+    // Counterpart to the two tests above: proves they are not passing because the fixture
+    // can never cancel.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
+  });
+
+  it('does not end agent speech when handing a paused speech to another activity', async () => {
+    const activity = falseInterruptionActivity();
+    const handle = activity.pausedSpeech!.handle;
+
+    await activity.cancelSpeechPause({ interrupt: false });
+
+    expect(handle.interrupted).toBe(false);
+    expect(activity.audioRecognition!.onEndOfAgentSpeech).not.toHaveBeenCalled();
+  });
+
+  it('resumes at the timeout when no turn decision is open', async () => {
+    const activity = falseInterruptionActivity();
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(299);
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.pausedSpeech).toBeUndefined();
   });
 });
 
 describe('AgentActivity - speech completion', () => {
   it('ends audio recognition speech when pipeline completion moves session out of speaking', () => {
     const audioRecognition = {
-      onEndOfAgentSpeech: vi.fn(),
+      onEndOfAgentSpeech: vi.fn(async () => {}),
     };
     const fakeActivity = {
       speechQueue: {
@@ -934,6 +1319,9 @@ describe('AgentActivity - interrupted tool completion', () => {
       output: 'charged',
       isError: false,
     });
+    call.createdAt = 200;
+    output.createdAt = 300;
+    chatCtx.insert(call);
     const toolOutput = {
       output: [
         ToolExecutionOutput.create({
@@ -951,12 +1339,13 @@ describe('AgentActivity - interrupted tool completion', () => {
         _commitInterruptedToolOutputs: (
           toolOutput: typeof toolOutput,
           speechHandle: SpeechHandle,
-          createdAt: number,
         ) => void;
       }
-    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create());
 
     expect(chatCtx.items).toContain(output);
+    expect(output.createdAt).toBe(300);
+    expect(chatCtx.items).toEqual([call, output]);
     expect(toolItemsAdded).toHaveBeenCalledWith([output]);
     expect(generateReply).not.toHaveBeenCalled();
   });
@@ -1007,10 +1396,9 @@ describe('AgentActivity - interrupted tool completion', () => {
         _commitInterruptedToolOutputs: (
           toolOutput: typeof toolOutput,
           speechHandle: SpeechHandle,
-          createdAt: number,
         ) => void;
       }
-    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create());
 
     expect(chatCtx.items).not.toContain(call);
     expect(chatCtx.items).not.toContain(output);
@@ -1078,10 +1466,9 @@ describe('AgentActivity - interrupted tool completion', () => {
         _commitInterruptedToolOutputs: (
           toolOutput: typeof toolOutput,
           speechHandle: SpeechHandle,
-          createdAt: number,
         ) => void;
       }
-    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create());
 
     expect(chatCtx.items).toHaveLength(2);
     expect(chatCtx.items).toEqual(expect.arrayContaining([completedCall, completedOutput]));
@@ -1099,6 +1486,8 @@ describe('AgentActivity - interrupted tool completion', () => {
 
 describe('AgentActivity - realtime reply chat context push', () => {
   function buildRealtimeReplyActivity(updateError?: unknown) {
+    const userSilenceEvent = new Event();
+    userSilenceEvent.set();
     const generationEvent = {} as GenerationCreatedEvent;
     const realtimeSession = {
       chatCtx: ChatContext.empty(),
@@ -1121,6 +1510,7 @@ describe('AgentActivity - realtime reply chat context push', () => {
       agentSession: {
         _conversationItemAdded: vi.fn(),
       },
+      userSilenceEvent,
       realtimeGenerationTask: vi.fn(async () => {}),
       logger: { info() {}, debug() {}, warn: vi.fn(), error: vi.fn() },
     };
@@ -1227,7 +1617,6 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     };
     toolOutput: ReturnType<typeof buildToolOutput>;
     speechHandle: SpeechHandle;
-    createdAt: number;
   }) => Promise<boolean>;
 
   function buildActivity() {
@@ -1236,6 +1625,7 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     Object.assign(activity, {
       _backgroundSpeeches: new Set<SpeechHandle>(),
       _commitInterruptedToolOutputs: commitInterruptedToolOutputs,
+      logger: log(),
     });
     const waitForToolExecution = (
       activity as unknown as { _waitForToolExecution: WaitForToolExecution }
@@ -1254,12 +1644,11 @@ describe('AgentActivity - interruption while waiting for tools', () => {
       executeToolsTask: { result: Promise.resolve(), cancelAndWait },
       toolOutput,
       speechHandle,
-      createdAt: 123,
     });
 
     expect(shouldContinue).toBe(false);
     expect(cancelAndWait).toHaveBeenCalledOnce();
-    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 123);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle);
     expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
   });
 
@@ -1276,7 +1665,6 @@ describe('AgentActivity - interruption while waiting for tools', () => {
       },
       toolOutput,
       speechHandle,
-      createdAt: 456,
     });
     expect(activity['_backgroundSpeeches']).toContain(speechHandle);
 
@@ -1284,7 +1672,295 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     executionFinished.resolve();
 
     await expect(waiting).resolves.toBe(false);
-    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 456);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle);
     expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
+  });
+
+  it('still commits outputs when cancelling the tool task overruns its budget', async () => {
+    // `Task.cancelAndWait` throws once the cooperative-cancel budget expires. A tool that
+    // ignores its abort signal must not take the commit down with it — the LLM has already
+    // seen these outputs, so dropping them leaves the function calls dangling.
+    const { commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
+    const speechHandle = SpeechHandle.create();
+    speechHandle.interrupt();
+    const toolOutput = buildToolOutput();
+
+    const shouldContinue = await waitForToolExecution({
+      executeToolsTask: {
+        result: new Promise<void>(() => {}),
+        cancelAndWait: vi.fn(async () => {
+          throw new Error('Task cancellation timed out');
+        }),
+      },
+      toolOutput,
+      speechHandle,
+    });
+
+    expect(shouldContinue).toBe(false);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle);
+  });
+});
+
+/**
+ * A realtime provider only publishes the final user transcript once the reply has
+ * finished generating, so committing the message at that moment stamps the user turn
+ * later than the reply it prompted and the transcript renders them out of order. The
+ * provider reports when the turn began via `turnStartedAt`.
+ */
+describe('AgentActivity - realtime user turn timing', () => {
+  function buildRealtimeActivity() {
+    const chatCtx = new ChatContext();
+    const fakeActivity = {
+      vad: undefined,
+      stt: undefined,
+      audioRecognition: undefined,
+      isInterruptionDetectionEnabled: false,
+      agent: { _chatCtx: chatCtx },
+      agentSession: {
+        emit: vi.fn(),
+        _updateUserState: vi.fn(),
+        _conversationItemAdded: vi.fn(),
+      },
+      interrupt: vi.fn(),
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const proto = AgentActivity.prototype as unknown as Record<string, (...args: never[]) => void>;
+    return {
+      chatCtx,
+      transcribed: (transcript: string, itemId: string, turnStartedAt?: number) =>
+        proto.onInputAudioTranscriptionCompleted!.call(fakeActivity, {
+          transcript,
+          itemId,
+          isFinal: true,
+          turnStartedAt,
+        } as never),
+    };
+  }
+
+  it('stamps the user message where the turn began, not at transcript delivery', () => {
+    vi.useFakeTimers();
+    try {
+      // the provider withholds the transcript until its reply is done generating
+      vi.setSystemTime(1_007_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      transcribed('what is my name?', 'item_1', 1_000_000);
+
+      const message = chatCtx.items[0]!;
+      if (message.type !== 'message') throw new Error('expected a chat message');
+      expect(message.createdAt).toBe(1_000_000);
+      // seconds, so the dashboard can place the turn where it happened
+      expect(message.metrics?.startedSpeakingAt).toBe(1_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('places the turn before the reply it prompted when its transcript lands later', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_007_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      // the reply is committed first, because the provider held the user transcript back
+      chatCtx.insert(
+        ChatMessage.create({ role: 'assistant', content: 'you are Brian', createdAt: 1_003_000 }),
+      );
+      transcribed('what is my name?', 'item_1', 1_000_000);
+
+      expect(
+        chatCtx.items.map((item) => (item.type === 'message' ? item.role : item.type)),
+      ).toEqual(['user', 'assistant']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pairs each turn with its own start, even when transcripts arrive late', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_010_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      // both transcripts land after the second turn began; each keeps its own start
+      transcribed('first', 'item_1', 1_000_000);
+      transcribed('second', 'item_2', 1_005_000);
+
+      const [first, second] = chatCtx.items;
+      if (first?.type !== 'message' || second?.type !== 'message') {
+        throw new Error('expected chat messages');
+      }
+      expect(first.createdAt).toBe(1_000_000);
+      expect(second.createdAt).toBe(1_005_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to delivery time when the provider reports no turn start', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_002_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      transcribed('text injected turn', 'item_1');
+
+      const message = chatCtx.items[0]!;
+      if (message.type !== 'message') throw new Error('expected a chat message');
+      expect(message.createdAt).toBe(1_002_000);
+      expect(message.metrics?.startedSpeakingAt).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('AgentActivity - transcriptsEquivalent', () => {
+  it.each([
+    // Formatting-only differences must not invalidate the preemptive generation
+    // (Python: test_formatting_only_final_reuses_preemptive_generation).
+    {
+      name: 'casing, spacing and trailing punctuation',
+      first: 'BOOK   A ROOM',
+      second: 'book a room.',
+      expected: true,
+    },
+    // A changed word must invalidate it (Python: test_changed_words_invalidate_preemptive_generation).
+    { name: 'a changed word', first: 'book a', second: 'book a room', expected: false },
+    // Guard clause: there is no finalized transcript to compare against.
+    {
+      name: 'an undefined finalized transcript',
+      first: 'book a room',
+      second: undefined,
+      expected: false,
+    },
+    // Both sides tokenize to nothing, so there is nothing to call equivalent.
+    { name: 'transcripts that tokenize to no words', first: '...', second: '', expected: false },
+    // The CJK/Thai alternation splits those scripts per character, so whitespace between
+    // them is irrelevant — this is what emulates Python's `split_character=True`.
+    {
+      name: 'CJK characters split by whitespace',
+      first: '你好world',
+      second: '你 好 world',
+      expected: true,
+    },
+    {
+      name: 'Thai characters split by whitespace',
+      first: 'สวัสดี ครับ',
+      second: 'สวัสดีครับ',
+      expected: true,
+    },
+    // Documented divergence: Python's `casefold()` maps ß -> ss and returns true here, while
+    // JS `toLowerCase()` does not. Erring conservative (regenerate rather than reuse) is the
+    // safe direction: extra work, never a generation reused for a different utterance.
+    {
+      name: 'a fold JS toLowerCase() does not perform (Python casefold() returns true)',
+      first: 'STRASSE',
+      second: 'straße',
+      expected: false,
+    },
+  ])('returns $expected for $name', ({ first, second, expected }) => {
+    expect(transcriptsEquivalent(first, second)).toBe(expected);
+  });
+});
+
+/**
+ * The pipeline task retains the speculative ChatMessage built at preflight time, so when the
+ * preemptive generation is reused that message — not the finalized one — is what lands in
+ * conversation history. It must therefore be reconciled with the finalized transcript and any
+ * onUserTurnCompleted edits before the speech is scheduled (agent_activity.ts:2510-2517).
+ */
+describe('AgentActivity - preemptive generation reconciliation', () => {
+  function buildReuseActivity(
+    onUserTurnCompleted: (chatCtx: ChatContext, message: ChatMessage) => void,
+  ) {
+    const emptyToolCtx = ToolContext.empty();
+    const speculativeMessage = ChatMessage.create({
+      role: 'user',
+      content: 'BOOK   A ROOM',
+      transcriptConfidence: 0.4,
+    });
+    const speechHandle = SpeechHandle.create();
+    const scheduleSpeech = vi.fn();
+    const generateReply = vi.fn();
+
+    const fakeActivity = {
+      _preemptiveGenerationCount: 1,
+      _currentSpeech: undefined as SpeechHandle | undefined,
+      schedulingPaused: false,
+      newTurnsBlocked: false,
+      llm: new FakePreemptiveLLM(),
+      tools: emptyToolCtx,
+      toolChoice: null,
+      agent: {
+        chatCtx: new ChatContext(),
+        onUserTurnCompleted: async (chatCtx: ChatContext, message: ChatMessage) => {
+          onUserTurnCompleted(chatCtx, message);
+        },
+      },
+      agentSession: { emit: vi.fn() },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+      _preemptiveGeneration: {
+        speechHandle,
+        userMessage: speculativeMessage,
+        info: { newTranscript: 'BOOK   A ROOM', transcriptConfidence: 0.4 },
+        chatCtx: new ChatContext(),
+        tools: emptyToolCtx,
+        toolChoice: null,
+        createdAt: Date.now(),
+      },
+      scheduleSpeech,
+      generateReply,
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const userTurnCompleted = (AgentActivity.prototype as unknown as Record<string, unknown>)
+      .userTurnCompleted as (this: unknown, info: unknown) => Promise<void>;
+
+    return {
+      fakeActivity,
+      speculativeMessage,
+      speechHandle,
+      scheduleSpeech,
+      generateReply,
+      // A formatting-only finalized transcript, so the reuse guard passes.
+      completeTurn: () =>
+        userTurnCompleted.call(fakeActivity, {
+          newTranscript: 'book a room.',
+          transcriptConfidence: 0.9,
+          skipReply: false,
+        }),
+    };
+  }
+
+  it('reconciles the retained speculative message with the finalized transcript', async () => {
+    const harness = buildReuseActivity(() => {});
+
+    await harness.completeTurn();
+
+    // Reused, not regenerated.
+    expect(harness.scheduleSpeech).toHaveBeenCalledWith(harness.speechHandle, expect.any(Number));
+    expect(harness.generateReply).not.toHaveBeenCalled();
+    expect(harness.fakeActivity._preemptiveGeneration).toBeUndefined();
+
+    // The message committed to history is the speculative one, carrying the finalized values.
+    expect(harness.speculativeMessage.content).toEqual(['book a room.']);
+    expect(harness.speculativeMessage.transcriptConfidence).toBe(0.9);
+  });
+
+  it('keeps onUserTurnCompleted edits on the retained speculative message', async () => {
+    const harness = buildReuseActivity((_chatCtx, message) => {
+      message.content = ['book a room!'];
+      message.transcriptConfidence = 0.42;
+    });
+
+    await harness.completeTurn();
+
+    expect(harness.scheduleSpeech).toHaveBeenCalledWith(harness.speechHandle, expect.any(Number));
+    expect(harness.generateReply).not.toHaveBeenCalled();
+    expect(harness.speculativeMessage.content).toEqual(['book a room!']);
+    expect(harness.speculativeMessage.transcriptConfidence).toBe(0.42);
   });
 });

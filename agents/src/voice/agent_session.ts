@@ -4,7 +4,12 @@
 import { type JsonObject, Struct } from '@bufbuild/protobuf';
 import { Mutex } from '@livekit/mutex';
 import { AgentSession as pb } from '@livekit/protocol';
-import type { AudioFrame, Room } from '@livekit/rtc-node';
+import {
+  type AudioFrame,
+  ParticipantKind,
+  type RemoteParticipant,
+  type Room,
+} from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
@@ -32,6 +37,7 @@ import {
   ChatContext,
   ChatMessage,
   type Instructions,
+  concatInstructions,
 } from '../llm/chat_context.js';
 import type {
   LLM,
@@ -42,6 +48,7 @@ import type {
   ToolContextLike,
 } from '../llm/index.js';
 import { ToolContext, toToolContext } from '../llm/index.js';
+import { LLM as BaseLLM } from '../llm/llm.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
@@ -49,6 +56,11 @@ import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
+import {
+  DEFAULT_SPEECH_STEERING_OPTIONS,
+  type SpeechSteeringOptions,
+  steeringInstructions,
+} from '../tts/provider_format.js';
 import type { TTS, TTSError } from '../tts/tts.js';
 import {
   DEFAULT_API_CONNECT_OPTIONS,
@@ -88,6 +100,7 @@ import {
   type UserInputTranscribedEvent,
   type UserState,
   type UserStateChangedEvent,
+  type UserTranscriptionTimeoutEvent,
   createAgentStateChangedEvent,
   createCloseEvent,
   createConversationItemAddedEvent,
@@ -119,6 +132,9 @@ import type {
 } from './turn_config/turn_handling.js';
 import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
 import { setParticipantSpanAttributes } from './utils.js';
+
+const SIP_RULE_ID_ATTR = 'sip.ruleID';
+const DEFAULT_AEC_WARMUP_DURATION = 3000;
 
 export interface AgentSessionUsage {
   /** List of usage summaries, one per model/provider combination. */
@@ -192,14 +208,18 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   useTtsAlignedTranscript: boolean;
   maxToolSteps: number;
   userAwayTimeout: number | null;
+  transcriptionTimeout: number | null;
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
   ttsTextTransforms: readonly TextTransform[] | null;
+  /** Resolved per-category recording options for this session. */
+  recordingOptions: ResolvedRecordingOptions;
 }
 
 export const defaultAgentSessionOptions = {
   maxToolSteps: 3,
   userAwayTimeout: 15.0,
+  transcriptionTimeout: null,
   aecWarmupDuration: 3000,
   ttsReadIdleTimeout: 10_000,
   forwardAudioIdleTimeout: 10_000,
@@ -238,6 +258,7 @@ export type TurnDetectionMode =
 
 export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
+  [AgentSessionEventTypes.UserTranscriptionTimeout]: (ev: UserTranscriptionTimeoutEvent) => void;
   [AgentSessionEventTypes.AgentStateChanged]: (ev: AgentStateChangedEvent) => void;
   [AgentSessionEventTypes.UserStateChanged]: (ev: UserStateChangedEvent) => void;
   [AgentSessionEventTypes.ConversationItemAdded]: (ev: ConversationItemAddedEvent) => void;
@@ -289,9 +310,20 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   userAwayTimeout?: number | null;
 
   /**
+   * Emit `user_transcription_timeout` when VAD detects user speech during the user's turn but no
+   * non-empty final transcript arrives within this many milliseconds after the speech ends. This
+   * can happen because STT failed or because audio was intentionally withheld from STT, such as
+   * during AEC warmup or uninterruptible agent speech. A non-empty final transcript satisfies the
+   * timeout for the current turn even if adaptive interruption detection later discards it as a
+   * backchannel. Requires both VAD and STT. Set to `null` to disable.
+   * @defaultValue null
+   */
+  transcriptionTimeout?: number | null;
+
+  /**
    * Duration in milliseconds for AEC (Acoustic Echo Cancellation) warmup, during which
    * interruptions from audio activity are suppressed. Set to `null` to disable.
-   * @defaultValue 3000
+   * Defaults to 3000, or `null` for outbound SIP calls.
    */
   aecWarmupDuration?: number | null;
 
@@ -331,7 +363,92 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * and `filter_emoji`; pass `null` to disable text transforms.
    */
   ttsTextTransforms?: readonly TextTransform[] | null;
+
+  /**
+   * Let the LLM steer how the agent sounds.
+   *
+   * When enabled, the provider's markup guide is injected into the LLM prompt so it can
+   * emit inline delivery tags (emotion, pacing, non-verbal sounds), which are rendered by
+   * the TTS and stripped from the transcript. Pass an {@link ExpressiveOptions} object to
+   * steer or override the injected instructions. Requires an
+   * {@link inference.TTS | inference TTS} with a model that declares a markup dialect; it
+   * stays off otherwise.
+   *
+   * @defaultValue false
+   */
+  expressive?: boolean | ExpressiveOptions;
 };
+
+/**
+ * Configuration for the expressive pipeline, passed as `AgentSession({ expressive: ... })`.
+ *
+ * Controls how TTS markup instructions are injected into the LLM when expressive is
+ * enabled. All keys are optional; common shapes:
+ *
+ * - `{ speechSteering: {...} }` — steer delivery and non-verbal sounds on top of the
+ *   provider-agnostic default instructions.
+ * - `{ ttsInstructionsTemplate: '...' }` — a fully custom prompt.
+ * - `{ ttsInstructionsAppend: '...' }` — your own rules appended to the template.
+ *
+ * Any explicit template overrides the default; unset parts fall back to the
+ * provider-agnostic default.
+ */
+export interface ExpressiveOptions {
+  speechSteering?: SpeechSteeringOptions;
+  ttsInstructionsTemplate?: Instructions | string;
+  ttsInstructionsAppend?: string;
+}
+
+/** The placeholder the expressive template substitutes the provider's markup guide into. */
+export const TTS_INSTRUCTIONS_PLACEHOLDER = '{tts.markup.llm_instructions}';
+
+export const DEFAULT_EXPRESSIVE_OPTIONS: ExpressiveOptions = {
+  ttsInstructionsTemplate:
+    'You can control how you speak using the following formatting tags. ' +
+    'Use them when appropriate to make your speech more expressive and natural:\n\n' +
+    TTS_INSTRUCTIONS_PLACEHOLDER,
+  speechSteering: DEFAULT_SPEECH_STEERING_OPTIONS,
+};
+
+function appendInstructions(template: Instructions | string, extra: string): Instructions | string {
+  // concatenate the *raw* template text so any {placeholders} survive until render
+  return concatInstructions(template, '\n\n' + extra);
+}
+
+/**
+ * Resolve a user {@link ExpressiveOptions} to a concrete options object for a provider.
+ *
+ * Starts from `defaults`, renders `speechSteering` into per-provider delivery guidelines
+ * appended to the template, then applies any explicit `ttsInstructionsTemplate` override
+ * and `ttsInstructionsAppend` (last, so the user's free-form rules always win). Steering
+ * fields the user doesn't set fall back to `defaults`' `speechSteering`, so an explicit
+ * value always wins over a default. The returned object always has
+ * `ttsInstructionsTemplate` and `speechSteering` (never `ttsInstructionsAppend`);
+ * `speechSteering` passes through so injection can filter the advertised markup vocabulary
+ * (`TTSMarkup.llmInstructions`) with it.
+ */
+export function resolveExpressiveOptions(
+  expr: ExpressiveOptions,
+  options: { providerKey: string; defaults: ExpressiveOptions },
+): ExpressiveOptions {
+  const { providerKey, defaults } = options;
+  let ttsTemplate = expr.ttsInstructionsTemplate ?? defaults.ttsInstructionsTemplate!;
+
+  const steering: SpeechSteeringOptions = {
+    ...(defaults.speechSteering ?? {}),
+    ...(expr.speechSteering ?? {}),
+  };
+  const fragment = steeringInstructions(providerKey, steering);
+  if (fragment) {
+    ttsTemplate = appendInstructions(ttsTemplate, fragment);
+  }
+
+  if (expr.ttsInstructionsAppend) {
+    ttsTemplate = appendInstructions(ttsTemplate, expr.ttsInstructionsAppend);
+  }
+
+  return { ttsInstructionsTemplate: ttsTemplate, speechSteering: steering };
+}
 
 export type AgentSessionUpdateOptions = {
   /** Configuration updates for turn handling. */
@@ -417,6 +534,35 @@ export class AgentSession<
   private idleReleased = new Event();
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
+  private readonly _aecWarmupDurationExplicit: boolean;
+
+  /**
+   * The session's expressive setting, as the user passed it.
+   * @internal
+   */
+  _expressive: boolean | ExpressiveOptions = false;
+
+  /**
+   * Whether the markup guide has been injected at least once this session.
+   *
+   * Latches on: it is what licenses the history scrub on a later expressive-off turn
+   * (a handoff to a TTS without a markup dialect builds a fresh `AgentActivity`, so the
+   * flag has to outlive it). Sessions that never enabled expressive keep it `false` and
+   * are never scrubbed.
+   *
+   * @internal
+   */
+  _expressiveEverActive = false;
+
+  /**
+   * Whether the "template has no markup-guide placeholder" warning has been emitted.
+   *
+   * Session-scoped so a misconfigured template warns once rather than once per turn, and
+   * survives a handoff (which builds a fresh `AgentActivity`).
+   *
+   * @internal
+   */
+  _warnedExpressiveTemplate = false;
 
   // Connection options for STT, LLM, and TTS
   private _connOptions: ResolvedSessionConnectOptions;
@@ -472,9 +618,6 @@ export class AgentSession<
   /** @internal */
   _recordedEvents: AgentEvent[] = [];
 
-  /** @internal Resolved per-category recording options for this session. */
-  _recordingOptions: ResolvedRecordingOptions = { ...RECORDING_ALL_OFF };
-
   /** @internal */
   _asyncToolOptions: AsyncToolOptions = resolveAsyncToolOptions();
 
@@ -483,7 +626,7 @@ export class AgentSession<
 
   /** @internal True when any recording category is enabled. */
   get _enableRecording(): boolean {
-    return recordingEnabled(this._recordingOptions);
+    return recordingEnabled(this.sessionOptions.recordingOptions);
   }
 
   /** @internal - Timestamp when the session started (milliseconds) */
@@ -510,6 +653,7 @@ export class AgentSession<
   constructor(options: AgentSessionOptions<UserData> = {}) {
     super();
 
+    this._aecWarmupDurationExplicit = options.aecWarmupDuration !== undefined;
     const { agentSessionOptions: opts, legacyVoiceOptions } =
       migrateLegacyOptions<UserData>(options);
 
@@ -522,8 +666,10 @@ export class AgentSession<
       connOptions,
       tools,
       toolHandling,
+      expressive,
       ...resolvedSessionOptions
     } = opts;
+    this._expressive = expressive ?? false;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
@@ -560,6 +706,11 @@ export class AgentSession<
       this.llm = llm;
     }
 
+    // Eagerly establish DNS/TLS to the LLM provider so the first inference request is faster.
+    if (this.llm instanceof BaseLLM) {
+      this.llm.prewarm();
+    }
+
     if (typeof tts === 'string') {
       this.tts = InferenceTTS.fromModelString(tts);
     } else {
@@ -582,7 +733,9 @@ export class AgentSession<
     this._asyncToolOptions = resolveAsyncToolOptions(toolHandling?.asyncOptions);
 
     // configurable IO
-    this._input = new AgentInput(this.onAudioInputChanged);
+    this._input = new AgentInput(this.onAudioInputChanged, (enabled) =>
+      this.onAudioEnabledChanged(enabled),
+    );
     this._output = new AgentOutput(this.onAudioOutputChanged, this.onTextOutputChanged);
 
     // This is the "global" chat context, it holds the entire conversation history
@@ -726,7 +879,7 @@ export class AgentSession<
 
       if (this.output.audio && outputOptions?.audioEnabled !== false) {
         this.logger.warn(
-          'RoomIO audio output is enabled but output.audio is already set, ignoring..',
+          'RoomIO audio output is enabled; preserving and using the existing output.audio',
         );
       }
 
@@ -764,7 +917,7 @@ export class AgentSession<
       if (
         this.input.audio &&
         this.output.audio &&
-        (this._recordingOptions.audio || consoleForcesRecord)
+        (this.sessionOptions.recordingOptions.audio || consoleForcesRecord)
       ) {
         this._recorderIO = new RecorderIO({ agentSession: this });
         this.input.audio = this._recorderIO.recordInput(this.input.audio);
@@ -847,9 +1000,9 @@ export class AgentSession<
         record = ctx.job.enableRecording;
       }
 
-      this._recordingOptions = resolveRecordingOptions(record);
+      this.sessionOptions.recordingOptions = resolveRecordingOptions(record);
       if (this._textOnly) {
-        this._recordingOptions.audio = false;
+        this.sessionOptions.recordingOptions.audio = false;
       }
 
       // Only one AgentSession per job can be the primary (and therefore record).
@@ -857,18 +1010,18 @@ export class AgentSession<
       // never configures cloud recording. Mirrors Python's start() ordering.
       if (ctx._primaryAgentSession === undefined || ctx._primaryAgentSession === this) {
         ctx._primaryAgentSession = this;
-      } else if (recordingEnabled(this._recordingOptions)) {
+      } else if (recordingEnabled(this.sessionOptions.recordingOptions)) {
         if (recordIsGiven) {
           throw new Error(
             'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
           );
         }
         // record was not given: silently disable recording for the secondary session
-        this._recordingOptions = resolveRecordingOptions(false);
+        this.sessionOptions.recordingOptions = resolveRecordingOptions(false);
       }
 
       if (this._enableRecording) {
-        await ctx.initRecording(this._recordingOptions);
+        await ctx.initRecording(this.sessionOptions.recordingOptions);
       }
     }
 
@@ -990,6 +1143,16 @@ export class AgentSession<
     return handle;
   }
 
+  /**
+   * Interrupt the current speech generation.
+   *
+   * A queued speech created with `allowInterruptions: false` keeps playing, along with the ones
+   * behind it, unless `force` is set.
+   *
+   * @returns A future that completes when the interruption is fully processed.
+   * @throws Error if the session is not running, or if the speech currently playing disallows
+   * interruptions and `force` is false.
+   */
   interrupt(options?: { force?: boolean }) {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
@@ -1607,6 +1770,16 @@ export class AgentSession<
     }
   }
 
+  private onAudioEnabledChanged(enabled: boolean): void {
+    if (!enabled && this._userState === 'speaking') {
+      if (this.activity) {
+        this.activity.onEndOfSpeech(undefined);
+      } else {
+        this._updateUserState('listening');
+      }
+    }
+  }
+
   private onAudioOutputChanged(): void {
     if (
       this.started &&
@@ -1660,6 +1833,23 @@ export class AgentSession<
 
     this._aecWarmupRemaining = 0;
     if (this._aecWarmupTimer !== null) {
+      clearTimeout(this._aecWarmupTimer);
+      this._aecWarmupTimer = null;
+    }
+  }
+
+  /** @internal */
+  _onRoomIOParticipantLinked(participant: RemoteParticipant): void {
+    if (this._aecWarmupDurationExplicit) {
+      return;
+    }
+
+    const isOutboundSip =
+      participant.info.kind === ParticipantKind.SIP && !participant.attributes[SIP_RULE_ID_ATTR];
+    this.sessionOptions.aecWarmupDuration = isOutboundSip ? null : DEFAULT_AEC_WARMUP_DURATION;
+    this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
+
+    if (isOutboundSip && this._aecWarmupTimer !== null) {
       clearTimeout(this._aecWarmupTimer);
       this._aecWarmupTimer = null;
     }

@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-sarvam",
-  "version": "1.5.5",
+  "version": "1.6.4",
   "description": "Sarvam AI plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -40,7 +40,7 @@
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "@types/ws": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.12",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },

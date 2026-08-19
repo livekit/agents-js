@@ -169,7 +169,11 @@ function dropUnsupportedParams(
   return result;
 }
 
-export type InferenceClass = 'priority' | 'standard';
+/**
+ * Scheduling class for a request. `low` yields to voice traffic, so it is only
+ * appropriate for work no caller is waiting on.
+ */
+export type InferenceClass = 'priority' | 'standard' | 'low';
 
 export interface InferenceLLMOptions {
   model: LLMModels;
@@ -259,6 +263,11 @@ export class LLM extends llm.LLM {
 
   get provider(): string {
     return 'livekit';
+  }
+
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    this.client.apiKey = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
+    await this.client.models.list({ signal });
   }
 
   static fromModelString(modelString: string): LLM {
@@ -516,21 +525,22 @@ export class LLMStream extends llm.LLMStream {
         for (const choice of chunk.choices) {
           const chatChunk = this.parseChoice(chunk.id, choice, thinkingFilter);
           if (chatChunk) {
-            retryable = false;
+            if (llm.hasResponse(chatChunk)) {
+              retryable = false;
+            }
             this.queue.put(chatChunk);
           }
         }
 
         if (chunk.usage) {
           const usage = chunk.usage;
-          retryable = false;
           this.queue.put({
             id: chunk.id,
             usage: {
-              completionTokens: usage.completion_tokens,
-              promptTokens: usage.prompt_tokens,
+              completionTokens: usage.completion_tokens || 0,
+              promptTokens: usage.prompt_tokens || 0,
               promptCachedTokens: usage.prompt_tokens_details?.cached_tokens || 0,
-              totalTokens: usage.total_tokens,
+              totalTokens: usage.total_tokens || 0,
             },
           });
         }

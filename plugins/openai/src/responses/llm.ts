@@ -226,7 +226,6 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       );
 
       for await (const event of stream) {
-        retryable = false;
         let chunk: llm.ChatChunk | undefined;
 
         switch (event.type) {
@@ -252,6 +251,11 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
 
         if (chunk) {
           this.queue.put(chunk);
+          // a retry only duplicates output the caller has already seen; the
+          // stream-opening event and the usage-bearing one are neither
+          if (llm.hasResponse(chunk)) {
+            retryable = false;
+          }
         }
       }
     } catch (error) {

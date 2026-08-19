@@ -10,9 +10,9 @@ import { ConnectionPool } from '../connection_pool.js';
 import { type LanguageCode, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
-import { basic as tokenizeBasic } from '../tokenize/index.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
+import { dropBracketCues, sentenceTokenizer } from '../tts/provider_format.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import {
   Event,
@@ -412,6 +412,23 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return 'inference.TTS';
   }
 
+  /**
+   * Key the shared markup tables off the gateway model's provider.
+   *
+   * `llmInstructions` / `normalize` / `convert` are inherited from the base markup helper,
+   * keyed on this.
+   */
+  protected override markupProviderKey(): string {
+    const model = this.opts?.model ?? '';
+    const provider = model.split('/')[0] ?? '';
+    if (provider === 'inworld' && model.includes('tts-2')) {
+      return 'inworld';
+    } else if (provider === 'inworld') {
+      return ''; // older inworld models don't support markup
+    }
+    return provider;
+  }
+
   get model(): string {
     return this.opts.model ?? 'unknown';
   }
@@ -547,6 +564,17 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
 export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeStream {
   private opts: InferenceTTSOptions<TModel>;
   private tts: TTS<TModel>;
+  /**
+   * Snapshot whether expressive is active now, while the framework holds it fixed for this
+   * synthesis (set synchronously before `stream()`). Reading it lazily in `run` would race
+   * with the next turn/session mutating the shared TTS instance.
+   */
+  private expressive: boolean;
+  /**
+   * Alignment arrives finer-grained than a cue, so `dropBracketCues` parks the tail of an
+   * unclosed span here between messages.
+   */
+  private heldTokens: TimedString[] = [];
 
   #logger = log();
 
@@ -554,6 +582,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     super(tts, connOptions);
     this.opts = opts;
     this.tts = tts;
+    this.expressive = tts.expressive;
   }
 
   get label() {
@@ -587,7 +616,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     // Python side.
     let pendingTimedTranscripts: TimedString[] = [];
 
-    const sendTokenizerStream = new tokenizeBasic.SentenceTokenizer().stream();
+    // chunking defaults (cap + expressive batch size) live in provider_format
+    const provider = (this.opts.model ?? '').split('/')[0] ?? '';
+    const sendTokenizerStream = sentenceTokenizer(provider, {
+      expressive: this.expressive,
+    }).stream();
     const eventChannel = createStreamChannel<TtsServerEvent>();
     const requestId = shortuuid('tts_request_');
     const inputSentEvent = new Event();
@@ -637,7 +670,9 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           sendTokenizerStream.flush();
           continue;
         }
-        sendTokenizerStream.pushText(data);
+        // only expressive turns can carry markup; without it the text is a plain
+        // utterance and must reach the provider byte-for-byte
+        sendTokenizerStream.pushText(this.expressive ? this.tts.markup.normalize(data) : data);
       }
       // Only call endInput if the stream hasn't been closed by cleanup
       if (!closing) {
@@ -657,11 +692,17 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         if (this.opts.model) generationConfig.model = this.opts.model;
         if (this.opts.language) generationConfig.language = this.opts.language;
 
+        // re-normalize at sentence level: tags split across input chunks aren't caught by
+        // the per-chunk normalize in the input task
+        const converted = this.expressive
+          ? this.tts.markup.convert(this.tts.markup.normalize(ev.token))
+          : ev.token;
+
         this.markStarted();
         await sendClientEvent(
           {
             type: 'input_transcript',
-            transcript: ev.token + ' ',
+            transcript: converted + ' ',
             generation_config: generationConfig,
             extra: (this.opts.modelOptions as Record<string, unknown>) ?? {},
           },
@@ -801,29 +842,35 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               }
               break;
             case 'output_alignment':
+              let aligned: TimedString[] = [];
               if (serverEvent.words && serverEvent.words.length > 0) {
-                for (const w of serverEvent.words) {
-                  pendingTimedTranscripts.push(
-                    createTimedString({
-                      text: w.word,
-                      startTime: w.start,
-                      endTime: w.end,
-                    }),
-                  );
-                }
+                aligned = serverEvent.words.map((w) =>
+                  createTimedString({
+                    text: provider === 'cartesia' ? `${w.word} ` : w.word,
+                    startTime: w.start,
+                    endTime: w.end,
+                  }),
+                );
               } else if (serverEvent.chars && serverEvent.chars.length > 0) {
-                for (const c of serverEvent.chars) {
-                  pendingTimedTranscripts.push(
-                    createTimedString({
-                      text: c.char,
-                      startTime: c.start,
-                      endTime: c.end,
-                    }),
-                  );
-                }
+                aligned = serverEvent.chars.map((c) =>
+                  createTimedString({ text: c.char, startTime: c.start, endTime: c.end }),
+                );
+              }
+              if (aligned.length > 0) {
+                // the provider aligned the *converted* text, so under expressive it carries
+                // native cues that were never spoken
+                pendingTimedTranscripts.push(
+                  ...(this.expressive ? dropBracketCues(aligned, this.heldTokens) : aligned),
+                );
               }
               break;
             case 'done':
+              if (this.heldTokens.length > 0) {
+                // release an unclosed span, cue unresolved
+                pendingTimedTranscripts.push(
+                  ...dropBracketCues([], this.heldTokens, { final: true }),
+                );
+              }
               for (const frame of bstream.flush()) {
                 sendLastFrame(currentSessionId!, false);
                 lastFrame = frame;

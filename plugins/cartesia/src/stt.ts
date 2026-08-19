@@ -4,7 +4,10 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIStatusError,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
+  asError,
   asLanguageCode,
   calculateAudioDurationSeconds,
   getBaseLanguage,
@@ -24,6 +27,14 @@ const REQUEST_ID_HEADER = 'cartesia-request-id';
 const API_VERSION = '2026-03-01';
 const DRAIN_TIMEOUT_MS = 5000;
 const KEEPALIVE_INTERVAL_MS = 30000;
+
+const sanitizedErrorName = (error: Error): string => {
+  if (error instanceof SyntaxError) return 'SyntaxError';
+  if (error instanceof TypeError) return 'TypeError';
+  if (error instanceof RangeError) return 'RangeError';
+  if (error instanceof AggregateError) return 'AggregateError';
+  return 'Error';
+};
 
 /**
  * Fires once when the WebSocket connection is established.
@@ -267,10 +278,12 @@ export class SpeechStream extends stt.SpeechStream {
   #currentTranscript = '';
   #speechDuration = 0;
   #closingWs = false;
+  #connectTimeout: number;
 
   constructor(sttInstance: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
     super(sttInstance, opts.sampleRate, connOptions);
     this.#opts = { ...opts };
+    this.#connectTimeout = connOptions?.timeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.timeoutMs;
   }
 
   override get label(): string {
@@ -295,12 +308,21 @@ export class SpeechStream extends stt.SpeechStream {
       const url = this.#getCartesiaUrl();
       this.#logger.debug(`Connecting to Cartesia STT: ${url}`);
 
-      const ws = new WebSocket(url, {
-        headers: {
-          [AUTHORIZATION_HEADER]: this.#opts.apiKey,
-          [VERSION_HEADER]: API_VERSION,
-        },
-      });
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(url, {
+          handshakeTimeout: this.#connectTimeout,
+          headers: {
+            [AUTHORIZATION_HEADER]: this.#opts.apiKey,
+            [VERSION_HEADER]: API_VERSION,
+          },
+        });
+      } catch (error) {
+        throw new APIConnectionError({
+          message: sanitizedErrorName(asError(error)),
+          options: { retryable: true },
+        });
+      }
       this.#ws = ws;
 
       // Cartesia returns the request id on the WS upgrade response, before any
@@ -316,16 +338,41 @@ export class SpeechStream extends stt.SpeechStream {
       });
 
       await new Promise<void>((resolve, reject) => {
-        const onOpen = () => {
+        const cleanup = () => {
+          ws.off('open', onOpen);
+          ws.off('unexpected-response', onUnexpectedResponse);
           ws.off('error', onError);
+        };
+        const onOpen = () => {
+          cleanup();
           resolve();
         };
+        const onUnexpectedResponse = (_request: unknown, response: { statusCode?: number }) => {
+          cleanup();
+          ws.on('error', () => {});
+          ws.close();
+          // Authentication headers can appear in WebSocket handshake errors.
+          const statusCode = response.statusCode ?? -1;
+          reject(
+            new APIStatusError({
+              message: `Cartesia WebSocket connection rejected with status ${statusCode}`,
+              options: { statusCode },
+            }),
+          );
+        };
         const onError = (err: Error) => {
-          ws.off('open', onOpen);
-          reject(new APIConnectionError({ message: err.message, options: { retryable: true } }));
+          cleanup();
+          // Transport errors can contain credentials in URLs.
+          reject(
+            new APIConnectionError({
+              message: sanitizedErrorName(err),
+              options: { retryable: true },
+            }),
+          );
         };
 
         ws.once('open', onOpen);
+        ws.once('unexpected-response', onUnexpectedResponse);
         ws.once('error', onError);
       });
 

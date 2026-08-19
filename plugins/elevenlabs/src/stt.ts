@@ -60,8 +60,14 @@ export interface STTOptions {
   model?: ElevenLabsSTTModels | string;
   /** @deprecated Use `model` instead. */
   modelId?: ElevenLabsSTTModels | string;
+  /**
+   * Keywords or phrases to bias transcription towards. Scribe v2 batch accepts up to 1000
+   * keyterms of at most 50 characters each; realtime accepts up to 50 keyterms of at most 20
+   * characters each. Usage incurs additional costs.
+   */
   keyterms?: string[];
   noVerbatim?: boolean;
+  enableLogging?: boolean;
 }
 
 interface ResolvedSTTOptions {
@@ -75,6 +81,7 @@ interface ResolvedSTTOptions {
   serverVad?: VADOptions | null;
   keyterms?: string[];
   noVerbatim: boolean;
+  enableLogging: boolean;
 }
 
 export interface STTRecognizeOptions {
@@ -88,6 +95,8 @@ interface ElevenLabsWord {
   start?: number;
   end?: number;
   speaker_id?: string | null;
+  type?: string;
+  logprob?: number;
 }
 
 interface ElevenLabsBatchResponse {
@@ -158,8 +167,24 @@ function asWords(value: unknown): ElevenLabsWord[] {
       start: asNumber(record.start),
       end: asNumber(record.end),
       speaker_id: asString(record.speaker_id) ?? null,
+      type: asString(record.type),
+      logprob: asNumber(record.logprob),
     };
   });
+}
+
+function speechConfidence(words?: ElevenLabsWord[]): number {
+  if (!words) return 0;
+
+  const logprobs = words.flatMap((word) =>
+    word.type === 'word' && word.logprob !== undefined ? [word.logprob] : [],
+  );
+  if (logprobs.length === 0) return 0;
+
+  return Math.min(
+    1,
+    Math.max(0, Math.exp(logprobs.reduce((sum, value) => sum + value, 0) / logprobs.length)),
+  );
 }
 
 function parseBatchResponse(value: unknown): ElevenLabsBatchResponse {
@@ -249,6 +274,7 @@ export class STT extends stt.STT {
       modelId,
       keyterms: opts.keyterms,
       noVerbatim: opts.noVerbatim ?? false,
+      enableLogging: opts.enableLogging ?? true,
     };
     this.#session = opts.httpSession ?? {};
   }
@@ -367,12 +393,15 @@ export class STT extends stt.STT {
 
     try {
       const fetchFn = this.#session.fetch ?? fetch;
-      const response = await fetchFn(`${this.#opts.baseURL}/speech-to-text`, {
-        method: 'POST',
-        headers: { [AUTHORIZATION_HEADER]: this.#opts.apiKey },
-        body: form,
-        signal: abortSignal ?? null,
-      });
+      const response = await fetchFn(
+        `${this.#opts.baseURL}/speech-to-text?enable_logging=${String(this.#opts.enableLogging).toLowerCase()}`,
+        {
+          method: 'POST',
+          headers: { [AUTHORIZATION_HEADER]: this.#opts.apiKey },
+          body: form,
+          signal: abortSignal ?? null,
+        },
+      );
       const responseJson = parseBatchResponse(await response.json());
       if (response.status !== 200) {
         throw new APIStatusError({
@@ -428,7 +457,7 @@ export class STT extends stt.STT {
           speakerId,
           startTime,
           endTime,
-          confidence: 0,
+          confidence: speechConfidence(words),
           words: words?.map((word) =>
             createTimedString({
               text: word.text ?? '',
@@ -466,7 +495,11 @@ export class STT extends stt.STT {
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
-        stream.updateOptions({ serverVad: opts.serverVad, noVerbatim: opts.noVerbatim });
+        stream.updateOptions({
+          serverVad: opts.serverVad,
+          noVerbatim: opts.noVerbatim,
+          keyterms: opts.keyterms,
+        });
       } else {
         this.#streams.delete(ref);
       }
@@ -516,7 +549,11 @@ export class SpeechStream extends stt.SpeechStream {
     );
   }
 
-  updateOptions(opts: { serverVad?: VADOptions | null; noVerbatim?: boolean }): void {
+  updateOptions(opts: {
+    serverVad?: VADOptions | null;
+    noVerbatim?: boolean;
+    keyterms?: string[];
+  }): void {
     if (opts.serverVad !== undefined) {
       this.#opts.serverVad = opts.serverVad;
       if (!this.#reconnectEvent.done) {
@@ -525,6 +562,12 @@ export class SpeechStream extends stt.SpeechStream {
     }
     if (opts.noVerbatim !== undefined) {
       this.#opts.noVerbatim = opts.noVerbatim;
+      if (!this.#reconnectEvent.done) {
+        this.#reconnectEvent.resolve();
+      }
+    }
+    if (opts.keyterms !== undefined) {
+      this.#opts.keyterms = opts.keyterms;
       if (!this.#reconnectEvent.done) {
         this.#reconnectEvent.resolve();
       }
@@ -603,11 +646,19 @@ export class SpeechStream extends stt.SpeechStream {
                     sample_rate: this.#opts.sampleRate,
                   }),
                 );
+              }
 
-                if (hasEnded) {
-                  this.#audioDurationCollector.flush();
-                  hasEnded = false;
-                }
+              if (hasEnded) {
+                this.#audioDurationCollector.flush();
+                ws?.send(
+                  JSON.stringify({
+                    message_type: 'input_audio_chunk',
+                    audio_base_64: '',
+                    commit: true,
+                    sample_rate: this.#opts.sampleRate,
+                  }),
+                );
+                hasEnded = false;
               }
             }
           } finally {
@@ -684,6 +735,7 @@ export class SpeechStream extends stt.SpeechStream {
       `model_id=${this.#opts.modelId}`,
       `audio_format=pcm_${this.#opts.sampleRate}`,
       `commit_strategy=${commitStrategy}`,
+      `enable_logging=${String(this.#opts.enableLogging).toLowerCase()}`,
     ];
 
     if (!this.#language) {
@@ -718,6 +770,12 @@ export class SpeechStream extends stt.SpeechStream {
 
     if (this.#opts.noVerbatim) {
       params.push('no_verbatim=true');
+    }
+
+    if (this.#opts.keyterms !== undefined) {
+      params.push(
+        ...this.#opts.keyterms.map((keyterm) => `keyterms=${encodeURIComponent(keyterm)}`),
+      );
     }
 
     const baseURL = this.#opts.baseURL.replace('https://', 'wss://').replace('http://', 'ws://');
@@ -790,7 +848,7 @@ export class SpeechStream extends stt.SpeechStream {
       text,
       startTime: startTime + this.startTimeOffset,
       endTime: endTime + this.startTimeOffset,
-      confidence: 0,
+      confidence: speechConfidence(words),
     };
     if (words.length > 0) {
       speechData.words = words.map((word) =>

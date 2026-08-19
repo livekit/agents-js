@@ -9,7 +9,7 @@ import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, intervalForRetry } from '../types.js';
-import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
+import { AsyncIterableQueue, Task, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
 import {
   type ToolChoice,
@@ -29,6 +29,8 @@ export interface CompletionUsage {
   completionTokens: number;
   promptTokens: number;
   promptCachedTokens: number;
+  /** Tokens used to write to the prompt cache. */
+  cacheCreationTokens?: number;
   totalTokens: number;
   /** The service tier used for processing (e.g. 'default', 'priority', 'flex'). */
   serviceTier?: string;
@@ -38,6 +40,17 @@ export interface ChatChunk {
   id: string;
   delta?: ChoiceDelta;
   usage?: CompletionUsage;
+}
+
+/**
+ * Whether this chunk delivered generation the caller can see.
+ *
+ * Token counts and provider metadata (a gateway deployment stamp, a thought
+ * signature) reach the caller without being output: they neither start the clock
+ * on time-to-first-token nor give a retry anything to duplicate.
+ */
+export function hasResponse(chunk: ChatChunk): boolean {
+  return Boolean(chunk.delta?.content || chunk.delta?.toolCalls?.length);
 }
 
 export interface CollectedResponse {
@@ -65,6 +78,9 @@ export type LLMCallbacks = {
 };
 
 export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCallbacks>) {
+  #prewarmTask?: Task<void>;
+  #closed = false;
+
   constructor() {
     super();
   }
@@ -120,14 +136,45 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
   }): LLMStream;
 
   /**
-   * Pre-warm connection to the LLM service
+   * Pre-warm connection to the LLM service.
+   *
+   * Establishes DNS resolution and the TLS connection to the provider before the first inference
+   * request, reducing time-to-first-token on the initial reply. Non-blocking (fire-and-forget) and
+   * idempotent; calls made after {@link aclose} are ignored. Providers enable it by overriding
+   * {@link _prewarmImpl}.
    */
   prewarm(): void {
-    // Default implementation - subclasses can override
+    if (this.#closed || this._prewarmImpl === LLM.prototype._prewarmImpl) {
+      return;
+    }
+
+    if (this.#prewarmTask) {
+      return;
+    }
+
+    this.#prewarmTask = Task.from(async (controller) => {
+      try {
+        await this._prewarmImpl(controller.signal);
+      } catch {
+        // Prewarm is best-effort and must not affect session startup.
+      }
+    });
   }
 
+  /**
+   * Performs a provider-specific, token-free request that initializes DNS, TLS, authentication,
+   * and keep-alive state.
+   *
+   * @remarks Exceptions are swallowed by {@link prewarm}. Implementations must honor `signal` so
+   * {@link aclose} can cancel and await in-flight work.
+   */
+  protected async _prewarmImpl(_signal: AbortSignal): Promise<void> {}
+
   async aclose(): Promise<void> {
-    // Default implementation - subclasses can override
+    this.#closed = true;
+    if (this.#prewarmTask) {
+      await this.#prewarmTask.cancelAndWait();
+    }
   }
 }
 
@@ -174,7 +221,15 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
+    startSoon(async () => {
+      try {
+        await this.mainTask();
+      } catch {
+        // already surfaced via emitError; swallow to avoid unhandled rejection.
+      } finally {
+        this.queue.close();
+      }
+    });
   }
 
   private _mainTaskImpl = async (span: Span) => {
@@ -269,7 +324,9 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       if (requestId && !this.#providerRequestIds.includes(requestId)) {
         this.#providerRequestIds.push(requestId);
       }
-      if (ttft === BigInt(-1)) {
+      // measured against generation, not the first chunk: a retry that follows a
+      // contentless chunk would otherwise latch the clock on the failed attempt
+      if (ttft === BigInt(-1) && hasResponse(ev)) {
         ttft = process.hrtime.bigint() - startTime;
         completionStartTime = new Date().toISOString();
       }
@@ -292,6 +349,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       completionTokens: usage?.completionTokens || 0,
       promptTokens: usage?.promptTokens || 0,
       promptCachedTokens: usage?.promptCachedTokens || 0,
+      cacheCreationTokens: usage?.cacheCreationTokens || 0,
       totalTokens: usage?.totalTokens || 0,
       tokensPerSecond: (() => {
         if (durationMs <= 0) {

@@ -30,6 +30,7 @@ import {
   MIN_SILENCE_DURATION_MS,
   type TurnDetectionEvent,
 } from '../inference/eot/base.js';
+import { type LanguageCode, asLanguageCode } from '../language.js';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { Future } from '../utils.js';
@@ -55,6 +56,7 @@ interface RecognitionInternals {
   turnDetectorLatePredictionWarned: boolean;
   lastEmittedEotPrediction?: TurnDetectionEvent;
   lastSpeakingTime?: number;
+  lastLanguage?: LanguageCode;
   audioTranscript: string;
   audioInterimTranscript: string;
   audioPreflightTranscript: string;
@@ -68,6 +70,7 @@ interface RecognitionInternals {
   runEOUDetection: (chatCtx: ChatContext, trigger?: 'vad' | 'stt' | 'manual') => void;
   createVadTask: (vad: VAD | undefined, signal: AbortSignal) => Promise<void>;
   checkVadSilenceRequirement: (detector?: _TurnDetector | BaseStreamingTurnDetector) => void;
+  updateLastLanguage: (language: LanguageCode, transcript: string) => void;
   updateTurnDetector: (detector: _TurnDetector | BaseStreamingTurnDetector | undefined) => void;
   clearUserTurn: () => void;
 }
@@ -221,6 +224,35 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+describe('TestLanguageTracking', () => {
+  it('does not replace a concrete language with a non-specific language', () => {
+    const { internals } = makeRecognition();
+    internals.lastLanguage = asLanguageCode('en');
+
+    internals.updateLastLanguage(asLanguageCode('multi'), 'ambiguous phrase');
+
+    expect(internals.lastLanguage).toBe(asLanguageCode('en'));
+  });
+
+  it('does not initialize language with a non-specific language', () => {
+    const { internals } = makeRecognition();
+    internals.lastLanguage = undefined;
+
+    internals.updateLastLanguage(asLanguageCode('multi'), 'we');
+
+    expect(internals.lastLanguage).toBeUndefined();
+  });
+
+  it('still updates concrete language after a long transcript', () => {
+    const { internals } = makeRecognition();
+    internals.lastLanguage = asLanguageCode('en');
+
+    internals.updateLastLanguage(asLanguageCode('fr'), 'bonjour');
+
+    expect(internals.lastLanguage).toBe(asLanguageCode('fr'));
+  });
+});
+
 /**
  * Drive `createVadTask` against a scripted VAD stream so VAD events flow
  * through the real handler. `feed()` resolves once the event has been processed
@@ -283,6 +315,21 @@ function runScriptedVad(internals: RecognitionInternals): {
     },
   };
 }
+
+describe('VAD task lifecycle', () => {
+  it('ends speech when the VAD task closes mid-speech', async () => {
+    const { internals, hooks } = makeRecognition();
+    const vad = runScriptedVad(internals);
+
+    await vad.feed(startOfSpeech());
+    expect(internals.speaking).toBe(true);
+
+    await vad.stop();
+
+    expect(hooks.onEndOfSpeech).toHaveBeenCalledWith(undefined);
+    expect(internals.speaking).toBe(false);
+  });
+});
 
 describe('TestResumedSpeechAbortsCommit', () => {
   it('cancels the in-flight bounce when VAD start-of-speech arrives during endpointing', async () => {

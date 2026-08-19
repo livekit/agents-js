@@ -98,8 +98,19 @@ export abstract class AudioInput {
     await this.multiStream.close();
   }
 
+  /**
+   * Framework-owned attach-state transition used by {@link AgentInput.setAudioEnabled}.
+   * Subclasses that gate frames (or wrap another {@link AudioInput}) should override
+   * this — not only {@link onAttached}/{@link onDetached} — so mute still works when
+   * lifecycle hooks omit `super`.
+   * @internal
+   */
+  setAttached(_attached: boolean): void {}
+
+  /** Lifecycle hook invoked after {@link setAttached}(true). */
   onAttached(): void {}
 
+  /** Lifecycle hook invoked after {@link setAttached}(false). */
   onDetached(): void {}
 }
 
@@ -309,7 +320,10 @@ export class AgentInput {
   // enabled by default
   private _audioEnabled: boolean = true;
 
-  constructor(private readonly audioChanged: () => void) {}
+  constructor(
+    private readonly audioChanged: () => void,
+    private readonly audioEnabledChanged?: (enabled: boolean) => void,
+  ) {}
 
   setAudioEnabled(enable: boolean): void {
     if (enable === this._audioEnabled) {
@@ -317,16 +331,13 @@ export class AgentInput {
     }
 
     this._audioEnabled = enable;
+    this.audioEnabledChanged?.(enable);
 
     if (!this._audioStream) {
       return;
     }
 
-    if (enable) {
-      this._audioStream.onAttached();
-    } else {
-      this._audioStream.onDetached();
-    }
+    this.applyAudioAttachState(this._audioStream, enable);
   }
 
   get audioEnabled(): boolean {
@@ -338,8 +349,29 @@ export class AgentInput {
   }
 
   set audio(stream: AudioInput | null) {
+    if (stream === this._audioStream) {
+      return;
+    }
+
+    if (this._audioStream) {
+      this.applyAudioAttachState(this._audioStream, false);
+    }
+
     this._audioStream = stream;
     this.audioChanged();
+
+    if (this._audioStream) {
+      this.applyAudioAttachState(this._audioStream, this._audioEnabled);
+    }
+  }
+
+  private applyAudioAttachState(stream: AudioInput, attached: boolean): void {
+    stream.setAttached(attached);
+    if (attached) {
+      stream.onAttached();
+    } else {
+      stream.onDetached();
+    }
   }
 }
 

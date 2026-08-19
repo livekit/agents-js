@@ -415,8 +415,10 @@ describe('Agent', () => {
           capabilities: { streaming: true },
           stream: () => ttsStream,
           close: async () => {},
+          _setExpressive: () => {},
         },
         agentSession: { connOptions: { ttsConnOptions: {} } },
+        _resolveExpressiveOptions: () => undefined,
       };
 
       async function* textInput() {
@@ -794,6 +796,112 @@ describe('Agent', () => {
           process.env.LIVEKIT_REMOTE_EOT_URL = previousRemoteEotUrl;
         }
       }
+    });
+
+    it.each([
+      ['word', true],
+      [false, false],
+    ] as const)(
+      'should use the STT alignment claim to resolve automatic adaptive interruption (%s)',
+      (alignedTranscript, expectedAdaptive) => {
+        const previousDevMode = process.env.LIVEKIT_DEV_MODE;
+        const previousApiKey = process.env.LIVEKIT_API_KEY;
+        const previousApiSecret = process.env.LIVEKIT_API_SECRET;
+        process.env.LIVEKIT_DEV_MODE = '1';
+        process.env.LIVEKIT_API_KEY = 'fake';
+        process.env.LIVEKIT_API_SECRET = 'fake-secret';
+
+        try {
+          const activity = Object.create(AgentActivity.prototype) as any;
+          activity.agent = {
+            llm: {},
+            stt: { capabilities: { alignedTranscript, streaming: true } },
+            vad: {},
+            turnHandling: { interruption: { enabled: true }, turnDetection: 'stt' },
+          };
+          activity.agentSession = {
+            _textOnly: false,
+            interruptionDetection: undefined,
+            turnDetection: 'stt',
+          };
+          activity.logger = { warn: vi.fn() };
+          activity.onInterruptionOverlappingSpeech = vi.fn();
+          activity.onInterruptionMetricsCollected = vi.fn();
+          activity.onInterruptionError = vi.fn();
+
+          expect(activity.resolveInterruptionDetector() !== undefined).toBe(expectedAdaptive);
+        } finally {
+          if (previousDevMode === undefined) delete process.env.LIVEKIT_DEV_MODE;
+          else process.env.LIVEKIT_DEV_MODE = previousDevMode;
+          if (previousApiKey === undefined) delete process.env.LIVEKIT_API_KEY;
+          else process.env.LIVEKIT_API_KEY = previousApiKey;
+          if (previousApiSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+          else process.env.LIVEKIT_API_SECRET = previousApiSecret;
+        }
+      },
+    );
+
+    it('should keep automatic adaptive interruption off in plain production', () => {
+      const previousDevMode = process.env.LIVEKIT_DEV_MODE;
+      const previousRemoteEotUrl = process.env.LIVEKIT_REMOTE_EOT_URL;
+      delete process.env.LIVEKIT_DEV_MODE;
+      delete process.env.LIVEKIT_REMOTE_EOT_URL;
+
+      try {
+        const activity = Object.create(AgentActivity.prototype) as any;
+        activity.agent = {
+          llm: {},
+          stt: { capabilities: { alignedTranscript: 'word', streaming: true } },
+          vad: {},
+          turnHandling: { interruption: { enabled: true }, turnDetection: 'stt' },
+        };
+        activity.agentSession = {
+          _textOnly: false,
+          interruptionDetection: undefined,
+          turnDetection: 'stt',
+        };
+        activity.logger = { info: vi.fn(), warn: vi.fn() };
+
+        expect(activity.resolveInterruptionDetector()).toBeUndefined();
+      } finally {
+        if (previousDevMode !== undefined) process.env.LIVEKIT_DEV_MODE = previousDevMode;
+        if (previousRemoteEotUrl !== undefined) {
+          process.env.LIVEKIT_REMOTE_EOT_URL = previousRemoteEotUrl;
+        }
+      }
+    });
+
+    it.each(['word', false] as const)(
+      'should keep VAD interruption when explicitly selected (%s alignment)',
+      (alignedTranscript) => {
+        const activity = Object.create(AgentActivity.prototype) as any;
+        activity.agent = {
+          llm: {},
+          stt: { capabilities: { alignedTranscript, streaming: true } },
+          vad: {},
+          turnHandling: {
+            interruption: { enabled: true, mode: 'vad' },
+            turnDetection: 'stt',
+          },
+        };
+        activity.agentSession = {
+          _textOnly: false,
+          interruptionDetection: undefined,
+          turnDetection: 'stt',
+        };
+        activity.logger = { warn: vi.fn() };
+
+        expect(activity.resolveInterruptionDetector()).toBeUndefined();
+      },
+    );
+
+    it('should retain the session VAD for turn-detecting STT', () => {
+      const vad = {};
+      const activity = Object.create(AgentActivity.prototype) as any;
+      activity.agent = { vad: undefined };
+      activity.agentSession = { _textOnly: false, vad };
+
+      expect(activity.vad).toBe(vad);
     });
 
     it('should warn when session explicitly requests adaptive detection even if agent overrides it', () => {

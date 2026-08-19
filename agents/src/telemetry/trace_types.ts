@@ -36,6 +36,8 @@ export const ATTR_PARTICIPANT_KIND = 'lk.participant_kind';
 // session start
 export const ATTR_JOB_ID = 'lk.job_id';
 export const ATTR_AGENT_NAME = 'lk.agent_name';
+export const ATTR_CLOUD_AGENT_ID = 'lk.cloud_agent_id';
+export const ATTR_DEPLOYMENT_ID = 'lk.deployment_id';
 export const ATTR_ROOM_NAME = 'lk.pii.room_name';
 export const ATTR_SESSION_OPTIONS = 'lk.session_options';
 

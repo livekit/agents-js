@@ -232,6 +232,11 @@ describe('FishAudio streaming', () => {
     });
   });
 
+  it('always enables quality guard', async () => {
+    const request = await captureStartRequest();
+    expect(request.features).toEqual(['quality-guard']);
+  });
+
   it('omits generation tuning by default', async () => {
     const request = await captureStartRequest();
     expect(request).not.toHaveProperty('max_new_tokens');

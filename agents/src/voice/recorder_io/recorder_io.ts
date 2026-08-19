@@ -566,6 +566,11 @@ class RecorderAudioInput extends AudioInput {
     return transform.readable;
   }
 
+  override setAttached(attached: boolean): void {
+    super.setAttached(attached);
+    this.source.setAttached(attached);
+  }
+
   onAttached(): void {
     this.source.onAttached();
   }

@@ -272,8 +272,8 @@ export class InterruptionStreamBase {
             }
             cache.clear();
           } else if (chunk.type === 'overlap-speech-ended') {
-            this.logger.debug('overlap speech ended');
             if (overlapSpeechStarted) {
+              this.logger.debug('overlap speech ended');
               this.userSpeakingSpan = undefined;
               let latestEntry = cache.pop(
                 (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,

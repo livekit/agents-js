@@ -65,6 +65,7 @@ export type { ProviderFormat } from './provider_format/index.js';
 export {
   LLM,
   LLMStream,
+  hasResponse,
   type ChatChunk,
   type ChoiceDelta,
   type CollectedResponse,

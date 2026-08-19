@@ -336,12 +336,20 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
+    startSoon(async () => {
+      try {
+        await this.mainTask();
+      } catch {
+        // already surfaced via emitError; swallow to avoid unhandled rejection.
+      } finally {
+        this.queue.close();
+      }
+    });
   }
 
   /**
    * Runs the STT with retry logic. Errors are emitted via {@link STT} error events
-   * and then re-thrown to trigger `.finally()` cleanup.
+   * and then re-thrown to end the attempt loop; the caller swallows them.
    *
    * @throws {APIError} When the STT request fails with a non-retryable error
    * @throws {APIConnectionError} When all retry attempts are exhausted

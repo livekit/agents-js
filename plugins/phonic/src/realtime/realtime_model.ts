@@ -53,11 +53,51 @@ export interface RealtimeModelOptions {
   noInputPokeSec?: number;
   noInputPokeText?: string;
   noInputEndConversationSec?: number;
+  websocketTimeoutSec?: number;
+  intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
+  isWelcomeMessageInterruptible?: boolean;
+  vadPrebufferDurationMs?: number;
+  vadMinSpeechDurationMs?: number;
+  vadMinSilenceDurationMs?: number;
+  vadThreshold?: number;
+  enableAssistantBackchannel?: boolean;
+  assistantBackchannelAggressiveness?: number;
+  pronunciationDictionary?: Phonic.ConfigOptions['pronunciation_dictionary'];
+  templateVariables?: Phonic.ConfigOptions['template_variables'];
+  enableRedaction?: boolean;
+  mcpServers?: string[];
+  observabilityIntegrations?: Phonic.ConfigOptions['observability_integrations'];
+  configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
   additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
+  configsForTools?: PhonicToolConfig[];
+  /** @deprecated Use `configsForTools` with `forbid_speech_after_tool_call` per tool instead. */
   forbidSpeechAfterToolCall?: string[];
   onConversationCreated?: (conversationId: string) => void;
   /** Set by `updateInstructions` via `voice.Agent` rather than the RealtimeModel constructor */
   instructions?: string;
+}
+
+// Phonic's built-in tools, referenced by name in `phonicTools`. A configsForTools entry for one of
+// these carries its built-in config (below) so it is sent to Phonic as an inline object, not a name.
+const BUILT_IN_TOOL_NAMES = new Set([
+  'choose_not_to_respond',
+  'keypad_input',
+  'natural_conversation_ending',
+]);
+
+/**
+ * Per-tool behavior overrides for `configsForTools` (see README). `name` is required; every other
+ * field is optional and falls back to the plugin default when omitted. Keys are snake_case to match
+ * Phonic's wire format (direct passthrough).
+ */
+export interface PhonicToolConfig {
+  name: string;
+  require_speech_before_tool_call?: boolean;
+  forbid_speech_after_tool_call?: boolean;
+  forbid_tool_call_after_speech?: boolean;
+  // Built-in tools only (set on the matching `phonicTools` entry):
+  respond_after_sec?: number; // choose_not_to_respond: seconds to wait before a follow-up (or omit)
+  speech_before_tool_call?: string; // keypad_input / natural_conversation_ending: required|optional|suppressed
 }
 
 export class RealtimeModel extends llm.RealtimeModel {
@@ -157,20 +197,78 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       noInputEndConversationSec?: number;
       /**
+       * Seconds of inactivity before the Phonic websocket is closed
+       */
+      websocketTimeoutSec?: number;
+      /**
+       * LLM intelligence level, `standard` or `high`
+       */
+      intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
+      /**
+       * When false, the welcome message cannot be interrupted by the user
+       */
+      isWelcomeMessageInterruptible?: boolean;
+      /**
+       * Voice-activity-detection prebuffer duration, in milliseconds
+       */
+      vadPrebufferDurationMs?: number;
+      /**
+       * Minimum speech duration for VAD, in milliseconds
+       */
+      vadMinSpeechDurationMs?: number;
+      /**
+       * Minimum silence duration for VAD, in milliseconds
+       */
+      vadMinSilenceDurationMs?: number;
+      /**
+       * Voice-activity-detection threshold
+       */
+      vadThreshold?: number;
+      /**
+       * When true, the assistant produces backchannel responses (e.g. "mm-hmm") while the user speaks
+       */
+      enableAssistantBackchannel?: boolean;
+      /**
+       * How aggressively the assistant backchannels. Only applies when `enableAssistantBackchannel` is true
+       */
+      assistantBackchannelAggressiveness?: number;
+      /**
+       * List of `{ word, pronunciation }` entries; words must be unique
+       */
+      pronunciationDictionary?: Phonic.ConfigOptions['pronunciation_dictionary'];
+      /**
+       * Variables substituted into the system prompt and welcome message
+       */
+      templateVariables?: Phonic.ConfigOptions['template_variables'];
+      /**
+       * When true, PII/PHI is redacted from transcripts and bleeped from audio after the conversation ends
+       */
+      enableRedaction?: boolean;
+      /**
+       * Names of pre-configured MCP servers to make available to the assistant. Names must be unique
+       */
+      mcpServers?: string[];
+      /**
+       * Observability integrations to forward traces to (currently `braintrust`)
+       */
+      observabilityIntegrations?: Phonic.ConfigOptions['observability_integrations'];
+      /**
+       * Endpoint the agent calls to fetch per-conversation configuration. Pass `null` to disable
+       */
+      configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
+      /**
        * Additional runtime parameters forwarded to Phonic
        */
       additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
       /**
-       * Names of tools after which Phonic should NOT auto-generate a spoken reply.
-       *
-       * Use for tools that always hand off / trigger an agent switch (e.g. advancing
-       * a task in a `TaskGroup`). After such a tool, the outgoing agent would otherwise
-       * speak a reply that the handoff's session reset immediately cancels, producing a
-       * race / double-speak. Forbidding speech lets only the incoming agent speak.
-       *
-       * Only list tools that ALWAYS hand off — a listed tool that returns without
-       * handing off will leave the agent silent (no reply is generated). Tools not
-       * listed keep the default behavior (a reply is generated after the tool output).
+       * Per-tool behavior overrides, one `PhonicToolConfig` per tool (keyed by `name`); omitted
+       * fields fall back to the plugin defaults. See the README for the available fields.
+       */
+      configsForTools?: PhonicToolConfig[];
+      /**
+       * @deprecated Use `configsForTools` with `forbid_speech_after_tool_call` per tool instead.
+       * When set, each listed tool is merged into `configsForTools` as
+       * `forbid_speech_after_tool_call: true` (an explicit `configsForTools` entry wins).
        */
       forbidSpeechAfterToolCall?: string[];
       /**
@@ -235,13 +333,36 @@ export class RealtimeModel extends llm.RealtimeModel {
       noInputPokeSec: options.noInputPokeSec,
       noInputPokeText: options.noInputPokeText,
       noInputEndConversationSec: options.noInputEndConversationSec,
+      websocketTimeoutSec: options.websocketTimeoutSec,
+      intelligenceLevel: options.intelligenceLevel,
+      isWelcomeMessageInterruptible: options.isWelcomeMessageInterruptible,
+      vadPrebufferDurationMs: options.vadPrebufferDurationMs,
+      vadMinSpeechDurationMs: options.vadMinSpeechDurationMs,
+      vadMinSilenceDurationMs: options.vadMinSilenceDurationMs,
+      vadThreshold: options.vadThreshold,
+      enableAssistantBackchannel: options.enableAssistantBackchannel,
+      assistantBackchannelAggressiveness: options.assistantBackchannelAggressiveness,
+      pronunciationDictionary: options.pronunciationDictionary,
+      templateVariables: options.templateVariables,
+      enableRedaction: options.enableRedaction,
+      mcpServers: options.mcpServers,
+      observabilityIntegrations: options.observabilityIntegrations,
+      configurationEndpoint: options.configurationEndpoint,
       additionalParams: options.additionalParams,
+      configsForTools: options.configsForTools,
       forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
       onConversationCreated: options.onConversationCreated,
       connOptions: options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       model: options.model ?? DEFAULT_MODEL,
       baseUrl: options.baseUrl,
     };
+
+    if (options.forbidSpeechAfterToolCall) {
+      log().warn(
+        '`forbidSpeechAfterToolCall` is deprecated and will be removed in a future release; ' +
+          'set `forbid_speech_after_tool_call` per tool via `configsForTools` instead.',
+      );
+    }
   }
 
   /**
@@ -289,7 +410,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private closedFuture = new Future<void, never>();
   private connectTask: Promise<void>;
   private toolDefinitions: Phonic.InlineWebSocketTool[] = [];
-  private forbidSpeechAfterToolCall = new Set<string>();
+  private configsForTools = new Map<string, PhonicToolConfig>();
   private pendingToolCallIds = new Set<string>();
   private readyToStart = new Future<void>();
   private pendingGenerateReplyFut?: Future<llm.GenerationCreatedEvent>;
@@ -304,6 +425,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.client = new PhonicClient({
       apiKey: this.options.apiKey,
       baseUrl: this.options.baseUrl,
+      reconnectConversationOnAbnormalDisconnect: true,
     });
     this.bstream = new AudioByteStream(
       PHONIC_INPUT_SAMPLE_RATE,
@@ -369,7 +491,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           output: item.output,
         });
         sentToolCallOutput = true;
-        if (item.name && this.forbidSpeechAfterToolCall.has(item.name)) {
+        if (item.name && this.configsForTools.get(item.name)?.forbid_speech_after_tool_call) {
           forbidSpeech = true;
         }
       }
@@ -425,32 +547,73 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private buildToolDefinitions(tools: llm.ToolContext): Phonic.InlineWebSocketTool[] {
-    this.forbidSpeechAfterToolCall = new Set(this.options.forbidSpeechAfterToolCall ?? []);
+    this.configsForTools = new Map((this.options.configsForTools ?? []).map((c) => [c.name, c]));
+    // Deprecated: fold forbidSpeechAfterToolCall (list of tool names) into the per-tool configs;
+    // an explicit configsForTools entry for the same tool wins.
+    for (const name of this.options.forbidSpeechAfterToolCall ?? []) {
+      const cfg = this.configsForTools.get(name);
+      if (cfg === undefined) {
+        this.configsForTools.set(name, { name, forbid_speech_after_tool_call: true });
+      } else if (cfg.forbid_speech_after_tool_call === undefined) {
+        this.configsForTools.set(name, { ...cfg, forbid_speech_after_tool_call: true });
+      }
+    }
     // TODO: support provider tools in the Phonic schema.
     return tools
       .flatten()
       .filter(llm.isFunctionTool)
-      .map((t) => ({
-        type: 'custom_websocket',
-        tool_schema: {
-          type: 'function',
-          function: {
-            name: t.name,
-            description: t.description,
-            parameters: llm.toJsonSchema(t.parameters) as Phonic.OpenAiFunctionParameters,
-            strict: true,
+      .map((t) => {
+        const cfg = this.configsForTools.get(t.name);
+        return {
+          type: 'custom_websocket',
+          tool_schema: {
+            type: 'function',
+            function: {
+              name: t.name,
+              description: t.description,
+              parameters: llm.toJsonSchema(t.parameters) as Phonic.OpenAiFunctionParameters,
+              strict: true,
+            },
           },
+          tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
+          // fixed, not configurable: the plugin does not support tool chaining or tool calls
+          // during agent speech within the RealtimeSession generations framework
+          wait_for_speech_before_tool_call: true,
+          allow_tool_chaining: false,
+          require_speech_before_tool_call: cfg?.require_speech_before_tool_call ?? false,
+          forbid_speech_after_tool_call: cfg?.forbid_speech_after_tool_call ?? false,
+          forbid_tool_call_after_speech: cfg?.forbid_tool_call_after_speech ?? false,
+        };
+      });
+  }
+
+  // A phonicTools entry: an inline built-in object when it's a built-in with a config in
+  // configsForTools (so respond_after_sec / speech_before_tool_call reach Phonic), else the bare name
+  // (which uses the tool's default config).
+  private serializePhonicTools(): Phonic.ToolDefinition[] {
+    return (this.options.phonicTools ?? []).map((name): Phonic.ToolDefinition => {
+      if (!BUILT_IN_TOOL_NAMES.has(name)) return name;
+      const cfg = this.configsForTools.get(name);
+      if (name === 'choose_not_to_respond') {
+        if (cfg?.respond_after_sec === undefined) return name;
+        return {
+          type: 'built_in',
+          name,
+          tool_config: { respond_after_sec: cfg.respond_after_sec },
+        };
+      }
+      // keypad_input, natural_conversation_ending. name is a string here (not narrowed to the
+      // literal union), so cast it to the built-in name type; the config is passed through as-is.
+      if (cfg?.speech_before_tool_call === undefined) return name;
+      return {
+        type: 'built_in',
+        name: name as Phonic.BuiltInToolDefinition.Name,
+        tool_config: {
+          speech_before_tool_call:
+            cfg.speech_before_tool_call as Phonic.BuiltInToolConfig['speech_before_tool_call'],
         },
-        tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
-        // Tool chaining and tool calls during speech are not supported at this time
-        // for ease of implementation within the RealtimeSession generations framework
-        wait_for_speech_before_tool_call: true,
-        allow_tool_chaining: false,
-        // When true, Phonic does not auto-generate a spoken reply after this tool's
-        // output. Used for tools that always hand off so the outgoing agent doesn't
-        // speak a reply that the handoff's session reset would cancel.
-        forbid_speech_after_tool_call: this.forbidSpeechAfterToolCall.has(t.name),
-      }));
+      };
+    });
   }
 
   override async _updateSession(
@@ -486,7 +649,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pendingUserText = undefined;
 
     const toolsPayload: Phonic.ToolDefinition[] = [
-      ...(this.options.phonicTools ?? []),
+      ...this.serializePhonicTools(),
       ...this.toolDefinitions,
     ];
 
@@ -676,7 +839,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       model: this.options.model as Phonic.ConfigPayload['model'],
       ...this.buildConfigOptions({
         systemPrompt: this.options.instructions + this.systemPromptPostfix,
-        toolsPayload: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
+        toolsPayload: [...this.serializePhonicTools(), ...this.toolDefinitions],
       }),
     });
   }
@@ -972,6 +1135,21 @@ export class RealtimeSession extends llm.RealtimeSession {
       no_input_poke_sec: this.options.noInputPokeSec,
       no_input_poke_text: this.options.noInputPokeText,
       no_input_end_conversation_sec: this.options.noInputEndConversationSec,
+      websocket_timeout_sec: this.options.websocketTimeoutSec,
+      intelligence_level: this.options.intelligenceLevel,
+      is_welcome_message_interruptible: this.options.isWelcomeMessageInterruptible,
+      vad_prebuffer_duration_ms: this.options.vadPrebufferDurationMs,
+      vad_min_speech_duration_ms: this.options.vadMinSpeechDurationMs,
+      vad_min_silence_duration_ms: this.options.vadMinSilenceDurationMs,
+      vad_threshold: this.options.vadThreshold,
+      enable_assistant_backchannel: this.options.enableAssistantBackchannel,
+      assistant_backchannel_aggressiveness: this.options.assistantBackchannelAggressiveness,
+      pronunciation_dictionary: this.options.pronunciationDictionary,
+      template_variables: this.options.templateVariables,
+      enable_redaction: this.options.enableRedaction,
+      mcp_servers: this.options.mcpServers,
+      observability_integrations: this.options.observabilityIntegrations,
+      configuration_endpoint: this.options.configurationEndpoint,
       additional_params: this.options.additionalParams,
       stream_ahead_of_real_time: true,
     };

@@ -22,6 +22,7 @@ import type {
 } from '@livekit/rtc-node';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { createRequire } from 'node:module';
+import { adoptLocalAudioFrame } from './_frame_identity.js';
 import { KrispLicenseFrameProcessor } from './_krisp.js';
 import {
   type AuthProvider,
@@ -57,7 +58,7 @@ export interface KrispVivaFilterOptions {
    * otherwise it falls back to LiveKit Cloud auth ({@link LiveKitCloudAuthProvider}).
    */
   authProvider: AuthProvider;
-  /** Noise suppression strength, 0..=100 where 100 is maximum suppression. Default 100. */
+  /** Noise suppression strength, 0..=100 where 100 is maximum suppression. Default 75. */
   noiseSuppressionLevel: number;
 }
 
@@ -153,7 +154,7 @@ export class KrispVivaFilter extends FrameProcessor<AudioFrame> {
   ) {
     super();
     const provider = resolveAuthProvider(opts.authProvider);
-    this.inner = buildBackend(mode, provider, opts.noiseSuppressionLevel ?? 100);
+    this.inner = buildBackend(mode, provider, opts.noiseSuppressionLevel ?? 75);
   }
 
   isEnabled(): boolean {
@@ -182,7 +183,7 @@ export class KrispVivaFilter extends FrameProcessor<AudioFrame> {
   }
 
   process(frame: AudioFrame): AudioFrame {
-    return this.inner.process(frame);
+    return adoptLocalAudioFrame(this.inner.process(frame));
   }
 
   close(): void {

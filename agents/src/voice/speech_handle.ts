@@ -4,12 +4,53 @@
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Context } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
+import { log } from '../log.js';
 import type { Task } from '../utils.js';
 import { Event, Future, dedent, shortuuid } from '../utils.js';
 import { functionCallStorage } from './agent.js';
 
 /** Symbol used to identify SpeechHandle instances */
 const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
+
+/**
+ * How long a cooperatively cancelled task may take to unwind after its abort signal fires.
+ *
+ * Has no python counterpart: there a cancelled task takes `CancelledError` at its next await point,
+ * so `utils.aio.cancel_and_wait` needs no ceiling at all. Nothing here can cancel a pending
+ * promise, so tasks are aborted cooperatively and waited on with this bound instead.
+ *
+ * All it bounds is how long an *aborted task body* takes to reach its own return — not how long
+ * the work it started takes. The pipeline's tasks are stream pumps that re-check `signal.aborted`
+ * each iteration, and `performToolExecutions` never awaits a user tool promise on this path: it
+ * races the abort signal (`_waitForToolExecutionResult`), while `ToolExecutor` abandons a cancelled
+ * tool outright and only *logs* if `execute()` is still running after `DRAIN_TOOL_TIMEOUT_MS`.
+ * Non-cancellable tools are awaited to completion by `ToolExecutor.drain()` with no ceiling at all,
+ * and the shutdown drain is a separate unbounded await that runs *after* this budget — so tool
+ * cleanup is governed by the executor's own design, never by this value.
+ *
+ * Measured `performToolExecutions` settle latency after `abort()`: 0.04–0.33 ms across a tool that
+ * observes its abort signal, a 4s tool that ignores it, a non-cancellable 4s tool, three concurrent
+ * tools, and a tool body that never settles at all. The one shape that exceeds 2s is a task parked
+ * on a tool-call stream that is never closed — it never settles, so no finite ceiling rescues it.
+ *
+ * 2s is therefore ample, and small enough that the two budgets an interrupted reply spends in
+ * sequence (its task group, then its tool-execution task) still fit inside
+ * {@link INTERRUPTION_TIMEOUT}; at 5s they would not.
+ */
+export const REPLY_TASK_CANCEL_TIMEOUT = 2000;
+
+/**
+ * How long an interrupted speech may keep running before its tasks are cancelled outright.
+ *
+ * Ports `INTERRUPTION_TIMEOUT` from `livekit-agents/livekit/agents/voice/speech_handle.py`,
+ * including its value. It must stay strictly greater than {@link REPLY_TASK_CANCEL_TIMEOUT}: a
+ * teardown may legitimately spend that whole budget, and its clock starts *after* the interrupt
+ * that arms this watchdog, so at equal values the watchdog always preempts a slow-but-healthy
+ * teardown and marks the handle done just as it resumes to commit its turn — trading a muted
+ * session for a lost assistant message. The margin is what this watchdog costs: dead air the user
+ * hears before the session recovers, against a session that without it never recovers at all.
+ */
+const INTERRUPTION_TIMEOUT = 5000;
 
 /**
  * Type guard to check if a value is a SpeechHandle.
@@ -96,6 +137,8 @@ export class SpeechHandle {
 
   private itemAddedCallbacks: Set<(item: ChatItem) => void> = new Set();
   private doneCallbacks: Set<(sh: SpeechHandle) => void> = new Set();
+  private interruptTimeout?: ReturnType<typeof setTimeout>;
+  private logger = log();
 
   /** @internal Symbol marker for type identification */
   readonly [SPEECH_HANDLE_SYMBOL] = true;
@@ -204,11 +247,16 @@ export class SpeechHandle {
   /**
    * Interrupt the current speech generation.
    *
-   * @throws Error If this speech handle does not allow interruptions.
+   * @throws Error If this speech handle is still running and does not allow interruptions.
    *
    * @returns The same speech handle that was interrupted.
    */
   interrupt(force: boolean = false): SpeechHandle {
+    if (this.interrupted || this.done()) {
+      // Already cancelled or finished: nothing to interrupt, and protection is moot.
+      return this;
+    }
+
     if (!force && !this.allowInterruptions) {
       throw new Error('This generation handle does not allow interruptions');
     }
@@ -312,9 +360,48 @@ export class SpeechHandle {
 
     if (!this.interruptFut.done) {
       this.interruptFut.resolve();
+      this.startInterruptTimeout();
     }
 
     return this;
+  }
+
+  /**
+   * Arm the watchdog that force-cancels an interrupted speech that refuses to finish.
+   *
+   * Interrupting only resolves `interruptFut`; it is up to the owning reply task to notice and
+   * unwind. A task parked on something the interruption itself cannot settle — most of the
+   * pipeline reply's post-interrupt waits race the reply's abort signal, and nothing on the
+   * ordinary interrupt path ever fires it — would otherwise never reach
+   * `_markGenerationDone()`. The speech scheduling loop waits on that generation, so a single
+   * stuck reply silently mutes the session for the rest of its life (#2065). Cancelling the
+   * owned tasks aborts exactly the signal those waits are watching; `_markDone` then releases
+   * the scheduler even if a task ignores its signal.
+   *
+   * Ported from python's `SpeechHandle._cancel`.
+   */
+  private startInterruptTimeout(): void {
+    this.interruptTimeout = setTimeout(() => {
+      this.interruptTimeout = undefined;
+      this.logger.error(
+        { speech_id: this._id, timeout: INTERRUPTION_TIMEOUT },
+        'speech not done in time after interruption, cancelling the speech arbitrarily.',
+      );
+      for (const task of this._tasks) {
+        task.cancel();
+      }
+      this._markDone();
+    }, INTERRUPTION_TIMEOUT);
+    // A pending watchdog must not be what keeps a process alive: handles that are interrupted
+    // and then abandoned (never scheduled, so never marked done) would hold the loop open.
+    this.interruptTimeout.unref?.();
+  }
+
+  private clearInterruptTimeout(): void {
+    if (this.interruptTimeout !== undefined) {
+      clearTimeout(this.interruptTimeout);
+      this.interruptTimeout = undefined;
+    }
   }
 
   /** @internal */
@@ -384,6 +471,8 @@ export class SpeechHandle {
     if (this.generations.length > 0) {
       this._markGenerationDone();
     }
+
+    this.clearInterruptTimeout();
   }
 
   /** @internal */
