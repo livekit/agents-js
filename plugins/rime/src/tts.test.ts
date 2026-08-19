@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger } from '@livekit/agents';
+import { initializeLogger, log } from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts } from '@livekit/agents-plugins-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -43,6 +43,22 @@ describe('Rime TTS streaming', () => {
     expect(defaultTTS).toHaveProperty('opts.speaker', 'luna');
     expect(explicitCodaTTS).toHaveProperty('opts.modelId', 'coda');
     expect(explicitCodaTTS).toHaveProperty('opts.speaker', 'lyra');
+  });
+
+  it('warns when the Arcana model is selected', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const rimeTTS = new TTS({ apiKey: 'test-rime-key', modelId: 'arcana' });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Rime Arcana is no longer supported. Use modelId: 'coda' instead.",
+    );
+
+    warnSpy.mockClear();
+    rimeTTS.updateOptions({ modelId: 'arcana' });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Rime Arcana is no longer supported. Use modelId: 'coda' instead.",
+    );
   });
 
   it('emits audio before the Rime response body closes', async () => {

@@ -85,6 +85,12 @@ const defaultTTSOptions: TTSOptions = {
   segment: 'bySentence',
 };
 
+function warnIfArcana(modelId: TTSOptions['modelId'] | undefined): void {
+  if (modelId === 'arcana') {
+    log().warn("Rime Arcana is no longer supported. Use modelId: 'coda' instead.");
+  }
+}
+
 function modelParams(opts: TTSOptions): Record<string, string | number | boolean> {
   const params: Record<string, string | number | boolean> = {};
   if (opts.lang !== undefined) params.lang = opts.lang;
@@ -223,6 +229,7 @@ export class TTS extends tts.TTS {
     if (this.opts.apiKey === undefined) {
       throw new Error('RIME API key is required, whether as an argument or as $RIME_API_KEY');
     }
+    warnIfArcana(opts.modelId);
   }
 
   get model(): string {
@@ -239,6 +246,7 @@ export class TTS extends tts.TTS {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<TTSOptions>) {
+    warnIfArcana(opts.modelId);
     this.opts = resolveOptions({ ...this.opts, ...opts });
   }
 
