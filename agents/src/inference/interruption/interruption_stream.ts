@@ -168,6 +168,12 @@ export class InterruptionStreamBase {
     let overlapSpeechStarted = false;
     let overlapCount = 0;
     const cache = new BoundedCache<number, InterruptionCacheEntry>(10);
+    // Which overlap each in-flight request was cut for, keyed like `cache` by the request's
+    // `createdAt`. Deliberately kept outside `cache`: that one is cleared at every overlap
+    // boundary, which is exactly when a late response still needs to be identifiable. Bounded
+    // well above the ~10 requests/s one overlap produces, so a live request is not evicted
+    // mid-overlap.
+    const requestGenerations = new BoundedCache<number, { generation: number }>(256);
     const inferenceS16Data = new Int16Array(
       Math.ceil(this.options.maxAudioDurationInS * this.options.sampleRate),
     ).fill(0);
@@ -178,6 +184,7 @@ export class InterruptionStreamBase {
       overlapSpeechStartedAt: this.overlapSpeechStartedAt,
       cache,
       overlapCount,
+      requestGenerations,
     });
     const setState = (partial: { overlapSpeechStarted?: boolean }) => {
       if (partial.overlapSpeechStarted !== undefined) {
@@ -245,6 +252,7 @@ export class InterruptionStreamBase {
             startIdx = 0;
             this.numRequests = 0;
             cache.clear();
+            requestGenerations.clear();
           } else if (chunk.type === 'agent-speech-ended') {
             this.logger.debug('agent speech ended');
             agentSpeechStarted = false;
@@ -255,6 +263,7 @@ export class InterruptionStreamBase {
             startIdx = 0;
             this.numRequests = 0;
             cache.clear();
+            requestGenerations.clear();
           } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
             this.overlapSpeechStartedAt = chunk.startedAt;
             this.userSpeakingSpan = chunk.userSpeakingSpan;
