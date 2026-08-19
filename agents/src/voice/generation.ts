@@ -1331,7 +1331,7 @@ export function performToolExecutions({
             function: toolCall.name,
             'lk.pii.arguments': toolCall.args,
             speech_id: speechHandle.id,
-            error: error.message,
+            'lk.pii.error': error.message,
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );

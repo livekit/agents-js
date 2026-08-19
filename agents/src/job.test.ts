@@ -251,6 +251,12 @@ describe('simulator participant lifecycle', () => {
 });
 
 describe('JobContext telemetry metadata', () => {
+  it('includes redaction when the project enables it', () => {
+    const { ctx } = createJobContextWithRoom({}, { enableRedaction: true });
+
+    expect(ctx._otelMetadata()).toEqual({ 'lk.redaction.enabled': true });
+  });
+
   it('includes redaction when the recording option enables it', () => {
     const ctx = createJobContext();
 

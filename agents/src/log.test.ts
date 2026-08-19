@@ -3,7 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { enableOtelLogging, initializeLogger, log } from './log.js';
-import { PinoCloudExporter, initPinoCloudExporter } from './telemetry/pino_otel_transport.js';
+import {
+  PinoCloudExporter,
+  flushPinoLogs,
+  initPinoCloudExporter,
+} from './telemetry/pino_otel_transport.js';
+import { REDACTED_EXCEPTION_MESSAGE } from './telemetry/utils.js';
 
 const OTEL_ENABLED_KEY = Symbol.for('@livekit/agents:otelEnabled');
 
@@ -15,6 +20,8 @@ function resetOtelLoggingState() {
 describe('OTEL logging', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     resetOtelLoggingState();
   });
 
@@ -117,4 +124,56 @@ describe('OTEL logging', () => {
       expect(avatarRecord).not.toHaveProperty('lk.pii.avatar_id');
     });
   });
+
+  it.each([
+    ['error', false],
+    ['error', true],
+    ['err', false],
+    ['err', true],
+  ] as const)(
+    'redacts serialized %s details when redaction is %s',
+    async (exceptionKey, redactionEnabled) => {
+      vi.stubEnv('LIVEKIT_API_KEY', 'devkey');
+      vi.stubEnv('LIVEKIT_API_SECRET', 'secret');
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+      vi.stubGlobal('fetch', fetchMock);
+      initializeLogger({ pretty: false, level: 'info' });
+
+      initPinoCloudExporter({
+        cloudHostname: 'example.livekit.cloud',
+        roomId: 'RM_test',
+        jobId: 'AJ_test',
+        metadata: { 'lk.redaction.enabled': redactionEnabled },
+      });
+      enableOtelLogging();
+
+      log().error({ [exceptionKey]: new Error('secret transcript') }, 'provider failed');
+      await flushPinoLogs();
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const payload = JSON.parse(fetchMock.mock.calls[0]![1].body as string) as {
+        resourceLogs: Array<{
+          scopeLogs: Array<{
+            logRecords: Array<{
+              attributes: Array<{ key: string; value: { stringValue?: string } }>;
+            }>;
+          }>;
+        }>;
+      };
+      const attributes = payload.resourceLogs[0]!.scopeLogs[0]!.logRecords[0]!.attributes;
+      const serializedError = attributes.find(({ key }) => key === exceptionKey)?.value.stringValue;
+      expect(serializedError).toBeDefined();
+      const error = JSON.parse(serializedError!) as Record<string, unknown>;
+
+      if (redactionEnabled) {
+        expect(error).toEqual({
+          type: 'Error',
+          message: REDACTED_EXCEPTION_MESSAGE,
+        });
+      } else {
+        expect(error.message).toBe('secret transcript');
+        expect(error.stack).toContain('secret transcript');
+      }
+    },
+  );
 });

@@ -1,10 +1,118 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import * as traceTypes from './trace_types.js';
 
 const PII_SEGMENT_RE = /(^|\.)pii(\.|$)/i;
+const LOG_METHODS = new Set(['child', 'debug', 'error', 'fatal', 'info', 'trace', 'warn']);
+const SENSITIVE_LOG_FIELDS = new Set([
+  'arguments',
+  'avatarIdentity',
+  'avatarParticipantIdentity',
+  'callerIdentity',
+  'callerRoom',
+  'chatCtx',
+  'chat_ctx',
+  'destinationIdentity',
+  'expectedIdentities',
+  'humanAgentIdentity',
+  'humanAgentRoomName',
+  'identity',
+  'interimTranscript',
+  'interim_transcript',
+  'mintedIdentity',
+  'participant',
+  'participantIdentity',
+  'participantValue',
+  'participant_identity',
+  'publishOnBehalf',
+  'progressMessage',
+  'progress_message',
+  'rawArguments',
+  'raw_arguments',
+  'repaired',
+  'requestedIdentity',
+  'room',
+  'roomName',
+  'room_name',
+  'senderIdentity',
+  'transcript',
+]);
+
+const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+
+function sourceFiles(root: string): string[] {
+  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      return sourceFiles(path);
+    }
+    if (!entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) {
+      return [];
+    }
+    return [path];
+  });
+}
+
+function propertyName(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) {
+    return name.text;
+  }
+  return undefined;
+}
+
+function sensitiveLogFieldsWithoutPii(): string[] {
+  const pluginsRoot = join(REPO_ROOT, 'plugins');
+  const roots = [
+    join(REPO_ROOT, 'agents', 'src'),
+    ...readdirSync(pluginsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(pluginsRoot, entry.name, 'src'))
+      .filter(existsSync),
+  ];
+  const untagged: string[] = [];
+
+  for (const path of roots.flatMap(sourceFiles)) {
+    const source = readFileSync(path, 'utf8');
+    const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+
+    function visit(node: ts.Node): void {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        LOG_METHODS.has(node.expression.name.text)
+      ) {
+        for (const argument of node.arguments) {
+          if (!ts.isObjectLiteralExpression(argument)) continue;
+          for (const property of argument.properties) {
+            if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
+              continue;
+            }
+            const key = propertyName(property.name);
+            const leaf = key?.split('.').at(-1);
+            if (!key || !leaf || !SENSITIVE_LOG_FIELDS.has(leaf) || PII_SEGMENT_RE.test(key)) {
+              continue;
+            }
+            const line = sourceFile.getLineAndCharacterOfPosition(
+              property.getStart(sourceFile),
+            ).line;
+            untagged.push(`${relative(REPO_ROOT, path)}:${line + 1}: ${key}`);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+  }
+
+  return untagged.sort();
+}
 
 // Keys that carry no conversational content, tool payloads, or other user data.
 const SAFE_KEYS = new Set([
@@ -121,5 +229,9 @@ describe('telemetry key PII classification', () => {
     const stale = [...SAFE_KEYS].filter((key) => !declared.has(key)).sort();
 
     expect(stale).toEqual([]);
+  });
+
+  it('tags sensitive literal structured-log fields as PII', () => {
+    expect(sensitiveLogFieldsWithoutPii()).toEqual([]);
   });
 });

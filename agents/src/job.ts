@@ -177,7 +177,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
     this.#logger = log().child({
       jobId: this.#info.job.id,
-      roomName: this.#info.job.room?.name,
+      'lk.pii.room_name': this.#info.job.room?.name,
     });
     this.#inferenceExecutor = inferenceExecutor;
     this._redactionEnabled = Boolean(info.job.enableRedaction);
@@ -389,9 +389,9 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     try {
       const client = new RoomServiceClient(this.#info.url, this.#info.apiKey, this.#info.apiSecret);
       await client.deleteRoom(targetRoomName);
-      this.#logger.info({ roomName: targetRoomName }, 'room deleted');
+      this.#logger.info({ 'lk.pii.room_name': targetRoomName }, 'room deleted');
     } catch (error) {
-      this.#logger.warn({ error, roomName: targetRoomName }, 'error while deleting room');
+      this.#logger.warn({ error, 'lk.pii.room_name': targetRoomName }, 'error while deleting room');
     }
   }
 
@@ -601,7 +601,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
         // Ignore malformed simulation dispatch metadata, matching Python's parse-failure behavior.
       }
     }
-    if (options?.redaction) {
+    if (this._redactionEnabled || options?.redaction) {
       metadata[ATTRIBUTE_REDACTION_ENABLED] = true;
     }
     return Object.keys(metadata).length > 0 ? metadata : undefined;

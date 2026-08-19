@@ -274,7 +274,7 @@ export class RoomIO {
     ) {
       this.logger.info(
         {
-          participant: participant.identity,
+          'lk.pii.participant_identity': participant.identity,
           reason: DisconnectReason[participant.disconnectReason],
         },
         'closing agent session due to participant disconnect ' +
@@ -315,7 +315,7 @@ export class RoomIO {
       return;
     }
     this.logger.info(
-      { room: this.room.name },
+      { 'lk.pii.room_name': this.room.name },
       'deleting room on agent session close ' +
         '(disable via `RoomInputOptions.deleteRoomOnClose=false`)',
     );
@@ -470,7 +470,10 @@ export class RoomIO {
 
   /** Switch to a different participant */
   setParticipant(participantIdentity: string | null) {
-    this.logger.debug({ participantIdentity }, 'setting participant');
+    this.logger.debug(
+      { 'lk.pii.participant_identity': participantIdentity },
+      'setting participant',
+    );
     if (participantIdentity === null) {
       this.unsetParticipant();
       return;
@@ -641,7 +644,10 @@ export class RoomIO {
         if (!(error instanceof IdleTimeoutError)) {
           throw error;
         }
-        this.logger.warn({ room: this.room.name }, 'automatic room deletion timed out');
+        this.logger.warn(
+          { 'lk.pii.room_name': this.room.name },
+          'automatic room deletion timed out',
+        );
       }
     }
   }

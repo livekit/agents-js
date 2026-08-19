@@ -4,10 +4,11 @@
 import { type Span, SpanStatusCode, context as otelContext, trace } from '@opentelemetry/api';
 import { getJobContext } from '../job.js';
 import type { RealtimeModelMetrics } from '../metrics/base.js';
+import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 import * as traceTypes from './trace_types.js';
 import { tracer } from './traces.js';
 
-export const REDACTED_EXCEPTION_MESSAGE = 'exception details redacted';
+export { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 
 export interface RecordExceptionOptions {
   /**

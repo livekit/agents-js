@@ -224,7 +224,7 @@ describe('AvatarSession base', () => {
 
     expect(removeParticipantMock).toHaveBeenCalledWith('test-room', 'avatar-identity');
     expect(debug).toHaveBeenCalledWith(
-      { identity: 'avatar-identity' },
+      { 'lk.pii.avatar_identity': 'avatar-identity' },
       'avatar participant not in room, skipping removal',
     );
     expect(warn).not.toHaveBeenCalled();
@@ -251,7 +251,7 @@ describe('AvatarSession base', () => {
 
     expect(removeParticipantMock).toHaveBeenCalledWith('test-room', 'avatar-identity');
     expect(warn).toHaveBeenCalledWith(
-      { error, identity: 'avatar-identity' },
+      { error, 'lk.pii.avatar_identity': 'avatar-identity' },
       'failed to remove avatar participant',
     );
     expect(debug).not.toHaveBeenCalledWith(
