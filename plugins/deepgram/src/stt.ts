@@ -551,7 +551,10 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error({ 'lk.pii.message': msg }, 'Deepgram STT failed to process message');
+            this.#logger.error(
+              { error: err, 'lk.pii.message': msg.toString() },
+              'Deepgram STT failed to process message',
+            );
             reject(err);
           }
         });

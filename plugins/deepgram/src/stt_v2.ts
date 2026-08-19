@@ -314,7 +314,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         this.#reconnectEvent.clear();
 
         const url = this.#getDeepgramUrl();
-        this.#logger.debug({ 'lk.pii.url': url }, 'connecting to Deepgram');
+        this.#logger.debug('connecting to Deepgram');
 
         this.#ws = new WebSocket(url, {
           headers: { Authorization: `Token ${this.#opts.apiKey}` },
