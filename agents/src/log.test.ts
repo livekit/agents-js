@@ -155,7 +155,8 @@ describe('OTEL logging', () => {
       await flushPinoLogs();
 
       expect(fetchMock).toHaveBeenCalledOnce();
-      const payload = JSON.parse(fetchMock.mock.calls[0]![1].body as string) as {
+      const requestBody = fetchMock.mock.calls[0]![1].body as string;
+      const payload = JSON.parse(requestBody) as {
         resourceLogs: Array<{
           scopeLogs: Array<{
             logRecords: Array<{
@@ -174,6 +175,9 @@ describe('OTEL logging', () => {
           type: 'Error',
           message: REDACTED_EXCEPTION_MESSAGE,
         });
+        expect(requestBody).not.toContain('secret transcript');
+        expect(requestBody).not.toContain('secret nested cause');
+        expect(requestBody).not.toContain('secret provider payload');
       } else {
         expect(error.message).toContain('secret transcript');
         expect(error.message).toContain('secret nested cause');
