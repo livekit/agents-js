@@ -82,8 +82,10 @@ function redactSerializedException(value: unknown): unknown {
     return value;
   }
 
-  const { stack: _stack, ...redacted } = exception;
-  return { ...redacted, message: REDACTED_EXCEPTION_MESSAGE };
+  return {
+    type: exception.type,
+    message: REDACTED_EXCEPTION_MESSAGE,
+  };
 }
 
 /**

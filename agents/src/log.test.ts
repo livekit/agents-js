@@ -147,7 +147,11 @@ describe('OTEL logging', () => {
       });
       enableOtelLogging();
 
-      log().error({ [exceptionKey]: new Error('secret transcript') }, 'provider failed');
+      const exception = new Error('secret transcript', {
+        cause: new Error('secret nested cause'),
+      }) as Error & { body: unknown };
+      exception.body = { transcript: 'secret provider payload' };
+      log().error({ [exceptionKey]: exception }, 'provider failed');
       await flushPinoLogs();
 
       expect(fetchMock).toHaveBeenCalledOnce();
@@ -171,8 +175,10 @@ describe('OTEL logging', () => {
           message: REDACTED_EXCEPTION_MESSAGE,
         });
       } else {
-        expect(error.message).toBe('secret transcript');
+        expect(error.message).toContain('secret transcript');
+        expect(error.message).toContain('secret nested cause');
         expect(error.stack).toContain('secret transcript');
+        expect(error.body).toEqual({ transcript: 'secret provider payload' });
       }
     },
   );
