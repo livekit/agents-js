@@ -9,7 +9,8 @@
  * dot-delimited `pii` segment (`lk.pii.<name>`). PII-enabled projects have these attributes
  * stripped at the LiveKit Cloud collector, and the segment is the marker it honors. Such content
  * must not be embedded in span names, event names, or log message bodies because those are not
- * redactable.
+ * redactable. For structured attributes, the collector applies the marker recursively to keys in
+ * nested OTLP key-value lists and arrays.
  */
 
 // LiveKit custom attributes
