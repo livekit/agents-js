@@ -38,8 +38,8 @@ export interface WsTransportState {
   overlapSpeechStarted: boolean;
   overlapSpeechStartedAt: number | undefined;
   cache: BoundedCache<number, InterruptionCacheEntry>;
-  /** Bumped on every `overlap-speech-started`; identifies the currently open overlap. */
-  overlapCount: number;
+  /** Bumped on every `overlap-speech-started` and never reset; identifies the open overlap. */
+  overlapGeneration: number;
   /** Overlap generation each in-flight request was cut for, keyed by its `createdAt`. */
   requestGenerations: BoundedCache<number, { generation: number }>;
 }
@@ -165,7 +165,7 @@ export interface WsTransportResult {
  */
 function isStaleResponse(state: WsTransportState, createdAt: number): boolean {
   const recorded = state.requestGenerations.get(createdAt);
-  return recorded !== undefined && recorded.generation !== state.overlapCount;
+  return recorded !== undefined && recorded.generation !== state.overlapGeneration;
 }
 
 /**
@@ -427,7 +427,7 @@ export function createWsTransport(
         speechInput: audioSlice,
       }),
     );
-    state.requestGenerations.set(createdAt, { generation: state.overlapCount });
+    state.requestGenerations.set(createdAt, { generation: state.overlapGeneration });
 
     const header = new ArrayBuffer(8);
     const view = new DataView(header);

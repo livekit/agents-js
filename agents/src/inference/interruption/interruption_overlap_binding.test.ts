@@ -134,6 +134,44 @@ describe('interruption overlap binding (#2119)', () => {
     await stream.close();
   });
 
+  it('does not attribute a bargein from a previous agent turn to the current one', async () => {
+    // Overlap identity has to outlive the agent turn. A per-turn counter would restart at the
+    // same value next turn, and dropping the request's record at the boundary would let it
+    // through as "current" — either way the verdict lands on unrelated later speech.
+    const { stream, ws } = await openStream();
+    const events = collectEvents(stream);
+
+    await stream.pushFrame(InterruptionStreamSentinel.agentSpeechStarted());
+    await stream.pushFrame(InterruptionStreamSentinel.overlapSpeechStarted(500, Date.now()));
+    await stream.pushFrame(makeAudioFrame());
+    await sleep(20);
+
+    const requestIds = sentRequestIds(ws);
+    expect(requestIds.length).toBeGreaterThan(0);
+    const previousTurnRequestId = requestIds[requestIds.length - 1]!;
+
+    await stream.pushFrame(InterruptionStreamSentinel.agentSpeechEnded());
+    await sleep(20);
+
+    // Next agent turn, first overlap — the same position the previous request was cut from.
+    await stream.pushFrame(InterruptionStreamSentinel.agentSpeechStarted());
+    await stream.pushFrame(InterruptionStreamSentinel.overlapSpeechStarted(500, Date.now()));
+    await sleep(20);
+    const beforeLateResponse = events.length;
+
+    ws.simulateMessage({
+      type: 'bargein_detected',
+      created_at: previousTurnRequestId,
+      probabilities: [0.99, 0.99, 0.99, 0.99],
+      prediction_duration: 0.05,
+    });
+    await sleep(30);
+
+    expect(events.slice(beforeLateResponse).filter((e) => e.isInterruption)).toEqual([]);
+
+    await stream.close();
+  });
+
   it('still reports an interruption when the request generation is no longer on record', async () => {
     // The generation ledger is bounded, so a very long overlap can evict a live request. Losing
     // that bookkeeping must fail open — dropping the response instead would suppress a genuine

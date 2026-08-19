@@ -167,12 +167,16 @@ export class InterruptionStreamBase {
     let accumulatedSamples = 0;
     let overlapSpeechStarted = false;
     let overlapCount = 0;
+    // Identifies an overlap for the lifetime of the stream. Distinct from `overlapCount`, which
+    // resets every agent turn and drives the audio-prefix shift: a response that outlives its
+    // turn must still be distinguishable, and per-turn counts collide across turns.
+    let overlapGeneration = 0;
     const cache = new BoundedCache<number, InterruptionCacheEntry>(10);
     // Which overlap each in-flight request was cut for, keyed like `cache` by the request's
-    // `createdAt`. Deliberately kept outside `cache`: that one is cleared at every overlap
-    // boundary, which is exactly when a late response still needs to be identifiable. Bounded
-    // well above the ~10 requests/s one overlap produces, so a live request is not evicted
-    // mid-overlap.
+    // `createdAt`. Deliberately kept outside `cache`, and never cleared: `cache` is emptied at
+    // every overlap and agent-speech boundary, which is exactly when a late response still needs
+    // to be identifiable. Bounded well above the ~10 requests/s one overlap produces, so a live
+    // request is not evicted mid-overlap.
     const requestGenerations = new BoundedCache<number, { generation: number }>(256);
     const inferenceS16Data = new Int16Array(
       Math.ceil(this.options.maxAudioDurationInS * this.options.sampleRate),
@@ -184,6 +188,7 @@ export class InterruptionStreamBase {
       overlapSpeechStartedAt: this.overlapSpeechStartedAt,
       cache,
       overlapCount,
+      overlapGeneration,
       requestGenerations,
     });
     const setState = (partial: { overlapSpeechStarted?: boolean }) => {
@@ -252,7 +257,6 @@ export class InterruptionStreamBase {
             startIdx = 0;
             this.numRequests = 0;
             cache.clear();
-            requestGenerations.clear();
           } else if (chunk.type === 'agent-speech-ended') {
             this.logger.debug('agent speech ended');
             agentSpeechStarted = false;
@@ -263,7 +267,6 @@ export class InterruptionStreamBase {
             startIdx = 0;
             this.numRequests = 0;
             cache.clear();
-            requestGenerations.clear();
           } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
             this.overlapSpeechStartedAt = chunk.startedAt;
             this.userSpeakingSpan = chunk.userSpeakingSpan;
@@ -271,6 +274,7 @@ export class InterruptionStreamBase {
             overlapSpeechStarted = true;
             accumulatedSamples = 0;
             overlapCount += 1;
+            overlapGeneration += 1;
             if (overlapCount <= 1) {
               const keepSize =
                 Math.round((chunk.speechDuration / 1000) * this.options.sampleRate) +
