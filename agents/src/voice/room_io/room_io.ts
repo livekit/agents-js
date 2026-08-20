@@ -107,7 +107,8 @@ export interface RoomOutputOptions {
   /** Maximum queue size in milliseconds for the audio output buffer.
     When TTS generates audio faster than real-time, a larger queue prevents
     early frames from being discarded by the ring buffer.
-    Defaults to the AudioSource internal default (1000ms).
+    Defaults to 200ms, matching Python. Set a larger value if a bursty TTS
+    provider needs a larger prebuffer.
   */
   queueSizeMs?: number;
   /** Send the transcription as a JSON dict for each chunk on the `lk.transcription`
@@ -136,6 +137,7 @@ const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
   audioEnabled: true,
   syncTranscription: true,
   audioPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+  queueSizeMs: 200,
   jsonFormat: false,
 };
 

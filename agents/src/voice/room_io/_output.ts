@@ -375,28 +375,12 @@ export class ParticipantAudioOutput extends AudioOutput {
   private audioSource: AudioSource;
   private publication?: LocalTrackPublication;
   private flushTask?: Task<void>;
-  private flushPushedDuration?: number;
 
   /** Duration of audio pushed to the source, in seconds */
   private pushedDuration: number = 0;
   private sourcePushedDuration: number = 0;
   private sourceDiscardedDuration: number = 0;
-  private captureSequence: number = 0;
-  private captureSegment: number = 0;
-  private playbackStartedSegment?: number;
-  private captureDurations: Map<
-    number,
-    { pushedDuration: number; sourcePushedDuration: number; sourceDiscardedDuration: number }
-  > = new Map();
   private interruptionGeneration: number = 0;
-  private interruptionSnapshot?: {
-    future: Future<void>;
-    sourcePushedDuration: number;
-    sourceDiscardedDuration: number;
-    queuedDuration: number;
-    pendingSegments: number;
-    captureCutoff: number;
-  };
   private forwardingCount: number = 0;
   /** Resolved only while no capture is held or being submitted to AudioSource. */
   private forwardingIdleFuture: Future<void> = new Future();
@@ -443,32 +427,28 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
+    const interruptionGeneration = this.interruptionGeneration;
     if (!this.startedFuture.done) {
       await this.startedFuture.await;
+      if (interruptionGeneration !== this.interruptionGeneration) {
+        return;
+      }
+    }
+
+    if (this.flushTask && !this.flushTask.done) {
+      this.logger.error('captureFrame called while flush is in progress');
+      await this.flushTask.result;
+    }
+    if (interruptionGeneration !== this.interruptionGeneration) {
+      return;
     }
 
     const segmentCapture = super.captureFrame(frame);
     const frameDuration = frame.samplesPerChannel / frame.sampleRate;
-    this.captureSegment ??= 0;
-    const captureSegment = this.captureSegment;
-    this.captureSequence = (this.captureSequence ?? 0) + 1;
-    const captureSequence = this.captureSequence;
-    this.captureDurations ??= new Map();
-    const captureDuration = {
-      pushedDuration: frameDuration,
-      sourcePushedDuration: 0,
-      sourceDiscardedDuration: 0,
-    };
-    this.captureDurations.set(captureSequence, captureDuration);
     this.pushedDuration += frameDuration;
-    this.interruptionGeneration ??= 0;
-    const interruptionGeneration = this.interruptionGeneration;
     const interruptionFuture = this.interruptedFuture;
-    this.forwardingCount = (this.forwardingCount ?? 0) + 1;
-    if (
-      this.forwardingCount === 1 &&
-      (!this.forwardingIdleFuture || this.forwardingIdleFuture.done)
-    ) {
+    this.forwardingCount++;
+    if (this.forwardingCount === 1 && this.forwardingIdleFuture.done) {
       this.forwardingIdleFuture = new Future();
     }
 
@@ -477,22 +457,9 @@ export class ParticipantAudioOutput extends AudioOutput {
       if (interruptionGeneration !== this.interruptionGeneration || interruptionFuture.done) {
         return;
       }
-      if (!this.playbackEnabledFuture.done) {
-        const queuedDuration = this.audioSource.queuedDuration ?? 0;
-        let remainingDiscardedDuration = queuedDuration / 1000;
-        for (const duration of [...this.captureDurations.values()].reverse()) {
-          const availableDuration = Math.max(
-            duration.sourcePushedDuration - duration.sourceDiscardedDuration,
-            0,
-          );
-          const discardedDuration = Math.min(availableDuration, remainingDiscardedDuration);
-          duration.sourceDiscardedDuration += discardedDuration;
-          remainingDiscardedDuration -= discardedDuration;
-          if (remainingDiscardedDuration <= 0) {
-            break;
-          }
-        }
-        this.sourceDiscardedDuration = (this.sourceDiscardedDuration ?? 0) + queuedDuration / 1000;
+      while (!this.playbackEnabledFuture.done) {
+        const queuedDuration = this.audioSource.queuedDuration;
+        this.sourceDiscardedDuration += queuedDuration / 1000;
         this.audioSource.clearQueue();
         await Promise.race([this.playbackEnabledFuture.await, interruptionFuture.await]);
         if (interruptionGeneration !== this.interruptionGeneration || interruptionFuture.done) {
@@ -500,129 +467,47 @@ export class ParticipantAudioOutput extends AudioOutput {
         }
       }
 
-      if (this.playbackStartedSegment !== captureSegment) {
-        this.playbackStartedSegment = captureSegment;
+      if (!this.firstFrameEmitted) {
         this.firstFrameEmitted = true;
         this.onPlaybackStarted(Date.now());
       }
 
-      captureDuration.sourcePushedDuration += frameDuration;
-      this.sourcePushedDuration = (this.sourcePushedDuration ?? 0) + frameDuration;
+      this.sourcePushedDuration += frameDuration;
       await this.audioSource.captureFrame(frame);
     } finally {
       this.forwardingCount--;
       if (this.forwardingCount === 0) {
-        this.forwardingIdleFuture?.resolve();
+        this.forwardingIdleFuture.resolve();
       }
     }
   }
 
-  private async waitForPlayoutTask(abortController: AbortController): Promise<void> {
-    const accountedDuration = this.pushedDuration;
-    const captureCutoff = this.captureSequence ?? 0;
+  private async waitForPlayoutTask(): Promise<void> {
     const interruptionFuture = this.interruptedFuture;
-    const abortFuture = new Future<boolean>();
-
-    const resolveAbort = () => {
-      if (!abortFuture.done) abortFuture.resolve(true);
-    };
-
-    abortController.signal.addEventListener('abort', resolveAbort);
 
     const waitForForwardingAndPlayout = async () => {
-      await this.forwardingIdleFuture?.await;
+      await this.forwardingIdleFuture.await;
       await this.audioSource.waitForPlayout();
     };
 
-    waitForForwardingAndPlayout().finally(() => {
-      abortController.signal.removeEventListener('abort', resolveAbort);
-      if (!abortFuture.done) abortFuture.resolve(false);
-    });
-
-    const aborted = await Promise.race([
-      abortFuture.await,
-      interruptionFuture.await.then(() => true),
-    ]);
-    const interrupted = interruptionFuture.done || aborted;
-    const interruptionSnapshot =
-      interrupted && this.interruptionSnapshot?.future === interruptionFuture
-        ? this.interruptionSnapshot
-        : undefined;
-    const captureDurations = [...(this.captureDurations?.entries() ?? [])]
-      .filter(([sequence]) => sequence <= captureCutoff)
-      .map(([, duration]) => duration);
-    const capturedSourcePushedDuration = captureDurations.reduce(
-      (total, duration) => total + duration.sourcePushedDuration,
-      0,
-    );
-    const capturedSourceDiscardedDuration = captureDurations.reduce(
-      (total, duration) => total + duration.sourceDiscardedDuration,
-      0,
-    );
-
-    let pushedDuration = Math.max(
-      (interruptionSnapshot?.sourcePushedDuration ??
-        (captureDurations.length > 0 ? capturedSourcePushedDuration : this.sourcePushedDuration) ??
-        accountedDuration) -
-        (interruptionSnapshot?.sourceDiscardedDuration ??
-          (captureDurations.length > 0
-            ? capturedSourceDiscardedDuration
-            : this.sourceDiscardedDuration) ??
-          0),
-      0,
-    );
+    await Promise.race([waitForForwardingAndPlayout(), interruptionFuture.await]);
+    const interrupted = interruptionFuture.done;
+    let pushedDuration = Math.max(this.sourcePushedDuration - this.sourceDiscardedDuration, 0);
 
     if (interrupted) {
-      pushedDuration = Math.max(
-        pushedDuration -
-          (interruptionSnapshot?.queuedDuration ?? this.audioSource.queuedDuration ?? 0) / 1000,
-        0,
-      );
-      if (!interruptionSnapshot) {
-        this.audioSource.clearQueue();
-      }
+      pushedDuration = Math.max(pushedDuration - this.audioSource.queuedDuration / 1000, 0);
+      this.audioSource.clearQueue();
     }
 
-    const finishedCaptureCutoff = interruptionSnapshot?.captureCutoff ?? captureCutoff;
-    for (const sequence of this.captureDurations?.keys() ?? []) {
-      if (sequence <= finishedCaptureCutoff) {
-        this.captureDurations.delete(sequence);
-      }
-    }
-    if (!interruptionSnapshot) {
-      const remainingDurations = [...(this.captureDurations?.values() ?? [])];
-      this.pushedDuration = remainingDurations.reduce(
-        (total, duration) => total + duration.pushedDuration,
-        0,
-      );
-      this.sourcePushedDuration = remainingDurations.reduce(
-        (total, duration) => total + duration.sourcePushedDuration,
-        0,
-      );
-      this.sourceDiscardedDuration = remainingDurations.reduce(
-        (total, duration) => total + duration.sourceDiscardedDuration,
-        0,
-      );
-      if (remainingDurations.length === 0) {
-        this.firstFrameEmitted = false;
-      }
-    }
+    this.pushedDuration = 0;
+    this.sourcePushedDuration = 0;
+    this.sourceDiscardedDuration = 0;
+    this.firstFrameEmitted = false;
     if (this.interruptedFuture === interruptionFuture) {
       this.interruptedFuture = new Future();
     }
 
-    const pendingSegments = interruptionSnapshot?.pendingSegments ?? this.pendingPlayoutSegments;
-    const finishes =
-      interrupted && Number.isFinite(pendingSegments) ? Math.max(pendingSegments, 1) : 1;
-    for (let i = 0; i < finishes; i++) {
-      this.onPlaybackFinished({
-        playbackPosition: i === 0 ? pushedDuration : 0,
-        interrupted,
-      });
-    }
-    if (this.interruptionSnapshot === interruptionSnapshot) {
-      this.interruptionSnapshot = undefined;
-    }
+    this.onPlaybackFinished({ playbackPosition: pushedDuration, interrupted });
   }
 
   /**
@@ -631,38 +516,21 @@ export class ParticipantAudioOutput extends AudioOutput {
   flush(): void {
     super.flush();
 
-    if (!this.pushedDuration && this.pendingPlayoutSegments === 0) {
+    if (!this.pushedDuration) {
       return;
     }
 
     if (this.flushTask && !this.flushTask.done) {
-      if (this.flushPushedDuration === this.pushedDuration) {
-        return;
-      }
-
-      this.logger.error('flush called while playback is in progress');
-      this.flushTask.cancel();
+      return;
     }
 
-    this.captureSegment = (this.captureSegment ?? 0) + 1;
-    this.flushPushedDuration = this.pushedDuration;
-    const flushTask = Task.from((controller) => this.waitForPlayoutTask(controller));
+    const flushTask = Task.from(() => this.waitForPlayoutTask());
     this.flushTask = flushTask;
-    void flushTask.result
-      .finally(() => {
-        if (this.flushTask === flushTask) {
-          this.flushPushedDuration = undefined;
-        }
-      })
-      .catch(() => {});
+    void flushTask.result.catch(() => {});
   }
 
   clearBuffer(): void {
-    this.interruptionGeneration = (this.interruptionGeneration ?? 0) + 1;
-    if (!this.playbackEnabledFuture.done) {
-      this.playbackEnabledFuture.resolve();
-      this.playbackEnabledFuture = new Future();
-    }
+    this.interruptionGeneration++;
     if (
       this.interruptedFuture.done ||
       (this.pushedDuration === 0 && this.pendingPlayoutSegments === 0)
@@ -674,34 +542,6 @@ export class ParticipantAudioOutput extends AudioOutput {
       (!this.flushTask || this.flushTask.done)
     ) {
       this.flush();
-    }
-    if (this.pendingPlayoutSegments > 0) {
-      const captureCutoff = this.captureSequence ?? 0;
-      const captureDurations = [...(this.captureDurations?.entries() ?? [])]
-        .filter(([sequence]) => sequence <= captureCutoff)
-        .map(([, duration]) => duration);
-      this.interruptionSnapshot = {
-        future: this.interruptedFuture,
-        sourcePushedDuration:
-          captureDurations.length > 0
-            ? captureDurations.reduce((total, duration) => total + duration.sourcePushedDuration, 0)
-            : this.sourcePushedDuration,
-        sourceDiscardedDuration:
-          captureDurations.length > 0
-            ? captureDurations.reduce(
-                (total, duration) => total + duration.sourceDiscardedDuration,
-                0,
-              )
-            : this.sourceDiscardedDuration,
-        queuedDuration: this.audioSource.queuedDuration ?? 0,
-        pendingSegments: this.pendingPlayoutSegments,
-        captureCutoff,
-      };
-      this.pushedDuration = 0;
-      this.sourcePushedDuration = 0;
-      this.sourceDiscardedDuration = 0;
-      this.firstFrameEmitted = false;
-      this.audioSource.clearQueue();
     }
     if (!this.interruptedFuture.done) {
       this.interruptedFuture.resolve();
