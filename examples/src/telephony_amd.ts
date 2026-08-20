@@ -103,6 +103,8 @@ export default defineAgent({
       participantIdentity,
     });
     const detection = detector.execute();
+    // Keep the concurrent detection handled until it is awaited after dialing.
+    void detection.catch(() => {});
 
     try {
       // Start running AMD before creating the SIP participant to avoid losing
