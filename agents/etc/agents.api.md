@@ -1101,12 +1101,12 @@ const ATTR_AMD_SPEECH_DURATION = "lk.amd.speech_duration";
 // Warning: (ae-missing-release-tag) "ATTR_AMD_TRANSCRIPT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_AMD_TRANSCRIPT = "lk.amd.transcript";
+const ATTR_AMD_TRANSCRIPT = "lk.pii.amd.transcript";
 
 // Warning: (ae-missing-release-tag) "ATTR_CHAT_CTX" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_CHAT_CTX = "lk.chat_ctx";
+const ATTR_CHAT_CTX = "lk.pii.chat_ctx";
 
 // Warning: (ae-missing-release-tag) "ATTR_CLOUD_AGENT_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1186,7 +1186,7 @@ const ATTR_EXCEPTION_TYPE = "exception.type";
 // Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_ARGS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_FUNCTION_TOOL_ARGS = "lk.function_tool.arguments";
+const ATTR_FUNCTION_TOOL_ARGS = "lk.pii.function_tool.arguments";
 
 // Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1206,7 +1206,7 @@ const ATTR_FUNCTION_TOOL_NAME = "lk.function_tool.name";
 // Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_OUTPUT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_FUNCTION_TOOL_OUTPUT = "lk.function_tool.output";
+const ATTR_FUNCTION_TOOL_OUTPUT = "lk.pii.function_tool.output";
 
 // Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOLS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1266,7 +1266,7 @@ const ATTR_GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens";
 // Warning: (ae-missing-release-tag) "ATTR_INSTRUCTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_INSTRUCTIONS = "lk.instructions";
+const ATTR_INSTRUCTIONS = "lk.pii.instructions";
 
 // Warning: (ae-missing-release-tag) "ATTR_INTERRUPTION_DETECTION_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1316,7 +1316,7 @@ const ATTR_PARTICIPANT_ID = "lk.participant_id";
 // Warning: (ae-missing-release-tag) "ATTR_PARTICIPANT_IDENTITY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_PARTICIPANT_IDENTITY = "lk.participant_identity";
+const ATTR_PARTICIPANT_IDENTITY = "lk.pii.participant_identity";
 
 // Warning: (ae-missing-release-tag) "ATTR_PARTICIPANT_KIND" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1341,12 +1341,12 @@ const ATTR_REALTIME_MODEL_METRICS = "lk.realtime_model_metrics";
 // Warning: (ae-missing-release-tag) "ATTR_RESPONSE_FUNCTION_CALLS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_RESPONSE_FUNCTION_CALLS = "lk.response.function_calls";
+const ATTR_RESPONSE_FUNCTION_CALLS = "lk.pii.response.function_calls";
 
 // Warning: (ae-missing-release-tag) "ATTR_RESPONSE_TEXT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_RESPONSE_TEXT = "lk.response.text";
+const ATTR_RESPONSE_TEXT = "lk.pii.response.text";
 
 // Warning: (ae-missing-release-tag) "ATTR_RESPONSE_TTFB" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1366,7 +1366,7 @@ const ATTR_RETRY_COUNT = "lk.retry_count";
 // Warning: (ae-missing-release-tag) "ATTR_ROOM_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_ROOM_NAME = "lk.room_name";
+const ATTR_ROOM_NAME = "lk.pii.room_name";
 
 // Warning: (ae-missing-release-tag) "ATTR_SESSION_OPTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1375,7 +1375,7 @@ const ATTR_SESSION_OPTIONS = "lk.session_options";
 
 // Warning: (ae-missing-release-tag) "ATTR_SPEECH_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 const ATTR_SPEECH_ID = "lk.speech_id";
 
 // Warning: (ae-missing-release-tag) "ATTR_SPEECH_INTERRUPTED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1406,7 +1406,7 @@ const ATTR_TRANSCRIPTION_DELAY = "lk.transcription_delay";
 // Warning: (ae-missing-release-tag) "ATTR_TTS_INPUT_TEXT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_TTS_INPUT_TEXT = "lk.input_text";
+const ATTR_TTS_INPUT_TEXT = "lk.pii.input_text";
 
 // Warning: (ae-missing-release-tag) "ATTR_TTS_LABEL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1426,12 +1426,12 @@ const ATTR_TTS_STREAMING = "lk.tts.streaming";
 // Warning: (ae-missing-release-tag) "ATTR_USER_INPUT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_USER_INPUT = "lk.user_input";
+const ATTR_USER_INPUT = "lk.pii.user_input";
 
 // Warning: (ae-missing-release-tag) "ATTR_USER_TRANSCRIPT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_USER_TRANSCRIPT = "lk.user_transcript";
+const ATTR_USER_TRANSCRIPT = "lk.pii.user_transcript";
 
 // Warning: (ae-missing-release-tag) "ATTRIBUTE_REDACTION_ENABLED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -4485,6 +4485,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     _primaryAgentSession?: AgentSession;
     // (undocumented)
     get proc(): JobProcess<ProcessUserData>;
+    // @internal (undocumented)
+    _redactionEnabled: boolean;
     // (undocumented)
     get room(): Room;
     // (undocumented)
@@ -5735,7 +5737,14 @@ class RecognizeSentinel {
 // Warning: (ae-missing-release-tag) "recordException" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-function recordException(span: Span, error: Error): void;
+function recordException(span: Span, error: Error, options?: RecordExceptionOptions): void;
+
+// Warning: (ae-missing-release-tag) "RecordExceptionOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface RecordExceptionOptions {
+    redacted?: boolean;
+}
 
 // Warning: (ae-internal-missing-underscore) The name "recordingEnabled" should be prefixed with an underscore because the declaration is marked as @internal
 //
@@ -5746,6 +5755,11 @@ export function recordingEnabled(options: Record<string, unknown>): boolean;
 //
 // @public (undocumented)
 function recordRealtimeMetrics(span: Span, metrics: RealtimeModelMetrics): void;
+
+// Warning: (ae-missing-release-tag) "REDACTED_EXCEPTION_MESSAGE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const REDACTED_EXCEPTION_MESSAGE = "exception details redacted";
 
 // Warning: (ae-missing-release-tag) "rejectOnAbort" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -7340,8 +7354,10 @@ declare namespace telemetry {
         SetTracerProviderOptions,
         SpanProcessorLike,
         StartSpanOptions,
+        REDACTED_EXCEPTION_MESSAGE,
         recordException,
-        recordRealtimeMetrics
+        recordRealtimeMetrics,
+        RecordExceptionOptions
     }
 }
 
@@ -8982,7 +8998,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/voice/amd.ts:309:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:317:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
 // src/voice/amd.ts:507:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:907:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "canEmit"
+// src/voice/amd.ts:910:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "canEmit"
 // src/voice/events.ts:423:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:178:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts

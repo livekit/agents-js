@@ -551,7 +551,9 @@ export class SpeechStream extends stt.SpeechStream {
                 break;
               }
               default: {
-                this.#logger.child({ msg: json }).warn('received unexpected message from Deepgram');
+                this.#logger
+                  .child({ 'lk.pii.message': json })
+                  .warn('received unexpected message from Deepgram');
                 break;
               }
             }
@@ -560,7 +562,10 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`STT: Error processing message: ${msg}`);
+            this.#logger.error(
+              { error: err, 'lk.pii.message': msg.toString() },
+              'Deepgram STT failed to process message',
+            );
             reject(err);
           }
         });

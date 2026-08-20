@@ -364,7 +364,10 @@ class FallbackLLMStream extends LLMStream {
 
           // Check if we sent data before failing
           if (textSent || toolCallsSent.length > 0) {
-            const extra = { textSent, toolCallsSent };
+            const extra = {
+              'lk.pii.response.text': textSent,
+              'lk.pii.response.function_calls': toolCallsSent,
+            };
 
             if (!this.adapter.retryOnChunkSent) {
               this._log.error(

@@ -433,7 +433,7 @@ export function createToolOutput(params: {
     logger.error(
       {
         callId: toolCall.callId,
-        output: finalOutput,
+        'lk.pii.output': finalOutput,
       },
       `AI function ${toolCall.name} returned an invalid output`,
     );
@@ -1329,9 +1329,9 @@ export function performToolExecutions({
         logger.error(
           {
             function: toolCall.name,
-            arguments: toolCall.args,
+            'lk.pii.arguments': toolCall.args,
             speech_id: speechHandle.id,
-            error: error.message,
+            'lk.pii.error': error.message,
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
@@ -1359,7 +1359,7 @@ export function performToolExecutions({
       logger.info(
         {
           function: toolCall.name,
-          arguments: parsedArgs,
+          'lk.pii.arguments': parsedArgs,
           speech_id: speechHandle.id,
         },
         'Executing LLM tool call',
@@ -1450,7 +1450,7 @@ export function performToolExecutions({
                 logger.debug(
                   {
                     function: toolCall.name,
-                    arguments: parsedArgs,
+                    'lk.pii.arguments': parsedArgs,
                     speech_id: speechHandle.id,
                   },
                   'executing mock tool',

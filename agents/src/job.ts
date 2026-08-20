@@ -142,6 +142,9 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** @internal */
   _sessionDirectory: string;
 
+  /** @internal */
+  _redactionEnabled: boolean;
+
   // Lazily built from the job's simulation attributes; undefined when not
   // under a simulation. #simulationResolved guards the one-time parse.
   #simulationCtx?: SimulationContext;
@@ -174,9 +177,10 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
     this.#logger = log().child({
       jobId: this.#info.job.id,
-      roomName: this.#info.job.room?.name,
+      'lk.pii.room_name': this.#info.job.room?.name,
     });
     this.#inferenceExecutor = inferenceExecutor;
+    this._redactionEnabled = Boolean(info.job.enableRedaction);
     // In console mode, recordings land in a local user-visible directory
     // (mirrors python's AgentsConsole); real jobs use a temp dir.
     const agentsConsole = AgentsConsole.getInstance();
@@ -385,9 +389,9 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     try {
       const client = new RoomServiceClient(this.#info.url, this.#info.apiKey, this.#info.apiSecret);
       await client.deleteRoom(targetRoomName);
-      this.#logger.info({ roomName: targetRoomName }, 'room deleted');
+      this.#logger.info({ 'lk.pii.room_name': targetRoomName }, 'room deleted');
     } catch (error) {
-      this.#logger.warn({ error, roomName: targetRoomName }, 'error while deleting room');
+      this.#logger.warn({ error, 'lk.pii.room_name': targetRoomName }, 'error while deleting room');
     }
   }
 
@@ -551,6 +555,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
+    const redactionEnabled = Boolean(this.job.enableRedaction || options.redaction);
+    if (redactionEnabled && options.audio && !options.transcript) {
+      throw new Error('audio upload requires transcript upload when redaction is enabled');
+    }
+    this._redactionEnabled = redactionEnabled;
+
     const url = new URL(this.#info.url);
     if (!isCloud(url)) {
       return;
@@ -591,7 +601,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
         // Ignore malformed simulation dispatch metadata, matching Python's parse-failure behavior.
       }
     }
-    if (options?.redaction) {
+    if (this._redactionEnabled || options?.redaction) {
       metadata[ATTRIBUTE_REDACTION_ENABLED] = true;
     }
     return Object.keys(metadata).length > 0 ? metadata : undefined;

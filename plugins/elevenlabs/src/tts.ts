@@ -479,7 +479,11 @@ class Connection {
 
         if (data.error) {
           this.#logger.error(
-            { context_id: contextId, error: data.error, data },
+            {
+              context_id: contextId,
+              error: data.error,
+              'lk.pii.data': data,
+            },
             'elevenlabs tts returned error',
           );
           if (contextId) {
@@ -494,13 +498,16 @@ class Connection {
         if (!ctx) {
           if (data.type === 'flush_done') {
             this.#logger.debug(
-              { context_id: contextId, data },
+              { context_id: contextId, 'lk.pii.data': data },
               'ignoring elevenlabs flush_done message for inactive context',
             );
             continue;
           }
 
-          this.#logger.warn({ data }, 'unexpected message received from elevenlabs tts');
+          this.#logger.warn(
+            { 'lk.pii.data': data },
+            'unexpected message received from elevenlabs tts',
+          );
           continue;
         }
 

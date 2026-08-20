@@ -10,6 +10,8 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
+import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
+import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
 export interface PinoLogObject {
@@ -71,6 +73,22 @@ function convertValue(value: unknown): unknown {
   return { stringValue: String(value) };
 }
 
+function redactSerializedException(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const exception = value as Record<string, unknown>;
+  if (typeof exception.type !== 'string' || typeof exception.message !== 'string') {
+    return value;
+  }
+
+  return {
+    type: exception.type,
+    message: REDACTED_EXCEPTION_MESSAGE,
+  };
+}
+
 /**
  * Standalone Pino log exporter for LiveKit Cloud.
  *
@@ -125,6 +143,7 @@ export class PinoCloudExporter {
 
   private convertToOtlpRecord(logObj: PinoLogObject): any {
     const { severityNumber, severityText } = mapPinoLevelToSeverity(logObj.level);
+    const redactionEnabled = this.config.metadata?.[ATTRIBUTE_REDACTION_ENABLED] === true;
 
     const attributes: any[] = [
       { key: 'room_id', value: { stringValue: this.config.roomId } },
@@ -145,7 +164,11 @@ export class PinoCloudExporter {
 
     for (const [key, value] of Object.entries(logObj)) {
       if (!EXCLUDE_FIELDS.has(key)) {
-        attributes.push({ key, value: convertValue(value) });
+        const attributeValue =
+          redactionEnabled && (key === 'error' || key === 'err')
+            ? redactSerializedException(value)
+            : value;
+        attributes.push({ key, value: convertValue(attributeValue) });
       }
     }
 

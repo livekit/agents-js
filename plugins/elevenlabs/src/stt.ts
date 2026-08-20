@@ -862,7 +862,7 @@ export class SpeechStream extends stt.SpeechStream {
     }
 
     if (messageType === 'partial_transcript') {
-      this.#logger.debug({ data }, 'Received message type partial_transcript');
+      this.#logger.debug({ 'lk.pii.data': data }, 'Received message type partial_transcript');
       if (text) {
         if (!this.#speaking) {
           this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
@@ -915,7 +915,13 @@ export class SpeechStream extends stt.SpeechStream {
     ) {
       return;
     } else {
-      this.#logger.warn(`ElevenLabs STT unknown message type: ${messageType}, data: ${data}`);
+      this.#logger.warn(
+        {
+          messageType,
+          'lk.pii.data': data,
+        },
+        'ElevenLabs STT returned an unknown message type',
+      );
     }
   }
 }

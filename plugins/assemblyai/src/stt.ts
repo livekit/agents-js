@@ -517,7 +517,13 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`AssemblyAI: error processing message: ${msg}`);
+            this.#logger.error(
+              {
+                error: err,
+                'lk.pii.message': msg.toString(),
+              },
+              'AssemblyAI failed to process message',
+            );
             reject(err);
           }
         };

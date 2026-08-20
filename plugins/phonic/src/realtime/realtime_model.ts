@@ -497,7 +497,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       if (item?.type === 'message') {
         if ((item.role === 'system' || item.role === 'developer') && item.rawTextContent) {
-          this.#logger.debug(`Sending add system message: ${item.rawTextContent}`);
+          this.#logger.debug(
+            { 'lk.pii.system_message': item.rawTextContent },
+            'sending add system message',
+          );
           this.socket?.sendAddSystemMessage({
             type: 'add_system_message',
             system_message: item.rawTextContent,
@@ -507,7 +510,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         // Only treat a user message as text input when it's appended at the tail of the context.
         if (item.role === 'user' && itemId === lastItemId && item.rawTextContent) {
-          this.#logger.debug(`Received user text input: ${item.rawTextContent}`);
+          this.#logger.debug({ 'lk.pii.text': item.rawTextContent }, 'received user text input');
           this.pendingUserText = item.rawTextContent;
           bufferedUserText = true;
         }

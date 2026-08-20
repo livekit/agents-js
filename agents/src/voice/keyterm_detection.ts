@@ -625,14 +625,12 @@ export function parseToolCall(toolCalls: FunctionCall[]): [string[], string[], s
 function debugDump(userMsg: string, result: [string[], string[], string[]]): void {
   const [pending, confirm, remove] = result;
   log().debug(
-    [
-      '──────── keyterm detection ────────',
-      userMsg,
-      '──── output ────',
-      `pending: ${JSON.stringify(pending)}`,
-      `confirm: ${JSON.stringify(confirm)}`,
-      `remove:  ${JSON.stringify(remove)}`,
-      '───────────────────────────────────',
-    ].join('\n'),
+    {
+      'lk.pii.user_message': userMsg,
+      'lk.pii.pending_keyterms': pending,
+      'lk.pii.confirmed_keyterms': confirm,
+      'lk.pii.removed_keyterms': remove,
+    },
+    'keyterm detection result',
   );
 }

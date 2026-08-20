@@ -64,7 +64,7 @@ import {
   setParticipantSpanAttributes,
 } from './utils.js';
 
-// Maximum number of chat items included in the `lk.chat_ctx` attribute of the
+// Maximum number of chat items included in the `lk.pii.chat_ctx` attribute of the
 // `eou_detection` span (mirrors Python's `_EOU_MAX_HISTORY_TURNS`).
 const EOU_MAX_HISTORY_TURNS = 6;
 const MIN_LANGUAGE_DETECTION_LENGTH = 5;
@@ -1170,7 +1170,7 @@ export class AudioRecognition {
 
         this.logger.debug(
           {
-            user_transcript: transcript,
+            'lk.pii.user_transcript': transcript,
             language: this.lastLanguage,
           },
           'received user transcript',
@@ -1194,7 +1194,7 @@ export class AudioRecognition {
         if (this.vadBaseTurnDetection || this.userTurnCommitted) {
           if (transcriptChanged) {
             this.logger.debug(
-              { transcript: this.audioTranscript },
+              { 'lk.pii.transcript': this.audioTranscript },
               'triggering preemptive generation (FINAL_TRANSCRIPT)',
             );
             this.hooks.onPreemptiveGeneration({
@@ -1232,7 +1232,7 @@ export class AudioRecognition {
 
         this.logger.debug(
           {
-            user_transcript: preflightTranscript,
+            'lk.pii.user_transcript': preflightTranscript,
             language: this.lastLanguage,
           },
           'received user preflight transcript',
@@ -1254,7 +1254,7 @@ export class AudioRecognition {
           const confidenceVals = [...this.finalTranscriptConfidence, preflightConfidence];
           this.logger.debug(
             {
-              transcript:
+              'lk.pii.transcript':
                 this.audioPreflightTranscript.length > 100
                   ? this.audioPreflightTranscript.slice(0, 100) + '...'
                   : this.audioPreflightTranscript,
@@ -1272,7 +1272,10 @@ export class AudioRecognition {
         }
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
-        this.logger.debug({ transcript: ev.alternatives?.[0]?.text }, 'interim transcript');
+        this.logger.debug(
+          { 'lk.pii.transcript': ev.alternatives?.[0]?.text },
+          'interim transcript',
+        );
         this.hooks.onInterimTranscript(
           ev,
           this.hasUserVad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
@@ -1420,7 +1423,7 @@ export class AudioRecognition {
     this.logger.debug(
       {
         stt: this.stt,
-        audioTranscript: this.audioTranscript,
+        'lk.pii.audio_transcript': this.audioTranscript,
         turnDetectionMode: this.turnDetectionMode,
       },
       'running EOU detection',
@@ -1699,7 +1702,7 @@ export class AudioRecognition {
           return;
         }
 
-        this.logger.debug({ transcript: this.audioTranscript }, 'end of user turn');
+        this.logger.debug({ 'lk.pii.transcript': this.audioTranscript }, 'end of user turn');
 
         const confidenceAvg =
           this.finalTranscriptConfidence.length > 0

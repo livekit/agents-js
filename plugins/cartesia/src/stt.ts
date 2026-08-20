@@ -499,7 +499,7 @@ export class SpeechStream extends stt.SpeechStream {
         }
         try {
           if (msg.type === 'error') {
-            this.#logger.error('Cartesia sent an error', msg);
+            this.#logger.error({ 'lk.pii.message': msg }, 'Cartesia sent an error');
 
             // do not close the websocket on bad requests since that may be caused by invalid messages
             if (msg.status_code === undefined || msg.status_code >= 500) {
@@ -657,7 +657,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
 
       default:
-        this.#logger.warn('received unexpected message from Cartesia STT', { data });
+        this.#logger.warn({ 'lk.pii.data': data }, 'received unexpected message from Cartesia STT');
     }
   }
 

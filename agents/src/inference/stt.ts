@@ -943,7 +943,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             const parseResult = await sttServerEventSchema.safeParseAsync(result.value);
             if (!parseResult.success) {
               this.#logger.warn(
-                { error: parseResult.error, rawData: result.value },
+                {
+                  error: parseResult.error,
+                  'lk.pii.raw_data': result.value,
+                },
                 'Failed to parse STT server event',
               );
               continue;

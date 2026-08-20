@@ -1858,7 +1858,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this.logger.info(
       {
-        newTranscript: info.newTranscript,
+        'lk.pii.new_transcript': info.newTranscript,
         transcriptConfidence: info.transcriptConfidence,
       },
       'starting preemptive generation',
@@ -2047,7 +2047,7 @@ export class AgentActivity implements RecognitionHooks {
     if (this.schedulingPaused || this.newTurnsBlocked) {
       this.cancelPreemptiveGeneration();
       this.logger.warn(
-        { user_input: info.newTranscript },
+        { 'lk.pii.user_input': info.newTranscript },
         'skipping user input, speech scheduling is paused',
       );
       if (this.agentSession?._closing) {
@@ -2596,7 +2596,7 @@ export class AgentActivity implements RecognitionHooks {
     if (currentSpeech) {
       if (!currentSpeech.allowInterruptions) {
         this.logger.warn(
-          { user_input: info.newTranscript },
+          { 'lk.pii.user_input': info.newTranscript },
           'skipping user input, current speech generation cannot be interrupted',
         );
         return;
@@ -2621,7 +2621,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.schedulingPaused || this.newTurnsBlocked) {
       this.logger.warn(
-        { user_input: info.newTranscript },
+        { 'lk.pii.user_input': info.newTranscript },
         'skipping onUserTurnCompleted, speech scheduling is paused',
       );
       if (this.agentSession._closing) {
@@ -2657,7 +2657,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.schedulingPaused || this.newTurnsBlocked) {
       this.logger.warn(
-        { user_input: info.newTranscript },
+        { 'lk.pii.user_input': info.newTranscript },
         'skipping reply to user input, speech scheduling is paused',
       );
       if (userMessage && this.agentSession._closing) {
@@ -3462,7 +3462,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       this.logger.info(
-        { speech_id: speechHandle.id, message: forwardedText },
+        { speech_id: speechHandle.id, 'lk.pii.message': forwardedText },
         'playout completed with interrupt',
       );
       if (speechHandle._hasGenerations) {
@@ -3493,7 +3493,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._conversationItemAdded(message);
       span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, forwardedText);
       this.logger.info(
-        { speech_id: speechHandle.id, message: forwardedText },
+        { speech_id: speechHandle.id, 'lk.pii.message': forwardedText },
         'playout completed without interruption',
       );
     }
@@ -3990,7 +3990,10 @@ export class AgentActivity implements RecognitionHooks {
           const { done, value } = await reader.read();
           if (done) break;
 
-          this.logger.debug({ tool_call: value }, 'received tool call from the realtime API');
+          this.logger.debug(
+            { 'lk.pii.tool_call': value },
+            'received tool call from the realtime API',
+          );
           toolCalls.push(value);
         }
       } finally {
@@ -4358,8 +4361,8 @@ export class AgentActivity implements RecognitionHooks {
         {
           speechId: speechHandle.id,
           name: sanitizedOut.toolCall?.name,
-          args: sanitizedOut.toolCall.args,
-          output: sanitizedOut.toolCallOutput?.output,
+          'lk.pii.arguments': sanitizedOut.toolCall.args,
+          'lk.pii.output': sanitizedOut.toolCallOutput?.output,
           isError: sanitizedOut.toolCallOutput?.isError,
         },
         'Tool call execution finished',
