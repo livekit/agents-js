@@ -133,5 +133,30 @@ export type TTSSampleRate = 8000 | 16000 | 22050 | 24000 | 32000 | 44100;
 // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 85-86 lines
 export const DEFAULT_MODEL: TTSModel = 'speech-02-turbo';
 export const DEFAULT_VOICE_ID: TTSVoice = 'socialmedia_female_2_v1';
+
+/**
+ * MiniMax API region.
+ *
+ * @remarks `global_en` targets the international platform and `cn_zh` targets
+ * the mainland China platform. Both regions expose the same `t2a_v2` routes,
+ * but an API key is only valid for the region it was created in.
+ */
+export type TTSRegion = 'global_en' | 'cn_zh';
+
+/**
+ * Base URL of the MiniMax API per region.
+ *
+ * @remarks Endpoint reference: `https://platform.minimax.io/docs` for
+ * `global_en` and `https://platform.minimaxi.com/docs` for `cn_zh`.
+ */
+export const TTS_REGIONAL_BASE_URLS = {
+  global_en: 'https://api.minimax.io',
+  cn_zh: 'https://api.minimaxi.com',
+} as const satisfies Record<TTSRegion, string>;
+
+/** Region used when {@link TTSOptions.region} is not set. */
+export const DEFAULT_TTS_REGION: TTSRegion = 'global_en';
+
 // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 142-144 lines
-export const DEFAULT_BASE_URL = 'https://api-uw.minimax.io';
+/** Base URL used when neither a base URL nor a region is given. */
+export const DEFAULT_BASE_URL: string = TTS_REGIONAL_BASE_URLS[DEFAULT_TTS_REGION];

@@ -23,8 +23,10 @@ import {
   type TTSEmotion,
   type TTSLanguageBoost,
   type TTSModel,
+  type TTSRegion,
   type TTSSampleRate,
   type TTSVoice,
+  TTS_REGIONAL_BASE_URLS,
 } from './models.js';
 
 const NUM_CHANNELS = 1;
@@ -72,7 +74,13 @@ export interface TTSOptions {
   /** API key. Falls back to `$MINIMAX_API_KEY`. */
   apiKey?: string;
   /**
-   * Base URL of the MiniMax API. Falls back to `$MINIMAX_BASE_URL`, otherwise
+   * MiniMax API region used to pick the endpoint. Ignored when
+   * {@link TTSOptions.baseUrl} is set. Defaults to `global_en`.
+   */
+  region?: TTSRegion;
+  /**
+   * Base URL of the MiniMax API. Defaults to the endpoint of
+   * {@link TTSOptions.region}, then to `$MINIMAX_BASE_URL`, then to
    * {@link DEFAULT_BASE_URL}.
    */
   baseUrl?: string;
@@ -128,6 +136,15 @@ const validateOptions = (opts: {
   }
 };
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 142-144 lines
+const resolveBaseUrl = (opts: TTSOptions): string => {
+  if (opts.baseUrl) return opts.baseUrl;
+  // An explicitly requested region wins over the environment so a single
+  // process can talk to both regions.
+  if (opts.region) return TTS_REGIONAL_BASE_URLS[opts.region];
+  return process.env.MINIMAX_BASE_URL || DEFAULT_BASE_URL;
+};
+
 // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 221-252 lines
 const resolveOptions = (opts: TTSOptions): ResolvedTTSOptions => {
   const apiKey = opts.apiKey ?? process.env.MINIMAX_API_KEY;
@@ -161,7 +178,7 @@ const resolveOptions = (opts: TTSOptions): ResolvedTTSOptions => {
     sampleRate: opts.sampleRate ?? DEFAULT_SAMPLE_RATE,
     bitrate: opts.bitrate ?? DEFAULT_BITRATE,
     apiKey,
-    baseUrl: opts.baseUrl ?? process.env.MINIMAX_BASE_URL ?? DEFAULT_BASE_URL,
+    baseUrl: resolveBaseUrl(opts),
     tokenizer: opts.tokenizer ?? new tokenize.basic.SentenceTokenizer(),
   };
 };
@@ -214,6 +231,11 @@ export class TTS extends tts.TTS {
 
   get model(): string {
     return this.#opts.model;
+  }
+
+  /** Resolved base URL of the MiniMax API this instance talks to. */
+  get baseUrl(): string {
+    return this.#opts.baseUrl;
   }
 
   get provider(): string {
