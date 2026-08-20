@@ -19,3 +19,11 @@ as a whole.
 
 Install the package with `pnpm add @livekit/agents-plugin-bland` and set `BLAND_API_KEY` to your
 Bland API key.
+
+Voice agents stream text through Bland's realtime WebSocket by default, allowing audio to begin
+before the full sentence is available and supporting in-place cancellation on barge-in. The
+`synthesize()` method always sends complete strings over HTTP. Set `streaming: false` to disable
+WebSocket sessions and use HTTP-only synthesis without holding a Bland concurrency slot.
+
+See the [Bland realtime TTS reference](https://docs.bland.ai/api-v2/post/tts-ws) for protocol
+details.
