@@ -2,33 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type ExportResult, ExportResultCode } from '@opentelemetry/core';
-import {
-  createOtlpHttpExportDelegate,
-  httpAgentFactoryFromOptions,
-} from '@opentelemetry/otlp-exporter-base/node-http';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import FormData from 'form-data';
 import http from 'node:http';
-import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { PinoCloudExporter } from './pino_otel_transport.js';
-import {
-  FanoutSpanProcessor,
-  setTracerProvider,
-  setupCloudTracer,
-  tracer,
-  uploadSessionReport,
-} from './traces.js';
-import {
-  fetchWithUploadGate,
-  registerOtlpHttpUploadGateTarget,
-  uploadGate,
-} from './upload_gate.js';
+import { setTracerProvider, tracer, uploadSessionReport } from './traces.js';
+import { UploadGateTraceExporter, fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
 const DISABLED_MSG = 'project data recording is disabled by owner';
 
@@ -36,16 +21,15 @@ function statusProto(message: string): Buffer {
   return Buffer.concat([Buffer.from([0x08, 0x07, 0x12, message.length]), Buffer.from(message)]);
 }
 
-function makeReport(recordingOptions: SessionReport['recordingOptions']): SessionReport {
+function makeReport(recordingOptions: SessionReport['options']['recordingOptions']): SessionReport {
   return {
     jobId: 'job1',
     roomId: 'room1',
     room: 'room-name',
-    options: {},
+    options: { recordingOptions },
     events: [],
     chatHistory: ChatContext.empty(),
     enableRecording: true,
-    recordingOptions,
     startedAt: 1_700_000_000_000,
     timestamp: 1_700_000_001_000,
   };
@@ -72,13 +56,15 @@ function mockFormSubmit(statusCode: number, body: Buffer = Buffer.alloc(0)) {
   });
 }
 
-async function createCustomTraceHarness(
-  responseForRequest: (requestCount: number) => { status: number; body: string },
+async function createTraceHarness(
+  responseForRequest: (
+    requestCount: number,
+  ) => { status: number; body: string } | Promise<{ status: number; body: string }>,
 ) {
   let requestCount = 0;
-  const server = http.createServer((_request, response) => {
+  const server = http.createServer(async (_request, response) => {
     requestCount += 1;
-    const { status, body } = responseForRequest(requestCount);
+    const { status, body } = await responseForRequest(requestCount);
     response.statusCode = status;
     response.end(body);
   });
@@ -87,60 +73,34 @@ async function createCustomTraceHarness(
   if (typeof address === 'string' || address === null) throw new Error('missing server address');
 
   const url = `http://127.0.0.1:${address.port}/observability/traces/otlp/v0`;
-  const fanout = new FanoutSpanProcessor();
-  const provider = new NodeTracerProvider({ spanProcessors: [fanout] });
+  const exporter = new UploadGateTraceExporter({ url, headers: {} });
   const resultPromises: Promise<ExportResult>[] = [];
-
-  setTracerProvider(provider, {
-    registerSpanProcessor: (processor) => fanout.add(processor),
-    createCloudSpanProcessor: () => {
-      registerOtlpHttpUploadGateTarget(url);
-      const exporter = createOtlpHttpExportDelegate<ReadableSpan, object>(
-        {
-          url,
-          headers: async () => ({}),
-          compression: 'none',
-          concurrencyLimit: 1,
-          timeoutMillis: 1_000,
-          agentFactory: httpAgentFactoryFromOptions({}),
-        },
-        {
-          serializeRequest: () => new Uint8Array([1]),
-          deserializeResponse: () => ({}),
-        },
+  const processor: SpanProcessor = {
+    onStart: () => undefined,
+    onEnd: (span: ReadableSpan) => {
+      resultPromises.push(
+        new Promise<ExportResult>((resolve) => {
+          exporter.export([span], resolve);
+        }),
       );
-      const processor: SpanProcessor = {
-        onStart: () => undefined,
-        onEnd: (span) => {
-          resultPromises.push(
-            new Promise<ExportResult>((resolve) => {
-              exporter.export(span, resolve);
-            }),
-          );
-        },
-        forceFlush: async () => {
-          await Promise.all(resultPromises);
-        },
-        shutdown: async () => {
-          await exporter.shutdown();
-        },
-      };
-      return processor;
     },
-  });
-  await setupCloudTracer({
-    roomId: 'room1',
-    jobId: 'job1',
-    cloudHostname: 'example.livekit.cloud',
-    enableLogs: false,
-  });
+    forceFlush: async () => {
+      await Promise.all(resultPromises);
+      await exporter.forceFlush();
+    },
+    shutdown: async () => {
+      await exporter.shutdown();
+    },
+  };
+  const provider = new NodeTracerProvider({ spanProcessors: [processor] });
+  setTracerProvider(provider);
 
   return {
     exportSpan: async (name: string) => {
       const span = tracer.startSpan({ name });
       span.end();
       const result = resultPromises.at(-1);
-      if (!result) throw new Error('custom processor did not export the span');
+      if (!result) throw new Error('trace processor did not export the span');
       return result;
     },
     requestCount: () => requestCount,
@@ -190,34 +150,6 @@ describe('recording disabled upload gate', () => {
 
     expect(response.ok).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it('restores patched HTTP requests when the gate resets', () => {
-    const originalRequest = http.request;
-
-    registerOtlpHttpUploadGateTarget('http://127.0.0.1/observability/traces/otlp/v0');
-    expect(http.request).not.toBe(originalRequest);
-
-    uploadGate.reset();
-    expect(http.request).toBe(originalRequest);
-  });
-
-  it('preserves HTTP request wrappers installed after the upload gate', () => {
-    const originalRequest = http.request;
-
-    registerOtlpHttpUploadGateTarget('http://127.0.0.1/observability/traces/otlp/v0');
-    const uploadGateRequest = http.request;
-    const laterRequest: typeof http.request = (...args) => uploadGateRequest(...args);
-    http.request = laterRequest;
-    syncBuiltinESMExports();
-
-    try {
-      uploadGate.reset();
-      expect(http.request).toBe(laterRequest);
-    } finally {
-      http.request = originalRequest;
-      syncBuiltinESMExports();
-    }
   });
 
   it('warns once per session', () => {
@@ -355,52 +287,8 @@ describe('recording disabled upload gate', () => {
     expect(submitSpy).not.toHaveBeenCalled();
   });
 
-  it('intercepts OpenTelemetry 2.x after the node:http ESM binding is loaded', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const server = http.createServer((_request, response) => {
-      response.statusCode = 401;
-      response.end(DISABLED_MSG);
-    });
-
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    if (typeof address === 'string' || address === null) throw new Error('missing server address');
-
-    const url = `http://127.0.0.1:${address.port}/observability/traces/otlp/v0`;
-    registerOtlpHttpUploadGateTarget(url);
-    const exporter = createOtlpHttpExportDelegate<string, object>(
-      {
-        url,
-        headers: async () => ({}),
-        compression: 'none',
-        concurrencyLimit: 1,
-        timeoutMillis: 1_000,
-        agentFactory: httpAgentFactoryFromOptions({}),
-      },
-      {
-        serializeRequest: () => new Uint8Array([1]),
-        deserializeResponse: () => ({}),
-      },
-    );
-
-    try {
-      const result = await new Promise<{ code: ExportResultCode }>((resolve) => {
-        exporter.export('payload', resolve);
-      });
-
-      expect(result.code).toBe(ExportResultCode.SUCCESS);
-      expect(uploadGate.disabled).toBe(true);
-    } finally {
-      await exporter.shutdown();
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    }
-  });
-
   it('does not let an old in-flight disabled response latch a new gate generation', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    let requestCount = 0;
     let markFirstRequestStarted!: () => void;
     let releaseFirstResponse!: () => void;
     const firstRequestStarted = new Promise<void>((resolve) => {
@@ -409,74 +297,40 @@ describe('recording disabled upload gate', () => {
     const firstResponseReleased = new Promise<void>((resolve) => {
       releaseFirstResponse = resolve;
     });
-    const server = http.createServer(async (_request, response) => {
-      requestCount += 1;
+    const harness = await createTraceHarness(async (requestCount) => {
       if (requestCount === 1) {
-        response.statusCode = 401;
-        response.write(DISABLED_MSG);
         markFirstRequestStarted();
         await firstResponseReleased;
-        response.end();
-        return;
+        return { status: 401, body: DISABLED_MSG };
       }
-      response.statusCode = 200;
-      response.end('ok');
+      return { status: 200, body: 'ok' };
     });
 
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    if (typeof address === 'string' || address === null) throw new Error('missing server address');
-
-    const url = `http://127.0.0.1:${address.port}/observability/traces/otlp/v0`;
-    registerOtlpHttpUploadGateTarget(url);
-    const exporter = createOtlpHttpExportDelegate<string, object>(
-      {
-        url,
-        headers: async () => ({}),
-        compression: 'none',
-        concurrencyLimit: 1,
-        timeoutMillis: 1_000,
-        agentFactory: httpAgentFactoryFromOptions({}),
-      },
-      {
-        serializeRequest: () => new Uint8Array([1]),
-        deserializeResponse: () => ({}),
-      },
-    );
-
     try {
-      const oldExport = new Promise<ExportResult>((resolve) => {
-        exporter.export('old-generation', resolve);
-      });
+      const oldExport = harness.exportSpan('old-generation');
       await firstRequestStarted;
 
       uploadGate.reset();
-      registerOtlpHttpUploadGateTarget(url);
       releaseFirstResponse();
 
       const oldResult = await oldExport;
       expect(oldResult.code).toBe(ExportResultCode.SUCCESS);
       expect(uploadGate.disabled).toBe(false);
       expect(warn).not.toHaveBeenCalled();
-      await new Promise<void>((resolve) => setImmediate(resolve));
 
-      const currentResult = await new Promise<ExportResult>((resolve) => {
-        exporter.export('current-generation', resolve);
-      });
+      const currentResult = await harness.exportSpan('current-generation');
       expect(currentResult.code).toBe(ExportResultCode.SUCCESS);
-      expect(requestCount).toBe(2);
+      expect(harness.requestCount()).toBe(2);
     } finally {
       releaseFirstResponse();
-      await exporter.shutdown();
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
+      await harness.close();
     }
   });
 
-  it('short-circuits custom cloud processor exports after recording is disabled', async () => {
+  it('short-circuits trace exports without patching process HTTP functions', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const harness = await createCustomTraceHarness(() => ({
+    const originalRequest = http.request;
+    const harness = await createTraceHarness(() => ({
       status: 401,
       body: DISABLED_MSG,
     }));
@@ -485,6 +339,7 @@ describe('recording disabled upload gate', () => {
       const first = await harness.exportSpan('first');
       const second = await harness.exportSpan('second');
 
+      expect(http.request).toBe(originalRequest);
       expect(first.code).toBe(ExportResultCode.SUCCESS);
       expect(second.code).toBe(ExportResultCode.SUCCESS);
       expect(harness.requestCount()).toBe(1);
@@ -493,8 +348,8 @@ describe('recording disabled upload gate', () => {
     }
   });
 
-  it('does not suppress unrelated custom cloud processor 401 responses', async () => {
-    const harness = await createCustomTraceHarness((requestCount) =>
+  it('does not suppress unrelated trace export 401 responses', async () => {
+    const harness = await createTraceHarness((requestCount) =>
       requestCount === 1 ? { status: 401, body: 'invalid token' } : { status: 200, body: 'ok' },
     );
 

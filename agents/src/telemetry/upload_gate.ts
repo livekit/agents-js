@@ -1,31 +1,42 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type * as httpTypes from 'node:http';
-import type * as httpsTypes from 'node:https';
-import { createRequire, syncBuiltinESMExports } from 'node:module';
-import { Readable, Writable } from 'node:stream';
+import { type ExportResult, ExportResultCode } from '@opentelemetry/core';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
+import { OTLPExporterError } from '@opentelemetry/otlp-exporter-base';
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 
 const DISABLED_MARKERS = ['data recording is disabled', 'disabled by owner'];
 
+/**
+ * Session-scoped latch that stops Cloud uploads after the project reports data recording is
+ * disabled.
+ */
 class UploadGate {
   private isDisabled = false;
   private currentGeneration = 0;
 
+  /** Re-enables uploads and invalidates responses from the previous session. */
   reset(): void {
     this.isDisabled = false;
     this.currentGeneration += 1;
-    resetOtlpHttpInterceptor();
   }
 
+  /** Whether Cloud uploads are disabled for the current session. */
   get disabled(): boolean {
     return this.isDisabled;
   }
 
+  /** Current session generation used to isolate in-flight responses across resets. */
   get generation(): number {
     return this.currentGeneration;
   }
 
+  /**
+   * Disables uploads for the matching session generation and emits the session warning once.
+   *
+   * @param generation - Generation that received the disabled response.
+   */
   disable(generation: number = this.currentGeneration): void {
     if (generation !== this.currentGeneration) return;
     if (this.isDisabled) return;
@@ -36,6 +47,7 @@ class UploadGate {
     );
   }
 
+  /** Returns whether an HTTP response is the known project-recording-disabled rejection. */
   isDisabledResponse(statusCode: number, body: Uint8Array | ArrayBuffer | string): boolean {
     if (statusCode !== 401) return false;
     const text = bodyToText(body).toLowerCase();
@@ -43,8 +55,13 @@ class UploadGate {
   }
 }
 
+/** Shared upload gate for LiveKit Cloud telemetry and recording transports. */
 export const uploadGate = new UploadGate();
 
+/**
+ * Sends a Fetch request through the upload gate and converts the known disabled response to
+ * synthetic success.
+ */
 export async function fetchWithUploadGate(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -75,157 +92,35 @@ function bodyToText(body: Uint8Array | ArrayBuffer | string): string {
   return Buffer.from(body instanceof ArrayBuffer ? new Uint8Array(body) : body).toString('utf8');
 }
 
-const otlpHttpTargets = new Set<string>();
-let otlpHttpInterceptorInstalled = false;
-let originalHttpRequest: RequestFn | undefined;
-let originalHttpsRequest: RequestFn | undefined;
-let installedHttpRequest: RequestFn | undefined;
-let installedHttpsRequest: RequestFn | undefined;
-
-export function registerOtlpHttpUploadGateTarget(rawUrl: string): void {
-  const url = new URL(rawUrl);
-  otlpHttpTargets.add(requestTargetKey(url.hostname, url.port, url.pathname));
-  installOtlpHttpInterceptor();
-}
-
-function installOtlpHttpInterceptor(): void {
-  if (otlpHttpInterceptorInstalled) return;
-  otlpHttpInterceptorInstalled = true;
-
-  const require = createRequire(import.meta.url);
-  const httpModule = require('node:http') as typeof httpTypes;
-  const httpsModule = require('node:https') as typeof httpsTypes;
-
-  originalHttpRequest = httpModule.request as RequestFn;
-  originalHttpsRequest = httpsModule.request as RequestFn;
-  installedHttpRequest = wrapRequest(originalHttpRequest);
-  installedHttpsRequest = wrapRequest(originalHttpsRequest);
-  httpModule.request = installedHttpRequest as typeof httpModule.request;
-  httpsModule.request = installedHttpsRequest as typeof httpsModule.request;
-  // OpenTelemetry 2.x loads request through ESM, which may already have cached the old binding.
-  syncBuiltinESMExports();
-}
-
-function resetOtlpHttpInterceptor(): void {
-  otlpHttpTargets.clear();
-  if (!otlpHttpInterceptorInstalled) return;
-
-  const require = createRequire(import.meta.url);
-  const httpModule = require('node:http') as typeof httpTypes;
-  const httpsModule = require('node:https') as typeof httpsTypes;
-  if (originalHttpRequest && httpModule.request === installedHttpRequest) {
-    httpModule.request = originalHttpRequest as typeof httpModule.request;
-  }
-  if (originalHttpsRequest && httpsModule.request === installedHttpsRequest) {
-    httpsModule.request = originalHttpsRequest as typeof httpsModule.request;
-  }
-  syncBuiltinESMExports();
-  originalHttpRequest = undefined;
-  originalHttpsRequest = undefined;
-  installedHttpRequest = undefined;
-  installedHttpsRequest = undefined;
-  otlpHttpInterceptorInstalled = false;
-}
-
-type RequestArg =
-  | string
-  | URL
-  | httpTypes.RequestOptions
-  | ((res: httpTypes.IncomingMessage) => void)
-  | undefined;
-type RequestFn = (...args: RequestArg[]) => httpTypes.ClientRequest;
-
-function wrapRequest(original: RequestFn) {
-  return (...args: RequestArg[]): httpTypes.ClientRequest => {
-    if (!matchesRegisteredTarget(args)) {
-      return original(...args);
-    }
-
-    const callbackIndex = args.findIndex((arg) => typeof arg === 'function');
-    if (callbackIndex === -1) {
-      return original(...args);
-    }
-
-    const callback = args[callbackIndex] as (res: httpTypes.IncomingMessage) => void;
-    if (uploadGate.disabled) {
-      return makeOkClientRequest(callback);
-    }
+/**
+ * OTLP trace exporter that applies the shared upload gate without modifying process-wide HTTP
+ * functions.
+ */
+export class UploadGateTraceExporter extends OTLPTraceExporter {
+  /** Exports spans, converting the known disabled response to synthetic success. */
+  override export(items: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
     const generation = uploadGate.generation;
+    if (uploadGate.disabled) {
+      resultCallback({ code: ExportResultCode.SUCCESS });
+      return;
+    }
 
-    args[callbackIndex] = (res: httpTypes.IncomingMessage) => {
-      const chunks: Buffer[] = [];
-      res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-      res.on('end', () => {
-        if (uploadGate.isDisabledResponse(res.statusCode ?? 0, Buffer.concat(chunks))) {
-          uploadGate.disable(generation);
-          res.statusCode = 200;
-          res.statusMessage = 'OK';
-        }
-      });
-      callback(res);
-    };
-
-    return original(...args);
-  };
-}
-
-function makeOkClientRequest(
-  callback: (res: httpTypes.IncomingMessage) => void,
-): httpTypes.ClientRequest {
-  const request = new Writable({
-    write(_chunk, _encoding, done) {
-      done();
-    },
-  }) as unknown as httpTypes.ClientRequest;
-  request.setTimeout = () => request;
-  request.setHeader = () => request;
-  request.once('finish', () => {
-    const response = Readable.from([]) as unknown as httpTypes.IncomingMessage;
-    response.statusCode = 200;
-    response.statusMessage = 'OK';
-    response.headers = {};
-    callback(response);
-  });
-  return request;
-}
-
-function matchesRegisteredTarget(args: unknown[]): boolean {
-  const target = getRequestTarget(args);
-  return target !== undefined && otlpHttpTargets.has(target);
-}
-
-function getRequestTarget(args: unknown[]): string | undefined {
-  const first = args[0];
-  const second = args[1];
-
-  if (typeof first === 'string' || first instanceof URL) {
-    const url = new URL(first);
-    const options = isRequestOptions(second) ? second : {};
-    const hostname = options.hostname ?? options.host?.split(':')[0] ?? url.hostname;
-    const port = options.port?.toString() ?? url.port;
-    const path = options.path?.toString() ?? url.pathname;
-    return requestTargetKey(hostname, port, path.split('?')[0] ?? path);
+    super.export(items, (result) => {
+      if (isDisabledTraceExport(result)) {
+        uploadGate.disable(generation);
+        resultCallback({ code: ExportResultCode.SUCCESS });
+        return;
+      }
+      resultCallback(result);
+    });
   }
-
-  if (isRequestOptions(first)) {
-    const hostname = first.hostname ?? first.host?.split(':')[0];
-    if (!hostname) return undefined;
-    const port = first.port?.toString() ?? '';
-    const path = first.path?.toString() ?? '/';
-    return requestTargetKey(hostname, port, path.split('?')[0] ?? path);
-  }
-
-  return undefined;
 }
 
-function isRequestOptions(value: unknown): value is httpTypes.RequestOptions {
-  return typeof value === 'object' && value !== null;
-}
-
-function requestTargetKey(
-  hostname: string,
-  port: string | number | undefined,
-  path: string,
-): string {
-  return `${hostname}:${port ?? ''}:${path}`;
+function isDisabledTraceExport(result: ExportResult): boolean {
+  const error = result.error;
+  return (
+    result.code === ExportResultCode.FAILED &&
+    error instanceof OTLPExporterError &&
+    uploadGate.isDisabledResponse(error.code ?? 0, error.data ?? '')
+  );
 }
