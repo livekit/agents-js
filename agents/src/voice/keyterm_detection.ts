@@ -287,7 +287,7 @@ export class KeytermDetector extends (EventEmitter as new () => TypedEmitter<Key
       return;
     }
     this.stt = stt;
-    if (stt !== undefined && this.keyterms.length > 0) {
+    if (stt !== undefined && (this.keyterms.length > 0 || stt.capabilities.keyterms)) {
       stt._updateSessionKeyterms(this.keyterms);
     }
   }
