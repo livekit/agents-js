@@ -100,6 +100,27 @@ function createFakeSession(llm?: RealtimeModel): FakeSession {
   };
 }
 
+describe('RoomIO native audio output', () => {
+  it('uses a 200ms source queue by default', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false },
+      outputOptions: { transcriptionEnabled: false },
+    });
+
+    roomIO.start();
+
+    const participantAudioOutput = Reflect.get(roomIO, 'participantAudioOutput');
+    expect(Reflect.get(participantAudioOutput, 'options').queueSizeMs).toBe(200);
+    expect(Reflect.get(participantAudioOutput, 'audioSource').queueSize).toBe(200);
+
+    await roomIO.close();
+  });
+});
+
 class ExternalAudioOutput extends AudioOutput {
   readonly capturedFrames: AudioFrame[] = [];
   readonly close = vi.fn(async () => {});
