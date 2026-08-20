@@ -491,7 +491,10 @@ export class RealtimeSession extends llm.RealtimeSession {
           output: item.output,
         });
         sentToolCallOutput = true;
-        if (item.name && this.configsForTools.get(item.name)?.forbid_speech_after_tool_call) {
+        if (
+          !item.replyRequired ||
+          (item.name && this.configsForTools.get(item.name)?.forbid_speech_after_tool_call)
+        ) {
           forbidSpeech = true;
         }
       }

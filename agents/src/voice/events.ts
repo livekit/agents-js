@@ -213,6 +213,8 @@ export type FunctionToolsExecutedEvent = {
   functionCalls: FunctionCall[];
   functionCallOutputs: FunctionCallOutput[];
   createdAt: number;
+  readonly hasToolReply: boolean;
+  cancelToolReply(): void;
 };
 
 export const createFunctionToolsExecutedEvent = ({
@@ -229,6 +231,12 @@ export const createFunctionToolsExecutedEvent = ({
     functionCalls,
     functionCallOutputs,
     createdAt,
+    get hasToolReply() {
+      return functionCallOutputs.some((output) => output.replyRequired);
+    },
+    cancelToolReply() {
+      for (const output of functionCallOutputs) output.replyRequired = false;
+    },
   };
 };
 
