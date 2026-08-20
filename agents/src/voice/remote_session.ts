@@ -442,6 +442,9 @@ function chatItemToProto(item: RemoteChatItem): pb.ChatContext_ChatItem {
         metricsReport.onUserTurnCompletedDelay = msg.metrics.onUserTurnCompletedDelay;
       if (msg.metrics.llmNodeTtft !== undefined)
         metricsReport.llmNodeTtft = msg.metrics.llmNodeTtft;
+      if (msg.metrics.llmNodeTps !== undefined) metricsReport.llmNodeTps = msg.metrics.llmNodeTps;
+      if (msg.metrics.llmNodeTtfs !== undefined)
+        metricsReport.llmNodeTtfs = msg.metrics.llmNodeTtfs;
       if (msg.metrics.ttsNodeTtfb !== undefined)
         metricsReport.ttsNodeTtfb = msg.metrics.ttsNodeTtfb;
       if (msg.metrics.e2eLatency !== undefined) metricsReport.e2eLatency = msg.metrics.e2eLatency;

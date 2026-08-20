@@ -285,6 +285,22 @@ export interface MetricsReport {
   endOfTurnDelay?: number;
   onUserTurnCompletedDelay?: number;
   llmNodeTtft?: number;
+  /**
+   * LLM output tokens per second for this turn, measured at the `llmNode` over the
+   * streaming window (first to last text chunk). Absent for a reply that arrived in a
+   * single chunk, which has no measurable rate.
+   *
+   * Assistant `ChatMessage` only.
+   */
+  llmNodeTps?: number;
+  /**
+   * Time in seconds from LLM generation start until the first sentence reached the TTS
+   * provider, as segmented by that TTS. Absent when no audio came from a LiveKit TTS this
+   * turn.
+   *
+   * Assistant `ChatMessage` only.
+   */
+  llmNodeTtfs?: number;
   ttsNodeTtfb?: number;
   /**
    * Delay (in seconds) between forwarding the first audio frame and the `AudioOutput`

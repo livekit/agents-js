@@ -535,6 +535,8 @@ interface ProtoMetricsReport {
   endOfTurnDelay?: number;
   onUserTurnCompletedDelay?: number;
   llmNodeTtft?: number;
+  llmNodeTps?: number;
+  llmNodeTtfs?: number;
   ttsNodeTtfb?: number;
   playbackLatency?: number;
   e2eLatency?: number;
@@ -646,6 +648,12 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
       }
       if (metrics.llmNodeTtft !== undefined) {
         protoMetrics.llmNodeTtft = metrics.llmNodeTtft;
+      }
+      if (metrics.llmNodeTps !== undefined) {
+        protoMetrics.llmNodeTps = metrics.llmNodeTps;
+      }
+      if (metrics.llmNodeTtfs !== undefined) {
+        protoMetrics.llmNodeTtfs = metrics.llmNodeTtfs;
       }
       if (metrics.ttsNodeTtfb !== undefined) {
         protoMetrics.ttsNodeTtfb = metrics.ttsNodeTtfb;

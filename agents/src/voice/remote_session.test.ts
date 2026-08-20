@@ -11,6 +11,7 @@ import {
   type RunningJobInfo,
   runWithJobContextAsync,
 } from '../job.js';
+import { ChatMessage } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import type { AgentSession } from './agent_session.js';
@@ -284,6 +285,39 @@ describe('SessionHost event forwarding', () => {
 
     const unsubscribed = new Set(off.mock.calls.map(([event]) => event));
     expect(unsubscribed).toEqual(FORWARDED_EVENTS);
+  });
+
+  it('forwards LLM node throughput fields', async () => {
+    let conversationHandler: ((event: unknown) => void) | undefined;
+    const session = {
+      on: (event: string, handler: (event: unknown) => void) => {
+        if (event === 'conversation_item_added') conversationHandler = handler;
+      },
+      off: vi.fn(),
+    } as unknown as AgentSession;
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession(session);
+
+    conversationHandler?.({
+      type: 'conversation_item_added',
+      item: ChatMessage.create({
+        role: 'assistant',
+        content: 'hello',
+        metrics: { llmNodeTps: 12.5, llmNodeTtfs: 0.6 },
+      }),
+      createdAt: Date.now(),
+    });
+
+    await vi.waitFor(() => expect(transport.sent).toHaveLength(1));
+    const event = (transport.sent[0]!.message.value as pb.AgentSessionEvent).event;
+    expect(event.case).toBe('conversationItemAdded');
+    if (event.case !== 'conversationItemAdded') throw new Error('unexpected event');
+    const item = event.value.item?.item;
+    expect(item?.case).toBe('message');
+    if (item?.case !== 'message') throw new Error('unexpected chat item');
+    expect(item.value.metrics?.llmNodeTps).toBeCloseTo(12.5);
+    expect(item.value.metrics?.llmNodeTtfs).toBeCloseTo(0.6);
   });
 });
 
