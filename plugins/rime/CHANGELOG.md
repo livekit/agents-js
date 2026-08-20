@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-rime
 
+## 1.7.0
+
+### Patch Changes
+
+- ⚠️ Remove Rime Arcana model support before Rime's cloud cutoff on August 15, 2026 at 12:00 UTC. Set `modelId` to `coda` when you upgrade. The default paths keep their established speakers for voice continuity. - [#2253](https://github.com/livekit/agents-js/pull/2253) ([@naszzz](https://github.com/naszzz))
+
+- Updated dependencies [[`ef7159c`](https://github.com/livekit/agents-js/commit/ef7159c5e8799824d14935f08b8c0681dfdfaabf), [`da27ec3`](https://github.com/livekit/agents-js/commit/da27ec30e72df930cb48da1f036d6fc4f8a2e2bf), [`6cd0864`](https://github.com/livekit/agents-js/commit/6cd0864f9c2ba95f3b30c2dfa9f3c2596ebded5d), [`b0ef4dd`](https://github.com/livekit/agents-js/commit/b0ef4dde6f2eac035ada04fbf04871330ce67c06), [`94319c6`](https://github.com/livekit/agents-js/commit/94319c68f49b88c1d8be392decf960ad15350826), [`e6be29b`](https://github.com/livekit/agents-js/commit/e6be29b036b9e2423324dfc6561024fa10ebd5d1), [`6e328e8`](https://github.com/livekit/agents-js/commit/6e328e838274c1d0b5bfa885697ae5a73bb6a884), [`39c7b62`](https://github.com/livekit/agents-js/commit/39c7b622d10ccb78f58ee2d2417f0eb335c7b1c9), [`9ad3233`](https://github.com/livekit/agents-js/commit/9ad3233413b864b23c20c77644220716c5528482), [`d753177`](https://github.com/livekit/agents-js/commit/d75317730c88a8d01196804690f5ada8c844be38)]:
+  - @livekit/agents@1.7.0
+
 ## 1.6.4
 
 ### Patch Changes
