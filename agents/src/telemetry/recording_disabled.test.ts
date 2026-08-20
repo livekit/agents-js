@@ -9,6 +9,7 @@ import http from 'node:http';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
+import { initializeLogger, log } from '../log.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { PinoCloudExporter } from './pino_otel_transport.js';
@@ -117,6 +118,7 @@ describe('recording disabled upload gate', () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
+    initializeLogger({ pretty: false, level: 'silent' });
     uploadGate.reset();
     process.env.LIVEKIT_API_KEY = 'devkey';
     process.env.LIVEKIT_API_SECRET = 'secretsecretsecretsecretsecretsecret';
@@ -142,7 +144,7 @@ describe('recording disabled upload gate', () => {
   });
 
   it('returns a synthetic ok response once uploads are disabled', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     uploadGate.disable();
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
@@ -152,14 +154,16 @@ describe('recording disabled upload gate', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('warns once per session', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  it('warns through the configured logger once per session', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     uploadGate.disable();
     uploadGate.disable();
 
     expect(uploadGate.disabled).toBe(true);
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(consoleWarn).not.toHaveBeenCalled();
 
     uploadGate.reset();
     uploadGate.disable();
@@ -168,7 +172,7 @@ describe('recording disabled upload gate', () => {
   });
 
   it('warns once when disabled concurrently', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
 
     await Promise.all(
       Array.from({ length: 32 }, () => Promise.resolve().then(() => uploadGate.disable())),
@@ -182,7 +186,7 @@ describe('recording disabled upload gate', () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(statusProto(DISABLED_MSG), { status: 401 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     const exporter = new SimpleOTLPHttpLogExporter({
       cloudHostname: 'example.livekit.cloud',
       resourceAttributes: {},
@@ -221,7 +225,7 @@ describe('recording disabled upload gate', () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(statusProto(DISABLED_MSG), { status: 401 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     const exporter = new PinoCloudExporter({
       cloudHostname: 'example.livekit.cloud',
       roomId: 'room1',
@@ -241,7 +245,7 @@ describe('recording disabled upload gate', () => {
   it('recording upload latches disabled responses without throwing', async () => {
     vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
     const submitSpy = mockFormSubmit(401, statusProto(DISABLED_MSG));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     const report = makeReport({
       audio: false,
       traces: false,
@@ -288,7 +292,7 @@ describe('recording disabled upload gate', () => {
   });
 
   it('does not let an old in-flight disabled response latch a new gate generation', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     let markFirstRequestStarted!: () => void;
     let releaseFirstResponse!: () => void;
     const firstRequestStarted = new Promise<void>((resolve) => {
@@ -328,7 +332,7 @@ describe('recording disabled upload gate', () => {
   });
 
   it('short-circuits trace exports without patching process HTTP functions', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     const originalRequest = http.request;
     const harness = await createTraceHarness(() => ({
       status: 401,

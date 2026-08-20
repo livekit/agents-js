@@ -5,6 +5,7 @@ import { type ExportResult, ExportResultCode } from '@opentelemetry/core';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { OTLPExporterError } from '@opentelemetry/otlp-exporter-base';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
+import { log } from '../log_core.js';
 
 const DISABLED_MARKERS = ['data recording is disabled', 'disabled by owner'];
 
@@ -41,7 +42,7 @@ class UploadGate {
     if (generation !== this.currentGeneration) return;
     if (this.isDisabled) return;
     this.isDisabled = true;
-    console.warn(
+    log().warn(
       'LiveKit Cloud data recording is disabled for this project; ' +
         'skipping telemetry and recording uploads for this session',
     );
