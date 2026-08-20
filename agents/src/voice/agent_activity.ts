@@ -2050,6 +2050,9 @@ export class AgentActivity implements RecognitionHooks {
         { user_input: info.newTranscript },
         'skipping user input, speech scheduling is paused',
       );
+      if (this.agentSession?._closing) {
+        this.commitSkippedUserTurn(info);
+      }
       // TODO(shubhra): should we "forward" this new turn to the next agent/activity?
       return true;
     }

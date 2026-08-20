@@ -391,6 +391,7 @@ export class AudioRecognition {
   private overlapOpen = false;
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
   private closed = false;
+  private readonly closeWakeController = new AbortController();
 
   // backchannel boundary for adaptive interruption suppression
   private backchannelBoundary?: [number, number];
@@ -1671,7 +1672,15 @@ export class AudioRecognition {
 
         if (extraSleep > 0) {
           // add delay to see if there's a potential upcoming EOU task that cancels this one
-          await delay(Math.max(extraSleep, 0), { signal: controller.signal });
+          try {
+            await delay(Math.max(extraSleep, 0), {
+              signal: AbortSignal.any([controller.signal, this.closeWakeController.signal]),
+            });
+          } catch (error) {
+            if (!this.closeWakeController.signal.aborted) {
+              throw error;
+            }
+          }
         }
 
         if (controller.signal.aborted) {
@@ -1773,6 +1782,7 @@ export class AudioRecognition {
           // ignore aborted errors
           return;
         }
+        if (this.closed) return;
         this.logger.error(err, 'Error in EOU detection task:');
       });
   }
@@ -2304,16 +2314,31 @@ export class AudioRecognition {
           this.logger.debug('User turn commit task cancelled');
           return;
         }
+        if (this.closed) return;
         this.logger.error(err, 'Error in user turn commit task:');
       });
   }
 
   async close() {
     this.closed = true;
+    this.closeWakeController.abort();
     this.overlapOpen = false;
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();
-    await this.commitUserTurnTask?.cancelAndWait();
+    // WARNING: These tasks are intentionally allowed to finish so the final user turn is not
+    // lost. Cleanup can therefore continue past the worker's session-close timeout.
+    if (this.commitUserTurnTask) {
+      try {
+        await this.commitUserTurnTask.result;
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          this.logger.warn(
+            { errorType: error instanceof Error ? error.constructor.name : typeof error },
+            'error while committing the final user turn on close',
+          );
+        }
+      }
+    }
     await this.stopSttTasks();
 
     if (this.sttPipeline) {
@@ -2333,7 +2358,18 @@ export class AudioRecognition {
     this.subscriberWriters = [];
 
     await this.vadTask?.cancelAndWait();
-    await this.bounceEOUTask?.cancelAndWait();
+    if (this.bounceEOUTask) {
+      try {
+        await this.bounceEOUTask.result;
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          this.logger.warn(
+            { errorType: error instanceof Error ? error.constructor.name : typeof error },
+            'error while completing the final user turn on close',
+          );
+        }
+      }
+    }
     await this.interruptionTask?.cancelAndWait();
 
     if (this.turnDetectorStream !== undefined) {
