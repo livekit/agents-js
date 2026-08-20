@@ -4,10 +4,12 @@
 import { Future, Task, type TimedString, llm, stream } from '@livekit/agents';
 import { realtime } from '@livekit/agents-plugin-openai';
 import type { AudioFrame } from '@livekit/rtc-node';
+import { ReadableStream } from 'node:stream/web';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RealtimeModel } from './realtime_model.js';
 
 type SessionInternals = {
+  createSessionUpdateEvent: () => realtime.SessionUpdateEvent;
   createChatCtxUpdateEvents: (
     chatCtx: llm.ChatContext,
   ) => Promise<(realtime.ConversationItemCreateEvent | realtime.ConversationItemDeleteEvent)[]>;
@@ -22,9 +24,13 @@ type SessionInternals = {
   handleResponseTextDelta: (event: realtime.ResponseTextDeltaEvent) => void;
   interrupt: () => Promise<void>;
   pendingTranscription?: realtime.ConversationItemInputAudioTranscriptionCompletedEvent;
+  pendingSayEventIds: string[];
+  discardedEventIds: Set<string>;
+  responseCreatedFutures: Record<string, unknown>;
   remoteChatCtx: llm.RemoteChatContext;
   resetInputTurnState: () => void;
   responseSpoke: boolean;
+  sendEvent: (event: realtime.ClientEvent) => void;
 };
 
 type EmittedTranscript = llm.InputTranscriptionCompleted;
@@ -149,6 +155,159 @@ describe('xAI realtime turn state', () => {
       },
     });
   }
+
+  it('uses current voice and transcription defaults', () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const options = model._options;
+
+    expect(model.model).toBe('grok-voice-latest');
+    expect(model.capabilities.supportsSay).toBe(true);
+    expect(options.inputAudioTranscription).toEqual({ model: 'grok-transcribe' });
+  });
+
+  it('lifts voice and turn detection in session updates', () => {
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      reasoning: { effort: 'high' },
+      speed: 1.2,
+    });
+    const session = model.session() as unknown as SessionInternals;
+
+    const event = session.createSessionUpdateEvent();
+
+    expect(event.session.voice).toBe('ara');
+    expect(event.session.turn_detection).toEqual({
+      type: 'server_vad',
+      threshold: 0.5,
+      prefix_padding_ms: 300,
+      silence_duration_ms: 200,
+      create_response: true,
+      interrupt_response: true,
+    });
+    expect(event.session.reasoning).toEqual({ effort: 'high' });
+    expect(event.session.audio?.output?.voice).toBeUndefined();
+    expect(event.session.audio?.input?.turn_detection).toBeUndefined();
+    expect(event.session.audio?.output?.speed).toBe(1.2);
+  });
+
+  it('emits transcription.updated as a non-final caption', () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const realtimeSession = model.session();
+    const emitted: EmittedTranscript[] = [];
+    realtimeSession.on('input_audio_transcription_completed', (event) => emitted.push(event));
+
+    realtimeSession.emit('openai_server_event_received', {
+      type: 'conversation.item.input_audio_transcription.updated',
+      item_id: 'item_1',
+      transcript: 'hello there',
+    });
+
+    expect(emitted).toEqual([{ itemId: 'item_1', transcript: 'hello there', isFinal: false }]);
+  });
+
+  it('sends force_message and resolves say from response.created', async () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as SessionInternals;
+    const sent: realtime.ClientEvent[] = [];
+    session.sendEvent = (event) => sent.push(event);
+
+    const generationPromise = realtimeSession.say('Hello from force message.');
+    await Promise.resolve();
+    responseCreated(session);
+    const generation = await generationPromise;
+
+    expect(generation.userInitiated).toBe(true);
+    expect(sent[0]).toMatchObject({
+      type: 'conversation.item.create',
+      item: {
+        type: 'force_message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'Hello from force message.' }],
+      },
+    });
+  });
+
+  it('keeps an aborted say tag so a late response is discarded', async () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as SessionInternals;
+    const sent: realtime.ClientEvent[] = [];
+    session.sendEvent = (event) => sent.push(event);
+    const controller = new AbortController();
+
+    const generationPromise = realtimeSession.say('hello', { signal: controller.signal });
+    await Promise.resolve();
+    const sayId = session.pendingSayEventIds[0];
+    controller.abort();
+    await expect(generationPromise).rejects.toThrow('say aborted');
+
+    expect(session.pendingSayEventIds).toEqual([sayId]);
+    expect(session.discardedEventIds).toContain(sayId);
+    expect(sent).toContainEqual({ type: 'response.cancel' });
+
+    responseCreated(session);
+    expect(session.currentGeneration).toBeInstanceOf(realtime.DiscardedGeneration);
+    expect(session.pendingSayEventIds).toEqual([]);
+    expect(session.discardedEventIds).not.toContain(sayId);
+  });
+
+  it('does not cancel another response when say is aborted before send', async () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as SessionInternals;
+    const sent: realtime.ClientEvent[] = [];
+    session.sendEvent = (event) => sent.push(event);
+    const controller = new AbortController();
+    const text = new ReadableStream<string>({
+      async pull(streamController) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        streamController.enqueue('too late');
+        streamController.close();
+      },
+    });
+
+    const generationPromise = realtimeSession.say(text, { signal: controller.signal });
+    controller.abort();
+    await expect(generationPromise).rejects.toThrow('say aborted');
+
+    expect(session.pendingSayEventIds).toEqual([]);
+    expect(session.discardedEventIds.size).toBe(0);
+    expect(sent).toEqual([]);
+  });
+
+  it('settles a pending say when the session closes', async () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as SessionInternals;
+    session.sendEvent = () => {};
+
+    const generationPromise = realtimeSession.say('still speaking');
+    await Promise.resolve();
+    await realtimeSession.close();
+
+    await expect(generationPromise).rejects.toThrow('say aborted');
+    expect(session.responseCreatedFutures).toEqual({});
+  });
+
+  it('matches overlapping say responses FIFO', async () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as SessionInternals;
+    session.sendEvent = () => {};
+
+    const first = realtimeSession.say('first');
+    const second = realtimeSession.say('second');
+    await Promise.resolve();
+    const pending = [...session.pendingSayEventIds];
+    responseCreated(session);
+    responseCreated(session);
+
+    await expect(first).resolves.toMatchObject({ userInitiated: true });
+    await expect(second).resolves.toMatchObject({ userInitiated: true });
+    expect(pending).toHaveLength(2);
+    expect(session.pendingSayEventIds).toEqual([]);
+  });
 
   function replyItemAnnounced(session: SessionInternals, itemId: string, after: string): void {
     session.remoteChatCtx.insert(
