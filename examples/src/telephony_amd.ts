@@ -59,6 +59,30 @@ export default defineAgent({
       room: ctx.room,
     });
 
+    // Hang up the SIP call by deleting the room when the agent shuts down.
+    // Register before dialing so early call failures are cleaned up too.
+    ctx.addShutdownCallback(async () => {
+      const roomName = ctx.room.name;
+      if (
+        !roomName ||
+        !process.env.LIVEKIT_URL ||
+        !process.env.LIVEKIT_API_KEY ||
+        !process.env.LIVEKIT_API_SECRET
+      ) {
+        return;
+      }
+      const rooms = new RoomServiceClient(
+        process.env.LIVEKIT_URL,
+        process.env.LIVEKIT_API_KEY,
+        process.env.LIVEKIT_API_SECRET,
+      );
+      try {
+        await rooms.deleteRoom(roomName);
+      } catch (err) {
+        logger.warn({ err }, 'failed to delete room during hangup');
+      }
+    });
+
     const phoneNumber = process.env.SIP_PHONE_NUMBER;
     const participantIdentity = process.env.SIP_PARTICIPANT_IDENTITY;
     const outboundTrunkId = process.env.LIVEKIT_OUTBOUND_TRUNK_ID;
@@ -78,6 +102,9 @@ export default defineAgent({
     const detector = new voice.AMD(session, {
       participantIdentity,
     });
+    const detection = detector.execute();
+    // Keep the concurrent detection handled until it is awaited after dialing.
+    void detection.catch(() => {});
 
     try {
       // Start running AMD before creating the SIP participant to avoid losing
@@ -102,12 +129,26 @@ export default defineAgent({
         );
 
         logger.info({ participantIdentity }, 'creating SIP participant');
-        await sip.createSipParticipant(outboundTrunkId, phoneNumber, roomName, {
-          participantIdentity,
-          waitUntilAnswered: true,
-        });
+        try {
+          await sip.createSipParticipant(outboundTrunkId, phoneNumber, roomName, {
+            participantIdentity,
+            waitUntilAnswered: true,
+            // The API timeout must outlast the ring window; AMD starts after answer.
+            timeout: 45,
+          });
+        } catch (err) {
+          logger.info({ err }, 'call was not answered');
+          ctx.shutdown('call not answered');
+          return;
+        }
 
-        const participant = await ctx.waitForParticipant(participantIdentity);
+        // The call may end just before waitUntilAnswered returns.
+        const participant = ctx.room.remoteParticipants.get(participantIdentity);
+        if (!participant) {
+          logger.info('SIP participant missing, ending');
+          ctx.shutdown('participant missing');
+          return;
+        }
         const subscribedAudioTrackSids: string[] = [];
         for (const pub of participant.trackPublications.values()) {
           if (pub.subscribed && pub.kind === TrackKind.KIND_AUDIO && pub.sid) {
@@ -125,7 +166,7 @@ export default defineAgent({
         );
       }
 
-      const result = await detector.execute();
+      const result = await detection;
 
       if (
         result.category === voice.AMDCategory.HUMAN ||
@@ -153,31 +194,8 @@ export default defineAgent({
       }
     } finally {
       await detector.aclose();
+      await detection.catch(() => {});
     }
-
-    // Hang up the SIP call by deleting the room when the agent shuts down.
-    // Mirrors python's `add_shutdown_callback(hangup)` pattern.
-    ctx.addShutdownCallback(async () => {
-      const roomName = ctx.room.name;
-      if (
-        !roomName ||
-        !process.env.LIVEKIT_URL ||
-        !process.env.LIVEKIT_API_KEY ||
-        !process.env.LIVEKIT_API_SECRET
-      ) {
-        return;
-      }
-      const rooms = new RoomServiceClient(
-        process.env.LIVEKIT_URL,
-        process.env.LIVEKIT_API_KEY,
-        process.env.LIVEKIT_API_SECRET,
-      );
-      try {
-        await rooms.deleteRoom(roomName);
-      } catch (err) {
-        logger.warn({ err }, 'failed to delete room during hangup');
-      }
-    });
   },
 });
 

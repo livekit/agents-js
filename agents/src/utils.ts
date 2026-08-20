@@ -1268,7 +1268,9 @@ export async function waitForTrackPublication({
   /**
    * Restrict matching to a specific participant identity. When omitted (or
    * `undefined`), matches whichever remote participant publishes a matching
-   * track first. Pass `''` to match no one (rare, use `undefined` instead).
+   * track first. Rejects if the requested participant disconnects before a
+   * matching publication is found. Pass `''` to match no one (rare, use
+   * `undefined` instead).
    */
   identity?: string;
   kind: TrackKind;
@@ -1358,6 +1360,14 @@ export async function waitForTrackPublication({
     }
   };
 
+  const onParticipantDisconnected = (participant: RemoteParticipant) => {
+    if (participant.identity === identity && !fut.done) {
+      fut.reject(
+        new Error(`Participant ${identity} disconnected while waiting for track publication`),
+      );
+    }
+  };
+
   if (waitForSubscription) {
     room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
   } else {
@@ -1365,6 +1375,9 @@ export async function waitForTrackPublication({
   }
   if (includeLocal) {
     room.on(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
+  }
+  if (identity !== undefined) {
+    room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
   }
 
   const onAbort = () => {
@@ -1408,6 +1421,9 @@ export async function waitForTrackPublication({
     }
     if (includeLocal) {
       room.off(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
+    }
+    if (identity !== undefined) {
+      room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
     }
     signal?.removeEventListener('abort', onAbort);
   }
