@@ -391,6 +391,7 @@ export class AudioRecognition {
   private overlapOpen = false;
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
   private closed = false;
+  private readonly closeWakeController = new AbortController();
 
   // backchannel boundary for adaptive interruption suppression
   private backchannelBoundary?: [number, number];
@@ -1671,7 +1672,15 @@ export class AudioRecognition {
 
         if (extraSleep > 0) {
           // add delay to see if there's a potential upcoming EOU task that cancels this one
-          await delay(Math.max(extraSleep, 0), { signal: controller.signal });
+          try {
+            await delay(Math.max(extraSleep, 0), {
+              signal: AbortSignal.any([controller.signal, this.closeWakeController.signal]),
+            });
+          } catch (error) {
+            if (!this.closeWakeController.signal.aborted) {
+              throw error;
+            }
+          }
         }
 
         if (controller.signal.aborted) {
@@ -2312,6 +2321,7 @@ export class AudioRecognition {
 
   async close() {
     this.closed = true;
+    this.closeWakeController.abort();
     this.overlapOpen = false;
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();

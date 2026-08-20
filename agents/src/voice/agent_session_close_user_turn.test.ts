@@ -12,6 +12,8 @@ import { AudioInput } from './io.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
 const TRANSCRIPT = 'the mailbox is full and cannot accept new messages at this time';
+const ENDPOINTING_DELAY_MS = 3_000;
+const CLOSE_DEADLINE_MS = 1_500;
 
 class FakeAudioInput extends AudioInput {
   readonly #controller: ReadableStreamDefaultController<AudioFrame>;
@@ -38,14 +40,17 @@ class FakeAudioInput extends AudioInput {
 describe('AgentSession close final user turn', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
-  it('commits a trailing transcript', async () => {
+  it('commits a trailing transcript without waiting for endpointing', async () => {
     const stt = new FakeSTT({
       fakeUserSpeeches: [{ startTime: 50, endTime: 200, transcript: TRANSCRIPT, sttDelay: 300 }],
     });
     const session = new AgentSession({
       stt,
       llm: new FakeLLM(),
-      turnHandling: { turnDetection: 'stt' },
+      turnHandling: {
+        turnDetection: 'stt',
+        endpointing: { minDelay: ENDPOINTING_DELAY_MS, maxDelay: ENDPOINTING_DELAY_MS },
+      },
     });
     const agent = new Agent({ instructions: 'You are a helpful assistant.' });
     const audioInput = new FakeAudioInput();
@@ -54,8 +59,11 @@ describe('AgentSession close final user turn', () => {
 
     audioInput.push(100);
     await new Promise((resolve) => setTimeout(resolve, 100));
+    const closeStartedAt = performance.now();
     await session.close();
+    const closeDurationMs = performance.now() - closeStartedAt;
 
+    expect(closeDurationMs).toBeLessThan(CLOSE_DEADLINE_MS);
     expect(
       agent.chatCtx.items
         .filter((item) => item.type === 'message' && item.role === 'user')
