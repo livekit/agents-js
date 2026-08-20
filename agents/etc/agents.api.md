@@ -45,6 +45,7 @@ import { SimulationRun_Job } from '@livekit/protocol';
 import type { SIPOutboundConfig } from '@livekit/protocol';
 import { Span } from '@opentelemetry/api';
 import type { Span as Span_2 } from '@opentelemetry/sdk-trace-base';
+import type { SpanExporter } from '@opentelemetry/sdk-trace-base';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
@@ -2359,6 +2360,7 @@ export enum CloseReason {
 //
 // @public
 interface CloudSpanProcessorOptions {
+    exporter: SpanExporter;
     headers: Record<string, string>;
     url: string;
 }

@@ -609,6 +609,8 @@ class RecorderAudioOutput extends AudioOutput {
   private currentSegment?: RecorderOutputSegment;
   private deferredFinishes: PlaybackFinishedEvent[] = [];
   private _startedWallTime?: number;
+  private currentPauseStart?: number;
+  private pauseWallTimes: Array<[number, number]> = [];
   private _logger = log();
 
   _lastSpeechEndTime?: number;
@@ -632,9 +634,13 @@ class RecorderAudioOutput extends AudioOutput {
   }
 
   pause(): void {
-    const segment = this.segments[0];
+    if (this.currentPauseStart === undefined && this.recorderIO.recording) {
+      this.currentPauseStart = Date.now();
+    }
+
+    const segment = this.currentSegment ?? this.segments.at(-1);
     if (segment && segment.currentPauseStart === undefined && this.recorderIO.recording) {
-      segment.currentPauseStart = Date.now();
+      segment.currentPauseStart = this.currentPauseStart;
     }
 
     if (this.nextInChain) {
@@ -646,9 +652,15 @@ class RecorderAudioOutput extends AudioOutput {
    * Resume playback and record the pause interval
    */
   resume(): void {
-    const segment = this.segments[0];
+    const resumedAt = Date.now();
+    if (this.currentPauseStart !== undefined && this.recorderIO.recording) {
+      this.pauseWallTimes.push([this.currentPauseStart, resumedAt]);
+      this.currentPauseStart = undefined;
+    }
+
+    const segment = this.currentSegment ?? this.segments.at(-1);
     if (segment?.currentPauseStart !== undefined && this.recorderIO.recording) {
-      segment.pauseWallTimes.push([segment.currentPauseStart, Date.now()]);
+      segment.pauseWallTimes.push([segment.currentPauseStart, resumedAt]);
       segment.currentPauseStart = undefined;
     }
 
@@ -895,6 +907,14 @@ class RecorderAudioOutput extends AudioOutput {
     const startedNewSegment = this.capturedPlayoutSegments > capturedBefore;
     let segment = this.currentSegment;
     if (startedNewSegment) {
+      const captureTime = Date.now();
+      this.pauseWallTimes = this.pauseWallTimes
+        .filter(([, end]) => end > captureTime)
+        .map(([start, end]) => [Math.max(start, captureTime), end]);
+      if (this.currentPauseStart !== undefined) {
+        this.currentPauseStart = Math.max(this.currentPauseStart, captureTime);
+      }
+
       segment = {
         frames: [],
         acceptedDownstream: this.nextInChain === undefined,
@@ -910,8 +930,9 @@ class RecorderAudioOutput extends AudioOutput {
         // would make the elapsed window ~zero (negative if we are still paused, since
         // `finishTime` is then the pause start) and truncate away every frame the sink just
         // reported as played.
-        speechStartTime: Date.now(),
-        pauseWallTimes: [],
+        speechStartTime: captureTime,
+        currentPauseStart: this.currentPauseStart,
+        pauseWallTimes: [...this.pauseWallTimes],
       };
       this.segments.push(segment);
       this.currentSegment = segment;

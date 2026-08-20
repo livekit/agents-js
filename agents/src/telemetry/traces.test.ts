@@ -17,7 +17,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
-import { setTracerProvider, setupCloudTracer, tracer, uploadSessionReport } from './traces.js';
+import {
+  type CloudSpanProcessorOptions,
+  setTracerProvider,
+  setupCloudTracer,
+  tracer,
+  uploadSessionReport,
+} from './traces.js';
 
 describe('setupCloudTracer default provider resource', () => {
   let provider: NodeTracerProvider | undefined;
@@ -271,10 +277,13 @@ describe('setupCloudTracer with a user-configured provider', () => {
     expect(registeredProcessors[2]).toBeInstanceOf(BatchSpanProcessor);
   });
 
-  it('prefers a user-supplied cloud processor factory over the built-in exporter', async () => {
+  it('passes the gated exporter to a user-supplied cloud processor factory', async () => {
     const registeredProcessors: SpanProcessor[] = [];
-    const factoryProcessor = new SimpleSpanProcessor(new InMemorySpanExporter());
-    const createCloudSpanProcessor = vi.fn(() => factoryProcessor);
+    let factoryProcessor: SimpleSpanProcessor | undefined;
+    const createCloudSpanProcessor = vi.fn((options: CloudSpanProcessorOptions) => {
+      factoryProcessor = new SimpleSpanProcessor(options.exporter);
+      return factoryProcessor;
+    });
     setTracerProvider(userProvider, {
       registerSpanProcessor: (processor) => registeredProcessors.push(processor),
       createCloudSpanProcessor,

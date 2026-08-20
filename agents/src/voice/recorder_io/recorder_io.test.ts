@@ -534,6 +534,102 @@ describe('RecorderIO close', () => {
 });
 
 describe('RecorderAudioOutput', () => {
+  it('drops pauses before the segment', async () => {
+    vi.useFakeTimers();
+    try {
+      const writes: AudioFrame[][] = [];
+      const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+      const recorderState = recorder as unknown as {
+        started: boolean;
+        writeCb: (buf: AudioFrame[]) => void;
+      };
+      recorderState.started = true;
+      recorderState.writeCb = (buf) => writes.push(buf);
+      const output = recorder.recordOutput(new FakeAudioOutput());
+
+      vi.setSystemTime(10_000);
+      output.pause();
+      vi.setSystemTime(10_500);
+      output.resume();
+      vi.setSystemTime(11_000);
+      const frame = makeFrame(20);
+      await output.captureFrame(frame);
+      output.flush();
+      vi.setSystemTime(11_020);
+      output.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
+
+      expect(writes).toHaveLength(1);
+      expect(writes[0]!.reduce((sum, item) => sum + item.samplesPerChannel, 0)).toBe(960);
+      recorderState.started = false;
+      await recorder.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clips a pause that overlaps the segment', async () => {
+    vi.useFakeTimers();
+    try {
+      const writes: AudioFrame[][] = [];
+      const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+      const recorderState = recorder as unknown as {
+        started: boolean;
+        writeCb: (buf: AudioFrame[]) => void;
+      };
+      recorderState.started = true;
+      recorderState.writeCb = (buf) => writes.push(buf);
+      const output = recorder.recordOutput(new FakeAudioOutput());
+
+      vi.setSystemTime(10_000);
+      output.pause();
+      vi.setSystemTime(10_500);
+      const frame = makeFrame(20);
+      await output.captureFrame(frame);
+      vi.setSystemTime(10_700);
+      output.resume();
+      output.flush();
+      vi.setSystemTime(10_720);
+      output.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
+
+      expect(writes).toHaveLength(1);
+      expect(writes[0]!.reduce((sum, item) => sum + item.samplesPerChannel, 0)).toBe(10560);
+      recorderState.started = false;
+      await recorder.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps trailing silence for a midsegment pause', async () => {
+    vi.useFakeTimers();
+    try {
+      const writes: AudioFrame[][] = [];
+      const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+      const recorderState = recorder as unknown as {
+        started: boolean;
+        writeCb: (buf: AudioFrame[]) => void;
+      };
+      recorderState.started = true;
+      recorderState.writeCb = (buf) => writes.push(buf);
+      const output = recorder.recordOutput(new FakeAudioOutput());
+
+      vi.setSystemTime(10_000);
+      await output.captureFrame(makeFrame(100));
+      vi.setSystemTime(10_050);
+      output.pause();
+      output.flush();
+      vi.setSystemTime(10_200);
+      output.onPlaybackFinished({ playbackPosition: 0.05, interrupted: true });
+
+      expect(writes).toHaveLength(1);
+      expect(writes[0]!.reduce((sum, item) => sum + item.samplesPerChannel, 0)).toBe(9600);
+      recorderState.started = false;
+      await recorder.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not lose a playback finish emitted during first-frame capture', async () => {
     const recorder = new RecorderIO({ agentSession: {} as AgentSession });
     const output = recorder.recordOutput(new FinishDuringCaptureOutput());

@@ -15,7 +15,6 @@ import {
   trace,
 } from '@opentelemetry/api';
 import { SeverityNumber } from '@opentelemetry/api-logs';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
 import {
   defaultResource,
@@ -23,7 +22,12 @@ import {
   envDetector,
   resourceFromAttributes,
 } from '@opentelemetry/resources';
-import type { ReadableSpan, Span as SdkSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
+import type {
+  ReadableSpan,
+  Span as SdkSpan,
+  SpanExporter,
+  SpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
@@ -42,6 +46,7 @@ import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
+import { UploadGateTraceExporter, uploadGate } from './upload_gate.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -242,12 +247,14 @@ export class FanoutSpanProcessor implements SpanProcessor {
   }
 }
 
-/** Connection details for building a span processor that exports to LiveKit Cloud. */
+/** Inputs for building a span processor that exports to LiveKit Cloud. */
 export interface CloudSpanProcessorOptions {
   /** OTLP/HTTP protobuf endpoint for LiveKit Cloud traces. */
   url: string;
   /** Request headers, including the authorization token, the exporter must send. */
   headers: Record<string, string>;
+  /** Framework-owned exporter that applies LiveKit Cloud's recording-disabled upload gate. */
+  exporter: SpanExporter;
 }
 
 interface CustomProviderConfig {
@@ -276,14 +283,13 @@ export interface SetTracerProviderOptions {
    * only to override how that processor is constructed:
    *
    * ```typescript
-   * import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
    * import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
    *
-   * createCloudSpanProcessor: ({ url, headers }) =>
-   *   new BatchSpanProcessor(new OTLPTraceExporter({ url, headers }))
+   * createCloudSpanProcessor: ({ exporter }) => new BatchSpanProcessor(exporter)
    * ```
    *
-   * The returned processor must use OpenTelemetry SDK 2.x.
+   * Build the processor around the supplied exporter so the recording-disabled upload gate remains
+   * active. The returned processor must use OpenTelemetry SDK 2.x.
    */
   createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessor;
 }
@@ -368,6 +374,8 @@ export async function setupCloudTracer(options: {
   enableLogs?: boolean;
   metadata?: Attributes;
 }): Promise<void> {
+  uploadGate.reset();
+
   const {
     roomId,
     jobId,
@@ -432,10 +440,13 @@ export async function setupCloudTracer(options: {
       );
 
     if (enableTraces) {
-      const cloudExporterOptions: CloudSpanProcessorOptions = {
-        url: `https://${cloudHostname}/observability/traces/otlp/v0`,
-        headers,
-      };
+      const url = `https://${cloudHostname}/observability/traces/otlp/v0`;
+      const createCloudExporter = () =>
+        new UploadGateTraceExporter({
+          url,
+          headers,
+          compression: CompressionAlgorithm.GZIP,
+        });
 
       // If the user already configured a tracer provider (e.g. setTracerProvider in the job
       // entrypoint), attach the cloud exporter to it rather than replacing it, so spans reach
@@ -449,12 +460,7 @@ export async function setupCloudTracer(options: {
           resource,
           spanProcessors: [
             new MetadataSpanProcessor(sessionMetadata),
-            new BatchSpanProcessor(
-              new OTLPTraceExporter({
-                ...cloudExporterOptions,
-                compression: CompressionAlgorithm.GZIP,
-              }),
-            ),
+            new BatchSpanProcessor(createCloudExporter()),
           ],
         });
         // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
@@ -472,14 +478,14 @@ export async function setupCloudTracer(options: {
               'using OpenTelemetry 2.x.',
           );
         } else {
+          const cloudExporterOptions: CloudSpanProcessorOptions = {
+            url,
+            headers,
+            exporter: createCloudExporter(),
+          };
           const cloudSpanProcessor = config.createCloudSpanProcessor
             ? config.createCloudSpanProcessor(cloudExporterOptions)
-            : new BatchSpanProcessor(
-                new OTLPTraceExporter({
-                  ...cloudExporterOptions,
-                  compression: CompressionAlgorithm.GZIP,
-                }),
-              );
+            : new BatchSpanProcessor(cloudExporterOptions.exporter);
 
           // The user's provider keeps its own Resource (incl. service.name): a provider has one
           // Resource shared by all exporters, so applying `resource` here would also relabel
@@ -769,6 +775,9 @@ export async function uploadSessionReport(options: {
   if (!recordingEnabled(report.options.recordingOptions)) {
     return;
   }
+  if (uploadGate.disabled) {
+    return;
+  }
 
   // Create OTLP HTTP exporter for chat history logs
   // Uses raw HTTP JSON format which is required by LiveKit Cloud
@@ -850,6 +859,9 @@ export async function uploadSessionReport(options: {
   }
 
   await logExporter.export(logRecords);
+  if (uploadGate.disabled) {
+    return;
+  }
 
   const hasAudio = Boolean(
     report.options.recordingOptions.audio &&
@@ -949,6 +961,7 @@ export async function uploadSessionReport(options: {
   // Upload to LiveKit Cloud using form-data's submit method
   // This properly streams the multipart form with all headers including Content-Length
   return new ThrowsPromise<void, Error>((resolve, reject) => {
+    const uploadGeneration = uploadGate.generation;
     formData.submit(
       {
         protocol: 'https:',
@@ -967,9 +980,9 @@ export async function uploadSessionReport(options: {
 
         if (res.statusCode && res.statusCode >= 400) {
           // Read response body for error details
-          let body = '';
+          const chunks: Buffer[] = [];
           res.on('data', (chunk) => {
-            body += chunk.toString();
+            chunks.push(Buffer.from(chunk));
           });
           res.on('error', (readErr) => {
             reject(
@@ -979,9 +992,15 @@ export async function uploadSessionReport(options: {
             );
           });
           res.on('end', () => {
+            const body = Buffer.concat(chunks);
+            if (uploadGate.isDisabledResponse(res.statusCode ?? 0, body)) {
+              uploadGate.disable(uploadGeneration);
+              resolve();
+              return;
+            }
             reject(
               new Error(
-                `Failed to upload session report: ${res.statusCode} ${res.statusMessage} - ${body}`,
+                `Failed to upload session report: ${res.statusCode} ${res.statusMessage} - ${body.toString('utf8')}`,
               ),
             );
           });
