@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Gandr
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
@@ -126,30 +126,31 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 
   protected async run() {
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       const { apiKey, model, voice, speed, responseFormat, baseURL } = this.opts;
 
       let response: Response;
       try {
-        response = await fetch(
-          `${baseURL ?? DEFAULT_BASE_URL}/audio/speech`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model,
-              input: this.inputText,
-              voice,
-              response_format: responseFormat ?? 'pcm',
-              speed,
-            }),
-            signal: this.abortSignal,
+        response = await fetch(`${baseURL ?? DEFAULT_BASE_URL}/audio/speech`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
           },
-        );
+          body: JSON.stringify({
+            model,
+            input: this.inputText,
+            voice,
+            response_format: responseFormat ?? 'pcm',
+            speed,
+          }),
+          signal: this.abortSignal,
+        });
       } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw error;
+        }
         throw new APIConnectionError({
           message: `Gandr request failed: ${String(error)}`,
         });
@@ -177,7 +178,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
       const requestId = shortuuid();
       const audioByteStream = new AudioByteStream(GANDR_SAMPLE_RATE, GANDR_CHANNELS);
-      const reader = response.body.getReader();
+      reader = response.body.getReader();
 
       let lastFrame: AudioFrame | undefined;
       const sendLastFrame = (final: boolean) => {
@@ -191,11 +192,17 @@ export class ChunkedStream extends tts.ChunkedStream {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const frames = audioByteStream.write(value.buffer);
+        const frames = audioByteStream.write(value);
         for (const frame of frames) {
           sendLastFrame(false);
           lastFrame = frame;
         }
+      }
+
+      for (const frame of audioByteStream.flush()) {
+        if (frame.samplesPerChannel === 0) continue;
+        sendLastFrame(false);
+        lastFrame = frame;
       }
 
       sendLastFrame(true);
@@ -211,6 +218,11 @@ export class ChunkedStream extends tts.ChunkedStream {
       }
       throw new APIConnectionError({ message: `Gandr request failed: ${String(error)}` });
     } finally {
+      try {
+        await reader?.cancel();
+      } catch {
+        // stream already errored or closed
+      }
       this.queue.close();
     }
   }

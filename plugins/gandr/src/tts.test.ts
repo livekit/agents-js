@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Gandr
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import { initializeLogger } from '@livekit/agents';
