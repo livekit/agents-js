@@ -37,6 +37,7 @@ const defaultSessionOptions = {
     transcript: false,
     redaction: false,
   },
+  expressive: false,
 } as const satisfies AgentSessionOptions & { recordingOptions: ResolvedRecordingOptions };
 
 const defaultLegacyVoiceOptions: VoiceOptions = {

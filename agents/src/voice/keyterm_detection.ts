@@ -282,6 +282,16 @@ export class KeytermDetector extends (EventEmitter as new () => TypedEmitter<Key
     }
   }
 
+  swapStt(stt: STT | undefined): void {
+    if (stt === this.stt) {
+      return;
+    }
+    this.stt = stt;
+    if (stt !== undefined && this.keyterms.length > 0) {
+      stt._updateSessionKeyterms(this.keyterms);
+    }
+  }
+
   /** Bind this activity's STT (always) and start detection (if enabled). */
   start(session: KeytermDetectorSession, stt: STT): void {
     // static keyterms must reach the recognizer even with detection disabled

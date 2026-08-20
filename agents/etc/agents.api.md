@@ -101,6 +101,9 @@ export class Agent<UserData = any> {
         transcriptionNode(agent: Agent, text: ReadableStream_2<string | TimedString> | AsyncIterable<string | TimedString>, _modelSettings: ModelSettings): Promise<ReadableStream_2<string | TimedString> | null>;
         realtimeAudioOutputNode(_agent: Agent, audio: ReadableStream_2<AudioFrame> | AsyncIterable<AudioFrame>, _modelSettings: ModelSettings): Promise<ReadableStream_2<AudioFrame> | null>;
     };
+    get expressive(): boolean | ExpressiveOptions | undefined;
+    // @internal (undocumented)
+    _expressive?: boolean | ExpressiveOptions;
     // (undocumented)
     getActivityOrThrow(): AgentActivity;
     // (undocumented)
@@ -111,6 +114,8 @@ export class Agent<UserData = any> {
     _instructions: string | Instructions;
     // (undocumented)
     get llm(): LLM | RealtimeModel | undefined;
+    // @internal (undocumented)
+    _llm?: LLM | RealtimeModel | null;
     // (undocumented)
     llmNode(chatCtx: ChatContext, toolCtx: ToolContext, modelSettings: ModelSettings): Promise<ReadableStream_2<ChatChunk | string | FlushSentinel> | null>;
     // (undocumented)
@@ -129,6 +134,8 @@ export class Agent<UserData = any> {
     get session(): AgentSession<UserData>;
     // (undocumented)
     get stt(): STT | undefined;
+    // @internal (undocumented)
+    _stt?: STT | null;
     // (undocumented)
     sttNode(audio: ReadableStream_2<AudioFrame> | AsyncIterable<AudioFrame>, modelSettings: ModelSettings): Promise<ReadableStream_2<SpeechEvent | string> | null>;
     // (undocumented)
@@ -139,6 +146,8 @@ export class Agent<UserData = any> {
     transcriptionNode(text: ReadableStream_2<string | TimedString> | AsyncIterable<string | TimedString>, modelSettings: ModelSettings): Promise<ReadableStream_2<string | TimedString> | null>;
     // (undocumented)
     get tts(): TTS | undefined;
+    // @internal (undocumented)
+    _tts?: TTS | null;
     // (undocumented)
     ttsNode(text: ReadableStream_2<string> | AsyncIterable<string>, modelSettings: ModelSettings): Promise<ReadableStream_2<AudioFrame> | null>;
     // Warning: (ae-forgotten-export) The symbol "TurnHandlingOptions" needs to be exported by the entry point index.d.ts
@@ -150,11 +159,15 @@ export class Agent<UserData = any> {
     // (undocumented)
     updateInstructions(instructions: string | Instructions): Promise<void>;
     // (undocumented)
+    updateOptions(options?: AgentUpdateOptions): Promise<void>;
+    // (undocumented)
     updateTools(tools: ToolContextLike<UserData>): Promise<void>;
     // (undocumented)
     get useTtsAlignedTranscript(): boolean | undefined;
     // (undocumented)
     get vad(): VAD | undefined;
+    // @internal (undocumented)
+    _vad?: VAD | null;
 }
 
 // @internal
@@ -367,22 +380,23 @@ export interface AgentOptions<UserData> {
     allowInterruptions?: boolean;
     // (undocumented)
     chatCtx?: ChatContext;
+    expressive?: boolean | ExpressiveOptions;
     // (undocumented)
     id?: string;
     // (undocumented)
     instructions: string | Instructions;
     // (undocumented)
-    llm?: LLM | RealtimeModel | LLMModels;
+    llm?: LLM | RealtimeModel | LLMModels | null;
     // (undocumented)
     minConsecutiveSpeechDelay?: number;
     // (undocumented)
-    stt?: STT | ModelWithLanguage;
+    stt?: STT | ModelWithLanguage | null;
     // (undocumented)
     toolHandling?: ToolHandlingOptions;
     // (undocumented)
     tools?: ToolContextLike<UserData>;
     // (undocumented)
-    tts?: TTS | ModelWithVoice;
+    tts?: TTS | ModelWithVoice | null;
     // Warning: (ae-forgotten-export) The symbol "TurnDetectionMode" needs to be exported by the entry point index.d.ts
     //
     // @deprecated (undocumented)
@@ -392,7 +406,7 @@ export interface AgentOptions<UserData> {
     // (undocumented)
     useTtsAlignedTranscript?: boolean;
     // (undocumented)
-    vad?: VAD;
+    vad?: VAD | null;
 }
 
 // Warning: (ae-missing-release-tag) "AgentsConsole" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -619,10 +633,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         startTime?: number;
         otelContext?: Context;
     }): void;
-    // Warning: (ae-forgotten-export) The symbol "AgentSessionUpdateOptions" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
-    updateOptions(options: AgentSessionUpdateOptions): void;
+    updateOptions(options?: AgentSessionUpdateOptions): void;
     // @internal (undocumented)
     _updateUserState(state: UserState, options?: {
         lastSpeakingTime?: number;
@@ -717,6 +729,19 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
     expressive?: boolean | ExpressiveOptions;
 };
 
+// Warning: (ae-missing-release-tag) "AgentSessionUpdateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type AgentSessionUpdateOptions = {
+    expressive?: boolean | ExpressiveOptions;
+    turnHandling?: {
+        turnDetection?: TurnDetectionMode | null;
+        endpointing?: Partial<EndpointingOptions>;
+    };
+    turnDetection?: TurnDetectionMode | null;
+    keyterms?: string[];
+};
+
 // Warning: (ae-missing-release-tag) "AgentSessionUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -767,6 +792,17 @@ export interface AgentTaskContext<ResultT = unknown, UserData = unknown> extends
 //
 // @public (undocumented)
 export interface AgentTaskCreateOptions<ResultT = unknown, UserData = any> extends AgentTaskOptions<UserData>, AgentHooks<UserData, AgentTaskContext<ResultT, UserData>> {
+}
+
+// Warning: (ae-missing-release-tag) "AgentUpdateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface AgentUpdateOptions {
+    expressive?: boolean | ExpressiveOptions;
+    llm?: LLM | RealtimeModel | LLMModels | null;
+    stt?: STT | ModelWithLanguage | null;
+    tts?: TTS | ModelWithVoice | null;
+    vad?: VAD | null;
 }
 
 // Warning: (ae-forgotten-export) The symbol "AMD_base" needs to be exported by the entry point index.d.ts
@@ -4574,6 +4610,8 @@ export class KeytermDetector extends KeytermDetector_base {
     start(session: KeytermDetectorSession, stt: STT): void;
     // (undocumented)
     get staticKeyterms(): string[];
+    // (undocumented)
+    swapStt(stt: STT | undefined): void;
 }
 
 // Warning: (ae-missing-release-tag) "KeytermsOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -8549,9 +8587,11 @@ declare namespace voice {
         AgentOptions,
         AgentTaskContext,
         AgentTaskCreateOptions,
+        AgentUpdateOptions,
         ModelSettings,
         AgentSession,
         AgentSessionOptions,
+        AgentSessionUpdateOptions,
         AgentSessionUsage,
         ExpressiveOptions,
         VoiceOptions,
@@ -8989,16 +9029,15 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:358:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:501:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:379:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:985:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1620:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1620:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1620:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
-// src/voice/amd.ts:309:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
-// src/voice/amd.ts:309:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:317:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
-// src/voice/amd.ts:507:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:910:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "canEmit"
+// src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:988:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
+// src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
+// src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
+// src/voice/amd.ts:511:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/events.ts:423:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:178:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts

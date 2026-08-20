@@ -12,12 +12,14 @@ export {
   type AgentOptions,
   type AgentTaskContext,
   type AgentTaskCreateOptions,
+  type AgentUpdateOptions,
   type ModelSettings,
 } from './agent.js';
 export * from './amd.js';
 export {
   AgentSession,
   type AgentSessionOptions,
+  type AgentSessionUpdateOptions,
   type AgentSessionUsage,
   type ExpressiveOptions,
   type VoiceOptions,

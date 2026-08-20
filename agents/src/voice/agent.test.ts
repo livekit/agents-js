@@ -814,9 +814,9 @@ describe('Agent', () => {
         try {
           const activity = Object.create(AgentActivity.prototype) as any;
           activity.agent = {
-            llm: {},
-            stt: { capabilities: { alignedTranscript, streaming: true } },
-            vad: {},
+            _llm: {},
+            _stt: { capabilities: { alignedTranscript, streaming: true } },
+            _vad: {},
             turnHandling: { interruption: { enabled: true }, turnDetection: 'stt' },
           };
           activity.agentSession = {
@@ -850,9 +850,9 @@ describe('Agent', () => {
       try {
         const activity = Object.create(AgentActivity.prototype) as any;
         activity.agent = {
-          llm: {},
-          stt: { capabilities: { alignedTranscript: 'word', streaming: true } },
-          vad: {},
+          _llm: {},
+          _stt: { capabilities: { alignedTranscript: 'word', streaming: true } },
+          _vad: {},
           turnHandling: { interruption: { enabled: true }, turnDetection: 'stt' },
         };
         activity.agentSession = {
@@ -876,9 +876,9 @@ describe('Agent', () => {
       (alignedTranscript) => {
         const activity = Object.create(AgentActivity.prototype) as any;
         activity.agent = {
-          llm: {},
-          stt: { capabilities: { alignedTranscript, streaming: true } },
-          vad: {},
+          _llm: {},
+          _stt: { capabilities: { alignedTranscript, streaming: true } },
+          _vad: {},
           turnHandling: {
             interruption: { enabled: true, mode: 'vad' },
             turnDetection: 'stt',
@@ -898,7 +898,7 @@ describe('Agent', () => {
     it('should retain the session VAD for turn-detecting STT', () => {
       const vad = {};
       const activity = Object.create(AgentActivity.prototype) as any;
-      activity.agent = { vad: undefined };
+      activity.agent = { _vad: undefined };
       activity.agentSession = { _textOnly: false, vad };
 
       expect(activity.vad).toBe(vad);
@@ -933,9 +933,9 @@ describe('Agent', () => {
             interruption: { enabled: false },
           },
           turnDetection: undefined,
-          stt: undefined,
-          vad: undefined,
-          llm: undefined,
+          _stt: undefined,
+          _vad: undefined,
+          _llm: undefined,
         };
         activity.agentSession = {
           interruptionDetection: undefined,
