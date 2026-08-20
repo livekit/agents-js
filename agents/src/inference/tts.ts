@@ -60,7 +60,7 @@ export type InworldModels =
   | 'inworld/inworld-tts-1-max'
   | 'inworld/inworld-tts-1';
 
-export type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
+export type RimeModels = 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
 
 export type XaiTTSModels = 'xai/tts-1';
 
@@ -251,7 +251,7 @@ export function hasAlignedTranscript(
 
 /** Inference Fallback Adapter: configuration for a fallback TTS model that runs server-side in LiveKit Inference, providing automatic fallback between providers. */
 export interface TTSFallbackModel {
-  /** Model name (e.g. "cartesia/sonic", "elevenlabs/eleven_flash_v2", "rime/arcana"). */
+  /** Model name (e.g. "cartesia/sonic", "elevenlabs/eleven_flash_v2", "rime/coda"). */
   model: string;
   /** Voice to use for the model. */
   voice: string;

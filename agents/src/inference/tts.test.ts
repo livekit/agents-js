@@ -484,7 +484,7 @@ describeLiveKitInference('LiveKit Inference TTS integration', agents, async (har
       voice: 'Xb7hH8MSUJpSbSDYk0k2',
     },
     { model: 'inworld/inworld-tts-2', voice: 'Ashley' },
-    { model: 'rime/arcana', voice: 'celeste' },
+    { model: 'rime/coda', voice: 'celeste' },
   ] as const;
 
   for (const options of models) {
