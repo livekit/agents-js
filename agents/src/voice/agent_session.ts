@@ -362,6 +362,7 @@ export class AgentSession<
   private closing = false;
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
+  private runningToolCalls: Set<string> = new Set();
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
 
@@ -1322,6 +1323,25 @@ export class AgentSession<
   }
 
   /** @internal */
+  _toolExecutionUpdated(event: ToolExecutionUpdatedEvent): void {
+    if (event.update.type === 'tool_call_started') {
+      this.runningToolCalls.add(event.update.functionCall.callId);
+      this._cancelUserAwayTimer();
+    } else if (event.update.type === 'tool_call_ended') {
+      this.runningToolCalls.delete(event.update.callId);
+      if (
+        this.runningToolCalls.size === 0 &&
+        this._userState === 'listening' &&
+        this._agentState === 'listening'
+      ) {
+        this._setUserAwayTimer();
+      }
+    }
+
+    this.emit(AgentSessionEventTypes.ToolExecutionUpdated, event);
+  }
+
+  /** @internal */
   _updateAgentState(state: AgentState, options?: { startTime?: number; otelContext?: Context }) {
     if (this._agentState === state) {
       return;
@@ -1450,6 +1470,10 @@ export class AgentSession<
       this.sessionOptions.userAwayTimeout === null ||
       this.sessionOptions.userAwayTimeout === undefined
     ) {
+      return;
+    }
+
+    if (this.runningToolCalls.size > 0) {
       return;
     }
 

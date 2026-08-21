@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { FunctionCall } from '../llm/chat_context.js';
 import type { AgentSession } from './agent_session.js';
-import { AgentSessionEventTypes, createToolExecutionUpdatedEvent } from './events.js';
+import { createToolExecutionUpdatedEvent } from './events.js';
 import type { SpeechHandle } from './speech_handle.js';
 
 export type UnknownUserData = unknown;
@@ -35,12 +35,10 @@ export class RunContext<UserData = UnknownUserData> {
   }
 
   update(message: unknown): void {
-    if (typeof this.session.emit !== 'function') return;
     const rawMessage = typeof message === 'string' ? message : String(message);
     const id = `${this.functionCall.callId}_update_${this.updateCount}`;
     this.updateCount += 1;
-    this.session.emit(
-      AgentSessionEventTypes.ToolExecutionUpdated,
+    this.session._toolExecutionUpdated(
       createToolExecutionUpdatedEvent({
         type: 'tool_call_updated',
         id,

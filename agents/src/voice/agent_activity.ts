@@ -2108,7 +2108,9 @@ export class AgentActivity implements RecognitionHooks {
 
   private onPipelineReplyDone(): void {
     if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
-      this.agentSession._updateAgentState('listening');
+      this.agentSession._updateAgentState(
+        this._backgroundSpeeches.size > 0 ? 'thinking' : 'listening',
+      );
       if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
@@ -2495,7 +2497,9 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.agentSession.agentState === 'speaking') {
-      this.agentSession._updateAgentState('listening');
+      this.agentSession._updateAgentState(
+        this._backgroundSpeeches.size > 0 ? 'thinking' : 'listening',
+      );
       if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
@@ -3000,7 +3004,7 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
-    if (!speechHandle.interrupted && toolOutput.output.length > 0) {
+    if (!speechHandle.interrupted && (!executeToolsTask.done || toolOutput.output.length > 0)) {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
@@ -3093,8 +3097,7 @@ export class AgentActivity implements RecognitionHooks {
         name: 'AgentActivity.pipelineReply',
       });
 
-      this.agentSession.emit(
-        AgentSessionEventTypes.ToolExecutionUpdated,
+      this.agentSession._toolExecutionUpdated(
         createToolExecutionUpdatedEvent({
           type: 'tool_reply_updated',
           updateIds,
@@ -3109,8 +3112,7 @@ export class AgentActivity implements RecognitionHooks {
           : speechHandle.chatItems.length > initialChatItemCount
             ? 'completed'
             : 'skipped';
-        this.agentSession.emit(
-          AgentSessionEventTypes.ToolExecutionUpdated,
+        this.agentSession._toolExecutionUpdated(
           createToolExecutionUpdatedEvent({
             type: 'tool_reply_updated',
             updateIds,
@@ -3135,6 +3137,12 @@ export class AgentActivity implements RecognitionHooks {
         this.agent._chatCtx.insert(toolCallOutputs);
         this.agentSession._toolItemsAdded(toolCallOutputs);
       }
+    }
+
+    if (!shouldGenerateToolReply && !this.speechQueue.peek() && !this._currentSpeech) {
+      this.agentSession._updateAgentState(
+        this._backgroundSpeeches.size > 0 ? 'thinking' : 'listening',
+      );
     }
   };
 
@@ -3579,6 +3587,15 @@ export class AgentActivity implements RecognitionHooks {
 
     addRealtimeMessageOutputs(messageOutputs);
 
+    if (this.agentSession.agentState === 'speaking') {
+      const toolBusy =
+        !speechHandle.interrupted && (!executeToolsTask.done || toolOutput.output.length > 0);
+      this.agentSession._updateAgentState(toolBusy ? 'thinking' : 'listening');
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+    }
+
     // mark the playout done before waiting for the tool execution
     speechHandle._markGenerationDone();
     // TODO(brian): close tees
@@ -3706,6 +3723,15 @@ export class AgentActivity implements RecognitionHooks {
 
     // skip realtime reply if not required or auto-generated
     if (!shouldGenerateToolReply || realtimeModel.capabilities.autoToolReplyGeneration) {
+      if (
+        !shouldGenerateToolReply &&
+        !this.speechQueue.peek() &&
+        (!this._currentSpeech || this._currentSpeech.done())
+      ) {
+        this.agentSession._updateAgentState(
+          this._backgroundSpeeches.size > 0 ? 'thinking' : 'listening',
+        );
+      }
       return;
     }
 

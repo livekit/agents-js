@@ -49,7 +49,7 @@ import {
 } from './agent.js';
 import type { ForwardOutput } from './agent_activity.ts';
 import type { AgentSession } from './agent_session.js';
-import { AgentSessionEventTypes, createToolExecutionUpdatedEvent } from './events.js';
+import { createToolExecutionUpdatedEvent } from './events.js';
 import {
   AudioOutput,
   type LLMNode,
@@ -982,11 +982,7 @@ export function performToolExecutions({
   const emitToolExecutionUpdate = (
     update: Parameters<typeof createToolExecutionUpdatedEvent>[0],
   ) => {
-    if (typeof session.emit !== 'function') return;
-    session.emit(
-      AgentSessionEventTypes.ToolExecutionUpdated,
-      createToolExecutionUpdatedEvent(update),
-    );
+    session._toolExecutionUpdated(createToolExecutionUpdatedEvent(update));
   };
 
   const toolCompleted = (out: ToolExecutionOutput) => {

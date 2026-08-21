@@ -414,6 +414,7 @@ describe('AgentActivity - speech completion', () => {
       _currentSpeech: {
         done: () => true,
       },
+      _backgroundSpeeches: new Set(),
       audioRecognition,
       agentSession: {
         agentState: 'speaking',
