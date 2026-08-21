@@ -259,4 +259,45 @@ describe('AgentSession reusable resources handoff', () => {
       startSpy.mockRestore();
     }
   });
+
+  it('skips resuming a paused activity while the session is closing and closes it', async () => {
+    const closeFn = vi.fn(async () => {});
+    const resources: ReusableResources = {
+      sttPipeline: { close: closeFn } as any,
+    };
+    const taskAgent = new Agent({ instructions: 'task' });
+    const previousActivity = {
+      agent: taskAgent,
+      drain: vi.fn(async () => resources),
+      close: vi.fn(async () => {}),
+      pause: vi.fn(async () => resources),
+    };
+    const resumedAgent = new Agent({ instructions: 'resumed' });
+    const resumedActivity = {
+      agent: resumedAgent,
+      resume: vi.fn(async () => {}),
+      start: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      attachAudioInput: vi.fn(),
+      _onEnterTask: undefined,
+    };
+    resumedAgent._agentActivity = resumedActivity as any;
+
+    const session = createFakeSession();
+    (session as any).activity = previousActivity as any;
+    (session as any).closing = true;
+
+    await AgentSession.prototype._updateActivity.call(session, resumedAgent, {
+      newActivity: 'resume',
+      waitOnEnter: false,
+    });
+
+    expect(previousActivity.drain).toHaveBeenCalledTimes(1);
+    expect(previousActivity.close).toHaveBeenCalledTimes(1);
+    expect(closeFn).toHaveBeenCalledTimes(1);
+    expect(resumedActivity.resume).not.toHaveBeenCalled();
+    expect(resumedActivity.close).toHaveBeenCalledTimes(1);
+    expect((session as any).activity).toBeUndefined();
+    expect((session as any).nextActivity).toBeUndefined();
+  });
 });
