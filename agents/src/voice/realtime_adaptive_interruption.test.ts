@@ -100,7 +100,7 @@ function setActivityProp<T>(activity: object, key: string, value: T): void {
 }
 
 describe('realtime adaptive interruption', () => {
-  it('does not reopen a resolved overlap when pausing agent speech', () => {
+  it('pauses a resolved overlap with one agent speech end', () => {
     const onStartOfOverlapSpeech = vi.fn();
     const onEndOfAgentSpeech = vi.fn();
     const pause = vi.fn();
@@ -147,13 +147,14 @@ describe('realtime adaptive interruption', () => {
       isInterruptionDetectionEnabled: true,
       pauseEnabled: () => true,
       restoreInterruptionByAudioActivity: vi.fn(),
-      updatePausedSpeech: vi.fn(),
+      updatePausedSpeech: vi.fn(() => setActivityProp(activity, 'pausedSpeech', {})),
     });
 
     activity.onInterruption(overlapEvent({ isInterruption: true, agentEnded: false }));
 
     expect(pause).toHaveBeenCalledOnce();
     expect(onStartOfOverlapSpeech).not.toHaveBeenCalled();
+    expect(onEndOfAgentSpeech).toHaveBeenCalledOnce();
   });
 
   it('enables adaptive interruption for realtime without STT', () => {

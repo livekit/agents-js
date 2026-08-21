@@ -1722,7 +1722,7 @@ export class AgentActivity implements RecognitionHooks {
     this.interruptByAudioActivity({
       ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,
     });
-    if (this.audioRecognition) {
+    if (this.audioRecognition && this.pausedSpeech === undefined) {
       this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
   }
