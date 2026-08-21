@@ -37,6 +37,10 @@ const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 const DRAIN_TIMEOUT = 60 * 60 * 1000;
 const PROJECT_TYPE = 'nodejs';
+// Mirrors CurrentWorkerProtocol in livekit/protocol. LiveKit Cloud reads this off
+// the /worker endpoint to decide whether the SDK supports agent deployments; a
+// worker that omits it is treated as legacy and registered without its deployment.
+const WORKER_PROTOCOL_VERSION = 1;
 
 let localEotRunnerRegistered = false;
 /**
@@ -318,6 +322,7 @@ export class AgentServer {
   #opts: ServerOptions;
   #procPool: ProcPool;
 
+  #deployment = process.env.LIVEKIT_AGENT_DEPLOYMENT || '';
   #id = 'unregistered';
   #closed = true;
   #draining = false;
@@ -419,10 +424,12 @@ export class AgentServer {
       const getWorkerInfo = () => ({
         agent_name: opts.agentName,
         agent_name_is_env: opts.agentNameIsEnv,
+        deployment: this.#deployment,
         worker_type: JobType[opts.serverType],
         active_jobs: this.activeJobs.length,
         sdk_version: version,
         project_type: PROJECT_TYPE,
+        protocol_version: WORKER_PROTOCOL_VERSION,
       });
 
       this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
@@ -675,6 +682,7 @@ export class AgentServer {
               id: this.id,
               agentName: this.#opts.agentName,
               agentNameIsEnv: this.#opts.agentNameIsEnv,
+              deployment: this.#deployment,
               server_info: msg.message.value.serverInfo,
             })
             .info('registered worker');
@@ -736,6 +744,7 @@ export class AgentServer {
           value: {
             type: this.#opts.serverType,
             agentName: this.#opts.agentName,
+            deployment: this.#deployment,
             allowedPermissions: new ParticipantPermission({
               canPublish: this.#opts.permissions.canPublish,
               canSubscribe: this.#opts.permissions.canSubscribe,
