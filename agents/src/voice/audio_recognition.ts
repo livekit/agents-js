@@ -1026,8 +1026,20 @@ export class AudioRecognition {
       }
     }
 
+    // A final can be accepted just before agent speech; its held END_OF_SPEECH must still
+    // close that pending STT turn even though the sentinel has no transcript alternatives.
+    const hasPendingAcceptedTurnBoundary =
+      this.turnDetectionMode === 'stt' &&
+      !this.userTurnCommitted &&
+      this.audioTranscript.length > 0 &&
+      emitFromIndex !== null &&
+      this.transcriptBuffer
+        .slice(emitFromIndex)
+        .some((event) => event.type === SpeechEventType.END_OF_SPEECH);
     const eventsToEmit =
-      emitFromIndex !== null && shouldFlush ? this.transcriptBuffer.slice(emitFromIndex) : [];
+      emitFromIndex !== null && (shouldFlush || hasPendingAcceptedTurnBoundary)
+        ? this.transcriptBuffer.slice(emitFromIndex)
+        : [];
 
     // Snapshot the ignore-until before resetting so the added-delay diagnostic below mirrors
     // the value the holding decision was made against.
