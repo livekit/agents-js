@@ -30,10 +30,11 @@ function stream<T>(...items: T[]): ReadableStream<T> {
   });
 }
 
-/** Emits one text message plus one tool call per generation. */
+/** Emits one text message and optionally one tool call per generation. */
 class FakeRealtimeSession extends RealtimeSession {
   private _chatCtx = ChatContext.empty();
   private _tools = ToolContext.empty();
+  includeTool = true;
 
   get chatCtx(): ChatContext {
     return this._chatCtx;
@@ -63,9 +64,9 @@ class FakeRealtimeSession extends RealtimeSession {
         audioStream: stream<AudioFrame>(),
         modalities: Promise.resolve(['text']),
       }),
-      functionStream: stream(
-        FunctionCall.create({ callId: TOOL_CALL_ID, name: 'lookup_order', args: '{}' }),
-      ),
+      functionStream: this.includeTool
+        ? stream(FunctionCall.create({ callId: TOOL_CALL_ID, name: 'lookup_order', args: '{}' }))
+        : stream<FunctionCall>(),
       userInitiated: true,
       responseId: 'response-1',
     };
@@ -98,6 +99,32 @@ class FakeRealtimeModel extends RealtimeModel {
 }
 
 describe('Realtime tool output commit', () => {
+  it('restores audio interruption after a reply without tools', async () => {
+    const model = new FakeRealtimeModel();
+    model.activeSession.includeTool = false;
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    const agent = new Agent({ instructions: 'test' });
+
+    await session.start({ agent });
+    const activity = session._activity as unknown as {
+      isInterruptionDetectionEnabled: boolean;
+      isInterruptionByAudioActivityEnabled: boolean;
+    };
+    activity.isInterruptionDetectionEnabled = true;
+    activity.isInterruptionByAudioActivityEnabled = false;
+
+    try {
+      await session.generateReply().waitForPlayout();
+      await vi.waitFor(() => expect(activity.isInterruptionByAudioActivityEnabled).toBe(true));
+    } finally {
+      await session.close();
+    }
+  });
+
   it('ends active speech before waiting for a tool', async () => {
     const toolStarted = new Future<void>();
     const releaseTool = new Future<void>();

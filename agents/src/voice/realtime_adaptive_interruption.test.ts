@@ -283,8 +283,10 @@ type RecognitionInternals = {
 };
 
 type RecognitionStreamInternals = AudioRecognition & {
+  interruptionDetected?: boolean;
   overlapOpen: boolean;
   speaking: boolean;
+  turnBackchannelOverAgent: boolean;
   trySendInterruptionSentinel: ReturnType<typeof vi.fn>;
 };
 
@@ -346,6 +348,7 @@ function recognitionWithInterruptionStream(): {
     backchannelBoundaryTimer: undefined,
     backchannelBoundaryCallback: undefined,
     ignoreUserTranscriptUntil: undefined,
+    interruptionDetected: undefined,
     overlapInCurrentTurn: false,
     overlapOpen: false,
     speaking: false,
@@ -441,6 +444,8 @@ describe('AudioRecognition realtime adaptive backchannel verdicts', () => {
     recognition.speaking = true;
     await recognition.onStartOfOverlapSpeech(0, userStartedAt);
     await recognition.onEndOfAgentSpeech(Date.now());
+    recognition.interruptionDetected = false;
+    recognition.turnBackchannelOverAgent = true;
     sent.length = 0;
 
     const resumedAt = Date.now();
@@ -453,6 +458,8 @@ describe('AudioRecognition realtime adaptive backchannel verdicts', () => {
     expect(sent[1]).toMatchObject({ speechDuration: 0, startedAt: resumedAt });
     expect(recognition.endpointing.onStartOfSpeech).toHaveBeenCalledOnce();
     expect(recognition.endpointing.onStartOfSpeech).toHaveBeenCalledWith(userStartedAt, true);
+    expect(recognition.interruptionDetected).toBeUndefined();
+    expect(recognition.turnBackchannelOverAgent).toBe(false);
   });
 
   it('does not close an overlap again after a verdict resolves it', async () => {

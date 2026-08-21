@@ -842,7 +842,6 @@ export class AudioRecognition {
       if (!this.endpointing.overlapping) {
         this.endpointing.onStartOfSpeech(startedAt, true);
       }
-      this.turnBackchannelOverAgent = false;
       const overlapStarted = this.startOverlapInference(
         speechDuration,
         startedAt,
@@ -862,6 +861,8 @@ export class AudioRecognition {
     if (!this.isInterruptionEnabled || !this.isAgentSpeaking) {
       return undefined;
     }
+    this.interruptionDetected = undefined;
+    this.turnBackchannelOverAgent = false;
     this.overlapInCurrentTurn = true;
     this.overlapOpen = true;
     return InterruptionStreamSentinel.overlapSpeechStarted(

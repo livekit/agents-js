@@ -4071,7 +4071,7 @@ export class AgentActivity implements RecognitionHooks {
       if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
-      if (toolBusy && this.isInterruptionDetectionEnabled) {
+      if (this.isInterruptionDetectionEnabled) {
         this.restoreInterruptionByAudioActivity();
       }
       endedAgentSpeechBeforeTool = true;
