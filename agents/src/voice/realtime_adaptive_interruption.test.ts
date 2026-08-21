@@ -97,13 +97,16 @@ type ActivityInternals = {
 
 type InterruptionActivityHarness = {
   isInterruptionByAudioActivityEnabled: boolean;
-  agent: { llm: object; stt: undefined };
+  agent: { llm: object; stt?: object };
   agentSession: {
     _textOnly: boolean;
     _aecWarmupRemaining: number;
     sessionOptions: { turnHandling: { interruption: { minWords: number } } };
   };
-  audioRecognition: { releaseTranscriptsForAudioActivity: ReturnType<typeof vi.fn> };
+  audioRecognition: {
+    currentTranscript?: string;
+    releaseTranscriptsForAudioActivity: ReturnType<typeof vi.fn>;
+  };
   _currentSpeech: { interrupted: boolean; allowInterruptions: boolean };
   pendingInterruption?: OverlappingSpeechEvent;
   interruptByAudioActivity: () => void;
@@ -201,6 +204,36 @@ describe('realtime adaptive interruption', () => {
 
     expect(activity.audioRecognition.releaseTranscriptsForAudioActivity).toHaveBeenCalledOnce();
     expect(activity._currentSpeech.interrupt).toHaveBeenCalledOnce();
+  });
+
+  it('clears a pending verdict when the transcript is below minWords', () => {
+    const activity = Object.create(
+      AgentActivity.prototype,
+    ) as unknown as InterruptionActivityHarness;
+    activity.isInterruptionByAudioActivityEnabled = true;
+    activity.agent = { llm: {}, stt: {} };
+    activity.agentSession = {
+      _textOnly: false,
+      _aecWarmupRemaining: 0,
+      sessionOptions: {
+        turnHandling: {
+          interruption: { minWords: 2 },
+        },
+      },
+    };
+    activity.audioRecognition = {
+      currentTranscript: 'one',
+      releaseTranscriptsForAudioActivity: vi.fn(),
+    };
+    activity._currentSpeech = {
+      interrupted: false,
+      allowInterruptions: true,
+    };
+    activity.pendingInterruption = overlapEvent({ isInterruption: true });
+
+    activity.interruptByAudioActivity();
+
+    expect(activity.pendingInterruption).toBeUndefined();
   });
 
   it('clears a pending verdict when no speech can be interrupted', () => {

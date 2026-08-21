@@ -1668,6 +1668,7 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(shubhra): better word splitting for multi-language
       const wordCount = splitWords(text ?? '', true).length;
       if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
+        this.pendingInterruption = undefined;
         return;
       }
     }
