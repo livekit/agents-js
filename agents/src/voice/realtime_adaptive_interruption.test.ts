@@ -248,6 +248,35 @@ describe('realtime adaptive interruption', () => {
     expect(activity.pendingInterruption).toBeUndefined();
   });
 
+  it('clears a pending verdict during AEC warmup', () => {
+    const activity = Object.create(
+      AgentActivity.prototype,
+    ) as unknown as InterruptionActivityHarness;
+    activity.isInterruptionByAudioActivityEnabled = true;
+    activity.agent = { _llm: {}, _stt: undefined };
+    activity.agentSession = {
+      _textOnly: false,
+      _aecWarmupRemaining: 1,
+      sessionOptions: {
+        turnHandling: {
+          interruption: { minWords: 0 },
+        },
+      },
+    };
+    activity.audioRecognition = {
+      releaseTranscriptsForAudioActivity: vi.fn(),
+    };
+    activity._currentSpeech = {
+      interrupted: false,
+      allowInterruptions: true,
+    };
+    activity.pendingInterruption = overlapEvent({ isInterruption: true });
+
+    activity.interruptByAudioActivity();
+
+    expect(activity.pendingInterruption).toBeUndefined();
+  });
+
   it('clears a pending verdict when no speech can be interrupted', () => {
     const activity = Object.create(AgentActivity.prototype) as any;
     activity.isInterruptionByAudioActivityEnabled = true;

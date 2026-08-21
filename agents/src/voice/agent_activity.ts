@@ -1875,6 +1875,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.agentSession._aecWarmupRemaining > 0) {
       // Disable interruption from audio activity while AEC warmup is active.
+      this.pendingInterruption = undefined;
       return;
     }
 
