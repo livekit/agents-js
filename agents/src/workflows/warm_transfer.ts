@@ -90,9 +90,10 @@ export interface WarmTransferTaskOptions {
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
    * Speech played before ending the human agent's call when the caller hangs up after the human
-   * agent answers. A string is spoken with `session.say()`. A callback runs only after the caller
-   * hangs up and must return the speech handle that the task will await. This option takes
-   * precedence over `callerHangupInstruction`.
+   * agent answers. A string is spoken with `session.say()` and requires a TTS model. For sessions
+   * without TTS, use a callback that returns `session.say(text, { audio })` with prerecorded audio.
+   * The callback runs only after the caller hangs up, and the task awaits its returned handle.
+   * This option takes precedence over `callerHangupInstruction`.
    */
   callerHangupSpeech?: CallerHangupSpeech;
   /**
