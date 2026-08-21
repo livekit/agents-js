@@ -455,6 +455,11 @@ describe('AgentActivity - mainTask', () => {
   it('does not deadlock cancelling a paused speech whose generation never finishes', async () => {
     const handle = SpeechHandle.create({ allowInterruptions: true });
     handle._authorizeGeneration();
+    const onEndOfAgentSpeech = (
+      AgentActivity.prototype as unknown as {
+        onEndOfAgentSpeech: (endedAt: number, options?: { paused?: boolean }) => Promise<void>;
+      }
+    ).onEndOfAgentSpeech;
 
     const fakeActivity = {
       cancelSpeechPauseTask: undefined,
@@ -471,6 +476,7 @@ describe('AgentActivity - mainTask', () => {
       audioRecognition: {
         onEndOfAgentSpeech: vi.fn(async () => {}),
       },
+      onEndOfAgentSpeech,
       agentSession: {
         sessionOptions: {
           turnHandling: {
@@ -808,6 +814,11 @@ describe('AgentActivity - speech completion', () => {
         done: () => true,
       },
       audioRecognition,
+      onEndOfAgentSpeech: (
+        AgentActivity.prototype as unknown as {
+          onEndOfAgentSpeech: (endedAt: number) => Promise<void>;
+        }
+      ).onEndOfAgentSpeech,
       agentSession: {
         agentState: 'speaking',
         _updateAgentState: vi.fn((state: string) => {

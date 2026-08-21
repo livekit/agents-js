@@ -355,7 +355,8 @@ export class AgentActivity implements RecognitionHooks {
   private readonly closeAbort = new AbortController();
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
-  private interruptionDetected = false;
+  private pendingInterruption?: OverlappingSpeechEvent;
+  private audioActivityInterruptionInProgress = false;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
 
@@ -391,11 +392,6 @@ export class AgentActivity implements RecognitionHooks {
 
   private readonly onModelError = (ev: RealtimeModelError | STTError | TTSError | LLMError): void =>
     this.onError(ev);
-
-  private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
-    this.interruptionDetected = ev.isInterruption;
-    this.agentSession.emit(AgentSessionEventTypes.OverlappingSpeech, ev);
-  };
 
   private readonly onInterruptionMetricsCollected = (ev: InterruptionMetrics): void => {
     this.agentSession._usageCollector.collect(ev);
@@ -1775,7 +1771,11 @@ export class AgentActivity implements RecognitionHooks {
     // Mirrors python AudioRecognition._on_vad_event → amd._on_user_speech_started().
     this.agentSession.amd?.onUserSpeechStarted();
     this.userSilenceEvent.clear();
-    if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+    if (
+      this.isInterruptionDetectionEnabled &&
+      this.audioRecognition &&
+      this.pendingInterruption === undefined
+    ) {
       // Pass speechStartTime as the absolute startedAt timestamp.
       this.audioRecognition.onStartOfOverlapSpeech(
         ev.speechDuration,
@@ -1783,8 +1783,6 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession._userSpeakingSpan,
       );
     }
-    this.interruptionDetected = false;
-
     // Cancel the timer when user starts speaking but leave the paused state unchanged.
     this.cancelFalseInterruptionTimer();
 
@@ -1862,20 +1860,46 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private interruptByAudioActivity(options?: { ignoreUserTranscriptUntil?: number }): void {
+  private onEndOfAgentSpeech(
+    endedAt: number,
+    options?: { paused?: boolean },
+  ): Promise<void> | undefined {
+    const teardown = this.audioRecognition?.onEndOfAgentSpeech(endedAt, options);
+    this.pendingInterruption = undefined;
+    return teardown;
+  }
+
+  private interruptByAudioActivity(): void {
+    if (this.audioActivityInterruptionInProgress) {
+      return;
+    }
+
+    this.audioActivityInterruptionInProgress = true;
+    try {
+      this.interruptByAudioActivityOnce();
+    } finally {
+      this.audioActivityInterruptionInProgress = false;
+    }
+  }
+
+  private interruptByAudioActivityOnce(): void {
     if (!this.isInterruptionByAudioActivityEnabled) {
       return;
     }
 
     if (this.agentSession._aecWarmupRemaining > 0) {
       // Disable interruption from audio activity while AEC warmup is active.
+      this.pendingInterruption = undefined;
       return;
     }
 
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
       // skip speech handle interruption if server side turn detection is enabled
+      this.pendingInterruption = undefined;
       return;
     }
+
+    this.audioRecognition?.releaseTranscriptsForAudioActivity();
 
     if (
       this.stt &&
@@ -1886,6 +1910,7 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(shubhra): better word splitting for multi-language
       const wordCount = splitWords(text ?? '', true).length;
       if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
+        this.pendingInterruption = undefined;
         return;
       }
     }
@@ -1909,7 +1934,12 @@ export class AgentActivity implements RecognitionHooks {
         // spams the interruption stream with duplicate `agent-speech-ended` sentinels.
         const wasAgentSpeaking = this.agentSession.agentState === 'speaking';
 
-        if (wasAgentSpeaking && this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        if (
+          wasAgentSpeaking &&
+          this.isInterruptionDetectionEnabled &&
+          this.audioRecognition &&
+          this.pendingInterruption === undefined
+        ) {
           this.audioRecognition.onStartOfOverlapSpeech(
             0,
             Date.now(),
@@ -1921,16 +1951,12 @@ export class AgentActivity implements RecognitionHooks {
         audioOutput!.pause();
         if (wasAgentSpeaking) {
           this.agentSession._updateAgentState('listening');
-          if (this.audioRecognition) {
-            this.audioRecognition.onEndOfAgentSpeech(
-              options?.ignoreUserTranscriptUntil ?? Date.now(),
-              { paused: true },
-            );
-          }
+          this.onEndOfAgentSpeech(Date.now(), { paused: true });
           if (this.isInterruptionDetectionEnabled) {
             this.restoreInterruptionByAudioActivity();
           }
         }
+        this.pendingInterruption = undefined;
       } else {
         this.logger.info(
           { 'speech id': this._currentSpeech.id },
@@ -1938,20 +1964,28 @@ export class AgentActivity implements RecognitionHooks {
         );
         this.realtimeSession?.interrupt();
         this._currentSpeech.interrupt();
+        this.pendingInterruption = undefined;
       }
+    } else {
+      this.pendingInterruption = undefined;
     }
   }
 
-  onInterruption(ev: OverlappingSpeechEvent) {
-    this.restoreInterruptionByAudioActivity();
-    this.interruptByAudioActivity({
-      ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,
-    });
-    if (this.audioRecognition) {
-      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt, {
-        paused: this.pausedSpeech !== undefined,
-      });
+  onOverlapSpeech(ev: OverlappingSpeechEvent): void {
+    if (ev.isInterruption) {
+      this.pendingInterruption = ev;
+      this.isInterruptionByAudioActivityEnabled = false;
     }
+
+    this.agentSession.emit(AgentSessionEventTypes.OverlappingSpeech, ev);
+    this.audioRecognition?.applyOverlapSpeechEvent(ev);
+
+    if (!ev.isInterruption) {
+      return;
+    }
+
+    this.restoreInterruptionByAudioActivity();
+    this.interruptByAudioActivity();
   }
 
   onInterimTranscript(ev: SpeechEvent, speaking: boolean | undefined): void {
@@ -2739,9 +2773,7 @@ export class AgentActivity implements RecognitionHooks {
   private onPipelineReplyDone(): void {
     if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
       this.agentSession._updateAgentState('listening');
-      if (this.audioRecognition) {
-        this.audioRecognition.onEndOfAgentSpeech(Date.now());
-      }
+      this.onEndOfAgentSpeech(Date.now());
       if (this.isInterruptionDetectionEnabled) {
         this.restoreInterruptionByAudioActivity();
       }
@@ -3146,9 +3178,7 @@ export class AgentActivity implements RecognitionHooks {
 
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
-        if (this.audioRecognition) {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-        }
+        this.onEndOfAgentSpeech(Date.now());
         this.restoreInterruptionByAudioActivity();
       }
     } finally {
@@ -3680,9 +3710,7 @@ export class AgentActivity implements RecognitionHooks {
 
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
-        if (this.audioRecognition) {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-        }
+        this.onEndOfAgentSpeech(Date.now());
         if (this.isInterruptionDetectionEnabled) {
           this.restoreInterruptionByAudioActivity();
         }
@@ -3729,9 +3757,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.audioRecognition) {
-        this.audioRecognition.onEndOfAgentSpeech(Date.now());
-      }
+      this.onEndOfAgentSpeech(Date.now());
       if (this.isInterruptionDetectionEnabled) {
         this.restoreInterruptionByAudioActivity();
       }
@@ -4288,9 +4314,7 @@ export class AgentActivity implements RecognitionHooks {
 
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
-        if (this.audioRecognition) {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-        }
+        this.onEndOfAgentSpeech(Date.now());
       }
       speechHandle._markGenerationDone();
       await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
@@ -4316,9 +4340,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.audioRecognition) {
-        this.audioRecognition.onEndOfAgentSpeech(Date.now());
-      }
+      this.onEndOfAgentSpeech(Date.now());
     }
 
     if (toolOutput.output.length === 0) {
@@ -4905,7 +4927,6 @@ export class AgentActivity implements RecognitionHooks {
         await this._mainTask.cancelAndWait();
       }
       if (this.interruptionDetector) {
-        this.interruptionDetector.off('overlapping_speech', this.onInterruptionOverlappingSpeech);
         this.interruptionDetector.off('metrics_collected', this.onInterruptionMetricsCollected);
         this.interruptionDetector.off('error', this.onInterruptionError);
       }
@@ -4948,12 +4969,8 @@ export class AgentActivity implements RecognitionHooks {
       // Realtime commits turns manually; barge-in withholds the commit, so no STT is needed.
       canGatekeep = !this.llm.capabilities.turnDetection;
     } else {
-      // The STT pipeline gatekeeps by holding and flushing transcripts.
-      canGatekeep = !!(
-        this.stt &&
-        this.stt.capabilities.alignedTranscript &&
-        this.stt.capabilities.streaming
-      );
+      // Local event arrival time and VAD state are sufficient for transcript gating.
+      canGatekeep = this.stt !== undefined;
     }
 
     if (
@@ -4998,7 +5015,6 @@ export class AgentActivity implements RecognitionHooks {
     try {
       const detector = new AdaptiveInterruptionDetector();
 
-      detector.on('overlapping_speech', this.onInterruptionOverlappingSpeech);
       detector.on('metrics_collected', this.onInterruptionMetricsCollected);
       detector.on('error', this.onInterruptionError);
 
@@ -5179,12 +5195,10 @@ export class AgentActivity implements RecognitionHooks {
 
     // The pause withheld end-of-agent-speech for a resume. Interrupting ends the turn instead;
     // audio stopped when it was paused, so no playout is left to wait for.
-    if (interrupt && this.audioRecognition) {
-      void this.audioRecognition
-        .onEndOfAgentSpeech(Date.now())
-        .catch((error) =>
-          this.logger.warn({ error }, 'failed to report end of agent speech on pause cancel'),
-        );
+    if (interrupt) {
+      void this.onEndOfAgentSpeech(Date.now())?.catch((error) =>
+        this.logger.warn({ error }, 'failed to report end of agent speech on pause cancel'),
+      );
     }
 
     if (
@@ -5246,12 +5260,12 @@ export class AgentActivity implements RecognitionHooks {
     this.restoreInterruptionByAudioActivity();
 
     if (this.interruptionDetector) {
-      this.interruptionDetector.off('overlapping_speech', this.onInterruptionOverlappingSpeech);
       this.interruptionDetector.off('metrics_collected', this.onInterruptionMetricsCollected);
       this.interruptionDetector.off('error', this.onInterruptionError);
       this.interruptionDetector = undefined;
     }
 
+    this.pendingInterruption = undefined;
     if (this.audioRecognition) {
       this.audioRecognition.disableInterruptionDetection().catch((err) => {
         this.logger.warn({ err }, 'error while disabling interruption detection');

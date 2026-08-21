@@ -9,7 +9,7 @@ import { BaseEndpointing } from './turn_config/endpointing.js';
 
 function createHooks(): RecognitionHooks {
   return {
-    onInterruption: () => {},
+    onOverlapSpeech: () => {},
     onBackchannelConfirmed: () => {},
     onStartOfSpeech: () => {},
     onVADInferenceDone: () => {},
@@ -41,6 +41,7 @@ describe('AudioRecognition endpointing integration', () => {
       recognitionHooks: createHooks(),
       endpointing,
     });
+    (recognition as unknown as { isInterruptionEnabled: boolean }).isInterruptionEnabled = true;
 
     await recognition.onStartOfAgentSpeech(1000);
     await recognition.onStartOfOverlapSpeech(0, 1200);

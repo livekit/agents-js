@@ -19,7 +19,7 @@ type AudioRecognitionInternals = AudioRecognition & {
 
 function createRecognition(): AudioRecognitionInternals {
   const hooks: RecognitionHooks = {
-    onInterruption: vi.fn(),
+    onOverlapSpeech: vi.fn(),
     onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),

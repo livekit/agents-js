@@ -531,7 +531,7 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         force?: boolean;
     }): Future<void, Error>;
     // (undocumented)
-    get interruptionDetection(): "adaptive" | "vad" | undefined;
+    get interruptionDetection(): "vad" | "adaptive" | undefined;
     // @internal (undocumented)
     readonly _keytermDetector: KeytermDetector;
     get keyterms(): string[];
@@ -5929,7 +5929,7 @@ export function resolveExpressiveOptions(expr: ExpressiveOptions, options: {
 // Warning: (ae-missing-release-tag) "RimeModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
+type RimeModels = 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
 
 // Warning: (ae-missing-release-tag) "RimeOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -6643,6 +6643,7 @@ interface SpeechData {
 interface SpeechEvent {
     // (undocumented)
     alternatives?: [SpeechData, ...SpeechData[]];
+    createdAt?: number;
     // (undocumented)
     recognitionUsage?: RecognitionUsage;
     // (undocumented)
@@ -9027,7 +9028,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:194:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:358:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/stt/stt.ts:361:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:501:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:988:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
