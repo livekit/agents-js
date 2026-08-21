@@ -46,6 +46,10 @@ function createFunctionCallStreamFromArray(fcs: FunctionCall[]): NodeReadableStr
   });
 }
 
+function createMockSession(): AgentSession {
+  return { _toolExecutionUpdated: vi.fn() } as unknown as AgentSession;
+}
+
 describe('Generation + Tool Execution', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
@@ -90,7 +94,7 @@ describe('Generation + Tool Execution', () => {
     const toolCallStream = createFunctionCallStream(fc);
 
     const [execTask, toolOutput] = performToolExecutions({
-      session: {} as any,
+      session: createMockSession(),
       speechHandle: { id: 'speech_test', _itemAdded: () => {} } as any,
       toolCtx: { getWeather } as any,
       toolCallStream,
@@ -136,7 +140,7 @@ describe('Generation + Tool Execution', () => {
     const toolCallStream = createFunctionCallStream(fc);
 
     const [execTask, toolOutput] = performToolExecutions({
-      session: {} as any,
+      session: createMockSession(),
       speechHandle: { id: 'speech_test2', _itemAdded: () => {} } as any,
       toolCtx: { echo } as any,
       toolCallStream,
@@ -168,7 +172,7 @@ describe('Generation + Tool Execution', () => {
     const toolCallStream = createFunctionCallStream(fc);
 
     const [execTask, toolOutput] = performToolExecutions({
-      session: {} as AgentSession,
+      session: createMockSession(),
       speechHandle: { id: 'speech_repair', _itemAdded: () => {} } as unknown as SpeechHandle,
       toolCtx: { removeOrderItem } as unknown as ToolContext,
       toolCallStream,
@@ -208,7 +212,7 @@ describe('Generation + Tool Execution', () => {
     const toolCallStream = createFunctionCallStream(fc);
 
     const [execTask, toolOutput] = performToolExecutions({
-      session: {} as any,
+      session: createMockSession(),
       speechHandle: { id: 'speech_abort', _itemAdded: () => {} } as any,
       toolCtx: { longOp } as any,
       toolCallStream,
@@ -243,7 +247,7 @@ describe('Generation + Tool Execution', () => {
     const toolCallStream = createFunctionCallStream(fc);
 
     const [execTask, toolOutput] = performToolExecutions({
-      session: {} as any,
+      session: createMockSession(),
       speechHandle: { id: 'speech_invalid', _itemAdded: () => {} } as any,
       toolCtx: { echo } as any,
       toolCallStream,
@@ -281,7 +285,7 @@ describe('Generation + Tool Execution', () => {
     const toolCallStream = createFunctionCallStream(fc);
 
     const [execTask, toolOutput] = performToolExecutions({
-      session: {} as any,
+      session: createMockSession(),
       speechHandle: { id: 'speech_bad_json', _itemAdded: () => {} } as any,
       toolCtx: { echo } as any,
       toolCallStream,
@@ -319,7 +323,7 @@ describe('Generation + Tool Execution', () => {
     const toolCallStream = createFunctionCallStream(fc);
 
     const [execTask, toolOutput] = performToolExecutions({
-      session: {} as any,
+      session: createMockSession(),
       speechHandle: { id: 'speech_generic_err', _itemAdded: () => {} } as any,
       toolCtx: { sensitive } as any,
       toolCallStream,
@@ -363,7 +367,7 @@ describe('Generation + Tool Execution', () => {
     const toolCallStream = createFunctionCallStream(fc);
 
     const [execTask, toolOutput] = performToolExecutions({
-      session: {} as any,
+      session: createMockSession(),
       speechHandle: { id: 'speech_tool_error', _itemAdded: () => {} } as any,
       toolCtx: { checked } as any,
       toolCallStream,
@@ -406,7 +410,7 @@ describe('Generation + Tool Execution', () => {
     const toolCallStream = createFunctionCallStreamFromArray([fc1, fc2]);
 
     const [execTask, toolOutput] = performToolExecutions({
-      session: {} as any,
+      session: createMockSession(),
       speechHandle: { id: 'speech_multi', _itemAdded: () => {} } as any,
       toolCtx: { sum, upper } as any,
       toolCallStream,
