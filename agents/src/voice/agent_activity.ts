@@ -1941,6 +1941,7 @@ export class AgentActivity implements RecognitionHooks {
             this.restoreInterruptionByAudioActivity();
           }
         }
+        this.pendingInterruption = undefined;
       } else {
         this.logger.info(
           { 'speech id': this._currentSpeech.id },

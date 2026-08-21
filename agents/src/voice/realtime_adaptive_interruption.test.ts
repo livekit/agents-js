@@ -112,6 +112,16 @@ type InterruptionActivityHarness = {
   interruptByAudioActivity: () => void;
 };
 
+type PausableInterruptionActivityHarness = InterruptionActivityHarness & {
+  agentSession: InterruptionActivityHarness['agentSession'] & {
+    agentState: 'listening';
+    output: { audio: { pause: ReturnType<typeof vi.fn> } };
+  };
+  _currentSpeech: InterruptionActivityHarness['_currentSpeech'] & { id: string };
+  cancelFalseInterruptionTimer: ReturnType<typeof vi.fn>;
+  pauseEnabled: ReturnType<typeof vi.fn>;
+};
+
 function setActivityProp<T>(activity: object, key: string, value: T): void {
   Object.defineProperty(activity, key, { configurable: true, value, writable: true });
 }
@@ -288,6 +298,41 @@ describe('realtime adaptive interruption', () => {
 
     activity.interruptByAudioActivity();
 
+    expect(activity.pendingInterruption).toBeUndefined();
+  });
+
+  it('clears a pending verdict when speech is already paused', () => {
+    const activity = Object.create(
+      AgentActivity.prototype,
+    ) as unknown as PausableInterruptionActivityHarness;
+    activity.isInterruptionByAudioActivityEnabled = true;
+    activity.agent = { _llm: {}, _stt: undefined };
+    activity.agentSession = {
+      _textOnly: false,
+      _aecWarmupRemaining: 0,
+      agentState: 'listening',
+      output: { audio: { pause: vi.fn() } },
+      sessionOptions: {
+        turnHandling: {
+          interruption: { minWords: 0 },
+        },
+      },
+    };
+    activity.audioRecognition = {
+      releaseTranscriptsForAudioActivity: vi.fn(),
+    };
+    activity._currentSpeech = {
+      id: 'speech',
+      interrupted: false,
+      allowInterruptions: true,
+    };
+    activity.pendingInterruption = overlapEvent({ isInterruption: true });
+    activity.cancelFalseInterruptionTimer = vi.fn();
+    activity.pauseEnabled = vi.fn(() => true);
+
+    activity.interruptByAudioActivity();
+
+    expect(activity.agentSession.output.audio.pause).toHaveBeenCalledOnce();
     expect(activity.pendingInterruption).toBeUndefined();
   });
 
