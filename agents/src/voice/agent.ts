@@ -767,6 +767,10 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       blockedTasks.push(onEnterTask);
     }
 
+    // Register before any await so a concurrent drain (e.g. session close)
+    // won't wait for tasks blocked on this handoff.
+    oldActivity._addDrainBlockedTasks(blockedTasks);
+
     const activeRunState = session._globalRunState;
     if (activeRunState && !activeRunState.done()) {
       for (const task of blockedTasks) {
@@ -822,7 +826,10 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       // runState could have changed after future resolved
       runState = session._globalRunState;
 
-      if (session.currentAgent !== this) {
+      if (session._closing && this._agentActivity === undefined) {
+        // The activity never started because the session is closing; the close path
+        // owns the previous activity.
+      } else if (session.currentAgent !== this) {
         this.#logger.warn(
           `${this.constructor.name} completed, but the agent has changed in the meantime. ` +
             `Ignoring handoff to the previous agent, likely due to AgentSession.updateAgent being invoked.`,
