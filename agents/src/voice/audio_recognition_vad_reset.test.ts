@@ -26,7 +26,7 @@ interface RecognitionInternals {
 
 function makeHooks(): RecognitionHooks {
   return {
-    onInterruption: vi.fn(),
+    onOverlapSpeech: vi.fn(),
     onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),

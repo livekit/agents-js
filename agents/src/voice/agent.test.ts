@@ -800,10 +800,11 @@ describe('Agent', () => {
 
     it.each([
       ['word', true],
+      [false, true],
       [false, false],
     ] as const)(
-      'should use the STT alignment claim to resolve automatic adaptive interruption (%s)',
-      (alignedTranscript, expectedAdaptive) => {
+      'should resolve automatic adaptive interruption independently of STT alignment (%s, streaming=%s)',
+      (alignedTranscript, streaming) => {
         const previousDevMode = process.env.LIVEKIT_DEV_MODE;
         const previousApiKey = process.env.LIVEKIT_API_KEY;
         const previousApiSecret = process.env.LIVEKIT_API_SECRET;
@@ -815,7 +816,7 @@ describe('Agent', () => {
           const activity = Object.create(AgentActivity.prototype) as any;
           activity.agent = {
             llm: {},
-            stt: { capabilities: { alignedTranscript, streaming: true } },
+            stt: { capabilities: { alignedTranscript, streaming } },
             vad: {},
             turnHandling: { interruption: { enabled: true }, turnDetection: 'stt' },
           };
@@ -825,11 +826,10 @@ describe('Agent', () => {
             turnDetection: 'stt',
           };
           activity.logger = { warn: vi.fn() };
-          activity.onInterruptionOverlappingSpeech = vi.fn();
           activity.onInterruptionMetricsCollected = vi.fn();
           activity.onInterruptionError = vi.fn();
 
-          expect(activity.resolveInterruptionDetector() !== undefined).toBe(expectedAdaptive);
+          expect(activity.resolveInterruptionDetector()).toBeDefined();
         } finally {
           if (previousDevMode === undefined) delete process.env.LIVEKIT_DEV_MODE;
           else process.env.LIVEKIT_DEV_MODE = previousDevMode;
@@ -840,6 +840,49 @@ describe('Agent', () => {
         }
       },
     );
+
+    it('should allow explicit adaptive interruption with an unaligned STT', () => {
+      const previousDevMode = process.env.LIVEKIT_DEV_MODE;
+      const previousRemoteEotUrl = process.env.LIVEKIT_REMOTE_EOT_URL;
+      const previousApiKey = process.env.LIVEKIT_API_KEY;
+      const previousApiSecret = process.env.LIVEKIT_API_SECRET;
+      delete process.env.LIVEKIT_DEV_MODE;
+      delete process.env.LIVEKIT_REMOTE_EOT_URL;
+      process.env.LIVEKIT_API_KEY = 'fake';
+      process.env.LIVEKIT_API_SECRET = 'fake-secret';
+
+      try {
+        const activity = Object.create(AgentActivity.prototype) as any;
+        activity.agent = {
+          llm: {},
+          stt: { capabilities: { alignedTranscript: false, streaming: true } },
+          vad: {},
+          turnHandling: {
+            interruption: { enabled: true, mode: 'adaptive' },
+            turnDetection: 'stt',
+          },
+        };
+        activity.agentSession = {
+          _textOnly: false,
+          interruptionDetection: undefined,
+          turnDetection: 'stt',
+        };
+        activity.logger = { warn: vi.fn() };
+        activity.onInterruptionMetricsCollected = vi.fn();
+        activity.onInterruptionError = vi.fn();
+
+        expect(activity.resolveInterruptionDetector()).toBeDefined();
+      } finally {
+        if (previousDevMode !== undefined) process.env.LIVEKIT_DEV_MODE = previousDevMode;
+        if (previousRemoteEotUrl !== undefined) {
+          process.env.LIVEKIT_REMOTE_EOT_URL = previousRemoteEotUrl;
+        }
+        if (previousApiKey === undefined) delete process.env.LIVEKIT_API_KEY;
+        else process.env.LIVEKIT_API_KEY = previousApiKey;
+        if (previousApiSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+        else process.env.LIVEKIT_API_SECRET = previousApiSecret;
+      }
+    });
 
     it('should keep automatic adaptive interruption off in plain production', () => {
       const previousDevMode = process.env.LIVEKIT_DEV_MODE;
