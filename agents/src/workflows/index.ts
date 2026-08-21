@@ -10,7 +10,7 @@ export {
 export {
   WarmTransferTask,
   createWarmTransferTask,
-  type CallerHangupSpeech,
+  type WarmTransferSpeech,
   type WarmTransferResult,
   type WarmTransferTaskOptions,
 } from './warm_transfer.js';
