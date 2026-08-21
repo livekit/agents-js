@@ -215,3 +215,32 @@ export function toToolsConfig({
   tools.push(...providerTools);
   return [tools.length > 0 ? tools : undefined, hasFunctionTools && providerTools.length > 0];
 }
+
+export function createFunctionResponse(
+  output: llm.FunctionCallOutput,
+  {
+    vertexai = false,
+    toolResponseScheduling,
+  }: {
+    vertexai?: boolean;
+    toolResponseScheduling?: types.FunctionResponseScheduling;
+  } = {},
+): types.FunctionResponse {
+  const response: types.FunctionResponse = {
+    name: output.name,
+    response: output.isError ? { error: output.output } : { output: output.output },
+  };
+
+  if (toolResponseScheduling !== undefined) {
+    // vertexai currently doesn't support the scheduling parameter, gemini api defaults to idle
+    // it's the user's responsibility to avoid this parameter when using vertexai
+    response.scheduling = toolResponseScheduling;
+  }
+
+  if (!vertexai) {
+    // vertexai does not support id in FunctionResponse
+    response.id = output.callId;
+  }
+
+  return response;
+}
