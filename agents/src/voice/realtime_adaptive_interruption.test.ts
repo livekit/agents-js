@@ -181,7 +181,7 @@ describe('realtime adaptive interruption', () => {
     expect(activity.interruptByAudioActivity).toHaveBeenCalledWith();
   });
 
-  it('consumes a verdict after released transcripts satisfy minWords', () => {
+  it('does not reenter while released transcripts satisfy minWords', () => {
     const activity = Object.create(AgentActivity.prototype) as any;
     activity.isInterruptionByAudioActivityEnabled = true;
     activity.agent = { _llm: {}, _stt: {} };
@@ -198,6 +198,7 @@ describe('realtime adaptive interruption', () => {
       currentTranscript: '',
       releaseTranscriptsForAudioActivity: vi.fn(() => {
         activity.audioRecognition.currentTranscript = 'enough words';
+        activity.interruptByAudioActivity();
       }),
     };
     activity._currentSpeech = {
@@ -216,6 +217,7 @@ describe('realtime adaptive interruption', () => {
     expect(activity.audioRecognition.releaseTranscriptsForAudioActivity).toHaveBeenCalledOnce();
     expect(activity._currentSpeech.interrupt).toHaveBeenCalledOnce();
     expect(activity.pendingInterruption).toBeUndefined();
+    expect(activity.audioActivityInterruptionInProgress).toBe(false);
   });
 
   it('clears a pending verdict when the transcript is below minWords', () => {

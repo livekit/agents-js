@@ -356,6 +356,7 @@ export class AgentActivity implements RecognitionHooks {
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
   private pendingInterruption?: OverlappingSpeechEvent;
+  private audioActivityInterruptionInProgress = false;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
 
@@ -1869,6 +1870,19 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private interruptByAudioActivity(): void {
+    if (this.audioActivityInterruptionInProgress) {
+      return;
+    }
+
+    this.audioActivityInterruptionInProgress = true;
+    try {
+      this.interruptByAudioActivityOnce();
+    } finally {
+      this.audioActivityInterruptionInProgress = false;
+    }
+  }
+
+  private interruptByAudioActivityOnce(): void {
     if (!this.isInterruptionByAudioActivityEnabled) {
       return;
     }
