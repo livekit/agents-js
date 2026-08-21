@@ -64,7 +64,9 @@ class InfClient implements InferenceExecutor {
           const fut = this.#requests[msg.value.requestId];
           delete this.#requests[msg.value.requestId];
           if (!fut) {
-            this.#logger.child({ resp: msg.value }).warn('received unexpected inference response');
+            this.#logger
+              .child({ 'lk.pii.response': msg.value })
+              .warn('received unexpected inference response');
             return;
           }
           fut.resolve(msg.value);

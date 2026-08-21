@@ -97,7 +97,7 @@ type ActivityInternals = {
 
 type InterruptionActivityHarness = {
   isInterruptionByAudioActivityEnabled: boolean;
-  agent: { llm: object; stt?: object };
+  agent: { _llm: object; _stt?: object };
   agentSession: {
     _textOnly: boolean;
     _aecWarmupRemaining: number;
@@ -174,7 +174,7 @@ describe('realtime adaptive interruption', () => {
   it('consumes a verdict after released transcripts satisfy minWords', () => {
     const activity = Object.create(AgentActivity.prototype) as any;
     activity.isInterruptionByAudioActivityEnabled = true;
-    activity.agent = { llm: {}, stt: {} };
+    activity.agent = { _llm: {}, _stt: {} };
     activity.agentSession = {
       _textOnly: false,
       _aecWarmupRemaining: 0,
@@ -213,7 +213,7 @@ describe('realtime adaptive interruption', () => {
       AgentActivity.prototype,
     ) as unknown as InterruptionActivityHarness;
     activity.isInterruptionByAudioActivityEnabled = true;
-    activity.agent = { llm: {}, stt: {} };
+    activity.agent = { _llm: {}, _stt: {} };
     activity.agentSession = {
       _textOnly: false,
       _aecWarmupRemaining: 0,
@@ -241,7 +241,7 @@ describe('realtime adaptive interruption', () => {
   it('clears a pending verdict when no speech can be interrupted', () => {
     const activity = Object.create(AgentActivity.prototype) as any;
     activity.isInterruptionByAudioActivityEnabled = true;
-    activity.agent = { llm: {}, stt: undefined };
+    activity.agent = { _llm: {}, _stt: undefined };
     activity.agentSession = {
       _textOnly: false,
       _aecWarmupRemaining: 0,
@@ -267,7 +267,7 @@ describe('realtime adaptive interruption', () => {
       AgentActivity.prototype,
     ) as unknown as InterruptionActivityHarness;
     activity.isInterruptionByAudioActivityEnabled = true;
-    activity.agent = { llm: {}, stt: undefined };
+    activity.agent = { _llm: {}, _stt: undefined };
     activity.agentSession = {
       _textOnly: false,
       _aecWarmupRemaining: 0,

@@ -142,12 +142,12 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
         } catch (error) {
           if (isTwirpNotFoundError(error)) {
             this.#logger.debug(
-              { identity: this.avatarIdentity },
+              { 'lk.pii.avatar_identity': this.avatarIdentity },
               'avatar participant not in room, skipping removal',
             );
           } else {
             this.#logger.warn(
-              { error, identity: this.avatarIdentity },
+              { error, 'lk.pii.avatar_identity': this.avatarIdentity },
               'failed to remove avatar participant',
             );
           }

@@ -32,7 +32,7 @@ const RIME_TTS_CHANNELS = 1;
  *
  * @param opts - Optional TTS configuration options
  * @returns The sample rate in Hz. Returns the explicit samplingRate if provided,
- *          otherwise returns model-specific defaults (24000 for arcana, 16000 for mistv2,
+ *          otherwise returns model-specific defaults (24000 for coda, 16000 for mistv2,
  *          or the default RIME_TTS_SAMPLE_RATE for other models)
  */
 function getSampleRate(opts?: Partial<TTSOptions>): number {
@@ -40,7 +40,6 @@ function getSampleRate(opts?: Partial<TTSOptions>): number {
     return opts.samplingRate;
   }
   switch (opts?.modelId) {
-    case 'arcana':
     case 'coda':
       return 24000;
     case 'mistv2':
@@ -78,7 +77,7 @@ export interface TTSOptions {
 }
 
 const defaultTTSOptions: TTSOptions = {
-  modelId: 'arcana',
+  modelId: 'coda',
   speaker: 'luna',
   apiKey: process.env.RIME_API_KEY,
   baseURL: RIME_BASE_URL,
@@ -86,17 +85,20 @@ const defaultTTSOptions: TTSOptions = {
   segment: 'bySentence',
 };
 
+function warnIfArcana(modelId: TTSOptions['modelId'] | undefined): void {
+  if (modelId === 'arcana') {
+    log().warn("Rime Arcana is no longer supported. Use modelId: 'coda' instead.");
+  }
+}
+
 function modelParams(opts: TTSOptions): Record<string, string | number | boolean> {
   const params: Record<string, string | number | boolean> = {};
   if (opts.lang !== undefined) params.lang = opts.lang;
 
-  if (opts.modelId === 'arcana') {
+  if (opts.modelId === 'coda') {
     if (opts.repetition_penalty !== undefined) params.repetition_penalty = opts.repetition_penalty;
     if (opts.temperature !== undefined) params.temperature = opts.temperature;
     if (opts.top_p !== undefined) params.top_p = opts.top_p;
-    if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
-    if (opts.timeScaleFactor !== undefined) params.timeScaleFactor = opts.timeScaleFactor;
-  } else if (opts.modelId === 'coda') {
     if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
     if (opts.timeScaleFactor !== undefined) params.timeScaleFactor = opts.timeScaleFactor;
   } else if (opts.modelId.includes('mist')) {
@@ -195,9 +197,7 @@ function resolveOptions(opts: Partial<TTSOptions>): TTSOptions {
   }
 
   if (resolved.modelId === 'mistv2' && resolved.timeScaleFactor !== undefined) {
-    throw new Error(
-      'timeScaleFactor is not supported by the mistv2 model; use arcana, mistv3, or coda.',
-    );
+    throw new Error('timeScaleFactor is not supported by the mistv2 model; use mistv3 or coda.');
   }
 
   return resolved;
@@ -229,6 +229,7 @@ export class TTS extends tts.TTS {
     if (this.opts.apiKey === undefined) {
       throw new Error('RIME API key is required, whether as an argument or as $RIME_API_KEY');
     }
+    warnIfArcana(opts.modelId);
   }
 
   get model(): string {
@@ -245,6 +246,7 @@ export class TTS extends tts.TTS {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<TTSOptions>) {
+    warnIfArcana(opts.modelId);
     this.opts = resolveOptions({ ...this.opts, ...opts });
   }
 

@@ -404,8 +404,8 @@ it('start warns when the gateway minted a different avatar identity', async () =
 
   expect(warn).toHaveBeenCalledWith(
     expect.objectContaining({
-      requestedIdentity: 'lemonslice-inference-avatar',
-      mintedIdentity: 'gateway-normalized-avatar',
+      'lk.pii.requested_identity': 'lemonslice-inference-avatar',
+      'lk.pii.minted_identity': 'gateway-normalized-avatar',
     }),
     expect.stringContaining('different identity than requested'),
   );

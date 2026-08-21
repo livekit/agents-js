@@ -1197,7 +1197,13 @@ export class RealtimeSession extends llm.RealtimeSession {
           case 'content':
             const { turns, turnComplete } = msg.value;
             if (LK_GOOGLE_DEBUG) {
-              this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
+              this.#logger.debug(
+                {
+                  eventType: msg.type,
+                  'lk.pii.event': this.loggableClientEvent(msg),
+                },
+                'sent Gemini Live client event',
+              );
             }
             await session.sendClientContent({
               turns,
@@ -1208,7 +1214,13 @@ export class RealtimeSession extends llm.RealtimeSession {
             const { functionResponses } = msg.value;
             if (functionResponses) {
               if (LK_GOOGLE_DEBUG) {
-                this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
+                this.#logger.debug(
+                  {
+                    eventType: msg.type,
+                    'lk.pii.event': this.loggableClientEvent(msg),
+                  },
+                  'sent Gemini Live client event',
+                );
               }
               try {
                 await session.sendToolResponse({
@@ -1269,9 +1281,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       (part) => part.inlineData?.data,
     );
     if (LK_GOOGLE_DEBUG) {
-      this.#logger.debug(`(server) <- ${JSON.stringify(this.loggableServerMessage(response))}`);
+      this.#logger.debug(
+        { 'lk.pii.response': this.loggableServerMessage(response) },
+        'received Gemini Live server event',
+      );
     } else if (!hasAudioData) {
-      this.#logger.debug(`(server) <- ${JSON.stringify(this.loggableServerMessage(response))}`);
+      this.#logger.debug(
+        { 'lk.pii.response': this.loggableServerMessage(response) },
+        'received Gemini Live server event',
+      );
     }
     const unlock = await this.sessionLock.lock();
 

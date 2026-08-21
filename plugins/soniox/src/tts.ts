@@ -640,7 +640,13 @@ class Connection {
     try {
       response = JSON.parse(raw) as Record<string, unknown>;
     } catch (error) {
-      this.#logger.warn({ error, raw }, 'Failed to parse Soniox TTS response');
+      this.#logger.warn(
+        {
+          error,
+          'lk.pii.raw_response': raw,
+        },
+        'Failed to parse Soniox TTS response',
+      );
       return;
     }
 

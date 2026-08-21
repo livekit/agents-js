@@ -17,7 +17,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
-import { setTracerProvider, setupCloudTracer, tracer, uploadSessionReport } from './traces.js';
+import {
+  type CloudSpanProcessorOptions,
+  setTracerProvider,
+  setupCloudTracer,
+  tracer,
+  uploadSessionReport,
+} from './traces.js';
 
 describe('setupCloudTracer default provider resource', () => {
   let provider: NodeTracerProvider | undefined;
@@ -271,10 +277,13 @@ describe('setupCloudTracer with a user-configured provider', () => {
     expect(registeredProcessors[2]).toBeInstanceOf(BatchSpanProcessor);
   });
 
-  it('prefers a user-supplied cloud processor factory over the built-in exporter', async () => {
+  it('passes the gated exporter to a user-supplied cloud processor factory', async () => {
     const registeredProcessors: SpanProcessor[] = [];
-    const factoryProcessor = new SimpleSpanProcessor(new InMemorySpanExporter());
-    const createCloudSpanProcessor = vi.fn(() => factoryProcessor);
+    let factoryProcessor: SimpleSpanProcessor | undefined;
+    const createCloudSpanProcessor = vi.fn((options: CloudSpanProcessorOptions) => {
+      factoryProcessor = new SimpleSpanProcessor(options.exporter);
+      return factoryProcessor;
+    });
     setTracerProvider(userProvider, {
       registerSpanProcessor: (processor) => registeredProcessors.push(processor),
       createCloudSpanProcessor,
@@ -429,6 +438,38 @@ describe('uploadSessionReport metadata', () => {
       'lk.redaction.enabled': true,
     });
     expect(records[0]?.attributes).not.toHaveProperty('session.simulation');
+  });
+
+  it('marks session keyterms as PII in exported session-report logs', async () => {
+    const exportSpy = vi
+      .spyOn(SimpleOTLPHttpLogExporter.prototype, 'export')
+      .mockResolvedValue(undefined);
+    const keytermsOptions = {
+      keyterms: ['Acme Corp'],
+      keytermDetection: { enabled: false },
+    };
+    const report = makeReport({
+      audio: false,
+      traces: true,
+      logs: false,
+      transcript: false,
+      redaction: false,
+    });
+    report.options = { ...report.options, keytermsOptions };
+
+    await uploadSessionReport({
+      agentName: 'agent',
+      cloudHostname: 'example.livekit.cloud',
+      report,
+    });
+
+    const records = exportSpy.mock.calls[0]?.[0] ?? [];
+    const serializedOptions = records[0]?.attributes['session.options'] as Record<string, unknown>;
+    const serializedKeytermsOptions = serializedOptions.keytermsOptions as Record<string, unknown>;
+    expect(serializedKeytermsOptions['lk.pii.keyterms']).toEqual(['Acme Corp']);
+    expect(serializedKeytermsOptions).not.toHaveProperty('keyterms');
+    expect(serializedKeytermsOptions.keytermDetection).toEqual({ enabled: false });
+    expect(keytermsOptions.keyterms).toEqual(['Acme Corp']);
   });
 
   it('sets job, simulation, and redaction fields on the multipart recording header', async () => {

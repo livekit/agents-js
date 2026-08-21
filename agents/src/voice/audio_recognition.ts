@@ -64,7 +64,7 @@ import {
   setParticipantSpanAttributes,
 } from './utils.js';
 
-// Maximum number of chat items included in the `lk.chat_ctx` attribute of the
+// Maximum number of chat items included in the `lk.pii.chat_ctx` attribute of the
 // `eou_detection` span (mirrors Python's `_EOU_MAX_HISTORY_TURNS`).
 const EOU_MAX_HISTORY_TURNS = 6;
 const MIN_LANGUAGE_DETECTION_LENGTH = 5;
@@ -368,6 +368,7 @@ export class AudioRecognition {
   private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
   private sttOwnershipTransferred = false;
   private readonly sttLifecycleLock = new Mutex();
+  private readonly vadLifecycleLock = new Mutex();
 
   // all cancellable tasks
   private bounceEOUTask?: Task<void>;
@@ -393,6 +394,7 @@ export class AudioRecognition {
   private overlapOpen = false;
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
   private closed = false;
+  private readonly closeWakeController = new AbortController();
 
   // backchannel boundary for adaptive interruption suppression
   private backchannelBoundary?: [number, number];
@@ -641,13 +643,14 @@ export class AudioRecognition {
    * configure it: raise if the bound VAD exposes `minSilenceDuration` and it
    * is below the floor. VADs that don't expose the knob are left untouched.
    */
-  private checkVadSilenceRequirement(
+  checkVadSilenceRequirement(
     detector: _TurnDetector | BaseStreamingTurnDetector | undefined = this.turnDetector,
+    vad: VAD | undefined = this.vad,
   ): void {
-    if (!(detector instanceof BaseStreamingTurnDetector) || this.vad === undefined) {
+    if (!(detector instanceof BaseStreamingTurnDetector) || vad === undefined) {
       return;
     }
-    const current = this.vad.minSilenceDuration;
+    const current = vad.minSilenceDuration;
     if (current === null) {
       return;
     }
@@ -670,16 +673,67 @@ export class AudioRecognition {
     }
   }
 
+  async updateStt(
+    stt: STTNode | undefined,
+    options: { model?: string; provider?: string; resetContext?: boolean } = {},
+  ): Promise<void> {
+    const unlock = await this.sttLifecycleLock.lock();
+    try {
+      this.stt = stt;
+      if (Object.hasOwn(options, 'model')) {
+        this.sttModel = options.model;
+      }
+      if (Object.hasOwn(options, 'provider')) {
+        this.sttProvider = options.provider;
+      }
+      if (options.resetContext) {
+        this.lastLanguage = undefined;
+        this.sttRequestIds = [];
+        this.transcriptBuffer = [];
+      }
+
+      await this.stopSttTasks();
+      await this.sttPipeline?.close();
+      this.sttPipeline = undefined;
+      this.sttOwnershipTransferred = false;
+
+      if (!this.closed && this.stt !== undefined) {
+        this.startSttTasks();
+      }
+    } finally {
+      unlock();
+    }
+  }
+
+  async updateVad(vad: VAD | undefined, usingDefaultVad: boolean): Promise<void> {
+    this.checkVadSilenceRequirement(undefined, vad);
+    const unlock = await this.vadLifecycleLock.lock();
+    try {
+      this.vad = vad;
+      this.usingDefaultVad = usingDefaultVad;
+      this.isInterruptionEnabled = !!(this.interruptionDetection && this.vad);
+
+      await this.vadTask?.cancelAndWait();
+      this.vadTask = undefined;
+      this.vadStream = undefined;
+
+      if (!this.closed && this.vad !== undefined) {
+        this.startVadTask(this.vad);
+      }
+    } finally {
+      unlock();
+    }
+  }
+
   async start(options?: {
     sttPipeline?: STTPipeline;
     turnDetectorStream?: BaseStreamingTurnDetectorStream;
   }) {
     this.startSttTasks(options?.sttPipeline);
 
-    this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
-    this.vadTask.result.catch((err) => {
-      this.logger.error(`Error running VAD task: ${err}`);
-    });
+    if (this.vad !== undefined) {
+      this.startVadTask(this.vad);
+    }
 
     this.interruptionTask = Task.from(({ signal }) =>
       this.createInterruptionTask(this.interruptionDetection, signal),
@@ -1078,7 +1132,7 @@ export class AudioRecognition {
 
         this.logger.debug(
           {
-            user_transcript: transcript,
+            'lk.pii.user_transcript': transcript,
             language: this.lastLanguage,
           },
           'received user transcript',
@@ -1102,7 +1156,7 @@ export class AudioRecognition {
         if (this.vadBaseTurnDetection || this.userTurnCommitted) {
           if (transcriptChanged) {
             this.logger.debug(
-              { transcript: this.audioTranscript },
+              { 'lk.pii.transcript': this.audioTranscript },
               'triggering preemptive generation (FINAL_TRANSCRIPT)',
             );
             this.hooks.onPreemptiveGeneration({
@@ -1140,7 +1194,7 @@ export class AudioRecognition {
 
         this.logger.debug(
           {
-            user_transcript: preflightTranscript,
+            'lk.pii.user_transcript': preflightTranscript,
             language: this.lastLanguage,
           },
           'received user preflight transcript',
@@ -1162,7 +1216,7 @@ export class AudioRecognition {
           const confidenceVals = [...this.finalTranscriptConfidence, preflightConfidence];
           this.logger.debug(
             {
-              transcript:
+              'lk.pii.transcript':
                 this.audioPreflightTranscript.length > 100
                   ? this.audioPreflightTranscript.slice(0, 100) + '...'
                   : this.audioPreflightTranscript,
@@ -1180,7 +1234,10 @@ export class AudioRecognition {
         }
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
-        this.logger.debug({ transcript: ev.alternatives?.[0]?.text }, 'interim transcript');
+        this.logger.debug(
+          { 'lk.pii.transcript': ev.alternatives?.[0]?.text },
+          'interim transcript',
+        );
         this.hooks.onInterimTranscript(
           ev,
           this.hasUserVad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
@@ -1329,7 +1386,7 @@ export class AudioRecognition {
     this.logger.debug(
       {
         stt: this.stt,
-        audioTranscript: this.audioTranscript,
+        'lk.pii.audio_transcript': this.audioTranscript,
         turnDetectionMode: this.turnDetectionMode,
       },
       'running EOU detection',
@@ -1581,7 +1638,15 @@ export class AudioRecognition {
 
         if (extraSleep > 0) {
           // add delay to see if there's a potential upcoming EOU task that cancels this one
-          await delay(Math.max(extraSleep, 0), { signal: controller.signal });
+          try {
+            await delay(Math.max(extraSleep, 0), {
+              signal: AbortSignal.any([controller.signal, this.closeWakeController.signal]),
+            });
+          } catch (error) {
+            if (!this.closeWakeController.signal.aborted) {
+              throw error;
+            }
+          }
         }
 
         if (controller.signal.aborted) {
@@ -1600,7 +1665,7 @@ export class AudioRecognition {
           return;
         }
 
-        this.logger.debug({ transcript: this.audioTranscript }, 'end of user turn');
+        this.logger.debug({ 'lk.pii.transcript': this.audioTranscript }, 'end of user turn');
 
         const confidenceAvg =
           this.finalTranscriptConfidence.length > 0
@@ -1683,6 +1748,7 @@ export class AudioRecognition {
           // ignore aborted errors
           return;
         }
+        if (this.closed) return;
         this.logger.error(err, 'Error in EOU detection task:');
       });
   }
@@ -2165,14 +2231,28 @@ export class AudioRecognition {
    * and trigger interruptions correctly.
    */
   private resetVad() {
-    if (!this.vad) return;
+    void this.resetVadTask().catch((err) => {
+      this.logger.error(`Error resetting VAD task: ${err}`);
+    });
+  }
 
-    this.vadTask?.cancelAndWait().finally(() => {
-      if (this.closed) return;
-      this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
-      this.vadTask.result.catch((err) => {
-        this.logger.error(`Error running VAD task: ${err}`);
-      });
+  private async resetVadTask(): Promise<void> {
+    const unlock = await this.vadLifecycleLock.lock();
+    try {
+      if (!this.vad || this.closed) return;
+      await this.vadTask?.cancelAndWait();
+      if (!this.closed && this.vad !== undefined) {
+        this.startVadTask(this.vad);
+      }
+    } finally {
+      unlock();
+    }
+  }
+
+  private startVadTask(vad: VAD): void {
+    this.vadTask = Task.from(({ signal }) => this.createVadTask(vad, signal));
+    this.vadTask.result.catch((err) => {
+      this.logger.error(`Error running VAD task: ${err}`);
     });
   }
 
@@ -2216,16 +2296,31 @@ export class AudioRecognition {
           this.logger.debug('User turn commit task cancelled');
           return;
         }
+        if (this.closed) return;
         this.logger.error(err, 'Error in user turn commit task:');
       });
   }
 
   async close() {
     this.closed = true;
+    this.closeWakeController.abort();
     this.overlapOpen = false;
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();
-    await this.commitUserTurnTask?.cancelAndWait();
+    // WARNING: These tasks are intentionally allowed to finish so the final user turn is not
+    // lost. Cleanup can therefore continue past the worker's session-close timeout.
+    if (this.commitUserTurnTask) {
+      try {
+        await this.commitUserTurnTask.result;
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          this.logger.warn(
+            { errorType: error instanceof Error ? error.constructor.name : typeof error },
+            'error while committing the final user turn on close',
+          );
+        }
+      }
+    }
     await this.stopSttTasks();
 
     if (this.sttPipeline) {
@@ -2245,7 +2340,18 @@ export class AudioRecognition {
     this.subscriberWriters = [];
 
     await this.vadTask?.cancelAndWait();
-    await this.bounceEOUTask?.cancelAndWait();
+    if (this.bounceEOUTask) {
+      try {
+        await this.bounceEOUTask.result;
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          this.logger.warn(
+            { errorType: error instanceof Error ? error.constructor.name : typeof error },
+            'error while completing the final user turn on close',
+          );
+        }
+      }
+    }
     await this.interruptionTask?.cancelAndWait();
 
     if (this.turnDetectorStream !== undefined) {

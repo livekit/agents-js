@@ -2,11 +2,42 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type Span, SpanStatusCode, context as otelContext, trace } from '@opentelemetry/api';
+import { getJobContext } from '../job.js';
 import type { RealtimeModelMetrics } from '../metrics/base.js';
+import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 import * as traceTypes from './trace_types.js';
 import { tracer } from './traces.js';
 
-export function recordException(span: Span, error: Error): void {
+export { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
+
+export interface RecordExceptionOptions {
+  /**
+   * Whether to omit exception messages and stack traces from telemetry. Defaults to the resolved
+   * redaction setting for the current session.
+   */
+  redacted?: boolean;
+}
+
+export function recordException(
+  span: Span,
+  error: Error,
+  options: RecordExceptionOptions = {},
+): void {
+  const redacted = options.redacted ?? getJobContext(false)?._redactionEnabled ?? false;
+  if (redacted) {
+    const attrs = {
+      [traceTypes.ATTR_EXCEPTION_TYPE]: error.constructor.name,
+      [traceTypes.ATTR_EXCEPTION_MESSAGE]: REDACTED_EXCEPTION_MESSAGE,
+    };
+    span.addEvent('exception', attrs);
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      message: REDACTED_EXCEPTION_MESSAGE,
+    });
+    span.setAttributes(attrs);
+    return;
+  }
+
   span.recordException(error);
   span.setStatus({
     code: SpanStatusCode.ERROR,

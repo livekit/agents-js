@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
+import { AudioFrame, LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ATTRIBUTE_TRANSCRIPTION_EXPRESSION,
@@ -15,6 +15,101 @@ type CaptureFrameArg = Parameters<ParticipantAudioOutput['captureFrame']>[0];
 
 const nextTick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+class QueuedAudioSource {
+  queuedDuration = 0;
+  playedDuration = 0;
+  clearCount = 0;
+  captured: CaptureFrameArg[] = [];
+
+  async captureFrame(frame: CaptureFrameArg): Promise<void> {
+    this.captured.push(frame);
+    this.queuedDuration += (frame.samplesPerChannel / frame.sampleRate) * 1000;
+  }
+
+  async waitForPlayout(): Promise<void> {
+    await nextTick();
+    this.playedDuration += this.queuedDuration / 1000;
+    this.queuedDuration = 0;
+  }
+
+  clearQueue(): void {
+    this.clearCount++;
+    this.queuedDuration = 0;
+  }
+}
+
+class BlockingAudioSource extends QueuedAudioSource {
+  captureStarted = new Future<void>();
+  captureAllowed = new Future<void>();
+  playoutStarted = new Future<void>();
+  playoutAllowed = new Future<void>();
+
+  override async captureFrame(frame: CaptureFrameArg): Promise<void> {
+    await super.captureFrame(frame);
+    this.captureStarted.resolve();
+    await this.captureAllowed.await;
+  }
+
+  override async waitForPlayout(): Promise<void> {
+    this.playoutStarted.resolve();
+    await this.playoutAllowed.await;
+    await super.waitForPlayout();
+  }
+}
+
+type TestParticipantAudioOutput = ParticipantAudioOutput & {
+  startedFuture: Future<void>;
+  playbackEnabledFuture: Future<void>;
+  interruptedFuture: Future<void>;
+  forwardingIdleFuture: Future<void>;
+  firstFrameEmitted: boolean;
+  pushedDuration: number;
+  sourcePushedDuration: number;
+  sourceDiscardedDuration: number;
+  interruptionGeneration: number;
+  forwardingCount: number;
+  _capturing: boolean;
+  playbackSegmentsCount: number;
+  playbackFinishedCount: number;
+  playbackFinishedFuture: Future<void>;
+  onPlaybackStarted: (createdAt: number) => void;
+  logger: {
+    error: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+  };
+  audioSource: QueuedAudioSource;
+};
+
+function makeTestOutput(audioSource: QueuedAudioSource = new QueuedAudioSource()) {
+  const output = Object.create(ParticipantAudioOutput.prototype) as TestParticipantAudioOutput;
+  output.startedFuture = new Future<void>();
+  output.startedFuture.resolve();
+  output.playbackEnabledFuture = new Future<void>();
+  output.playbackEnabledFuture.resolve();
+  output.interruptedFuture = new Future<void>();
+  output.forwardingIdleFuture = new Future<void>();
+  output.forwardingIdleFuture.resolve();
+  output.firstFrameEmitted = false;
+  output.pushedDuration = 0;
+  output.sourcePushedDuration = 0;
+  output.sourceDiscardedDuration = 0;
+  output.interruptionGeneration = 0;
+  output.forwardingCount = 0;
+  output._capturing = false;
+  output.playbackSegmentsCount = 0;
+  output.playbackFinishedCount = 0;
+  output.playbackFinishedFuture = new Future<void>();
+  output.onPlaybackStarted = vi.fn();
+  output.logger = { error: vi.fn(), warn: vi.fn() };
+  output.audioSource = audioSource;
+  return output;
+}
+
+function audioFrame(durationMs: number, value = 0): AudioFrame {
+  const samplesPerChannel = (durationMs / 1000) * 48000;
+  return new AudioFrame(new Int16Array(samplesPerChannel).fill(value), 48000, 1, samplesPerChannel);
+}
+
 describe('ParticipantAudioOutput waitForPlayoutTask', () => {
   it('resets tracked duration after non-interrupted playout', async () => {
     let resolvePlayout!: () => void;
@@ -24,7 +119,10 @@ describe('ParticipantAudioOutput waitForPlayoutTask', () => {
 
     const output = Object.create(ParticipantAudioOutput.prototype) as ParticipantAudioOutput & {
       pushedDuration: number;
+      sourcePushedDuration: number;
+      sourceDiscardedDuration: number;
       interruptedFuture: Future<void>;
+      forwardingIdleFuture: Future<void>;
       firstFrameEmitted: boolean;
       audioSource: {
         waitForPlayout: () => Promise<void>;
@@ -32,12 +130,16 @@ describe('ParticipantAudioOutput waitForPlayoutTask', () => {
         clearQueue: () => void;
       };
       onPlaybackFinished: (event: { playbackPosition: number; interrupted: boolean }) => void;
-      waitForPlayoutTask: (abortController: AbortController) => Promise<void>;
+      waitForPlayoutTask: () => Promise<void>;
     };
 
     const onPlaybackFinished = vi.fn();
     output.pushedDuration = 1.0;
+    output.sourcePushedDuration = 1.0;
+    output.sourceDiscardedDuration = 0;
     output.interruptedFuture = new Future<void>();
+    output.forwardingIdleFuture = new Future<void>();
+    output.forwardingIdleFuture.resolve();
     output.firstFrameEmitted = true;
     output.onPlaybackFinished = onPlaybackFinished;
     output.audioSource = {
@@ -46,7 +148,7 @@ describe('ParticipantAudioOutput waitForPlayoutTask', () => {
       clearQueue: vi.fn(),
     };
 
-    const task = output.waitForPlayoutTask(new AbortController());
+    const task = output.waitForPlayoutTask();
 
     resolvePlayout();
     await task;
@@ -58,7 +160,7 @@ describe('ParticipantAudioOutput waitForPlayoutTask', () => {
     });
   });
 
-  it('resets duration to queue state when interrupted flush clears overlap', async () => {
+  it('subtracts queued source audio when interrupted', async () => {
     let resolvePlayout!: () => void;
     const waitForPlayout = new Promise<void>((resolve) => {
       resolvePlayout = resolve;
@@ -66,7 +168,10 @@ describe('ParticipantAudioOutput waitForPlayoutTask', () => {
 
     const output = Object.create(ParticipantAudioOutput.prototype) as ParticipantAudioOutput & {
       pushedDuration: number;
+      sourcePushedDuration: number;
+      sourceDiscardedDuration: number;
       interruptedFuture: Future<void>;
+      forwardingIdleFuture: Future<void>;
       firstFrameEmitted: boolean;
       audioSource: {
         waitForPlayout: () => Promise<void>;
@@ -74,12 +179,16 @@ describe('ParticipantAudioOutput waitForPlayoutTask', () => {
         clearQueue: () => void;
       };
       onPlaybackFinished: (event: { playbackPosition: number; interrupted: boolean }) => void;
-      waitForPlayoutTask: (abortController: AbortController) => Promise<void>;
+      waitForPlayoutTask: () => Promise<void>;
     };
 
     const onPlaybackFinished = vi.fn();
     output.pushedDuration = 1.0;
+    output.sourcePushedDuration = 1.0;
+    output.sourceDiscardedDuration = 0;
     output.interruptedFuture = new Future<void>();
+    output.forwardingIdleFuture = new Future<void>();
+    output.forwardingIdleFuture.resolve();
     output.firstFrameEmitted = true;
     output.onPlaybackFinished = onPlaybackFinished;
     output.audioSource = {
@@ -90,15 +199,12 @@ describe('ParticipantAudioOutput waitForPlayoutTask', () => {
       }),
     };
 
-    const task = output.waitForPlayoutTask(new AbortController());
+    const task = output.waitForPlayoutTask();
 
-    // Overlap from the next segment arrives before interruption.
-    output.pushedDuration += 0.5;
     output.interruptedFuture.resolve();
     resolvePlayout();
     await task;
 
-    // interrupted path clears queued overlap, so duration should not retain stale overlap time.
     expect(output.pushedDuration).toBe(0);
     expect(onPlaybackFinished).toHaveBeenCalledWith({
       playbackPosition: 0.5,
@@ -114,9 +220,11 @@ describe('ParticipantAudioOutput waitForPlayoutTask', () => {
 
     const output = Object.create(ParticipantAudioOutput.prototype) as ParticipantAudioOutput & {
       pushedDuration: number;
+      sourcePushedDuration: number;
+      sourceDiscardedDuration: number;
       flushTask?: { done: boolean };
-      flushPushedDuration?: number;
       interruptedFuture: Future<void>;
+      forwardingIdleFuture: Future<void>;
       firstFrameEmitted: boolean;
       audioSource: {
         waitForPlayout: () => Promise<void>;
@@ -131,7 +239,11 @@ describe('ParticipantAudioOutput waitForPlayoutTask', () => {
 
     const onPlaybackFinished = vi.fn();
     output.pushedDuration = 1.0;
+    output.sourcePushedDuration = 1.0;
+    output.sourceDiscardedDuration = 0;
     output.interruptedFuture = new Future<void>();
+    output.forwardingIdleFuture = new Future<void>();
+    output.forwardingIdleFuture.resolve();
     output.firstFrameEmitted = true;
     output.onPlaybackFinished = onPlaybackFinished;
     output.logger = {
@@ -168,6 +280,11 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     interruptedFuture: Future<void>;
     firstFrameEmitted: boolean;
     pushedDuration: number;
+    sourcePushedDuration: number;
+    sourceDiscardedDuration: number;
+    interruptionGeneration: number;
+    forwardingCount: number;
+    forwardingIdleFuture: Future<void>;
     _capturing: boolean;
     playbackSegmentsCount: number;
     playbackFinishedCount: number;
@@ -176,6 +293,8 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     audioSource: {
       clearQueue: () => void;
       captureFrame: (frame: CaptureFrameArg) => Promise<void>;
+      waitForPlayout: () => Promise<void>;
+      queuedDuration: number;
     };
   };
 
@@ -188,32 +307,51 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     output.interruptedFuture = new Future<void>();
     output.firstFrameEmitted = false;
     output.pushedDuration = 0;
+    output.sourcePushedDuration = 0;
+    output.sourceDiscardedDuration = 0;
+    output.interruptionGeneration = 0;
+    output.forwardingCount = 0;
+    output.forwardingIdleFuture = new Future<void>();
+    output.forwardingIdleFuture.resolve();
     output._capturing = false;
     output.playbackSegmentsCount = 0;
     output.playbackFinishedCount = 0;
     output.playbackFinishedFuture = new Future<void>();
     output.onPlaybackStarted = vi.fn();
-    output.audioSource = { clearQueue: vi.fn(), captureFrame: vi.fn(async () => {}) };
+    output.audioSource = {
+      clearQueue: vi.fn(),
+      captureFrame: vi.fn(async () => {}),
+      waitForPlayout: vi.fn(async () => {}),
+      queuedDuration: 0,
+    };
     return output;
   };
 
   const frame = () => ({ samplesPerChannel: 480, sampleRate: 24000 }) as unknown as CaptureFrameArg;
 
-  it('does not strand the segment counter when a frame is interrupted while paused', async () => {
+  it('finishes the segment when a frame is interrupted while paused', async () => {
     const output = makeOutput({ paused: true });
 
     const capture = output.captureFrame(frame());
-    output.interruptedFuture.resolve();
+    output.clearBuffer();
+    await capture;
+
+    expect(output.playbackSegmentsCount).toBe(1);
+    expect(output.audioSource.captureFrame).not.toHaveBeenCalled();
+    expect(await output.waitForPlayout()).toEqual({ playbackPosition: 0, interrupted: true });
+  });
+
+  it('drops a frame interrupted while waiting for subscription', async () => {
+    const output = makeOutput({ paused: false });
+    output.startedFuture = new Future<void>();
+
+    const capture = output.captureFrame(frame());
+    output.clearBuffer();
+    output.startedFuture.resolve();
     await capture;
 
     expect(output.playbackSegmentsCount).toBe(0);
     expect(output.audioSource.captureFrame).not.toHaveBeenCalled();
-
-    const result = await Promise.race([
-      output.waitForPlayout().then(() => 'resolved' as const),
-      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1000)),
-    ]);
-    expect(result).toBe('resolved');
   });
 
   it('registers a segment on the normal non-paused path', async () => {
@@ -243,6 +381,223 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     }
 
     expect(output.onPlaybackStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a capture gated when playback pauses again during resume', async () => {
+    const output = makeOutput({ paused: true });
+
+    const capture = output.captureFrame(frame());
+    await nextTick();
+
+    output.resume();
+    output.pause();
+    await nextTick();
+
+    expect(output.audioSource.captureFrame).not.toHaveBeenCalled();
+
+    output.resume();
+    await capture;
+
+    expect(output.audioSource.captureFrame).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ParticipantAudioOutput discarded audio accounting', () => {
+  it('does not report discarded audio as played', async () => {
+    const source = new QueuedAudioSource();
+    const output = makeTestOutput(source);
+
+    await output.captureFrame(audioFrame(500));
+    output.pause();
+    const heldCapture = output.captureFrame(audioFrame(20));
+    output.flush();
+    await nextTick();
+
+    expect(source.clearCount).toBe(1);
+    output.clearBuffer();
+    await heldCapture;
+    const finished = await output.waitForPlayout();
+
+    expect(finished.interrupted).toBe(true);
+    expect(finished.playbackPosition).toBe(0);
+  });
+
+  it('excludes discarded audio after resume', async () => {
+    const source = new QueuedAudioSource();
+    const output = makeTestOutput(source);
+
+    await output.captureFrame(audioFrame(500));
+    output.pause();
+    const heldCapture = output.captureFrame(audioFrame(200));
+    output.flush();
+    await nextTick();
+
+    expect(source.clearCount).toBe(1);
+    output.resume();
+    await heldCapture;
+    const finished = await output.waitForPlayout();
+
+    expect(finished.interrupted).toBe(false);
+    expect(finished.playbackPosition).toBeCloseTo(source.playedDuration);
+  });
+
+  it('finishes playout when paused after forwarding drains', async () => {
+    const source = new QueuedAudioSource();
+    const output = makeTestOutput(source);
+    const frame = audioFrame(20);
+
+    await output.captureFrame(frame);
+    output.flush();
+    output.pause();
+    const finished = await output.waitForPlayout();
+
+    expect(finished.interrupted).toBe(false);
+    expect(finished.playbackPosition).toBeCloseTo(frame.samplesPerChannel / frame.sampleRate);
+  });
+
+  it('drops a paused frame from an interrupted segment', async () => {
+    const source = new QueuedAudioSource();
+    const output = makeTestOutput(source);
+    const oldFrame = audioFrame(20, 1);
+    const newFrame = audioFrame(40, 2);
+
+    output.pause();
+    const heldCapture = output.captureFrame(oldFrame);
+    output.flush();
+    await nextTick();
+
+    output.clearBuffer();
+    await heldCapture;
+    const interrupted = await output.waitForPlayout();
+
+    output.resume();
+    await output.captureFrame(newFrame);
+    output.flush();
+    const finished = await output.waitForPlayout();
+
+    expect(interrupted.interrupted).toBe(true);
+    expect(interrupted.playbackPosition).toBe(0);
+    expect(finished.interrupted).toBe(false);
+    expect(finished.playbackPosition).toBeCloseTo(newFrame.samplesPerChannel / newFrame.sampleRate);
+    expect(source.captured).toEqual([newFrame]);
+  });
+
+  it('waits for active submission and source playout', async () => {
+    const source = new BlockingAudioSource();
+    const output = makeTestOutput(source);
+    const frame = audioFrame(20);
+    const capture = output.captureFrame(frame);
+    await source.captureStarted.await;
+
+    output.flush();
+    const playout = output.waitForPlayout();
+    await nextTick();
+
+    let settled = false;
+    void playout.then(() => {
+      settled = true;
+    });
+    expect(settled).toBe(false);
+    expect(source.playoutStarted.done).toBe(false);
+
+    source.captureAllowed.resolve();
+    await capture;
+    await source.playoutStarted.await;
+    expect(settled).toBe(false);
+
+    source.playoutAllowed.resolve();
+    const finished = await playout;
+
+    expect(finished.interrupted).toBe(false);
+    expect(finished.playbackPosition).toBeCloseTo(frame.samplesPerChannel / frame.sampleRate);
+  });
+
+  it('waits for previous segment playout before capturing the next segment', async () => {
+    const source = new BlockingAudioSource();
+    source.captureAllowed.resolve();
+    const output = makeTestOutput(source);
+    const firstFrame = audioFrame(20, 1);
+    const secondFrame = audioFrame(40, 2);
+
+    await output.captureFrame(firstFrame);
+    output.flush();
+    await source.playoutStarted.await;
+
+    let secondCaptureSettled = false;
+    const secondCapture = output.captureFrame(secondFrame).then(() => {
+      secondCaptureSettled = true;
+    });
+    await nextTick();
+
+    expect(secondCaptureSettled).toBe(false);
+    expect(source.captured).toEqual([firstFrame]);
+
+    source.playoutAllowed.resolve();
+    const firstFinished = await output.waitForPlayout();
+    await secondCapture;
+
+    expect(firstFinished).toEqual({
+      interrupted: false,
+      playbackPosition: firstFrame.samplesPerChannel / firstFrame.sampleRate,
+    });
+    expect(source.captured).toEqual([firstFrame, secondFrame]);
+
+    output.flush();
+    const secondFinished = await output.waitForPlayout();
+    expect(secondFinished).toEqual({
+      interrupted: false,
+      playbackPosition: secondFrame.samplesPerChannel / secondFrame.sampleRate,
+    });
+  });
+
+  it('drops a next-segment capture interrupted while waiting for prior playout', async () => {
+    const source = new BlockingAudioSource();
+    source.captureAllowed.resolve();
+    const output = makeTestOutput(source);
+    const firstFrame = audioFrame(20, 1);
+
+    await output.captureFrame(firstFrame);
+    output.flush();
+    await source.playoutStarted.await;
+
+    const nextCapture = output.captureFrame(audioFrame(40, 2));
+    await nextTick();
+    output.clearBuffer();
+
+    expect(await output.waitForPlayout()).toEqual({
+      interrupted: true,
+      playbackPosition: 0,
+    });
+    await nextCapture;
+    expect(source.captured).toEqual([firstFrame]);
+
+    source.playoutAllowed.resolve();
+  });
+
+  it('finishes once when producer flush follows clearBuffer', async () => {
+    const source = new QueuedAudioSource();
+    const output = makeTestOutput(source);
+    const onPlaybackFinished = vi.spyOn(output, 'onPlaybackFinished');
+
+    await output.captureFrame(audioFrame(20, 1));
+    output.clearBuffer();
+    output.flush();
+
+    expect(await output.waitForPlayout()).toEqual({
+      interrupted: true,
+      playbackPosition: 0,
+    });
+    expect(onPlaybackFinished).toHaveBeenCalledTimes(1);
+
+    const nextFrame = audioFrame(40, 2);
+    await output.captureFrame(nextFrame);
+    output.flush();
+
+    expect(await output.waitForPlayout()).toEqual({
+      interrupted: false,
+      playbackPosition: nextFrame.samplesPerChannel / nextFrame.sampleRate,
+    });
+    expect(onPlaybackFinished).toHaveBeenCalledTimes(2);
   });
 });
 

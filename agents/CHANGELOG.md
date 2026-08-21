@@ -1,5 +1,53 @@
 # @livekit/agents
 
+## 1.7.0
+
+### Minor Changes
+
+- Tag content-bearing telemetry with `lk.pii.*` and redact trace exception details when project or session redaction is enabled. Redacted audio uploads now require transcript uploads, Deepgram parse failures retain readable details without logging connection query parameters, and MiniMax task failure payloads no longer appear in exception messages. Dashboards and queries using the previous sensitive trace keys must migrate to their `lk.pii.*` replacements. - [#2100](https://github.com/livekit/agents-js/pull/2100) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+### Patch Changes
+
+- ⚠️ Remove Rime Arcana model support before Rime's cloud cutoff on August 15, 2026 at 12:00 UTC. Set `modelId` to `coda` when you upgrade. The default paths keep their established speakers for voice continuity. - [#2253](https://github.com/livekit/agents-js/pull/2253) ([@naszzz](https://github.com/naszzz))
+
+- Send every field the agent_session wire format declares for chat items, and emit the telemetry chat item log with the same field names and shapes as livekit/agents. - [#2247](https://github.com/livekit/agents-js/pull/2247) ([@u9g](https://github.com/u9g))
+
+- Wait for pending turn finalization when closing a voice session. - [#2307](https://github.com/livekit/agents-js/pull/2307) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Require local inference 0.2.7. - [#2303](https://github.com/livekit/agents-js/pull/2303) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Skip LiveKit Cloud trace, OTLP and Pino log, session report, and recording uploads after Cloud reports project data recording is disabled. - [#2107](https://github.com/livekit/agents-js/pull/2107) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Start answering machine detection timeouts after SIP calls are answered and settle when the participant disappears before audio arrives. - [#2226](https://github.com/livekit/agents-js/pull/2226) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Exclude discarded room audio from reported playback duration. The room audio queue now defaults - [#2256](https://github.com/livekit/agents-js/pull/2256) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+  to 200ms, matching Python. Set `RoomOutputOptions.queueSizeMs` to retain a larger prebuffer for
+  bursty TTS output.
+
+- Add `Agent.updateOptions()` for swapping STT, VAD, LLM, and TTS models at runtime, including - [#2297](https://github.com/livekit/agents-js/pull/2297) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+  explicit `null` values to disable session fallback, and allow expressive TTS settings to be
+  updated dynamically on agents and sessions. Only the fields you pass are changed, matching
+  `Agent.update_options()` in the Python framework.
+
+- chore(deps): update @livekit/rtc-node to 0.13.34 - [#2304](https://github.com/livekit/agents-js/pull/2304) ([@1egoman](https://github.com/1egoman))
+
+  Ports data streams over to the rust livekit-ffi implementation, replacing the
+  TypeScript one (livekit/node-sdks#697). Data streams v2 brings single-packet
+  streams and DEFLATE compression, roughly doubling throughput.
+
+  Behavior changes worth noting for anything reading a stream:
+
+  - Errors encountered while reading an incoming stream now propagate to the
+    caller instead of being logged and dropped, so a handler that awaits
+    `readAll()` needs to handle rejections. Both of our stream handlers
+    (`RoomIO.onUserTextInput` and `RoomSessionTransport.onByteStream`) already do.
+  - An in-flight stream is now terminated with an error when either side fully
+    reconnects, where previously the receiver could be handed a payload that was
+    silently missing the chunks lost during the outage.
+  - Incoming streams are capped at 5gb by default, overridable per room via
+    `dataStream.maxPayloadByteLength` on `room.connect`.
+  - `sendText` and `sendFile` accept a new `compress` option (default `true`).
+
 ## 1.6.4
 
 ### Patch Changes

@@ -226,6 +226,7 @@ export const defaultAgentSessionOptions = {
   turnHandling: {},
   useTtsAlignedTranscript: true,
   ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
+  expressive: false,
 } as const satisfies AgentSessionOptions;
 
 /** @deprecated {@link VoiceOptions} has been flattened onto to {@link AgentSessionOptions} */
@@ -451,6 +452,8 @@ export function resolveExpressiveOptions(
 }
 
 export type AgentSessionUpdateOptions = {
+  /** Change expressive TTS delivery for subsequent replies. */
+  expressive?: boolean | ExpressiveOptions;
   /** Configuration updates for turn handling. */
   turnHandling?: {
     /**
@@ -1224,7 +1227,10 @@ export class AgentSession<
     this.activity.resumeReplyAuthorization();
   }
 
-  updateOptions(options: AgentSessionUpdateOptions): void {
+  updateOptions(options: AgentSessionUpdateOptions = {}): void {
+    if (options.expressive !== undefined) {
+      this._expressive = options.expressive;
+    }
     if (options.keyterms !== undefined) {
       this._keytermDetector.setStaticKeyterms(options.keyterms);
     }

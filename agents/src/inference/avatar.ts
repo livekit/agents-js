@@ -275,8 +275,8 @@ export class AvatarSession extends BaseAvatarSession {
           {
             provider: this.providerName,
             sessionId: this._sessionId,
-            requestedIdentity: this.avatarParticipantIdentity,
-            mintedIdentity: createResp.avatar_identity,
+            'lk.pii.requested_identity': this.avatarParticipantIdentity,
+            'lk.pii.minted_identity': createResp.avatar_identity,
           },
           'avatar gateway minted the worker token for a different identity than requested; the avatar participant will join as the minted identity and this session will not reach it',
         );

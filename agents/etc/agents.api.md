@@ -45,6 +45,7 @@ import { SimulationRun_Job } from '@livekit/protocol';
 import type { SIPOutboundConfig } from '@livekit/protocol';
 import { Span } from '@opentelemetry/api';
 import type { Span as Span_2 } from '@opentelemetry/sdk-trace-base';
+import type { SpanExporter } from '@opentelemetry/sdk-trace-base';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
@@ -100,6 +101,9 @@ export class Agent<UserData = any> {
         transcriptionNode(agent: Agent, text: ReadableStream_2<string | TimedString> | AsyncIterable<string | TimedString>, _modelSettings: ModelSettings): Promise<ReadableStream_2<string | TimedString> | null>;
         realtimeAudioOutputNode(_agent: Agent, audio: ReadableStream_2<AudioFrame> | AsyncIterable<AudioFrame>, _modelSettings: ModelSettings): Promise<ReadableStream_2<AudioFrame> | null>;
     };
+    get expressive(): boolean | ExpressiveOptions | undefined;
+    // @internal (undocumented)
+    _expressive?: boolean | ExpressiveOptions;
     // (undocumented)
     getActivityOrThrow(): AgentActivity;
     // (undocumented)
@@ -110,6 +114,8 @@ export class Agent<UserData = any> {
     _instructions: string | Instructions;
     // (undocumented)
     get llm(): LLM | RealtimeModel | undefined;
+    // @internal (undocumented)
+    _llm?: LLM | RealtimeModel | null;
     // (undocumented)
     llmNode(chatCtx: ChatContext, toolCtx: ToolContext, modelSettings: ModelSettings): Promise<ReadableStream_2<ChatChunk | string | FlushSentinel> | null>;
     // (undocumented)
@@ -128,6 +134,8 @@ export class Agent<UserData = any> {
     get session(): AgentSession<UserData>;
     // (undocumented)
     get stt(): STT | undefined;
+    // @internal (undocumented)
+    _stt?: STT | null;
     // (undocumented)
     sttNode(audio: ReadableStream_2<AudioFrame> | AsyncIterable<AudioFrame>, modelSettings: ModelSettings): Promise<ReadableStream_2<SpeechEvent | string> | null>;
     // (undocumented)
@@ -138,6 +146,8 @@ export class Agent<UserData = any> {
     transcriptionNode(text: ReadableStream_2<string | TimedString> | AsyncIterable<string | TimedString>, modelSettings: ModelSettings): Promise<ReadableStream_2<string | TimedString> | null>;
     // (undocumented)
     get tts(): TTS | undefined;
+    // @internal (undocumented)
+    _tts?: TTS | null;
     // (undocumented)
     ttsNode(text: ReadableStream_2<string> | AsyncIterable<string>, modelSettings: ModelSettings): Promise<ReadableStream_2<AudioFrame> | null>;
     // Warning: (ae-forgotten-export) The symbol "TurnHandlingOptions" needs to be exported by the entry point index.d.ts
@@ -149,11 +159,15 @@ export class Agent<UserData = any> {
     // (undocumented)
     updateInstructions(instructions: string | Instructions): Promise<void>;
     // (undocumented)
+    updateOptions(options?: AgentUpdateOptions): Promise<void>;
+    // (undocumented)
     updateTools(tools: ToolContextLike<UserData>): Promise<void>;
     // (undocumented)
     get useTtsAlignedTranscript(): boolean | undefined;
     // (undocumented)
     get vad(): VAD | undefined;
+    // @internal (undocumented)
+    _vad?: VAD | null;
 }
 
 // @internal
@@ -366,22 +380,23 @@ export interface AgentOptions<UserData> {
     allowInterruptions?: boolean;
     // (undocumented)
     chatCtx?: ChatContext;
+    expressive?: boolean | ExpressiveOptions;
     // (undocumented)
     id?: string;
     // (undocumented)
     instructions: string | Instructions;
     // (undocumented)
-    llm?: LLM | RealtimeModel | LLMModels;
+    llm?: LLM | RealtimeModel | LLMModels | null;
     // (undocumented)
     minConsecutiveSpeechDelay?: number;
     // (undocumented)
-    stt?: STT | ModelWithLanguage;
+    stt?: STT | ModelWithLanguage | null;
     // (undocumented)
     toolHandling?: ToolHandlingOptions;
     // (undocumented)
     tools?: ToolContextLike<UserData>;
     // (undocumented)
-    tts?: TTS | ModelWithVoice;
+    tts?: TTS | ModelWithVoice | null;
     // Warning: (ae-forgotten-export) The symbol "TurnDetectionMode" needs to be exported by the entry point index.d.ts
     //
     // @deprecated (undocumented)
@@ -391,7 +406,7 @@ export interface AgentOptions<UserData> {
     // (undocumented)
     useTtsAlignedTranscript?: boolean;
     // (undocumented)
-    vad?: VAD;
+    vad?: VAD | null;
 }
 
 // Warning: (ae-missing-release-tag) "AgentsConsole" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -516,7 +531,7 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         force?: boolean;
     }): Future<void, Error>;
     // (undocumented)
-    get interruptionDetection(): "adaptive" | "vad" | undefined;
+    get interruptionDetection(): "vad" | "adaptive" | undefined;
     // @internal (undocumented)
     readonly _keytermDetector: KeytermDetector;
     get keyterms(): string[];
@@ -618,10 +633,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         startTime?: number;
         otelContext?: Context;
     }): void;
-    // Warning: (ae-forgotten-export) The symbol "AgentSessionUpdateOptions" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
-    updateOptions(options: AgentSessionUpdateOptions): void;
+    updateOptions(options?: AgentSessionUpdateOptions): void;
     // @internal (undocumented)
     _updateUserState(state: UserState, options?: {
         lastSpeakingTime?: number;
@@ -716,6 +729,19 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
     expressive?: boolean | ExpressiveOptions;
 };
 
+// Warning: (ae-missing-release-tag) "AgentSessionUpdateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type AgentSessionUpdateOptions = {
+    expressive?: boolean | ExpressiveOptions;
+    turnHandling?: {
+        turnDetection?: TurnDetectionMode | null;
+        endpointing?: Partial<EndpointingOptions>;
+    };
+    turnDetection?: TurnDetectionMode | null;
+    keyterms?: string[];
+};
+
 // Warning: (ae-missing-release-tag) "AgentSessionUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -766,6 +792,17 @@ export interface AgentTaskContext<ResultT = unknown, UserData = unknown> extends
 //
 // @public (undocumented)
 export interface AgentTaskCreateOptions<ResultT = unknown, UserData = any> extends AgentTaskOptions<UserData>, AgentHooks<UserData, AgentTaskContext<ResultT, UserData>> {
+}
+
+// Warning: (ae-missing-release-tag) "AgentUpdateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface AgentUpdateOptions {
+    expressive?: boolean | ExpressiveOptions;
+    llm?: LLM | RealtimeModel | LLMModels | null;
+    stt?: STT | ModelWithLanguage | null;
+    tts?: TTS | ModelWithVoice | null;
+    vad?: VAD | null;
 }
 
 // Warning: (ae-forgotten-export) The symbol "AMD_base" needs to be exported by the entry point index.d.ts
@@ -1100,12 +1137,12 @@ const ATTR_AMD_SPEECH_DURATION = "lk.amd.speech_duration";
 // Warning: (ae-missing-release-tag) "ATTR_AMD_TRANSCRIPT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_AMD_TRANSCRIPT = "lk.amd.transcript";
+const ATTR_AMD_TRANSCRIPT = "lk.pii.amd.transcript";
 
 // Warning: (ae-missing-release-tag) "ATTR_CHAT_CTX" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_CHAT_CTX = "lk.chat_ctx";
+const ATTR_CHAT_CTX = "lk.pii.chat_ctx";
 
 // Warning: (ae-missing-release-tag) "ATTR_CLOUD_AGENT_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1185,7 +1222,7 @@ const ATTR_EXCEPTION_TYPE = "exception.type";
 // Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_ARGS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_FUNCTION_TOOL_ARGS = "lk.function_tool.arguments";
+const ATTR_FUNCTION_TOOL_ARGS = "lk.pii.function_tool.arguments";
 
 // Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1205,7 +1242,7 @@ const ATTR_FUNCTION_TOOL_NAME = "lk.function_tool.name";
 // Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_OUTPUT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_FUNCTION_TOOL_OUTPUT = "lk.function_tool.output";
+const ATTR_FUNCTION_TOOL_OUTPUT = "lk.pii.function_tool.output";
 
 // Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOLS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1265,7 +1302,7 @@ const ATTR_GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens";
 // Warning: (ae-missing-release-tag) "ATTR_INSTRUCTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_INSTRUCTIONS = "lk.instructions";
+const ATTR_INSTRUCTIONS = "lk.pii.instructions";
 
 // Warning: (ae-missing-release-tag) "ATTR_INTERRUPTION_DETECTION_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1315,7 +1352,7 @@ const ATTR_PARTICIPANT_ID = "lk.participant_id";
 // Warning: (ae-missing-release-tag) "ATTR_PARTICIPANT_IDENTITY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_PARTICIPANT_IDENTITY = "lk.participant_identity";
+const ATTR_PARTICIPANT_IDENTITY = "lk.pii.participant_identity";
 
 // Warning: (ae-missing-release-tag) "ATTR_PARTICIPANT_KIND" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1340,12 +1377,12 @@ const ATTR_REALTIME_MODEL_METRICS = "lk.realtime_model_metrics";
 // Warning: (ae-missing-release-tag) "ATTR_RESPONSE_FUNCTION_CALLS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_RESPONSE_FUNCTION_CALLS = "lk.response.function_calls";
+const ATTR_RESPONSE_FUNCTION_CALLS = "lk.pii.response.function_calls";
 
 // Warning: (ae-missing-release-tag) "ATTR_RESPONSE_TEXT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_RESPONSE_TEXT = "lk.response.text";
+const ATTR_RESPONSE_TEXT = "lk.pii.response.text";
 
 // Warning: (ae-missing-release-tag) "ATTR_RESPONSE_TTFB" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1365,7 +1402,7 @@ const ATTR_RETRY_COUNT = "lk.retry_count";
 // Warning: (ae-missing-release-tag) "ATTR_ROOM_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_ROOM_NAME = "lk.room_name";
+const ATTR_ROOM_NAME = "lk.pii.room_name";
 
 // Warning: (ae-missing-release-tag) "ATTR_SESSION_OPTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1374,7 +1411,7 @@ const ATTR_SESSION_OPTIONS = "lk.session_options";
 
 // Warning: (ae-missing-release-tag) "ATTR_SPEECH_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 const ATTR_SPEECH_ID = "lk.speech_id";
 
 // Warning: (ae-missing-release-tag) "ATTR_SPEECH_INTERRUPTED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1405,7 +1442,7 @@ const ATTR_TRANSCRIPTION_DELAY = "lk.transcription_delay";
 // Warning: (ae-missing-release-tag) "ATTR_TTS_INPUT_TEXT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_TTS_INPUT_TEXT = "lk.input_text";
+const ATTR_TTS_INPUT_TEXT = "lk.pii.input_text";
 
 // Warning: (ae-missing-release-tag) "ATTR_TTS_LABEL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1425,12 +1462,12 @@ const ATTR_TTS_STREAMING = "lk.tts.streaming";
 // Warning: (ae-missing-release-tag) "ATTR_USER_INPUT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_USER_INPUT = "lk.user_input";
+const ATTR_USER_INPUT = "lk.pii.user_input";
 
 // Warning: (ae-missing-release-tag) "ATTR_USER_TRANSCRIPT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const ATTR_USER_TRANSCRIPT = "lk.user_transcript";
+const ATTR_USER_TRANSCRIPT = "lk.pii.user_transcript";
 
 // Warning: (ae-missing-release-tag) "ATTRIBUTE_REDACTION_ENABLED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -2359,6 +2396,7 @@ export enum CloseReason {
 //
 // @public
 interface CloudSpanProcessorOptions {
+    exporter: SpanExporter;
     headers: Record<string, string>;
     url: string;
 }
@@ -4483,6 +4521,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     _primaryAgentSession?: AgentSession;
     // (undocumented)
     get proc(): JobProcess<ProcessUserData>;
+    // @internal (undocumented)
+    _redactionEnabled: boolean;
     // (undocumented)
     get room(): Room;
     // (undocumented)
@@ -4570,6 +4610,8 @@ export class KeytermDetector extends KeytermDetector_base {
     start(session: KeytermDetectorSession, stt: STT): void;
     // (undocumented)
     get staticKeyterms(): string[];
+    // (undocumented)
+    swapStt(stt: STT | undefined): void;
 }
 
 // Warning: (ae-missing-release-tag) "KeytermsOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -5733,7 +5775,14 @@ class RecognizeSentinel {
 // Warning: (ae-missing-release-tag) "recordException" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-function recordException(span: Span, error: Error): void;
+function recordException(span: Span, error: Error, options?: RecordExceptionOptions): void;
+
+// Warning: (ae-missing-release-tag) "RecordExceptionOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface RecordExceptionOptions {
+    redacted?: boolean;
+}
 
 // Warning: (ae-internal-missing-underscore) The name "recordingEnabled" should be prefixed with an underscore because the declaration is marked as @internal
 //
@@ -5744,6 +5793,11 @@ export function recordingEnabled(options: Record<string, unknown>): boolean;
 //
 // @public (undocumented)
 function recordRealtimeMetrics(span: Span, metrics: RealtimeModelMetrics): void;
+
+// Warning: (ae-missing-release-tag) "REDACTED_EXCEPTION_MESSAGE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const REDACTED_EXCEPTION_MESSAGE = "exception details redacted";
 
 // Warning: (ae-missing-release-tag) "rejectOnAbort" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -5875,7 +5929,7 @@ export function resolveExpressiveOptions(expr: ExpressiveOptions, options: {
 // Warning: (ae-missing-release-tag) "RimeModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
+type RimeModels = 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
 
 // Warning: (ae-missing-release-tag) "RimeOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -7339,8 +7393,10 @@ declare namespace telemetry {
         SetTracerProviderOptions,
         SpanProcessorLike,
         StartSpanOptions,
+        REDACTED_EXCEPTION_MESSAGE,
         recordException,
-        recordRealtimeMetrics
+        recordRealtimeMetrics,
+        RecordExceptionOptions
     }
 }
 
@@ -8532,9 +8588,11 @@ declare namespace voice {
         AgentOptions,
         AgentTaskContext,
         AgentTaskCreateOptions,
+        AgentUpdateOptions,
         ModelSettings,
         AgentSession,
         AgentSessionOptions,
+        AgentSessionUpdateOptions,
         AgentSessionUsage,
         ExpressiveOptions,
         VoiceOptions,
@@ -8972,16 +9030,15 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:361:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:501:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:379:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:985:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1620:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1620:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1620:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
-// src/voice/amd.ts:309:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
-// src/voice/amd.ts:309:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:317:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
-// src/voice/amd.ts:507:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:907:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "canEmit"
+// src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:988:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
+// src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
+// src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
+// src/voice/amd.ts:511:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/events.ts:423:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:178:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts

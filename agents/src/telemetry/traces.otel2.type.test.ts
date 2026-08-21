@@ -8,6 +8,7 @@ import {
   type SpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import http from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type CloudSpanProcessorOptions,
@@ -16,6 +17,7 @@ import {
   setupCloudTracer,
   tracer,
 } from './traces.js';
+import { UploadGateTraceExporter } from './upload_gate.js';
 
 // Included in `pnpm typecheck`, this suite verifies that the public telemetry API composes
 // directly with the OpenTelemetry SDK 2.x dependencies shipped by the package.
@@ -55,6 +57,7 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
   });
 
   it('exports spans to both the user exporter and the cloud span processor', async () => {
+    const originalRequest = http.request;
     let cloudOptions: CloudSpanProcessorOptions | undefined;
     setTracerProvider(provider, {
       metadata: { 'livekit.test.custom': true },
@@ -80,6 +83,8 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     expect(tracer.getProvider()).toBe(provider);
     expect(cloudOptions?.url).toBe('https://example.livekit.cloud/observability/traces/otlp/v0');
     expect(cloudOptions?.headers.Authorization).toMatch(/^Bearer /);
+    expect(cloudOptions?.exporter).toBeInstanceOf(UploadGateTraceExporter);
+    expect(http.request).toBe(originalRequest);
 
     const cloudSpans = cloudExporter.getFinishedSpans();
     expect(cloudSpans.map((s) => s.name)).toEqual(['otel2-span']);

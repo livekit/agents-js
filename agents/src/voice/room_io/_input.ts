@@ -57,9 +57,12 @@ export class ParticipantAudioInputStream extends AudioInput {
   }
 
   setParticipant(participant: RemoteParticipant | string | null) {
-    this.logger.debug({ participant }, 'setting participant audio input');
     const participantIdentity =
       participant instanceof RemoteParticipant ? participant.identity : participant;
+    this.logger.debug(
+      { 'lk.pii.participant_identity': participantIdentity },
+      'setting participant audio input',
+    );
 
     if (this.participantIdentity === participantIdentity) {
       return;
@@ -83,7 +86,7 @@ export class ParticipantAudioInputStream extends AudioInput {
 
     this.logger.info(
       {
-        participantValue: participantValue?.identity,
+        'lk.pii.participant_identity': participantValue?.identity,
         trackPublications: trackPublicationsArray,
         lengthOfTrackPublications: trackPublicationsArray.length,
       },
@@ -106,11 +109,17 @@ export class ParticipantAudioInputStream extends AudioInput {
   }
 
   override onAttached(): void {
-    this.logger.debug({ participant: this.participantIdentity }, 'input stream attached');
+    this.logger.debug(
+      { 'lk.pii.participant_identity': this.participantIdentity },
+      'input stream attached',
+    );
   }
 
   override onDetached(): void {
-    this.logger.debug({ participant: this.participantIdentity }, 'input stream detached');
+    this.logger.debug(
+      { 'lk.pii.participant_identity': this.participantIdentity },
+      'input stream detached',
+    );
   }
 
   private onTrackUnpublished = (
@@ -150,7 +159,10 @@ export class ParticipantAudioInputStream extends AudioInput {
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): boolean => {
-    this.logger.debug({ participant: participant.identity }, 'onTrackSubscribed in _input');
+    this.logger.debug(
+      { 'lk.pii.participant_identity': participant.identity },
+      'onTrackSubscribed in _input',
+    );
     if (
       this.participantIdentity !== participant.identity ||
       publication.source !== TrackSource.SOURCE_MICROPHONE ||

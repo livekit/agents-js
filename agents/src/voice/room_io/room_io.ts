@@ -107,7 +107,8 @@ export interface RoomOutputOptions {
   /** Maximum queue size in milliseconds for the audio output buffer.
     When TTS generates audio faster than real-time, a larger queue prevents
     early frames from being discarded by the ring buffer.
-    Defaults to the AudioSource internal default (1000ms).
+    Defaults to 200ms, matching Python. Set a larger value if a bursty TTS
+    provider needs a larger prebuffer.
   */
   queueSizeMs?: number;
   /** Send the transcription as a JSON dict for each chunk on the `lk.transcription`
@@ -136,6 +137,7 @@ const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
   audioEnabled: true,
   syncTranscription: true,
   audioPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+  queueSizeMs: 200,
   jsonFormat: false,
 };
 
@@ -274,7 +276,7 @@ export class RoomIO {
     ) {
       this.logger.info(
         {
-          participant: participant.identity,
+          'lk.pii.participant_identity': participant.identity,
           reason: DisconnectReason[participant.disconnectReason],
         },
         'closing agent session due to participant disconnect ' +
@@ -315,7 +317,7 @@ export class RoomIO {
       return;
     }
     this.logger.info(
-      { room: this.room.name },
+      { 'lk.pii.room_name': this.room.name },
       'deleting room on agent session close ' +
         '(disable via `RoomInputOptions.deleteRoomOnClose=false`)',
     );
@@ -470,7 +472,10 @@ export class RoomIO {
 
   /** Switch to a different participant */
   setParticipant(participantIdentity: string | null) {
-    this.logger.debug({ participantIdentity }, 'setting participant');
+    this.logger.debug(
+      { 'lk.pii.participant_identity': participantIdentity },
+      'setting participant',
+    );
     if (participantIdentity === null) {
       this.unsetParticipant();
       return;
@@ -641,7 +646,10 @@ export class RoomIO {
         if (!(error instanceof IdleTimeoutError)) {
           throw error;
         }
-        this.logger.warn({ room: this.room.name }, 'automatic room deletion timed out');
+        this.logger.warn(
+          { 'lk.pii.room_name': this.room.name },
+          'automatic room deletion timed out',
+        );
       }
     }
   }

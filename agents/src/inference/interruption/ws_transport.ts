@@ -184,7 +184,10 @@ export function createWsTransport(
         message = wsMessageSchema.parse(JSON.parse(data.toString()));
       } catch (err) {
         logger.warn(
-          { data: data.toString(), err: err instanceof Error ? err.message : String(err) },
+          {
+            'lk.pii.data': data.toString(),
+            err: err instanceof Error ? err.message : String(err),
+          },
           'Failed to parse WebSocket message',
         );
         return;

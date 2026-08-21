@@ -61,7 +61,7 @@ export default defineAgent({
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
         fallback: [
           { model: 'elevenlabs/eleven_flash_v2', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' },
-          'rime/arcana',
+          { model: 'rime/coda', voice: 'luna' },
         ],
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],

@@ -62,4 +62,19 @@ describe('SimpleOTLPHttpLogExporter attribute conversion', () => {
     expect(payload).toContain('turn-detector-v1');
     expect(payload).toContain('ws://gateway');
   });
+
+  it('encodes nested PII markers as OTLP key-value keys', async () => {
+    const payload = await exportAttributes({
+      'session.options': {
+        keytermsOptions: {
+          'lk.pii.keyterms': ['Acme Corp'],
+          keytermDetection: { enabled: false },
+        },
+      },
+    });
+
+    expect(payload).toContain('"key":"session.options"');
+    expect(payload).toContain('"key":"lk.pii.keyterms"');
+    expect(payload).toContain('"kvlistValue"');
+  });
 });

@@ -450,19 +450,19 @@ class AgentHookContext<UserData> implements AgentContext<UserData> {
   constructor(readonly agent: Agent<UserData>) {}
 
   get vad(): VAD | undefined {
-    return this.agent.vad;
+    return this.agent.vad ?? undefined;
   }
 
   get stt(): STT | undefined {
-    return this.agent.stt;
+    return this.agent.stt ?? undefined;
   }
 
   get llm(): LLM | RealtimeModel | undefined {
-    return this.agent.llm;
+    return this.agent.llm ?? undefined;
   }
 
   get tts(): TTS | undefined {
-    return this.agent.tts;
+    return this.agent.tts ?? undefined;
   }
 
   get useTtsAlignedTranscript(): boolean | undefined {

@@ -422,7 +422,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               reject(new APIError('Deepgram TTS returned error', { body: message }));
               return;
             } else if (message.type !== 'Metadata') {
-              this.#logger.warn({ message }, 'Unknown Deepgram message type');
+              this.#logger.warn({ 'lk.pii.message': message }, 'Unknown Deepgram message type');
             }
 
             resetMessageTimeout(reject);

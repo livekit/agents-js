@@ -116,10 +116,9 @@ export interface AMDOptions {
   /** Override the AMD classification system prompt. */
   prompt?: string;
   /**
-   * Restrict AMD to a specific participant. Used to filter the
-   * `waitForTrackPublication` gate (see python detector.py) and span
-   * attribution. When unset, AMD binds to whichever participant the session
-   * is linked to.
+   * Restrict AMD to a specific participant. AMD settles immediately if that
+   * participant disconnects before publishing audio. When unset, AMD binds to
+   * whichever participant the session is linked to.
    */
   participantIdentity?: string;
   /**
@@ -144,6 +143,7 @@ const DEFAULT_AMD_STT_MODEL = 'cartesia/ink-whisper';
 
 const SIP_CALL_STATUS_ATTR = 'sip.callStatus';
 const SIP_CALL_STATUS_ACTIVE = 'active';
+const TRACK_PUBLICATION_TIMEOUT_MS = 5_000;
 
 const EVALUATED_LLM_MODELS: ReadonlySet<string> = new Set([
   'google/gemini-3.1-flash-lite',
@@ -241,6 +241,11 @@ function warnIfNotEvaluated(
  * Mirrors Python's `_AMDClassifier` two-gate architecture:
  * a result is only emitted when both a **verdict** (from LLM or heuristic) and
  * a **silence gate** (from VAD or timeout) are satisfied.
+ *
+ * Start AMD before creating a SIP participant so no audio is missed. The
+ * detection timeout begins only after listening starts; SIP settings bound the
+ * pre-answer phase. If the call ends before audio arrives, AMD settles as
+ * uncertain with `reason = "participant_missing"`.
  *
  * Emits `'amd_prediction'` once with the final {@link AMDPredictionEvent} when
  * a run settles (mirrors python `AMD(EventEmitter[Literal["amd_prediction"]])`).
@@ -410,7 +415,6 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
             this.resolveRun = resolve;
             this.rejectRun = reject;
             this.subscribe();
-            this.startDetectionTimer();
             this.gateListening();
             this.startSTTPump();
           });
@@ -500,9 +504,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   /**
-   * Arms the detection-timeout budget. Started in `execute()` as a backstop against a
-   * never-published track, then re-armed in {@link gateListening} at track-up so the
-   * effective budget runs from track-subscribe. Re-armable, hence the clear first.
+   * Arms the detection-timeout budget when listening starts. SIP settings bound
+   * the pre-answer phase, while {@link gateListening} separately bounds waiting
+   * for a participant audio track.
    */
   private startDetectionTimer(): void {
     this.clearTimer('detection');
@@ -524,6 +528,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private startListening(): void {
     if (this.settled || this.listening) return;
     this.listening = true;
+    this.startDetectionTimer();
     this.startNoSpeechTimer();
     this._log.debug('AMD starts listening');
   }
@@ -643,6 +648,12 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     const targetIdentity = this.participantIdentity ?? roomIO?.linkedParticipant?.identity;
 
     this.trackGateAbort = new AbortController();
+    const trackGateAbort = this.trackGateAbort;
+    const publicationTimeout = setTimeout(() => {
+      if (this.trackGateAbort !== trackGateAbort || this.settled) return;
+      this.settleParticipantMissing('timed out waiting for participant audio track');
+      trackGateAbort.abort();
+    }, TRACK_PUBLICATION_TIMEOUT_MS);
     waitForTrackPublication({
       room,
       identity: targetIdentity,
@@ -651,12 +662,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       signal: this.trackGateAbort.signal,
     })
       .then(async (publication) => {
+        clearTimeout(publicationTimeout);
         if (this.settled) {
           return;
         }
-
-        // Re-anchor the budget at track-subscribe so slow subscription doesn't eat it.
-        this.startDetectionTimer();
 
         const publicationSid = publication.sid;
         const participant = targetIdentity
@@ -667,12 +676,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
               )
             : undefined;
         if (!participant) {
-          // Publisher gone (disconnected in the race window): nothing to gate on.
-          // Start listening so the no-speech timer settles AMD instead of stranding
-          // it until the detection timeout.
-          if (!this.settled) {
-            this.startListening();
-          }
+          this.settleParticipantMissing('participant disappeared after track subscription');
           return;
         }
 
@@ -694,10 +698,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           if (this.trackGateAbort?.signal.aborted) {
             return;
           }
-          // Otherwise the SIP participant disconnected before going active: no audio
-          // remains, so fall through and let the no-speech timer settle AMD instead
-          // of stranding it until the detection timeout.
-          this._log.debug({ err }, 'AMD SIP answer wait failed; starting to listen');
+          this.settleParticipantMissing(String(err));
+          return;
         }
 
         if (!this.settled) {
@@ -705,18 +707,18 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         }
       })
       .catch((err) => {
-        // Track gating is best-effort: if waiting for publication fails (e.g.
-        // room disconnected, aborted by `cleanup`, or the function rejects),
-        // fall back to starting the timer so the run still settles within
-        // `noSpeechTimeoutMs`.
         if (this.trackGateAbort?.signal.aborted) {
           return;
         }
-        this._log.debug({ err }, 'AMD listening gate failed; starting immediately');
-        if (!this.settled) {
-          this.startListening();
-        }
-      });
+        this.settleParticipantMissing(String(err));
+      })
+      .finally(() => clearTimeout(publicationTimeout));
+  }
+
+  private settleParticipantMissing(error: string): void {
+    if (this.settled) return;
+    this._log.debug({ error }, 'AMD: call ended before detection could run, settling');
+    this.settle(AMDCategory.UNCERTAIN, 'participant_missing');
   }
 
   private cleanup(): void {
@@ -818,7 +820,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         isMachine: result.isMachine,
         speechDurationMs: result.speechDurationMs,
         delayMs: result.delayMs,
-        transcript: result.transcript,
+        'lk.pii.transcript': result.transcript,
       },
       'amd prediction',
     );
@@ -869,7 +871,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       return false;
     }
     this._log.debug(
-      { category: this.verdictResult.category, transcript: info.newTranscript },
+      {
+        category: this.verdictResult.category,
+        'lk.pii.transcript': info.newTranscript,
+      },
       'skipping auto reply: AMD already returned a machine verdict',
     );
     return true;
@@ -891,20 +896,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   /**
-   * Ref: python classifier.py `_on_timeout` — a timeout (detection budget,
-   * no-speech, short greeting) fired. Commits a fallback verdict if none exists,
-   * then tries to emit. This only decides *what* the verdict is; {@link canEmit}
-   * decides *when* it is released. End-of-turn is forced here only when there is
-   * nothing left to wait for: no speech was heard, or we are not waiting for the
-   * greeting to finish (`waitUntilFinished` off). When `waitUntilFinished` is set
-   * and speech was heard, the fallback is still committed but its release stays
-   * gated on end-of-turn (the real signal or the backstop timer), so we don't cut
-   * the greeting short with an `uncertain` result.
-   *
-   * Not gated by `listening`: detection_timeout must still fire when the call
-   * never reaches listening (e.g. SIP never answered).
+   * Commit a fallback verdict and attempt emission. This can run before listening
+   * begins. After speech, `waitUntilFinished` keeps emission gated on end-of-turn
+   * so a fallback cannot cut the greeting short.
    */
-  private onTimeout(category: AMDCategory, reason: string, speechDurationMs?: number): void {
+  private settle(category: AMDCategory, reason: string, speechDurationMs?: number): void {
     if (this.settled) return;
     this.clearTimer('silence');
     this.silenceReached = true;
@@ -947,11 +943,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private settleNoSpeech(): void {
-    this.onTimeout(AMDCategory.UNCERTAIN, 'no_speech_timeout');
+    this.settle(AMDCategory.UNCERTAIN, 'no_speech_timeout');
   }
 
   private settleDetectionTimeout(): void {
-    this.onTimeout(AMDCategory.UNCERTAIN, 'detection_timeout');
+    this.settle(AMDCategory.UNCERTAIN, 'detection_timeout');
   }
 
   // ─── recognition hooks (invoked by AgentActivity, mirroring python AudioRecognition) ───
@@ -1011,7 +1007,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     // classifier can review the words before settling.
     if (speechDurationMs <= this.humanSpeechThresholdMs && this.transcriptParts.length === 0) {
       this.silenceTimer = setTimeout(
-        () => this.onTimeout(AMDCategory.HUMAN, 'short_greeting', speechDurationMs),
+        () => this.settle(AMDCategory.HUMAN, 'short_greeting', speechDurationMs),
         remaining(this.humanSilenceThresholdMs),
       );
       this.silenceTimerTrigger = 'short_speech';
@@ -1072,7 +1068,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     // The session is closing — force a settle regardless of the emission gates
     // (open the end-of-turn gate so a non-human fallback can release immediately).
     this.eotReached = true;
-    this.onTimeout(AMDCategory.UNCERTAIN, 'session_closed');
+    this.settle(AMDCategory.UNCERTAIN, 'session_closed');
   };
 
   // ─── LLM classification ─────────────────────────────────────────────────────
