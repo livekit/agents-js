@@ -199,8 +199,6 @@ export function createWarmTransferTask({
 
   // Resolves when the human agent room/session fails, so onEnter stops waiting.
   const humanAgentFailedFut = new Future<void>();
-  // Resolves when the transfer is cancelled before the merge, so onEnter stops
-  // a still-pending dial (e.g. while the human agent's phone is ringing).
   const cancellationFut = new Future<void>();
 
   // `task` is created at the end of this function. The helpers and tools below
@@ -604,9 +602,6 @@ export function createWarmTransferTask({
 
       setIoEnabled(false);
 
-      // Race the dial against a human-agent-room failure or cancellation.
-      // AbortController lets the `finally` cancel a still-pending dial when
-      // either of those wins the race.
       const abortController = new AbortController();
       const dialPromise = dialHumanAgent(abortController.signal);
       try {
@@ -617,8 +612,7 @@ export function createWarmTransferTask({
         ]);
 
         if (result.cancelled) {
-          // The cancellation handler already completed the task; the `finally`
-          // below aborts the pending dial and tears down the half-built room.
+          // The cancellation handler already completed the task.
           return;
         }
         if (!result.session) {
