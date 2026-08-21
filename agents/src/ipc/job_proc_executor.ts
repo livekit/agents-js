@@ -20,7 +20,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   #runningJob?: RunningJobInfo;
   #agent: string;
   #inferenceExecutor?: InferenceExecutor;
-  #inferenceTasks: Promise<void>[] = [];
+  #inferenceTasks = new Set<Promise<void>>();
   #logger = log();
 
   constructor(
@@ -84,8 +84,12 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   async mainTask(proc: ChildProcess) {
     proc.on('message', (msg: IPCMessage) => {
       switch (msg.case) {
-        case 'inferenceRequest':
-          this.#inferenceTasks.push(this.#doInferenceTask(proc, msg.value));
+        case 'inferenceRequest': {
+          const task = this.#doInferenceTask(proc, msg.value);
+          this.#inferenceTasks.add(task);
+          void task.finally(() => this.#inferenceTasks.delete(task));
+          break;
+        }
       }
     });
   }
