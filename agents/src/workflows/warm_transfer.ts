@@ -226,7 +226,6 @@ export function createWarmTransferTask({
     // the pre-merge hangup watch; connect_to_caller re-attaches its own
     // post-merge cleanup listener.
     callerRoom?.off(RoomEvent.ParticipantDisconnected, onCallerLeftBeforeMerge);
-    abortSignal?.removeEventListener('abort', onAbort);
 
     if (transferAgentSession) {
       // shutdown() triggers deleteRoomOnClose, which disconnects the human agent
@@ -571,6 +570,9 @@ export function createWarmTransferTask({
     llm: llm ?? undefined,
     tts: tts ?? undefined,
     allowInterruptions,
+    onExit: () => {
+      abortSignal?.removeEventListener('abort', onAbort);
+    },
     onEnter: async () => {
       jobCtx = getJobContext();
       callerRoom = jobCtx.room;

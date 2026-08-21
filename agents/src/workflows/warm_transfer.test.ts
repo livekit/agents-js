@@ -172,6 +172,23 @@ describe('createWarmTransferTask', () => {
     expect(shutdown).toHaveBeenCalledOnce();
   });
 
+  it('removes the abort listener when the framework exits the task', async () => {
+    const controller = new AbortController();
+    const addEventListener = vi.spyOn(controller.signal, 'addEventListener');
+    const removeEventListener = vi.spyOn(controller.signal, 'removeEventListener');
+    mockDial();
+    const { create } = setupTransfer(controller.signal);
+
+    const options = create.mock.calls[0]![0];
+    await options.onEnter!({} as never);
+    const listener = addEventListener.mock.calls.find(([event]) => event === 'abort')?.[1];
+    expect(listener).toBeDefined();
+    expect(options.onExit).toBeDefined();
+    await options.onExit!({} as never);
+
+    expect(removeEventListener).toHaveBeenCalledWith('abort', listener);
+  });
+
   it.each(['completes', 'fails', 'times out'] as const)(
     'waits until caller-hangup notice playout %s before shutting down an answered agent',
     async (outcome) => {
