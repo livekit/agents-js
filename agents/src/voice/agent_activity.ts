@@ -4294,6 +4294,26 @@ export class AgentActivity implements RecognitionHooks {
       }
       speechHandle._markGenerationDone();
       await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
+      const interruptedToolOutputs = toolOutput.output
+        .filter((output) => output.agentTask === undefined)
+        .map((output) => output.toolCallOutput)
+        .filter((output): output is FunctionCallOutput => output !== undefined);
+      this._commitInterruptedToolOutputs(toolOutput, speechHandle, Date.now());
+      if (interruptedToolOutputs.length > 0) {
+        try {
+          // Tool responses still need to reach the provider when arbitrary mid-session chat
+          // updates are unsupported. Realtime implementations use updateChatCtx as the
+          // transport for function-call outputs so providers can clear pending call IDs.
+          const chatCtx = realtimeSession.chatCtx.copy();
+          chatCtx.items.push(...interruptedToolOutputs);
+          await realtimeSession.updateChatCtx(chatCtx);
+        } catch (error) {
+          this.logger.warn(
+            { error, speech_id: speechHandle.id },
+            'failed to flush tool outputs after realtime generation was interrupted',
+          );
+        }
+      }
 
       // TODO(brian): close tees
       return;

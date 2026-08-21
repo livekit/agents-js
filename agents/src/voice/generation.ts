@@ -374,8 +374,9 @@ export function createToolOutput(params: {
   toolCall: FunctionCall;
   output?: unknown;
   exception?: Error;
+  replyRequired?: boolean;
 }): ToolExecutionOutput {
-  const { toolCall, output, exception } = params;
+  const { toolCall, output, exception, replyRequired } = params;
   const logger = log();
 
   // support returning Exception instead of raising them (for devex purposes inside evals)
@@ -397,6 +398,7 @@ export function createToolOutput(params: {
       }),
       rawOutput: finalOutput,
       rawException: finalException,
+      replyRequired,
     });
   }
 
@@ -405,6 +407,7 @@ export function createToolOutput(params: {
       toolCall: FunctionCall.create({ ...toolCall }),
       rawOutput: finalOutput,
       rawException: finalException,
+      replyRequired,
     });
   }
 
@@ -419,6 +422,7 @@ export function createToolOutput(params: {
       }),
       rawOutput: finalOutput,
       rawException: finalException,
+      replyRequired,
     });
   }
 
@@ -441,6 +445,7 @@ export function createToolOutput(params: {
       toolCall: FunctionCall.create({ ...toolCall }),
       rawOutput: finalOutput,
       rawException: finalException,
+      replyRequired,
     });
   }
 
@@ -452,7 +457,7 @@ export function createToolOutput(params: {
       output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
       isError: false,
     }),
-    replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
+    replyRequired: replyRequired ?? toolOutput !== undefined, // require a reply if the tool returned an output
     agentTask,
     rawOutput: finalOutput,
     rawException: finalException,
@@ -1252,12 +1257,25 @@ export function performToolExecutions({
       if (done) break;
 
       if (toolChoice === 'none') {
+        const message =
+          `Tool calls are not allowed on this turn because toolChoice is set to 'none'. ` +
+          `${toolCall.name} was not executed.`;
         logger.error(
           {
             function: toolCall.name,
             speech_id: speechHandle.id,
           },
-          "received a tool call with toolChoice set to 'none', ignoring",
+          "received a tool call with toolChoice set to 'none', rejecting",
+        );
+        // Record the consumed call so its error output has a matching history entry, even though
+        // the tool itself is intentionally not executed.
+        onToolExecutionStarted(toolCall);
+        toolCompleted(
+          createToolOutput({
+            toolCall,
+            exception: new ToolError(message),
+            replyRequired: false,
+          }),
         );
         continue;
       }
