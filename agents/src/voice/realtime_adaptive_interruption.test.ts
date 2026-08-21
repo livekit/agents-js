@@ -439,24 +439,23 @@ describe('AudioRecognition realtime adaptive backchannel verdicts', () => {
 
   it('restarts the detector when paused speech resumes', async () => {
     const { recognition, sent } = recognitionWithInterruptionStream();
-    await recognition.onStartOfAgentSpeech(1_000);
-    const userStartedAt = 1_200;
-    recognition.speechStartTime = userStartedAt;
+    await recognition.onStartOfAgentSpeech(Date.now());
+    const userStartedAt = Date.now();
     recognition.speaking = true;
     await recognition.onStartOfOverlapSpeech(0, userStartedAt);
-    await recognition.onEndOfAgentSpeech(1_400);
+    await recognition.onEndOfAgentSpeech(Date.now());
     recognition.interruptionDetected = false;
     recognition.turnBackchannelOverAgent = true;
     sent.length = 0;
 
-    const resumedAt = 2_000;
+    const resumedAt = Date.now();
     await recognition.onStartOfAgentSpeech(resumedAt);
 
     expect(sent.map((item) => item.type)).toEqual([
       'agent-speech-started',
       'overlap-speech-started',
     ]);
-    expect(sent[1]).toMatchObject({ speechDuration: 800, startedAt: resumedAt });
+    expect(sent[1]).toMatchObject({ speechDuration: 0, startedAt: resumedAt });
     expect(recognition.endpointing.onStartOfSpeech).toHaveBeenCalledOnce();
     expect(recognition.endpointing.onStartOfSpeech).toHaveBeenCalledWith(userStartedAt, true);
     expect(recognition.interruptionDetected).toBeUndefined();
@@ -466,7 +465,6 @@ describe('AudioRecognition realtime adaptive backchannel verdicts', () => {
   it('does not start the same overlap twice when a speech-start event follows agent speech', async () => {
     const { recognition, sent } = recognitionWithInterruptionStream();
     recognition.speaking = true;
-    recognition.speechStartTime = 1_000;
 
     await recognition.onStartOfAgentSpeech(1_200);
     await recognition.onStartOfOverlapSpeech(200, 1_000);
