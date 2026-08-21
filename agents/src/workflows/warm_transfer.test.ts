@@ -273,4 +273,25 @@ describe('createWarmTransferTask', () => {
 
     expect(complete).toHaveBeenCalledWith(reason);
   });
+
+  it('observes aborts after a participant move fails', async () => {
+    const controller = new AbortController();
+    const reason = new Error('application shutdown');
+    mockDial();
+    vi.spyOn(RoomServiceClient.prototype, 'moveParticipant').mockRejectedValue(
+      new Error('move failed'),
+    );
+    const { complete, create } = setupTransfer(controller.signal);
+
+    const options = create.mock.calls[0]![0];
+    await options.onEnter!({} as never);
+    const connect = (options.tools as FunctionTool[]).find(
+      (entry) => entry.name === 'connect_to_caller',
+    )!;
+
+    await expect(connect.execute({}, {} as never)).rejects.toThrow('move failed');
+    controller.abort(reason);
+
+    expect(complete).toHaveBeenCalledWith(reason);
+  });
 });

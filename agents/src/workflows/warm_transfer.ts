@@ -195,7 +195,6 @@ export function createWarmTransferTask({
   let hangupNotifySession: AgentSession | null = null;
   let holdAudioHandle: PlayHandle | null = null;
   let originalIoState: IoState | null = null;
-  let mergeInProgress = false;
 
   // Resolves when the human agent room/session fails, so onEnter stops waiting.
   const humanAgentFailedFut = new Future<void>();
@@ -309,7 +308,7 @@ export function createWarmTransferTask({
   };
 
   const onAbort = (): void => {
-    if (task.done || mergeInProgress) return;
+    if (task.done) return;
 
     const error = asError(abortSignal?.reason ?? new Error('warm transfer aborted'));
     logger.info({ error }, 'warm transfer aborted');
@@ -523,7 +522,7 @@ export function createWarmTransferTask({
           throw new ToolError('the transfer was already cancelled');
         }
 
-        mergeInProgress = true;
+        abortSignal?.removeEventListener('abort', onAbort);
         try {
           await mergeCalls();
           setResult({ humanAgentIdentity });
@@ -532,9 +531,8 @@ export function createWarmTransferTask({
             setResult(asError(abortSignal.reason ?? new Error('warm transfer aborted')));
             return;
           }
+          abortSignal?.addEventListener('abort', onAbort, { once: true });
           throw error;
-        } finally {
-          mergeInProgress = false;
         }
         callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerParticipantDisconnected);
       },
