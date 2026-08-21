@@ -75,6 +75,8 @@ export function isSpeechHandle(value: unknown): value is SpeechHandle {
  * Omitting `then` terminates the unwrap because the pattern
  * `object & { then(...) }` no longer matches. In practice, calling `.then`
  * on an already-awaited handle has no meaningful use.
+ *
+ * @public
  */
 export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
 
@@ -84,6 +86,8 @@ export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
  * currently-running tool creates a real circular wait — the handle's playout
  * cannot finish until the tool returns, but the tool is blocked waiting for
  * the playout.
+ *
+ * @public
  */
 export class SpeechHandleCircularWaitError extends Error {
   constructor(functionCallName: string) {
@@ -99,6 +103,8 @@ export class SpeechHandleCircularWaitError extends Error {
 /**
  * Describes how the user provided input that triggered the current turn.
  * Used by modality-aware Instructions to pick the correct variant.
+ *
+ * @public
  */
 export interface InputDetails {
   modality: 'audio' | 'text';
@@ -107,6 +113,11 @@ export interface InputDetails {
 /** Default {@link InputDetails} used when no explicit value is provided. */
 export const DEFAULT_INPUT_DETAILS: InputDetails = { modality: 'audio' };
 
+/**
+ * Controls and observes one agent speech turn.
+ *
+ * @public
+ */
 export class SpeechHandle {
   /** Priority for messages that should be played after all other messages in the queue */
   static SPEECH_PRIORITY_LOW = 0;
