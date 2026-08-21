@@ -18,7 +18,7 @@ import { ToolError, ToolFlag, tool } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
-import { Future, waitUntilAborted } from '../utils.js';
+import { Future, asError, waitUntilAborted } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { Agent, AgentTask } from '../voice/agent.js';
 import { AgentSession, type TurnDetectionMode } from '../voice/agent_session.js';
@@ -37,6 +37,16 @@ export interface WarmTransferResult {
 }
 
 export interface WarmTransferTaskOptions {
+  /**
+   * Signal for application cancellation, such as a consult deadline or application shutdown.
+   *
+   * Do not abort this signal when the caller disconnects. The task handles caller disconnects so
+   * it can play `callerHangupInstruction` before it ends an answered consultation.
+   *
+   * A successful participant move wins if it completes after the signal aborts. The task stops
+   * waiting for a pending SIP request but cannot cancel it.
+   */
+  abortSignal?: AbortSignal;
   /** The phone number or SIP URI to dial for the human agent. */
   sipCallTo?: string;
   /**
@@ -121,6 +131,7 @@ type IoState = {
  * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
  */
 export function createWarmTransferTask({
+  abortSignal,
   sipCallTo,
   sipTrunkId: rawSipTrunkId,
   sipConnection,
@@ -187,9 +198,7 @@ export function createWarmTransferTask({
 
   // Resolves when the human agent room/session fails, so onEnter stops waiting.
   const humanAgentFailedFut = new Future<void>();
-  // Resolves when the caller hangs up before the merge, so onEnter cancels a
-  // still-pending dial (e.g. while the human agent's phone is ringing).
-  const callerHangupFut = new Future<void>();
+  const cancellationFut = new Future<void>();
 
   // `task` is created at the end of this function. The helpers and tools below
   // only read it at runtime (inside their bodies), long after it's assigned, so
@@ -282,7 +291,7 @@ export function createWarmTransferTask({
       { 'lk.pii.participant_identity': participantIdentity },
       'caller hung up before the transfer completed, cancelling transfer',
     );
-    callerHangupFut.resolve();
+    cancellationFut.resolve();
 
     // If the human agent already answered, take the session out of setResult's
     // reach and let them know before hanging up, instead of dropping the call
@@ -295,6 +304,15 @@ export function createWarmTransferTask({
       void notifyHumanAgentOfHangup(session);
     }
     setResult(new ToolError('caller hung up before the transfer completed'));
+  };
+
+  const onAbort = (): void => {
+    if (task.done) return;
+
+    const error = asError(abortSignal?.reason ?? new Error('warm transfer aborted'));
+    logger.info({ error }, 'warm transfer aborted');
+    cancellationFut.resolve();
+    setResult(error);
   };
 
   // Pre-merge watch: cancels the transfer if the caller leaves while the human
@@ -509,8 +527,18 @@ export function createWarmTransferTask({
           throw new ToolError('the transfer was already cancelled');
         }
 
-        await mergeCalls();
-        setResult({ humanAgentIdentity });
+        abortSignal?.removeEventListener('abort', onAbort);
+        try {
+          await mergeCalls();
+          setResult({ humanAgentIdentity });
+        } catch (error) {
+          if (abortSignal?.aborted) {
+            setResult(asError(abortSignal.reason ?? new Error('warm transfer aborted')));
+            return;
+          }
+          abortSignal?.addEventListener('abort', onAbort, { once: true });
+          throw error;
+        }
         callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerParticipantDisconnected);
       },
     }),
@@ -548,9 +576,18 @@ export function createWarmTransferTask({
     llm: llm ?? undefined,
     tts: tts ?? undefined,
     allowInterruptions,
+    onExit: () => {
+      abortSignal?.removeEventListener('abort', onAbort);
+    },
     onEnter: async () => {
       jobCtx = getJobContext();
       callerRoom = jobCtx.room;
+
+      abortSignal?.addEventListener('abort', onAbort, { once: true });
+      if (abortSignal?.aborted) {
+        onAbort();
+        return;
+      }
 
       callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerLeftBeforeMerge);
       if (!hasCallerParticipant()) {
@@ -571,21 +608,17 @@ export function createWarmTransferTask({
 
       setIoEnabled(false);
 
-      // Race the dial against a human-agent-room failure or a caller hangup.
-      // AbortController lets the `finally` cancel a still-pending dial when
-      // either of those wins the race.
       const abortController = new AbortController();
       const dialPromise = dialHumanAgent(abortController.signal);
       try {
         const result = await Promise.race([
-          dialPromise.then((session) => ({ session, callerHungUp: false })),
-          humanAgentFailedFut.await.then(() => ({ session: null, callerHungUp: false })),
-          callerHangupFut.await.then(() => ({ session: null, callerHungUp: true })),
+          dialPromise.then((session) => ({ session, cancelled: false })),
+          humanAgentFailedFut.await.then(() => ({ session: null, cancelled: false })),
+          cancellationFut.await.then(() => ({ session: null, cancelled: true })),
         ]);
 
-        if (result.callerHungUp) {
-          // cancelForCallerHangup already completed the task; the `finally`
-          // below aborts the pending dial and tears down the half-built room.
+        if (result.cancelled) {
+          // The cancellation handler already completed the task.
           return;
         }
         if (!result.session) {
