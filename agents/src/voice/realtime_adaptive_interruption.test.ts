@@ -100,6 +100,62 @@ function setActivityProp<T>(activity: object, key: string, value: T): void {
 }
 
 describe('realtime adaptive interruption', () => {
+  it('does not reopen a resolved overlap when pausing agent speech', () => {
+    const onStartOfOverlapSpeech = vi.fn();
+    const onEndOfAgentSpeech = vi.fn();
+    const pause = vi.fn();
+    let agentState: 'speaking' | 'listening' = 'speaking';
+    const agentSession = {
+      _aecWarmupRemaining: 0,
+      _textOnly: true,
+      _userSpeakingSpan: undefined,
+      get agentState() {
+        return agentState;
+      },
+      llm: new FakeLLM([]),
+      output: { audio: { pause } },
+      sessionOptions: {
+        turnHandling: {
+          interruption: { falseInterruptionTimeout: 2_000, minWords: 0 },
+        },
+      },
+      _updateAgentState: vi.fn((state: 'listening') => {
+        agentState = state;
+      }),
+    };
+    const activity = Object.create(AgentActivity.prototype) as {
+      onInterruption: AgentActivity['onInterruption'];
+      audioRecognition: {
+        currentTranscript: string;
+        endpointingOverlapping: boolean;
+        onStartOfOverlapSpeech: typeof onStartOfOverlapSpeech;
+        onEndOfAgentSpeech: typeof onEndOfAgentSpeech;
+      };
+    };
+    Object.assign(activity, {
+      _currentSpeech: { interrupted: false, allowInterruptions: true },
+      agent: new Agent({ instructions: 'test' }),
+      agentSession,
+      audioRecognition: {
+        currentTranscript: '',
+        endpointingOverlapping: true,
+        onStartOfOverlapSpeech,
+        onEndOfAgentSpeech,
+      },
+      cancelFalseInterruptionTimer: vi.fn(),
+      isInterruptionByAudioActivityEnabled: true,
+      isInterruptionDetectionEnabled: true,
+      pauseEnabled: () => true,
+      restoreInterruptionByAudioActivity: vi.fn(),
+      updatePausedSpeech: vi.fn(),
+    });
+
+    activity.onInterruption(overlapEvent({ isInterruption: true, agentEnded: false }));
+
+    expect(pause).toHaveBeenCalledOnce();
+    expect(onStartOfOverlapSpeech).not.toHaveBeenCalled();
+  });
+
   it('enables adaptive interruption for realtime without STT', () => {
     vi.stubEnv('LIVEKIT_API_KEY', 'k');
     vi.stubEnv('LIVEKIT_API_SECRET', 's');

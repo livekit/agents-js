@@ -544,6 +544,11 @@ export class AudioRecognition {
   }
 
   /** @internal */
+  get endpointingOverlapping(): boolean {
+    return this.endpointing.overlapping;
+  }
+
+  /** @internal */
   get isClosed(): boolean {
     return this.closed;
   }

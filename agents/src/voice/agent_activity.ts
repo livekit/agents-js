@@ -1680,7 +1680,12 @@ export class AgentActivity implements RecognitionHooks {
         // spams the interruption stream with duplicate `agent-speech-ended` sentinels.
         const wasAgentSpeaking = this.agentSession.agentState === 'speaking';
 
-        if (wasAgentSpeaking && this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        if (
+          wasAgentSpeaking &&
+          this.isInterruptionDetectionEnabled &&
+          this.audioRecognition &&
+          !this.audioRecognition.endpointingOverlapping
+        ) {
           this.audioRecognition.onStartOfOverlapSpeech(
             0,
             Date.now(),
@@ -4059,6 +4064,19 @@ export class AgentActivity implements RecognitionHooks {
 
     addRealtimeMessageOutputs(messageOutputs);
 
+    let endedAgentSpeechBeforeTool = false;
+    if (this.agentSession.agentState === 'speaking') {
+      const toolBusy = !executeToolsTask.done || toolOutput.output.length > 0;
+      this.agentSession._updateAgentState(toolBusy ? 'thinking' : 'listening');
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      if (toolBusy && this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
+      }
+      endedAgentSpeechBeforeTool = true;
+    }
+
     // mark the playout done before waiting for the tool execution
     speechHandle._markGenerationDone();
     // TODO(brian): close tees
@@ -4072,17 +4090,21 @@ export class AgentActivity implements RecognitionHooks {
 
     if (toolOutput.output.length > 0) {
       this.agentSession._updateAgentState('thinking');
-      if (this.audioRecognition) {
-        this.audioRecognition.onEndOfAgentSpeech(Date.now());
-      }
-      if (this.isInterruptionDetectionEnabled) {
-        this.restoreInterruptionByAudioActivity();
+      if (!endedAgentSpeechBeforeTool) {
+        if (this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+        if (this.isInterruptionDetectionEnabled) {
+          this.restoreInterruptionByAudioActivity();
+        }
       }
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
       if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
+    } else if (endedAgentSpeechBeforeTool && this.agentSession.agentState === 'thinking') {
+      this.agentSession._updateAgentState('listening');
     }
 
     if (toolOutput.output.length === 0) {
