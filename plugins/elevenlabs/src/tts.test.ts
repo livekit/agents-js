@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
-import { TTS } from './tts.js';
+import { type SynthesizeStream, TTS } from './tts.js';
 
 async function startWebSocketServer() {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -174,6 +174,141 @@ describe('ElevenLabs TTS options', () => {
 
 describe('ElevenLabs TTS websocket', () => {
   const audio = Buffer.alloc(4410).toString('base64');
+
+  it('defers new contexts until an interrupted context is finalized', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const messages: Record<string, unknown>[] = [];
+    let socket: WebSocket | undefined;
+
+    wss.on('connection', (ws) => {
+      socket = ws;
+      ws.on('message', (raw) => {
+        messages.push(JSON.parse(raw.toString()) as Record<string, unknown>);
+      });
+    });
+
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+    const streams: SynthesizeStream[] = [];
+
+    const isInit = (contextId: string) =>
+      messages.some(
+        (message) =>
+          message.context_id === contextId &&
+          message.text === ' ' &&
+          Object.hasOwn(message, 'voice_settings'),
+      );
+    const isClosed = (contextId: string) =>
+      messages.some(
+        (message) => message.context_id === contextId && message.close_context === true,
+      );
+
+    try {
+      for (let i = 0; i < 5; i++) {
+        const stream = elevenlabs.stream();
+        streams.push(stream);
+        stream.pushText(`reply ${i}.`);
+        stream.flush();
+        await waitUntil(() => isInit(stream.contextId));
+      }
+
+      for (const stream of streams) {
+        stream.close();
+      }
+
+      const replacement = elevenlabs.stream();
+      streams.push(replacement);
+      replacement.pushText('replacement reply.');
+      replacement.flush();
+
+      await waitUntil(() => streams.slice(0, 5).every((stream) => isClosed(stream.contextId)));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(isInit(replacement.contextId)).toBe(false);
+      for (const stream of streams.slice(0, 5)) {
+        const closeIndex = messages.findIndex(
+          (message) => message.context_id === stream.contextId && message.close_context === true,
+        );
+        expect(closeIndex).toBeGreaterThanOrEqual(0);
+        expect(
+          messages
+            .slice(closeIndex + 1)
+            .some((message) => message.context_id === stream.contextId && 'text' in message),
+        ).toBe(false);
+      }
+
+      socket!.send(JSON.stringify({ context_id: streams[0]!.contextId, isFinal: true }));
+      await waitUntil(() => isInit(replacement.contextId));
+
+      const firstCloseIndex = messages.findIndex(
+        (message) => message.context_id === streams[0]!.contextId && message.close_context === true,
+      );
+      const replacementInitIndex = messages.findIndex(
+        (message) =>
+          message.context_id === replacement.contextId &&
+          message.text === ' ' &&
+          Object.hasOwn(message, 'voice_settings'),
+      );
+      expect(firstCloseIndex).toBeGreaterThanOrEqual(0);
+      expect(replacementInitIndex).toBeGreaterThan(firstCloseIndex);
+    } finally {
+      for (const stream of streams) {
+        stream.close();
+      }
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('does not initialize a stream that was cancelled before startup', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const messages: Record<string, unknown>[] = [];
+
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        messages.push(JSON.parse(raw.toString()) as Record<string, unknown>);
+      });
+    });
+
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+    const stream = elevenlabs.stream();
+
+    try {
+      stream.close();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(messages).toEqual([]);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('flushes graceful streams before closing their context', async () => {
+    let responded = false;
+    const { messages } = await synthesizeWithMessages((ws, receivedMessages) => {
+      const closeMessage = receivedMessages.find((message) => message.close_context === true);
+      if (closeMessage && !responded) {
+        responded = true;
+        ws.send(JSON.stringify({ context_id: closeMessage.context_id, isFinal: true }));
+      }
+    });
+
+    const contextId = messages[0]!.context_id;
+    const flushIndex = messages.findIndex(
+      (message) =>
+        message.context_id === contextId && message.text === '' && message.flush === true,
+    );
+    const closeIndex = messages.findIndex(
+      (message) => message.context_id === contextId && message.close_context === true,
+    );
+
+    expect(flushIndex).toBeGreaterThanOrEqual(0);
+    expect(closeIndex).toBeGreaterThan(flushIndex);
+    expect(
+      messages
+        .slice(closeIndex + 1)
+        .some((message) => message.context_id === contextId && 'text' in message),
+    ).toBe(false);
+  });
 
   it('accepts snake-case context IDs', async () => {
     const { events } = await synthesizeWithMessages((ws, messages) => {
