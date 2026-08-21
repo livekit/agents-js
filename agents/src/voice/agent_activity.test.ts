@@ -101,7 +101,7 @@ function buildMainTaskRunner() {
     _currentSpeech: SpeechHandle | undefined;
     _schedulingPaused: boolean;
     _authorizationPaused: boolean;
-    _drainBlockedTasks: Task<void>[];
+    _drainBlockedTasks: Set<Task<void>>;
     _mainTask: { result: Promise<void> } | undefined;
     logger: {
       info: () => void;
@@ -118,7 +118,7 @@ function buildMainTaskRunner() {
     _currentSpeech: undefined as SpeechHandle | undefined,
     _schedulingPaused: false,
     _authorizationPaused: false,
-    _drainBlockedTasks: [] as Task<void>[],
+    _drainBlockedTasks: new Set<Task<void>>(),
     _mainTask: undefined as { result: Promise<void> } | undefined,
     logger: {
       info: () => {},
