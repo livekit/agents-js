@@ -773,7 +773,13 @@ export class AudioRecognition {
     const sentinels: InterruptionSentinel[] = [InterruptionStreamSentinel.agentSpeechStarted()];
 
     if (this.speaking) {
-      const overlapStarted = this.startOverlapInference(0, startedAt, this.activeUserSpeakingSpan);
+      const speechDuration =
+        this.speechStartTime === undefined ? 0 : Math.max(0, startedAt - this.speechStartTime);
+      const overlapStarted = this.startOverlapInference(
+        speechDuration,
+        startedAt,
+        this.activeUserSpeakingSpan,
+      );
       if (overlapStarted) {
         sentinels.push(overlapStarted);
       }
@@ -858,7 +864,7 @@ export class AudioRecognition {
     startedAt: number,
     userSpeakingSpan?: Span,
   ): OverlapSpeechStarted | undefined {
-    if (!this.isInterruptionEnabled || !this.isAgentSpeaking) {
+    if (!this.isInterruptionEnabled || !this.isAgentSpeaking || this.overlapOpen) {
       return undefined;
     }
     this.interruptionDetected = undefined;
