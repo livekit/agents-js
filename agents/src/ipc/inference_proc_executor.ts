@@ -5,6 +5,7 @@ import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
 import { extname } from 'node:path';
+import { InferenceRunner } from '../inference_runner.js';
 import { log } from '../log.js';
 import { shortuuid } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
@@ -58,6 +59,36 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
       highPingThreshold,
     );
     this.#runners = runners;
+  }
+
+  protected get processKind(): string {
+    return 'inference';
+  }
+
+  /**
+   * Build an executor configured with the standard supervision defaults, or
+   * `undefined` when no plugin has registered an {@link InferenceRunner} (in
+   * which case there is nothing to run in a child process).
+   *
+   * Shared by both the worker and the console, matching python's single
+   * `InferenceProcExecutor` construction.
+   */
+  static createIfNeeded(): InferenceProcExecutor | undefined {
+    if (Object.keys(InferenceRunner.registeredRunners).length === 0) {
+      return undefined;
+    }
+    return new InferenceProcExecutor({
+      runners: InferenceRunner.registeredRunners,
+      // 5 minutes, matching python: loading model files into the child can be
+      // slow on first run.
+      initializeTimeout: 5 * 60 * 1000,
+      closeTimeout: 5000,
+      memoryWarnMB: 2000,
+      memoryLimitMB: 0,
+      pingInterval: 5000,
+      pingTimeout: 60000,
+      highPingThreshold: 2500,
+    });
   }
 
   createProcess(): ChildProcess {

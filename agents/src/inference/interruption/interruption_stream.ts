@@ -10,7 +10,6 @@ import { type StreamChannel, createStreamChannel } from '../../stream/stream_cha
 import { traceTypes } from '../../telemetry/index.js';
 import { FRAMES_PER_SECOND, apiConnectDefaults } from './defaults.js';
 import type { InterruptionDetectionError } from './errors.js';
-import { createHttpTransport } from './http_transport.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { AdaptiveInterruptionDetector } from './interruption_detector.js';
 import {
@@ -55,8 +54,8 @@ export class InterruptionStreamSentinel {
     return { type: 'overlap-speech-started', speechDuration, startedAt, userSpeakingSpan };
   }
 
-  static overlapSpeechEnded(endedAt: number): OverlapSpeechEnded {
-    return { type: 'overlap-speech-ended', endedAt };
+  static overlapSpeechEnded(endedAt: number, agentEnded = false): OverlapSpeechEnded {
+    return { type: 'overlap-speech-ended', endedAt, agentEnded };
   }
 
   static flush(): Flush {
@@ -99,13 +98,15 @@ export class InterruptionStreamBase {
   // Store reconnect function for WebSocket transport
   private wsReconnect?: () => Promise<void>;
 
+  private wsClose?: () => void;
+
   // Mutable transport options that can be updated via updateOptions()
   private transportOptions: {
     baseUrl: string;
     apiKey: string;
     apiSecret: string;
     sampleRate: number;
-    threshold: number;
+    threshold?: number;
     minFrames: number;
     timeout: number;
     connectTimeout: number;
@@ -154,8 +155,8 @@ export class InterruptionStreamBase {
       this.options.minFrames = Math.ceil(options.minInterruptionDurationInS * FRAMES_PER_SECOND);
       this.transportOptions.minFrames = this.options.minFrames;
     }
-    // Trigger WebSocket reconnection if using proxy (WebSocket transport)
-    if (this.options.useProxy && this.wsReconnect) {
+    // Trigger WebSocket reconnection to apply updated settings.
+    if (this.wsReconnect) {
       await this.wsReconnect();
     }
   }
@@ -271,8 +272,8 @@ export class InterruptionStreamBase {
             }
             cache.clear();
           } else if (chunk.type === 'overlap-speech-ended') {
-            this.logger.debug('overlap speech ended');
             if (overlapSpeechStarted) {
+              this.logger.debug('overlap speech ended');
               this.userSpeakingSpan = undefined;
               let latestEntry = cache.pop(
                 (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
@@ -286,6 +287,7 @@ export class InterruptionStreamBase {
                 type: 'overlapping_speech',
                 detectedAt: chunk.endedAt,
                 isInterruption: false,
+                agentEnded: chunk.agentEnded,
                 overlapStartedAt: this.overlapSpeechStartedAt,
                 speechInput: e.speechInput,
                 probabilities: e.probabilities,
@@ -309,30 +311,20 @@ export class InterruptionStreamBase {
       { highWaterMark: 32 },
     );
 
-    // Second transform: transport layer (HTTP or WebSocket based on useProxy)
+    // Second transform: WebSocket transport layer.
     const transportOptions = this.transportOptions;
 
-    let transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
-    if (this.options.useProxy) {
-      const wsResult = createWsTransport(
-        transportOptions,
-        getState,
-        setState,
-        handleSpanUpdate,
-        onRequestSent,
-        getAndResetNumRequests,
-      );
-      transport = wsResult.transport;
-      this.wsReconnect = wsResult.reconnect;
-    } else {
-      transport = createHttpTransport(
-        transportOptions,
-        getState,
-        setState,
-        handleSpanUpdate,
-        getAndResetNumRequests,
-      );
-    }
+    const wsResult = createWsTransport(
+      transportOptions,
+      getState,
+      setState,
+      handleSpanUpdate,
+      onRequestSent,
+      getAndResetNumRequests,
+    );
+    const transport = wsResult.transport;
+    this.wsReconnect = wsResult.reconnect;
+    this.wsClose = wsResult.close;
 
     const eventEmitter = new TransformStream<OverlappingSpeechEvent, OverlappingSpeechEvent>({
       transform: (chunk, controller) => {
@@ -345,7 +337,7 @@ export class InterruptionStreamBase {
           predictionDuration: chunk.predictionDurationInS * 1000,
           detectionDelay: chunk.detectionDelayInS * 1000,
           numInterruptions: chunk.isInterruption ? 1 : 0,
-          numBackchannels: chunk.isInterruption ? 0 : 1,
+          numBackchannels: !chunk.isInterruption && !chunk.agentEnded ? 1 : 0,
           numRequests: chunk.numRequests,
           metadata: {
             modelProvider: this.model.provider,
@@ -415,9 +407,13 @@ export class InterruptionStreamBase {
   }
 
   async close(): Promise<void> {
-    if (!this.inputStream.closed) await this.inputStream.close();
-    this.resampler?.close();
-    this.model.removeStream(this);
+    try {
+      if (!this.inputStream.closed) await this.inputStream.close();
+    } finally {
+      this.wsClose?.();
+      this.resampler?.close();
+      this.model.removeStream(this);
+    }
   }
 }
 

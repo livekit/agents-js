@@ -8,7 +8,6 @@
  */
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   Task,
   cli,
@@ -19,21 +18,15 @@ import {
   log,
   voice,
 } from '@livekit/agents';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 
 initializeLogger({ pretty: true });
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const logger = log();
-    const vad = ctx.proc.userData.vad! as silero.VAD;
 
     const session = new voice.AgentSession({
-      vad,
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       tts: new inference.TTS({

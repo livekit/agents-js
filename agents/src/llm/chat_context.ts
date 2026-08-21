@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
+import { stripExprMarkup } from '../tts/provider_format.js';
 import { createImmutableArray, shortuuid } from '../utils.js';
 import type { LLM } from './llm.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
@@ -104,13 +105,12 @@ export class Instructions {
       return result;
     };
 
-    const hasTextVariant = values.some(
-      (value) => isInstructions(value) && value._textVariant !== undefined,
-    );
+    const audio = render('audio');
+    const text = render('text');
 
     return new Instructions({
-      audio: render('audio'),
-      text: hasTextVariant ? render('text') : undefined,
+      audio,
+      text: audio === text ? undefined : text,
       represent: render('value'),
     });
   }
@@ -272,6 +272,13 @@ export function createAudioContent(params: {
 }
 
 export interface MetricsReport {
+  /**
+   * Provider-known request or response IDs associated with this turn.
+   *
+   * Assistant `ChatMessage` only. These IDs can be used to correlate a turn with
+   * provider-side logs.
+   */
+  providerRequestIds?: string[];
   startedSpeakingAt?: number;
   stoppedSpeakingAt?: number;
   transcriptionDelay?: number;
@@ -358,9 +365,21 @@ export class ChatMessage {
 
   /**
    * Returns a single string with all text parts of the message joined by new
-   * lines. If no string content is present, returns `null`.
+   * lines, with LiveKit's expressive `<expr/>` tags removed from assistant
+   * messages. If no string content is present, returns `undefined`.
    */
   get textContent(): string | undefined {
+    const raw = this.rawTextContent;
+    if (raw === undefined || this.role !== 'assistant') return raw;
+    return stripExprMarkup(raw);
+  }
+
+  /**
+   * Returns a single string with all text parts of the message joined by new
+   * lines, exactly as generated. Assistant messages may contain expressive
+   * `<expr/>` tags.
+   */
+  get rawTextContent(): string | undefined {
     const parts = this.content
       .filter((c): c is string | Instructions => typeof c === 'string' || isInstructions(c))
       .map((c) => (typeof c === 'string' ? c : c.value));
@@ -777,6 +796,20 @@ export class ChatContext {
     }
   }
 
+  /**
+   * Remove the first item from the chat context by item or item ID.
+   *
+   * Throws if the item or ID is not found.
+   */
+  remove(item: ChatItem | string): void {
+    const itemId = typeof item === 'string' ? item : item.id;
+    const idx = this.indexById(itemId);
+    if (idx === undefined) {
+      throw new Error(`Item not found: ${itemId}`);
+    }
+    this._items.splice(idx, 1);
+  }
+
   getById(itemId: string): ChatItem | undefined {
     return this._items.find((i) => i.id === itemId);
   }
@@ -835,7 +868,7 @@ export class ChatContext {
         continue;
       }
 
-      if (toolCtx !== undefined && isToolCallOrOutput(item) && toolCtx[item.name] === undefined) {
+      if (toolCtx !== undefined && isToolCallOrOutput(item) && !toolCtx.hasTool(item.name)) {
         continue;
       }
 
@@ -925,6 +958,7 @@ export class ChatContext {
       excludeTimestamp?: boolean;
       excludeFunctionCall?: boolean;
       excludeConfigUpdate?: boolean;
+      stripMarkup?: boolean;
     } = {},
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): JSONObject {
@@ -934,6 +968,7 @@ export class ChatContext {
       excludeTimestamp = true,
       excludeFunctionCall = false,
       excludeConfigUpdate = false,
+      stripMarkup = false,
     } = options;
 
     const items: ChatItem[] = [];
@@ -972,6 +1007,12 @@ export class ChatContext {
           processedItem.content = processedItem.content.filter((c) => {
             return !(typeof c === 'object' && c.type === 'audio_content');
           });
+        }
+
+        if (stripMarkup && processedItem.role === 'assistant') {
+          processedItem.content = processedItem.content.map((c) =>
+            typeof c === 'string' ? stripExprMarkup(c) : c,
+          );
         }
       }
 
@@ -1190,7 +1231,7 @@ export class ChatContext {
           return toXml(item.role, (item.textContent ?? '').trim());
         }
 
-        return functionCallItemToMessage(item).textContent ?? '';
+        return functionCallItemToMessage(item).rawTextContent ?? '';
       })
       .join('\n')
       .trim();

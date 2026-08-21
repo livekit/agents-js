@@ -3,18 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
-  beta,
   cli,
   defineAgent,
   inference,
   llm,
   log,
   voice,
+  workflows,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 
@@ -26,8 +23,9 @@ class SupportAgent extends voice.Agent {
   constructor() {
     super({
       instructions: INSTRUCTIONS,
-      tools: {
-        transfer_to_human: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'transfer_to_human',
           description: `Called when the user asks to speak to a human agent. This will put the user on hold while the supervisor is connected.
 
 Ensure that the user has confirmed that they wanted to be transferred. Do not start transfer until the user has confirmed.
@@ -55,7 +53,7 @@ Examples on when the tool should be called:
                 );
               }
 
-              const result = await new beta.WarmTransferTask({
+              const result = await new workflows.WarmTransferTask({
                 sipCallTo: SUPERVISOR_PHONE_NUMBER,
                 sipTrunkId: SIP_TRUNK_ID,
                 sipNumber: SIP_NUMBER,
@@ -66,27 +64,27 @@ Examples on when the tool should be called:
               }).run();
 
               logger.info(
-                { supervisorIdentity: result.humanAgentIdentity },
-                'transfer to supervisor successful',
+                { humanAgentIdentity: result.humanAgentIdentity },
+                'transfer to human agent successful',
               );
               const goodbyeSpeech = ctx.session.say(
-                "you are on the line with my supervisor. I'll be hanging up now.",
+                "you are on the line with a human agent. I'll be hanging up now.",
                 { allowInterruptions: false },
               );
               await goodbyeSpeech.waitForPlayout();
               ctx.session.shutdown();
             } catch (error) {
               if (error instanceof llm.ToolError) {
-                logger.error({ error }, 'failed to transfer to supervisor with tool error');
+                logger.error({ error }, 'failed to transfer to human agent with tool error');
                 throw error;
               }
 
-              logger.error({ error }, 'failed to transfer to supervisor');
-              throw new llm.ToolError(`failed to transfer to supervisor with error: ${error}`);
+              logger.error({ error }, 'failed to transfer to human agent');
+              throw new llm.ToolError(`failed to transfer to human agent with error: ${error}`);
             }
           },
         }),
-      },
+      ],
     });
   }
 
@@ -95,20 +93,19 @@ Examples on when the tool should be called:
   }
 }
 
+// No prewarm hook needed: the local EOT model runs in the shared inference
+// process (loaded once per host), and the inference VAD (~2MB, in-process)
+// lazy-loads on first stream.
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad as silero.VAD,
+      vad: new inference.VAD(),
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
       }),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 
     await session.start({
@@ -159,4 +156,10 @@ WHY a human agent is requested or needed at this point
 Brief summary in 100-200 characters from a first-person perspective
 `;
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'sip-inbound' }));
+// IMPORTANT: set `agentName` so this worker uses EXPLICIT dispatch. Without it,
+// the worker auto-dispatches an agent into EVERY new room in the project —
+// including the human agent room that WarmTransferTask creates — which puts a
+// second agent on the line with the human agent and produces overlapping voices.
+cli.runApp(
+  new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'warm-transfer' }),
+);

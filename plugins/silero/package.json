@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-silero",
-  "version": "1.4.4",
+  "version": "1.7.0",
   "description": "Silero voice activity detection LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -35,8 +35,9 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:*",
+    "@livekit/local-inference": "^0.2.7",
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.12",
     "@types/ws": "catalog:",
     "onnxruntime-common": "1.24.3",
     "tsup": "^8.3.5",

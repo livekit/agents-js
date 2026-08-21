@@ -71,5 +71,7 @@ export type TTSEncoding = 'pcm_s16le';
 
 /**
  * See [the docs](https://docs.cartesia.ai/build-with-cartesia/stt-models/latest) for all options.
+ *
+ * `ink-2` currently supports English only; `ink-whisper` is multilingual.
  */
-export type STTModel = 'ink-2';
+export type STTModel = 'ink-2' | 'ink-whisper';

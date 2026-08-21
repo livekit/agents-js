@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-phonic",
-  "version": "1.4.4",
+  "version": "1.7.0",
   "description": "Phonic STS plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -36,12 +36,12 @@
   "devDependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.12",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "phonic": "^0.31.10"
+    "phonic": "^0.32.15"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

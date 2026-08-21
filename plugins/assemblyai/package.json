@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-assemblyai",
-  "version": "1.4.4",
+  "version": "1.7.0",
   "description": "AssemblyAI plugin for LiveKit Agents for Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -38,13 +38,13 @@
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.12",
     "@types/ws": "^8.5.10",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "ws": "^8.16.0"
+    "ws": "^8.21.1"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

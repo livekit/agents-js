@@ -2,33 +2,33 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  Agent,
+  AgentSession,
+  AgentSessionEventTypes,
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
   inference,
-  llm,
   log,
-  metrics,
-  voice,
+  logMetrics,
+  tool,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
-import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
+import * as krisp from '@livekit/agents-plugin-krisp';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
+// No prewarm hook needed: the local EOT model runs in the shared inference
+// process (loaded once per host), and the silero VAD (~2MB, in-process)
+// lazy-loads on first stream.
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
-    const agent = new voice.Agent({
+    const agent = Agent.create({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it.",
-      tools: {
-        getWeather: llm.tool({
+      tools: [
+        tool({
+          name: 'getWeather',
           description: 'Get the weather for a given location.',
           parameters: z.object({
             location: z.string().describe('The location to get the weather for'),
@@ -37,15 +37,12 @@ export default defineAgent({
             return `The weather in ${location} is sunny.`;
           },
         }),
-      },
+      ],
     });
 
     const logger = log();
 
-    const session = new voice.AgentSession({
-      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-      // See more at https://docs.livekit.io/agents/build/turns
-      vad: ctx.proc.userData.vad! as silero.VAD,
+    const session = new AgentSession({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       stt: new inference.STT({
@@ -64,12 +61,13 @@ export default defineAgent({
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
         fallback: [
           { model: 'elevenlabs/eleven_flash_v2', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' },
-          'rime/arcana',
+          { model: 'rime/coda', voice: 'luna' },
         ],
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
-        turnDetection: new livekit.turnDetector.MultilingualModel(),
+        // turn detection defaults to the audio inference.TurnDetector when unset.
+        // See https://docs.livekit.io/agents/build/turns
         interruption: {
           // Enable false-interruption auto-resume behavior.
           resumeFalseInterruption: true,
@@ -90,6 +88,14 @@ export default defineAgent({
           enabled: true,
         },
       },
+      // automatically detect keyterms and apply them to the STT per user turn
+      keytermsOptions: {
+        keyterms: ['LiveKit'],
+        keytermDetection: {
+          enabled: true,
+          turnInterval: 1, // increase to reduce LLM API calls
+        },
+      },
       useTtsAlignedTranscript: true,
       aecWarmupDuration: 3000,
       connOptions: {
@@ -103,8 +109,11 @@ export default defineAgent({
     });
 
     // Log metrics as they are emitted
-    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
-      metrics.logMetrics(ev.metrics);
+    session.on(AgentSessionEventTypes.MetricsCollected, (ev) => {
+      if (ev.metrics.type === 'stt_metrics') {
+        return;
+      }
+      logMetrics(ev.metrics);
     });
 
     // Log usage summary when job shuts down
@@ -117,7 +126,7 @@ export default defineAgent({
       );
     });
 
-    session.on(voice.AgentSessionEventTypes.OverlappingSpeech, (ev) => {
+    session.on(AgentSessionEventTypes.OverlappingSpeech, (ev) => {
       logger.warn({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
     });
 
@@ -126,7 +135,7 @@ export default defineAgent({
       room: ctx.room,
       inputOptions: {
         deleteRoomOnClose: true,
-        noiseCancellation: BackgroundVoiceCancellation(),
+        noiseCancellation: krisp.voiceIsolation(),
       },
     });
 

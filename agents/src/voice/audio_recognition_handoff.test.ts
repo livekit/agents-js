@@ -12,6 +12,7 @@ import type { STTNode } from './io.js';
 function createHooks() {
   const hooks: RecognitionHooks = {
     onInterruption: vi.fn(),
+    onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
     onEndOfSpeech: vi.fn(),
@@ -19,6 +20,7 @@ function createHooks() {
     onFinalTranscript: vi.fn(),
     onEndOfTurn: vi.fn(async () => true),
     onPreemptiveGeneration: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
     onUserTurnExceeded: vi.fn(),
     retrieveChatCtx: () => ChatContext.empty(),
   };
@@ -119,27 +121,27 @@ describe('AudioRecognition STT pipeline handoff', () => {
     }
   });
 
-  it('resets handoff-sensitive STT state when attaching a pipeline', async () => {
+  it('resets handoff-sensitive STT state without clearing the pipeline input anchor', async () => {
     const sttNode: STTNode = async () =>
       new ReadableStream<SpeechEvent | string>({
         start() {},
       });
 
     const pipeline = new STTPipeline(sttNode);
+    pipeline.inputStartedAt = Date.now() - 60_000;
     const { recognition } = createRecognition(sttNode);
 
     (recognition as any).transcriptBuffer = [
       { type: SpeechEventType.FINAL_TRANSCRIPT, alternatives: [{ text: 'stale transcript' }] },
     ];
     (recognition as any).ignoreUserTranscriptUntil = Date.now();
-    (recognition as any)._inputStartedAt = Date.now();
 
     try {
       await recognition.start({ sttPipeline: pipeline });
 
       expect((recognition as any).transcriptBuffer).toEqual([]);
       expect((recognition as any).ignoreUserTranscriptUntil).toBeUndefined();
-      expect((recognition as any)._inputStartedAt).toBeUndefined();
+      expect(recognition.inputStartedAt).toBe(pipeline.inputStartedAt);
     } finally {
       await recognition.close();
       await pipeline.close();

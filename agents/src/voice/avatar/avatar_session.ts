@@ -4,6 +4,7 @@
 import type { Room } from '@livekit/rtc-node';
 import { RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import { getJobContext } from '../../job.js';
 import { log } from '../../log.js';
@@ -36,6 +37,8 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
   #room?: Room;
   #waitAvatarJoinAbort?: AbortController;
   #waitAvatarJoinPromise?: Promise<void>;
+  #shutdownCallbackContexts = new WeakSet<object>();
+  #activeShutdownCallbackContext?: object;
 
   get avatarIdentity(): string {
     return 'unknown';
@@ -54,8 +57,16 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
    */
   async start(agentSession: AgentSession, room: Room): Promise<unknown> {
     const jobCtx = getJobContext(false);
+    this.#activeShutdownCallbackContext = jobCtx;
     if (jobCtx !== undefined) {
-      jobCtx.addShutdownCallback(() => this.aclose());
+      if (!this.#shutdownCallbackContexts.has(jobCtx)) {
+        jobCtx.addShutdownCallback(async () => {
+          if (this.#activeShutdownCallbackContext === jobCtx) {
+            await this.aclose();
+          }
+        });
+        this.#shutdownCallbackContexts.add(jobCtx);
+      }
     } else {
       this.#logger.debug(
         'AvatarSession started outside a job context; call aclose() manually to ' +
@@ -89,10 +100,74 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
   }
 
   /**
+   * Wait until the avatar participant has joined the room and published its video track.
+   *
+   * @param timeout - Timeout in milliseconds. Pass `null` to wait indefinitely.
+   */
+  async waitForJoin({ timeout = 30000 }: { timeout?: number | null } = {}): Promise<void> {
+    if (!this.#waitAvatarJoinPromise) return;
+    if (timeout === null) {
+      await this.#waitAvatarJoinPromise;
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      this.#waitAvatarJoinPromise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('timed out waiting for avatar participant')),
+          timeout,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+  }
+
+  /**
    * Release any resources owned by this avatar session. Default implementation is a no-op;
    * subclasses can override to perform cleanup.
    */
   async aclose(): Promise<void> {
+    const roomName = this.#room?.name;
+    if (this.#room?.isConnected && roomName !== undefined) {
+      const jobCtx = getJobContext(false);
+      if (jobCtx !== undefined) {
+        try {
+          const client = new RoomServiceClient(
+            jobCtx.info.url,
+            jobCtx.info.apiKey,
+            jobCtx.info.apiSecret,
+          );
+          await client.removeParticipant(roomName, this.avatarIdentity);
+        } catch (error) {
+          if (isTwirpNotFoundError(error)) {
+            this.#logger.debug(
+              { 'lk.pii.avatar_identity': this.avatarIdentity },
+              'avatar participant not in room, skipping removal',
+            );
+          } else {
+            this.#logger.warn(
+              { error, 'lk.pii.avatar_identity': this.avatarIdentity },
+              'failed to remove avatar participant',
+            );
+          }
+        }
+      }
+    }
+
+    await this._rollbackStart();
+  }
+
+  /**
+   * Roll back base start lifecycle state without removing the avatar participant.
+   *
+   * Subclasses may use this when provisioning has an ambiguous outcome and must be retried.
+   *
+   * @internal
+   */
+  protected async _rollbackStart(): Promise<void> {
+    this.#activeShutdownCallbackContext = undefined;
+
     if (this.#agentSession) {
       this.#agentSession.off(
         AgentSessionEventTypes.ConversationItemAdded,
@@ -186,4 +261,10 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
       createMetricsCollectedEvent({ metrics }),
     );
   }
+}
+
+function isTwirpNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && 'code' in error && error.code === 'not_found'
+  );
 }

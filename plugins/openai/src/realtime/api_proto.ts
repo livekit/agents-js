@@ -10,6 +10,18 @@ export const OUT_FRAME_SIZE = 1200; // 50ms
 export const BASE_URL = 'wss://api.openai.com/v1';
 
 export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string; // Open-ended, for future models
+
+/**
+ * Models that support the `reasoning` configuration on the Realtime API.
+ * Currently only the `gpt-realtime-2` family supports it.
+ *
+ * Ref: https://developers.openai.com/api/reference/resources/realtime/subresources/calls/methods/accept
+ */
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+export interface Reasoning {
+  effort?: ReasoningEffort;
+}
 export type Voice =
   | 'alloy'
   | 'shimmer'
@@ -121,6 +133,8 @@ export type TurnDetectionType =
 export type InputAudioTranscription = {
   model: InputTranscriptionModel;
   language?: string;
+  languages?: string[];
+  keywords?: string[];
   prompt?: string;
 };
 
@@ -268,6 +282,7 @@ export interface ConversationResource {
 }
 
 export type ResponseStatusDetails =
+  | string
   | {
       type: 'incomplete';
       reason: 'max_output_tokens' | 'content_filter' | string;
@@ -329,6 +344,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     audio?: RealtimeAudioConfig; // GA: nested audio config
     max_output_tokens?: number | 'inf'; // GA: renamed from max_response_output_tokens
     tracing?: TracingConfig | null; // GA: tracing config
+    reasoning?: Reasoning | null; // GA: reasoning config (gpt-realtime-2 only)
     // Common fields
     model: Model;
     instructions: string;
@@ -433,6 +449,7 @@ export interface ResponseCreateEvent extends BaseClientEvent {
 
 export interface ResponseCancelEvent extends BaseClientEvent {
   type: 'response.cancel';
+  response_id?: string;
 }
 
 export type ClientEvent =
@@ -522,6 +539,7 @@ export interface ConversationItemInputAudioTranscriptionCompletedEvent extends B
   item_id: string;
   content_index: number;
   transcript: string;
+  status?: 'in_progress' | 'completed' | string;
 }
 
 export interface ConversationItemInputAudioTranscriptionFailedEvent extends BaseServerEvent {

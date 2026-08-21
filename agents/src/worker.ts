@@ -15,10 +15,14 @@ import type { ParticipantInfo } from 'livekit-server-sdk';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import { availableParallelism } from 'node:os';
+import { extname } from 'node:path';
 import { WebSocket } from 'ws';
 import { APIStatusError } from './_exceptions.js';
+import { ATTRIBUTE_AGENT_NAME } from './constants.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
+import { _getLocalInferenceModule } from './inference/_warmup.js';
+import { EOT_INFERENCE_METHOD } from './inference/eot/runner.js';
 import { InferenceRunner } from './inference_runner.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
@@ -31,7 +35,34 @@ import { version } from './version.js';
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
+const DRAIN_TIMEOUT = 60 * 60 * 1000;
 const PROJECT_TYPE = 'nodejs';
+
+let localEotRunnerRegistered = false;
+/**
+ * Register the local audio-EOT inference runner so it runs in the shared
+ * inference process. Idempotent and guarded by native-binding availability;
+ * a no-op (with a one-time warning) when `@livekit/local-inference` can't be
+ * loaded so the worker still starts on unsupported platforms.
+ */
+function maybeRegisterLocalEotRunner(): void {
+  if (localEotRunnerRegistered) return;
+  localEotRunnerRegistered = true;
+  if (InferenceRunner.registeredRunners[EOT_INFERENCE_METHOD]) return;
+  if (_getLocalInferenceModule() === undefined) {
+    log().warn(
+      '@livekit/local-inference native binding unavailable; local audio EOT disabled ' +
+        '(predictions will degrade to a positive default). cloud EOT and other turn ' +
+        'detection modes are unaffected.',
+    );
+    return;
+  }
+  const ext = extname(import.meta.url); // '.js' (built) or '.ts' (tsx/ts-node)
+  InferenceRunner.registerRunner(
+    EOT_INFERENCE_METHOD,
+    new URL(`./inference/eot/runner${ext}`, import.meta.url).toString(),
+  );
+}
 
 class Default {
   static loadThreshold(production: boolean): number {
@@ -129,6 +160,7 @@ export class ServerOptions {
   loadFunc: (worker: AgentServer) => Promise<number>;
   loadThreshold: number;
   numIdleProcesses: number;
+  drainTimeout: number;
   shutdownProcessTimeout: number;
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
@@ -144,6 +176,7 @@ export class ServerOptions {
   port: number;
   logLevel: string;
   production: boolean;
+  simulation: boolean;
   jobMemoryWarnMB: number;
   jobMemoryLimitMB: number;
 
@@ -154,6 +187,7 @@ export class ServerOptions {
     loadFunc = defaultCpuLoad,
     loadThreshold = undefined,
     numIdleProcesses = undefined,
+    drainTimeout = DRAIN_TIMEOUT,
     shutdownProcessTimeout = 60 * 1000,
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
@@ -169,7 +203,8 @@ export class ServerOptions {
     port = undefined,
     logLevel = 'info',
     production = false,
-    jobMemoryWarnMB = 500,
+    simulation = false,
+    jobMemoryWarnMB = 1000,
     jobMemoryLimitMB = 0,
   }: {
     /**
@@ -183,6 +218,8 @@ export class ServerOptions {
     /** When the load exceeds this threshold, the worker will be marked as unavailable. */
     loadThreshold?: number;
     numIdleProcesses?: number;
+    /** Number of milliseconds to wait for current jobs to finish upon shutdown. */
+    drainTimeout?: number;
     shutdownProcessTimeout?: number;
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
@@ -210,6 +247,7 @@ export class ServerOptions {
     port?: number;
     logLevel?: string;
     production?: boolean;
+    simulation?: boolean;
     jobMemoryWarnMB?: number;
     jobMemoryLimitMB?: number;
   }) {
@@ -219,14 +257,20 @@ export class ServerOptions {
     }
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
-    this.loadThreshold = loadThreshold || Default.loadThreshold(production);
+    this.loadThreshold = simulation ? Infinity : loadThreshold || Default.loadThreshold(production);
     this.numIdleProcesses = numIdleProcesses || Default.numIdleProcesses(production);
+    this.drainTimeout = drainTimeout;
     this.shutdownProcessTimeout = shutdownProcessTimeout;
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
     // agentNameIsEnv may be passed explicitly when ServerOptions is re-constructed (e.g.
     // cli.ts spreads an existing ServerOptions instance), so prefer it when defined.
-    if (agentName) {
+    if (process.env.LIVEKIT_AGENT_NAME_OVERRIDE) {
+      // Highest priority: `lk simulate` sets this to force the worker to register
+      // under the agent name it dispatches to, overriding any configured agentName.
+      this.agentName = process.env.LIVEKIT_AGENT_NAME_OVERRIDE;
+      this.agentNameIsEnv = agentNameIsEnv ?? true;
+    } else if (agentName) {
       this.agentName = agentName;
       this.agentNameIsEnv = agentNameIsEnv ?? false;
     } else if (process.env.LIVEKIT_AGENT_NAME) {
@@ -246,6 +290,7 @@ export class ServerOptions {
     this.port = port || Default.port(production);
     this.logLevel = logLevel;
     this.production = production;
+    this.simulation = simulation;
     this.jobMemoryWarnMB = jobMemoryWarnMB;
     this.jobMemoryLimitMB = jobMemoryLimitMB;
   }
@@ -284,7 +329,7 @@ export class AgentServer {
 
   event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
-  #httpServer: HTTPServer;
+  #httpServer?: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
 
@@ -308,6 +353,12 @@ export class AgentServer {
       );
 
     if (opts.workerToken) {
+      // Re-export into the environment so forked subprocesses inherit it (fork()
+      // copies process.env by default). The inference-header code in the child reads
+      // process.env.LIVEKIT_WORKER_TOKEN — see inference/utils.ts buildMetadataHeaders().
+      // Mirrors Python worker.py, which sets os.environ before spawning job procs.
+      process.env.LIVEKIT_WORKER_TOKEN = opts.workerToken;
+
       if (opts.loadFunc !== defaultCpuLoad) {
         this.#logger.warn(
           'custom loadFunc is not supported when deploying to Cloud, using defaults',
@@ -323,18 +374,14 @@ export class AgentServer {
       }
     }
 
-    if (Object.entries(InferenceRunner.registeredRunners).length) {
-      this.#inferenceExecutor = new InferenceProcExecutor({
-        runners: InferenceRunner.registeredRunners,
-        initializeTimeout: 30000,
-        closeTimeout: 5000,
-        memoryWarnMB: 2000,
-        memoryLimitMB: 0,
-        pingInterval: 5000,
-        pingTimeout: 60000,
-        highPingThreshold: 2500,
-      });
-    }
+    // Register the local audio-EOT runner so it runs in the shared inference
+    // process (loaded once per host, ~138 MB) instead of in every job worker.
+    // Guarded by binding availability: on a platform where
+    // `@livekit/local-inference` can't load, skip registration so the worker
+    // still starts (local EOT then degrades to a positive-default prediction).
+    maybeRegisterLocalEotRunner();
+
+    this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded();
 
     this.#procPool = new ProcPool(
       opts.agent,
@@ -348,36 +395,40 @@ export class AgentServer {
 
     this.#opts = opts;
 
-    const healthCheck = () => {
-      // Check if inference executor exists and is not alive
-      if (this.#inferenceExecutor && !this.#inferenceExecutor.isAlive) {
-        return { healthy: false, message: 'inference process not running' };
-      }
+    // Simulations run ephemeral workers side by side; a health endpoint on a fixed port would make
+    // concurrent runs collide.
+    if (!opts.simulation) {
+      const healthCheck = () => {
+        // Check if inference executor exists and is not alive
+        if (this.#inferenceExecutor && !this.#inferenceExecutor.isAlive) {
+          return { healthy: false, message: 'inference process not running' };
+        }
 
-      // Only healthy when fully connected with an active WebSocket
-      if (
-        this.#closed ||
-        this.#connecting ||
-        !this.#session ||
-        this.#session.readyState !== WebSocket.OPEN
-      ) {
-        return { healthy: false, message: 'not connected to livekit' };
-      }
+        // Only healthy when fully connected with an active WebSocket
+        if (
+          this.#closed ||
+          this.#connecting ||
+          !this.#session ||
+          this.#session.readyState !== WebSocket.OPEN
+        ) {
+          return { healthy: false, message: 'not connected to livekit' };
+        }
 
-      return { healthy: true, message: 'OK' };
-    };
+        return { healthy: true, message: 'OK' };
+      };
 
-    const getWorkerInfo = () => ({
-      agent_name: opts.agentName,
-      agent_name_is_env: opts.agentNameIsEnv,
-      deployment: this.#deployment,
-      worker_type: JobType[opts.serverType],
-      active_jobs: this.activeJobs.length,
-      sdk_version: version,
-      project_type: PROJECT_TYPE,
-    });
+      const getWorkerInfo = () => ({
+        agent_name: opts.agentName,
+        agent_name_is_env: opts.agentNameIsEnv,
+        deployment: this.#deployment,
+        worker_type: JobType[opts.serverType],
+        active_jobs: this.activeJobs.length,
+        sdk_version: version,
+        project_type: PROJECT_TYPE,
+      });
 
-    this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
+      this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
+    }
   }
 
   /** @throws {@link WorkerError} if worker failed to connect or already running */
@@ -444,8 +495,19 @@ export class AgentServer {
       }
     };
 
-    await ThrowsPromise.all([workerWS(), this.#httpServer.run()]);
-    this.#close.resolve();
+    const tasks = [workerWS()];
+    if (this.#httpServer) {
+      tasks.push(this.#httpServer.run());
+    }
+    try {
+      await ThrowsPromise.all(tasks);
+      this.#close.resolve();
+    } catch (e) {
+      if (!this.#close.done) {
+        this.#close.reject(e instanceof Error ? e : new Error(String(e)));
+      }
+      throw e;
+    }
   }
 
   get id(): string {
@@ -492,9 +554,11 @@ export class AgentServer {
 
     const promises = [joinJobs()];
 
-    if (timeout) {
+    const timeoutMs = timeout ?? this.#opts.drainTimeout;
+
+    if (timeoutMs) {
       promises.push(
-        rejectOnAbort(AbortSignal.timeout(timeout)).catch(() => {
+        rejectOnAbort(AbortSignal.timeout(timeoutMs)).catch(() => {
           throw new WorkerError('timed out draining');
         }),
       );
@@ -589,7 +653,10 @@ export class AgentServer {
           wsData = `${wsData.slice(0, 128)}...(+${wsData.length - 128} more)`;
         }
         const type = typeof event.data;
-        this.#logger.warn({ type, ws_data: wsData }, `unexpected message type: ${type}`);
+        this.#logger.warn(
+          { type, 'lk.pii.ws_data': wsData },
+          'received unexpected worker message type',
+        );
         return;
       }
 
@@ -607,8 +674,10 @@ export class AgentServer {
           this.#id = msg.message.value.workerId;
           this.#logger
             .child({
-              deployment: this.#deployment,
               id: this.id,
+              agentName: this.#opts.agentName,
+              agentNameIsEnv: this.#opts.agentNameIsEnv,
+              deployment: this.#deployment,
               server_info: msg.message.value.serverInfo,
             })
             .info('registered worker');
@@ -783,7 +852,13 @@ export class AgentServer {
               participantIdentity: args.identity,
               participantName: args.name,
               participantMetadata: args.metadata,
-              participantAttributes: args.attributes,
+              // Stamp the agent name on the participant (matches the Python SDK).
+              // Consumers like `lk agent simulate` find the agent participant by
+              // this attribute; without it they never detect the agent joining.
+              participantAttributes: {
+                ...args.attributes,
+                [ATTRIBUTE_AGENT_NAME]: this.#opts.agentName,
+              },
             },
           },
         }),
@@ -872,7 +947,7 @@ export class AgentServer {
 
   async close() {
     if (this.#closed) {
-      await this.#close.await;
+      await this.#close.await.catch(() => undefined);
       return;
     }
 
@@ -882,11 +957,11 @@ export class AgentServer {
 
     await this.#inferenceExecutor?.close();
     await this.#procPool.close();
-    await this.#httpServer.close();
+    await this.#httpServer?.close();
     await ThrowsPromise.allSettled(this.#tasks);
 
     this.#session?.close();
-    await this.#close.await;
+    await this.#close.await.catch(() => undefined);
   }
 }
 

@@ -17,6 +17,21 @@ function makeFrame(samplesPerChannel = 800, sampleRate = 16000): AudioFrame {
   return new AudioFrame(data, sampleRate, 1, samplesPerChannel);
 }
 
+async function recognizeWords(words?: Record<string, unknown>[]) {
+  const { server, baseURL } = await startHttpServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ text: 'hello', language_code: 'en', words }));
+  });
+
+  try {
+    return await new STT({ apiKey: 'test-key', baseURL }).recognize(makeFrame(), {
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+  } finally {
+    await closeHttpServer(server);
+  }
+}
+
 async function startHttpServer(handler: RequestListener) {
   const server = createServer(handler);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -135,6 +150,73 @@ describe('ElevenLabs STT integration', () => {
 });
 
 describe('ElevenLabs STT', () => {
+  it('calculates confidence from spoken-word logprobs', async () => {
+    const event = await recognizeWords([
+      { type: 'word', logprob: -0.01 },
+      { type: 'spacing', logprob: -2 },
+      { type: 'word', logprob: -0.05 },
+    ]);
+
+    expect(event.alternatives?.[0]?.confidence).toBeGreaterThan(0.9);
+    expect(event.alternatives?.[0]?.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it('flags low-quality transcription confidence', async () => {
+    const event = await recognizeWords([
+      { type: 'word', logprob: -2.5 },
+      { type: 'word', logprob: -3 },
+    ]);
+
+    expect(event.alternatives?.[0]?.confidence).toBeLessThan(0.2);
+  });
+
+  it('defaults confidence to zero without logprobs', async () => {
+    const withoutWords = await recognizeWords();
+    const withoutLogprobs = await recognizeWords([{ text: 'hi', start: 0.1, end: 0.4 }]);
+
+    expect(withoutWords.alternatives?.[0]?.confidence).toBe(0);
+    expect(withoutLogprobs.alternatives?.[0]?.confidence).toBe(0);
+  });
+
+  it('sets confidence on committed transcripts', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let connected = false;
+
+    wss.on('connection', (ws) => {
+      connected = true;
+      ws.on('message', () => {
+        ws.send(
+          JSON.stringify({
+            message_type: 'committed_transcript',
+            text: 'hello',
+            words: [{ text: 'hello', start: 0.1, end: 0.4, type: 'word', logprob: -0.02 }],
+          }),
+        );
+        ws.send(JSON.stringify({ message_type: 'committed_transcript', text: '' }));
+      });
+    });
+
+    try {
+      const stream = new STT({
+        apiKey: 'test-key',
+        baseURL,
+        model: 'scribe_v2_realtime',
+        serverVad: { vadSilenceThresholdSecs: 0.5 },
+      }).stream();
+      await waitUntil(() => connected);
+      stream.pushFrame(makeFrame());
+      stream.flush();
+      stream.endInput();
+
+      const events = await collectUntilEnd(stream);
+      stream.close();
+      const final = events.find((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT);
+      expect(final?.alternatives?.[0]?.confidence).toBeGreaterThan(0.9);
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('defaults to Scribe v1 batch recognition', () => {
     const stt = new STT({ apiKey: 'test-key' });
 
@@ -193,7 +275,7 @@ describe('ElevenLabs STT', () => {
         baseURL,
         languageCode: 'en',
         tagAudioEvents: false,
-        modelId: 'scribe_v2',
+        model: 'scribe_v2',
         keyterms: ['LiveKit', 'ElevenLabs'],
       });
 
@@ -203,7 +285,7 @@ describe('ElevenLabs STT', () => {
       });
 
       expect(request?.method).toBe('POST');
-      expect(request?.url).toBe('/speech-to-text');
+      expect(request?.url).toBe('/speech-to-text?enable_logging=true');
       expect(request?.apiKey).toBe('test-key');
       expect(request?.body).toContain('name="model_id"');
       expect(request?.body).toContain('scribe_v2');
@@ -262,7 +344,7 @@ describe('ElevenLabs STT', () => {
     });
 
     try {
-      const eleven = new STT({ apiKey: 'test-key', baseURL, modelId: 'scribe_v2_realtime' });
+      const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
       const stream = eleven.stream();
       stream.startTimeOffset = 1;
 
@@ -280,7 +362,7 @@ describe('ElevenLabs STT', () => {
       expect(url.pathname).toBe('/speech-to-text/realtime');
       expect(url.searchParams.get('model_id')).toBe('scribe_v2_realtime');
       expect(url.searchParams.get('audio_format')).toBe('pcm_16000');
-      expect(url.searchParams.get('commit_strategy')).toBe('vad');
+      expect(url.searchParams.get('commit_strategy')).toBe('manual');
       expect(url.searchParams.get('include_language_detection')).toBe('true');
       expect(receivedMessages[0]).toMatchObject({
         message_type: 'input_audio_chunk',
@@ -318,6 +400,59 @@ describe('ElevenLabs STT', () => {
     }
   });
 
+  it('commits the turn when no audio is left to send', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const sent: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => sent.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      // 50ms is exactly one repack chunk, so flush() returns no frames.
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => sent.length === 1);
+
+      stream.flush();
+      await waitUntil(() => sent.length === 2);
+
+      expect(sent.map((message) => message.commit)).toEqual([false, true]);
+      expect(sent[1]?.audio_base_64).toBe('');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('commits after the buffered audio', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const sent: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => sent.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      stream.pushFrame(makeFrame(480));
+      stream.flush();
+      await waitUntil(() => sent.length === 2);
+
+      expect(sent.map((message) => message.commit)).toEqual([false, true]);
+      expect(sent[0]?.audio_base_64).not.toBe('');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('builds realtime query params for language, timestamps, and server VAD', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     let requestUrl = '';
@@ -334,7 +469,6 @@ describe('ElevenLabs STT', () => {
             words: [{ text: 'kept', start: 0, end: 0.2 }],
           }),
         );
-        ws.send(JSON.stringify({ message_type: 'committed_transcript_with_timestamps', text: '' }));
       });
     });
 
@@ -342,7 +476,7 @@ describe('ElevenLabs STT', () => {
       const eleven = new STT({
         apiKey: 'test-key',
         baseURL,
-        modelId: 'scribe_v2_realtime',
+        model: 'scribe_v2_realtime',
         languageCode: 'en',
         includeTimestamps: true,
         serverVad: {
@@ -364,6 +498,7 @@ describe('ElevenLabs STT', () => {
 
       const url = new URL(`ws://127.0.0.1${requestUrl}`);
       expect(url.searchParams.get('language_code')).toBe('en');
+      expect(url.searchParams.get('commit_strategy')).toBe('vad');
       expect(url.searchParams.get('include_language_detection')).toBeNull();
       expect(url.searchParams.get('include_timestamps')).toBe('true');
       expect(url.searchParams.get('vad_silence_threshold_secs')).toBe('0.5');
@@ -379,6 +514,126 @@ describe('ElevenLabs STT', () => {
     }
   });
 
+  it('includes keyterms in the realtime connection URL', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let requestUrl = '';
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      keyterms: ['nginx', 'Grafana Loki', 'Ærø'],
+    }).stream();
+    try {
+      await waitUntil(() => requestUrl !== '');
+
+      expect(requestUrl).toContain('keyterms=nginx');
+      expect(requestUrl).toContain('keyterms=Grafana%20Loki');
+      expect(requestUrl).toContain('keyterms=%C3%86r%C3%B8');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('escapes query delimiters in realtime keyterms', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let requestUrl = '';
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      keyterms: ['Smith & Sons', 'C#'],
+    }).stream();
+    try {
+      await waitUntil(() => requestUrl !== '');
+
+      expect(requestUrl).toContain('keyterms=Smith%20%26%20Sons');
+      expect(requestUrl).toContain('keyterms=C%23');
+      expect(new URL(`ws://127.0.0.1${requestUrl}`).searchParams.getAll('keyterms')).toEqual([
+        'Smith & Sons',
+        'C#',
+      ]);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('omits realtime keyterms when not provided', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let requestUrl = '';
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+
+    const stream = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' }).stream();
+    try {
+      await waitUntil(() => requestUrl !== '');
+
+      expect(requestUrl).not.toContain('keyterms=');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('forwards keyterm updates to active streams', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_ws, req) => {
+      urls.push(req.url ?? '');
+    });
+
+    const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+    const stream = eleven.stream();
+    try {
+      await waitUntil(() => urls.length === 1);
+      eleven.updateOptions({ keyterms: ['nginx'] });
+      await waitUntil(() => urls.length === 2, 2000);
+
+      expect(new URL(`ws://127.0.0.1${urls[1]}`).searchParams.getAll('keyterms')).toEqual([
+        'nginx',
+      ]);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('updates stream keyterms and reconnects', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_ws, req) => {
+      urls.push(req.url ?? '');
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      await waitUntil(() => urls.length === 1);
+      stream.updateOptions({ keyterms: ['nginx'] });
+      await waitUntil(() => urls.length === 2, 2000);
+
+      expect(new URL(`ws://127.0.0.1${urls[1]}`).searchParams.getAll('keyterms')).toEqual([
+        'nginx',
+      ]);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('updates server VAD on active streams and reconnects in place', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     const urls: string[] = [];
@@ -389,18 +644,22 @@ describe('ElevenLabs STT', () => {
     });
 
     try {
-      const eleven = new STT({ apiKey: 'test-key', baseURL, modelId: 'scribe_v2_realtime' });
+      const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
       const stream = eleven.stream();
 
       await waitUntil(() => urls.length === 1);
-      eleven.updateOptions({ serverVad: null });
+      eleven.updateOptions({ serverVad: { vadSilenceThresholdSecs: 0.5 } });
       await waitUntil(() => urls.length === 2, 2000);
+      eleven.updateOptions({ serverVad: null });
+      await waitUntil(() => urls.length === 3, 2000);
       stream.close();
 
       const first = new URL(`ws://127.0.0.1${urls[0]}`);
       const second = new URL(`ws://127.0.0.1${urls[1]}`);
-      expect(first.searchParams.get('commit_strategy')).toBe('vad');
-      expect(second.searchParams.get('commit_strategy')).toBe('manual');
+      const third = new URL(`ws://127.0.0.1${urls[2]}`);
+      expect(first.searchParams.get('commit_strategy')).toBe('manual');
+      expect(second.searchParams.get('commit_strategy')).toBe('vad');
+      expect(third.searchParams.get('commit_strategy')).toBe('manual');
     } finally {
       await closeWebSocketServer(wss);
     }

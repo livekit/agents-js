@@ -8,6 +8,41 @@
 export const USERDATA_TIMED_TRANSCRIPT = 'lk.timed_transcripts';
 
 /**
+ * Key used to store when synthesized text was first sent to the TTS provider.
+ */
+export const USERDATA_TTS_STARTED_TIME = 'lk.tts_started_time';
+
+/**
+ * Marker yielded from an LLM node to flush the current audio/text output segment.
+ */
+export const FlushSentinel = Symbol.for('lk.FlushSentinel');
+export type FlushSentinel = typeof FlushSentinel;
+
+/** Indicates that the participant is a simulator for testing purposes. */
+export const ATTRIBUTE_SIMULATOR = 'lk.simulator';
+
+/** Job attribute carrying the simulation dispatch proto JSON. */
+export const ATTRIBUTE_SIMULATOR_DISPATCH = 'lk.simulator.dispatch';
+
+/** Telemetry metadata key marking the session as a simulation. */
+export const ATTRIBUTE_SIMULATION_ENABLED = 'lk.simulation.enabled';
+
+/** Telemetry metadata key requesting PII redaction for the session. */
+export const ATTRIBUTE_REDACTION_ENABLED = 'lk.redaction.enabled';
+
+const RECORDING_OPTION_KEYS = ['audio', 'traces', 'logs', 'transcript'] as const;
+
+/** @internal */
+export function recordingEnabled(options: Record<string, unknown>): boolean {
+  return RECORDING_OPTION_KEYS.some((key) => options[key] === true);
+}
+
+/** @internal */
+export function isFlushSentinel(value: unknown): value is FlushSentinel {
+  return value === FlushSentinel;
+}
+
+/**
  * Connection options for API calls, controlling retry and timeout behavior.
  */
 export interface APIConnectOptions {
@@ -25,14 +60,17 @@ export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions = {
   timeoutMs: 10000,
 };
 
+/** Matches agents (Python), whose _interval_for_retry returns 0.1 seconds here. */
+const FIRST_RETRY_INTERVAL_MS = 100;
+
 /**
- * Return the interval for the given number of retries.
- * The first retry is immediate, and then uses specified retryIntervalMs.
+ * Return the interval before the given retry, in milliseconds.
+ * The first retry comes quickly, and every one after uses retryIntervalMs.
  * @internal
  */
 export function intervalForRetry(connOptions: APIConnectOptions, numRetries: number): number {
   if (numRetries === 0) {
-    return 0.1;
+    return FIRST_RETRY_INTERVAL_MS;
   }
   return connOptions.retryIntervalMs;
 }

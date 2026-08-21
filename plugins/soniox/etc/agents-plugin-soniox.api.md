@@ -4,9 +4,27 @@
 
 ```ts
 
-import { APIConnectOptions } from '@livekit/agents';
-import { AudioBuffer as AudioBuffer_2 } from '@livekit/agents';
-import { stt } from '@livekit/agents';
+import { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler } from '@livekit/rtc-node';
+import { Logger } from 'pino';
+import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import { TransformStream as TransformStream_2 } from 'node:stream/web';
+import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
+
+// Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+export class ChunkedStream extends tts.ChunkedStream {
+    // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
+    constructor(tts: TTS, text: string, opts: TTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
 
 // @public (undocumented)
 export interface ContextGeneralItem {
@@ -32,6 +50,8 @@ export interface ContextTranslationTerm {
     target: string;
 }
 
+// Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export class SpeechStream extends stt.SpeechStream {
     constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions);
@@ -50,6 +70,8 @@ export class STT extends stt.STT {
     get model(): string;
     // (undocumented)
     get provider(): string;
+    // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
     _recognize(_: AudioBuffer_2): Promise<stt.SpeechEvent>;
     // (undocumented)
@@ -72,6 +94,7 @@ export interface STTOptions {
     enableLanguageIdentification: boolean;
     // (undocumented)
     enableSpeakerDiarization: boolean;
+    endpointLatencyAdjustmentLevel?: number;
     // (undocumented)
     languageHints?: string[];
     // (undocumented)
@@ -88,6 +111,19 @@ export interface STTOptions {
 }
 
 // @public (undocumented)
+export class SynthesizeStream extends tts.SynthesizeStream {
+    constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions);
+    // (undocumented)
+    close(): void;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected onStreamDone(): void;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
+
+// @public (undocumented)
 export type TranslationConfig = {
     type: 'one_way';
     targetLanguage: string;
@@ -96,6 +132,49 @@ export type TranslationConfig = {
     languageA: string;
     languageB: string;
 };
+
+// @public (undocumented)
+export class TTS extends tts.TTS {
+    constructor(opts?: Partial<TTSOptions>);
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    prewarm(): void;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): SynthesizeStream;
+    // (undocumented)
+    synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream;
+    // (undocumented)
+    updateOptions(opts: Partial<Pick<TTSOptions, 'model' | 'language' | 'voice' | 'speed'>>): void;
+}
+
+// @public (undocumented)
+export interface TTSOptions {
+    // (undocumented)
+    apiKey?: string;
+    audioFormat: string;
+    // (undocumented)
+    bitrate?: number | null;
+    // (undocumented)
+    language: string;
+    // (undocumented)
+    model: string;
+    // (undocumented)
+    sampleRate: number;
+    speed: number;
+    // (undocumented)
+    voice: string;
+    // (undocumented)
+    websocketUrl: string;
+}
 
 // (No @packageDocumentation comment for this package)
 

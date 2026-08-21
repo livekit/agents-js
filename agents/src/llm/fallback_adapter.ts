@@ -8,7 +8,7 @@ import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js
 import type { ChatContext } from './chat_context.js';
 import type { ChatChunk } from './llm.js';
 import { LLM, LLMStream } from './llm.js';
-import type { ToolChoice, ToolContext } from './tool_context.js';
+import type { ToolChoice, ToolContextLike } from './tool_context.js';
 
 /**
  * Default connection options for FallbackAdapter.
@@ -113,7 +113,7 @@ export class FallbackAdapter extends LLM {
 
   chat(opts: {
     chatCtx: ChatContext;
-    toolCtx?: ToolContext;
+    toolCtx?: ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: ToolChoice;
@@ -159,7 +159,7 @@ class FallbackLLMStream extends LLMStream {
     adapter: FallbackAdapter,
     opts: {
       chatCtx: ChatContext;
-      toolCtx?: ToolContext;
+      toolCtx?: ToolContextLike;
       connOptions: APIConnectOptions;
       parallelToolCalls?: boolean;
       toolChoice?: ToolChoice;
@@ -364,7 +364,10 @@ class FallbackLLMStream extends LLMStream {
 
           // Check if we sent data before failing
           if (textSent || toolCallsSent.length > 0) {
-            const extra = { textSent, toolCallsSent };
+            const extra = {
+              'lk.pii.response.text': textSent,
+              'lk.pii.response.function_calls': toolCallsSent,
+            };
 
             if (!this.adapter.retryOnChunkSent) {
               this._log.error(

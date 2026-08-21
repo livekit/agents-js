@@ -9,6 +9,12 @@ on:
     branches:
       - main
       - 0.x
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: 'Publish a snapshot release'
+        type: boolean
+        default: false
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -21,6 +27,10 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    outputs:
+      publish_outcome: ${{ steps.changesets.outcome }}
+      published: ${{ steps.changesets.outputs.published }}
+      published_packages: ${{ steps.changesets.outputs.publishedPackages }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -56,9 +66,20 @@ jobs:
           echo "All packages exist on npm."
       - name: Create Release Pull Request or Publish to npm
         id: changesets
-        uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1.7.0
+        if: ${{ github.event.inputs.snapshot != 'true' }}
+        uses: changesets/action@63a615b9cd06ba9a3e6d13796c7fbcb080a60a0b # v1.8.0
         with:
           publish: pnpm ci:publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish pre-release
+        id: changeset-prerelease
+        if: ${{ github.event.inputs.snapshot == 'true' }}
+        run: |
+          pnpm changeset version --snapshot next
+          pnpm build
+          pnpm publish -r --tag next --no-git-checks
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Build docs
@@ -71,3 +92,42 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.DOCS_DEPLOY_AWS_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.DOCS_DEPLOY_AWS_API_SECRET }}
           AWS_DEFAULT_REGION: 'us-east-1'
+
+  dispatch-downstream-bumps:
+    name: Bump agents-js in downstream repos
+    needs: [release]
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      needs.release.outputs.publish_outcome == 'success' &&
+      needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to internal-actions
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_DISPATCH_TOKEN }}
+          TARGET_REPO: ${{ vars.TARGET_REPO }}
+          PUBLISHED_PACKAGES: ${{ needs.release.outputs.published_packages }}
+          SOURCE_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          is_stable=$(jq -r 'length > 0 and all(.[]; .version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
+            <<< "$PUBLISHED_PACKAGES")
+          if [ "$is_stable" != "true" ]; then
+            echo "::notice::Published packages are not all stable versions; skipping downstream bump."
+            exit 0
+          fi
+          if [ -z "$TARGET_REPO" ]; then
+            echo "::error::TARGET_REPO repository variable is not configured"
+            exit 1
+          fi
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::SYNC_DISPATCH_TOKEN repository secret is not configured"
+            exit 1
+          fi
+          jq -n \
+            --arg source_repo "$SOURCE_REPO" \
+            --arg source_sha "$SOURCE_SHA" \
+            --argjson published_packages "$PUBLISHED_PACKAGES" \
+            '{event_type: "agents-js-published", client_payload: {source_repo: $source_repo, source_sha: $source_sha, published_packages: $published_packages}}' \
+            | gh api -X POST "repos/${TARGET_REPO}/dispatches" --input -

@@ -1,12 +1,20 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, type VADEvent, VADEventType, mergeFrames } from '@livekit/agents';
+import {
+  AudioByteStream,
+  type VADEvent,
+  VADEventType,
+  type VADStream,
+  mergeFrames,
+} from '@livekit/agents';
+import { VAD_WINDOW_SAMPLES, createVad } from '@livekit/local-inference';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { VAD, type VADStream } from './vad.js';
+import { OnnxModel, newInferenceSession } from './onnx_model.js';
+import { VAD } from './vad.js';
 
 const TARGET_SAMPLE_RATE = 16000;
 const CHUNK_DURATION_MS = 10;
@@ -61,6 +69,27 @@ function makeSpeechThenSilenceFrames(): AudioFrame[] {
   return frames;
 }
 
+function makeTestSpeechPcm(): Int16Array {
+  const sample = readFileSync(join(import.meta.dirname, '../../test/src/long.wav'));
+  const channels = sample.readUInt16LE(22);
+  const fileSampleRate = sample.readUInt32LE(24);
+  const dataSamples = sample.readUInt32LE(40) / 2;
+  if (channels !== 1) {
+    throw new Error(`expected mono test audio, got ${channels} channels`);
+  }
+
+  const pcm = new Int16Array(sample.buffer, sample.byteOffset + 44, dataSamples);
+  if (fileSampleRate === TARGET_SAMPLE_RATE) {
+    return pcm;
+  }
+
+  const resampler = new AudioResampler(fileSampleRate, TARGET_SAMPLE_RATE, channels);
+  const frame = new AudioFrame(pcm, fileSampleRate, channels, dataSamples);
+  const out = [...resampler.push(frame), ...resampler.flush()];
+  resampler.close();
+  return mergeFrames(out).data;
+}
+
 /**
  * Push every frame (synchronous + ordered relative to `flush()`), then consume
  * events until a complete speech segment has been observed.
@@ -113,4 +142,34 @@ describe('Silero VADStream flush reset', () => {
       }
     },
   );
+});
+
+// The plugin and inference.VAD ship the model separately, so this prevents them from drifting.
+describe('Silero VAD checkpoint', () => {
+  it('matches inference.VAD window by window', { timeout: 30000 }, async () => {
+    const pcm = makeTestSpeechPcm();
+    const session = await newInferenceSession(true);
+    const pluginModel = new OnnxModel(session, TARGET_SAMPLE_RATE);
+    const nativeModel = createVad();
+
+    let windows = 0;
+    try {
+      for (let i = 0; i + VAD_WINDOW_SAMPLES <= pcm.length; i += VAD_WINDOW_SAMPLES) {
+        const window = pcm.slice(i, i + VAD_WINDOW_SAMPLES);
+        const input = Float32Array.from(window, (sample) => sample / 32767);
+        const pluginProbability = await pluginModel.run(input);
+        const nativeProbability = await nativeModel.predict(window);
+
+        expect(
+          Math.abs(pluginProbability - nativeProbability),
+          `checkpoints diverge at window ${windows}`,
+        ).toBeLessThanOrEqual(1e-3);
+        windows += 1;
+      }
+    } finally {
+      await session.release();
+    }
+
+    expect(windows).toBeGreaterThan(100);
+  });
 });

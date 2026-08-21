@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'node:events';
+import { CLIClient } from './cli_client.js';
+import { runConsole } from './console.js';
 import { type PluginDownloadFailure, formatDownloadFailureMessage } from './download.js';
 import { initializeLogger, log } from './log.js';
 import { Plugin } from './plugin.js';
@@ -18,6 +20,8 @@ type CliArgs = {
   event?: EventEmitter;
   room?: string;
   participantIdentity?: string;
+  // Address of the driving `lk` CLI's dev channel (set by `lk agent dev`).
+  cliAddr?: string;
 };
 
 const formatErrorMessage = (error: unknown): string =>
@@ -27,9 +31,25 @@ const runServer = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
   const logger = log();
 
+  if (!args.production && !args.room && !args.cliAddr) {
+    logger.warn(
+      'dev mode is deprecated and will be removed in a future release; ' +
+        'use `lk agent dev` instead ' +
+        '(https://docs.livekit.io/reference/developer-tools/livekit-cli/#setup)',
+    );
+  }
+
   // though `production` is defined in ServerOptions, it will always be overridden by CLI.
   const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
-  const server = new AgentServer(new ServerOptions({ production: args.production, ...opts }));
+  const serverOptions = new ServerOptions({ ...opts, production: args.production });
+  const server = new AgentServer(serverOptions);
+
+  // When launched by `lk agent dev`, report ServerInfo over the CLI's dev channel
+  // so it can surface e.g. a Cloud console link. Best-effort; never fatal.
+  const cliClient = args.cliAddr
+    ? new CLIClient(args.cliAddr, serverOptions.agentName, serverOptions.wsURL)
+    : undefined;
+  cliClient?.start();
 
   if (args.room) {
     server.event.once('worker_registered', () => {
@@ -52,6 +72,7 @@ const runServer = async (args: CliArgs) => {
         logger.error(e);
       }
     }
+    cliClient?.close();
     await server.close();
     logger.debug('worker closed due to SIGINT.');
     process.exit(130); // SIGINT exit code
@@ -66,6 +87,7 @@ const runServer = async (args: CliArgs) => {
         logger.error(e);
       }
     }
+    cliClient?.close();
     await server.close();
     logger.debug('worker closed due to SIGTERM.');
     process.exit(143); // SIGTERM exit code
@@ -76,6 +98,8 @@ const runServer = async (args: CliArgs) => {
   } catch {
     logger.fatal('closing worker due to error.');
     process.exit(1);
+  } finally {
+    cliClient?.close();
   }
 };
 
@@ -135,6 +159,13 @@ export const runApp = (opts: ServerOptions) => {
     .command('start')
     .description('Start the worker in production mode')
     .addOption(logLevelOption('info'))
+    .addOption(
+      new Option(
+        '--simulation',
+        'Run under an agent simulation: the worker load limit is disabled so runs ' +
+          'can saturate the agent, and the worker HTTP server is not started. Set by `lk simulate`.',
+      ).hideHelp(),
+    )
     .action((...[, command]) => {
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
@@ -143,6 +174,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
+      opts.simulation = commandOptions.simulation || opts.simulation;
       runServer({
         opts,
         production: true,
@@ -152,8 +184,17 @@ export const runApp = (opts: ServerOptions) => {
 
   program
     .command('dev')
-    .description('Start the worker in development mode')
+    .description(
+      'Start the worker in development mode\n\n' +
+        'Deprecated: use lk agent dev instead ' +
+        '(https://docs.livekit.io/reference/developer-tools/livekit-cli/#setup).',
+    )
     .addOption(logLevelOption('debug'))
+    .addOption(
+      // Set by `lk agent dev`: address of the CLI's dev channel the agent reports
+      // ServerInfo to (agent name + URL, e.g. for a Cloud console link).
+      new Option('--cli-addr <string>', 'Internal use only').hideHelp(),
+    )
     .action((...[, command]) => {
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
@@ -167,6 +208,7 @@ export const runApp = (opts: ServerOptions) => {
         opts,
         production: false,
         watch: false,
+        cliAddr: commandOptions.cliAddr,
       });
     });
 
@@ -191,6 +233,27 @@ export const runApp = (opts: ServerOptions) => {
         watch: false,
         room: commandOptions.room,
         participantIdentity: commandOptions.participantIdentity,
+      });
+    });
+
+  program
+    .command('console')
+    .description('Run the agent in-process attached to a local broker over TCP')
+    .requiredOption('--connect-addr <addr>', 'host:port of the broker TCP socket')
+    .option('--record', 'save the session report locally', false)
+    .addOption(logLevelOption('debug'))
+    .action((...[, command]) => {
+      const commandOptions = command.opts();
+      opts.logLevel = commandOptions.logLevel;
+      initializeLogger({ pretty: true, level: opts.logLevel });
+      process.env.LIVEKIT_DEV_MODE = '1';
+      runConsole({
+        agentPath: opts.agent,
+        connectAddr: commandOptions.connectAddr,
+        record: commandOptions.record === true,
+      }).catch((error) => {
+        log().fatal(`console mode failed: ${formatErrorMessage(error)}`);
+        process.exit(1);
       });
     });
 

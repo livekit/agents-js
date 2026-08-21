@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { STT } from './stt.js';
+import { describeLiveKitInference } from './test_utils.js';
 import {
   TTS,
   type TTSFallbackModel,
@@ -272,7 +275,7 @@ describe('TTS constructor fallback and connOptions', () => {
   });
 });
 
-describe('TTS provider modelOptions parity', () => {
+describe('TTS provider modelOptions', () => {
   it('preserves ElevenLabs inference model options', () => {
     const modelOptions = {
       speed: 1.2,
@@ -468,4 +471,34 @@ describe('TTS alignedTranscript capability', () => {
     tts.updateOptions({});
     expect(invalidateSpy).toHaveBeenCalledTimes(4);
   });
+});
+
+describeLiveKitInference('LiveKit Inference TTS integration', agents, async (harness) => {
+  const models = [
+    {
+      model: 'cartesia/sonic-3',
+      voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+    },
+    {
+      model: 'elevenlabs/eleven_flash_v2',
+      voice: 'Xb7hH8MSUJpSbSDYk0k2',
+    },
+    { model: 'inworld/inworld-tts-2', voice: 'Ashley' },
+    { model: 'rime/coda', voice: 'celeste' },
+  ] as const;
+
+  for (const options of models) {
+    describe(options.model, async () => {
+      await harness.tts(
+        new TTS(options),
+        new STT({
+          model: 'deepgram/nova-3',
+          modelOptions: { endpointing: 1000 },
+        }),
+        {
+          streamingValidationStt: true,
+        },
+      );
+    });
+  }
 });

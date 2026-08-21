@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConnectionPool } from './connection_pool.js';
+import { log } from './log.js';
 
 describe('ConnectionPool', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   const makeConnectCb = () => {
     let n = 0;
     return vi.fn(async (_timeout: number): Promise<string> => `conn_${++n}`);
@@ -79,6 +85,7 @@ describe('ConnectionPool', () => {
 
   describe('maxSessionDuration', () => {
     it('should expire connections after maxSessionDuration', async () => {
+      vi.useFakeTimers();
       const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (_conn: string) => {
         // Mock close
@@ -94,7 +101,7 @@ describe('ConnectionPool', () => {
       pool.put(conn1);
 
       // Wait for expiration
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await vi.advanceTimersByTimeAsync(150);
 
       const conn2 = await pool.get();
       expect(conn2).not.toBe(conn1); // Should create new connection
@@ -103,6 +110,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should refresh connection timestamp when markRefreshedOnGet is true', async () => {
+      vi.useFakeTimers();
       const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (_conn: string) => {
         // Mock close
@@ -119,7 +127,7 @@ describe('ConnectionPool', () => {
       pool.put(conn1);
 
       // Wait 100ms (less than expiration)
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vi.advanceTimersByTimeAsync(100);
 
       // Get again - should refresh timestamp
       const conn2 = await pool.get();
@@ -127,7 +135,7 @@ describe('ConnectionPool', () => {
       pool.put(conn2);
 
       // Wait another 100ms (total 200ms, but refreshed at 100ms)
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vi.advanceTimersByTimeAsync(100);
 
       // Should still be valid
       const conn3 = await pool.get();
@@ -189,6 +197,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should handle abort signal', async () => {
+      vi.useFakeTimers();
       const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (_conn: string) => {
         // Mock close
@@ -213,8 +222,9 @@ describe('ConnectionPool', () => {
 
       // Abort after a short delay
       setTimeout(() => abortController.abort(), 10);
-
-      await expect(promise).rejects.toThrow();
+      const rejection = expect(promise).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(10);
+      await rejection;
 
       // Connection should be removed from pool
       const conn2 = await pool.get();
@@ -225,6 +235,7 @@ describe('ConnectionPool', () => {
 
   describe('prewarm', () => {
     it('should create connection in background', async () => {
+      vi.useFakeTimers();
       let n = 0;
       const connectCb = vi.fn(async (_timeout: number): Promise<string> => {
         await new Promise((resolve) => setTimeout(resolve, 50));
@@ -242,7 +253,7 @@ describe('ConnectionPool', () => {
       pool.prewarm();
 
       // Wait for prewarm to complete
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vi.advanceTimersByTimeAsync(50);
 
       const conn = await pool.get();
       expect(conn).toBeDefined();
@@ -269,6 +280,64 @@ describe('ConnectionPool', () => {
       const conn2 = await pool.get();
       expect(conn2).toBe(conn1); // Should reuse existing
       expect(connectCb).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not leak API keys from failed prewarm errors', async () => {
+      const secret = 'cartesia-secret-api-key-do-not-log';
+      const warnSpy = vi.spyOn(log(), 'warn');
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        const pool = new ConnectionPool<string>({
+          connectCb: async () => {
+            throw new TypeError(`WebSocket handshake failed with X-API-Key: ${secret}`);
+          },
+          closeCb: async () => {},
+        });
+        pool.prewarm();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(unhandled).toEqual([]);
+        expect(warnSpy).toHaveBeenCalledWith(
+          { exceptionType: 'TypeError' },
+          'failed to prewarm connection pool',
+        );
+        expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(secret);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('does not leak URL credentials from failed prewarm errors', async () => {
+      const secretKey = 'url-secret-api-key-do-not-log';
+      const secretJwt = 'url-secret-jwt-token-do-not-log';
+      const warnSpy = vi.spyOn(log(), 'warn');
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        const pool = new ConnectionPool<string>({
+          connectCb: async () => {
+            throw new Error(`wss://example.com/ws?api_key=${secretKey}&jwt_token=${secretJwt}`);
+          },
+          closeCb: async () => {},
+        });
+        pool.prewarm();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(unhandled).toEqual([]);
+        expect(warnSpy).toHaveBeenCalledWith(
+          { exceptionType: 'Error' },
+          'failed to prewarm connection pool',
+        );
+        expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(secretKey);
+        expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(secretJwt);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
     });
   });
 

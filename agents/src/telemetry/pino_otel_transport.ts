@@ -10,6 +10,9 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
+import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
+import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
+import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
 export interface PinoLogObject {
   level: number;
@@ -24,6 +27,7 @@ export interface PinoCloudExporterConfig {
   cloudHostname: string;
   roomId: string;
   jobId: string;
+  metadata?: Record<string, unknown>;
   loggerName?: string;
   batchSize?: number;
   flushIntervalMs?: number;
@@ -67,6 +71,22 @@ function convertValue(value: unknown): unknown {
     return { stringValue: JSON.stringify(value) };
   }
   return { stringValue: String(value) };
+}
+
+function redactSerializedException(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const exception = value as Record<string, unknown>;
+  if (typeof exception.type !== 'string' || typeof exception.message !== 'string') {
+    return value;
+  }
+
+  return {
+    type: exception.type,
+    message: REDACTED_EXCEPTION_MESSAGE,
+  };
 }
 
 /**
@@ -123,12 +143,17 @@ export class PinoCloudExporter {
 
   private convertToOtlpRecord(logObj: PinoLogObject): any {
     const { severityNumber, severityText } = mapPinoLevelToSeverity(logObj.level);
+    const redactionEnabled = this.config.metadata?.[ATTRIBUTE_REDACTION_ENABLED] === true;
 
     const attributes: any[] = [
       { key: 'room_id', value: { stringValue: this.config.roomId } },
       { key: 'job_id', value: { stringValue: this.config.jobId } },
       { key: 'logger.name', value: { stringValue: this.loggerName } },
     ];
+
+    for (const [key, value] of Object.entries(this.config.metadata ?? {})) {
+      attributes.push({ key, value: convertValue(value) });
+    }
 
     if (logObj.pid !== undefined) {
       attributes.push({ key: 'process.pid', value: { intValue: String(logObj.pid) } });
@@ -139,7 +164,11 @@ export class PinoCloudExporter {
 
     for (const [key, value] of Object.entries(logObj)) {
       if (!EXCLUDE_FIELDS.has(key)) {
-        attributes.push({ key, value: convertValue(value) });
+        const attributeValue =
+          redactionEnabled && (key === 'error' || key === 'err')
+            ? redactSerializedException(value)
+            : value;
+        attributes.push({ key, value: convertValue(attributeValue) });
       }
     }
 
@@ -177,6 +206,8 @@ export class PinoCloudExporter {
   }
 
   private async sendLogs(logRecords: any[]): Promise<void> {
+    if (uploadGate.disabled) return;
+
     await this.ensureJwt();
 
     const payload = {
@@ -196,6 +227,10 @@ export class PinoCloudExporter {
                 attributes: [
                   { key: 'room_id', value: { stringValue: this.config.roomId } },
                   { key: 'job_id', value: { stringValue: this.config.jobId } },
+                  ...Object.entries(this.config.metadata ?? {}).map(([key, value]) => ({
+                    key,
+                    value: convertValue(value),
+                  })),
                 ],
               },
               logRecords,
@@ -207,7 +242,7 @@ export class PinoCloudExporter {
 
     const endpoint = `https://${this.config.cloudHostname}/observability/logs/otlp/v0`;
 
-    const response = await fetch(endpoint, {
+    const response = await fetchWithUploadGate(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.jwt}`,

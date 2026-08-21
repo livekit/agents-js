@@ -14,12 +14,14 @@ import {
 function createHooks(): RecognitionHooks {
   return {
     onInterruption: vi.fn(),
+    onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
     onEndOfSpeech: vi.fn(),
     onInterimTranscript: vi.fn(),
     onFinalTranscript: vi.fn(),
     onPreemptiveGeneration: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
     retrieveChatCtx: () => ChatContext.empty(),
     onEndOfTurn: vi.fn(async () => true),
   };
@@ -47,6 +49,7 @@ function overlapSpeechEvent(isInterruption: boolean): OverlappingSpeechEvent {
     type: 'overlapping_speech',
     detectedAt: Date.now(),
     isInterruption,
+    agentEnded: false,
     totalDurationInS: 0,
     predictionDurationInS: 0,
     detectionDelayInS: 0,

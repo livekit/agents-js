@@ -4,11 +4,38 @@
 
 ```ts
 
-import type { llm } from '@livekit/agents';
-import { LLM as LLM_2 } from '@livekit/agents-plugin-openai';
-import OpenAI from 'openai';
-import { responses as responses_2 } from '@livekit/agents-plugin-openai';
+import { AgentInference } from '@livekit/protocol';
+import { AgentSession as AgentSession_2 } from '@livekit/protocol';
+import { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler } from '@livekit/rtc-node';
+import type { Context } from '@opentelemetry/api';
+import { EventEmitter } from 'events';
+import { EventEmitter as EventEmitter_2 } from 'node:events';
+import { FrameProcessor } from '@livekit/rtc-node';
+import { JsonObject } from '@bufbuild/protobuf';
+import type { JSONSchema7 } from 'json-schema';
+import { Logger } from 'pino';
+import { NoiseCancellationOptions } from '@livekit/rtc-node';
+import { OpenAI } from 'openai';
+import { Participant } from '@livekit/rtc-node';
+import { ParticipantKind } from '@livekit/rtc-node';
+import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import { RemoteParticipant } from '@livekit/rtc-node';
+import { Room } from '@livekit/rtc-node';
+import type { Span } from '@opentelemetry/api';
+import type { TextStreamInfo } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { TrackPublishOptions } from '@livekit/rtc-node';
+import { TransformStream as TransformStream_2 } from 'node:stream/web';
+import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import { WebSocket as WebSocket_2 } from 'ws';
+import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
+import { z } from 'zod';
 
+// Warning: (ae-forgotten-export) The symbol "LLM_2" needs to be exported by the entry point index.d.ts
+//
 // @public
 export class LLM extends LLM_2 {
     constructor(opts?: Partial<LLMOptions>);
@@ -18,9 +45,11 @@ export class LLM extends LLM_2 {
     get provider(): string;
 }
 
+// Warning: (ae-forgotten-export) The symbol "responses_2" needs to be exported by the entry point index.d.ts
+//
 // @public
-class LLM_3 extends responses_2.LLM {
-    constructor(opts?: Partial<LLMOptions_2>);
+class LLM_5 extends responses_2.LLM {
+    constructor(opts?: Partial<LLMOptions_4>);
     // (undocumented)
     label(): string;
     // (undocumented)
@@ -41,6 +70,8 @@ export interface LLMOptions {
     parallelToolCalls?: boolean;
     // (undocumented)
     temperature?: number;
+    // Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
     toolChoice?: llm.ToolChoice;
     // (undocumented)
@@ -50,7 +81,7 @@ export interface LLMOptions {
 }
 
 // @public (undocumented)
-interface LLMOptions_2 {
+interface LLMOptions_4 {
     // (undocumented)
     apiKey?: string;
     // (undocumented)
@@ -91,9 +122,9 @@ export type PerplexityResponsesModels = 'perplexity/sonar';
 
 declare namespace responses {
     export {
-        LLM_3 as LLM,
+        LLM_5 as LLM,
         PERPLEXITY_RESPONSES_BASE_URL,
-        LLMOptions_2 as LLMOptions
+        LLMOptions_4 as LLMOptions
     }
 }
 export { responses }

@@ -19,6 +19,7 @@ import {
   isInstructions,
   renderInstructions,
 } from './chat_context.js';
+import { ProviderTool, ToolContext, tool } from './tool_context.js';
 
 initializeLogger({ pretty: false, level: 'error' });
 
@@ -304,6 +305,56 @@ describe('ChatContext.toJSON', () => {
   });
 });
 
+describe('ChatMessage text content', () => {
+  const mixed =
+    '<expr type="expression" label="happy"/> Press [Enter] to see <b>bold</b>, ' +
+    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+    '<expr type="prosody" label="whisper">keep it secret</expr>';
+  const mixedClean =
+    ' Press [Enter] to see <b>bold</b>, ' +
+    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+    'keep it secret';
+
+  it('strips only expr markup from assistant textContent', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [mixed] });
+
+    expect(msg.textContent).toBe(mixedClean);
+    expect(msg.rawTextContent).toBe(mixed);
+  });
+
+  it.each(['user', 'system', 'developer'] as const)('keeps %s textContent raw', (role) => {
+    const msg = ChatMessage.create({ role, content: [mixed] });
+
+    expect(msg.textContent).toBe(mixed);
+    expect(msg.rawTextContent).toBe(mixed);
+  });
+
+  it('returns undefined without text content', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [] });
+
+    expect(msg.textContent).toBeUndefined();
+    expect(msg.rawTextContent).toBeUndefined();
+  });
+
+  it('toJSON stripMarkup is expr-only and assistant-only', () => {
+    const chatCtx = new ChatContext();
+    chatCtx.addMessage({ role: 'user', content: [mixed] });
+    chatCtx.addMessage({ role: 'assistant', content: [mixed] });
+
+    const stripped = chatCtx.toJSON({ stripMarkup: true });
+    expect(stripped.items).toEqual([
+      expect.objectContaining({ content: [mixed], role: 'user' }),
+      expect.objectContaining({ content: [mixedClean], role: 'assistant' }),
+    ]);
+
+    const raw = chatCtx.toJSON();
+    expect(raw.items).toEqual([
+      expect.objectContaining({ content: [mixed], role: 'user' }),
+      expect.objectContaining({ content: [mixed], role: 'assistant' }),
+    ]);
+  });
+});
+
 describe('ChatContext._summarize', () => {
   it('includes function calls in the summarization source and keeps chronological order', async () => {
     const ctx = new ChatContext();
@@ -465,6 +516,38 @@ describe('ChatContext._summarize', () => {
     expect(result).toBe(ctx);
     expect(llm.chatCalls).toBe(0);
     expect(ctx.items.map((item) => item.id)).toEqual(originalIds);
+  });
+});
+
+describe('ChatContext.remove', () => {
+  it('removes an item by id', () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'system', content: 'system' });
+    const target = ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+
+    ctx.remove(target.id);
+
+    expect(ctx.getById(target.id)).toBeUndefined();
+  });
+
+  it('removes an item by item', () => {
+    const ctx = new ChatContext();
+    const target = ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+    ctx.addMessage({ role: 'user', content: 'user again' });
+
+    ctx.remove(target);
+
+    expect(ctx.items).toHaveLength(2);
+  });
+
+  it('throws when removing a nonexistent item', () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+
+    expect(() => ctx.remove('nonexistent_id')).toThrow('Item not found: nonexistent_id');
   });
 });
 
@@ -1320,6 +1403,45 @@ extra`;
     expect(instr.text).toBe('null=null undefined=undefined');
   });
 
+  it('tpl renders each modality variant exactly once', () => {
+    const instr = Instructions.tpl`${'You are a helpful assistant.'}
+
+${new Instructions({ audio: 'Handle noisy voice input.', text: 'Handle typed input.' })}`;
+
+    expect(renderInstructions(instr, 'audio')).toBe(
+      'You are a helpful assistant.\n\nHandle noisy voice input.',
+    );
+    expect(renderInstructions(instr, 'text')).toBe(
+      'You are a helpful assistant.\n\nHandle typed input.',
+    );
+    expect(renderInstructions(instr, 'audio').split('You are a helpful assistant.')).toHaveLength(
+      2,
+    );
+  });
+
+  it('tpl without Instructions interpolations is an audio-only render', () => {
+    const instr = Instructions.tpl`Hello ${'Alex'}`;
+
+    expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'Hello Alex' });
+    expect(instr.audio).toBe('Hello Alex');
+    expect(instr.text).toBe('Hello Alex');
+    expect(renderInstructions(instr)).toBe('Hello Alex');
+    expect(renderInstructions(instr, 'audio')).toBe('Hello Alex');
+  });
+
+  it('tpl collapses identical modality variants', () => {
+    const instr = Instructions.tpl`${'You are a helpful assistant.'}
+
+${new Instructions({ audio: 'shared note', text: 'shared note' })}`;
+
+    expect(instr.toJSON()).toEqual({
+      type: 'instructions',
+      audio: 'You are a helpful assistant.\n\nshared note',
+    });
+    expect(renderInstructions(instr)).toBe('You are a helpful assistant.\n\nshared note');
+    expect(renderInstructions(instr, 'audio')).toBe('You are a helpful assistant.\n\nshared note');
+  });
+
   it('serializes to a dict with both variants and round-trips through toJSON', () => {
     const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
 
@@ -1477,5 +1599,34 @@ extra`;
 
     // base context content is untouched (was the original instr)
     expect((baseCtx.items[0]! as ChatMessage).content[0]).toBe(instr);
+  });
+});
+
+describe('ChatContext.copy with toolCtx filter', () => {
+  it('drops function calls / outputs whose tool is not in the supplied ToolContext', () => {
+    const known = tool({ name: 'known', description: 'k', execute: async () => 'ok' });
+    const ctx = new ChatContext([
+      ChatMessage.create({ role: 'user', content: ['hello'] }),
+      FunctionCall.create({ callId: 'c1', name: 'known', args: '{}' }),
+      FunctionCallOutput.create({ callId: 'c1', name: 'known', output: 'done', isError: false }),
+      FunctionCall.create({ callId: 'c2', name: 'removed', args: '{}' }),
+      FunctionCallOutput.create({ callId: 'c2', name: 'removed', output: 'x', isError: false }),
+    ]);
+
+    const filtered = ctx.copy({ toolCtx: new ToolContext([known]) });
+    const types = filtered.items.map((i) => `${i.type}:${'name' in i ? i.name : ''}`);
+    expect(types).toEqual(['message:', 'function_call:known', 'function_call_output:known']);
+  });
+
+  it('keeps provider-tool calls when the ToolContext holds a matching provider tool id', () => {
+    class CodeRunner extends ProviderTool {}
+    const provider = new CodeRunner({ id: 'code_runner' });
+    const ctx = new ChatContext([
+      FunctionCall.create({ callId: 'p1', name: 'code_runner', args: '{}' }),
+      FunctionCall.create({ callId: 'p2', name: 'other', args: '{}' }),
+    ]);
+
+    const filtered = ctx.copy({ toolCtx: new ToolContext([provider]) });
+    expect(filtered.items.map((i) => ('name' in i ? i.name : ''))).toEqual(['code_runner']);
   });
 });

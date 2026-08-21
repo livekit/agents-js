@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-livekit",
-  "version": "1.4.4",
+  "version": "1.7.0",
   "description": "Additional utilities for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:*",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.12",
     "onnxruntime-common": "1.24.3",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"

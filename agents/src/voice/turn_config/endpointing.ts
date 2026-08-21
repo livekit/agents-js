@@ -15,14 +15,15 @@ export interface EndpointingOptions {
   mode: 'fixed' | 'dynamic';
   /**
    * Minimum time in milliseconds since the last detected speech before the agent declares the user's
-   * turn complete. In VAD mode this effectively behaves like `max(VAD silence, minDelay)`;
-   * in STT mode it is applied after the STT end-of-speech signal, so it can be additive with
-   * the STT provider's endpointing delay.
+   * turn complete. In dynamic mode this is the learned floor. In VAD mode this effectively behaves
+   * like `max(VAD silence, minDelay)`; in STT mode it is applied after the STT end-of-speech signal,
+   * so it can be additive with the STT provider's endpointing delay.
    * @defaultValue 500
    */
   minDelay: number;
   /**
-   * Maximum time in milliseconds the agent will wait before terminating the turn.
+   * Maximum time in milliseconds the agent will wait before terminating the turn. In dynamic mode
+   * this is a fixed ceiling.
    * @defaultValue 3000
    */
   maxDelay: number;
@@ -38,6 +39,18 @@ export const defaultEndpointingOptions = {
   mode: 'fixed',
   minDelay: 500,
   maxDelay: 3000,
+  alpha: 0.9,
+} as const satisfies EndpointingOptions;
+
+/**
+ * Tighter endpointing defaults used when the turn detector is a streaming
+ * ("audio model") detector. Keys the caller does not provide fall back to
+ * these instead of the legacy {@link defaultEndpointingOptions}.
+ */
+export const streamingEndpointingOptions = {
+  mode: 'fixed',
+  minDelay: 300,
+  maxDelay: 2500,
   alpha: 0.9,
 } as const satisfies EndpointingOptions;
 
@@ -89,7 +102,6 @@ export class BaseEndpointing {
 
 export class DynamicEndpointing extends BaseEndpointing {
   #utterancePause: ExpFilter;
-  #turnPause: ExpFilter;
   #utteranceStartedAt?: number;
   #utteranceEndedAt?: number;
   #agentSpeechStartedAt?: number;
@@ -112,20 +124,10 @@ export class DynamicEndpointing extends BaseEndpointing {
       minVal: minDelay,
       maxVal: maxDelay,
     });
-    this.#turnPause = new ExpFilter({
-      alpha,
-      initial: maxDelay,
-      minVal: minDelay,
-      maxVal: maxDelay,
-    });
   }
 
   override get minDelay(): number {
-    return this.#utterancePause.value ?? this._minDelay;
-  }
-
-  override get maxDelay(): number {
-    return Math.max(this.#turnPause.value ?? this._maxDelay, this.minDelay);
+    return Math.min(this.#utterancePause.value ?? this._minDelay, this.maxDelay);
   }
 
   get betweenUtteranceDelay(): number {
@@ -152,7 +154,7 @@ export class DynamicEndpointing extends BaseEndpointing {
   override onStartOfAgentSpeech(startedAt: number): void {
     this.#agentSpeechStartedAt = startedAt;
     this.#agentSpeechEndedAt = undefined;
-    this._overlapping = false;
+    this._overlapping = this.#speaking;
   }
 
   override onEndOfAgentSpeech(endedAt: number): void {
@@ -208,7 +210,6 @@ export class DynamicEndpointing extends BaseEndpointing {
     const agentStillSpeaking =
       this.#agentSpeechStartedAt !== undefined && this.#agentSpeechEndedAt === undefined;
     const betweenUtteranceDelay = this.betweenUtteranceDelay;
-    const betweenTurnDelay = this.betweenTurnDelay;
 
     if (this._overlapping || agentStillSpeaking) {
       const [turnDelay, interruptionDelay] = this.immediateInterruptionDelay;
@@ -223,14 +224,7 @@ export class DynamicEndpointing extends BaseEndpointing {
         // User resumed almost immediately after the agent started, so the prior pause was probably
         // part of the same user turn. Learn it as minDelay to avoid cutting in next time.
         this.#utterancePause.apply(1, betweenUtteranceDelay);
-      } else if (betweenTurnDelay > 0) {
-        // User spoke after a more substantial agent-start gap. Treat it as a new turn boundary and
-        // learn that gap as maxDelay.
-        this.#turnPause.apply(1, betweenTurnDelay);
       }
-    } else if (betweenTurnDelay > 0) {
-      // Normal case: user ended, agent eventually started. Learn that turn-boundary wait.
-      this.#turnPause.apply(1, betweenTurnDelay);
     } else {
       const noAgentSpeechAroundPause =
         this.#agentSpeechEndedAt === undefined && this.#agentSpeechStartedAt === undefined;
@@ -260,16 +254,13 @@ export class DynamicEndpointing extends BaseEndpointing {
     if (minDelay !== undefined) {
       this._minDelay = minDelay;
       this.#utterancePause.reset({ initial: minDelay, minVal: minDelay });
-      this.#turnPause.reset({ minVal: minDelay });
     }
     if (maxDelay !== undefined) {
       this._maxDelay = maxDelay;
-      this.#turnPause.reset({ initial: maxDelay, maxVal: maxDelay });
       this.#utterancePause.reset({ maxVal: maxDelay });
     }
     if (alpha !== undefined) {
       this.#utterancePause.reset({ alpha });
-      this.#turnPause.reset({ alpha });
     }
   }
 }

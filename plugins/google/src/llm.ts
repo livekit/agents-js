@@ -2,21 +2,68 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as types from '@google/genai';
-import { FunctionCallingConfigMode, type GenerateContentConfig, GoogleGenAI } from '@google/genai';
+import {
+  FunctionCallingConfigMode,
+  type GenerateContentConfig,
+  GoogleGenAI,
+  ThinkingLevel,
+} from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
+  log,
   shortuuid,
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
 import type { LLMTools } from './tools.js';
-import { toFunctionDeclarations } from './utils.js';
+import { toToolsConfig } from './utils.js';
 
 interface GoogleFormatData {
   systemMessages: string[] | null;
+}
+
+function isGemini3Model(model: string): boolean {
+  const modelLower = model.toLowerCase();
+  return modelLower.includes('gemini-3');
+}
+
+function toFunctionCallingConfig(
+  toolChoice: llm.ToolChoice | undefined,
+  toolCtx: llm.ToolContext | undefined,
+): types.FunctionCallingConfig | undefined {
+  if (toolChoice === undefined) {
+    return undefined;
+  }
+
+  if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
+    return {
+      mode: FunctionCallingConfigMode.ANY,
+      allowedFunctionNames: [toolChoice.function.name],
+    };
+  }
+  if (toolChoice === 'required') {
+    const toolNames = llm.sortedToolNames(toolCtx);
+    return {
+      mode: FunctionCallingConfigMode.ANY,
+      allowedFunctionNames: toolNames.length > 0 ? toolNames : undefined,
+    };
+  }
+  if (toolChoice === 'auto') {
+    return { mode: FunctionCallingConfigMode.AUTO };
+  }
+  if (toolChoice === 'none') {
+    return { mode: FunctionCallingConfigMode.NONE };
+  }
+
+  throw new Error(`Invalid tool choice: ${toolChoice}`);
+}
+
+function isGemini3FlashModel(model: string): boolean {
+  const modelLower = model.toLowerCase();
+  return modelLower.includes('gemini-3') && modelLower.includes('flash');
 }
 
 export interface LLMOptions {
@@ -38,6 +85,7 @@ export interface LLMOptions {
   httpOptions?: types.HttpOptions;
   seed?: number;
   serviceTier?: types.ServiceTier;
+  cachedContent?: string;
   mediaResolution?: types.MediaResolution;
 }
 
@@ -58,6 +106,11 @@ export class LLM extends llm.LLM {
       return 'Vertex AI';
     }
     return 'Gemini';
+  }
+
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    // Also fetches auth tokens ahead of time on Vertex AI.
+    await this.#client.models.list({ config: { pageSize: 1, abortSignal: signal } });
   }
 
   /**
@@ -88,6 +141,7 @@ export class LLM extends llm.LLM {
    * @param httpOptions - The HTTP options to use for the session.
    * @param seed - Random seed for reproducible results. Defaults to undefined.
    * @param serviceTier - The service tier for the request (e.g. ServiceTier.PRIORITY). Defaults to undefined.
+   * @param cachedContent - Resource name of an explicit context cache to attach to every request from this LLM instance, e.g. `cachedContents/abc123` for the Gemini API or `projects/<project>/locations/<location>/cachedContents/abc123` for VertexAI. The cache must already exist. When set, `systemInstruction`, `tools`, and `toolConfig` are omitted from outgoing requests because Gemini requires those fields to live inside the cached content resource.
    * @param mediaResolution - The media resolution for the request. Defaults to undefined.
    */
   constructor(
@@ -110,6 +164,7 @@ export class LLM extends llm.LLM {
       httpOptions,
       seed,
       serviceTier,
+      cachedContent,
       mediaResolution,
     }: LLMOptions = {
       model: 'gemini-2.0-flash-001',
@@ -182,6 +237,7 @@ export class LLM extends llm.LLM {
       httpOptions,
       seed,
       serviceTier,
+      cachedContent,
       mediaResolution,
       apiKey,
     };
@@ -189,59 +245,66 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     toolChoice,
     extraKwargs,
     geminiTools,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
     geminiTools?: LLMTools;
   }): LLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const extras: GenerateContentConfig = { ...extraKwargs } as GenerateContentConfig;
 
+    if (this.#opts.httpOptions !== undefined && extras.httpOptions === undefined) {
+      extras.httpOptions = this.#opts.httpOptions;
+    }
+
     toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
+    geminiTools = geminiTools !== undefined ? geminiTools : this.#opts.geminiTools;
 
-    if (toolChoice) {
-      let geminiToolConfig: types.ToolConfig;
+    // Mixing built-in (provider) tools with function tools is only supported on the Gemini 3
+    // Developer API, not Vertex AI. https://ai.google.dev/gemini-api/docs/tool-combination
+    const allowMixedTools = isGemini3Model(this.#opts.model) && !this.#opts.vertexai;
+    const usingCache = this.#opts.cachedContent !== undefined || 'cachedContent' in extras;
 
-      if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.ANY,
-            allowedFunctionNames: [toolChoice.function.name],
-          },
+    if (usingCache) {
+      const dropped = ['tools', 'toolConfig'].filter((key) => key in extras);
+      delete extras.tools;
+      delete extras.toolConfig;
+
+      const hasTools =
+        (toolCtx !== undefined &&
+          (Object.keys(toolCtx.functionTools).length > 0 || toolCtx.providerTools.length > 0)) ||
+        geminiTools !== undefined ||
+        dropped.length > 0;
+      if (hasTools) {
+        log().warn(
+          { model: this.#opts.model },
+          'gemini llm: ignoring tools; bake them into the CachedContent resource',
+        );
+      }
+    } else {
+      const [toolsConfig, mixed] = toToolsConfig({ toolCtx, geminiTools, allowMixedTools });
+      const functionCallingConfig = toFunctionCallingConfig(toolChoice, toolCtx);
+
+      if (functionCallingConfig !== undefined || mixed) {
+        extras.toolConfig = {
+          ...(extras.toolConfig ?? {}),
+          ...(functionCallingConfig !== undefined ? { functionCallingConfig } : {}),
+          includeServerSideToolInvocations: mixed || undefined,
         };
-      } else if (toolChoice === 'required') {
-        const toolNames = llm.sortedToolNames(toolCtx);
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.ANY,
-            allowedFunctionNames: toolNames.length > 0 ? toolNames : undefined,
-          },
-        };
-      } else if (toolChoice === 'auto') {
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.AUTO,
-          },
-        };
-      } else if (toolChoice === 'none') {
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.NONE,
-          },
-        };
-      } else {
-        throw new Error(`Invalid tool choice: ${toolChoice}`);
       }
 
-      extras.toolConfig = geminiToolConfig;
+      if (toolsConfig !== undefined) {
+        extras.tools = toolsConfig;
+      }
     }
 
     if (this.#opts.temperature !== undefined) {
@@ -267,7 +330,38 @@ export class LLM extends llm.LLM {
     }
 
     if (this.#opts.thinkingConfig !== undefined) {
-      extras.thinkingConfig = this.#opts.thinkingConfig;
+      const { includeThoughts, thinkingBudget, thinkingLevel } = this.#opts.thinkingConfig;
+
+      if (isGemini3Model(this.#opts.model)) {
+        // Gemini 3: only supports thinkingLevel
+        if (thinkingBudget !== undefined && thinkingLevel === undefined) {
+          log().warn(
+            `Model ${this.#opts.model} is Gemini 3 which does not support thinkingBudget. ` +
+              `Please use thinkingLevel ('low' or 'high') instead. Ignoring thinkingBudget.`,
+          );
+        }
+        extras.thinkingConfig = {
+          includeThoughts,
+          thinkingLevel:
+            thinkingLevel ??
+            (isGemini3FlashModel(this.#opts.model) ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW),
+        };
+      } else {
+        // Gemini 2.5 and earlier: only supports thinkingBudget
+        if (thinkingLevel !== undefined && thinkingBudget === undefined) {
+          log().warn(
+            `Model ${this.#opts.model} does not support thinkingLevel. ` +
+              `Please use thinkingBudget (number) instead for Gemini 2.5 and earlier models. ` +
+              `Ignoring thinkingLevel.`,
+          );
+          extras.thinkingConfig = { includeThoughts };
+        } else if (thinkingBudget !== undefined) {
+          // Preserve includeThoughts so callers relying on visible reasoning keep receiving it.
+          extras.thinkingConfig = { thinkingBudget, includeThoughts };
+        } else {
+          extras.thinkingConfig = this.#opts.thinkingConfig;
+        }
+      }
     }
 
     if (this.#opts.automaticFunctionCallingConfig !== undefined) {
@@ -278,11 +372,13 @@ export class LLM extends llm.LLM {
       extras.serviceTier = this.#opts.serviceTier;
     }
 
+    if (this.#opts.cachedContent !== undefined) {
+      extras.cachedContent = this.#opts.cachedContent;
+    }
+
     if (this.#opts.mediaResolution !== undefined) {
       extras.mediaResolution = this.#opts.mediaResolution;
     }
-
-    geminiTools = geminiTools !== undefined ? geminiTools : this.#opts.geminiTools;
 
     return new LLMStream(this, {
       client: this.#client,
@@ -290,7 +386,6 @@ export class LLM extends llm.LLM {
       chatCtx,
       toolCtx,
       connOptions,
-      geminiTools,
       extraKwargs: extras,
     });
   }
@@ -308,7 +403,6 @@ const BLOCKED_REASONS = [
 export class LLMStream extends llm.LLMStream {
   #client: GoogleGenAI;
   #model: string;
-  #geminiTools?: LLMTools;
   #extraKwargs: GenerateContentConfig;
 
   constructor(
@@ -319,7 +413,6 @@ export class LLMStream extends llm.LLMStream {
       chatCtx,
       toolCtx,
       connOptions,
-      geminiTools,
       extraKwargs,
     }: {
       client: GoogleGenAI;
@@ -327,7 +420,6 @@ export class LLMStream extends llm.LLMStream {
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
       connOptions: APIConnectOptions;
-      geminiTools?: LLMTools;
       extraKwargs: GenerateContentConfig;
     },
   ) {
@@ -335,7 +427,6 @@ export class LLMStream extends llm.LLMStream {
     super(llm, { chatCtx, toolCtx, connOptions });
     this.#client = client;
     this.#model = model;
-    this.#geminiTools = geminiTools;
     this.#extraKwargs = extraKwargs;
   }
 
@@ -354,12 +445,6 @@ export class LLMStream extends llm.LLMStream {
         parts: turn.parts as types.Part[],
       }));
 
-      const functionDeclarations = this.toolCtx ? toFunctionDeclarations(this.toolCtx) : undefined;
-      const tools =
-        functionDeclarations && functionDeclarations.length > 0
-          ? [{ functionDeclarations }]
-          : undefined;
-
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {
         systemInstruction = {
@@ -367,16 +452,42 @@ export class LLMStream extends llm.LLMStream {
         };
       }
 
+      // Gemini's API rejects `generateContent` requests that pass `cachedContent` together with
+      // `systemInstruction`; it must live inside the CachedContent resource.
+      const cachedContent = this.#extraKwargs.cachedContent;
+      const usingCache = cachedContent !== undefined;
+      const requestConfig: GenerateContentConfig = { ...this.#extraKwargs };
+
+      if (!usingCache) {
+        requestConfig.systemInstruction = systemInstruction;
+      } else {
+        const dropped: string[] = [];
+        if ('systemInstruction' in requestConfig) {
+          delete requestConfig.systemInstruction;
+          dropped.push('systemInstruction');
+        }
+        if (systemInstruction && !dropped.includes('systemInstruction')) {
+          dropped.push('systemInstruction');
+        }
+        if (dropped.length > 0) {
+          this.logger.warn(
+            { dropped, cachedContent },
+            'dropping systemInstruction from Gemini request because cachedContent is set; this field must be baked into the CachedContent resource',
+          );
+        }
+      }
+
+      const httpOptions = {
+        ...this.#extraKwargs.httpOptions,
+        timeout: this.#extraKwargs.httpOptions?.timeout ?? Math.floor(this.connOptions.timeoutMs),
+      };
+
       const response = await this.#client.models.generateContentStream({
         model: this.#model,
         contents,
         config: {
-          ...this.#extraKwargs,
-          systemInstruction,
-          httpOptions: this.#extraKwargs.httpOptions ?? {
-            timeout: Math.floor(this.connOptions.timeoutMs),
-          },
-          tools,
+          ...requestConfig,
+          httpOptions,
         },
       });
 
@@ -533,6 +644,11 @@ export class LLMStream extends llm.LLMStream {
     }
 
     if (!part.text) {
+      return null;
+    }
+
+    // Drop thought summaries so TTS never speaks Gemini's internal reasoning.
+    if (part.thought) {
       return null;
     }
 

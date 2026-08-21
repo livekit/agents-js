@@ -2,36 +2,44 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Duration, Timestamp } from '@bufbuild/protobuf';
-import { AgentSession as pb } from '@livekit/protocol';
+import { SimulationRun, AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
+import * as net from 'node:net';
 import { TOPIC_SESSION_MESSAGES } from '../constants.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
+import { getJobContext } from '../job.js';
 import type {
   ChatItem,
   FunctionCall as FCItem,
   FunctionCallOutput as FCOItem,
 } from '../llm/chat_context.js';
-import { isInstructions, renderInstructions } from '../llm/chat_context.js';
+import { renderInstructions } from '../llm/chat_context.js';
 import { type ToolContext, sortedToolNames } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
+  EOTModelUsage,
   InterruptionModelUsage,
   LLMModelUsage,
   STTModelUsage,
   TTSModelUsage,
 } from '../metrics/model_usage.js';
-import { Future, Task, shortuuid } from '../utils.js';
+import { encodeChatItem, msToTimestamp } from '../proto.js';
+import type { SimulationContext } from '../simulation.js';
+import { Future, Task, asError, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
+import type { TcpAudioInput, TcpAudioOutput } from './console_io.js';
 import {
+  type AgentFalseInterruptionEvent,
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
   type ConversationItemAddedEvent,
+  type EotPredictionEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
@@ -55,6 +63,7 @@ export type TextInputCallback = (session: AgentSession, ev: TextInputEvent) => v
 
 /** @experimental */
 export type RemoteSessionEventTypes =
+  | 'agent_false_interruption'
   | 'agent_state_changed'
   | 'user_state_changed'
   | 'conversation_item_added'
@@ -62,12 +71,14 @@ export type RemoteSessionEventTypes =
   | 'function_tools_executed'
   | 'overlapping_speech'
   | 'amd_prediction'
+  | 'eot_prediction'
   | 'session_usage'
   | 'debug_message'
   | 'error';
 
 /** @experimental */
 export type RemoteSessionCallbacks = {
+  agent_false_interruption: (ev: pb.AgentSessionEvent_AgentFalseInterruption) => void;
   agent_state_changed: (ev: pb.AgentSessionEvent_AgentStateChanged) => void;
   user_state_changed: (ev: pb.AgentSessionEvent_UserStateChanged) => void;
   conversation_item_added: (ev: pb.AgentSessionEvent_ConversationItemAdded) => void;
@@ -75,6 +86,7 @@ export type RemoteSessionCallbacks = {
   function_tools_executed: (ev: pb.AgentSessionEvent_FunctionToolsExecuted) => void;
   overlapping_speech: (ev: pb.AgentSessionEvent_OverlappingSpeech) => void;
   amd_prediction: (ev: pb.AgentSessionEvent_AmdPrediction) => void;
+  eot_prediction: (ev: pb.AgentSessionEvent_EotPrediction) => void;
   session_usage: (ev: pb.AgentSessionEvent_SessionUsageUpdated) => void;
   debug_message: (ev: pb.DebugMessage) => void;
   error: (ev: pb.AgentSessionEvent_Error) => void;
@@ -231,6 +243,123 @@ export class RoomSessionTransport extends SessionTransport {
   }
 }
 
+const TCP_HEADER_SIZE = 4;
+const TCP_MAX_MESSAGE_SIZE = 1 << 20; // 1 MiB
+const TCP_DRAIN_THRESHOLD = 64 * 1024; // 64 KiB
+
+/**
+ * Resolve once the socket's write buffer drains, or when the socket closes or
+ * errors. Unlike a bare `once('drain')`, this can't hang forever if the peer
+ * stops reading and the socket is then torn down.
+ */
+function waitForDrain(socket: net.Socket): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      socket.removeListener('drain', done);
+      socket.removeListener('close', done);
+      socket.removeListener('error', done);
+      resolve();
+    };
+    socket.once('drain', done);
+    socket.once('close', done);
+    socket.once('error', done);
+  });
+}
+
+/**
+ * {@link SessionTransport} that frames protobuf messages over a raw TCP socket.
+ *
+ * @experimental
+ */
+export class TcpSessionTransport extends SessionTransport {
+  private readonly host: string;
+  private readonly port: number;
+  private socket: net.Socket | null = null;
+  private closed = false;
+
+  constructor(host: string, port: number) {
+    super();
+    this.host = host;
+    this.port = port;
+  }
+
+  override async start(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const socket = net.createConnection({ host: this.host, port: this.port }, () => {
+        socket.setNoDelay(true);
+        socket.removeListener('error', onConnectError);
+        this.socket = socket;
+        resolve();
+      });
+      const onConnectError = (err: Error) => {
+        socket.destroy();
+        reject(err);
+      };
+      socket.once('error', onConnectError);
+    });
+  }
+
+  override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
+    const socket = this.socket;
+    if (this.closed || socket === null) return;
+
+    const data = msg.toBinary();
+    const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
+    header.writeUInt32BE(data.length, 0);
+    const flushed = socket.write(Buffer.concat([header, data]));
+
+    // Only block on backpressure once the write buffer is backed up. The wait
+    // also settles on close/error so a stalled reader can't hang teardown.
+    if (!flushed && socket.writableLength > TCP_DRAIN_THRESHOLD) {
+      await waitForDrain(socket);
+    }
+  }
+
+  override async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.socket?.destroy();
+    this.socket = null;
+  }
+
+  override async *[Symbol.asyncIterator](): AsyncIterableIterator<pb.AgentSessionMessage> {
+    const socket = this.socket;
+    if (socket === null) return;
+
+    let buffer = Buffer.alloc(0);
+    try {
+      for await (const chunk of socket) {
+        buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
+
+        while (buffer.length >= TCP_HEADER_SIZE) {
+          const length = buffer.readUInt32BE(0);
+          if (length > TCP_MAX_MESSAGE_SIZE) {
+            log().error({ length }, 'TCP session message too large, closing transport');
+            return;
+          }
+          if (buffer.length < TCP_HEADER_SIZE + length) break;
+
+          const payload = buffer.subarray(TCP_HEADER_SIZE, TCP_HEADER_SIZE + length);
+          buffer = buffer.subarray(TCP_HEADER_SIZE + length);
+
+          let msg: pb.AgentSessionMessage;
+          try {
+            msg = pb.AgentSessionMessage.fromBinary(payload);
+          } catch (e) {
+            log().warn({ error: e }, 'failed to parse TCP session message');
+            continue;
+          }
+          yield msg;
+        }
+      }
+    } catch (e) {
+      if (!this.closed) {
+        log().warn({ error: e }, 'TCP session transport read error');
+      }
+    }
+  }
+}
+
 // ===========================================================================
 // Enum maps
 // ===========================================================================
@@ -259,10 +388,6 @@ const AMD_CATEGORY_MAP: Record<AMDCategory, pb.AmdCategory> = {
 // ===========================================================================
 // Chat item / timestamp conversion helpers
 // ===========================================================================
-function msToTimestamp(ms: number): Timestamp {
-  return Timestamp.fromDate(new Date(ms));
-}
-
 function nowTimestamp(): Timestamp {
   return Timestamp.fromDate(new Date());
 }
@@ -281,102 +406,7 @@ type RemoteChatItem = Exclude<ChatItem, { type: 'agent_config_update' }>;
 function chatItemsToProto(items: ChatItem[]): pb.ChatContext_ChatItem[] {
   return items
     .filter((item): item is RemoteChatItem => item.type !== 'agent_config_update')
-    .map(chatItemToProto);
-}
-
-function chatItemToProto(item: RemoteChatItem): pb.ChatContext_ChatItem {
-  switch (item.type) {
-    case 'message': {
-      const msg = item;
-      const roleMap: Record<string, pb.ChatRole> = {
-        developer: pb.ChatRole.DEVELOPER,
-        system: pb.ChatRole.SYSTEM,
-        user: pb.ChatRole.USER,
-        assistant: pb.ChatRole.ASSISTANT,
-      };
-      const content: pb.ChatMessage_ChatContent[] = [];
-      for (const c of msg.content) {
-        if (typeof c === 'string') {
-          content.push(new pb.ChatMessage_ChatContent({ payload: { case: 'text', value: c } }));
-        } else if (isInstructions(c)) {
-          content.push(
-            new pb.ChatMessage_ChatContent({ payload: { case: 'text', value: c.value } }),
-          );
-        }
-      }
-
-      const metricsReport = new pb.MetricsReport();
-      if (msg.metrics.transcriptionDelay !== undefined)
-        metricsReport.transcriptionDelay = msg.metrics.transcriptionDelay;
-      if (msg.metrics.endOfTurnDelay !== undefined)
-        metricsReport.endOfTurnDelay = msg.metrics.endOfTurnDelay;
-      if (msg.metrics.onUserTurnCompletedDelay !== undefined)
-        metricsReport.onUserTurnCompletedDelay = msg.metrics.onUserTurnCompletedDelay;
-      if (msg.metrics.llmNodeTtft !== undefined)
-        metricsReport.llmNodeTtft = msg.metrics.llmNodeTtft;
-      if (msg.metrics.ttsNodeTtfb !== undefined)
-        metricsReport.ttsNodeTtfb = msg.metrics.ttsNodeTtfb;
-      if (msg.metrics.e2eLatency !== undefined) metricsReport.e2eLatency = msg.metrics.e2eLatency;
-
-      const pbMsg = new pb.ChatMessage({
-        id: msg.id,
-        role: roleMap[msg.role] ?? pb.ChatRole.ASSISTANT,
-        content,
-        interrupted: msg.interrupted,
-        metrics: metricsReport,
-        createdAt: msToTimestamp(msg.createdAt),
-      });
-      if (msg.transcriptConfidence !== undefined) {
-        pbMsg.transcriptConfidence = msg.transcriptConfidence;
-      }
-      return new pb.ChatContext_ChatItem({ item: { case: 'message', value: pbMsg } });
-    }
-    case 'function_call': {
-      const fc = item;
-      return new pb.ChatContext_ChatItem({
-        item: {
-          case: 'functionCall',
-          value: new pb.FunctionCall({
-            id: fc.id,
-            callId: fc.callId,
-            name: fc.name,
-            arguments: fc.args,
-            createdAt: msToTimestamp(fc.createdAt),
-          }),
-        },
-      });
-    }
-    case 'function_call_output': {
-      const fco = item;
-      return new pb.ChatContext_ChatItem({
-        item: {
-          case: 'functionCallOutput',
-          value: new pb.FunctionCallOutput({
-            id: fco.id,
-            callId: fco.callId,
-            name: fco.name,
-            output: fco.output,
-            isError: fco.isError,
-            createdAt: msToTimestamp(fco.createdAt),
-          }),
-        },
-      });
-    }
-    case 'agent_handoff': {
-      const ah = item;
-      return new pb.ChatContext_ChatItem({
-        item: {
-          case: 'agentHandoff',
-          value: new pb.AgentHandoff({
-            id: ah.id,
-            oldAgentId: ah.oldAgentId,
-            newAgentId: ah.newAgentId,
-            createdAt: msToTimestamp(ah.createdAt),
-          }),
-        },
-      });
-    }
-  }
+    .map(encodeChatItem);
 }
 
 // ===========================================================================
@@ -466,6 +496,22 @@ function sessionUsageToProto(usage: AgentSessionUsage): pb.AgentSessionUsage {
         );
         break;
       }
+      case 'eot_usage': {
+        const eu = mu as Partial<EOTModelUsage>;
+        modelUsages.push(
+          new pb.ModelUsage({
+            usage: {
+              case: 'eot',
+              value: new pb.EotModelUsage({
+                provider: eu.provider ?? '',
+                model: eu.model ?? '',
+                totalRequests: eu.totalRequests ?? 0,
+              }),
+            },
+          }),
+        );
+        break;
+      }
     }
   }
   return new pb.AgentSessionUsage({ modelUsage: modelUsages });
@@ -483,6 +529,7 @@ function protoSerializeOptions(opts: {
   };
   maxToolSteps?: number;
   userAwayTimeout?: number | null;
+  transcriptionTimeout?: number | null;
   useTtsAlignedTranscript?: boolean;
 }): Record<string, string> {
   return {
@@ -490,6 +537,7 @@ function protoSerializeOptions(opts: {
     interruption: JSON.stringify(opts.turnHandling?.interruption ?? {}),
     max_tool_steps: String(opts.maxToolSteps ?? 0),
     user_away_timeout: String(opts.userAwayTimeout ?? ''),
+    transcription_timeout: String(opts.transcriptionTimeout ?? ''),
     preemptive_generation: JSON.stringify(opts.turnHandling?.preemptiveGeneration ?? {}),
     use_tts_aligned_transcript: String(opts.useTtsAlignedTranscript ?? false),
   };
@@ -500,15 +548,22 @@ function protoSerializeOptions(opts: {
 // ===========================================================================
 export class SessionHost {
   private readonly transport: SessionTransport;
+  private readonly audioInput: TcpAudioInput | undefined;
+  private readonly audioOutput: TcpAudioOutput | undefined;
   private session: AgentSession | undefined;
   private started = false;
   private eventsRegistered = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
-  private textInputCb: TextInputCallback | undefined;
 
-  constructor(transport: SessionTransport) {
+  constructor(
+    transport: SessionTransport,
+    audioInput?: TcpAudioInput,
+    audioOutput?: TcpAudioOutput,
+  ) {
     this.transport = transport;
+    this.audioInput = audioInput;
+    this.audioOutput = audioOutput;
   }
 
   registerSession(session: AgentSession): void {
@@ -522,13 +577,11 @@ export class SessionHost {
       session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+      session.on(AgentSessionEventTypes.AgentFalseInterruption, this.onAgentFalseInterruption);
+      session.on(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
       session.on(AgentSessionEventTypes.Error, this.onHostError);
       session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
     }
-  }
-
-  registerTextInput(textInputCb: TextInputCallback): void {
-    this.textInputCb = textInputCb;
   }
 
   async start(): Promise<void> {
@@ -551,6 +604,11 @@ export class SessionHost {
       this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+      this.session.off(
+        AgentSessionEventTypes.AgentFalseInterruption,
+        this.onAgentFalseInterruption,
+      );
+      this.session.off(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
       this.session.off(AgentSessionEventTypes.Error, this.onHostError);
       this.session.off(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
     }
@@ -568,12 +626,22 @@ export class SessionHost {
   private async recvLoop(): Promise<void> {
     try {
       for await (const msg of this.transport) {
-        if (msg.message.case === 'request') {
-          if (this.session) {
-            this.trackTask(
-              Task.from(async () => this.handleRequestSafe(msg.message.value as pb.SessionRequest)),
-            );
-          }
+        switch (msg.message.case) {
+          case 'request':
+            if (this.session) {
+              this.trackTask(
+                Task.from(async () =>
+                  this.handleRequestSafe(msg.message.value as pb.SessionRequest),
+                ),
+              );
+            }
+            break;
+          case 'audioInput':
+            this.audioInput?.pushFrame(msg.message.value);
+            break;
+          case 'audioPlaybackFinished':
+            this.audioOutput?.notifyPlayoutFinished();
+            break;
         }
       }
     } catch (e) {
@@ -646,7 +714,7 @@ export class SessionHost {
       {
         case: 'conversationItemAdded',
         value: new pb.AgentSessionEvent_ConversationItemAdded({
-          item: chatItemToProto(event.item),
+          item: encodeChatItem(event.item),
         }),
       },
       event.createdAt,
@@ -663,6 +731,7 @@ export class SessionHost {
         (fco: FCOItem) =>
           new pb.FunctionCallOutput({
             callId: fco.callId,
+            name: fco.name,
             output: fco.output,
             isError: fco.isError,
           }),
@@ -679,7 +748,12 @@ export class SessionHost {
     );
   };
 
+  private onEotPrediction = (event: EotPredictionEvent): void => {
+    this._onEotPrediction(event);
+  };
+
   private onOverlappingSpeech = (event: OverlappingSpeechEvent): void => {
+    // TODO(AGT-3180): Forward agentEnded when the remote-session protocol supports it.
     const value = new pb.AgentSessionEvent_OverlappingSpeech({
       isInterruption: event.isInterruption,
       detectionDelay: event.detectionDelayInS,
@@ -689,6 +763,16 @@ export class SessionHost {
       value.overlapStartedAt = msToTimestamp(event.overlapStartedAt);
     }
     this.emitEvent({ case: 'overlappingSpeech', value });
+  };
+
+  private onAgentFalseInterruption = (event: AgentFalseInterruptionEvent): void => {
+    this.emitEvent(
+      {
+        case: 'agentFalseInterruption',
+        value: new pb.AgentSessionEvent_AgentFalseInterruption({ resumed: event.resumed }),
+      },
+      event.createdAt,
+    );
   };
 
   private onMetricsCollected = (event: MetricsCollectedEvent): void => {
@@ -709,7 +793,7 @@ export class SessionHost {
       {
         case: 'error',
         value: new pb.AgentSessionEvent_Error({
-          message: event.error ? String(event.error) : 'Unknown error',
+          message: event.error ? event.error.label : 'Unknown error',
         }),
       },
       event.createdAt,
@@ -734,6 +818,22 @@ export class SessionHost {
         category: AMD_CATEGORY_MAP[event.category],
         reason: event.reason,
         transcript: event.transcript,
+      }),
+    });
+  }
+
+  /**
+   * @internal — forwards an audio-EOT prediction to the connected
+   * {@link RemoteSession} peer.
+   */
+  _onEotPrediction(event: EotPredictionEvent): void {
+    this.emitEvent({
+      case: 'eotPrediction',
+      value: new pb.AgentSessionEvent_EotPrediction({
+        probability: event.probability,
+        threshold: event.threshold,
+        inferenceDuration: msToDuration(event.inferenceDurationMs),
+        delay: msToDuration(event.delayMs),
       }),
     });
   }
@@ -795,7 +895,81 @@ export class SessionHost {
             sdkVersion: version,
           }),
         });
+      case 'updateIo':
+        return this.handleUpdateIo(req.requestId, req.request.value);
+      case 'finalizeSimulation':
+        return this.handleFinalizeSimulation(req.requestId, req.request.value);
     }
+  }
+
+  private async handleFinalizeSimulation(
+    requestId: string,
+    req: pb.SessionRequest_FinalizeSimulation,
+  ): Promise<void> {
+    // The simulator's verdict is passed in so onSimulationEnd can read it
+    // (ctx.simulatorVerdict); the agent records its OWN verdict via ctx.fail().
+    let userVerdict: pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict | undefined;
+    let simCtx: SimulationContext | undefined;
+    let simError: string | undefined;
+    try {
+      const jobCtx = getJobContext(false);
+      simCtx = jobCtx?.simulationContext();
+      if (jobCtx && simCtx) {
+        simCtx._beginFinalize({
+          simulatorVerdict: {
+            success: req.provisionalSuccess,
+            reason: req.provisionalReason,
+          },
+          run: new SimulationRun({ id: simCtx._dispatch.simulationRunId }),
+        });
+        const fnc = jobCtx._simulationEndFnc;
+        if (fnc) {
+          await fnc(simCtx);
+        }
+      }
+    } catch (error) {
+      simError = asError(error).message;
+      log().error({ error }, 'error while executing the onSimulationEnd callback');
+    }
+    if (simCtx?.userVerdict) {
+      userVerdict = new pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict({
+        success: simCtx.userVerdict.success,
+        reason: simCtx.userVerdict.reason,
+      });
+    }
+    return this.sendResponse(
+      requestId,
+      {
+        case: 'finalizeSimulation',
+        value: new pb.SessionResponse_FinalizeSimulationResponse({ userVerdict }),
+      },
+      simError,
+    );
+  }
+
+  private async handleUpdateIo(
+    requestId: string,
+    update: pb.SessionRequest_UpdateIO,
+  ): Promise<void> {
+    const session = this.session!;
+    // Each field is proto3 `optional`; only apply the ones the peer actually set.
+    // JS `AgentInput`/`AgentOutput` expose no video toggle, so video_enabled is ignored.
+    if (update.input?.audioEnabled !== undefined) {
+      session.input.setAudioEnabled(update.input.audioEnabled);
+    }
+    if (update.output) {
+      if (update.output.audioEnabled !== undefined) {
+        session.output.setAudioEnabled(update.output.audioEnabled);
+      }
+      if (update.output.transcriptionEnabled !== undefined) {
+        session.output.setTranscriptionEnabled(update.output.transcriptionEnabled);
+      }
+    }
+
+    return this.sendResponse(requestId, {
+      case: 'updateIo',
+      value: new pb.SessionResponse_UpdateIOResponse(),
+    });
   }
 
   private async handleGetChatHistory(requestId: string): Promise<void> {
@@ -827,26 +1001,31 @@ export class SessionHost {
     let items: pb.ChatContext_ChatItem[] = [];
     let error: string | undefined;
 
-    if (text) {
-      if (this.textInputCb) {
-        const cbResult = this.textInputCb(this.session!, { text });
-        if (cbResult instanceof Promise) {
-          await cbResult;
-        }
-      } else {
-        try {
-          await this.session!.interrupt({ force: true }).await;
-        } catch {
-          // ignore
-        }
+    if (!text) {
+      error = 'empty run_input text';
+    } else {
+      // Drive the reply through session.run() directly and capture its events,
+      // ignoring any registered text-input callback. The room's default text
+      // input callback is fire-and-forget (interrupt + generateReply) and never
+      // surfaces the resulting chat items, so routing run_input through it would
+      // always return empty responses to the remote driver. This mirrors the
+      // Python SessionHost behavior.
+      try {
+        await this.session!.interrupt({ force: true }).await;
+      } catch {
+        // ignore
+      }
 
-        const result = this.session!.run({ userInput: text });
-        try {
-          await result.wait();
-        } catch (e) {
-          error = e instanceof Error ? e.message : String(e);
-        }
-        items = chatItemsToProto(result.events.map((ev) => ev.item));
+      const result = this.session!.run({ userInput: text });
+      try {
+        await result.wait();
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+      items = chatItemsToProto(result.events.map((ev) => ev.item));
+
+      if (items.length === 0 && !error) {
+        error = 'agent produced no response items';
       }
     }
 
@@ -873,6 +1052,7 @@ export class SessionHost {
           turnHandling: this.session!.sessionOptions.turnHandling,
           maxToolSteps: this.session!.sessionOptions.maxToolSteps,
           userAwayTimeout: this.session!.sessionOptions.userAwayTimeout,
+          transcriptionTimeout: this.session!.sessionOptions.transcriptionTimeout,
           useTtsAlignedTranscript: this.session!.sessionOptions.useTtsAlignedTranscript,
         }),
         createdAt: msToTimestamp(startedAt),
@@ -916,6 +1096,27 @@ export class SessionHost {
 // ===========================================================================
 // RemoteSession (protobuf-based client-side interface)
 // ===========================================================================
+
+/** Error returned by {@link RemoteSession.finalizeSimulation} when the agent's
+ * `onSimulationEnd` callback fails.
+ *
+ * The callback error remains the thrown error, while `userVerdict` preserves a
+ * verdict recorded before that failure.
+ *
+ * @experimental
+ */
+export class FinalizeSimulationError extends Error {
+  readonly userVerdict: pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict | undefined;
+
+  constructor(
+    message: string,
+    userVerdict?: pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict,
+  ) {
+    super(message);
+    this.name = 'FinalizeSimulationError';
+    this.userVerdict = userVerdict;
+  }
+}
 
 /** @experimental */
 export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<RemoteSessionCallbacks>) {
@@ -1005,8 +1206,14 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
       case 'overlappingSpeech':
         this.emit('overlapping_speech', ev.value);
         break;
+      case 'agentFalseInterruption':
+        this.emit('agent_false_interruption', ev.value);
+        break;
       case 'amdPrediction':
         this.emit('amd_prediction', ev.value);
+        break;
+      case 'eotPrediction':
+        this.emit('eot_prediction', ev.value);
         break;
       case 'sessionUsageUpdated':
         this.emit('session_usage', ev.value);
@@ -1028,7 +1235,7 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     }
   }
 
-  private async sendRequest(
+  private async sendRequestRaw(
     buildReq: (requestId: string) => pb.SessionRequest,
     timeout = 60000,
   ): Promise<pb.SessionResponse> {
@@ -1052,14 +1259,21 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     }, timeout);
 
     try {
-      const response = await future.await;
-      if (response.error) {
-        throw new Error(response.error);
-      }
-      return response;
+      return await future.await;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private async sendRequest(
+    buildReq: (requestId: string) => pb.SessionRequest,
+    timeout = 60000,
+  ): Promise<pb.SessionResponse> {
+    const response = await this.sendRequestRaw(buildReq, timeout);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response;
   }
 
   async fetchSessionState(): Promise<pb.SessionResponse_GetSessionStateResponse> {
@@ -1099,6 +1313,23 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         }),
     );
     if (resp.response.case !== 'getAgentInfo') {
+      throw new Error('unexpected response type');
+    }
+    return resp.response.value;
+  }
+
+  async fetchFrameworkInfo(): Promise<pb.SessionResponse_GetFrameworkInfoResponse> {
+    const resp = await this.sendRequest(
+      (id) =>
+        new pb.SessionRequest({
+          requestId: id,
+          request: {
+            case: 'getFrameworkInfo',
+            value: new pb.SessionRequest_GetFrameworkInfo(),
+          },
+        }),
+    );
+    if (resp.response.case !== 'getFrameworkInfo') {
       throw new Error('unexpected response type');
     }
     return resp.response.value;
@@ -1145,6 +1376,40 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         }),
     );
     if (resp.response.case !== 'getSessionUsage') {
+      throw new Error('unexpected response type');
+    }
+    return resp.response.value;
+  }
+
+  async finalizeSimulation({
+    provisionalSuccess,
+    provisionalReason = '',
+    timeout = 60000,
+  }: {
+    provisionalSuccess: boolean;
+    provisionalReason?: string;
+    timeout?: number;
+  }): Promise<pb.SessionResponse_FinalizeSimulationResponse> {
+    const resp = await this.sendRequestRaw(
+      (id) =>
+        new pb.SessionRequest({
+          requestId: id,
+          request: {
+            case: 'finalizeSimulation',
+            value: new pb.SessionRequest_FinalizeSimulation({
+              provisionalSuccess,
+              provisionalReason,
+            }),
+          },
+        }),
+      timeout,
+    );
+    const userVerdict =
+      resp.response.case === 'finalizeSimulation' ? resp.response.value.userVerdict : undefined;
+    if (resp.error) {
+      throw new FinalizeSimulationError(resp.error, userVerdict);
+    }
+    if (resp.response.case !== 'finalizeSimulation') {
       throw new Error('unexpected response type');
     }
     return resp.response.value;

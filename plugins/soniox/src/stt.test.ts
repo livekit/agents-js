@@ -37,6 +37,24 @@ const swallowExpectedRejection = (reason: unknown) => {
 beforeAll(() => process.on('unhandledRejection', swallowExpectedRejection));
 afterAll(() => void process.off('unhandledRejection', swallowExpectedRejection));
 
+describe('STT options', () => {
+  it.each([0, 1, 2, 3])(
+    'accepts supported endpoint latency adjustment level %i',
+    (endpointLatencyAdjustmentLevel) => {
+      expect(() => new STT({ apiKey: 'test-key', endpointLatencyAdjustmentLevel })).not.toThrow();
+    },
+  );
+
+  it.each([-1, 4])(
+    'rejects unsupported endpoint latency adjustment level %i',
+    (endpointLatencyAdjustmentLevel) => {
+      expect(() => new STT({ apiKey: 'test-key', endpointLatencyAdjustmentLevel })).toThrow(
+        'endpointLatencyAdjustmentLevel must be between 0 and 3',
+      );
+    },
+  );
+});
+
 // ---------------------------------------------------------------------------
 // TokenAccumulator: language-segment coalescing
 // ---------------------------------------------------------------------------
@@ -333,6 +351,59 @@ describe('processMessage', () => {
     expect(sd.targetTexts).toBeUndefined();
     expect(sd.sourceTexts!.join('')).toBe(sd.text);
   });
+
+  it('reports recognition usage for silent frames', () => {
+    const events = runProcess([{ tokens: [], total_audio_proc_ms: 3000 }]);
+
+    expect(events.map((event) => event.type)).toEqual([stt.SpeechEventType.RECOGNITION_USAGE]);
+    expect(events[0]?.recognitionUsage?.audioDuration).toBeCloseTo(3);
+  });
+
+  it('reports recognition usage without an endpoint token after transcript events', () => {
+    const events = runProcess([
+      { tokens: [nonfinalToken('hola', 'es')], total_audio_proc_ms: 2500 },
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      stt.SpeechEventType.START_OF_SPEECH,
+      stt.SpeechEventType.INTERIM_TRANSCRIPT,
+      stt.SpeechEventType.RECOGNITION_USAGE,
+    ]);
+    expect(events.at(-1)?.recognitionUsage?.audioDuration).toBeCloseTo(2.5);
+  });
+
+  it('reports recognition usage deltas and skips unchanged totals', () => {
+    const events = runProcess([
+      { tokens: [], total_audio_proc_ms: 3000 },
+      { tokens: [], total_audio_proc_ms: 3000 },
+      { tokens: [], total_audio_proc_ms: 5000 },
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      stt.SpeechEventType.RECOGNITION_USAGE,
+      stt.SpeechEventType.RECOGNITION_USAGE,
+    ]);
+    const durations = events.map((event) => event.recognitionUsage?.audioDuration);
+    expect(durations).toEqual([3, 2]);
+    expect(durations.reduce<number>((sum, duration) => sum + (duration ?? 0), 0)).toBeCloseTo(5);
+  });
+
+  it('still reports recognition usage on endpoint frames after transcript events', () => {
+    const events = runProcess([
+      {
+        tokens: [finalToken('Hello world.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 1500,
+      },
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      stt.SpeechEventType.START_OF_SPEECH,
+      stt.SpeechEventType.FINAL_TRANSCRIPT,
+      stt.SpeechEventType.END_OF_SPEECH,
+      stt.SpeechEventType.RECOGNITION_USAGE,
+    ]);
+    expect(events.at(-1)?.recognitionUsage?.audioDuration).toBeCloseTo(1.5);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -351,6 +422,51 @@ async function startWebSocketServer(): Promise<{ wss: WebSocketServer; baseUrl: 
 async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
   await new Promise<void>((resolve) => wss.close(() => resolve()));
 }
+
+describe('SpeechStream config', () => {
+  it.each([undefined, 0, 2])(
+    'serializes endpoint latency adjustment level %s',
+    async (endpointLatencyAdjustmentLevel) => {
+      const { wss, baseUrl } = await startWebSocketServer();
+      const configPromise = new Promise<Record<string, unknown>>((resolve) => {
+        wss.on('connection', (ws) => {
+          ws.once('message', (data) => {
+            resolve(JSON.parse(data.toString()) as Record<string, unknown>);
+            ws.send(JSON.stringify({ finished: true }));
+          });
+        });
+      });
+
+      try {
+        const soniox = new STT({
+          apiKey: 'test-key',
+          baseUrl,
+          endpointLatencyAdjustmentLevel,
+        });
+        const stream = soniox.stream({
+          connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+        });
+        const drain = (async () => {
+          for await (const _ of stream) {
+            /* discard events */
+          }
+        })();
+
+        const config = await configPromise;
+        if (endpointLatencyAdjustmentLevel === undefined) {
+          expect(config).not.toHaveProperty('endpoint_latency_adjustment_level');
+        } else {
+          expect(config.endpoint_latency_adjustment_level).toBe(endpointLatencyAdjustmentLevel);
+        }
+
+        stream.close();
+        await drain.catch(() => {});
+      } finally {
+        await closeWebSocketServer(wss);
+      }
+    },
+  );
+});
 
 describe('SpeechStream server errors', () => {
   it('surfaces a Soniox error frame as a non-retryable APIStatusError', async () => {
