@@ -531,16 +531,27 @@ function injectSchemaDefaults(
     const properties = schema.properties;
     const additional = schema.additionalProperties;
     if (isJsonObject(properties) || isJsonObject(additional)) {
+      const required = Array.isArray(schema.required) ? schema.required : [];
       return Object.fromEntries(
-        Object.entries(value).map(([key, item]) => {
+        Object.entries(value).flatMap<[string, unknown]>(([key, item]) => {
           const prop = isJsonObject(properties) ? properties[key] : undefined;
           if (isJsonObject(prop)) {
-            return [key, injectSchemaDefaults(item, prop, root)];
+            const resolved = injectSchemaDefaults(item, prop, root);
+            // A strict tool schema has no way to spell "absent": every property must be listed in
+            // `required`, so an optional one is emitted as required-and-nullable and the model
+            // signals "not provided" with null. Zod's `.optional()` accepts only undefined, so drop
+            // the key instead of handing validation a null the schema rejects. Defaults were already
+            // substituted above, and a property that is required or genuinely nullable keeps its
+            // null so a real contract violation still surfaces.
+            if (resolved === null && !required.includes(key) && !jsonSchemaAllowsNull(prop, root)) {
+              return [];
+            }
+            return [[key, resolved]];
           }
           if (isJsonObject(additional)) {
-            return [key, injectSchemaDefaults(item, additional, root)];
+            return [[key, injectSchemaDefaults(item, additional, root)]];
           }
-          return [key, item];
+          return [[key, item]];
         }),
       );
     }
