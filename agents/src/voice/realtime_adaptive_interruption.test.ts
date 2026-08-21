@@ -95,6 +95,20 @@ type ActivityInternals = {
   onBackchannelConfirmed: () => void;
 };
 
+type InterruptionActivityHarness = {
+  isInterruptionByAudioActivityEnabled: boolean;
+  agent: { llm: object; stt: undefined };
+  agentSession: {
+    _textOnly: boolean;
+    _aecWarmupRemaining: number;
+    sessionOptions: { turnHandling: { interruption: { minWords: number } } };
+  };
+  audioRecognition: { releaseTranscriptsForAudioActivity: ReturnType<typeof vi.fn> };
+  _currentSpeech: { interrupted: boolean; allowInterruptions: boolean };
+  pendingInterruption?: OverlappingSpeechEvent;
+  interruptByAudioActivity: () => void;
+};
+
 function setActivityProp<T>(activity: object, key: string, value: T): void {
   Object.defineProperty(activity, key, { configurable: true, value, writable: true });
 }
@@ -206,6 +220,35 @@ describe('realtime adaptive interruption', () => {
       releaseTranscriptsForAudioActivity: vi.fn(),
     };
     activity._currentSpeech = undefined;
+    activity.pendingInterruption = overlapEvent({ isInterruption: true });
+
+    activity.interruptByAudioActivity();
+
+    expect(activity.pendingInterruption).toBeUndefined();
+  });
+
+  it('clears a pending verdict when current speech is already interrupted', () => {
+    const activity = Object.create(
+      AgentActivity.prototype,
+    ) as unknown as InterruptionActivityHarness;
+    activity.isInterruptionByAudioActivityEnabled = true;
+    activity.agent = { llm: {}, stt: undefined };
+    activity.agentSession = {
+      _textOnly: false,
+      _aecWarmupRemaining: 0,
+      sessionOptions: {
+        turnHandling: {
+          interruption: { minWords: 0 },
+        },
+      },
+    };
+    activity.audioRecognition = {
+      releaseTranscriptsForAudioActivity: vi.fn(),
+    };
+    activity._currentSpeech = {
+      interrupted: true,
+      allowInterruptions: true,
+    };
     activity.pendingInterruption = overlapEvent({ isInterruption: true });
 
     activity.interruptByAudioActivity();
