@@ -1669,6 +1669,14 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const discardOutput = this.earlyCompletionPending;
 
+    // With audio output and output transcription on, the spoken words arrive as
+    // outputTranscription; a text part on the model turn is never spoken (an unflagged
+    // thought, or a function call the model wrote out as text) and would leak unspoken
+    // text into the transcript.
+    const forwardModelText =
+      !this._realtimeModel.capabilities.audioOutput ||
+      this.options.outputAudioTranscription === undefined;
+
     if (serverContent.modelTurn && !discardOutput) {
       const turn = serverContent.modelTurn;
 
@@ -1678,7 +1686,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           continue;
         }
 
-        if (part.text) {
+        if (part.text && forwardModelText) {
           gen.outputText += part.text;
           gen.textChannel.write(part.text);
         }
