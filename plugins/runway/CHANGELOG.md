@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-runway
 
+## 1.7.1
+
+### Patch Changes
+
+- Updated dependencies [[`d5ee95f`](https://github.com/livekit/agents-js/commit/d5ee95fec5707c3ff6cb79805d036388597628c9), [`3790deb`](https://github.com/livekit/agents-js/commit/3790deb75c10754d84649f8e1772129fab2463af), [`8c88e3b`](https://github.com/livekit/agents-js/commit/8c88e3b3acb3ab32dc2d7b19073379f726704015), [`0da1e11`](https://github.com/livekit/agents-js/commit/0da1e1165e8afa82f5993a22dbac17efadce6187), [`8c88e3b`](https://github.com/livekit/agents-js/commit/8c88e3b3acb3ab32dc2d7b19073379f726704015)]:
+  - @livekit/agents@1.7.1
+
 ## 1.7.0
 
 ### Patch Changes

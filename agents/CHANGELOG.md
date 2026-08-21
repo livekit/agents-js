@@ -1,5 +1,19 @@
 # @livekit/agents
 
+## 1.7.1
+
+### Patch Changes
+
+- Preserve adaptive interruption boundaries when agent playout pauses or enters a tool-call thinking gap. - [#2290](https://github.com/livekit/agents-js/pull/2290) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): avoid AgentTask handoff deadlock during session close - [#1776](https://github.com/livekit/agents-js/pull/1776) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Send deployment environment in worker registration. - [#1677](https://github.com/livekit/agents-js/pull/1677) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Serialize inline AgentTasks launched by parallel tool calls. - [#2313](https://github.com/livekit/agents-js/pull/2313) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Report the worker protocol version on the `/worker` endpoint so LiveKit Cloud recognizes agent deployment support. - [#1677](https://github.com/livekit/agents-js/pull/1677) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.7.0
 
 ### Minor Changes
