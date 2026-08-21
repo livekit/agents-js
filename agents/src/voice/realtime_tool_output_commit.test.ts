@@ -13,6 +13,7 @@ import {
 } from '../llm/realtime.js';
 import { type ToolChoice, ToolContext, tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
+import { Future } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 
@@ -29,10 +30,11 @@ function stream<T>(...items: T[]): ReadableStream<T> {
   });
 }
 
-/** Emits one text message plus one tool call per generation. */
+/** Emits one text message and optionally one tool call per generation. */
 class FakeRealtimeSession extends RealtimeSession {
   private _chatCtx = ChatContext.empty();
   private _tools = ToolContext.empty();
+  includeTool = true;
 
   get chatCtx(): ChatContext {
     return this._chatCtx;
@@ -62,9 +64,9 @@ class FakeRealtimeSession extends RealtimeSession {
         audioStream: stream<AudioFrame>(),
         modalities: Promise.resolve(['text']),
       }),
-      functionStream: stream(
-        FunctionCall.create({ callId: TOOL_CALL_ID, name: 'lookup_order', args: '{}' }),
-      ),
+      functionStream: this.includeTool
+        ? stream(FunctionCall.create({ callId: TOOL_CALL_ID, name: 'lookup_order', args: '{}' }))
+        : stream<FunctionCall>(),
       userInitiated: true,
       responseId: 'response-1',
     };
@@ -97,6 +99,70 @@ class FakeRealtimeModel extends RealtimeModel {
 }
 
 describe('Realtime tool output commit', () => {
+  it('restores audio interruption after a reply without tools', async () => {
+    const model = new FakeRealtimeModel();
+    model.activeSession.includeTool = false;
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    const agent = new Agent({ instructions: 'test' });
+
+    await session.start({ agent });
+    const activity = session._activity as unknown as {
+      isInterruptionDetectionEnabled: boolean;
+      isInterruptionByAudioActivityEnabled: boolean;
+    };
+    activity.isInterruptionDetectionEnabled = true;
+    activity.isInterruptionByAudioActivityEnabled = false;
+
+    try {
+      await session.generateReply().waitForPlayout();
+      await vi.waitFor(() => expect(activity.isInterruptionByAudioActivityEnabled).toBe(true));
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('ends active speech before waiting for a tool', async () => {
+    const toolStarted = new Future<void>();
+    const releaseTool = new Future<void>();
+    const toolFinished = new Future<void>();
+
+    const session = new AgentSession({
+      llm: new FakeRealtimeModel(),
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    const agent = new Agent({
+      instructions: 'test',
+      tools: {
+        lookup_order: tool({
+          description: 'x',
+          execute: async () => {
+            toolStarted.resolve();
+            await releaseTool.await;
+            toolFinished.resolve();
+            return 'ships tomorrow';
+          },
+        }),
+      },
+    });
+
+    await session.start({ agent });
+    const speech = session.generateReply();
+    await toolStarted.await;
+    try {
+      await vi.waitFor(() => expect(session.agentState).toBe('thinking'));
+    } finally {
+      releaseTool.resolve();
+      await toolFinished.await;
+      await speech.waitForPlayout();
+      await session.close();
+    }
+  });
+
   // Regression: the realtime path pushed tool outputs only into the copy sent to
   // the provider and into `session.history`, never into `agent._chatCtx`. That left
   // the agent context with a `function_call` and no matching output, so history

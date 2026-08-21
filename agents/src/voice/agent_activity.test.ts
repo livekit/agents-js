@@ -452,7 +452,7 @@ describe('AgentActivity - mainTask', () => {
     }
   });
 
-  it('does not deadlock cancelling a paused speech whose generation never finishes', async () => {
+  it('does not end paused agent speech twice when cancelling it', async () => {
     const handle = SpeechHandle.create({ allowInterruptions: true });
     handle._authorizeGeneration();
 
@@ -501,7 +501,7 @@ describe('AgentActivity - mainTask', () => {
     expect(result).toBe('resolved');
     expect(handle.interrupted).toBe(true);
     expect(fakeActivity.pausedSpeech).toBeUndefined();
-    expect(fakeActivity.audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledOnce();
+    expect(fakeActivity.audioRecognition.onEndOfAgentSpeech).not.toHaveBeenCalled();
   });
 });
 

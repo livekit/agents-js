@@ -82,6 +82,22 @@ describe('DynamicEndpointing', () => {
     expect(endpointing.maxDelay).toBe(previousMaxDelay);
   });
 
+  it('preserves an ongoing overlap when agent speech resumes', () => {
+    const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000, alpha: 0.5 });
+
+    endpointing.onEndOfSpeech(100_000);
+    endpointing.onStartOfAgentSpeech(100_200);
+    endpointing.onStartOfSpeech(100_400, true);
+    endpointing.onEndOfAgentSpeech(100_600);
+    endpointing.onStartOfAgentSpeech(100_700);
+
+    expect(endpointing.overlapping).toBe(true);
+
+    endpointing.onEndOfSpeech(101_000, true);
+
+    expect(endpointing.minDelay).toBe(300);
+  });
+
   it('updates options and clamps learned delays', () => {
     const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000, alpha: 0.5 });
 
