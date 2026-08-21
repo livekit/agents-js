@@ -1721,6 +1721,7 @@ export class AgentActivity implements RecognitionHooks {
         );
         this.realtimeSession?.interrupt();
         this._currentSpeech.interrupt();
+        this.pendingInterruption = undefined;
       }
     } else {
       this.pendingInterruption = undefined;
