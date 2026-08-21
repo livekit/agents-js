@@ -122,6 +122,8 @@ export class SpeechHandle {
   private generations: Future<void>[] = [];
   private _chatItems: ChatItem[] = [];
   private _error: unknown;
+  private interruptionHolds = 0;
+  private interruptionHoldsRestore: boolean;
 
   /** @internal */
   _tasks: Task<void>[] = [];
@@ -151,6 +153,7 @@ export class SpeechHandle {
     private _inputDetails: InputDetails = DEFAULT_INPUT_DETAILS,
     readonly parent?: SpeechHandle,
   ) {
+    this.interruptionHoldsRestore = _allowInterruptions;
     this.doneFut.await.finally(() => {
       for (const callback of this.doneCallbacks) {
         callback(this);
@@ -221,6 +224,29 @@ export class SpeechHandle {
       );
     }
     this._allowInterruptions = value;
+  }
+
+  /** @internal */
+  _holdInterruptions(): void {
+    if (this.interruptionHolds === 0) {
+      this.interruptionHoldsRestore = this._allowInterruptions;
+      this.allowInterruptions = false;
+    }
+
+    this.interruptionHolds += 1;
+  }
+
+  /** @internal */
+  _releaseInterruptions(): void {
+    this.interruptionHolds -= 1;
+    if (this.interruptionHolds === 0) {
+      // A forced interrupt lands regardless of the hold and leaves nothing to restore.
+      try {
+        this.allowInterruptions = this.interruptionHoldsRestore;
+      } catch {
+        // The handle was already interrupted.
+      }
+    }
   }
 
   done(): boolean {

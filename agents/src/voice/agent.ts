@@ -22,6 +22,7 @@ import {
   type ToolChoice,
   ToolContext,
   type ToolContextLike,
+  ToolError,
   toToolContext,
 } from '../llm/index.js';
 import { log } from '../log.js';
@@ -745,18 +746,6 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     // and the foreground hold keep it alive instead.
     const ownerIsNonBlocking =
       taskInfo.functionCall?.extra.__livekit_agents_tool_non_blocking === true;
-    if (!ownerIsNonBlocking) {
-      currentTask.addDoneCallback(() => {
-        if (this.future.done) return;
-
-        // If the Task finished before the AgentTask was completed, complete the AgentTask with an error.
-        this.#logger.error(`The Task finished before ${this.constructor.name} was completed.`);
-        this.complete(
-          new Error(`The Task finished before ${this.constructor.name} was completed.`),
-        );
-      });
-    }
-
     const oldAgent = oldActivity.agent;
     const session = oldActivity.agentSession;
 
@@ -767,93 +756,127 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       blockedTasks.push(onEnterTask);
     }
 
-    // Register before any await so a concurrent drain (e.g. session close)
-    // won't wait for tasks blocked on this handoff.
-    oldActivity._addDrainBlockedTasks(blockedTasks);
-
-    const activeRunState = session._globalRunState;
-    if (activeRunState && !activeRunState.done()) {
-      for (const task of blockedTasks) {
-        activeRunState._watchHandle(task);
-      }
-    }
-
-    if (
-      taskInfo.functionCall &&
-      oldActivity.llm instanceof RealtimeModel &&
-      !oldActivity.llm.capabilities.manualFunctionCalls
-    ) {
-      this.#logger.error(
-        `Realtime model does not support resuming function calls from chat context, ` +
-          `using AgentTask inside a function tool may have unexpected behavior.`,
-      );
-    }
-
-    const suspendedHandles: Array<SpeechHandle | Task<void>> = [];
-
-    await session._updateActivity(this, {
-      previousActivity: 'pause',
-      newActivity: 'start',
-      blockedTasks,
-    });
-
-    let runState = session._globalRunState;
-    if (runState && !runState.done()) {
-      if (speechHandle && runState._unwatchHandle(speechHandle)) {
-        suspendedHandles.push(speechHandle);
-      }
-
-      for (const task of blockedTasks) {
-        if (runState._unwatchHandle(task)) {
-          suspendedHandles.push(task);
-        }
-      }
-
-      // It is OK to call _markDoneIfNeeded here: _updateActivity has started
-      // the AgentTask activity, and any onEnter-generated speech is now watched.
-      // Only call it when something was actually suspended — a run created
-      // mid-transition has no watched handles yet (its generateReply is still
-      // deferred behind the activity lock), and marking done on an empty
-      // handle set would resolve it before it produced any events.
-      if (suspendedHandles.length > 0) {
-        runState._markDoneIfNeeded();
-      }
-    }
-
     try {
-      return await this.future.await;
-    } finally {
-      // runState could have changed after future resolved
-      runState = session._globalRunState;
+      return await oldActivity._withInlineTaskSlot({
+        speechHandle,
+        blockedTasks,
+        fn: async () => {
+          if (!ownerIsNonBlocking) {
+            currentTask.addDoneCallback(() => {
+              if (this.future.done) return;
 
-      if (session._closing && this._agentActivity === undefined) {
-        // The activity never started because the session is closing; the close path
-        // owns the previous activity.
-      } else if (session.currentAgent !== this) {
-        this.#logger.warn(
-          `${this.constructor.name} completed, but the agent has changed in the meantime. ` +
-            `Ignoring handoff to the previous agent, likely due to AgentSession.updateAgent being invoked.`,
-        );
-        await oldActivity.close();
-      } else {
-        if (runState && !runState.done()) {
-          for (const handle of suspendedHandles) {
-            runState._watchHandle(handle);
+              // If the Task finished before the AgentTask was completed, complete it with an error.
+              this.#logger.error(
+                `The Task finished before ${this.constructor.name} was completed.`,
+              );
+              this.complete(
+                new Error(`The Task finished before ${this.constructor.name} was completed.`),
+              );
+            });
           }
-        }
 
-        const mergedChatCtx = oldAgent._chatCtx.merge(this._chatCtx, {
-          excludeFunctionCall: !this._preserveFunctionCallHistory,
-          excludeInstructions: true,
-        });
-        oldAgent._chatCtx.items = mergedChatCtx.items;
+          if (
+            taskInfo.functionCall &&
+            oldActivity.llm instanceof RealtimeModel &&
+            !oldActivity.llm.capabilities.manualFunctionCalls
+          ) {
+            this.#logger.error(
+              `Realtime model does not support resuming function calls from chat context, ` +
+                `using AgentTask inside a function tool may have unexpected behavior.`,
+            );
+          }
 
-        await session._updateActivity(oldAgent, {
-          previousActivity: 'close',
-          newActivity: 'resume',
-          waitOnEnter: false,
-        });
-      }
+          await session._updateActivity(this, {
+            previousActivity: 'pause',
+            newActivity: 'start',
+            blockedTasks,
+            waitOnEnter: false,
+          });
+
+          if (!this._agentActivity && !this.done) {
+            this.complete(
+              new ToolError(`activity did not start for ${this.id}, likely due to session closing`),
+            );
+          }
+
+          let runState = session._globalRunState;
+          let pendingOnEnterTask: Task<void> | undefined;
+          const taskOnEnter = this._agentActivity?._onEnterTask;
+          if (taskOnEnter) {
+            if (runState && !runState.done()) {
+              // Keep the run alive until onEnter has registered any speech it creates.
+              runState._watchHandle(taskOnEnter);
+              pendingOnEnterTask = taskOnEnter;
+            } else {
+              await taskOnEnter.result;
+            }
+          }
+
+          const suspendedHandles: Array<SpeechHandle | Task<any>> = [];
+          if (runState && !runState.done()) {
+            const suspendHandle = (handle: SpeechHandle | Task<any>) => {
+              if (runState!._unwatchHandle(handle)) {
+                suspendedHandles.push(handle);
+              }
+            };
+
+            if (speechHandle) suspendHandle(speechHandle);
+            for (const blockedTask of blockedTasks) {
+              suspendHandle(blockedTask);
+            }
+            if (suspendedHandles.length > 0) {
+              runState._markDoneIfNeeded();
+            }
+          }
+
+          try {
+            return await this.future.await;
+          } finally {
+            // The active RunResult may have changed while the task waited for user input.
+            runState = session._globalRunState;
+            if (runState && !runState.done()) {
+              for (const handle of suspendedHandles) {
+                runState._watchHandle(handle);
+              }
+            }
+
+            if (pendingOnEnterTask) {
+              try {
+                await pendingOnEnterTask.result;
+              } catch (error) {
+                this.#logger.error(
+                  { error },
+                  `error in onEnter task of agent ${this.constructor.name}`,
+                );
+              }
+            }
+
+            if (session._closing && this._agentActivity === undefined) {
+              // The activity never started because close owns the previous activity.
+            } else if (session.currentAgent !== this) {
+              this.#logger.warn(
+                `${this.constructor.name} completed, but the agent has changed in the meantime. ` +
+                  `Ignoring handoff to the previous agent, likely due to AgentSession.updateAgent being invoked.`,
+              );
+              await oldActivity.close();
+            } else {
+              const mergedChatCtx = oldAgent._chatCtx.merge(this._chatCtx, {
+                excludeFunctionCall: !this._preserveFunctionCallHistory,
+                excludeInstructions: true,
+              });
+              oldAgent._chatCtx.items = mergedChatCtx.items;
+
+              await session._updateActivity(oldAgent, {
+                previousActivity: 'close',
+                newActivity: 'resume',
+                waitOnEnter: false,
+              });
+            }
+          }
+        },
+      });
+    } catch (error) {
+      throw error;
     }
   }
 }

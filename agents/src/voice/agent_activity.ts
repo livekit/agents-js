@@ -48,6 +48,7 @@ import {
   ToolContext,
   type ToolContextEntry,
   type ToolContextLike,
+  ToolError,
   ToolFlag,
   isFunctionTool,
   toToolContext,
@@ -340,6 +341,7 @@ export class AgentActivity implements RecognitionHooks {
   // model to auto-generate a tool reply (autoToolReplyGeneration=true).
   private pendingAutoToolReplyFut?: Future<void, never>;
   private lock = new Mutex();
+  private inlineTaskLock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
 
@@ -4771,6 +4773,52 @@ export class AgentActivity implements RecognitionHooks {
       this._drainBlockedTasks.add(task);
     }
     this.wakeupMainTask();
+  }
+
+  /** @internal */
+  async _withInlineTaskSlot<T>(options: {
+    speechHandle?: SpeechHandle;
+    blockedTasks: Task<any>[];
+    fn: () => Promise<T>;
+  }): Promise<T> {
+    const { speechHandle, blockedTasks, fn } = options;
+
+    // Tasks queued behind the active one share this speech. Counted holds keep it from
+    // becoming interruptible between siblings while one is still waiting for the slot.
+    if (speechHandle) {
+      if (speechHandle.interrupted) {
+        throw new Error('the speech that awaited the inline task is interrupted');
+      }
+      speechHandle._holdInterruptions();
+    }
+
+    try {
+      // Register before waiting for the slot so session close does not drain on a task
+      // that is still queued for the activity it needs to pause.
+      this._addDrainBlockedTasks(blockedTasks);
+
+      const unlock = await this.inlineTaskLock.lock();
+      try {
+        if (this.closed || this.agentSession._closing) {
+          throw new ToolError('the activity that awaited the inline task is closing');
+        }
+
+        // A run must only watch this task once it has the slot. Otherwise it would wait
+        // for user input needed by the task currently ahead of it.
+        const runState = this.agentSession._globalRunState;
+        if (runState && !runState.done()) {
+          for (const task of blockedTasks) {
+            runState._watchHandle(task);
+          }
+        }
+
+        return await fn();
+      } finally {
+        unlock();
+      }
+    } finally {
+      speechHandle?._releaseInterruptions();
+    }
   }
 
   private async _pauseSchedulingTask(blockedTasks: Task<any>[]): Promise<void> {
