@@ -108,7 +108,7 @@ describe('AudioRecognition transcription timeout', () => {
   });
 
   it('held final transcript cancels the timeout', async () => {
-    const { hooks, internals } = createRecognition({ transcriptionTimeout: 2000 });
+    const { hooks, recognition, internals } = createRecognition({ transcriptionTimeout: 2000 });
     internals.userTurnStart = Date.now();
     internals.armTranscriptionTimeout(1000, 0);
     internals.isInterruptionEnabled = true;
@@ -121,6 +121,7 @@ describe('AudioRecognition transcription timeout', () => {
     expect(internals.transcriptionTimeoutTimer).toBeUndefined();
     expect(internals.turnTranscriptReceived).toBe(true);
     expect(internals.transcriptBuffer).toEqual([event]);
+    expect(recognition.hasPendingUserSpeech).toBe(true);
     expect(hooks.onFinalTranscript).not.toHaveBeenCalled();
     expect(hooks.onTranscriptionTimeout).not.toHaveBeenCalled();
   });

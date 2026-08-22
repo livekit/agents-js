@@ -5239,10 +5239,14 @@ export class AgentActivity implements RecognitionHooks {
     this.falseInterruptionTimer = setTimeout(() => {
       this.falseInterruptionTimer = undefined;
 
-      // An open turn decision owns the paused speech. It either commits and interrupts it or
-      // drops it, and only then is the interruption known to be false.
-      const endOfTurnTask = this.audioRecognition?.endOfTurnTask;
-      if (endOfTurnTask && !endOfTurnTask.done) {
+      // A pending turn with speech or transcript evidence owns the pause until its decision
+      // settles. An empty task may outlive the timeout and must not hold playout indefinitely.
+      const audioRecognition = this.audioRecognition;
+      const endOfTurnTask = audioRecognition?.endOfTurnTask;
+      const hasUserActivity =
+        this.agentSession.userState === 'speaking' ||
+        Boolean(audioRecognition?.hasPendingUserSpeech);
+      if (endOfTurnTask && !endOfTurnTask.done && hasUserActivity) {
         this.falseInterruptionPending = true;
         endOfTurnTask.addDoneCallback(() => onTurnSettled(endOfTurnTask));
         return;
