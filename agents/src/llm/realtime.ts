@@ -151,6 +151,11 @@ export abstract class RealtimeSession extends EventEmitter {
     return this._realtimeModel;
   }
 
+  /** Capabilities of this session. Providers may override this for session-specific options. */
+  get capabilities() {
+    return this._realtimeModel.capabilities;
+  }
+
   abstract get chatCtx(): ChatContext;
 
   abstract get tools(): ToolContext;

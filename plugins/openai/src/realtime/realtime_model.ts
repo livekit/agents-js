@@ -102,6 +102,18 @@ export function isFatalError(error: unknown): boolean {
   return typeof errorCode === 'string' && FATAL_ERROR_CODES.has(errorCode);
 }
 
+function serverTurnTakingEnabled(turnDetection?: api_proto.TurnDetectionType | null): boolean {
+  return turnDetection !== null && turnDetection?.create_response !== false;
+}
+
+function warnOnHalfDisabledTurnTaking(turnDetection?: api_proto.TurnDetectionType | null): void {
+  if (turnDetection?.create_response === false && turnDetection.interrupt_response !== false) {
+    log().warn(
+      'create_response=false hands turn taking to the client, but the server still cancels its response on user speech, pass interrupt_response=false as well',
+    );
+  }
+}
+
 class CreateResponseHandle {
   instructions?: string;
   doneFut: Future<llm.GenerationCreatedEvent>;
@@ -160,6 +172,7 @@ export class RealtimeModel extends llm.RealtimeModel {
 
   /* @internal */
   _options: RealtimeOptions;
+  private sessions = new Set<WeakRef<RealtimeSession>>();
 
   get model(): string {
     return this._options.model;
@@ -204,9 +217,10 @@ export class RealtimeModel extends llm.RealtimeModel {
     const modalities = (options.modalities ||
       DEFAULT_REALTIME_MODEL_OPTIONS.modalities) as Modality[];
 
+    warnOnHalfDisabledTurnTaking(options.turnDetection);
     super({
       messageTruncation: true,
-      turnDetection: options.turnDetection !== null,
+      turnDetection: serverTurnTakingEnabled(options.turnDetection),
       canDisableTurnDetection: options.turnDetection === undefined,
       userTranscription: options.inputAudioTranscription !== null,
       autoToolReplyGeneration: false,
@@ -356,7 +370,42 @@ export class RealtimeModel extends llm.RealtimeModel {
   }
 
   session(options: llm.RealtimeSessionOptions = {}) {
-    return new RealtimeSession(this, options);
+    const session = new RealtimeSession(this, options);
+    this.sessions.add(new WeakRef(session));
+    return session;
+  }
+
+  updateOptions(options: {
+    voice?: string;
+    turnDetection?: api_proto.TurnDetectionType | null;
+    toolChoice?: llm.ToolChoice | null;
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+  }): void {
+    if (options.voice !== undefined) this._options.voice = options.voice;
+    if (options.turnDetection !== undefined) {
+      this._options.turnDetection = options.turnDetection;
+      this.capabilities.turnDetection = serverTurnTakingEnabled(options.turnDetection);
+      warnOnHalfDisabledTurnTaking(options.turnDetection);
+    }
+    if (options.toolChoice !== undefined)
+      this._options.toolChoice = options.toolChoice ?? undefined;
+    if (options.inputAudioTranscription !== undefined) {
+      this._options.inputAudioTranscription = options.inputAudioTranscription;
+      this.capabilities.userTranscription = options.inputAudioTranscription !== null;
+    }
+    for (const sessionRef of this.sessions) {
+      const session = sessionRef.deref();
+      if (!session) {
+        this.sessions.delete(sessionRef);
+        continue;
+      }
+      session.updateOptions({
+        ...options,
+        turnDetection:
+          options.turnDetection !== undefined ? this._options.turnDetection : undefined,
+        inputAudioTranscription: this._options.inputAudioTranscription,
+      });
+    }
   }
 
   async close() {
@@ -465,6 +514,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   // per-session copy of options so updateOptions can diff against the session's
   // own state instead of the shared model-level state.
   private _options: RealtimeOptions;
+  private _capabilities: llm.RealtimeCapabilities;
   private currentGeneration?: ResponseGeneration | DiscardedGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
   private discardedEventIds = new Set<string>();
@@ -504,6 +554,12 @@ export class RealtimeSession extends llm.RealtimeSession {
     this._options = {
       ...realtimeModel._options,
       turnDetection: options.turnDetectionDisabled ? null : realtimeModel._options.turnDetection,
+    };
+    this._capabilities = {
+      ...realtimeModel.capabilities,
+      turnDetection: options.turnDetectionDisabled
+        ? false
+        : realtimeModel.capabilities.turnDetection,
     };
 
     this.#task = Task.from(({ signal }) => this.#mainTask(signal));
@@ -583,6 +639,10 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   get chatCtx() {
     return this.remoteChatCtx.toChatCtx();
+  }
+
+  get capabilities() {
+    return this._capabilities;
   }
 
   get tools() {
@@ -837,27 +897,76 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.instructions = _instructions;
   }
 
-  updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
-    const currentToolChoice = toOaiToolChoice(this._options.toolChoice);
-    const nextToolChoice = toOaiToolChoice(toolChoice);
-    if (currentToolChoice === nextToolChoice) {
-      this._options.toolChoice = toolChoice;
-      return;
-    }
-
+  updateOptions(options: {
+    toolChoice?: llm.ToolChoice | null;
+    voice?: string;
+    turnDetection?: api_proto.TurnDetectionType | null;
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+  }): void {
     const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
-    const options: api_proto.SessionUpdateEvent['session'] = {
+    const sessionUpdate: api_proto.SessionUpdateEvent['session'] = {
       ...(!isLegacyAzure && { type: 'realtime' }),
     };
+    let hasChanges = false;
 
-    this._options.toolChoice = toolChoice;
-    options.tool_choice = toOaiToolChoice(toolChoice);
+    if (options.toolChoice !== undefined) {
+      const nextToolChoice = options.toolChoice ?? undefined;
+      if (toOaiToolChoice(this._options.toolChoice) !== toOaiToolChoice(nextToolChoice)) {
+        sessionUpdate.tool_choice = toOaiToolChoice(nextToolChoice);
+        hasChanges = true;
+      }
+      this._options.toolChoice = nextToolChoice;
+    }
 
-    // TODO(brian): add other options here
+    const audioInput: api_proto.RealtimeAudioConfigInput = {};
+    const audioOutput: api_proto.RealtimeAudioConfigOutput = {};
+    let hasAudioInput = false;
+    let hasAudioOutput = false;
+
+    if (options.voice !== undefined) {
+      if (this._options.voice !== options.voice) {
+        if (isLegacyAzure) sessionUpdate.voice = options.voice as api_proto.Voice;
+        else audioOutput.voice = options.voice as api_proto.Voice;
+        hasAudioOutput = true;
+      }
+      this._options.voice = options.voice as api_proto.Voice;
+    }
+    if (options.turnDetection !== undefined) {
+      if (this._options.turnDetection !== options.turnDetection) {
+        if (isLegacyAzure) sessionUpdate.turn_detection = options.turnDetection;
+        else audioInput.turn_detection = options.turnDetection;
+        hasAudioInput = true;
+      }
+      this._options.turnDetection = options.turnDetection;
+      this._capabilities.turnDetection = serverTurnTakingEnabled(options.turnDetection);
+    }
+    if (options.inputAudioTranscription !== undefined) {
+      if (this._options.inputAudioTranscription !== options.inputAudioTranscription) {
+        if (isLegacyAzure) {
+          sessionUpdate.input_audio_transcription = options.inputAudioTranscription;
+        } else {
+          audioInput.transcription = options.inputAudioTranscription;
+        }
+        hasAudioInput = true;
+      }
+      this._options.inputAudioTranscription = options.inputAudioTranscription;
+      this._capabilities.userTranscription = options.inputAudioTranscription !== null;
+    }
+    if (!isLegacyAzure && (hasAudioInput || hasAudioOutput)) {
+      sessionUpdate.audio = {
+        ...(hasAudioInput && { input: audioInput }),
+        ...(hasAudioOutput && { output: audioOutput }),
+      };
+      hasChanges = true;
+    } else if (isLegacyAzure && (hasAudioInput || hasAudioOutput)) {
+      hasChanges = true;
+    }
+
+    if (!hasChanges) return;
 
     this.sendEvent({
       type: 'session.update',
-      session: options,
+      session: sessionUpdate,
       event_id: shortuuid('options_update_'),
     });
   }
