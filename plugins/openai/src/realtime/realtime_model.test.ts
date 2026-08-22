@@ -118,6 +118,48 @@ describe('RealtimeModel turn detection disabling', () => {
     expect(explicitOff.capabilities.turnDetection).toBe(false);
     expect(explicitOff.capabilities.canDisableTurnDetection).toBe(false);
   });
+
+  it('keeps derived capabilities in sync with model updateOptions', () => {
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: { type: 'server_vad' },
+    });
+    expect(model.capabilities.turnDetection).toBe(true);
+    expect(model.capabilities.userTranscription).toBe(true);
+
+    model.updateOptions({
+      turnDetection: {
+        type: 'server_vad',
+        create_response: false,
+        interrupt_response: false,
+      },
+      inputAudioTranscription: null,
+    });
+    expect(model.capabilities.turnDetection).toBe(false);
+    expect(model.capabilities.userTranscription).toBe(false);
+
+    model.updateOptions({
+      turnDetection: { type: 'server_vad' },
+      inputAudioTranscription: { model: 'whisper-1' },
+    });
+    expect(model.capabilities.turnDetection).toBe(true);
+    expect(model.capabilities.userTranscription).toBe(true);
+  });
+
+  it('leaves derived capabilities alone when model updateOptions omits them', () => {
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: {
+        type: 'server_vad',
+        create_response: false,
+        interrupt_response: false,
+      },
+    });
+
+    model.updateOptions({ voice: 'marin' });
+
+    expect(model.capabilities.turnDetection).toBe(false);
+  });
 });
 
 describe('RealtimeSession.generateReply', () => {
@@ -1051,6 +1093,29 @@ describe('RealtimeSession.updateOptions', () => {
 
     sessionB.updateOptions({ toolChoice: 'required' });
     expect(sendEventSpyB).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps derived capabilities on the session', () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: { type: 'server_vad' },
+    });
+    const session = model.session();
+
+    session.updateOptions({
+      turnDetection: {
+        type: 'server_vad',
+        create_response: false,
+        interrupt_response: false,
+      },
+      inputAudioTranscription: null,
+    });
+
+    expect(session.capabilities.turnDetection).toBe(false);
+    expect(session.capabilities.userTranscription).toBe(false);
+    expect(model.capabilities.turnDetection).toBe(true);
+    expect(model.capabilities.userTranscription).toBe(true);
   });
 });
 
