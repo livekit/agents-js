@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { LiveServerContent } from '@google/genai';
 import { Behavior, FunctionResponseScheduling } from '@google/genai';
 import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
@@ -179,6 +180,75 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     session.clearPendingToolCallIdsForResponses(result?.functionResponses ?? []);
 
     expect(session.pendingToolCallIds.has('call_123')).toBe(false);
+  });
+});
+
+type ServerContentSessionInternals = {
+  _realtimeModel: { capabilities: { audioOutput: boolean } };
+  options: { outputAudioTranscription?: Record<string, never> };
+  earlyCompletionPending: boolean;
+  currentGeneration: {
+    outputText: string;
+    textChannel: { write: ReturnType<typeof vi.fn> };
+  };
+  handleServerContent(serverContent: LiveServerContent): void;
+};
+
+function createServerContentSession({
+  audioOutput,
+  outputAudioTranscription,
+}: {
+  audioOutput: boolean;
+  outputAudioTranscription?: Record<string, never>;
+}): ServerContentSessionInternals {
+  const session = Object.create(RealtimeSession.prototype) as ServerContentSessionInternals;
+  session._realtimeModel = { capabilities: { audioOutput } };
+  session.options = { outputAudioTranscription };
+  session.earlyCompletionPending = false;
+  session.currentGeneration = {
+    outputText: '',
+    textChannel: { write: vi.fn() },
+  };
+  return session;
+}
+
+describe('Google Realtime model text parts', () => {
+  const modelTextTurn: LiveServerContent = {
+    modelTurn: { parts: [{ text: 'call:getWeather{location:Seattle' }] },
+    outputTranscription: { text: 'Let me check.' },
+  };
+
+  it('keeps unspoken model text out of the transcript in an audio session', () => {
+    const session = createServerContentSession({
+      audioOutput: true,
+      outputAudioTranscription: {},
+    });
+
+    session.handleServerContent(modelTextTurn);
+
+    expect(session.currentGeneration.textChannel.write.mock.calls).toEqual([['Let me check.']]);
+    expect(session.currentGeneration.outputText).toBe('Let me check.');
+  });
+
+  it('forwards model text when the session runs in text modality', () => {
+    const session = createServerContentSession({
+      audioOutput: false,
+      outputAudioTranscription: {},
+    });
+
+    session.handleServerContent({ modelTurn: { parts: [{ text: 'Hello there.' }] } });
+
+    expect(session.currentGeneration.textChannel.write.mock.calls).toEqual([['Hello there.']]);
+    expect(session.currentGeneration.outputText).toBe('Hello there.');
+  });
+
+  it('forwards model text when output transcription is disabled', () => {
+    const session = createServerContentSession({ audioOutput: true });
+
+    session.handleServerContent({ modelTurn: { parts: [{ text: 'Hello there.' }] } });
+
+    expect(session.currentGeneration.textChannel.write.mock.calls).toEqual([['Hello there.']]);
+    expect(session.currentGeneration.outputText).toBe('Hello there.');
   });
 });
 
