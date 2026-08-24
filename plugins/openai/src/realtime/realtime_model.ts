@@ -1620,6 +1620,16 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('item.id is not set');
     }
 
+    let previousItemId = event.previous_item_id;
+    if (previousItemId && !this.remoteChatCtx.get(previousItemId)) {
+      // The server can anchor to an item it just deleted; the item belongs at the tail.
+      this.#logger.warn(
+        { itemId: event.item.id, previousItemId },
+        `${this.oaiRealtimeModel.label()} anchored an item to one it is no longer tracking, appending it instead`,
+      );
+      previousItemId = this.remoteChatCtx.tailId ?? '';
+    }
+
     const serverEventType = event.type as string;
     const incomingItem = openAIItemToLivekitItem(event.item);
     const existingItem = this.remoteChatCtx.get(event.item.id);
@@ -1632,7 +1642,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     try {
-      this.remoteChatCtx.insert(event.previous_item_id, incomingItem);
+      this.remoteChatCtx.insert(previousItemId, incomingItem);
     } catch (error) {
       this.#logger.error({ error, itemId: event.item.id }, 'failed to insert conversation item');
     }
@@ -2091,7 +2101,14 @@ export class RealtimeSession extends llm.RealtimeSession {
       const future = this.chatCtxEventFutures[eventId];
       if (future) {
         delete this.chatCtxEventFutures[eventId];
-        if (!future.done) future.reject(new Error(event.error.message));
+        if (!future.done) {
+          // A duplicate ID means the item is already there, as the create wanted.
+          if (event.error.code === 'item_create_duplicate_item_id') {
+            future.resolve();
+          } else {
+            future.reject(new Error(event.error.message));
+          }
+        }
         if (!isFatalError(event.error)) return;
       }
     }
