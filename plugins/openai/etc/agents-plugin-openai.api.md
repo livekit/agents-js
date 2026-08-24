@@ -1897,6 +1897,9 @@ export interface TTSOptions {
     instructions?: string;
     // (undocumented)
     model: TTSModels | string;
+    // Warning: (ae-forgotten-export) The symbol "TTSResponseFormat" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents-plugin-openai" does not have an export "UNPLAYABLE_CONTENT_TYPES"
+    responseFormat?: TTSResponseFormat;
     // (undocumented)
     speed: number;
     // (undocumented)
