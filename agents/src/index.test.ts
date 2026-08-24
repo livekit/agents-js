@@ -7,6 +7,8 @@ import {
   AgentSession,
   ChatContext,
   ModelUsageCollector,
+  SpeechHandle,
+  SpeechHandleCircularWaitError,
   logMetrics,
   tool,
 } from './index.js';
@@ -19,5 +21,7 @@ describe('index exports', () => {
     expect(tool).toBeDefined();
     expect(ModelUsageCollector).toBeDefined();
     expect(logMetrics).toBeDefined();
+    expect(SpeechHandle).toBeDefined();
+    expect(SpeechHandleCircularWaitError).toBeDefined();
   });
 });
