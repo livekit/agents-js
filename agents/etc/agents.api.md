@@ -2027,29 +2027,8 @@ export function calculateAudioDurationSeconds(frame: AudioBuffer_2): number;
 // @public (undocumented)
 export function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void>;
 
-// Warning: (ae-internal-missing-underscore) The name "CancellablePromise" should be prefixed with an underscore because the declaration is marked as @internal
+// Warning: (ae-missing-release-tag) "CartesiaModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @internal (undocumented)
-export class CancellablePromise<T, E extends Error = Error> {
-    constructor(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason: E) => void, onCancel: (cancelFn: () => void) => void) => void);
-    // (undocumented)
-    cancel(): void;
-    // (undocumented)
-    catch<TResult = never>(onrejected?: ((reason: E) => TResult | Promise<TResult>) | null): Promise<Throws<T | TResult | undefined, E>>;
-    // (undocumented)
-    get error(): Error | null;
-    // (undocumented)
-    finally(onfinally?: (() => void) | null): Promise<Throws<T, E>>;
-    // (undocumented)
-    static from<T, E extends Error = Error>(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>;
-    // (undocumented)
-    static from<T>(promise: Promise<T>): CancellablePromise<T>;
-    // (undocumented)
-    get isCancelled(): boolean;
-    // (undocumented)
-    then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null, onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null): Promise<TResult1 | TResult2>;
-}
-
 // @public (undocumented)
 type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 
@@ -3991,12 +3970,8 @@ interface GoogleSTTOptions {
     custom_vocabulary?: string[];
     language_codes?: string[];
 }
-
-// Warning: (ae-internal-missing-underscore) The name "gracefullyCancel" should be prefixed with an underscore because the declaration is marked as @internal
+// Warning: (ae-missing-release-tag) "handoff" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @internal (undocumented)
-export function gracefullyCancel<T>(promise: CancellablePromise<T>): Promise<void>;
-
 // @public (undocumented)
 export function handoff(options: {
     agent: Agent;
