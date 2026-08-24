@@ -26,6 +26,9 @@ const createFakeTask = () => {
   const complete = vi.fn(() => {
     done = true;
   });
+  const setInputAudioEnabled = vi.fn();
+  const setOutputAudioEnabled = vi.fn();
+  const setOutputTranscriptionEnabled = vi.fn();
   const task = {
     get done() {
       return done;
@@ -47,20 +50,26 @@ const createFakeTask = () => {
       input: {
         audio: {},
         audioEnabled: true,
-        setAudioEnabled: vi.fn(),
+        setAudioEnabled: setInputAudioEnabled,
       },
       output: {
         audio: {},
         audioEnabled: true,
         transcription: {},
         transcriptionEnabled: true,
-        setAudioEnabled: vi.fn(),
-        setTranscriptionEnabled: vi.fn(),
+        setAudioEnabled: setOutputAudioEnabled,
+        setTranscriptionEnabled: setOutputTranscriptionEnabled,
       },
     },
   } as unknown as AgentTask<WarmTransferResult>;
   const create = vi.spyOn(AgentTask, 'create').mockReturnValue(task);
-  return { complete, create };
+  return {
+    complete,
+    create,
+    setInputAudioEnabled,
+    setOutputAudioEnabled,
+    setOutputTranscriptionEnabled,
+  };
 };
 
 const createCallerRoom = (): Room =>
@@ -142,11 +151,26 @@ describe('createWarmTransferTask', () => {
     ).toThrow(/must not be empty/);
   });
 
+  it('aborts before dialing when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    const reason = new Error('application shutdown');
+    controller.abort(reason);
+    const { close, createSipParticipant, disconnect } = mockDial();
+    const { complete, create } = setupTransfer(controller.signal);
+
+    await create.mock.calls[0]![0].onEnter!({} as never);
+
+    expect(complete).toHaveBeenCalledWith(reason);
+    expect(createSipParticipant).not.toHaveBeenCalled();
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+  });
+
   it('aborts a pending dial with the signal reason', async () => {
     const controller = new AbortController();
     const reason = new Error('application shutdown');
     const dial = new Promise<never>(() => {});
-    const { close, createSipParticipant, disconnect } = mockDial(dial);
+    const { close, createSipParticipant, disconnect, shutdown } = mockDial(dial);
     const { complete, create } = setupTransfer(controller.signal);
 
     const entering = create.mock.calls[0]![0].onEnter!({} as never);
@@ -156,7 +180,76 @@ describe('createWarmTransferTask', () => {
 
     expect(complete).toHaveBeenCalledWith(reason);
     expect(disconnect).toHaveBeenCalledOnce();
-    expect(close).toHaveBeenCalledOnce();
+    expect(shutdown).toHaveBeenCalledWith({ drain: false });
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('does not block cancellation on transfer session teardown', async () => {
+    const controller = new AbortController();
+    const reason = new Error('application shutdown');
+    const dial = new Promise<never>(() => {});
+    const { close, createSipParticipant, disconnect, shutdown } = mockDial(dial);
+    close.mockReturnValue(new Promise<void>(() => {}));
+    const { complete, create } = setupTransfer(controller.signal);
+
+    const entering = create.mock.calls[0]![0].onEnter!({} as never);
+    await vi.waitFor(() => expect(createSipParticipant).toHaveBeenCalled());
+    controller.abort(reason);
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledWith(reason));
+
+    const outcome = await Promise.race([
+      entering.then(() => 'completed' as const),
+      new Promise<'timed out'>((resolve) => {
+        setTimeout(() => resolve('timed out'), 100);
+      }),
+    ]);
+
+    expect(outcome).toBe('completed');
+    expect(shutdown).toHaveBeenCalledWith({ drain: false });
+    expect(close).not.toHaveBeenCalled();
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
+      disconnect.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('keeps caller I/O disabled until cancellation cleanup exits the task', async () => {
+    const controller = new AbortController();
+    const reason = new Error('application shutdown');
+    const dial = new Promise<never>(() => {});
+    let finishDisconnect!: () => void;
+    const disconnecting = new Promise<void>((resolve) => {
+      finishDisconnect = resolve;
+    });
+    const { createSipParticipant, disconnect } = mockDial(dial);
+    disconnect.mockReturnValue(disconnecting);
+    const {
+      complete,
+      create,
+      setInputAudioEnabled,
+      setOutputAudioEnabled,
+      setOutputTranscriptionEnabled,
+    } = setupTransfer(controller.signal);
+    const options = create.mock.calls[0]![0];
+
+    const entering = options.onEnter!({} as never);
+    await vi.waitFor(() => expect(createSipParticipant).toHaveBeenCalled());
+    controller.abort(reason);
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledWith(reason));
+
+    const ioStateBeforeExit = [
+      setInputAudioEnabled.mock.lastCall?.[0],
+      setOutputAudioEnabled.mock.lastCall?.[0],
+      setOutputTranscriptionEnabled.mock.lastCall?.[0],
+    ];
+    finishDisconnect();
+    await entering;
+    await options.onExit!({} as never);
+
+    expect(ioStateBeforeExit).toEqual([false, false, false]);
+    expect(setInputAudioEnabled).toHaveBeenLastCalledWith(true);
+    expect(setOutputAudioEnabled).toHaveBeenLastCalledWith(true);
+    expect(setOutputTranscriptionEnabled).toHaveBeenLastCalledWith(true);
   });
 
   it('aborts an active consultation with the signal reason', async () => {
@@ -190,7 +283,7 @@ describe('createWarmTransferTask', () => {
   });
 
   it.each(['completes', 'fails', 'times out'] as const)(
-    'waits until caller-hangup notice playout %s before shutting down an answered agent',
+    'waits until caller-hangup notice playout %s before exiting and shutting down an answered agent',
     async (outcome) => {
       const controller = new AbortController();
       const timeoutController = new AbortController();
@@ -206,10 +299,18 @@ describe('createWarmTransferTask', () => {
       vi.spyOn(AgentSession.prototype, 'generateReply').mockReturnValue({
         waitForPlayout,
       } as never);
+      let finishRemoval!: () => void;
+      const removal = new Promise<void>((resolve) => {
+        finishRemoval = resolve;
+      });
+      const removeParticipant = vi
+        .spyOn(RoomServiceClient.prototype, 'removeParticipant')
+        .mockReturnValue(removal as never);
       const { shutdown } = mockDial();
       const { callerRoom, create } = setupTransfer(controller.signal);
 
-      await create.mock.calls[0]![0].onEnter!({} as never);
+      const options = create.mock.calls[0]![0];
+      await options.onEnter!({} as never);
       const onCallerLeft = vi
         .mocked(callerRoom.on)
         .mock.calls.find(([event]) => event === RoomEvent.ParticipantDisconnected)?.[1];
@@ -221,17 +322,36 @@ describe('createWarmTransferTask', () => {
 
       await vi.waitFor(() => expect(waitForPlayout).toHaveBeenCalledOnce());
       expect(shutdown).not.toHaveBeenCalled();
+      let exitFinished = false;
+      const exiting = Promise.resolve(options.onExit!({} as never)).then(() => {
+        exitFinished = true;
+      });
+      await Promise.resolve();
+      expect(exitFinished).toBe(false);
 
       if (outcome === 'completes') {
         completePlayout();
       } else if (outcome === 'fails') {
         failPlayout(new Error('playout failed'));
       } else {
-        expect(timeout).toHaveBeenCalledWith(10_000);
+        expect(timeout).toHaveBeenCalledWith(30_000);
         timeoutController.abort();
       }
 
+      await vi.waitFor(
+        () =>
+          expect(removeParticipant).toHaveBeenCalledWith(
+            'caller-room-human-agent',
+            'human-agent-sip',
+          ),
+        { timeout: 200 },
+      );
+      expect(exitFinished).toBe(false);
+      expect(shutdown).not.toHaveBeenCalled();
+      finishRemoval();
       await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce());
+      await exiting;
+      expect(exitFinished).toBe(true);
     },
   );
 

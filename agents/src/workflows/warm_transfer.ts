@@ -193,6 +193,8 @@ export function createWarmTransferTask({
   // Session handed off to the caller-hangup notification flow, which owns its
   // teardown from that point on — no other cleanup path may close it.
   let hangupNotifySession: AgentSession | null = null;
+  // Task exit keeps the caller job alive until the notification finishes.
+  let hangupNotifyPromise: Promise<void> | null = null;
   let holdAudioHandle: PlayHandle | null = null;
   let originalIoState: IoState | null = null;
 
@@ -244,7 +246,6 @@ export function createWarmTransferTask({
       logger.warn({ error }, 'failed to close background audio');
     });
 
-    setIoEnabled(true);
     task.complete(result);
   };
 
@@ -266,7 +267,10 @@ export function createWarmTransferTask({
 
   // Announces the caller hangup to the human agent, then hangs up on them by
   // shutting the session down (deleteRoomOnClose ends the SIP call).
-  const notifyHumanAgentOfHangup = async (session: AgentSession): Promise<void> => {
+  const notifyHumanAgentOfHangup = async (
+    session: AgentSession,
+    room: Room | null,
+  ): Promise<void> => {
     try {
       session.interrupt();
       const handle = session.generateReply({
@@ -277,11 +281,27 @@ export function createWarmTransferTask({
         toolChoice: 'none',
       });
       // Cap the wait so teardown can't hang on a stuck playout.
-      await waitUntilAborted(handle.waitForPlayout(), AbortSignal.timeout(10_000));
+      const playout = await waitUntilAborted(
+        handle.waitForPlayout(),
+        AbortSignal.timeout(CALLER_HANGUP_NOTICE_TIMEOUT_MS),
+      );
+      if (playout.isAborted) {
+        logger.warn(
+          { timeoutMs: CALLER_HANGUP_NOTICE_TIMEOUT_MS },
+          'caller hangup notification timed out',
+        );
+      }
     } catch (error) {
       logger.warn({ error }, 'failed to notify human agent of caller hangup');
     } finally {
-      session.shutdown();
+      if (room?.name && jobCtx) {
+        const info = jobCtx.info;
+        const rooms = new RoomServiceClient(info.url, info.apiKey, info.apiSecret);
+        await rooms.removeParticipant(room.name, humanAgentIdentity).catch((error) => {
+          logger.warn({ error }, 'failed to remove human agent after caller hangup');
+        });
+      }
+      session.shutdown({ drain: false });
     }
   };
 
@@ -298,10 +318,11 @@ export function createWarmTransferTask({
     // on them mid-briefing.
     const session = transferAgentSession;
     if (session) {
+      const room = humanAgentRoom;
       transferAgentSession = null;
       humanAgentRoom = null;
       hangupNotifySession = session;
-      void notifyHumanAgentOfHangup(session);
+      hangupNotifyPromise = notifyHumanAgentOfHangup(session, room);
     }
     setResult(new ToolError('caller hung up before the transfer completed'));
   };
@@ -364,11 +385,11 @@ export function createWarmTransferTask({
     session?: AgentSession | null,
     room?: Room | null,
   ): Promise<void> => {
+    // Start shutdown before disconnect so closeOnDisconnect cannot start a
+    // second close. Internal session teardown continues after the room is gone.
+    session?.shutdown({ drain: false });
     await room?.disconnect().catch((error) => {
       logger.warn({ error }, 'failed to disconnect human agent room');
-    });
-    await session?.close().catch((error) => {
-      logger.warn({ error }, 'failed to close transfer agent session');
     });
   };
 
@@ -570,8 +591,14 @@ export function createWarmTransferTask({
     llm: llm ?? undefined,
     tts: tts ?? undefined,
     allowInterruptions,
-    onExit: () => {
+    onExit: async () => {
       abortSignal?.removeEventListener('abort', onAbort);
+      if (hangupNotifyPromise) {
+        await hangupNotifyPromise;
+      }
+      // Keep the transfer activity deaf to the caller until dial cleanup has
+      // finished and the framework is ready to resume the original agent.
+      setIoEnabled(true);
     },
     onEnter: async () => {
       jobCtx = getJobContext();
@@ -731,6 +758,8 @@ export function resolveHumanAgentRoomName(callerRoomName: string, override?: str
 
 const CALLER_HANGUP_INSTRUCTION = `The caller has hung up before the transfer could be completed.
 Briefly inform the human agent that the caller has left and that you are ending the call now.`;
+
+const CALLER_HANGUP_NOTICE_TIMEOUT_MS = 30_000;
 
 const PERSONA = `# Identity
 
