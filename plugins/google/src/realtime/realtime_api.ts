@@ -414,8 +414,8 @@ export class RealtimeModel extends llm.RealtimeModel {
   /**
    * Create a new realtime session
    */
-  session() {
-    return new RealtimeSession(this);
+  session(options?: llm.RealtimeSessionOptions) {
+    return new RealtimeSession(this, options);
   }
 
   /**
@@ -499,10 +499,24 @@ export class RealtimeSession extends llm.RealtimeSession {
   #logger = log();
   #closed = false;
 
-  constructor(realtimeModel: RealtimeModel) {
+  constructor(realtimeModel: RealtimeModel, sessionOptions?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
 
     this.options = realtimeModel._options;
+
+    // Seed the initial configuration before #mainTask starts: tools and
+    // instructions are serialized into the setup frame of the first connection,
+    // and the same values arriving later through updateTools/updateInstructions
+    // would force a reconnect (tools cannot be updated mid-session at all).
+    if (sessionOptions?.instructions !== undefined) {
+      this.options.instructions = sessionOptions.instructions;
+    }
+    if (sessionOptions?.tools !== undefined) {
+      this._tools = sessionOptions.tools.copy();
+    }
+    if (sessionOptions?.chatCtx !== undefined) {
+      this._chatCtx = sessionOptions.chatCtx.copy();
+    }
     this.bstream = new AudioByteStream(
       INPUT_AUDIO_SAMPLE_RATE,
       INPUT_AUDIO_CHANNELS,
@@ -1015,6 +1029,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     while (!this.#closed) {
       // previous session might not be closed yet, we'll do it here.
       await this.closeActiveSession();
+
+      // close() may have run while we were waiting on the session lock
+      if (this.#closed) break;
 
       this.sessionShouldClose.clear();
       const config = this.buildConnectConfig();

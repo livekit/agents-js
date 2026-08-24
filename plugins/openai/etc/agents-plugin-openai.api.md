@@ -1135,7 +1135,7 @@ class RealtimeModel_2 extends llm.RealtimeModel {
     // (undocumented)
     sampleRate: number;
     // (undocumented)
-    session(): RealtimeSession_2;
+    session(options?: llm.RealtimeSessionOptions): RealtimeSession_2;
     static withAzure(input: {
         azureDeployment: string;
         azureEndpoint?: string;
@@ -1157,7 +1157,7 @@ class RealtimeModel_2 extends llm.RealtimeModel {
 //
 // @public
 class RealtimeSession_2 extends llm.RealtimeSession {
-    constructor(realtimeModel: RealtimeModel_2);
+    constructor(realtimeModel: RealtimeModel_2, sessionOptions?: llm.RealtimeSessionOptions);
     // (undocumented)
     get chatCtx(): llm.ChatContext;
     // (undocumented)

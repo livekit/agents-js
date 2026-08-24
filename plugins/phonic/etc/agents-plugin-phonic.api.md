@@ -117,7 +117,7 @@ class RealtimeModel extends llm.RealtimeModel {
     // (undocumented)
     get provider(): string;
     // Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
-    session(): RealtimeSession_2;
+    session(options?: llm.RealtimeSessionOptions): RealtimeSession_2;
 }
 
 // Warning: (ae-missing-release-tag) "RealtimeModelOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

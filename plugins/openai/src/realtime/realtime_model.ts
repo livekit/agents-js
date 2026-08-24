@@ -348,8 +348,8 @@ export class RealtimeModel extends llm.RealtimeModel {
     });
   }
 
-  session() {
-    return new RealtimeSession(this);
+  session(options?: llm.RealtimeSessionOptions) {
+    return new RealtimeSession(this, options);
   }
 
   async close() {
@@ -486,7 +486,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   #task: Task<void>;
   #closed = false;
 
-  constructor(realtimeModel: RealtimeModel) {
+  constructor(realtimeModel: RealtimeModel, sessionOptions?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
 
     this.oaiRealtimeModel = realtimeModel;
@@ -497,9 +497,29 @@ export class RealtimeSession extends llm.RealtimeSession {
     // diff to always see "no change" and never send session.update.
     this._options = { ...realtimeModel._options };
 
+    // seed before the initial session.update below so instructions ride the
+    // first frame and tools are configured before any generation can start
+    if (sessionOptions?.instructions !== undefined) {
+      this.instructions = sessionOptions.instructions;
+    }
+    if (sessionOptions?.tools !== undefined) {
+      this._tools = sessionOptions.tools.copy();
+    }
+
     this.#task = Task.from(({ signal }) => this.#mainTask(signal));
 
     this.sendEvent(this.createSessionUpdateEvent());
+
+    if (sessionOptions?.tools !== undefined && Object.keys(this._tools.functionTools).length > 0) {
+      this.sendEvent(this.createToolsUpdateEvent(this._tools));
+    }
+    if (sessionOptions?.chatCtx !== undefined && sessionOptions.chatCtx.items.length > 0) {
+      // the standard update path queues the item events ahead of the socket
+      // connecting; a later updateChatCtx with the same context diffs to empty
+      void this.updateChatCtx(sessionOptions.chatCtx).catch((error) => {
+        this.#logger.error(error, 'failed to apply the initial chat context');
+      });
+    }
   }
 
   private hasInflightResponse(): boolean {

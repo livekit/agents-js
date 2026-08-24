@@ -1098,6 +1098,48 @@ describe('RealtimeSession chat context update events', () => {
   });
 });
 
+describe('RealtimeSession initial session options', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('seeds instructions and tools into the pre-connect event queue', () => {
+    stubTaskRuntime();
+
+    const tools = new llm.ToolContext([
+      llm.tool({ name: 'lookup', description: 'look something up', execute: async () => 'ok' }),
+    ]);
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session({ instructions: 'be brief', tools });
+    const queued = (session as unknown as { messageChannel: { items: api_proto.ClientEvent[] } })
+      .messageChannel.items;
+
+    const sessionUpdates = queued.filter(
+      (ev): ev is api_proto.SessionUpdateEvent => ev.type === 'session.update',
+    );
+    expect(sessionUpdates).toHaveLength(2);
+    expect((sessionUpdates[0]!.session as { instructions?: string }).instructions).toBe('be brief');
+    expect(sessionUpdates[1]!.session.tools?.map((tool) => tool.name)).toEqual(['lookup']);
+    expect(session.tools.equals(tools)).toBe(true);
+  });
+
+  it('queues the initial chat context through the standard update path', async () => {
+    stubTaskRuntime();
+
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hi there' });
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session({ chatCtx });
+    const queued = (session as unknown as { messageChannel: { items: api_proto.ClientEvent[] } })
+      .messageChannel.items;
+
+    await vi.waitFor(() =>
+      expect(queued.some((ev) => ev.type === 'conversation.item.create')).toBe(true),
+    );
+  });
+});
+
 describe('RealtimeSession.updateOptions', () => {
   afterEach(() => {
     vi.restoreAllMocks();

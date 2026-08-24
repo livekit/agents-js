@@ -60,7 +60,7 @@ export class TTS extends tts.TTS {
 // Warning: (ae-missing-release-tag) "TTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type TTSModels = 'arcana' | 'coda' | 'mistv2' | 'mistv3';
+export type TTSModels = 'coda' | 'mistv2' | 'mistv3';
 
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
