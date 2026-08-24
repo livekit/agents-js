@@ -34,12 +34,12 @@ configureFfmpeg();
 // Both channels sit on one absolute timeline: the user's audio where it arrived, the agent's
 // where the device reports it played. Silence is whatever nothing was written over.
 
-const WRITE_INTERVAL_MS = 2500;
+export const WRITE_INTERVAL_MS = 2500;
 const DEFAULT_SAMPLE_RATE = 48000;
 const CLOSE_PLAYOUT_FLUSH_TIMEOUT_MS = 2000;
 
 /** How long the writer waits on a source that stopped delivering before taking the silence as real. */
-const INPUT_STALL_TIMEOUT_MS = 1000;
+export const INPUT_STALL_TIMEOUT_MS = 1000;
 
 /**
  * A run continues while its own clock stays this close to the timestamps coming in; re-anchoring

@@ -15,7 +15,7 @@ import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent, TextOutput } from '../io.js';
 import { ParticipantAudioOutput } from '../room_io/_output.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
-import { RecorderIO, Track } from './recorder_io.js';
+import { INPUT_STALL_TIMEOUT_MS, RecorderIO, Track, WRITE_INTERVAL_MS } from './recorder_io.js';
 
 class FakeAudioInput extends AudioInput {
   private chan: StreamChannel<AudioFrame> = createStreamChannel<AudioFrame>();
@@ -1394,4 +1394,95 @@ describe('RecorderIO end to end', () => {
       vi.useRealTimers();
     }
   }, 30000);
+});
+
+describe('RecorderAudioOutput event forwarding', () => {
+  /** The device at the end of the chain: the only output that knows where its audio went. */
+  class LeafAudioOutput extends AudioOutput {
+    constructor() {
+      super(RECORDING_RATE);
+    }
+
+    clearBuffer(): void {}
+  }
+
+  /** A wrapper that forwards audio, the way the transcription synchronizer sits in the chain. */
+  class PassthroughAudioOutput extends AudioOutput {
+    constructor(nextInChain: AudioOutput) {
+      super(nextInChain.sampleRate, nextInChain);
+    }
+
+    override async captureFrame(frame: AudioFrame): Promise<void> {
+      await super.captureFrame(frame);
+      await this.nextInChain!.captureFrame(frame);
+    }
+
+    clearBuffer(): void {}
+  }
+
+  it('carries a report from two levels down up to the recorder', async () => {
+    // Nothing else covers the listener the base class registers on `nextInChain`. Without it
+    // every recorder silently falls back to the segment endpoints, and the rest of the suite
+    // still passes because it calls `onPlaybackProgressed` directly.
+    const leaf = new LeafAudioOutput();
+    const { recorder, output, placed, state } = makePlacingOutput(new PassthroughAudioOutput(leaf));
+
+    await output.captureFrame(makeFrame(1000));
+    output.flush();
+
+    leaf.onPlaybackProgressed({ startedAt: 100_000, offset: 0, duration: 400 });
+    leaf.onPlaybackFinished({ playbackPosition: 0.4, interrupted: false });
+
+    expect(placed).toHaveLength(1);
+    // the sink's own timestamp, not the `Date.now()` the endpoint fallback would have used
+    expect(placed[0]!.startedAt).toBe(100_000);
+    expect(frameDurationMs(placed[0]!.frame)).toBeCloseTo(400);
+    state.started = false;
+    await recorder.close();
+  });
+});
+
+describe('RecorderIO write task', () => {
+  it('waits on the agent but not on a quiet source', async () => {
+    // A segment in flight holds the timeline; a microphone that went quiet does not.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      const flushed: number[] = [];
+      const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+      recorder.recordInput(new FakeAudioInput());
+      const audioOut = recorder.recordOutput(new FakeAudioOutput());
+      const state = recorder as unknown as {
+        started: boolean;
+        t0: number;
+        inputSettled: number;
+        enqueue: (item: { kind: string; until?: number }) => void;
+        write: (signal: AbortSignal) => Promise<void>;
+      };
+      state.started = true;
+      state.t0 = state.inputSettled = Date.now();
+      state.enqueue = (item) => {
+        if (item.kind === 'flush') flushed.push(item.until!);
+      };
+
+      const controller = new AbortController();
+      const writing = state.write(controller.signal);
+
+      // the source has delivered nothing, so the writer waits out the stall timeout and no more
+      await vi.advanceTimersByTimeAsync(WRITE_INTERVAL_MS);
+      expect(flushed.at(-1)).toBe(Date.now() - INPUT_STALL_TIMEOUT_MS);
+
+      // a segment opens, and it has not said where its audio went
+      await audioOut.captureFrame(makeFrame(200));
+      const segmentBegan = audioOut.pendingSince;
+      await vi.advanceTimersByTimeAsync(WRITE_INTERVAL_MS);
+      expect(flushed.at(-1)).toBe(segmentBegan);
+
+      controller.abort();
+      await writing;
+      state.started = false;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
