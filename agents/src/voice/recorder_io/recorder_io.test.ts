@@ -2,10 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame, type Room, TrackPublishOptions } from '@livekit/rtc-node';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { resolveFfmpegPath } from '../../ffmpeg.js';
 import { initializeLogger } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { Future, isWritableStreamClosedError } from '../../utils.js';
@@ -13,7 +15,7 @@ import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent, TextOutput } from '../io.js';
 import { ParticipantAudioOutput } from '../room_io/_output.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
-import { RecorderIO } from './recorder_io.js';
+import { RecorderIO, Track } from './recorder_io.js';
 
 class FakeAudioInput extends AudioInput {
   private chan: StreamChannel<AudioFrame> = createStreamChannel<AudioFrame>();
@@ -412,7 +414,9 @@ async function settleOrStall<T>(
   }
 }
 
-function makeFrame(durationMs: number, sampleRate = 48000, channels = 1): AudioFrame {
+const RECORDING_RATE = 48000;
+
+function makeFrame(durationMs: number, sampleRate = RECORDING_RATE, channels = 1): AudioFrame {
   const samplesPerChannel = Math.floor((durationMs / 1000) * sampleRate);
   return new AudioFrame(
     new Int16Array(samplesPerChannel * channels),
@@ -420,6 +424,47 @@ function makeFrame(durationMs: number, sampleRate = 48000, channels = 1): AudioF
     channels,
     samplesPerChannel,
   );
+}
+
+function frameDurationMs(frame: AudioFrame): number {
+  return (frame.samplesPerChannel / frame.sampleRate) * 1000;
+}
+
+/** A 1kHz tone loud enough to survive the opus encoder. */
+function makeToneFrame(durationMs: number, sampleRate = RECORDING_RATE): AudioFrame {
+  const samplesPerChannel = Math.floor((durationMs / 1000) * sampleRate);
+  const data = new Int16Array(samplesPerChannel);
+  for (let i = 0; i < samplesPerChannel; i++) {
+    data[i] = Math.round(8000 * Math.sin((2 * Math.PI * 1000 * i) / sampleRate));
+  }
+  return new AudioFrame(data, sampleRate, 1, samplesPerChannel);
+}
+
+interface PlacedAudio {
+  channel: 0 | 1;
+  startedAt: number;
+  frame: AudioFrame;
+}
+
+/**
+ * A recorder whose queue is replaced by a list, so a test can see exactly which audio the output
+ * handed over and when it says it played.
+ */
+function makePlacingOutput<T extends AudioOutput>(downstream: T) {
+  const placed: PlacedAudio[] = [];
+  const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+  const state = recorder as unknown as {
+    started: boolean;
+    enqueue: (item: { kind: string } & Partial<PlacedAudio>) => void;
+  };
+  state.started = true;
+  state.enqueue = (item) => {
+    if (item.kind === 'captured') {
+      placed.push(item as PlacedAudio);
+    }
+  };
+  const output = recorder.recordOutput(downstream);
+  return { recorder, output, downstream, placed, state };
 }
 
 function makeRecorder() {
@@ -473,8 +518,8 @@ describe('RecorderIO close', () => {
     await recorder.close();
 
     expect(Date.now() - start).toBeGreaterThanOrEqual(140);
-    // Nothing reached the encoder, so no file was produced.
-    expect(fs.existsSync(outputPath)).toBe(false);
+    // The unreported agent segment is dropped, but the window itself is still recorded as silence.
+    expect(fs.existsSync(outputPath)).toBe(true);
   }, 15000);
 
   it('settles a dropped, never-flushed segment on close without stalling or warning', async () => {
@@ -512,124 +557,35 @@ describe('RecorderIO close', () => {
   }, 15000);
 
   it('flushes trailing input audio on close', async () => {
-    const { recorder, input, inWrapped, outputPath } = makeRecorder();
-    await recorder.start(outputPath);
+    // only Date is faked, so the frames arrive on a clock that matches their own duration
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(1_000_000);
+      const { recorder, input, inWrapped, outputPath } = makeRecorder();
+      await recorder.start(outputPath);
 
-    // Frames only accumulate while flowing through the intercepting stream,
-    // so consume them like the session does.
-    const reader = inWrapped.stream.getReader();
-    for (let i = 0; i < 5; i++) {
-      await input.push(makeFrame(100));
-      await reader.read();
+      // Frames only reach the recorder while flowing through the intercepting stream,
+      // so consume them like the session does.
+      const reader = inWrapped.stream.getReader();
+      for (let i = 0; i < 5; i++) {
+        vi.setSystemTime(Date.now() + 100);
+        await input.push(makeFrame(100));
+        await reader.read();
+      }
+      reader.releaseLock();
+
+      // Close before the 2.5s write tick: without the final flush this audio would be dropped.
+      await recorder.close();
+
+      expect(fs.existsSync(outputPath)).toBe(true);
+      expect(fs.statSync(outputPath).size).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
     }
-    reader.releaseLock();
-
-    // Close before the 2.5s forward tick: without the final input flush this
-    // audio would be dropped.
-    await recorder.close();
-
-    expect(fs.existsSync(outputPath)).toBe(true);
-    expect(fs.statSync(outputPath).size).toBeGreaterThan(0);
   }, 15000);
 });
 
 describe('RecorderAudioOutput', () => {
-  it('drops pauses before the segment', async () => {
-    vi.useFakeTimers();
-    try {
-      const writes: AudioFrame[][] = [];
-      const recorder = new RecorderIO({ agentSession: {} as AgentSession });
-      const recorderState = recorder as unknown as {
-        started: boolean;
-        writeCb: (buf: AudioFrame[]) => void;
-      };
-      recorderState.started = true;
-      recorderState.writeCb = (buf) => writes.push(buf);
-      const output = recorder.recordOutput(new FakeAudioOutput());
-
-      vi.setSystemTime(10_000);
-      output.pause();
-      vi.setSystemTime(10_500);
-      output.resume();
-      vi.setSystemTime(11_000);
-      const frame = makeFrame(20);
-      await output.captureFrame(frame);
-      output.flush();
-      vi.setSystemTime(11_020);
-      output.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
-
-      expect(writes).toHaveLength(1);
-      expect(writes[0]!.reduce((sum, item) => sum + item.samplesPerChannel, 0)).toBe(960);
-      recorderState.started = false;
-      await recorder.close();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('clips a pause that overlaps the segment', async () => {
-    vi.useFakeTimers();
-    try {
-      const writes: AudioFrame[][] = [];
-      const recorder = new RecorderIO({ agentSession: {} as AgentSession });
-      const recorderState = recorder as unknown as {
-        started: boolean;
-        writeCb: (buf: AudioFrame[]) => void;
-      };
-      recorderState.started = true;
-      recorderState.writeCb = (buf) => writes.push(buf);
-      const output = recorder.recordOutput(new FakeAudioOutput());
-
-      vi.setSystemTime(10_000);
-      output.pause();
-      vi.setSystemTime(10_500);
-      const frame = makeFrame(20);
-      await output.captureFrame(frame);
-      vi.setSystemTime(10_700);
-      output.resume();
-      output.flush();
-      vi.setSystemTime(10_720);
-      output.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
-
-      expect(writes).toHaveLength(1);
-      expect(writes[0]!.reduce((sum, item) => sum + item.samplesPerChannel, 0)).toBe(10560);
-      recorderState.started = false;
-      await recorder.close();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('keeps trailing silence for a midsegment pause', async () => {
-    vi.useFakeTimers();
-    try {
-      const writes: AudioFrame[][] = [];
-      const recorder = new RecorderIO({ agentSession: {} as AgentSession });
-      const recorderState = recorder as unknown as {
-        started: boolean;
-        writeCb: (buf: AudioFrame[]) => void;
-      };
-      recorderState.started = true;
-      recorderState.writeCb = (buf) => writes.push(buf);
-      const output = recorder.recordOutput(new FakeAudioOutput());
-
-      vi.setSystemTime(10_000);
-      await output.captureFrame(makeFrame(100));
-      vi.setSystemTime(10_050);
-      output.pause();
-      output.flush();
-      vi.setSystemTime(10_200);
-      output.onPlaybackFinished({ playbackPosition: 0.05, interrupted: true });
-
-      expect(writes).toHaveLength(1);
-      expect(writes[0]!.reduce((sum, item) => sum + item.samplesPerChannel, 0)).toBe(9600);
-      recorderState.started = false;
-      await recorder.close();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('does not lose a playback finish emitted during first-frame capture', async () => {
     const recorder = new RecorderIO({ agentSession: {} as AgentSession });
     const output = recorder.recordOutput(new FinishDuringCaptureOutput());
@@ -877,16 +833,9 @@ describe('RecorderAudioOutput', () => {
   });
 
   it('keeps later segment audio when an older overlapping segment finishes', async () => {
-    const writes: AudioFrame[][] = [];
-    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
-    const recorderState = recorder as unknown as {
-      started: boolean;
-      writeCb: (buf: AudioFrame[]) => void;
-    };
-    recorderState.started = true;
-    recorderState.writeCb = (buf) => writes.push(buf);
-    const downstream = new FakeAudioOutput();
-    const output = recorder.recordOutput(downstream);
+    const { recorder, output, downstream, placed, state } = makePlacingOutput(
+      new FakeAudioOutput(),
+    );
 
     await output.captureFrame(makeFrame(1));
     output.flush();
@@ -897,22 +846,15 @@ describe('RecorderAudioOutput', () => {
     downstream.onPlaybackFinished({ playbackPosition: 0.001, interrupted: false });
     downstream.onPlaybackFinished({ playbackPosition: 0.001, interrupted: false });
 
-    expect(writes).toHaveLength(2);
-    recorderState.started = false;
+    expect(placed).toHaveLength(2);
+    state.started = false;
     await recorder.close();
   });
 
   it('keeps the audio a finish reports as played while the first frame was parked', async () => {
-    const writes: AudioFrame[][] = [];
-    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
-    const recorderState = recorder as unknown as {
-      started: boolean;
-      writeCb: (buf: AudioFrame[]) => void;
-    };
-    recorderState.started = true;
-    recorderState.writeCb = (buf) => writes.push(buf);
-    const downstream = new ParkFirstFrameOutput();
-    const output = recorder.recordOutput(downstream);
+    const { recorder, output, downstream, placed, state } = makePlacingOutput(
+      new ParkFirstFrameOutput(),
+    );
 
     const capture = output.captureFrame(makeFrame(100));
     await downstream.frameParked.await;
@@ -923,11 +865,9 @@ describe('RecorderAudioOutput', () => {
     await capture;
     output.flush();
 
-    const capturedSamples = writes
-      .flat()
-      .reduce((total, frame) => total + frame.samplesPerChannel, 0);
-    expect(capturedSamples).toBe(0.05 * 48000);
-    recorderState.started = false;
+    const capturedSamples = placed.reduce((total, item) => total + item.frame.samplesPerChannel, 0);
+    expect(capturedSamples).toBe(0.05 * RECORDING_RATE);
+    state.started = false;
     await recorder.close();
   });
 
@@ -1174,4 +1114,284 @@ describe('RecorderIO writable stream error detection', () => {
 
     expect(isWritableStreamClosedError(err)).toBe(false);
   });
+});
+
+describe('RecorderAudioOutput placement', () => {
+  it('places each report at the time the sink says it played', async () => {
+    // A gap between two reports is a gap in the recording, not silence moved to the front.
+    const { recorder, output, placed, state } = makePlacingOutput(new FakeAudioOutput());
+    await output.captureFrame(makeFrame(1000));
+    output.flush();
+
+    output.onPlaybackProgressed({ startedAt: 100_000, offset: 0, duration: 400 });
+    output.onPlaybackProgressed({ startedAt: 101_000, offset: 400, duration: 600 });
+    output.onPlaybackFinished({ playbackPosition: 1.0, interrupted: false });
+
+    expect(placed.map((item) => item.startedAt)).toEqual([100_000, 101_000]);
+    expect(placed.map((item) => frameDurationMs(item.frame))).toEqual([400, 600]);
+    state.started = false;
+    await recorder.close();
+  });
+
+  it('skips the audio a report says never played', async () => {
+    // Audio dropped from the sink's queue is a hole in the middle, not a shortened end.
+    const { recorder, output, placed, state } = makePlacingOutput(new FakeAudioOutput());
+    await output.captureFrame(makeFrame(1000));
+    output.flush();
+
+    // 0.2s of the segment was discarded on pause, so the next run resumes past it
+    output.onPlaybackProgressed({ startedAt: 100_000, offset: 0, duration: 300 });
+    output.onPlaybackProgressed({ startedAt: 100_800, offset: 500, duration: 500 });
+    output.onPlaybackFinished({ playbackPosition: 0.8, interrupted: false });
+
+    expect(placed.map((item) => item.startedAt)).toEqual([100_000, 100_800]);
+    expect(placed.map((item) => frameDurationMs(item.frame))).toEqual([300, 500]);
+    state.started = false;
+    await recorder.close();
+  });
+
+  it('anchors a sink that reports nothing at playbackStarted', async () => {
+    // The fallback is the shape a remote sink sends: one report for the whole segment.
+    vi.useFakeTimers();
+    try {
+      const { recorder, output, placed, state } = makePlacingOutput(new FakeAudioOutput());
+      await output.captureFrame(makeFrame(1000));
+      output.flush();
+
+      output.onPlaybackStarted(100_000);
+      vi.setSystemTime(105_000); // noticed long after the audio really stopped
+      output.onPlaybackFinished({ playbackPosition: 1.0, interrupted: false });
+
+      expect(placed).toHaveLength(1);
+      // not 105_000 - 1000, which is where the old recorder put it
+      expect(placed[0]!.startedAt).toBe(100_000);
+      expect(frameDurationMs(placed[0]!.frame)).toBe(1000);
+      state.started = false;
+      await recorder.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dates a sink with no start of its own from the segment end', async () => {
+    // Last resort for a remote sink that never reports a start.
+    vi.useFakeTimers();
+    try {
+      const { recorder, output, placed, state } = makePlacingOutput(new FakeAudioOutput());
+      await output.captureFrame(makeFrame(1000));
+      output.flush();
+
+      vi.setSystemTime(105_000);
+      output.onPlaybackFinished({ playbackPosition: 1.0, interrupted: false });
+
+      expect(placed).toHaveLength(1);
+      expect(placed[0]!.startedAt).toBe(104_000);
+      state.started = false;
+      await recorder.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('truncates an interrupted segment in the fallback', async () => {
+    const { recorder, output, placed, state } = makePlacingOutput(new FakeAudioOutput());
+    await output.captureFrame(makeFrame(1000));
+    output.flush();
+
+    output.onPlaybackStarted(100_000);
+    output.onPlaybackFinished({ playbackPosition: 0.4, interrupted: true });
+
+    expect(placed).toHaveLength(1);
+    expect(frameDurationMs(placed[0]!.frame)).toBe(400);
+    state.started = false;
+    await recorder.close();
+  });
+
+  it('holds the timeline while a segment is in flight', async () => {
+    // The writer cannot settle a window whose agent audio has not been reported yet.
+    const { recorder, output, state } = makePlacingOutput(new FakeAudioOutput());
+    expect(output.pendingSince).toBeUndefined();
+
+    await output.captureFrame(makeFrame(1000));
+    expect(output.pendingSince).toBeDefined();
+
+    output.onPlaybackProgressed({ startedAt: 100_000, offset: 0, duration: 1000 });
+    output.onPlaybackFinished({ playbackPosition: 1.0, interrupted: false });
+    expect(output.pendingSince).toBeUndefined();
+    state.started = false;
+    await recorder.close();
+  });
+});
+
+describe('Track', () => {
+  /** A frame whose every sample is loud, so placement shows up as non-zero samples. */
+  function loudFrame(samples: number, sampleRate = 1000, channels = 1): AudioFrame {
+    return new AudioFrame(
+      new Int16Array(samples * channels).fill(1000),
+      sampleRate,
+      channels,
+      samples,
+    );
+  }
+
+  const placedStarts = (track: Track) =>
+    (track as unknown as { placed: Array<{ start: number }> }).placed.map((run) => run.start);
+
+  it('lands placed audio at its own timestamp', () => {
+    const track = new Track(1000, 0);
+    track.push(2000, loudFrame(100));
+
+    const block = track.take(0, 3000);
+    expect(block.slice(0, 2000).every((sample) => sample === 0)).toBe(true);
+    expect(block.slice(2000, 2100).every((sample) => sample > 0)).toBe(true);
+    expect(block.slice(2100).every((sample) => sample === 0)).toBe(true);
+  });
+
+  it('keeps a gap between two runs a gap', () => {
+    const track = new Track(1000, 0);
+    track.push(0, loudFrame(100));
+    track.push(500, loudFrame(100));
+
+    const block = track.take(0, 1000);
+    expect(block.slice(0, 100).every((sample) => sample > 0)).toBe(true);
+    expect(block.slice(100, 500).every((sample) => sample === 0)).toBe(true);
+    expect(block.slice(500, 600).every((sample) => sample > 0)).toBe(true);
+  });
+
+  it('drops and counts audio that arrives after its window was written', () => {
+    const track = new Track(1000, 0);
+    track.take(0, 2000); // the first two seconds have already gone to the encoder
+    track.push(500, loudFrame(100));
+
+    expect(track.take(2000, 3000).every((sample) => sample === 0)).toBe(true);
+    expect(track.droppedSamples).toBe(100);
+  });
+
+  it('re-anchors a run when its clock drifts', () => {
+    const track = new Track(1000, 0);
+    track.push(0, loudFrame(100));
+    track.push(100, loudFrame(100)); // contiguous, extends the run
+    track.push(5000, loudFrame(100)); // beyond tolerance, anchors on its own timestamp
+
+    expect(placedStarts(track)).toEqual([0, 100, 5000]);
+  });
+
+  it('resamples a source below the recording rate in place', () => {
+    const track = new Track(48000, 0);
+    track.push(1000, loudFrame(2400, 24000)); // 100ms at 24kHz
+    track.push(9000, loudFrame(2400, 24000)); // a new run, so the first one is complete
+
+    const block = track.take(0, 48000 * 2);
+    expect(block.slice(0, 48000).every((sample) => sample === 0)).toBe(true);
+    // 100ms of audio, twice as many samples at the recording rate; the samples the resampler
+    // still held when the run ended are part of it
+    const nonZero = block.slice(48000).filter((sample) => sample !== 0).length;
+    expect(nonZero).toBeGreaterThan(4750);
+    expect(nonZero).toBeLessThan(4850);
+  });
+
+  it('mixes a stereo source down', () => {
+    const track = new Track(1000, 0);
+    track.push(0, loudFrame(100, 1000, 2));
+
+    const block = track.take(0, 200);
+    // samples, not interleaved values
+    expect(block.filter((sample) => sample !== 0).length).toBe(100);
+    expect(block[0]).toBeCloseTo(1000 / 32768, 4);
+  });
+});
+
+describe('RecorderIO end to end', () => {
+  /** Decode the recording back to two float channels at its own sample rate. */
+  function decodeStereo(filePath: string): [Float32Array, Float32Array] {
+    const raw = execFileSync(
+      resolveFfmpegPath() ?? 'ffmpeg',
+      [
+        '-v',
+        'error',
+        '-i',
+        filePath,
+        '-f',
+        's16le',
+        '-ac',
+        '2',
+        '-ar',
+        String(RECORDING_RATE),
+        '-',
+      ],
+      { maxBuffer: 1 << 28 },
+    );
+    // copied into a fresh buffer: the pipe's Buffer is not guaranteed to be 2-byte aligned
+    const pcm = new Int16Array(new Uint8Array(raw).buffer);
+    const left = new Float32Array(pcm.length / 2);
+    const right = new Float32Array(pcm.length / 2);
+    for (let i = 0; i < left.length; i++) {
+      left[i] = pcm[i * 2]! / 32768;
+      right[i] = pcm[i * 2 + 1]! / 32768;
+    }
+    return [left, right];
+  }
+
+  /** Peak amplitude over `[fromMs, toMs)` of one decoded channel. */
+  function peak(channel: Float32Array, fromMs: number, toMs: number): number {
+    const from = Math.round((fromMs / 1000) * RECORDING_RATE);
+    const to = Math.min(Math.round((toMs / 1000) * RECORDING_RATE), channel.length);
+    let loudest = 0;
+    for (let i = from; i < to; i++) {
+      loudest = Math.max(loudest, Math.abs(channel[i]!));
+    }
+    return loudest;
+  }
+
+  it('records each channel where it happened', async () => {
+    // The agent speaks 0.5s, goes quiet for 0.5s, speaks 0.5s. The microphone delivers for the
+    // first second, then stops. Neither hole may be filled by moving the audio around it.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(1_000_000);
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recorder-io-test-'));
+      const outputPath = path.join(dir, 'session.ogg');
+      const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+      const source = new FakeAudioInput();
+      const audioIn = recorder.recordInput(source);
+      const audioOut = recorder.recordOutput(new FakeAudioOutput());
+      await recorder.start(outputPath);
+      const t0 = Date.now();
+
+      // a microphone that delivers for one second, then goes quiet
+      const reader = audioIn.stream.getReader();
+      for (let i = 0; i < 10; i++) {
+        vi.setSystemTime(Date.now() + 100);
+        await source.push(makeToneFrame(100));
+        await reader.read();
+      }
+      reader.releaseLock();
+
+      // the agent speaks, stalls, then speaks again
+      await audioOut.captureFrame(makeToneFrame(1000));
+      audioOut.flush();
+      audioOut.onPlaybackStarted(t0 + 1500);
+      audioOut.onPlaybackProgressed({ startedAt: t0 + 1500, offset: 0, duration: 500 });
+      audioOut.onPlaybackProgressed({ startedAt: t0 + 2500, offset: 500, duration: 500 });
+      vi.setSystemTime(t0 + 3000);
+      audioOut.onPlaybackFinished({ playbackPosition: 1.0, interrupted: false });
+
+      await recorder.close();
+
+      const [userChannel, agentChannel] = decodeStereo(outputPath);
+      expect(userChannel.length / RECORDING_RATE).toBeCloseTo(3.0, 1);
+
+      // the microphone's first second is there, and its silence is silence
+      expect(peak(userChannel, 50, 950)).toBeGreaterThan(0.05);
+      expect(peak(userChannel, 1050, 3000)).toBeLessThan(0.01);
+
+      // the agent's two utterances sit either side of the stall, not packed together
+      expect(peak(agentChannel, 0, 1450)).toBeLessThan(0.01);
+      expect(peak(agentChannel, 1550, 1950)).toBeGreaterThan(0.05);
+      expect(peak(agentChannel, 2050, 2450)).toBeLessThan(0.01);
+      expect(peak(agentChannel, 2550, 2950)).toBeGreaterThan(0.05);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 30000);
 });

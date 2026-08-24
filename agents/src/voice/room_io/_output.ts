@@ -519,6 +519,12 @@ export class ParticipantAudioOutput extends AudioOutput {
   private firstFrameEmitted: boolean = false;
   /** Gate held closed while the output is paused; frame forwarding awaits it. */
   private playbackEnabledFuture: Future<void> = new Future();
+  /**
+   * The playhead sits at `sourcePushedDuration` minus what the source still holds; `dryAt` is
+   * when the source runs out if nothing more is pushed, which dates a run that has ended.
+   */
+  private runOffset: number = 0;
+  private dryAt?: number;
 
   constructor(room: Room, options: AudioOutputOptions) {
     super(options.sampleRate, undefined, { pause: true });
@@ -549,6 +555,24 @@ export class ParticipantAudioOutput extends AudioOutput {
 
   get subscribed(): boolean {
     return this.startedFuture.done;
+  }
+
+  /** Report the open run, and begin the next past any audio that never played. */
+  private reportRun(opts: { offset: number; endedAt: number; resumesAt?: number }): void {
+    const { offset, resumesAt } = opts;
+    // a run cannot outlast the audio the source held, however late the caller noticed
+    const endedAt = this.dryAt !== undefined ? Math.min(opts.endedAt, this.dryAt) : opts.endedAt;
+
+    const duration = offset - this.runOffset;
+    if (duration > 0) {
+      this.onPlaybackProgressed({
+        startedAt: endedAt - duration,
+        offset: this.runOffset,
+        duration,
+      });
+    }
+    this.runOffset = resumesAt ?? offset;
+    this.dryAt = undefined;
   }
 
   async start(signal: AbortSignal): Promise<void> {
@@ -589,6 +613,12 @@ export class ParticipantAudioOutput extends AudioOutput {
       while (!this.playbackEnabledFuture.done) {
         const queuedDuration = this.audioSource.queuedDuration;
         this.sourceDiscardedDuration += queuedDuration / 1000;
+        // the dropped queue never plays, so the next run resumes past it
+        this.reportRun({
+          offset: this.sourcePushedDuration * 1000 - queuedDuration,
+          endedAt: Date.now(),
+          resumesAt: this.sourcePushedDuration * 1000,
+        });
         this.audioSource.clearQueue();
         await Promise.race([this.playbackEnabledFuture.await, interruptionFuture.await]);
         if (interruptionGeneration !== this.interruptionGeneration || interruptionFuture.done) {
@@ -601,8 +631,14 @@ export class ParticipantAudioOutput extends AudioOutput {
         this.onPlaybackStarted(Date.now());
       }
 
+      if (this.dryAt !== undefined && Date.now() >= this.dryAt) {
+        // the source ran out before this frame arrived
+        this.reportRun({ offset: this.sourcePushedDuration * 1000, endedAt: this.dryAt });
+      }
+
       this.sourcePushedDuration += frameDuration;
       await this.audioSource.captureFrame(frame);
+      this.dryAt = Date.now() + this.audioSource.queuedDuration;
     } finally {
       this.forwardingCount--;
       if (this.forwardingCount === 0) {
@@ -624,10 +660,20 @@ export class ParticipantAudioOutput extends AudioOutput {
     let pushedDuration = Math.max(this.sourcePushedDuration - this.sourceDiscardedDuration, 0);
 
     if (interrupted) {
-      pushedDuration = Math.max(pushedDuration - this.audioSource.queuedDuration / 1000, 0);
+      const queuedDuration = this.audioSource.queuedDuration;
+      pushedDuration = Math.max(pushedDuration - queuedDuration / 1000, 0);
+      // the playhead stops where the cleared queue begins
+      this.reportRun({
+        offset: this.sourcePushedDuration * 1000 - queuedDuration,
+        endedAt: Date.now(),
+      });
       this.audioSource.clearQueue();
+    } else {
+      // the source drained, so everything pushed has played
+      this.reportRun({ offset: this.sourcePushedDuration * 1000, endedAt: Date.now() });
     }
 
+    this.runOffset = 0;
     this.pushedDuration = 0;
     this.sourcePushedDuration = 0;
     this.sourceDiscardedDuration = 0;
