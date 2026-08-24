@@ -72,7 +72,7 @@ export type STTLanguages = STTV2Languages | STTV3Languages;
 // Warning: (ae-missing-release-tag) "STTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type STTModels = 'saaras:v3' | 'saaras:v2.5' | 'saarika:v2.5';
+export type STTModels = 'saaras:v4' | 'saaras:v3' | 'saaras:v2.5' | 'saarika:v2.5';
 
 // Warning: (ae-missing-release-tag) "STTModes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -125,7 +125,7 @@ export interface STTV3Options extends STTBaseOptions {
     minSpeechFrames?: number;
     mode?: STTModes | string;
     // (undocumented)
-    model?: 'saaras:v3';
+    model?: 'saaras:v3' | 'saaras:v4';
     negativeFramesCount?: number;
     negativeFramesWindow?: number;
     negativeSpeechThreshold?: number;

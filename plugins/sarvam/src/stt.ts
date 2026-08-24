@@ -57,8 +57,8 @@ interface STTBaseOptions {
 
 /**
  * Options specific to saarika:v2.5.
- * saarika:v2.5 will be deprecated soon — prefer {@link STTV3Options} with `saaras:v3` for new integrations.
- * All v2.5 language codes are also supported by v3.
+ * saarika:v2.5 will be deprecated soon — prefer {@link STTV3Options} with `saaras:v4` for new integrations.
+ * All v2.5 language codes are also supported by v3 and v4.
  * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text/transcribe | Sarvam STT API docs}
  */
 export interface STTV2Options extends STTBaseOptions {
@@ -84,14 +84,14 @@ export interface STTTranslateOptions extends STTBaseOptions {
 }
 
 /**
- * Options specific to saaras:v3 (recommended).
+ * Options specific to saaras:v3 and saaras:v4 (recommended).
  * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text/transcribe | Sarvam STT API docs}
  */
 export interface STTV3Options extends STTBaseOptions {
-  model?: 'saaras:v3';
+  model?: 'saaras:v3' | 'saaras:v4';
   /** Language code (BCP-47). Default: 'en-IN'. Set to 'unknown' for auto-detection. */
   languageCode?: STTV3Languages | string;
-  /** Transcription mode (v3 only). Default: 'transcribe' */
+  /** Transcription mode (v3/v4 only). Default: 'transcribe' */
   mode?: STTModes | string;
   /** Conversation context to boost model accuracy */
   prompt?: string;
@@ -130,18 +130,18 @@ interface ResolvedSTTOptions {
   apiKey: string;
   model: STTModels;
   streaming: boolean;
-  // saarika:v2.5 and saaras:v3 only — not used by saaras:v2.5 (translate auto-detects)
+  // saarika:v2.5 and saaras:v3/v4 only — not used by saaras:v2.5 (translate auto-detects)
   languageCode?: STTLanguages | string;
-  // saaras:v3 and saaras:v2.5 (translate)
+  // saaras:v3/v4 and saaras:v2.5 (translate)
   mode?: STTModes | string;
-  // saaras:v2.5 (translate) and saaras:v3
+  // saaras:v2.5 (translate) and saaras:v3/v4
   prompt?: string;
-  // saarika:v2.5 and saaras:v3 (/speech-to-text only, not translate)
+  // saarika:v2.5 and saaras:v3/v4 (/speech-to-text only, not translate)
   withTimestamps?: boolean;
   // WS-only flags
   highVadSensitivity?: boolean;
   flushSignal?: boolean;
-  // saaras:v3 WS-only fine-grained VAD params
+  // saaras:v3/v4 WS-only fine-grained VAD params
   positiveSpeechThreshold?: number;
   negativeSpeechThreshold?: number;
   minSpeechFrames?: number;
@@ -197,7 +197,7 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
     throw new Error('Sarvam API key is required, whether as an argument or as $SARVAM_API_KEY');
   }
 
-  const model: STTModels = opts.model ?? 'saaras:v3';
+  const model: STTModels = opts.model ?? 'saaras:v4';
 
   const base: ResolvedSTTOptions = {
     apiKey,
@@ -211,7 +211,7 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
     const translateOpts = opts as STTTranslateOptions;
     base.prompt = translateOpts.prompt;
     base.mode = translateOpts.mode ?? SAARAS_TRANSLATE_DEFAULTS.mode;
-  } else if (model === 'saaras:v3') {
+  } else if (model === 'saaras:v3' || model === 'saaras:v4') {
     const v3Opts = opts as STTV3Options;
     base.languageCode = normalizeLanguage(v3Opts.languageCode ?? SAARAS_V3_DEFAULTS.languageCode);
     base.mode = v3Opts.mode ?? SAARAS_V3_DEFAULTS.mode;
@@ -266,7 +266,7 @@ function buildWsUrl(opts: ResolvedSTTOptions): string {
     params.set('language-code', opts.languageCode);
   }
 
-  // mode: v3 on STT WS, and translate WS (both endpoints support it)
+  // mode: v3/v4 on STT WS, and translate WS (both endpoints support it)
   if (opts.mode != null) {
     params.set('mode', opts.mode);
   }
@@ -278,7 +278,7 @@ function buildWsUrl(opts: ResolvedSTTOptions): string {
   if (opts.flushSignal != null) {
     params.set('flush_signal', String(opts.flushSignal));
   }
-  if (opts.model === 'saaras:v3') {
+  if (opts.model === 'saaras:v3' || opts.model === 'saaras:v4') {
     if (opts.positiveSpeechThreshold != null) {
       params.set('positive_speech_threshold', String(opts.positiveSpeechThreshold));
     }
@@ -326,10 +326,13 @@ function buildFormData(wavBlob: Blob, opts: ResolvedSTTOptions): FormData {
   if (opts.model !== 'saaras:v2.5' && opts.languageCode != null) {
     formData.append('language_code', opts.languageCode);
   }
-  if (opts.model === 'saaras:v3' && opts.mode != null) {
+  if ((opts.model === 'saaras:v3' || opts.model === 'saaras:v4') && opts.mode != null) {
     formData.append('mode', opts.mode);
   }
-  if ((opts.model === 'saaras:v2.5' || opts.model === 'saaras:v3') && opts.prompt != null) {
+  if (
+    (opts.model === 'saaras:v2.5' || opts.model === 'saaras:v3' || opts.model === 'saaras:v4') &&
+    opts.prompt != null
+  ) {
     formData.append('prompt', opts.prompt);
   }
   if (opts.model !== 'saaras:v2.5' && opts.withTimestamps) {
@@ -448,9 +451,10 @@ export class STT extends stt.STT {
    * `SARVAM_API_KEY` environment variable.
    *
    * Supported models:
-   * - `saaras:v3` (default, recommended) — supports all 22 languages, modes, prompt, timestamps, and uses `/speech-to-text`.
+   * - `saaras:v4` (default, recommended) — supports all 22 languages, modes, prompt, timestamps, and uses `/speech-to-text`.
+   * - `saaras:v3` — supports all 22 languages, modes, prompt, timestamps, and uses `/speech-to-text`.
    * - `saaras:v2.5` — Indic-to-English translation via `/speech-to-text-translate`. Auto-detects source language. Supports prompt.
-   * - `saarika:v2.5` — will be deprecated soon. Supports timestamps. All its languages are available in `saaras:v3`.
+   * - `saarika:v2.5` — will be deprecated soon. Supports timestamps. All its languages are available in `saaras:v3` and `saaras:v4`.
    *
    * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text/transcribe | Sarvam STT API docs}
    * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text-translate/translate | Sarvam STT Translate docs}
