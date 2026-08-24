@@ -82,7 +82,7 @@ export type STTModes = 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'c
 // Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options;
+export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options | STTV4Options;
 
 // Warning: (ae-forgotten-export) The symbol "STTBaseOptions" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "STTTranslateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -125,7 +125,7 @@ export interface STTV3Options extends STTBaseOptions {
     minSpeechFrames?: number;
     mode?: STTModes | string;
     // (undocumented)
-    model?: 'saaras:v3' | 'saaras:v4';
+    model?: 'saaras:v3';
     negativeFramesCount?: number;
     negativeFramesWindow?: number;
     negativeSpeechThreshold?: number;
@@ -135,6 +135,14 @@ export interface STTV3Options extends STTBaseOptions {
     prompt?: string;
     startSpeechVolumeThreshold?: number;
     withTimestamps?: boolean;
+}
+
+// Warning: (ae-missing-release-tag) "STTV4Options" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface STTV4Options extends Omit<STTV3Options, 'model' | 'prompt'> {
+    // (undocumented)
+    model?: 'saaras:v4';
 }
 
 // Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
