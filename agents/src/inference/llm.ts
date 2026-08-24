@@ -63,7 +63,9 @@ export type XAIModels =
   | 'xai/grok-4-1-fast-reasoning'
   | 'xai/grok-4.20-0309-non-reasoning'
   | 'xai/grok-4.20-0309-reasoning'
-  | 'xai/grok-4.20-multi-agent-0309';
+  | 'xai/grok-4.20-multi-agent-0309'
+  | 'xai/grok-4.3'
+  | 'xai/grok-4.5';
 
 type ChatCompletionPredictionContentParam =
   Expand<OpenAI.Chat.Completions.ChatCompletionPredictionContent>;
