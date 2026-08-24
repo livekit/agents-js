@@ -13,7 +13,6 @@ import {
   log,
   logMetrics,
   tool,
-  workflows,
 } from '@livekit/agents';
 import * as krisp from '@livekit/agents-plugin-krisp';
 import { fileURLToPath } from 'node:url';
@@ -24,11 +23,9 @@ import { z } from 'zod';
 // lazy-loads on first stream.
 export default defineAgent({
   entry: async (ctx: JobContext) => {
-    const logger = log();
     const agent = Agent.create({
       instructions:
-        "You are a helpful assistant, you can hear the user's message and respond to it. " +
-        'Use the warm transfer cancellation tool when the user asks to test a cancelled transfer.',
+        "You are a helpful assistant, you can hear the user's message and respond to it.",
       tools: [
         tool({
           name: 'getWeather',
@@ -40,60 +37,10 @@ export default defineAgent({
             return `The weather in ${location} is sunny.`;
           },
         }),
-        tool({
-          name: 'testWarmTransferCancellation',
-          description:
-            'Dial a human agent, then cancel the warm transfer after a specified delay to test cancellation.',
-          parameters: z.object({
-            abortAfterSeconds: z
-              .number()
-              .int()
-              .min(1)
-              .max(120)
-              .default(20)
-              .describe('How many seconds to wait before cancelling the warm transfer'),
-          }),
-          execute: async ({ abortAfterSeconds }, { ctx: toolCtx }) => {
-            const sipTrunkId = process.env.LIVEKIT_SIP_OUTBOUND_TRUNK;
-            const supervisorPhoneNumber = process.env.LIVEKIT_SUPERVISOR_PHONE_NUMBER;
-            if (!sipTrunkId || !supervisorPhoneNumber) {
-              throw new Error(
-                'LIVEKIT_SIP_OUTBOUND_TRUNK and LIVEKIT_SUPERVISOR_PHONE_NUMBER must be set',
-              );
-            }
-
-            const abortController = new AbortController();
-            const abortReason = new Error(
-              `warm transfer test cancelled after ${abortAfterSeconds} seconds`,
-            );
-            const abortTimeout = setTimeout(() => {
-              logger.info({ abortAfterSeconds }, 'aborting warm transfer test');
-              abortController.abort(abortReason);
-            }, abortAfterSeconds * 1000);
-
-            try {
-              const result = await new workflows.WarmTransferTask({
-                abortSignal: abortController.signal,
-                sipCallTo: supervisorPhoneNumber,
-                sipTrunkId,
-                sipNumber: process.env.LIVEKIT_SIP_NUMBER,
-                ringingTimeout: 120_000,
-                chatCtx: toolCtx.session.history,
-              }).run();
-
-              return `Warm transfer completed before cancellation for ${result.humanAgentIdentity}.`;
-            } catch (error) {
-              if (error === abortReason) {
-                logger.info({ error }, 'warm transfer rejected with the expected abort reason');
-              }
-              throw error;
-            } finally {
-              clearTimeout(abortTimeout);
-            }
-          },
-        }),
       ],
     });
+
+    const logger = log();
 
     const session = new AgentSession({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
@@ -196,4 +143,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'basic-agent' }));
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
