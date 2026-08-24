@@ -84,6 +84,7 @@ export {
   type MessageGeneration,
   type RealtimeCapabilities,
   type RealtimeModelError,
+  type RealtimeSessionOptions,
   type RealtimeSessionReconnectedEvent,
 } from './realtime.js';
 
