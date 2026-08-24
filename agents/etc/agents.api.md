@@ -1970,9 +1970,6 @@ type BuiltinTextTransform = 'filter_markdown' | 'filter_emoji';
 // @public (undocumented)
 export function calculateAudioDurationSeconds(frame: AudioBuffer_2): number;
 
-// @public
-type CallerHangupSpeech = string | ((session: AgentSession) => SpeechHandle);
-
 // Warning: (ae-missing-release-tag) "cancelAndWait" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -8914,6 +8911,9 @@ interface WarmTransferResult {
     humanAgentIdentity: string;
 }
 
+// @public
+type WarmTransferSpeech = string | ((session: AgentSession) => SpeechHandle);
+
 // Warning: (ae-missing-release-tag) "WarmTransferTask" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "createWarmTransferTask"
 //
@@ -8933,10 +8933,11 @@ interface WarmTransferTaskOptions {
     allowInterruptions?: boolean;
     // @deprecated
     callerHangupInstruction?: string | null;
-    callerHangupSpeech?: CallerHangupSpeech;
+    callerHangupSpeech?: WarmTransferSpeech;
     // (undocumented)
     chatCtx?: ChatContext;
     dtmf?: string | null;
+    greetingSpeech?: WarmTransferSpeech;
     holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "InstructionParts"
     instructions?: InstructionParts | string;
@@ -9071,7 +9072,7 @@ declare namespace workflows {
         TaskGroupResult,
         WarmTransferTask,
         createWarmTransferTask,
-        CallerHangupSpeech,
+        WarmTransferSpeech,
         WarmTransferResult,
         WarmTransferTaskOptions,
         InstructionParts
