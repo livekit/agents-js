@@ -286,8 +286,12 @@ describe('createWarmTransferTask', () => {
     'waits until caller-hangup notice playout %s before exiting and shutting down an answered agent',
     async (outcome) => {
       const controller = new AbortController();
-      const timeoutController = new AbortController();
-      const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutController.signal);
+      const playoutTimeoutController = new AbortController();
+      const removalTimeoutController = new AbortController();
+      const timeout = vi
+        .spyOn(AbortSignal, 'timeout')
+        .mockReturnValueOnce(playoutTimeoutController.signal)
+        .mockReturnValueOnce(removalTimeoutController.signal);
       let completePlayout!: () => void;
       let failPlayout!: (error: Error) => void;
       const playout = new Promise<void>((resolve, reject) => {
@@ -335,7 +339,7 @@ describe('createWarmTransferTask', () => {
         failPlayout(new Error('playout failed'));
       } else {
         expect(timeout).toHaveBeenCalledWith(30_000);
-        timeoutController.abort();
+        playoutTimeoutController.abort();
       }
 
       await vi.waitFor(
@@ -354,6 +358,60 @@ describe('createWarmTransferTask', () => {
       expect(exitFinished).toBe(true);
     },
   );
+
+  it('stops waiting when removing the human agent after caller hangup times out', async () => {
+    const controller = new AbortController();
+    const playoutTimeoutController = new AbortController();
+    const removalTimeoutController = new AbortController();
+    const timeout = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockReturnValueOnce(playoutTimeoutController.signal)
+      .mockReturnValueOnce(removalTimeoutController.signal);
+    vi.spyOn(AgentSession.prototype, 'interrupt').mockReturnValue({} as never);
+    vi.spyOn(AgentSession.prototype, 'generateReply').mockReturnValue({
+      waitForPlayout: vi.fn().mockResolvedValue(undefined),
+    } as never);
+    const removeParticipant = vi
+      .spyOn(RoomServiceClient.prototype, 'removeParticipant')
+      .mockReturnValue(new Promise<never>(() => {}) as never);
+    const { shutdown } = mockDial();
+    const {
+      callerRoom,
+      create,
+      setInputAudioEnabled,
+      setOutputAudioEnabled,
+      setOutputTranscriptionEnabled,
+    } = setupTransfer(controller.signal);
+
+    const options = create.mock.calls[0]![0];
+    await options.onEnter!({} as never);
+    const onCallerLeft = vi
+      .mocked(callerRoom.on)
+      .mock.calls.find(([event]) => event === RoomEvent.ParticipantDisconnected)?.[1];
+    expect(onCallerLeft).toBeDefined();
+    (onCallerLeft as (participant: { identity: string; kind: ParticipantKind }) => void)({
+      identity: 'caller',
+      kind: ParticipantKind.STANDARD,
+    });
+
+    let exitFinished = false;
+    const exiting = Promise.resolve(options.onExit!({} as never)).then(() => {
+      exitFinished = true;
+    });
+    await vi.waitFor(() => expect(removeParticipant).toHaveBeenCalledOnce());
+    expect(timeout).toHaveBeenNthCalledWith(1, 30_000);
+    await vi.waitFor(() => expect(timeout).toHaveBeenNthCalledWith(2, 10_000), { timeout: 200 });
+    expect(exitFinished).toBe(false);
+    expect(shutdown).not.toHaveBeenCalled();
+
+    removalTimeoutController.abort();
+    await exiting;
+
+    expect(shutdown).toHaveBeenCalledOnce();
+    expect(setInputAudioEnabled).toHaveBeenLastCalledWith(true);
+    expect(setOutputAudioEnabled).toHaveBeenLastCalledWith(true);
+    expect(setOutputTranscriptionEnabled).toHaveBeenLastCalledWith(true);
+  });
 
   it('lets a successful participant move win over an abort', async () => {
     const controller = new AbortController();

@@ -297,9 +297,19 @@ export function createWarmTransferTask({
       if (room?.name && jobCtx) {
         const info = jobCtx.info;
         const rooms = new RoomServiceClient(info.url, info.apiKey, info.apiSecret);
-        await rooms.removeParticipant(room.name, humanAgentIdentity).catch((error) => {
+        const removal = await waitUntilAborted(
+          rooms.removeParticipant(room.name, humanAgentIdentity),
+          AbortSignal.timeout(CALLER_HANGUP_CLEANUP_TIMEOUT_MS),
+        ).catch((error) => {
           logger.warn({ error }, 'failed to remove human agent after caller hangup');
+          return null;
         });
+        if (removal?.isAborted) {
+          logger.warn(
+            { timeoutMs: CALLER_HANGUP_CLEANUP_TIMEOUT_MS },
+            'timed out removing human agent after caller hangup',
+          );
+        }
       }
       session.shutdown({ drain: false });
     }
@@ -760,6 +770,7 @@ const CALLER_HANGUP_INSTRUCTION = `The caller has hung up before the transfer co
 Briefly inform the human agent that the caller has left and that you are ending the call now.`;
 
 const CALLER_HANGUP_NOTICE_TIMEOUT_MS = 30_000;
+const CALLER_HANGUP_CLEANUP_TIMEOUT_MS = 10_000;
 
 const PERSONA = `# Identity
 
