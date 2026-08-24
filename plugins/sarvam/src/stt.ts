@@ -84,14 +84,14 @@ export interface STTTranslateOptions extends STTBaseOptions {
 }
 
 /**
- * Options specific to saaras:v3 and saaras:v4 (recommended).
+ * Options specific to saaras:v3.
  * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text/transcribe | Sarvam STT API docs}
  */
 export interface STTV3Options extends STTBaseOptions {
-  model?: 'saaras:v3' | 'saaras:v4';
+  model?: 'saaras:v3';
   /** Language code (BCP-47). Default: 'en-IN'. Set to 'unknown' for auto-detection. */
   languageCode?: STTV3Languages | string;
-  /** Transcription mode (v3/v4 only). Default: 'transcribe' */
+  /** Transcription mode. Default: 'transcribe' */
   mode?: STTModes | string;
   /** Conversation context to boost model accuracy */
   prompt?: string;
@@ -119,8 +119,13 @@ export interface STTV3Options extends STTBaseOptions {
   numInitialIgnoredFrames?: number;
 }
 
+/** Options specific to saaras:v4 (default and recommended). */
+export interface STTV4Options extends Omit<STTV3Options, 'model' | 'prompt'> {
+  model?: 'saaras:v4';
+}
+
 /** Combined options — discriminated by `model` field */
-export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options;
+export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options | STTV4Options;
 
 // ---------------------------------------------------------------------------
 // Resolved (internal) options — flat union of all fields
@@ -212,21 +217,23 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
     base.prompt = translateOpts.prompt;
     base.mode = translateOpts.mode ?? SAARAS_TRANSLATE_DEFAULTS.mode;
   } else if (model === 'saaras:v3' || model === 'saaras:v4') {
-    const v3Opts = opts as STTV3Options;
-    base.languageCode = normalizeLanguage(v3Opts.languageCode ?? SAARAS_V3_DEFAULTS.languageCode);
-    base.mode = v3Opts.mode ?? SAARAS_V3_DEFAULTS.mode;
-    base.prompt = v3Opts.prompt;
-    base.withTimestamps = v3Opts.withTimestamps;
-    base.positiveSpeechThreshold = v3Opts.positiveSpeechThreshold;
-    base.negativeSpeechThreshold = v3Opts.negativeSpeechThreshold;
-    base.minSpeechFrames = v3Opts.minSpeechFrames;
-    base.firstTurnMinSpeechFrames = v3Opts.firstTurnMinSpeechFrames;
-    base.negativeFramesCount = v3Opts.negativeFramesCount;
-    base.negativeFramesWindow = v3Opts.negativeFramesWindow;
-    base.startSpeechVolumeThreshold = v3Opts.startSpeechVolumeThreshold;
-    base.interruptMinSpeechFrames = v3Opts.interruptMinSpeechFrames;
-    base.preSpeechPadFrames = v3Opts.preSpeechPadFrames;
-    base.numInitialIgnoredFrames = v3Opts.numInitialIgnoredFrames;
+    const saarasOpts = opts as STTV3Options | STTV4Options;
+    base.languageCode = normalizeLanguage(
+      saarasOpts.languageCode ?? SAARAS_V3_DEFAULTS.languageCode,
+    );
+    base.mode = saarasOpts.mode ?? SAARAS_V3_DEFAULTS.mode;
+    base.prompt = model === 'saaras:v3' ? (opts as STTV3Options).prompt : undefined;
+    base.withTimestamps = saarasOpts.withTimestamps;
+    base.positiveSpeechThreshold = saarasOpts.positiveSpeechThreshold;
+    base.negativeSpeechThreshold = saarasOpts.negativeSpeechThreshold;
+    base.minSpeechFrames = saarasOpts.minSpeechFrames;
+    base.firstTurnMinSpeechFrames = saarasOpts.firstTurnMinSpeechFrames;
+    base.negativeFramesCount = saarasOpts.negativeFramesCount;
+    base.negativeFramesWindow = saarasOpts.negativeFramesWindow;
+    base.startSpeechVolumeThreshold = saarasOpts.startSpeechVolumeThreshold;
+    base.interruptMinSpeechFrames = saarasOpts.interruptMinSpeechFrames;
+    base.preSpeechPadFrames = saarasOpts.preSpeechPadFrames;
+    base.numInitialIgnoredFrames = saarasOpts.numInitialIgnoredFrames;
   } else {
     // saarika:v2.5
     let languageCode = normalizeLanguage(
@@ -329,10 +336,7 @@ function buildFormData(wavBlob: Blob, opts: ResolvedSTTOptions): FormData {
   if ((opts.model === 'saaras:v3' || opts.model === 'saaras:v4') && opts.mode != null) {
     formData.append('mode', opts.mode);
   }
-  if (
-    (opts.model === 'saaras:v2.5' || opts.model === 'saaras:v3' || opts.model === 'saaras:v4') &&
-    opts.prompt != null
-  ) {
+  if ((opts.model === 'saaras:v2.5' || opts.model === 'saaras:v3') && opts.prompt != null) {
     formData.append('prompt', opts.prompt);
   }
   if (opts.model !== 'saaras:v2.5' && opts.withTimestamps) {
@@ -451,7 +455,7 @@ export class STT extends stt.STT {
    * `SARVAM_API_KEY` environment variable.
    *
    * Supported models:
-   * - `saaras:v4` (default, recommended) — supports all 22 languages, modes, prompt, timestamps, and uses `/speech-to-text`.
+   * - `saaras:v4` (default, recommended) — supports all 22 languages, modes, timestamps, and uses `/speech-to-text`.
    * - `saaras:v3` — supports all 22 languages, modes, prompt, timestamps, and uses `/speech-to-text`.
    * - `saaras:v2.5` — Indic-to-English translation via `/speech-to-text-translate`. Auto-detects source language. Supports prompt.
    * - `saarika:v2.5` — will be deprecated soon. Supports timestamps. All its languages are available in `saaras:v3` and `saaras:v4`.
