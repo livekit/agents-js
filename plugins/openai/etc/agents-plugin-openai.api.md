@@ -1897,14 +1897,17 @@ export interface TTSOptions {
     instructions?: string;
     // (undocumented)
     model: TTSModels | string;
-    // Warning: (ae-forgotten-export) The symbol "TTSResponseFormat" needs to be exported by the entry point index.d.ts
-    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents-plugin-openai" does not have an export "UNPLAYABLE_CONTENT_TYPES"
     responseFormat?: TTSResponseFormat;
     // (undocumented)
     speed: number;
     // (undocumented)
     voice: TTSVoices;
 }
+
+// Warning: (ae-missing-release-tag) "TTSResponseFormat" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type TTSResponseFormat = NonNullable<OpenAI.Audio.SpeechCreateParams['response_format']>;
 
 // Warning: (ae-missing-release-tag) "TTSVoices" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
