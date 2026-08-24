@@ -9082,7 +9082,7 @@ declare namespace workflows {
 // Warning: (ae-missing-release-tag) "XAIModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type XAIModels = 'xai/grok-4-1-fast-non-reasoning' | 'xai/grok-4-1-fast-reasoning' | 'xai/grok-4.20-0309-non-reasoning' | 'xai/grok-4.20-0309-reasoning' | 'xai/grok-4.20-multi-agent-0309';
+type XAIModels = 'xai/grok-4-1-fast-non-reasoning' | 'xai/grok-4-1-fast-reasoning' | 'xai/grok-4.20-0309-non-reasoning' | 'xai/grok-4.20-0309-reasoning' | 'xai/grok-4.20-multi-agent-0309' | 'xai/grok-4.3' | 'xai/grok-4.5';
 
 // Warning: (ae-missing-release-tag) "XaiOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
