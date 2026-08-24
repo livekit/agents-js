@@ -1352,6 +1352,9 @@ importers:
 
   plugins/sarvam:
     dependencies:
+      openai:
+        specifier: ^6.8.1
+        version: 6.8.1(ws@8.21.1)(zod@3.25.76)
       ws:
         specifier: 'catalog:'
         version: 8.21.1
@@ -1383,6 +1386,9 @@ importers:
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   plugins/silero:
     dependencies:
