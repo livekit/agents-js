@@ -15,7 +15,7 @@
  * Related: #1124, #1089, #836
  */
 import { Heap } from 'heap-js';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AgentConfigUpdate,
   ChatContext,
@@ -35,6 +35,7 @@ import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_con
 import { log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Event, Future, Task } from '../utils.js';
+import { type VADEvent, VADEventType } from '../vad.js';
 import { AgentTask, _getActivityTaskInfo } from './agent.js';
 import { AgentActivity, onEnterStorage, transcriptsEquivalent } from './agent_activity.js';
 import type { EndOfTurnInfo, PreemptiveGenerationInfo } from './audio_recognition.js';
@@ -506,31 +507,48 @@ describe('AgentActivity - mainTask', () => {
 });
 
 type FalseInterruptionActivity = {
-  pausedSpeech?: { handle: SpeechHandle; agentState: 'speaking'; timeout: number };
+  pausedSpeech?: {
+    handle: SpeechHandle;
+    agentState: 'thinking' | 'speaking';
+    timeout: number;
+  };
   _currentSpeech?: SpeechHandle;
   falseInterruptionTimer?: NodeJS.Timeout;
   falseInterruptionPending: boolean;
   cancelSpeechPauseTask?: Promise<void>;
+  userSilenceEvent: Event;
+  interruptionDetected: boolean;
   audioRecognition?: {
     endOfTurnTask?: Task<void>;
     isClosed: boolean;
-    onStartOfAgentSpeech: ReturnType<typeof vi.fn>;
-    onEndOfAgentSpeech: ReturnType<typeof vi.fn>;
+    onStartOfAgentSpeech: Mock;
+    onEndOfAgentSpeech: Mock;
   };
   agentSession: {
-    agentState: 'speaking';
+    agentState: 'thinking' | 'speaking';
+    amd?: undefined;
     sessionOptions: {
       turnHandling: {
         interruption: { resumeFalseInterruption: boolean; falseInterruptionTimeout: number };
       };
     };
-    output: { audio: { canPause: boolean; resume: ReturnType<typeof vi.fn> } };
-    _updateAgentState: ReturnType<typeof vi.fn>;
-    emit: ReturnType<typeof vi.fn>;
+    output: {
+      audioEnabled: boolean;
+      audio: {
+        canPause: boolean;
+        pause: Mock;
+        resume: Mock;
+      };
+    };
+    _updateUserState: Mock;
+    _updateAgentState: Mock;
+    emit: Mock;
   };
   isInterruptionDetectionEnabled: boolean;
-  disableVadInterruptionSoon: ReturnType<typeof vi.fn>;
-  logger: { debug: ReturnType<typeof vi.fn> };
+  disableVadInterruptionSoon: Mock;
+  logger: { debug: Mock };
+  onStartOfSpeech: (event: VADEvent) => void;
+  onEndOfSpeech: (event?: VADEvent) => void;
   startFalseInterruptionTimer: (timeout: number) => void;
   cancelFalseInterruptionTimer: () => void;
   cancelSpeechPause: (options?: { interrupt?: boolean }) => Promise<void>;
@@ -551,14 +569,21 @@ function falseInterruptionActivity(endOfTurnTask?: Task<void>): FalseInterruptio
       onStartOfAgentSpeech: vi.fn(),
       onEndOfAgentSpeech: vi.fn(async () => {}),
     },
+    userSilenceEvent: new Event(),
+    interruptionDetected: false,
     agentSession: {
       agentState: 'speaking',
+      amd: undefined,
       sessionOptions: {
         turnHandling: {
           interruption: { resumeFalseInterruption: true, falseInterruptionTimeout: 300 },
         },
       },
-      output: { audio: { canPause: true, resume: vi.fn() } },
+      output: {
+        audioEnabled: true,
+        audio: { canPause: true, pause: vi.fn(), resume: vi.fn() },
+      },
+      _updateUserState: vi.fn(),
       _updateAgentState: vi.fn(),
       emit: vi.fn(),
     },
@@ -567,6 +592,22 @@ function falseInterruptionActivity(endOfTurnTask?: Task<void>): FalseInterruptio
     logger: { debug: vi.fn() },
   });
   return activity;
+}
+
+function speechBoundaryEvent(type: VADEventType): VADEvent {
+  return {
+    type,
+    samplesIndex: 0,
+    timestamp: Date.now(),
+    speechDuration: 0,
+    silenceDuration: 0,
+    frames: [],
+    probability: 0,
+    inferenceDuration: 0,
+    speaking: type === VADEventType.START_OF_SPEECH,
+    rawAccumulatedSilence: 0,
+    rawAccumulatedSpeech: 0,
+  };
 }
 
 function endOfTurnInfo(options: { skipReply?: boolean } = {}): EndOfTurnInfo {
@@ -645,6 +686,21 @@ function endOfTurnActivity(llm: unknown): EndOfTurnActivity {
 describe('AgentActivity - false interruption resume', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it('preserves the configured grace for pre-playout speech', async () => {
+    const activity = falseInterruptionActivity();
+    activity.pausedSpeech = undefined;
+    activity.agentSession.agentState = 'thinking';
+
+    activity.onStartOfSpeech(speechBoundaryEvent(VADEventType.START_OF_SPEECH));
+    expect(activity.agentSession.output.audio.pause).toHaveBeenCalledOnce();
+    activity.onEndOfSpeech(speechBoundaryEvent(VADEventType.END_OF_SPEECH));
+
+    await vi.advanceTimersByTimeAsync(299);
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+  });
 
   it('waits for a dropped turn before resuming', async () => {
     const decision = new Future<void>();

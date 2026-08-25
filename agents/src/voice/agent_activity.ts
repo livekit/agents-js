@@ -1802,7 +1802,10 @@ export class AgentActivity implements RecognitionHooks {
       // EOS arms false-interruption resume. A final transcript or a
       // replying turn commit interrupts the paused handle.
       const audioOutput = this.agentSession.output.audio!;
-      this.updatePausedSpeech(this._currentSpeech, 0);
+      this.updatePausedSpeech(
+        this._currentSpeech,
+        this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout,
+      );
       audioOutput.pause();
     }
   }
