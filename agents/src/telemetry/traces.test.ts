@@ -15,6 +15,7 @@ import FormData from 'form-data';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
+import { version } from '../version.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import {
@@ -411,7 +412,7 @@ describe('uploadSessionReport metadata', () => {
     else process.env.LIVEKIT_API_SECRET = prevSecret;
   });
 
-  it('includes simulation and redaction metadata on exported session-report logs', async () => {
+  it('includes the SDK version, simulation, and redaction metadata on exported session-report logs', async () => {
     const exportSpy = vi
       .spyOn(SimpleOTLPHttpLogExporter.prototype, 'export')
       .mockResolvedValue(undefined);
@@ -434,6 +435,7 @@ describe('uploadSessionReport metadata', () => {
 
     const records = exportSpy.mock.calls[0]?.[0] ?? [];
     expect(records[0]?.attributes).toMatchObject({
+      sdk_version: version,
       'lk.simulation.enabled': true,
       'lk.redaction.enabled': true,
     });
