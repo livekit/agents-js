@@ -9,6 +9,8 @@ import {
   getJobContext,
   intervalForRetry,
   voice,
+  waitForParticipant,
+  waitForTrackPublication,
 } from '@livekit/agents';
 import type { Room } from '@livekit/rtc-node';
 import { TrackKind } from '@livekit/rtc-node';
@@ -18,6 +20,7 @@ import { log } from './log.js';
 
 const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 
+const AVATAR_JOIN_WAIT_MAX_ATTEMPTS = 5;
 const STOCK_AVATAR_ID = '694c83e2-8895-4a98-bd16-56332ca3f449';
 const DEFAULT_API_URL = 'https://api.bey.dev';
 const AVATAR_AGENT_IDENTITY = 'bey-avatar-agent';
@@ -203,6 +206,31 @@ export class AvatarSession extends voice.AvatarSession {
 
     this.#logger.debug('starting avatar session');
     await this.startAgent(livekitUrl, livekitToken);
+
+    for (let attempt = 1; attempt <= AVATAR_JOIN_WAIT_MAX_ATTEMPTS; attempt++) {
+      try {
+        await waitForParticipant({
+          room,
+          identity: this.avatarParticipantIdentity,
+        });
+        await waitForTrackPublication({
+          room,
+          identity: this.avatarParticipantIdentity,
+          kind: TrackKind.KIND_VIDEO,
+        });
+        break;
+      } catch (err) {
+        if (attempt === AVATAR_JOIN_WAIT_MAX_ATTEMPTS) throw err;
+        this.#logger.warn(
+          {
+            'lk.pii.destination_identity': this.avatarParticipantIdentity,
+            error: String(err),
+            attempt,
+          },
+          'avatar participant join wait failed, retrying (transient disconnect/reconnect is expected during avatar startup)',
+        );
+      }
+    }
 
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
