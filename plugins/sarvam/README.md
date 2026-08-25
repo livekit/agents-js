@@ -2,7 +2,7 @@
 
 [Sarvam AI](https://www.sarvam.ai/) plugin for [LiveKit Agents](https://docs.livekit.io/agents/).
 
-Provides text-to-speech (TTS) using Sarvam AI's Bulbul models and speech-to-text (STT) using Saaras/Saarika models, with support for 22+ Indian languages.
+Provides text-to-speech (TTS) using Sarvam AI's Bulbul models and speech-to-text (STT) using Saaras models, with support for 22+ Indian languages.
 
 ## Installation
 
@@ -64,29 +64,14 @@ const stt = new sarvam.STT({
 Setting `streaming: false` disables the plugin's native WebSocket streaming path.
 In an `AgentSession`, LiveKit will use VAD + non-streaming `recognize()` calls instead.
 
-### STT (Translate — Indic to English)
-
-```typescript
-import * as sarvam from '@livekit/agents-plugin-sarvam';
-
-const stt = new sarvam.STT({
-  model: 'saaras:v2.5',
-  prompt: 'Technical interview discussion',
-});
-```
-
 Set the `SARVAM_API_KEY` environment variable or pass `apiKey` directly.
 
 ## STT Models
 
-| Model                 | Endpoint                    | Languages   | Modes | Prompt |
-| --------------------- | --------------------------- | ----------- | ----- | ------ |
-| `saaras:v4` (default) | `/speech-to-text`           | 22 (BCP-47) | Yes   | No     |
-| `saaras:v3`           | `/speech-to-text`           | 22 (BCP-47) | Yes   | No     |
-| `saaras:v2.5`         | `/speech-to-text-translate` | Auto-detect | No    | Yes    |
-| `saarika:v2.5`        | `/speech-to-text`           | 12 (BCP-47) | No    | No     |
-
-`saarika:v2.5` will be deprecated soon — all its languages are available in `saaras:v3` and `saaras:v4`.
+| Model                 | Endpoint          | Languages   | Modes | Prompt |
+| --------------------- | ----------------- | ----------- | ----- | ------ |
+| `saaras:v4` (default) | `/speech-to-text` | 22 (BCP-47) | Yes   | No     |
+| `saaras:v3`           | `/speech-to-text` | 22 (BCP-47) | Yes   | No     |
 
 ## Supported Languages
 

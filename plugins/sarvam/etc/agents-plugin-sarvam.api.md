@@ -67,65 +67,30 @@ export class STT extends stt.STT {
 // Warning: (ae-missing-release-tag) "STTLanguages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type STTLanguages = STTV2Languages | STTV3Languages;
+export type STTLanguages = STTV3Languages;
 
 // Warning: (ae-missing-release-tag) "STTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type STTModels = 'saaras:v4' | 'saaras:v3' | 'saaras:v2.5' | 'saarika:v2.5';
+export type STTModels = 'saaras:v4' | 'saaras:v3';
 
 // Warning: (ae-missing-release-tag) "STTModes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export type STTModes = 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'codemix';
 
+// Warning: (ae-forgotten-export) The symbol "STTBaseOptions" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options | STTV4Options;
-
-// Warning: (ae-forgotten-export) The symbol "STTBaseOptions" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "STTTranslateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-export interface STTTranslateOptions extends STTBaseOptions {
-    mode?: STTModes | string;
-    // (undocumented)
-    model: 'saaras:v2.5';
-    prompt?: string;
-}
-
-// Warning: (ae-missing-release-tag) "STTV2Languages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-export type STTV2Languages = 'unknown' | 'hi-IN' | 'bn-IN' | 'kn-IN' | 'ml-IN' | 'mr-IN' | 'od-IN' | 'pa-IN' | 'ta-IN' | 'te-IN' | 'en-IN' | 'gu-IN';
-
-// Warning: (ae-missing-release-tag) "STTV2Options" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-export interface STTV2Options extends STTBaseOptions {
-    languageCode?: STTV2Languages | string;
-    // (undocumented)
-    model: 'saarika:v2.5';
-    withTimestamps?: boolean;
-}
-
-// Warning: (ae-missing-release-tag) "STTV3Languages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-export type STTV3Languages = STTV2Languages | 'as-IN' | 'ur-IN' | 'ne-IN' | 'kok-IN' | 'ks-IN' | 'sd-IN' | 'sa-IN' | 'sat-IN' | 'mni-IN' | 'brx-IN' | 'mai-IN' | 'doi-IN';
-
-// Warning: (ae-missing-release-tag) "STTV3Options" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-export interface STTV3Options extends STTBaseOptions {
+export interface STTOptions extends STTBaseOptions {
     firstTurnMinSpeechFrames?: number;
     interruptMinSpeechFrames?: number;
     languageCode?: STTV3Languages | string;
     minSpeechFrames?: number;
     mode?: STTModes | string;
     // (undocumented)
-    model?: 'saaras:v3';
+    model?: STTModels | string;
     negativeFramesCount?: number;
     negativeFramesWindow?: number;
     negativeSpeechThreshold?: number;
@@ -135,6 +100,34 @@ export interface STTV3Options extends STTBaseOptions {
     prompt?: string;
     startSpeechVolumeThreshold?: number;
     withTimestamps?: boolean;
+}
+
+// Warning: (ae-missing-release-tag) "STTTranslateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public @deprecated (undocumented)
+export type STTTranslateOptions = STTOptions;
+
+// Warning: (ae-missing-release-tag) "STTV2Languages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public @deprecated (undocumented)
+export type STTV2Languages = STTV3Languages;
+
+// Warning: (ae-missing-release-tag) "STTV2Options" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public @deprecated (undocumented)
+export type STTV2Options = STTOptions;
+
+// Warning: (ae-missing-release-tag) "STTV3Languages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type STTV3Languages = 'unknown' | 'hi-IN' | 'bn-IN' | 'kn-IN' | 'ml-IN' | 'mr-IN' | 'od-IN' | 'pa-IN' | 'ta-IN' | 'te-IN' | 'en-IN' | 'gu-IN' | 'as-IN' | 'ur-IN' | 'ne-IN' | 'kok-IN' | 'ks-IN' | 'sd-IN' | 'sa-IN' | 'sat-IN' | 'mni-IN' | 'brx-IN' | 'mai-IN' | 'doi-IN';
+
+// Warning: (ae-missing-release-tag) "STTV3Options" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface STTV3Options extends STTOptions {
+    // (undocumented)
+    model?: 'saaras:v3';
 }
 
 // Warning: (ae-missing-release-tag) "STTV4Options" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
