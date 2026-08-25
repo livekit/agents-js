@@ -507,6 +507,7 @@ describe('AgentActivity - mainTask', () => {
 
 type FalseInterruptionActivity = {
   pausedSpeech?: { handle: SpeechHandle; agentState: 'speaking'; timeout: number };
+  agentStateOwner?: { activity: unknown; speechHandle: SpeechHandle };
   _currentSpeech?: SpeechHandle;
   falseInterruptionTimer?: NodeJS.Timeout;
   falseInterruptionPending: boolean;
@@ -568,6 +569,7 @@ function falseInterruptionActivity(endOfTurnTask?: Task<void>): FalseInterruptio
     logger: { debug: vi.fn() },
   });
   activity.agentSession._activity = activity;
+  activity.agentStateOwner = { activity, speechHandle: handle };
   return activity;
 }
 
@@ -802,13 +804,15 @@ describe('AgentActivity - speech completion', () => {
     const audioRecognition = {
       onEndOfAgentSpeech: vi.fn(async () => {}),
     };
+    const speechHandle = {
+      done: () => true,
+    } as SpeechHandle;
     const fakeActivity = {
       speechQueue: {
         peek: () => undefined,
       },
-      _currentSpeech: {
-        done: () => true,
-      },
+      _currentSpeech: speechHandle,
+      agentStateOwner: undefined as unknown,
       audioRecognition,
       agentSession: {
         get _activity() {
@@ -820,11 +824,14 @@ describe('AgentActivity - speech completion', () => {
         }),
       },
     };
+    const owner = { activity: fakeActivity, speechHandle };
+    fakeActivity.agentStateOwner = owner;
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
 
     const onPipelineReplyDone = (AgentActivity.prototype as Record<string, unknown>)
-      .onPipelineReplyDone as (this: typeof fakeActivity) => void;
+      .onPipelineReplyDone as (this: typeof fakeActivity, owner: typeof owner) => void;
 
-    onPipelineReplyDone.call(fakeActivity);
+    onPipelineReplyDone.call(fakeActivity, owner);
 
     expect(fakeActivity.agentSession._updateAgentState).toHaveBeenCalledWith('listening');
     expect(audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledTimes(1);
@@ -1525,12 +1532,13 @@ describe('AgentActivity - realtime reply chat context push', () => {
   }
 
   async function runRealtimeReplyTask(activity: unknown, speechHandle: SpeechHandle) {
+    const owner = { activity, speechHandle };
     const realtimeReplyTask = (
       AgentActivity.prototype as unknown as {
         realtimeReplyTask(
           this: unknown,
           args: {
-            speechHandle: SpeechHandle;
+            owner: typeof owner;
             modelSettings: { toolChoice?: never };
             abortController: AbortController;
             userInput: string;
@@ -1540,7 +1548,7 @@ describe('AgentActivity - realtime reply chat context push', () => {
     ).realtimeReplyTask;
 
     await realtimeReplyTask.call(activity, {
-      speechHandle,
+      owner,
       modelSettings: {},
       abortController: new AbortController(),
       userInput: 'hello',

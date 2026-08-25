@@ -2,4 +2,4 @@
 '@livekit/agents': patch
 ---
 
-Prevent delayed cleanup from an interrupted reply from marking the agent as listening while a newer reply is speaking.
+Prevent delayed cleanup from an interrupted reply from overwriting the agent state owned by a newer reply.

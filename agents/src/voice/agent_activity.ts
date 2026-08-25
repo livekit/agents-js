@@ -4,7 +4,7 @@
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
-import type { Span } from '@opentelemetry/api';
+import type { Context, Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -281,6 +281,12 @@ interface PausedSpeechInfo {
   timeout: number;
 }
 
+/** Per-task agent-state lease. Tool-response tasks can reuse the same SpeechHandle. */
+interface SpeechOwner {
+  readonly activity: AgentActivity;
+  readonly speechHandle: SpeechHandle;
+}
+
 /// Analog to Python's _ForwardOutput
 export interface ForwardOutput {
   played: 'full' | 'partial' | 'skipped';
@@ -329,7 +335,7 @@ export class AgentActivity implements RecognitionHooks {
   private _authorizationPaused = false;
   private _drainBlockedTasks: Set<Task<any>> = new Set();
   private _currentSpeech?: SpeechHandle;
-  private speakingSpeechId?: string;
+  private agentStateOwner?: SpeechOwner;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private userSilenceEvent = new Event();
   private q_updated: Future<void, never>;
@@ -1555,14 +1561,15 @@ export class AgentActivity implements RecognitionHooks {
       }),
     );
 
+    const owner = this.createSpeechOwner(handle);
     const task = this.createSpeechTask({
       taskFn: (abortController: AbortController) =>
-        this.ttsTask(handle, text, addToChatCtx, {}, abortController, audio),
+        this.ttsTask(owner, text, addToChatCtx, {}, abortController, audio),
       ownedSpeechHandle: handle,
       name: 'AgentActivity.tts_say',
     });
 
-    task.result.finally(() => this.onPipelineReplyDone());
+    task.result.finally(() => this.onPipelineReplyDone(owner));
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
   }
@@ -1745,9 +1752,10 @@ export class AgentActivity implements RecognitionHooks {
     );
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
+    const owner = this.createSpeechOwner(handle);
     this.createSpeechTask({
       taskFn: (abortController: AbortController) =>
-        this.realtimeGenerationTask(handle, ev, {}, abortController),
+        this.realtimeGenerationTask(owner, ev, {}, abortController),
       ownedSpeechHandle: handle,
       name: 'AgentActivity.realtimeGeneration',
     });
@@ -1928,8 +1936,12 @@ export class AgentActivity implements RecognitionHooks {
 
         this.updatePausedSpeech(this._currentSpeech, timeout);
         audioOutput!.pause();
-        if (wasAgentSpeaking) {
-          this.agentSession._updateAgentState('listening');
+        const pausedOwner = this.agentStateOwner;
+        if (
+          wasAgentSpeaking &&
+          pausedOwner &&
+          this.transitionAgentState(pausedOwner, 'listening')
+        ) {
           if (this.audioRecognition) {
             this.audioRecognition.onEndOfAgentSpeech(
               options?.ignoreUserTranscriptUntil ?? Date.now(),
@@ -2555,27 +2567,62 @@ export class AgentActivity implements RecognitionHooks {
     this.q_updated.resolve();
   }
 
-  private tryStartAgentSpeech(speechHandle: SpeechHandle, startedSpeakingAt?: number): boolean {
-    if (this.agentSession._activity !== this || this._currentSpeech !== speechHandle) {
-      return false;
-    }
-    this.speakingSpeechId = speechHandle.id;
-    this.agentSession._updateAgentState('speaking', {
-      startTime: startedSpeakingAt,
-      otelContext: speechHandle._agentTurnContext,
-    });
-    return true;
+  private createSpeechOwner(speechHandle: SpeechHandle): SpeechOwner {
+    return { activity: this, speechHandle };
   }
 
-  private stopAgentSpeech(speechHandle: SpeechHandle): boolean {
+  private ownsAgentState(owner: SpeechOwner, expectedState?: AgentState): boolean {
+    return (
+      owner.activity === this &&
+      this.agentSession._activity === this &&
+      this.agentStateOwner === owner &&
+      (expectedState === undefined || this.agentSession.agentState === expectedState)
+    );
+  }
+
+  private claimAgentState(
+    owner: SpeechOwner,
+    state: AgentState,
+    options?: { startTime?: number; otelContext?: Context },
+  ): boolean {
     if (
+      owner.activity !== this ||
       this.agentSession._activity !== this ||
-      this.speakingSpeechId !== speechHandle.id ||
-      this.agentSession.agentState !== 'speaking'
+      owner.speechHandle.interrupted ||
+      owner.speechHandle.done()
     ) {
       return false;
     }
-    this.speakingSpeechId = undefined;
+
+    this.agentStateOwner = owner;
+    this.agentSession._updateAgentState(state, options);
+    return true;
+  }
+
+  private transitionAgentState(
+    owner: SpeechOwner,
+    state: AgentState,
+    options?: { startTime?: number; otelContext?: Context },
+  ): boolean {
+    if (!this.ownsAgentState(owner)) return false;
+
+    this.agentSession._updateAgentState(state, options);
+    return true;
+  }
+
+  private tryStartAgentSpeech(owner: SpeechOwner, startedSpeakingAt?: number): boolean {
+    if (this._currentSpeech !== owner.speechHandle) return false;
+
+    return this.claimAgentState(owner, 'speaking', {
+      startTime: startedSpeakingAt,
+      otelContext: owner.speechHandle._agentTurnContext,
+    });
+  }
+
+  private finishAgentState(owner: SpeechOwner, expectedState?: AgentState): boolean {
+    if (!this.ownsAgentState(owner, expectedState)) return false;
+
+    this.agentStateOwner = undefined;
     this.agentSession._updateAgentState('listening');
     return true;
   }
@@ -2645,12 +2692,13 @@ export class AgentActivity implements RecognitionHooks {
       }),
     );
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
+    const owner = this.createSpeechOwner(handle);
 
     if (this.llm instanceof RealtimeModel) {
       this.createSpeechTask({
         taskFn: (abortController: AbortController) =>
           this.realtimeReplyTask({
-            speechHandle: handle,
+            owner,
             // TODO(brian): support llm.ChatMessage for the realtime model
             userInput: userMessage?.rawTextContent,
             instructions,
@@ -2677,7 +2725,7 @@ export class AgentActivity implements RecognitionHooks {
       const task = this.createSpeechTask({
         taskFn: (abortController: AbortController) =>
           this.pipelineReplyTask(
-            handle,
+            owner,
             chatCtx ?? this.agent.chatCtx,
             tools,
             {
@@ -2691,7 +2739,7 @@ export class AgentActivity implements RecognitionHooks {
         name: 'AgentActivity.pipelineReply',
       });
 
-      task.result.finally(() => this.onPipelineReplyDone());
+      task.result.finally(() => this.onPipelineReplyDone(owner));
     }
 
     if (scheduleSpeech) {
@@ -2767,11 +2815,12 @@ export class AgentActivity implements RecognitionHooks {
     return future;
   }
 
-  private onPipelineReplyDone(): void {
-    if (this.agentSession._activity !== this) return;
-
-    if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
-      this.agentSession._updateAgentState('listening');
+  private onPipelineReplyDone(owner: SpeechOwner): void {
+    if (
+      !this.speechQueue.peek() &&
+      (!this._currentSpeech || this._currentSpeech.done()) &&
+      this.finishAgentState(owner)
+    ) {
       if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
@@ -3009,13 +3058,14 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async ttsTask(
-    speechHandle: SpeechHandle,
+    owner: SpeechOwner,
     text: string | ReadableStream<string>,
     addToChatCtx: boolean,
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
+    const { speechHandle } = owner;
     speechHandle._agentTurnContext = otelContext.active();
 
     speechHandleStorage.enterWith(speechHandle);
@@ -3073,7 +3123,7 @@ export class AgentActivity implements RecognitionHooks {
     const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt: number = Date.now()) => {
       replyStartedSpeakingAt = startedSpeakingAt;
       replyStartedForwardingAt = audioOut?.startedForwardingAt ?? replyStartedSpeakingAt;
-      if (!this.tryStartAgentSpeech(speechHandle, startedSpeakingAt)) return;
+      if (!this.tryStartAgentSpeech(owner, startedSpeakingAt)) return;
       if (this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech(replyStartedSpeakingAt);
       }
@@ -3174,7 +3224,7 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession._conversationItemAdded(message);
       }
 
-      if (this.stopAgentSpeech(speechHandle)) {
+      if (this.finishAgentState(owner, 'speaking')) {
         if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
         }
@@ -3202,7 +3252,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private _pipelineReplyTaskImpl = async ({
-    speechHandle,
+    owner,
     chatCtx,
     toolCtx,
     modelSettings,
@@ -3212,7 +3262,7 @@ export class AgentActivity implements RecognitionHooks {
     span,
     _previousUserMetrics,
   }: {
-    speechHandle: SpeechHandle;
+    owner: SpeechOwner;
     chatCtx: ChatContext;
     toolCtx: ToolContext;
     modelSettings: ModelSettings;
@@ -3222,6 +3272,7 @@ export class AgentActivity implements RecognitionHooks {
     span: Span;
     _previousUserMetrics?: MetricsReport;
   }): Promise<void> => {
+    const { speechHandle } = owner;
     speechHandle._agentTurnContext = otelContext.active();
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
@@ -3432,7 +3483,7 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(synthesizeTask);
     }
 
-    this.agentSession._updateAgentState('thinking');
+    this.claimAgentState(owner, 'thinking');
 
     const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
     if (speechHandle.allowInterruptions) {
@@ -3453,7 +3504,7 @@ export class AgentActivity implements RecognitionHooks {
       if (agentStartedSpeakingAt !== undefined) return;
       agentStartedSpeakingAt = startedSpeakingAt;
       agentStartedForwardingAt = audioOutRef?.startedForwardingAt ?? agentStartedSpeakingAt;
-      if (!this.tryStartAgentSpeech(speechHandle, startedSpeakingAt)) return;
+      if (!this.tryStartAgentSpeech(owner, startedSpeakingAt)) return;
       if (this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech(agentStartedSpeakingAt);
       }
@@ -3704,7 +3755,7 @@ export class AgentActivity implements RecognitionHooks {
         span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, forwardedText);
       }
 
-      if (this.stopAgentSpeech(speechHandle)) {
+      if (this.finishAgentState(owner, 'speaking')) {
         if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
         }
@@ -3750,16 +3801,18 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
-    if (!speechHandle.interrupted && toolOutput.output.length > 0) {
-      this.agentSession._updateAgentState('thinking');
+    if (
+      !speechHandle.interrupted &&
+      toolOutput.output.length > 0 &&
+      this.transitionAgentState(owner, 'thinking')
+    ) {
       if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
       if (this.isInterruptionDetectionEnabled) {
         this.restoreInterruptionByAudioActivity();
       }
-    } else if (this.agentSession.agentState === 'speaking') {
-      this.agentSession._updateAgentState('listening');
+    } else if (this.finishAgentState(owner, 'speaking')) {
       if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
@@ -3834,10 +3887,11 @@ export class AgentActivity implements RecognitionHooks {
           : 'auto';
 
       // Reuse the same speechHandle for the tool response.
+      const toolResponseOwner = this.createSpeechOwner(speechHandle);
       const toolResponseTask = this.createSpeechTask({
         taskFn: () =>
           this.pipelineReplyTask(
-            speechHandle,
+            toolResponseOwner,
             chatCtx,
             toolCtx,
             { toolChoice: respondToolChoice },
@@ -3850,14 +3904,14 @@ export class AgentActivity implements RecognitionHooks {
         name: 'AgentActivity.pipelineReply',
       });
 
-      toolResponseTask.result.finally(() => this.onPipelineReplyDone());
+      toolResponseTask.result.finally(() => this.onPipelineReplyDone(toolResponseOwner));
 
       this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
     }
   };
 
   private pipelineReplyTask = async (
-    speechHandle: SpeechHandle,
+    owner: SpeechOwner,
     chatCtx: ChatContext,
     toolCtx: ToolContext,
     modelSettings: ModelSettings,
@@ -3869,7 +3923,7 @@ export class AgentActivity implements RecognitionHooks {
     tracer.startActiveSpan(
       async (span) =>
         this._pipelineReplyTaskImpl({
-          speechHandle,
+          owner,
           chatCtx,
           toolCtx,
           modelSettings,
@@ -3886,7 +3940,7 @@ export class AgentActivity implements RecognitionHooks {
     );
 
   private async realtimeGenerationTask(
-    speechHandle: SpeechHandle,
+    owner: SpeechOwner,
     ev: GenerationCreatedEvent,
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
@@ -3895,7 +3949,7 @@ export class AgentActivity implements RecognitionHooks {
     return tracer.startActiveSpan(
       async (span) =>
         this._realtimeGenerationTaskImpl({
-          speechHandle,
+          owner,
           ev,
           modelSettings,
           replyAbortController,
@@ -3910,20 +3964,21 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async _realtimeGenerationTaskImpl({
-    speechHandle,
+    owner,
     ev,
     modelSettings,
     replyAbortController,
     addToChatCtx,
     span,
   }: {
-    speechHandle: SpeechHandle;
+    owner: SpeechOwner;
     ev: GenerationCreatedEvent;
     modelSettings: ModelSettings;
     replyAbortController: AbortController;
     addToChatCtx: boolean;
     span: Span;
   }): Promise<void> {
+    const { speechHandle } = owner;
     speechHandle._agentTurnContext = otelContext.active();
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
@@ -3978,7 +4033,7 @@ export class AgentActivity implements RecognitionHooks {
     const onFirstFrame = (startedAt: number = Date.now()) => {
       if (startedSpeakingAt !== undefined) return;
       startedSpeakingAt = startedAt;
-      if (!this.tryStartAgentSpeech(speechHandle, startedAt)) return;
+      if (!this.tryStartAgentSpeech(owner, startedAt)) return;
       if (this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech(startedAt);
       }
@@ -4314,7 +4369,7 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
-      if (this.stopAgentSpeech(speechHandle)) {
+      if (this.finishAgentState(owner, 'speaking')) {
         if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
         }
@@ -4329,16 +4384,22 @@ export class AgentActivity implements RecognitionHooks {
     addRealtimeMessageOutputs(messageOutputs);
 
     let endedAgentSpeechBeforeTool = false;
-    if (this.agentSession.agentState === 'speaking') {
-      const toolBusy = !executeToolsTask.done || toolOutput.output.length > 0;
-      this.agentSession._updateAgentState(toolBusy ? 'thinking' : 'listening');
-      if (this.audioRecognition) {
-        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+    const toolBusy = !executeToolsTask.done || toolOutput.output.length > 0;
+    if (this.ownsAgentState(owner, 'speaking')) {
+      const stateUpdated = toolBusy
+        ? this.transitionAgentState(owner, 'thinking')
+        : this.finishAgentState(owner, 'speaking');
+      if (stateUpdated) {
+        if (this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+        if (this.isInterruptionDetectionEnabled) {
+          this.restoreInterruptionByAudioActivity();
+        }
+        endedAgentSpeechBeforeTool = true;
       }
-      if (this.isInterruptionDetectionEnabled) {
-        this.restoreInterruptionByAudioActivity();
-      }
-      endedAgentSpeechBeforeTool = true;
+    } else if (toolBusy && this._currentSpeech === speechHandle) {
+      this.claimAgentState(owner, 'thinking');
     }
 
     // mark the playout done before waiting for the tool execution
@@ -4353,8 +4414,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (toolOutput.output.length > 0) {
-      this.agentSession._updateAgentState('thinking');
-      if (!endedAgentSpeechBeforeTool) {
+      if (this.transitionAgentState(owner, 'thinking') && !endedAgentSpeechBeforeTool) {
         if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
         }
@@ -4362,13 +4422,11 @@ export class AgentActivity implements RecognitionHooks {
           this.restoreInterruptionByAudioActivity();
         }
       }
-    } else if (this.agentSession.agentState === 'speaking') {
-      this.agentSession._updateAgentState('listening');
-      if (this.audioRecognition) {
+    } else {
+      const wasSpeaking = this.ownsAgentState(owner, 'speaking');
+      if (this.finishAgentState(owner) && wasSpeaking && this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
-    } else if (endedAgentSpeechBeforeTool && this.agentSession.agentState === 'thinking') {
-      this.agentSession._updateAgentState('listening');
     }
 
     if (toolOutput.output.length === 0) {
@@ -4503,10 +4561,11 @@ export class AgentActivity implements RecognitionHooks {
     );
 
     const toolChoice = schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+    const replyOwner = this.createSpeechOwner(replySpeechHandle);
     this.createSpeechTask({
       taskFn: (abortController: AbortController) =>
         this.realtimeReplyTask({
-          speechHandle: replySpeechHandle,
+          owner: replyOwner,
           modelSettings: { toolChoice },
           abortController,
         }),
@@ -4655,18 +4714,19 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async realtimeReplyTask({
-    speechHandle,
+    owner,
     modelSettings: { toolChoice },
     userInput,
     instructions,
     abortController,
   }: {
-    speechHandle: SpeechHandle;
+    owner: SpeechOwner;
     modelSettings: ModelSettings;
     abortController: AbortController;
     userInput?: string;
     instructions?: string | Instructions;
   }): Promise<void> {
+    const { speechHandle } = owner;
     speechHandleStorage.enterWith(speechHandle);
 
     if (!this.realtimeSession) {
@@ -4741,12 +4801,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       const generationEvent = await generationPromise;
-      await this.realtimeGenerationTask(
-        speechHandle,
-        generationEvent,
-        { toolChoice },
-        abortController,
-      );
+      await this.realtimeGenerationTask(owner, generationEvent, { toolChoice }, abortController);
     } finally {
       // reset toolChoice value
       if (toolChoice !== undefined && toolChoice !== originalToolChoice) {
@@ -5207,16 +5262,13 @@ export class AgentActivity implements RecognitionHooks {
         audioOutput.canPause &&
         !this.pausedSpeech.handle.done()
       ) {
+        const owner = this.agentStateOwner;
         const canRestoreAgentState =
-          this.agentSession._activity === this &&
-          (this.pausedSpeech.agentState !== 'speaking' ||
-            this.tryStartAgentSpeech(this.pausedSpeech.handle));
+          owner?.speechHandle === this.pausedSpeech.handle &&
+          this.transitionAgentState(owner, this.pausedSpeech.agentState, {
+            otelContext: this.pausedSpeech.handle._agentTurnContext,
+          });
         if (canRestoreAgentState) {
-          if (this.pausedSpeech.agentState !== 'speaking') {
-            this.agentSession._updateAgentState(this.pausedSpeech.agentState, {
-              otelContext: this.pausedSpeech.handle._agentTurnContext,
-            });
-          }
           if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
             this.audioRecognition.onStartOfAgentSpeech(Date.now());
           }

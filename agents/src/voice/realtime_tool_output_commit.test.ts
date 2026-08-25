@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatContext, FunctionCall } from '../llm/chat_context.js';
@@ -16,6 +16,7 @@ import { initializeLogger } from '../log.js';
 import { Future } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
+import { AudioOutput, type PlaybackFinishedEvent } from './io.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
 
@@ -28,6 +29,62 @@ function stream<T>(...items: T[]): ReadableStream<T> {
       controller.close();
     },
   });
+}
+
+const PLAYBACK_FINISHED: PlaybackFinishedEvent = {
+  playbackPosition: 0.02,
+  interrupted: false,
+};
+
+function frame(): AudioFrame {
+  const samples = 480;
+  return new AudioFrame(new Int16Array(samples), 24000, 1, samples);
+}
+
+class DelayedCleanupAudioOutput extends AudioOutput {
+  readonly initialWaitEntered = new Future<void>();
+  readonly cleanupWaitEntered = new Future<void>();
+
+  private waitCount = 0;
+  private initialPlayout = new Future<PlaybackFinishedEvent>();
+  private cleanupPlayout = new Future<PlaybackFinishedEvent>();
+
+  constructor() {
+    super(24000);
+  }
+
+  override async captureFrame(audioFrame: AudioFrame): Promise<void> {
+    await super.captureFrame(audioFrame);
+    this.onPlaybackStarted(Date.now());
+  }
+
+  override async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    this.waitCount += 1;
+    if (this.waitCount === 1) {
+      this.initialWaitEntered.resolve();
+      return this.initialPlayout.await;
+    }
+    if (this.waitCount === 2) {
+      this.cleanupWaitEntered.resolve();
+      return this.cleanupPlayout.await;
+    }
+    return PLAYBACK_FINISHED;
+  }
+
+  override clearBuffer(): void {}
+
+  releaseCleanup(): void {
+    if (!this.cleanupPlayout.done) {
+      this.cleanupPlayout.resolve({ ...PLAYBACK_FINISHED, interrupted: true });
+    }
+  }
+
+  releaseAll(): void {
+    if (!this.initialPlayout.done) {
+      this.initialPlayout.resolve({ ...PLAYBACK_FINISHED, interrupted: true });
+    }
+    this.releaseCleanup();
+  }
 }
 
 /** Emits one text message and optionally one tool call per generation. */
@@ -160,6 +217,71 @@ describe('Realtime tool output commit', () => {
       await toolFinished.await;
       await speech.waitForPlayout();
       await session.close();
+    }
+  });
+
+  it('ignores delayed cleanup while a newer reply waits for a tool', async () => {
+    vi.useFakeTimers();
+    const output = new DelayedCleanupAudioOutput();
+    const toolStarted = new Future<void>();
+    const releaseTool = new Future<void>();
+    const session = new AgentSession({
+      llm: new FakeRealtimeModel(),
+      vad: null,
+      userAwayTimeout: 15,
+      turnHandling: { turnDetection: null },
+    });
+    session.output.audio = output;
+    const agent = new Agent({
+      instructions: 'test',
+      tools: {
+        lookup_order: tool({
+          description: 'x',
+          execute: async () => {
+            toolStarted.resolve();
+            await releaseTool.await;
+            return 'ships tomorrow';
+          },
+        }),
+      },
+    });
+
+    let currentSpeech: ReturnType<AgentSession['generateReply']> | undefined;
+    await session.start({ agent });
+    try {
+      const staleSpeech = session.say('stale speech', {
+        audio: stream(frame()),
+        addToChatCtx: false,
+      });
+      const staleTask = staleSpeech._tasks[0]!;
+      await output.initialWaitEntered.await;
+      expect(session.agentState).toBe('speaking');
+
+      session.interrupt();
+      await output.cleanupWaitEntered.await;
+      currentSpeech = session.generateReply();
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await toolStarted.await;
+      await vi.waitFor(() => {
+        expect(session.agentState).toBe('thinking');
+        expect(session._activity?.currentSpeech).toBeUndefined();
+      });
+
+      output.releaseCleanup();
+      await staleTask.result.catch(() => undefined);
+
+      expect(session.agentState).toBe('thinking');
+      await vi.advanceTimersByTimeAsync(15_001);
+      expect(session.userState).toBe('listening');
+    } finally {
+      releaseTool.resolve();
+      output.releaseAll();
+      await currentSpeech?.waitForPlayout();
+      const closeTask = session.close();
+      await vi.runAllTimersAsync();
+      await closeTask;
+      vi.useRealTimers();
     }
   });
 

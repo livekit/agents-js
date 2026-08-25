@@ -104,6 +104,7 @@ describe('realtime adaptive interruption', () => {
     const onStartOfOverlapSpeech = vi.fn();
     const onEndOfAgentSpeech = vi.fn();
     const pause = vi.fn();
+    const speechHandle = SpeechHandle.create();
     let agentState: 'speaking' | 'listening' = 'speaking';
     const agentSession = {
       _aecWarmupRemaining: 0,
@@ -132,8 +133,10 @@ describe('realtime adaptive interruption', () => {
         onEndOfAgentSpeech: typeof onEndOfAgentSpeech;
       };
     };
+    Object.defineProperty(agentSession, '_activity', { get: () => activity });
     Object.assign(activity, {
-      _currentSpeech: { interrupted: false, allowInterruptions: true },
+      _currentSpeech: speechHandle,
+      agentStateOwner: { activity, speechHandle },
       agent: new Agent({ instructions: 'test' }),
       agentSession,
       audioRecognition: {
