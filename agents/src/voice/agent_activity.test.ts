@@ -518,6 +518,7 @@ type FalseInterruptionActivity = {
     onEndOfAgentSpeech: ReturnType<typeof vi.fn>;
   };
   agentSession: {
+    _activity?: FalseInterruptionActivity;
     agentState: 'speaking';
     sessionOptions: {
       turnHandling: {
@@ -566,6 +567,7 @@ function falseInterruptionActivity(endOfTurnTask?: Task<void>): FalseInterruptio
     disableVadInterruptionSoon: vi.fn(),
     logger: { debug: vi.fn() },
   });
+  activity.agentSession._activity = activity;
   return activity;
 }
 
@@ -809,6 +811,9 @@ describe('AgentActivity - speech completion', () => {
       },
       audioRecognition,
       agentSession: {
+        get _activity() {
+          return fakeActivity;
+        },
         agentState: 'speaking',
         _updateAgentState: vi.fn((state: string) => {
           fakeActivity.agentSession.agentState = state;

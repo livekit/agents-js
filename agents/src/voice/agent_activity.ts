@@ -329,6 +329,7 @@ export class AgentActivity implements RecognitionHooks {
   private _authorizationPaused = false;
   private _drainBlockedTasks: Set<Task<any>> = new Set();
   private _currentSpeech?: SpeechHandle;
+  private speakingSpeechId?: string;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private userSilenceEvent = new Event();
   private q_updated: Future<void, never>;
@@ -2554,6 +2555,31 @@ export class AgentActivity implements RecognitionHooks {
     this.q_updated.resolve();
   }
 
+  private tryStartAgentSpeech(speechHandle: SpeechHandle, startedSpeakingAt?: number): boolean {
+    if (this.agentSession._activity !== this || this._currentSpeech !== speechHandle) {
+      return false;
+    }
+    this.speakingSpeechId = speechHandle.id;
+    this.agentSession._updateAgentState('speaking', {
+      startTime: startedSpeakingAt,
+      otelContext: speechHandle._agentTurnContext,
+    });
+    return true;
+  }
+
+  private stopAgentSpeech(speechHandle: SpeechHandle): boolean {
+    if (
+      this.agentSession._activity !== this ||
+      this.speakingSpeechId !== speechHandle.id ||
+      this.agentSession.agentState !== 'speaking'
+    ) {
+      return false;
+    }
+    this.speakingSpeechId = undefined;
+    this.agentSession._updateAgentState('listening');
+    return true;
+  }
+
   generateReply(options: {
     userMessage?: ChatMessage;
     chatCtx?: ChatContext;
@@ -2742,6 +2768,8 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private onPipelineReplyDone(): void {
+    if (this.agentSession._activity !== this) return;
+
     if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
       this.agentSession._updateAgentState('listening');
       if (this.audioRecognition) {
@@ -3045,10 +3073,7 @@ export class AgentActivity implements RecognitionHooks {
     const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt: number = Date.now()) => {
       replyStartedSpeakingAt = startedSpeakingAt;
       replyStartedForwardingAt = audioOut?.startedForwardingAt ?? replyStartedSpeakingAt;
-      this.agentSession._updateAgentState('speaking', {
-        startTime: startedSpeakingAt,
-        otelContext: speechHandle._agentTurnContext,
-      });
+      if (!this.tryStartAgentSpeech(speechHandle, startedSpeakingAt)) return;
       if (this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech(replyStartedSpeakingAt);
       }
@@ -3149,8 +3174,7 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession._conversationItemAdded(message);
       }
 
-      if (this.agentSession.agentState === 'speaking') {
-        this.agentSession._updateAgentState('listening');
+      if (this.stopAgentSpeech(speechHandle)) {
         if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
         }
@@ -3429,10 +3453,7 @@ export class AgentActivity implements RecognitionHooks {
       if (agentStartedSpeakingAt !== undefined) return;
       agentStartedSpeakingAt = startedSpeakingAt;
       agentStartedForwardingAt = audioOutRef?.startedForwardingAt ?? agentStartedSpeakingAt;
-      this.agentSession._updateAgentState('speaking', {
-        startTime: startedSpeakingAt,
-        otelContext: speechHandle._agentTurnContext,
-      });
+      if (!this.tryStartAgentSpeech(speechHandle, startedSpeakingAt)) return;
       if (this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech(agentStartedSpeakingAt);
       }
@@ -3683,8 +3704,7 @@ export class AgentActivity implements RecognitionHooks {
         span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, forwardedText);
       }
 
-      if (this.agentSession.agentState === 'speaking') {
-        this.agentSession._updateAgentState('listening');
+      if (this.stopAgentSpeech(speechHandle)) {
         if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
         }
@@ -3958,10 +3978,7 @@ export class AgentActivity implements RecognitionHooks {
     const onFirstFrame = (startedAt: number = Date.now()) => {
       if (startedSpeakingAt !== undefined) return;
       startedSpeakingAt = startedAt;
-      this.agentSession._updateAgentState('speaking', {
-        startTime: startedAt,
-        otelContext: speechHandle._agentTurnContext,
-      });
+      if (!this.tryStartAgentSpeech(speechHandle, startedAt)) return;
       if (this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech(startedAt);
       }
@@ -4297,8 +4314,7 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
-      if (this.agentSession.agentState === 'speaking') {
-        this.agentSession._updateAgentState('listening');
+      if (this.stopAgentSpeech(speechHandle)) {
         if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
         }
@@ -5191,18 +5207,26 @@ export class AgentActivity implements RecognitionHooks {
         audioOutput.canPause &&
         !this.pausedSpeech.handle.done()
       ) {
-        this.agentSession._updateAgentState(this.pausedSpeech.agentState, {
-          otelContext: this.pausedSpeech.handle._agentTurnContext,
-        });
-        if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
-          this.audioRecognition.onStartOfAgentSpeech(Date.now());
+        const canRestoreAgentState =
+          this.agentSession._activity === this &&
+          (this.pausedSpeech.agentState !== 'speaking' ||
+            this.tryStartAgentSpeech(this.pausedSpeech.handle));
+        if (canRestoreAgentState) {
+          if (this.pausedSpeech.agentState !== 'speaking') {
+            this.agentSession._updateAgentState(this.pausedSpeech.agentState, {
+              otelContext: this.pausedSpeech.handle._agentTurnContext,
+            });
+          }
+          if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
+            this.audioRecognition.onStartOfAgentSpeech(Date.now());
+          }
+          if (this.isInterruptionDetectionEnabled) {
+            this.disableVadInterruptionSoon();
+          }
+          audioOutput.resume();
+          resumed = true;
+          this.logger.debug({ timeout }, 'resumed false interrupted speech');
         }
-        if (this.isInterruptionDetectionEnabled) {
-          this.disableVadInterruptionSoon();
-        }
-        audioOutput.resume();
-        resumed = true;
-        this.logger.debug({ timeout }, 'resumed false interrupted speech');
       }
 
       this.agentSession.emit(
