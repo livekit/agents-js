@@ -21,6 +21,7 @@ import { log } from './log.js';
 const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 
 const AVATAR_JOIN_WAIT_MAX_ATTEMPTS = 5;
+const AVATAR_JOIN_RETRY_DELAY_MS = 2000;
 const STOCK_AVATAR_ID = '694c83e2-8895-4a98-bd16-56332ca3f449';
 const DEFAULT_API_URL = 'https://api.bey.dev';
 const AVATAR_AGENT_IDENTITY = 'bey-avatar-agent';
@@ -224,11 +225,12 @@ export class AvatarSession extends voice.AvatarSession {
         this.#logger.warn(
           {
             'lk.pii.destination_identity': this.avatarParticipantIdentity,
-            error: String(err),
+            'lk.pii.error': String(err),
             attempt,
           },
           'avatar participant join wait failed, retrying (transient disconnect/reconnect is expected during avatar startup)',
         );
+        await new Promise((resolve) => setTimeout(resolve, AVATAR_JOIN_RETRY_DELAY_MS));
       }
     }
 
