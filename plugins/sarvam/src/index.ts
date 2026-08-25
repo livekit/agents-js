@@ -8,8 +8,8 @@ export {
   STT,
   SpeechStream,
   type STTOptions,
-  type STTV2Options,
   type STTTranslateOptions,
+  type STTV2Options,
   type STTV3Options,
   type STTV4Options,
 } from './stt.js';
