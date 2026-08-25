@@ -511,7 +511,7 @@ type FalseInterruptionActivity = {
     agentState: 'listening' | 'speaking';
     timeout: number;
   };
-  agentStateOwner?: { activity: unknown; speechHandle: SpeechHandle };
+  activeAgentStateLease?: { activity: unknown; speechHandle: SpeechHandle };
   _currentSpeech?: SpeechHandle;
   falseInterruptionTimer?: NodeJS.Timeout;
   falseInterruptionPending: boolean;
@@ -573,7 +573,7 @@ function falseInterruptionActivity(endOfTurnTask?: Task<void>): FalseInterruptio
     logger: { debug: vi.fn() },
   });
   activity.agentSession._activity = activity;
-  activity.agentStateOwner = { activity, speechHandle: handle };
+  activity.activeAgentStateLease = { activity, speechHandle: handle };
   return activity;
 }
 
@@ -806,7 +806,7 @@ describe('AgentActivity - false interruption resume', () => {
     const activity = falseInterruptionActivity();
     activity.pausedSpeech!.agentState = 'listening';
     activity.agentSession.agentState = 'listening';
-    activity.agentStateOwner = undefined;
+    activity.activeAgentStateLease = undefined;
 
     activity.startFalseInterruptionTimer(300);
     await vi.advanceTimersByTimeAsync(300);
@@ -843,7 +843,7 @@ describe('AgentActivity - speech completion', () => {
         peek: () => undefined,
       },
       _currentSpeech: speechHandle,
-      agentStateOwner: undefined as unknown,
+      activeAgentStateLease: undefined as unknown,
       audioRecognition,
       agentSession: {
         get _activity() {
@@ -855,14 +855,14 @@ describe('AgentActivity - speech completion', () => {
         }),
       },
     };
-    const owner = { activity: fakeActivity, speechHandle };
-    fakeActivity.agentStateOwner = owner;
+    const stateLease = { activity: fakeActivity, speechHandle };
+    fakeActivity.activeAgentStateLease = stateLease;
     Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
 
     const onPipelineReplyDone = (AgentActivity.prototype as Record<string, unknown>)
-      .onPipelineReplyDone as (this: typeof fakeActivity, owner: typeof owner) => void;
+      .onPipelineReplyDone as (this: typeof fakeActivity, stateLease: typeof stateLease) => void;
 
-    onPipelineReplyDone.call(fakeActivity, owner);
+    onPipelineReplyDone.call(fakeActivity, stateLease);
 
     expect(fakeActivity.agentSession._updateAgentState).toHaveBeenCalledWith('listening');
     expect(audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledTimes(1);
@@ -1563,13 +1563,13 @@ describe('AgentActivity - realtime reply chat context push', () => {
   }
 
   async function runRealtimeReplyTask(activity: unknown, speechHandle: SpeechHandle) {
-    const owner = { activity, speechHandle };
+    const stateLease = { activity, speechHandle };
     const realtimeReplyTask = (
       AgentActivity.prototype as unknown as {
         realtimeReplyTask(
           this: unknown,
           args: {
-            owner: typeof owner;
+            stateLease: typeof stateLease;
             modelSettings: { toolChoice?: never };
             abortController: AbortController;
             userInput: string;
@@ -1579,7 +1579,7 @@ describe('AgentActivity - realtime reply chat context push', () => {
     ).realtimeReplyTask;
 
     await realtimeReplyTask.call(activity, {
-      owner,
+      stateLease,
       modelSettings: {},
       abortController: new AbortController(),
       userInput: 'hello',

@@ -136,7 +136,7 @@ describe('realtime adaptive interruption', () => {
     Object.defineProperty(agentSession, '_activity', { get: () => activity });
     Object.assign(activity, {
       _currentSpeech: speechHandle,
-      agentStateOwner: { activity, speechHandle },
+      activeAgentStateLease: { activity, speechHandle },
       agent: new Agent({ instructions: 'test' }),
       agentSession,
       audioRecognition: {
