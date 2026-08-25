@@ -506,7 +506,11 @@ describe('AgentActivity - mainTask', () => {
 });
 
 type FalseInterruptionActivity = {
-  pausedSpeech?: { handle: SpeechHandle; agentState: 'speaking'; timeout: number };
+  pausedSpeech?: {
+    handle: SpeechHandle;
+    agentState: 'listening' | 'speaking';
+    timeout: number;
+  };
   agentStateOwner?: { activity: unknown; speechHandle: SpeechHandle };
   _currentSpeech?: SpeechHandle;
   falseInterruptionTimer?: NodeJS.Timeout;
@@ -520,7 +524,7 @@ type FalseInterruptionActivity = {
   };
   agentSession: {
     _activity?: FalseInterruptionActivity;
-    agentState: 'speaking';
+    agentState: 'listening' | 'speaking';
     sessionOptions: {
       turnHandling: {
         interruption: { resumeFalseInterruption: boolean; falseInterruptionTimeout: number };
@@ -795,6 +799,33 @@ describe('AgentActivity - false interruption resume', () => {
     await vi.advanceTimersByTimeAsync(1);
 
     expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.pausedSpeech).toBeUndefined();
+  });
+
+  it('resumes current playout before it has claimed agent state', async () => {
+    const activity = falseInterruptionActivity();
+    activity.pausedSpeech!.agentState = 'listening';
+    activity.agentSession.agentState = 'listening';
+    activity.agentStateOwner = undefined;
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.agentSession._updateAgentState).not.toHaveBeenCalled();
+    expect(activity.audioRecognition!.onStartOfAgentSpeech).not.toHaveBeenCalled();
+    expect(activity.pausedSpeech).toBeUndefined();
+  });
+
+  it('does not resume playout after the activity loses ownership', async () => {
+    const activity = falseInterruptionActivity();
+    activity.agentSession._activity = undefined;
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
+    expect(activity.agentSession._updateAgentState).not.toHaveBeenCalled();
     expect(activity.pausedSpeech).toBeUndefined();
   });
 });

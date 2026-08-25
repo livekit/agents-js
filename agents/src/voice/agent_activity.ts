@@ -5260,7 +5260,9 @@ export class AgentActivity implements RecognitionHooks {
         interruptionOptions.resumeFalseInterruption &&
         audioOutput &&
         audioOutput.canPause &&
-        !this.pausedSpeech.handle.done()
+        !this.pausedSpeech.handle.done() &&
+        this.agentSession._activity === this &&
+        this._currentSpeech === this.pausedSpeech.handle
       ) {
         const owner = this.agentStateOwner;
         const canRestoreAgentState =
@@ -5275,10 +5277,10 @@ export class AgentActivity implements RecognitionHooks {
           if (this.isInterruptionDetectionEnabled) {
             this.disableVadInterruptionSoon();
           }
-          audioOutput.resume();
-          resumed = true;
-          this.logger.debug({ timeout }, 'resumed false interrupted speech');
         }
+        audioOutput.resume();
+        resumed = true;
+        this.logger.debug({ timeout }, 'resumed false interrupted speech');
       }
 
       this.agentSession.emit(
