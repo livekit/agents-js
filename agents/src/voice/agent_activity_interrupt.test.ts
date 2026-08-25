@@ -11,6 +11,8 @@
  */
 import { Heap } from 'heap-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ChatContext } from '../llm/chat_context.js';
+import { Future } from '../utils.js';
 import { AgentActivity } from './agent_activity.js';
 import { SpeechHandle } from './speech_handle.js';
 
@@ -37,7 +39,7 @@ function makeActivity() {
     _preemptiveGeneration: undefined,
     realtimeSession: { interrupt: realtimeInterrupt },
     speechTasks: new Set(),
-    logger: { warn },
+    logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn },
   });
   return { activity, speechQueue, realtimeInterrupt, warn };
 }
@@ -141,5 +143,48 @@ describe('AgentActivity - interrupt protected queued speech', () => {
     expect(current.interrupted).toBe(true);
     expect(queued.interrupted).toBe(true);
     expect(realtimeInterrupt).toHaveBeenCalledOnce();
+  });
+
+  it('interrupts a queued reply while the scheduler owner finishes interrupted cleanup', async () => {
+    const { activity, speechQueue } = makeActivity();
+    const cleanupOwner = makeSpeech(true);
+    const queuedReply = makeSpeech(true);
+    const releasePauseCleanup = new Future<void>();
+    cleanupOwner.interrupt();
+    enqueue(speechQueue, queuedReply);
+
+    Object.assign(activity, {
+      _currentSpeech: cleanupOwner,
+      _preemptiveGenerationCount: 0,
+      _schedulingPaused: false,
+      newTurnsBlocked: false,
+      cancelSpeechPause: vi.fn(() => releasePauseCleanup.await),
+      agent: {
+        _llm: undefined,
+        chatCtx: ChatContext.empty(),
+        onUserTurnCompleted: vi.fn(async () => {}),
+      },
+      agentSession: { llm: undefined, emit: vi.fn() },
+    });
+
+    const turnCompletion = (
+      activity as unknown as {
+        userTurnCompleted(info: {
+          newTranscript: string;
+          transcriptConfidence: number;
+          skipReply: boolean;
+        }): Promise<void>;
+      }
+    ).userTurnCompleted({
+      newTranscript: 'new user turn',
+      transcriptConfidence: 1,
+      skipReply: false,
+    });
+
+    expect(cleanupOwner.done()).toBe(false);
+    expect(queuedReply.interrupted).toBe(true);
+
+    releasePauseCleanup.resolve();
+    await turnCompletion;
   });
 });
