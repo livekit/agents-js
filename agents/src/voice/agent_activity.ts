@@ -2216,6 +2216,24 @@ export class AgentActivity implements RecognitionHooks {
     return interrupted;
   }
 
+  private interruptQueuedSpeeches(force: boolean): void {
+    // Heap iteration pops in playout order. Walk a clone so retained speeches stay queued and
+    // interrupted ones remain for mainTask to drain.
+    for (const [, , speech] of this.speechQueue.clone()) {
+      if (speech.interrupted || speech.done()) continue;
+
+      if (!force && !speech.allowInterruptions) {
+        this.logger.warn(
+          { speech_id: speech.id },
+          'a queued speech does not allow interruptions and will play after the interruption, use interrupt({ force: true }) to interrupt it as well',
+        );
+        break;
+      }
+
+      speech.interrupt(force);
+    }
+  }
+
   private createSpeechTask(options: {
     taskFn: (controller: AbortController) => Promise<void>;
     controller?: AbortController;
@@ -2696,21 +2714,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this.realtimeSession?.interrupt();
 
-    // Heap iteration pops in playout order. Walk a clone so retained speeches stay queued and
-    // interrupted ones remain for mainTask to drain.
-    for (const [, , speech] of this.speechQueue.clone()) {
-      if (speech.interrupted || speech.done()) continue;
-
-      if (!force && !speech.allowInterruptions) {
-        this.logger.warn(
-          { speech_id: speech.id },
-          'a queued speech does not allow interruptions and will play after the interruption, use interrupt({ force: true }) to interrupt it as well',
-        );
-        break;
-      }
-
-      speech.interrupt(force);
-    }
+    this.interruptQueuedSpeeches(force);
 
     if (force) {
       // Force-interrupt (used during shutdown): cancel all speech tasks so they
@@ -2825,23 +2829,31 @@ export class AgentActivity implements RecognitionHooks {
     // Capture into a local before awaiting cancelSpeechPause: the main scheduling
     // loop can reset this._currentSpeech = undefined during the await (#1430).
     const currentSpeech = this._currentSpeech;
+    const activeSpeech =
+      currentSpeech && !currentSpeech.interrupted && !currentSpeech.done()
+        ? currentSpeech
+        : undefined;
+    if (activeSpeech && !activeSpeech.allowInterruptions) {
+      this.logger.warn(
+        { 'lk.pii.user_input': info.newTranscript },
+        'skipping user input, current speech generation cannot be interrupted',
+      );
+      return;
+    }
+
+    this.interruptQueuedSpeeches(false);
+
     if (currentSpeech) {
-      if (!currentSpeech.allowInterruptions) {
-        this.logger.warn(
-          { 'lk.pii.user_input': info.newTranscript },
-          'skipping user input, current speech generation cannot be interrupted',
-        );
-        return;
-      }
-
       await this.cancelSpeechPause();
+    }
 
+    if (activeSpeech) {
       this.logger.info(
-        { 'speech id': currentSpeech.id },
+        { 'speech id': activeSpeech.id },
         'speech interrupted, new user turn detected',
       );
 
-      currentSpeech.interrupt();
+      activeSpeech.interrupt();
       this.realtimeSession?.interrupt();
     }
 

@@ -1885,6 +1885,9 @@ describe('AgentActivity - preemptive generation reconciliation', () => {
     const speechHandle = SpeechHandle.create();
     const scheduleSpeech = vi.fn();
     const generateReply = vi.fn();
+    const speechQueue = new Heap<[number, number, SpeechHandle]>(
+      (a, b) => b[0] - a[0] || a[1] - b[1],
+    );
 
     const fakeActivity = {
       _preemptiveGenerationCount: 1,
@@ -1913,6 +1916,7 @@ describe('AgentActivity - preemptive generation reconciliation', () => {
       },
       scheduleSpeech,
       generateReply,
+      speechQueue,
     };
     Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
 
