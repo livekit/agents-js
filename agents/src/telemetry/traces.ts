@@ -23,6 +23,8 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
+import type { IncomingMessage } from 'node:http';
+import type { TLSSocket } from 'node:tls';
 import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
 import { enableOtelLogging, log } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
@@ -631,7 +633,34 @@ export async function uploadSessionReport(options: {
   const submitOnce = (): Promise<{ statusCode: number; statusMessage: string; body: Buffer }> =>
     new ThrowsPromise<{ statusCode: number; statusMessage: string; body: Buffer }, Error>(
       (resolve, reject) => {
-        buildFormData().submit(
+        let connected = false;
+        let response: IncomingMessage | undefined;
+        let connectTimer: NodeJS.Timeout | undefined;
+        let timeoutError: Error | undefined;
+        let settled = false;
+
+        const clearTimers = () => {
+          clearTimeout(connectTimer);
+          clearTimeout(totalTimer);
+        };
+        const resolveOnce = (value: {
+          statusCode: number;
+          statusMessage: string;
+          body: Buffer;
+        }) => {
+          if (settled) return;
+          settled = true;
+          clearTimers();
+          resolve(value);
+        };
+        const rejectOnce = (error: Error, retryableConnection = false) => {
+          if (settled) return;
+          settled = true;
+          clearTimers();
+          reject(new RecordingUploadError(error, retryableConnection));
+        };
+
+        const request = buildFormData().submit(
           {
             protocol: 'https:',
             host: cloudHostname,
@@ -643,17 +672,19 @@ export async function uploadSessionReport(options: {
           },
           (err, res) => {
             if (err) {
-              reject(new Error(`Failed to upload session report: ${err.message}`));
+              const error = timeoutError ?? err;
+              rejectOnce(error, !connected && isRetryableConnectionError(error));
               return;
             }
 
+            connected = true;
+            clearTimeout(connectTimer);
+            response = res;
             const chunks: Buffer[] = [];
             res.on('data', (chunk: Buffer) => chunks.push(chunk));
-            res.on('error', (readErr) =>
-              reject(new Error(`Response read error: ${readErr.message}`)),
-            );
+            res.on('error', (readErr) => rejectOnce(timeoutError ?? readErr));
             res.on('end', () =>
-              resolve({
+              resolveOnce({
                 statusCode: res.statusCode ?? 0,
                 statusMessage: res.statusMessage ?? '',
                 body: Buffer.concat(chunks),
@@ -661,32 +692,134 @@ export async function uploadSessionReport(options: {
             );
           },
         );
+
+        request.on('socket', (socket) => {
+          const tlsSocket = socket as TLSSocket;
+          const secureConnecting = (tlsSocket as TLSSocket & { secureConnecting?: boolean })
+            .secureConnecting;
+          if (!socket.connecting && !secureConnecting) {
+            connected = true;
+            return;
+          }
+
+          tlsSocket.once('secureConnect', () => {
+            connected = true;
+            clearTimeout(connectTimer);
+          });
+          connectTimer = setTimeout(() => {
+            timeoutError = new RecordingUploadConnectTimeoutError();
+            request.destroy(timeoutError);
+          }, RECORDING_UPLOAD_CONNECT_TIMEOUT_MS);
+          connectTimer.unref();
+        });
+
+        const totalTimer = setTimeout(() => {
+          timeoutError = new RecordingUploadTotalTimeoutError();
+          response?.destroy(timeoutError);
+          request.destroy(timeoutError);
+        }, RECORDING_UPLOAD_TOTAL_TIMEOUT_MS);
+        totalTimer.unref();
       },
     );
 
-  const maxRetries = 3;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  for (let attempt = 0; attempt <= RECORDING_UPLOAD_MAX_RETRIES; attempt++) {
     log().debug('uploading session report to LiveKit Cloud');
-    const { statusCode, statusMessage, body } = await submitOnce();
+    let result: { statusCode: number; statusMessage: string; body: Buffer };
+    let retry: { delayMs: number; failure: string } | undefined;
+    try {
+      result = await submitOnce();
+    } catch (error) {
+      if (
+        !(error instanceof RecordingUploadError) ||
+        !error.retryableConnection ||
+        attempt === RECORDING_UPLOAD_MAX_RETRIES
+      ) {
+        throw error;
+      }
+      retry = {
+        delayMs: recordingUploadRetryDelay(attempt),
+        failure: error.cause.name,
+      };
+    }
+
+    if (retry) {
+      logRecordingUploadRetry(retry.failure, attempt, retry.delayMs);
+      await new Promise((resolve) => setTimeout(resolve, retry.delayMs));
+      continue;
+    }
+
+    const { statusCode, statusMessage, body } = result!;
     if (statusCode > 0 && statusCode < 400) {
       log().debug('finished uploading');
       return;
     }
 
     const retryDelayMs = parseRetryDelayMs(body);
-    if (retryDelayMs === null || attempt === maxRetries) {
+    if (retryDelayMs === null || attempt === RECORDING_UPLOAD_MAX_RETRIES) {
       throw new Error(
         `Failed to upload session report: ${statusCode} ${statusMessage} - ${body.toString('utf-8')}`,
       );
     }
 
-    log().warn(
-      `recording upload failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${(
-        retryDelayMs / 1000
-      ).toFixed(1)}s`,
-    );
+    logRecordingUploadRetry(`status ${statusCode}`, attempt, retryDelayMs);
     await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
   }
+}
+
+const RECORDING_UPLOAD_TOTAL_TIMEOUT_MS = 900_000;
+const RECORDING_UPLOAD_CONNECT_TIMEOUT_MS = 30_000;
+const RECORDING_UPLOAD_MAX_RETRIES = 3;
+
+class RecordingUploadConnectTimeoutError extends Error {
+  constructor() {
+    super('Session report upload connection timed out');
+    this.name = 'RecordingUploadConnectTimeoutError';
+  }
+}
+
+class RecordingUploadTotalTimeoutError extends Error {
+  constructor() {
+    super('Session report upload timed out');
+    this.name = 'RecordingUploadTotalTimeoutError';
+  }
+}
+
+class RecordingUploadError extends Error {
+  constructor(
+    override readonly cause: Error,
+    readonly retryableConnection: boolean,
+  ) {
+    super(`Failed to upload session report: ${cause.message}`, { cause });
+    this.name = 'RecordingUploadError';
+  }
+}
+
+function isRetryableConnectionError(error: Error): boolean {
+  if (error instanceof RecordingUploadConnectTimeoutError) return true;
+  if (error instanceof RecordingUploadTotalTimeoutError) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return !(
+    code === undefined ||
+    code.startsWith('ERR_TLS_') ||
+    code.startsWith('ERR_SSL_') ||
+    code.startsWith('ERR_OSSL_') ||
+    code.startsWith('CERT_') ||
+    code.startsWith('DEPTH_ZERO_') ||
+    code.startsWith('SELF_SIGNED_') ||
+    code.startsWith('UNABLE_TO_')
+  );
+}
+
+function recordingUploadRetryDelay(attempt: number): number {
+  return Math.random() * Math.min(2 ** attempt * 1000, 8000);
+}
+
+function logRecordingUploadRetry(failure: string, attempt: number, retryDelayMs: number): void {
+  log().warn(
+    `recording upload failed (${failure}, attempt ${attempt + 1}/${
+      RECORDING_UPLOAD_MAX_RETRIES + 1
+    }), retrying in ${(retryDelayMs / 1000).toFixed(1)}s`,
+  );
 }
 
 const RETRY_INFO_TYPE_NAME = 'google.rpc.RetryInfo';
