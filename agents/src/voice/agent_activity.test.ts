@@ -514,11 +514,13 @@ type FalseInterruptionActivity = {
   audioRecognition?: {
     endOfTurnTask?: Task<void>;
     isClosed: boolean;
+    hasPendingUserSpeech: boolean;
     onStartOfAgentSpeech: ReturnType<typeof vi.fn>;
     onEndOfAgentSpeech: ReturnType<typeof vi.fn>;
   };
   agentSession: {
     agentState: 'speaking';
+    userState: 'speaking' | 'listening';
     sessionOptions: {
       turnHandling: {
         interruption: { resumeFalseInterruption: boolean; falseInterruptionTimeout: number };
@@ -536,7 +538,11 @@ type FalseInterruptionActivity = {
   cancelSpeechPause: (options?: { interrupt?: boolean }) => Promise<void>;
 };
 
-function falseInterruptionActivity(endOfTurnTask?: Task<void>): FalseInterruptionActivity {
+function falseInterruptionActivity(
+  endOfTurnTask?: Task<void>,
+  options: { hasPendingUserSpeech?: boolean; userState?: 'speaking' | 'listening' } = {},
+): FalseInterruptionActivity {
+  const { hasPendingUserSpeech = false, userState = 'listening' } = options;
   const handle = SpeechHandle.create({ allowInterruptions: true });
   const activity = Object.create(AgentActivity.prototype) as FalseInterruptionActivity;
   Object.assign(activity, {
@@ -548,11 +554,13 @@ function falseInterruptionActivity(endOfTurnTask?: Task<void>): FalseInterruptio
     audioRecognition: {
       endOfTurnTask,
       isClosed: false,
+      hasPendingUserSpeech,
       onStartOfAgentSpeech: vi.fn(),
       onEndOfAgentSpeech: vi.fn(async () => {}),
     },
     agentSession: {
       agentState: 'speaking',
+      userState,
       sessionOptions: {
         turnHandling: {
           interruption: { resumeFalseInterruption: true, falseInterruptionTimeout: 300 },
@@ -646,10 +654,29 @@ describe('AgentActivity - false interruption resume', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('waits for a dropped turn before resuming', async () => {
+  it('resumes when an empty turn decision remains pending', async () => {
     const decision = new Future<void>();
     const task = Task.from(async () => decision.await);
     const activity = falseInterruptionActivity(task);
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.falseInterruptionPending).toBe(false);
+    expect(activity.pausedSpeech).toBeUndefined();
+
+    decision.resolve();
+    await task.result;
+  });
+
+  it.each([
+    { signal: 'recognized speech', options: { hasPendingUserSpeech: true } },
+    { signal: 'the speaking state', options: { userState: 'speaking' as const } },
+  ])('waits for a dropped turn with $signal before resuming', async ({ options }) => {
+    const decision = new Future<void>();
+    const task = Task.from(async () => decision.await);
+    const activity = falseInterruptionActivity(task, options);
 
     activity.startFalseInterruptionTimer(300);
     await vi.advanceTimersByTimeAsync(300);
@@ -666,7 +693,7 @@ describe('AgentActivity - false interruption resume', () => {
   it('suppresses the resume when the turn commits', async () => {
     const decision = new Future<void>();
     const task = Task.from(async () => decision.await);
-    const activity = falseInterruptionActivity(task);
+    const activity = falseInterruptionActivity(task, { hasPendingUserSpeech: true });
 
     activity.startFalseInterruptionTimer(300);
     await vi.advanceTimersByTimeAsync(300);
@@ -681,7 +708,7 @@ describe('AgentActivity - false interruption resume', () => {
   it('does not resume a deferred pause during teardown', async () => {
     const decision = new Future<void>();
     const task = Task.from(async () => decision.await);
-    const activity = falseInterruptionActivity(task);
+    const activity = falseInterruptionActivity(task, { hasPendingUserSpeech: true });
 
     activity.startFalseInterruptionTimer(300);
     await vi.advanceTimersByTimeAsync(300);
@@ -700,7 +727,7 @@ describe('AgentActivity - false interruption resume', () => {
       await decision.await;
       if (controller.signal.aborted) return;
     });
-    const activity = falseInterruptionActivity(task);
+    const activity = falseInterruptionActivity(task, { hasPendingUserSpeech: true });
 
     activity.startFalseInterruptionTimer(300);
     await vi.advanceTimersByTimeAsync(300);
@@ -721,7 +748,7 @@ describe('AgentActivity - false interruption resume', () => {
   it('resumes when the turn decision fails', async () => {
     const decision = new Future<void>();
     const task = Task.from(async () => decision.await);
-    const activity = falseInterruptionActivity(task);
+    const activity = falseInterruptionActivity(task, { hasPendingUserSpeech: true });
 
     activity.startFalseInterruptionTimer(300);
     await vi.advanceTimersByTimeAsync(300);

@@ -544,6 +544,11 @@ export class AudioRecognition {
   }
 
   /** @internal */
+  get hasPendingUserSpeech(): boolean {
+    return this.turnTranscriptReceived || Boolean(this.currentTranscript.trim());
+  }
+
+  /** @internal */
   get inputStartedAt() {
     return this.sttPipeline?.inputStartedAt;
   }
