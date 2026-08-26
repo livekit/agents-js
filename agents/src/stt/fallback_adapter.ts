@@ -98,6 +98,7 @@ export class FallbackAdapter extends STT {
   private _status: STTStatus[] = [];
   private _logger = log();
   private _metricsForwarders = new Map<STT, (m: STTMetrics) => void>();
+  private _capabilitiesForwarders = new Map<STT, () => void>();
   // Last child that produced output or returned a recognize result. Surfaced
   // via the dynamic label/model/provider getters so OTel attributes like
   // `gen_ai.request.model` on `user_turn` (refreshed on every STT event by
@@ -197,9 +198,10 @@ export class FallbackAdapter extends STT {
   }
 
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
-    // forward to every underlying STT; unsupported ones warn-and-skip internally
     for (const sttInstance of this.sttInstances) {
-      sttInstance._pushConversationItem(ev);
+      if (sttInstance.capabilities.chatContext) {
+        sttInstance._pushConversationItem(ev);
+      }
     }
   }
 
@@ -213,8 +215,26 @@ export class FallbackAdapter extends STT {
     // SpeechStream.mainTask emits that on this STT instance naturally.
     for (const s of this.sttInstances) {
       const metricsForwarder = (metrics: STTMetrics) => this.emit('metrics_collected', metrics);
+      // Re-aggregate every capability a child can change at runtime, mirroring the
+      // constructor's aggregation. A child's `updateOptions({ model })` now recomputes
+      // `alignedTranscript`/`keyterms`/`chatContext` and emits `capabilities_changed`, so
+      // re-reading only `chatContext` here would leave the adapter advertising word timings
+      // (or keyterms) its children no longer provide.
+      const capabilitiesForwarder = () => {
+        this.updateCapabilities({
+          interimResults: this.sttInstances.every((stt) => stt.capabilities.interimResults),
+          diarization: this.sttInstances.every((stt) => !!stt.capabilities.diarization),
+          alignedTranscript: this.sttInstances.every((stt) => !!stt.capabilities.alignedTranscript)
+            ? this.sttInstances[0]!.capabilities.alignedTranscript ?? false
+            : false,
+          keyterms: this.sttInstances.some((stt) => !!stt.capabilities.keyterms),
+          chatContext: this.sttInstances.some((stt) => !!stt.capabilities.chatContext),
+        });
+      };
       this._metricsForwarders.set(s, metricsForwarder);
+      this._capabilitiesForwarders.set(s, capabilitiesForwarder);
       s.on('metrics_collected', metricsForwarder);
+      s.on('capabilities_changed', capabilitiesForwarder);
     }
   }
 
@@ -325,8 +345,11 @@ export class FallbackAdapter extends STT {
     for (const s of this.sttInstances) {
       const m = this._metricsForwarders.get(s);
       if (m) s.off('metrics_collected' as keyof STTCallbacks, m);
+      const c = this._capabilitiesForwarders.get(s);
+      if (c) s.off('capabilities_changed', c);
     }
     this._metricsForwarders.clear();
+    this._capabilitiesForwarders.clear();
   }
 }
 
