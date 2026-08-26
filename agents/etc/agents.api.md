@@ -6767,7 +6767,7 @@ export class SpeechHandleCircularWaitError extends Error {
 // Warning: (ae-missing-release-tag) "SpeechmaticsModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard';
+type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard' | 'speechmatics/linden-1';
 
 // Warning: (ae-missing-release-tag) "SpeechmaticsOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
