@@ -122,7 +122,7 @@ class FakeRealtimeModel extends RealtimeModel {
 }
 
 const REALTIME_REDACTION_WARNING =
-  'audio redaction may be inaccurate when using a RealtimeModel because realtime user turns do not include complete speech timestamps';
+  'RealtimeModel user turns lack complete speech timestamps, so audio redaction may be inaccurate; disable audio recording to keep transcript redaction enabled';
 
 function fakeJobContext(enableRedaction: boolean): JobContext {
   return {
