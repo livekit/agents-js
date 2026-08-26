@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { type JobContext, runWithJobContextAsync } from '../job.js';
 import { ChatContext, type FunctionCall } from '../llm/chat_context.js';
 import {
   type GenerationCreatedEvent,
@@ -13,7 +14,8 @@ import {
   RealtimeSession,
 } from '../llm/realtime.js';
 import { type ToolChoice, ToolContext } from '../llm/tool_context.js';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
+import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes, type ConversationItemAddedEvent } from './events.js';
@@ -91,10 +93,10 @@ class FakeRealtimeSession extends RealtimeSession {
 class FakeRealtimeModel extends RealtimeModel {
   readonly activeSession: FakeRealtimeSession;
 
-  constructor() {
+  constructor(turnDetection = false) {
     const capabilities: RealtimeCapabilities = {
       messageTruncation: false,
-      turnDetection: false,
+      turnDetection,
       userTranscription: false,
       autoToolReplyGeneration: false,
       audioOutput: false,
@@ -117,6 +119,46 @@ class FakeRealtimeModel extends RealtimeModel {
   }
 
   async close(): Promise<void> {}
+}
+
+const REALTIME_REDACTION_WARNING =
+  'audio redaction may be inaccurate when using a RealtimeModel because realtime user turns do not include complete speech timestamps';
+
+function fakeJobContext(enableRedaction: boolean): JobContext {
+  return {
+    job: { enableRecording: true, enableRedaction },
+    simulationContext: () => undefined,
+    initRecording: vi.fn(async () => {}),
+    _primaryAgentSession: undefined,
+    sessionDirectory: undefined,
+  } as unknown as JobContext;
+}
+
+async function runRealtimeSession({
+  projectRedaction,
+  sessionRedaction,
+  stt,
+  serverTurnDetection = true,
+}: {
+  projectRedaction: boolean;
+  sessionRedaction: boolean;
+  stt?: FakeSTT;
+  serverTurnDetection?: boolean;
+}): Promise<void> {
+  const session = new AgentSession({
+    llm: new FakeRealtimeModel(serverTurnDetection),
+    stt,
+    vad: null,
+    turnHandling: { turnDetection: null },
+  });
+
+  await runWithJobContextAsync(fakeJobContext(projectRedaction), async () => {
+    await session.start({
+      agent: new Agent({ instructions: 'test' }),
+      record: sessionRedaction ? { redaction: true } : true,
+    });
+    await session.close();
+  });
 }
 
 describe('Realtime message metrics', () => {
@@ -142,5 +184,65 @@ describe('Realtime message metrics', () => {
 
     expect(assistantMessages).toHaveLength(1);
     expect(assistantMessages[0]?.metrics.providerRequestIds).toEqual(['provider-response-id']);
+  });
+});
+
+describe('Realtime audio redaction warning', () => {
+  it.each([
+    { source: 'project', projectRedaction: true, sessionRedaction: false },
+    { source: 'session', projectRedaction: false, sessionRedaction: true },
+  ])('warns when $source redaction is enabled', async (options) => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    try {
+      await runRealtimeSession(options);
+      expect(warn).toHaveBeenCalledWith(REALTIME_REDACTION_WARNING);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('warns when STT is configured', async () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    try {
+      await runRealtimeSession({
+        projectRedaction: true,
+        sessionRedaction: false,
+        stt: new FakeSTT(),
+      });
+      expect(warn).toHaveBeenCalledWith(REALTIME_REDACTION_WARNING);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('warns when server-side turn detection is disabled', async () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    try {
+      await runRealtimeSession({
+        projectRedaction: true,
+        sessionRedaction: false,
+        serverTurnDetection: false,
+      });
+      expect(warn).toHaveBeenCalledWith(REALTIME_REDACTION_WARNING);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not warn when redaction is disabled', async () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    try {
+      await runRealtimeSession({
+        projectRedaction: false,
+        sessionRedaction: false,
+      });
+      expect(warn).not.toHaveBeenCalledWith(REALTIME_REDACTION_WARNING);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

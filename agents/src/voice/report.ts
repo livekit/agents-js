@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext } from '../llm/chat_context.js';
 import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
+import { msToUnixSeconds } from '../proto.js';
 import { version } from '../version.js';
 import type {
   AgentSessionOptions,
@@ -204,6 +205,22 @@ function modelUsageToJSON(usage: ModelUsage): Record<string, unknown> {
   return out;
 }
 
+function chatHistoryToStandardJSON(chatHistory: ChatContext): unknown {
+  const json = chatHistory.toJSON({ excludeTimestamp: false }) as {
+    items?: Array<Record<string, unknown>>;
+  };
+
+  for (const item of json.items ?? []) {
+    if (typeof item.createdAt === 'number') {
+      // Direct OTLP logs use msToTimestamp(). The redaction collector rebuilds that same
+      // protobuf from standard report JSON, where created_at is Unix seconds.
+      item.createdAt = msToUnixSeconds(item.createdAt);
+    }
+  }
+
+  return toSnakeCaseDeep(json);
+}
+
 //   - header: protobuf MetricsRecordingHeader (room_id, duration, start_time)
 //   - chat_history: JSON serialized chat history (use sessionReportToJSON)
 //   - audio: audio recording file if available (ogg format)
@@ -269,7 +286,7 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       preemptive_generation: options.turnHandling?.preemptiveGeneration ?? {},
       recording_options: { ...options.recordingOptions },
     },
-    chat_history: toSnakeCaseDeep(report.chatHistory.toJSON({ excludeTimestamp: false })),
+    chat_history: chatHistoryToStandardJSON(report.chatHistory),
     enable_user_data_training: report.enableRecording,
     timestamp: report.timestamp,
     usage: report.modelUsage ? report.modelUsage.map(modelUsageToJSON) : null,

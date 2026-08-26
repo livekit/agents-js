@@ -306,6 +306,33 @@ describe('sessionReportToJSON', () => {
     expect((payload.options as Record<string, unknown>).user_away_timeout).toBe(15);
   });
 
+  it('serializes chat item timestamps as Unix seconds', () => {
+    const chatHistory = ChatContext.empty();
+    chatHistory.addMessage({
+      role: 'user',
+      content: 'hello',
+      createdAt: 1787458002314,
+    });
+
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory,
+      enableRecording: false,
+      timestamp: 0,
+      startedAt: 0,
+    });
+
+    const payload = sessionReportToJSON(report);
+    const serializedHistory = payload.chat_history as {
+      items: Array<{ created_at: number }>;
+    };
+    expect(serializedHistory.items[0]?.created_at).toBe(1787458002.314);
+  });
+
   it('serializes the full chat history to the Python snake_case wire format', () => {
     // Mirrors the camelCase fixtures snapshotted in chat_context.test.ts, but asserts the
     // *converted* output: `chat_history` is what the report layer (toSnakeCaseDeep) emits, so
