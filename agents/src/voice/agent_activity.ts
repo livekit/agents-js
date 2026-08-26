@@ -451,7 +451,7 @@ export class AgentActivity implements RecognitionHooks {
       !this.agentSession._warnedRealtimeAudioRedaction
     ) {
       this.logger.warn(
-        'RealtimeModel user turns lack complete speech timestamps, so audio redaction may be inaccurate; disable audio recording to keep transcript redaction enabled',
+        'RealtimeModel user turns lack complete speech timestamps, risking unredacted PII in audio; disable audio recording to prevent leaks while keeping transcript redaction enabled',
       );
       this.agentSession._warnedRealtimeAudioRedaction = true;
     }
