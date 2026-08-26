@@ -122,7 +122,7 @@ class FakeRealtimeModel extends RealtimeModel {
 }
 
 const REALTIME_REDACTION_WARNING =
-  'RealtimeModel may leave PII unredacted in audio; disable audio recording to keep transcript redaction enabled';
+  'RealtimeModel user turns lack complete speech timestamps, so audio redaction may be inaccurate; disable audio recording to prevent redaction leak.';
 
 function fakeJobContext(enableRedaction: boolean): JobContext {
   return {
