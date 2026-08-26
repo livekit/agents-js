@@ -451,6 +451,18 @@ export class AgentActivity implements RecognitionHooks {
       asyncToolOptions: this.agent._asyncToolOptions ?? this.agentSession._asyncToolOptions,
     });
 
+    if (
+      this.llm instanceof RealtimeModel &&
+      this.agentSession.sessionOptions.recordingOptions.audio &&
+      this.agentSession._redactionEnabled &&
+      !this.agentSession._warnedRealtimeAudioRedaction
+    ) {
+      this.logger.warn(
+        'RealtimeModel user turns lack complete speech timestamps, so audio redaction may be inaccurate; disable audio recording to prevent redaction leak.',
+      );
+      this.agentSession._warnedRealtimeAudioRedaction = true;
+    }
+
     this._resolvedTurnDetection = this._resolveTurnDetection(this.turnDetection);
     this.turnDetectionMode =
       typeof this._resolvedTurnDetection === 'string' ? this._resolvedTurnDetection : undefined;
