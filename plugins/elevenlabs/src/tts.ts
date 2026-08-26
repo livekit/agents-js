@@ -22,13 +22,15 @@ import {
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import type { TTSEncoding, TTSModels } from './models.js';
+import { type TTSEncoding, type TTSModels, isDialogueModel } from './models.js';
 
 const DEFAULT_VOICE_ID = 'bIHbv24MWmeRgasZH58o';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
 const AUTHORIZATION_HEADER = 'xi-api-key';
 const WS_INACTIVITY_TIMEOUT = 180;
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_22050';
+const DIALOGUE_KEEP_ALIVE_INTERVAL = 10_000;
+const DIALOGUE_VOICE_SETTINGS_FIELDS = new Set<keyof VoiceSettings>(['stability']);
 
 export interface VoiceSettings {
   stability: number; // [0.0 - 1.0]
@@ -128,6 +130,9 @@ interface StreamData {
   durationsMs: number[];
   /** First word offset for timestamp normalization (removes leading silence) */
   firstWordOffsetMs: number | null;
+  timeoutMs: number;
+  timeoutTimer?: ReturnType<typeof setTimeout>;
+  terminate: () => void;
 }
 
 type ConnectionMessage = SynthesizeContent | CloseContext;
@@ -146,6 +151,10 @@ function synthesizeUrl(opts: ResolvedTTSOptions): string {
     url += `&optimize_streaming_latency=${streamingLatency}`;
   }
   return url;
+}
+
+function dialogueSynthesizeUrl(opts: ResolvedTTSOptions): string {
+  return `${opts.baseURL}/text-to-dialogue/stream?output_format=${opts.encoding}&enable_logging=${String(opts.enableLogging).toLowerCase()}`;
 }
 
 function multiStreamUrl(opts: ResolvedTTSOptions): string {
@@ -172,6 +181,23 @@ function multiStreamUrl(opts: ResolvedTTSOptions): string {
   return `${baseURL}/text-to-speech/${opts.voiceId}/multi-stream-input?${params.join('&')}`;
 }
 
+function dialogueMultiStreamUrl(opts: ResolvedTTSOptions): string {
+  const baseURL = opts.baseURL.replace('https://', 'wss://').replace('http://', 'ws://');
+  const params = [
+    `model_id=${opts.model}`,
+    `output_format=${opts.encoding}`,
+    `enable_logging=${opts.enableLogging}`,
+    `apply_text_normalization=${opts.applyTextNormalization}`,
+  ];
+  if (opts.language) {
+    params.splice(2, 0, `language_code=${getBaseLanguage(opts.language)}`);
+  }
+  if (opts.syncAlignment) {
+    params.push('sync_alignment=true');
+  }
+  return `${baseURL}/text-to-dialogue/multi-stream-input?${params.join('&')}`;
+}
+
 function stripUndefined<T extends object>(obj: T): Partial<T> {
   const result: Partial<T> = {};
   for (const key in obj) {
@@ -180,6 +206,25 @@ function stripUndefined<T extends object>(obj: T): Partial<T> {
     }
   }
   return result;
+}
+
+function dialogueVoiceSettings(
+  settings: Partial<VoiceSettings> | undefined,
+): Partial<VoiceSettings> | undefined {
+  if (!settings) return undefined;
+  const filtered = Object.fromEntries(
+    Object.entries(settings).filter(([key]) =>
+      DIALOGUE_VOICE_SETTINGS_FIELDS.has(key as keyof VoiceSettings),
+    ),
+  ) as Partial<VoiceSettings>;
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
+function pronunciationDictionaryLocators(opts: ResolvedTTSOptions) {
+  return opts.pronunciationDictionaryLocators?.map((locator) => ({
+    pronunciation_dictionary_id: locator.pronunciation_dictionary_id,
+    version_id: locator.version_id,
+  }));
 }
 
 /**
@@ -263,6 +308,8 @@ class Connection {
   #closed = false;
   #logger = log();
   #inputQueueResolver: (() => void) | null = null;
+  #closingContexts = new Set<string>();
+  #lastContextSend = new Map<string, number>();
 
   constructor(opts: ResolvedTTSOptions) {
     this.#opts = opts;
@@ -289,7 +336,9 @@ class Connection {
       return;
     }
 
-    const url = multiStreamUrl(this.#opts);
+    const url = isDialogueModel(this.#opts.model)
+      ? dialogueMultiStreamUrl(this.#opts)
+      : multiStreamUrl(this.#opts);
     const headers = { [AUTHORIZATION_HEADER]: this.#opts.apiKey };
 
     return new Promise((resolve, reject) => {
@@ -311,6 +360,8 @@ class Connection {
   registerStream(
     stream: SynthesizeStream,
     waiter: { resolve: (value: void) => void; reject: (error: Error) => void },
+    timeoutMs: number,
+    terminate: () => void,
   ): void {
     const contextId = stream.contextId;
     this.#contextData.set(contextId, {
@@ -320,7 +371,15 @@ class Connection {
       startTimesMs: [],
       durationsMs: [],
       firstWordOffsetMs: null,
+      timeoutMs,
+      terminate,
     });
+  }
+
+  unregisterStream(contextId: string): void {
+    const ctx = this.#contextData.get(contextId);
+    if (ctx?.timeoutTimer) clearTimeout(ctx.timeoutTimer);
+    this.#contextData.delete(contextId);
   }
 
   sendContent(content: SynthesizeContent): void {
@@ -339,21 +398,64 @@ class Connection {
     this.#inputQueueResolver?.();
   }
 
+  #nextKeepAliveDelay(): number {
+    const now = performance.now();
+    const eligible = [...this.#activeContexts].filter(
+      (contextId) => !this.#closingContexts.has(contextId),
+    );
+    if (eligible.length === 0) return DIALOGUE_KEEP_ALIVE_INTERVAL;
+    return Math.max(
+      0,
+      Math.min(
+        ...eligible.map(
+          (contextId) =>
+            (this.#lastContextSend.get(contextId) ?? now) + DIALOGUE_KEEP_ALIVE_INTERVAL - now,
+        ),
+      ),
+    );
+  }
+
+  async #sendDueKeepAlives(): Promise<void> {
+    if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) return;
+    const now = performance.now();
+    for (const contextId of this.#activeContexts) {
+      if (this.#closingContexts.has(contextId)) continue;
+      const lastSent = this.#lastContextSend.get(contextId);
+      if (lastSent === undefined || now - lastSent >= DIALOGUE_KEEP_ALIVE_INTERVAL) {
+        this.#ws.send(JSON.stringify({ context_id: contextId, keep_alive: true }));
+        this.#lastContextSend.set(contextId, now);
+      }
+    }
+  }
+
+  async #waitForInput(timeout?: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const done = () => {
+        if (timer) clearTimeout(timer);
+        if (this.#inputQueueResolver === done) this.#inputQueueResolver = null;
+        resolve();
+      };
+      this.#inputQueueResolver = done;
+      if (timeout !== undefined) timer = setTimeout(done, timeout);
+    });
+  }
+
   async #sendLoop(): Promise<void> {
+    const dialogue = isDialogueModel(this.#opts.model);
     try {
       while (!this.#closed) {
-        // Wait for messages in queue
         if (this.#inputQueue.length === 0) {
-          await new Promise<void>((resolve) => {
-            this.#inputQueueResolver = resolve;
-          });
-          this.#inputQueueResolver = null;
+          await this.#waitForInput(dialogue ? this.#nextKeepAliveDelay() : undefined);
         }
 
         if (this.#closed) break;
 
         const msg = this.#inputQueue.shift();
-        if (!msg) continue;
+        if (!msg) {
+          if (dialogue) await this.#sendDueKeepAlives();
+          continue;
+        }
 
         if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) {
           break;
@@ -364,34 +466,34 @@ class Connection {
           const content = msg as SynthesizeContent;
           const isNewContext = !this.#activeContexts.has(content.contextId);
 
-          // If not current and this is a new context, ignore it
-          if (!this.#isCurrent && isNewContext) {
-            continue;
-          }
-
           if (isNewContext) {
             const voiceSettings = this.#opts.voiceSettings
               ? stripUndefined(this.#opts.voiceSettings)
               : {};
 
-            const initPkt: Record<string, unknown> = {
-              text: ' ',
-              voice_settings: voiceSettings,
-              context_id: content.contextId,
-            };
+            const initPkt: Record<string, unknown> = dialogue
+              ? {
+                  context_id: content.contextId,
+                  voices: [this.#opts.voiceId],
+                }
+              : {
+                  text: ' ',
+                  voice_settings: voiceSettings,
+                  context_id: content.contextId,
+                };
 
-            if (this.#opts.chunkLengthSchedule) {
+            if (dialogue) {
+              const settings = dialogueVoiceSettings(voiceSettings);
+              if (settings) initPkt.voice_settings = settings;
+            } else if (this.#opts.chunkLengthSchedule) {
               initPkt.generation_config = {
                 chunk_length_schedule: this.#opts.chunkLengthSchedule,
               };
             }
 
-            if (this.#opts.pronunciationDictionaryLocators) {
-              initPkt.pronunciation_dictionary_locators =
-                this.#opts.pronunciationDictionaryLocators.map((locator) => ({
-                  pronunciation_dictionary_id: locator.pronunciation_dictionary_id,
-                  version_id: locator.version_id,
-                }));
+            const locators = pronunciationDictionaryLocators(this.#opts);
+            if (locators) {
+              initPkt.pronunciation_dictionary_locators = locators;
             }
 
             const initPktStr = JSON.stringify(initPkt);
@@ -399,20 +501,40 @@ class Connection {
             this.#activeContexts.add(content.contextId);
           }
 
-          const pkt: Record<string, unknown> = {
-            text: content.text,
-            context_id: content.contextId,
-          };
+          const pkt: Record<string, unknown> = dialogue
+            ? {
+                context_id: content.contextId,
+                inputs: [{ text: content.text, voice_id: this.#opts.voiceId }],
+              }
+            : {
+                text: content.text,
+                context_id: content.contextId,
+              };
           if (content.flush) {
             pkt.flush = true;
           }
 
           const pktStr = JSON.stringify(pkt);
+          const ctx = this.#contextData.get(content.contextId);
+          if (ctx && !ctx.timeoutTimer) {
+            ctx.timeoutTimer = setTimeout(() => {
+              ctx.waiter.reject(
+                new APITimeoutError({
+                  message: `${dialogue ? '11labs text-to-dialogue' : '11labs tts'} timed out after ${ctx.timeoutMs}ms`,
+                  options: { retryable: false },
+                }),
+              );
+              ctx.terminate();
+              this.#cleanupContext(content.contextId);
+            }, ctx.timeoutMs);
+          }
           this.#ws.send(pktStr);
+          if (dialogue) this.#lastContextSend.set(content.contextId, performance.now());
         } else {
           // CloseContext
           const closeMsg = msg as CloseContext;
           if (this.#activeContexts.has(closeMsg.contextId)) {
+            if (dialogue) this.#closingContexts.add(closeMsg.contextId);
             const closePkt = {
               context_id: closeMsg.contextId,
               close_context: true,
@@ -421,18 +543,29 @@ class Connection {
             this.#ws.send(closePktStr);
           }
         }
+
+        if (dialogue) await this.#sendDueKeepAlives();
       }
     } catch (e) {
-      this.#logger.warn({ error: e }, 'send loop error');
+      if (dialogue) {
+        const error = asError(e);
+        this.#logger.warn(
+          { exception_type: error.name, 'lk.pii.error': error.message },
+          'dialogue send loop error',
+        );
+      } else {
+        this.#logger.warn({ error: e }, 'send loop error');
+      }
     } finally {
       if (!this.#closed) {
-        await this.close();
+        await this.close('send');
       }
     }
   }
 
   async #recvLoop(): Promise<void> {
     if (!this.#ws) return;
+    const dialogue = isDialogueModel(this.#opts.model);
 
     const messageChannel = stream.createStreamChannel<Record<string, unknown>>();
 
@@ -449,7 +582,9 @@ class Connection {
       if (!this.#closed && this.#contextData.size > 0) {
         messageChannel.abort(
           new APIStatusError({
-            message: 'ElevenLabs websocket connection closed unexpectedly',
+            message: dialogue
+              ? 'ElevenLabs dialogue websocket connection closed unexpectedly'
+              : 'ElevenLabs websocket connection closed unexpectedly',
             options: { statusCode: code },
           }),
         );
@@ -474,21 +609,34 @@ class Connection {
         if (result.done || this.#closed) break;
 
         const data = result.value;
-        const contextId = (data.contextId || data.context_id) as string | undefined;
+        const contextId = (dialogue ? data.context_id : data.contextId || data.context_id) as
+          | string
+          | undefined;
         const ctx = contextId ? this.#contextData.get(contextId) : undefined;
 
         if (data.error) {
           this.#logger.error(
-            {
-              context_id: contextId,
-              error: data.error,
-              'lk.pii.data': data,
-            },
-            'elevenlabs tts returned error',
+            dialogue
+              ? {
+                  context_id: contextId,
+                  'lk.pii.error': data.error,
+                  'lk.pii.data': data,
+                }
+              : {
+                  context_id: contextId,
+                  error: data.error,
+                  'lk.pii.data': data,
+                },
+            dialogue
+              ? 'elevenlabs text-to-dialogue returned error'
+              : 'elevenlabs tts returned error',
           );
           if (contextId) {
             if (ctx) {
-              ctx.waiter.reject(new APIError(data.error as string));
+              ctx.terminate();
+              ctx.waiter.reject(
+                new APIError(data.error as string, { retryable: dialogue ? false : true }),
+              );
             }
             this.#cleanupContext(contextId);
           }
@@ -496,7 +644,7 @@ class Connection {
         }
 
         if (!ctx) {
-          if (data.type === 'flush_done') {
+          if (!dialogue && data.type === 'flush_done') {
             this.#logger.debug(
               { context_id: contextId, 'lk.pii.data': data },
               'ignoring elevenlabs flush_done message for inactive context',
@@ -504,29 +652,49 @@ class Connection {
             continue;
           }
 
-          this.#logger.warn(
-            { 'lk.pii.data': data },
-            'unexpected message received from elevenlabs tts',
-          );
+          if (contextId) {
+            this.#logger.debug(
+              { context_id: contextId, 'lk.pii.data': data },
+              dialogue
+                ? 'ignoring elevenlabs text-to-dialogue message for inactive context'
+                : 'ignoring elevenlabs message for inactive context',
+            );
+            if (data[dialogue ? 'is_final' : 'isFinal']) {
+              this.#cleanupContext(contextId);
+              if (!this.#isCurrent && this.#activeContexts.size === 0) break;
+            }
+          } else {
+            this.#logger.warn(
+              { 'lk.pii.data': data },
+              dialogue
+                ? 'unexpected message received from elevenlabs text-to-dialogue'
+                : 'unexpected message received from elevenlabs tts',
+            );
+          }
           continue;
         }
 
         const stream = ctx.stream;
 
         // Process alignment data
-        const alignment =
-          this.#opts.preferredAlignment === 'normalized'
+        const alignment = dialogue
+          ? (data.alignment as Record<string, unknown>)
+          : this.#opts.preferredAlignment === 'normalized'
             ? (data.normalizedAlignment as Record<string, unknown>)
             : (data.alignment as Record<string, unknown>);
 
         if (alignment && stream) {
           const chars = alignment.chars as string[] | undefined;
-          const starts = (alignment.charStartTimesMs || alignment.charsStartTimesMs) as
-            | number[]
-            | undefined;
-          const durs = (alignment.charDurationsMs || alignment.charsDurationsMs) as
-            | number[]
-            | undefined;
+          const starts = (
+            dialogue
+              ? alignment.char_start_times_ms
+              : alignment.charStartTimesMs || alignment.charsStartTimesMs
+          ) as number[] | undefined;
+          const durs = (
+            dialogue
+              ? alignment.char_durations_ms
+              : alignment.charDurationsMs || alignment.charsDurationsMs
+          ) as number[] | undefined;
 
           if (
             chars &&
@@ -545,7 +713,7 @@ class Connection {
 
               // Capture the first word's start time for normalization
               // This removes leading silence from timestamps
-              if (ctx.firstWordOffsetMs === null && start > 0) {
+              if (!dialogue && ctx.firstWordOffsetMs === null && start > 0) {
                 ctx.firstWordOffsetMs = start;
               }
 
@@ -564,7 +732,7 @@ class Connection {
               ctx.startTimesMs,
               ctx.durationsMs,
               false,
-              ctx.firstWordOffsetMs ?? 0,
+              dialogue ? 0 : ctx.firstWordOffsetMs ?? 0,
             );
 
             if (timedWords.length > 0) {
@@ -580,9 +748,12 @@ class Connection {
         if (data.audio) {
           const audioData = Buffer.from(data.audio as string, 'base64');
           stream.pushAudio(audioData);
+          if (ctx.timeoutTimer) {
+            clearTimeout(ctx.timeoutTimer);
+          }
         }
 
-        if (data.isFinal) {
+        if (data[dialogue ? 'is_final' : 'isFinal']) {
           // Flush remaining alignment data
           if (ctx.textBuffer) {
             const [timedWords] = toTimedWords(
@@ -590,7 +761,7 @@ class Connection {
               ctx.startTimesMs,
               ctx.durationsMs,
               true,
-              ctx.firstWordOffsetMs ?? 0,
+              dialogue ? 0 : ctx.firstWordOffsetMs ?? 0,
             );
             if (timedWords.length > 0) {
               stream.pushTimedTranscript(timedWords);
@@ -608,8 +779,18 @@ class Connection {
         }
       }
     } catch (e) {
-      this.#logger.warn({ error: e }, 'recv loop error');
+      if (dialogue) {
+        const error = asError(e);
+        this.#logger.warn(
+          { exception_type: error.name, 'lk.pii.error': error.message },
+          'dialogue recv loop error',
+        );
+      } else {
+        this.#logger.warn({ error: e }, 'recv loop error');
+      }
       for (const ctx of this.#contextData.values()) {
+        if (ctx.timeoutTimer) clearTimeout(ctx.timeoutTimer);
+        ctx.terminate();
         ctx.waiter.reject(asError(e));
       }
       this.#contextData.clear();
@@ -619,17 +800,19 @@ class Connection {
       this.#ws?.off('close', onClose);
       this.#ws?.off('error', onError);
       if (!this.#closed) {
-        await this.close();
+        await this.close('recv');
       }
     }
   }
 
   #cleanupContext(contextId: string): void {
-    this.#contextData.delete(contextId);
+    this.unregisterStream(contextId);
     this.#activeContexts.delete(contextId);
+    this.#closingContexts.delete(contextId);
+    this.#lastContextSend.delete(contextId);
   }
 
-  async close(): Promise<void> {
+  async close(caller?: 'send' | 'recv'): Promise<void> {
     if (this.#closed) {
       return;
     }
@@ -638,6 +821,7 @@ class Connection {
     this.#inputQueueResolver?.();
 
     for (const ctx of this.#contextData.values()) {
+      if (ctx.timeoutTimer) clearTimeout(ctx.timeoutTimer);
       ctx.waiter.reject(new APIStatusError({ message: 'connection closed' }));
     }
     this.#contextData.clear();
@@ -647,10 +831,10 @@ class Connection {
       this.#ws = null;
     }
 
-    if (this.#sendTask) {
+    if (this.#sendTask && caller !== 'send') {
       await this.#sendTask.catch(() => {});
     }
-    if (this.#recvTask) {
+    if (this.#recvTask && caller !== 'recv') {
       await this.#recvTask.catch(() => {});
     }
   }
@@ -724,6 +908,30 @@ export class TTS extends tts.TTS {
       autoMode,
       pronunciationDictionaryLocators: opts.pronunciationDictionaryLocators,
     };
+    this.#warnIfDialogueModelIgnoresOptions();
+  }
+
+  #warnIfDialogueModelIgnoresOptions(): void {
+    if (!isDialogueModel(this.#opts.model)) return;
+    const ignored: string[] = [];
+    if (this.#opts.chunkLengthSchedule !== undefined) ignored.push('chunkLengthSchedule');
+    if (this.#opts.streamingLatency !== undefined) ignored.push('streamingLatency');
+    if (this.#opts.enableSsmlParsing) ignored.push('enableSsmlParsing');
+    if (this.#opts.applyLanguageTextNormalization !== undefined) {
+      ignored.push('applyLanguageTextNormalization');
+    }
+    if (this.#opts.voiceSettings) {
+      for (const key of Object.keys(stripUndefined(this.#opts.voiceSettings))) {
+        if (!DIALOGUE_VOICE_SETTINGS_FIELDS.has(key as keyof VoiceSettings)) {
+          ignored.push(`voiceSettings.${key}`);
+        }
+      }
+    }
+    if (ignored.length > 0) {
+      this.#logger.warn(
+        `model '${this.#opts.model}' is synthesized via ElevenLabs' text-to-dialogue API, which does not support these options; they will be ignored: ${ignored.join(', ')}`,
+      );
+    }
   }
 
   get model(): string {
@@ -781,6 +989,8 @@ export class TTS extends tts.TTS {
       this.#opts.pronunciationDictionaryLocators = opts.pronunciationDictionaryLocators;
       changed = true;
     }
+
+    if (changed) this.#warnIfDialogueModelIgnoresOptions();
 
     if (changed && this.#currentConnection) {
       this.#currentConnection.markNonCurrent();
@@ -860,21 +1070,40 @@ export class ChunkedStream extends tts.ChunkedStream {
     const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
 
     try {
-      const response = await fetch(synthesizeUrl(this.#opts), {
-        method: 'POST',
-        headers: {
-          [AUTHORIZATION_HEADER]: this.#opts.apiKey,
-          'Content-Type': 'application/json',
+      const dialogue = isDialogueModel(this.#opts.model);
+      const settings = dialogueVoiceSettings(voiceSettings);
+      const body = dialogue
+        ? {
+            inputs: [{ text: this.inputText, voice_id: this.#opts.voiceId }],
+            model_id: this.#opts.model,
+            apply_text_normalization: this.#opts.applyTextNormalization,
+            ...(settings ? { settings } : {}),
+            ...(this.#opts.language ? { language_code: getBaseLanguage(this.#opts.language) } : {}),
+            ...(this.#opts.pronunciationDictionaryLocators
+              ? {
+                  pronunciation_dictionary_locators: pronunciationDictionaryLocators(this.#opts),
+                }
+              : {}),
+          }
+        : {
+            text: this.inputText,
+            model_id: this.#opts.model,
+            voice_settings: voiceSettings,
+            apply_text_normalization: this.#opts.applyTextNormalization,
+            ...extraParams,
+          };
+      const response = await fetch(
+        dialogue ? dialogueSynthesizeUrl(this.#opts) : synthesizeUrl(this.#opts),
+        {
+          method: 'POST',
+          headers: {
+            [AUTHORIZATION_HEADER]: this.#opts.apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+          signal: this.abortSignal,
         },
-        body: JSON.stringify({
-          text: this.inputText,
-          model_id: this.#opts.model,
-          voice_settings: voiceSettings,
-          apply_text_normalization: this.#opts.applyTextNormalization,
-          ...extraParams,
-        }),
-        signal: this.abortSignal,
-      });
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -987,7 +1216,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     let waiterReject: ((reason: Error) => void) | undefined;
     const waiterPromise = new Promise<void>((resolve, reject) => {
       waiterReject = reject;
-      connection.registerStream(this, { resolve, reject });
+      connection.registerStream(this, { resolve, reject }, this.connOptions.timeoutMs, () => {
+        this.#streamDone = true;
+        this.#sentTokenizerStream.close();
+        if (!this.input.closed) this.input.close();
+      });
     });
     let contextClosed = false;
 
@@ -1142,14 +1375,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         return;
       }
 
-      if (e instanceof APITimeoutError) {
-        throw e;
-      }
-      if (e instanceof APIStatusError) {
+      if (e instanceof APIError) {
         throw e;
       }
       throw new APIStatusError({ message: 'Could not synthesize' });
     } finally {
+      connection.unregisterStream(this.#contextId);
       closeContext(true);
       // Clean up abort listener
       this.abortController.signal.removeEventListener('abort', abortHandler);

@@ -33,6 +33,11 @@ export class ChunkedStream extends tts.ChunkedStream {
 // @public (undocumented)
 export type ElevenLabsSTTModels = 'scribe_v1' | 'scribe_v2' | 'scribe_v2_realtime';
 
+// Warning: (ae-missing-release-tag) "isDialogueModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export function isDialogueModel(model: string): boolean;
+
 // Warning: (ae-missing-release-tag) "PronunciationDictionaryLocator" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -226,7 +231,7 @@ export type TTSEncoding = 'mp3_22050_32' | 'mp3_44100_32' | 'mp3_44100_64' | 'mp
 // Warning: (ae-missing-release-tag) "TTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type TTSModels = 'eleven_monolingual_v1' | 'eleven_multilingual_v1' | 'eleven_multilingual_v2' | 'eleven_flash_v2' | 'eleven_flash_v2_5' | 'eleven_turbo_v2' | 'eleven_turbo_v2_5' | 'eleven_v3';
+export type TTSModels = 'eleven_monolingual_v1' | 'eleven_multilingual_v1' | 'eleven_multilingual_v2' | 'eleven_flash_v2' | 'eleven_flash_v2_5' | 'eleven_turbo_v2' | 'eleven_turbo_v2_5' | 'eleven_v3' | 'eleven_v3_conversational';
 
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
