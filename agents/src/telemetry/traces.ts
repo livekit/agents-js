@@ -42,6 +42,7 @@ import {
   ATTRIBUTE_SIMULATION_ENABLED,
   recordingEnabled,
 } from '../types.js';
+import { version } from '../version.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
@@ -608,6 +609,7 @@ export async function uploadSessionReport(options: {
       'session.options': serializeSessionOptions(report.options),
       'session.report_timestamp': report.timestamp,
       agent_name: agentName,
+      sdk_version: version,
       usage,
     },
   });

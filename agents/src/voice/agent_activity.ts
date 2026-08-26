@@ -48,6 +48,7 @@ import {
   ToolContext,
   type ToolContextEntry,
   type ToolContextLike,
+  ToolError,
   ToolFlag,
   isFunctionTool,
   toToolContext,
@@ -317,6 +318,7 @@ export class AgentActivity implements RecognitionHooks {
   agentSession: AgentSession;
 
   private started = false;
+  private closed = false;
   private audioRecognition?: AudioRecognition;
   private realtimeSession?: RealtimeSession;
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
@@ -325,7 +327,7 @@ export class AgentActivity implements RecognitionHooks {
   private _schedulingPaused = true;
   private newTurnsBlocked = false;
   private _authorizationPaused = false;
-  private _drainBlockedTasks: Task<any>[] = [];
+  private _drainBlockedTasks: Set<Task<any>> = new Set();
   private _currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private userSilenceEvent = new Event();
@@ -339,6 +341,7 @@ export class AgentActivity implements RecognitionHooks {
   // model to auto-generate a tool reply (autoToolReplyGeneration=true).
   private pendingAutoToolReplyFut?: Future<void, never>;
   private lock = new Mutex();
+  private inlineTaskLock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
 
@@ -1860,11 +1863,8 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private onEndOfAgentSpeech(
-    endedAt: number,
-    options?: { paused?: boolean },
-  ): Promise<void> | undefined {
-    const teardown = this.audioRecognition?.onEndOfAgentSpeech(endedAt, options);
+  private onEndOfAgentSpeech(endedAt: number): Promise<void> | undefined {
+    const teardown = this.audioRecognition?.onEndOfAgentSpeech(endedAt);
     this.pendingInterruption = undefined;
     return teardown;
   }
@@ -1938,7 +1938,8 @@ export class AgentActivity implements RecognitionHooks {
           wasAgentSpeaking &&
           this.isInterruptionDetectionEnabled &&
           this.audioRecognition &&
-          this.pendingInterruption === undefined
+          this.pendingInterruption === undefined &&
+          !this.audioRecognition.endpointingOverlapping
         ) {
           this.audioRecognition.onStartOfOverlapSpeech(
             0,
@@ -1951,7 +1952,7 @@ export class AgentActivity implements RecognitionHooks {
         audioOutput!.pause();
         if (wasAgentSpeaking) {
           this.agentSession._updateAgentState('listening');
-          this.onEndOfAgentSpeech(Date.now(), { paused: true });
+          this.onEndOfAgentSpeech(Date.now());
           if (this.isInterruptionDetectionEnabled) {
             this.restoreInterruptionByAudioActivity();
           }
@@ -2243,6 +2244,24 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
     return interrupted;
+  }
+
+  private interruptQueuedSpeeches(force: boolean): void {
+    // Heap iteration pops in playout order. Walk a clone so retained speeches stay queued and
+    // interrupted ones remain for mainTask to drain.
+    for (const [, , speech] of this.speechQueue.clone()) {
+      if (speech.interrupted || speech.done()) continue;
+
+      if (!force && !speech.allowInterruptions) {
+        this.logger.warn(
+          { speech_id: speech.id },
+          'a queued speech does not allow interruptions and will play after the interruption, use interrupt({ force: true }) to interrupt it as well',
+        );
+        break;
+      }
+
+      speech.interrupt(force);
+    }
   }
 
   private createSpeechTask(options: {
@@ -2565,7 +2584,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const toWait: Task<void>[] = [];
     for (const task of this.speechTasks) {
-      if (this._drainBlockedTasks.includes(task)) {
+      if (this._drainBlockedTasks.has(task)) {
         continue;
       }
 
@@ -2725,21 +2744,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this.realtimeSession?.interrupt();
 
-    // Heap iteration pops in playout order. Walk a clone so retained speeches stay queued and
-    // interrupted ones remain for mainTask to drain.
-    for (const [, , speech] of this.speechQueue.clone()) {
-      if (speech.interrupted || speech.done()) continue;
-
-      if (!force && !speech.allowInterruptions) {
-        this.logger.warn(
-          { speech_id: speech.id },
-          'a queued speech does not allow interruptions and will play after the interruption, use interrupt({ force: true }) to interrupt it as well',
-        );
-        break;
-      }
-
-      speech.interrupt(force);
-    }
+    this.interruptQueuedSpeeches(force);
 
     if (force) {
       // Force-interrupt (used during shutdown): cancel all speech tasks so they
@@ -2852,23 +2857,31 @@ export class AgentActivity implements RecognitionHooks {
     // Capture into a local before awaiting cancelSpeechPause: the main scheduling
     // loop can reset this._currentSpeech = undefined during the await (#1430).
     const currentSpeech = this._currentSpeech;
+    const activeSpeech =
+      currentSpeech && !currentSpeech.interrupted && !currentSpeech.done()
+        ? currentSpeech
+        : undefined;
+    if (activeSpeech && !activeSpeech.allowInterruptions) {
+      this.logger.warn(
+        { 'lk.pii.user_input': info.newTranscript },
+        'skipping user input, current speech generation cannot be interrupted',
+      );
+      return;
+    }
+
+    this.interruptQueuedSpeeches(false);
+
     if (currentSpeech) {
-      if (!currentSpeech.allowInterruptions) {
-        this.logger.warn(
-          { 'lk.pii.user_input': info.newTranscript },
-          'skipping user input, current speech generation cannot be interrupted',
-        );
-        return;
-      }
-
       await this.cancelSpeechPause();
+    }
 
+    if (activeSpeech) {
       this.logger.info(
-        { 'speech id': currentSpeech.id },
+        { 'speech id': activeSpeech.id },
         'speech interrupted, new user turn detected',
       );
 
-      currentSpeech.interrupt();
+      activeSpeech.interrupt();
       this.realtimeSession?.interrupt();
     }
 
@@ -3755,6 +3768,10 @@ export class AgentActivity implements RecognitionHooks {
 
     if (!speechHandle.interrupted && toolOutput.output.length > 0) {
       this.agentSession._updateAgentState('thinking');
+      this.onEndOfAgentSpeech(Date.now());
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
+      }
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
       this.onEndOfAgentSpeech(Date.now());
@@ -4325,6 +4342,17 @@ export class AgentActivity implements RecognitionHooks {
 
     addRealtimeMessageOutputs(messageOutputs);
 
+    let endedAgentSpeechBeforeTool = false;
+    if (this.agentSession.agentState === 'speaking') {
+      const toolBusy = !executeToolsTask.done || toolOutput.output.length > 0;
+      this.agentSession._updateAgentState(toolBusy ? 'thinking' : 'listening');
+      this.onEndOfAgentSpeech(Date.now());
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
+      }
+      endedAgentSpeechBeforeTool = true;
+    }
+
     // mark the playout done before waiting for the tool execution
     speechHandle._markGenerationDone();
     // TODO(brian): close tees
@@ -4338,9 +4366,17 @@ export class AgentActivity implements RecognitionHooks {
 
     if (toolOutput.output.length > 0) {
       this.agentSession._updateAgentState('thinking');
+      if (!endedAgentSpeechBeforeTool) {
+        this.onEndOfAgentSpeech(Date.now());
+        if (this.isInterruptionDetectionEnabled) {
+          this.restoreInterruptionByAudioActivity();
+        }
+      }
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
       this.onEndOfAgentSpeech(Date.now());
+    } else if (endedAgentSpeechBeforeTool && this.agentSession.agentState === 'thinking') {
+      this.agentSession._updateAgentState('listening');
     }
 
     if (toolOutput.output.length === 0) {
@@ -4755,11 +4791,67 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
   }
 
+  /** @internal */
+  _addDrainBlockedTasks(tasks: Task<any>[]): void {
+    for (const task of tasks) {
+      this._drainBlockedTasks.add(task);
+    }
+    this.wakeupMainTask();
+  }
+
+  /** @internal */
+  async _withInlineTaskSlot<T>(options: {
+    speechHandle?: SpeechHandle;
+    blockedTasks: Task<any>[];
+    fn: () => Promise<T>;
+  }): Promise<T> {
+    const { speechHandle, blockedTasks, fn } = options;
+
+    // Tasks queued behind the active one share this speech. Counted holds keep it from
+    // becoming interruptible between siblings while one is still waiting for the slot.
+    if (speechHandle) {
+      if (speechHandle.interrupted) {
+        throw new Error('the speech that awaited the inline task is interrupted');
+      }
+      speechHandle._holdInterruptions();
+    }
+
+    try {
+      // Register before waiting for the slot so session close does not drain on a task
+      // that is still queued for the activity it needs to pause.
+      this._addDrainBlockedTasks(blockedTasks);
+
+      const unlock = await this.inlineTaskLock.lock();
+      try {
+        if (this.closed || this.agentSession._closing) {
+          throw new ToolError('the activity that awaited the inline task is closing');
+        }
+
+        // A run must only watch this task once it has the slot. Otherwise it would wait
+        // for user input needed by the task currently ahead of it.
+        const runState = this.agentSession._globalRunState;
+        if (runState && !runState.done()) {
+          for (const task of blockedTasks) {
+            runState._watchHandle(task);
+          }
+        }
+
+        return await fn();
+      } finally {
+        unlock();
+      }
+    } finally {
+      speechHandle?._releaseInterruptions();
+    }
+  }
+
   private async _pauseSchedulingTask(blockedTasks: Task<any>[]): Promise<void> {
     if (this._schedulingPaused) return;
 
     this._schedulingPaused = true;
-    this._drainBlockedTasks = blockedTasks;
+    if (blockedTasks.length > 0) {
+      this._addDrainBlockedTasks(blockedTasks);
+    }
     this.wakeupMainTask();
 
     if (this._mainTask) {
@@ -4801,6 +4893,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this._schedulingPaused = false;
     this.newTurnsBlocked = false;
+    this._drainBlockedTasks.clear();
     this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
   }
 
@@ -4814,6 +4907,10 @@ export class AgentActivity implements RecognitionHooks {
     const unlock = await this.lock.lock();
 
     try {
+      if (this.closed) {
+        return undefined;
+      }
+
       const span = tracer.startSpan({
         name: 'pause_agent_activity',
         attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
@@ -4896,6 +4993,11 @@ export class AgentActivity implements RecognitionHooks {
 
     const unlock = await this.lock.lock();
     try {
+      if (this.closed) {
+        return;
+      }
+      this.closed = true;
+
       this.cancelPreemptiveGeneration();
 
       // Commit the in-flight assistant turn before teardown (#2041): a room
@@ -5111,7 +5213,7 @@ export class AgentActivity implements RecognitionHooks {
           otelContext: this.pausedSpeech.handle._agentTurnContext,
         });
         if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
-          this.audioRecognition.onStartOfAgentSpeech(Date.now(), { resumed: true });
+          this.audioRecognition.onStartOfAgentSpeech(Date.now());
         }
         if (this.isInterruptionDetectionEnabled) {
           this.disableVadInterruptionSoon();
@@ -5191,14 +5293,6 @@ export class AgentActivity implements RecognitionHooks {
 
     if (!this.pausedSpeech) {
       return;
-    }
-
-    // The pause withheld end-of-agent-speech for a resume. Interrupting ends the turn instead;
-    // audio stopped when it was paused, so no playout is left to wait for.
-    if (interrupt) {
-      void this.onEndOfAgentSpeech(Date.now())?.catch((error) =>
-        this.logger.warn({ error }, 'failed to report end of agent speech on pause cancel'),
-      );
     }
 
     if (

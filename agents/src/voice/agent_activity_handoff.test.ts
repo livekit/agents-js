@@ -313,6 +313,7 @@ describe('AgentActivity blockNewTurns (handoff transition)', () => {
     activity.logger = { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() };
     activity.cancelPreemptiveGeneration = vi.fn();
     activity.createSpeechTask = vi.fn(() => ({ cancel: vi.fn() }));
+    activity.speechQueue = { clone: () => [] };
     return activity;
   }
 

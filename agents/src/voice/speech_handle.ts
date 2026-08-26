@@ -75,6 +75,8 @@ export function isSpeechHandle(value: unknown): value is SpeechHandle {
  * Omitting `then` terminates the unwrap because the pattern
  * `object & { then(...) }` no longer matches. In practice, calling `.then`
  * on an already-awaited handle has no meaningful use.
+ *
+ * @public
  */
 export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
 
@@ -84,6 +86,8 @@ export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
  * currently-running tool creates a real circular wait — the handle's playout
  * cannot finish until the tool returns, but the tool is blocked waiting for
  * the playout.
+ *
+ * @public
  */
 export class SpeechHandleCircularWaitError extends Error {
   constructor(functionCallName: string) {
@@ -99,6 +103,8 @@ export class SpeechHandleCircularWaitError extends Error {
 /**
  * Describes how the user provided input that triggered the current turn.
  * Used by modality-aware Instructions to pick the correct variant.
+ *
+ * @public
  */
 export interface InputDetails {
   modality: 'audio' | 'text';
@@ -107,6 +113,11 @@ export interface InputDetails {
 /** Default {@link InputDetails} used when no explicit value is provided. */
 export const DEFAULT_INPUT_DETAILS: InputDetails = { modality: 'audio' };
 
+/**
+ * Controls and observes one agent speech turn.
+ *
+ * @public
+ */
 export class SpeechHandle {
   /** Priority for messages that should be played after all other messages in the queue */
   static SPEECH_PRIORITY_LOW = 0;
@@ -122,6 +133,8 @@ export class SpeechHandle {
   private generations: Future<void>[] = [];
   private _chatItems: ChatItem[] = [];
   private _error: unknown;
+  private interruptionHolds = 0;
+  private interruptionHoldsRestore: boolean;
 
   /** @internal */
   _tasks: Task<void>[] = [];
@@ -151,6 +164,7 @@ export class SpeechHandle {
     private _inputDetails: InputDetails = DEFAULT_INPUT_DETAILS,
     readonly parent?: SpeechHandle,
   ) {
+    this.interruptionHoldsRestore = _allowInterruptions;
     this.doneFut.await.finally(() => {
       for (const callback of this.doneCallbacks) {
         callback(this);
@@ -221,6 +235,29 @@ export class SpeechHandle {
       );
     }
     this._allowInterruptions = value;
+  }
+
+  /** @internal */
+  _holdInterruptions(): void {
+    if (this.interruptionHolds === 0) {
+      this.interruptionHoldsRestore = this._allowInterruptions;
+      this.allowInterruptions = false;
+    }
+
+    this.interruptionHolds += 1;
+  }
+
+  /** @internal */
+  _releaseInterruptions(): void {
+    this.interruptionHolds -= 1;
+    if (this.interruptionHolds === 0) {
+      // A forced interrupt lands regardless of the hold and leaves nothing to restore.
+      try {
+        this.allowInterruptions = this.interruptionHoldsRestore;
+      } catch {
+        // The handle was already interrupted.
+      }
+    }
   }
 
   done(): boolean {

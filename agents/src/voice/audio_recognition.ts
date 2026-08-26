@@ -26,6 +26,8 @@ import type { AdaptiveInterruptionDetector } from '../inference/interruption/int
 import { InterruptionStreamSentinel } from '../inference/interruption/interruption_stream.js';
 import {
   type InterruptionSentinel,
+  type OverlapSpeechEnded,
+  type OverlapSpeechStarted,
   type OverlappingSpeechEvent,
 } from '../inference/interruption/types.js';
 import type { LanguageCode } from '../language.js';
@@ -336,6 +338,7 @@ export class AudioRecognition {
   private userTurnStart: number | undefined;
   private userTurnCommitted = false;
   private speaking = false;
+  private activeUserSpeakingSpan?: Span;
   private vadSpeechStarted = false;
   private transcriptionTimeout?: number;
   private transcriptionTimeoutTimer?: ReturnType<typeof setTimeout>;
@@ -393,6 +396,7 @@ export class AudioRecognition {
   // An overlap is open right now, awaiting a verdict; several can occur within one turn.
   private overlapOpen = false;
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
+  private interruptionSentinelWrite: Promise<void> = Promise.resolve();
   private closed = false;
   private readonly closeWakeController = new AbortController();
 
@@ -549,6 +553,11 @@ export class AudioRecognition {
   /** @internal */
   get endOfTurnTask(): Task<void> | undefined {
     return this.bounceEOUTask;
+  }
+
+  /** @internal */
+  get endpointingOverlapping(): boolean {
+    return this.endpointing.overlapping;
   }
 
   /** @internal */
@@ -803,7 +812,13 @@ export class AudioRecognition {
     this.backchannelBoundaryCallback = undefined;
   }
 
-  async onStartOfAgentSpeech(startedAt: number, options?: { resumed?: boolean }) {
+  /**
+   * Mark the start of active agent speech.
+   *
+   * This lifecycle follows audible playout, not the generation. Resuming paused playout starts
+   * a new active-speech interval.
+   */
+  async onStartOfAgentSpeech(startedAt: number) {
     this.isAgentSpeaking = true;
     this.agentSpeechStartedAt = startedAt;
     this.syncTranscriptGate();
@@ -819,13 +834,23 @@ export class AudioRecognition {
       );
     }
 
-    // A resume re-enters the same agent turn; restarting would discard the open overlap.
-    if (!options?.resumed) {
-      return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
+    const sentinels: InterruptionSentinel[] = [InterruptionStreamSentinel.agentSpeechStarted()];
+
+    if (this.speaking) {
+      const overlapStarted = this.startOverlapInference(0, startedAt, this.activeUserSpeakingSpan);
+      if (overlapStarted) {
+        sentinels.push(overlapStarted);
+      }
     }
+    await this.trySendInterruptionSentinel(sentinels);
   }
 
-  onEndOfAgentSpeech(endedAt: number, options?: { paused?: boolean }): Promise<void> {
+  /**
+   * Mark the end of active agent speech.
+   *
+   * This can occur while the generation remains active, such as when playout is paused.
+   */
+  onEndOfAgentSpeech(endedAt: number): Promise<void> {
     this.cancelBackchannelBoundary();
 
     const wasAgentSpeaking = this.isAgentSpeaking;
@@ -840,11 +865,17 @@ export class AudioRecognition {
       return Promise.resolve();
     }
 
-    // Queue the detector reset before transcript hooks run, then await it afterward
-    // to preserve agent-speech-ended before overlap-speech-ended detector order.
-    const agentSpeechEnded = options?.paused
-      ? undefined
-      : this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechEnded());
+    const sentinels: InterruptionSentinel[] = [];
+    if (wasAgentSpeaking) {
+      const overlapEnded = this.closeOverlap(endedAt, undefined, true);
+      if (overlapEnded) {
+        sentinels.push(overlapEnded);
+      }
+    }
+    sentinels.push(InterruptionStreamSentinel.agentSpeechEnded());
+
+    // Queue detector boundaries before transcript hooks can start another overlap.
+    const detectorReset = this.trySendInterruptionSentinel(sentinels);
 
     if (wasAgentSpeaking) {
       this.logger.trace(
@@ -858,63 +889,75 @@ export class AudioRecognition {
     this.isAgentSpeaking = false;
     this.agentSpeechStartedAt = undefined;
 
-    // A paused playout retains the live detector stream. Resuming re-enters the same
-    // agent turn without sending a second start sentinel.
-    if (agentSpeechEnded === undefined) {
-      return Promise.resolve();
-    }
-
-    return this.finishEndOfAgentSpeech(agentSpeechEnded, endedAt, wasAgentSpeaking);
+    return this.finishEndOfAgentSpeech(detectorReset);
   }
 
-  private async finishEndOfAgentSpeech(
-    agentSpeechEnded: Promise<boolean>,
-    endedAt: number,
-    wasAgentSpeaking: boolean,
-  ): Promise<void> {
-    const inputOpen = await agentSpeechEnded;
+  private async finishEndOfAgentSpeech(detectorReset: Promise<boolean>): Promise<void> {
+    const inputOpen = await detectorReset;
     if (!inputOpen) {
       this.overlapOpen = false;
-      return;
     }
-
-    if (wasAgentSpeaking && this.overlapOpen) {
-      // Notify overlap end after the agent-speech-ended sentinel resets the inference stream
-      // so it does not emit a synthetic `isInterruption: false` event following a real
-      // interruption.
-      await this.onEndOfOverlapSpeech(endedAt, undefined, true);
-    }
-
-    // The sentinel sent above resets the detector stream, dropping any open overlap.
-    this.overlapOpen = false;
   }
 
   /** Start interruption inference when agent is speaking and overlap speech starts. */
   async onStartOfOverlapSpeech(speechDuration: number, startedAt: number, userSpeakingSpan?: Span) {
-    this.interruptionDetected = undefined;
-    if (!this.isInterruptionEnabled || !this.isAgentSpeaking) {
-      return false;
+    this.activeUserSpeakingSpan = userSpeakingSpan;
+    if (this.isAgentSpeaking) {
+      if (!this.endpointing.overlapping) {
+        this.endpointing.onStartOfSpeech(startedAt, true);
+      }
+      const overlapStarted = this.startOverlapInference(
+        speechDuration,
+        startedAt,
+        userSpeakingSpan,
+      );
+      if (overlapStarted) {
+        await this.trySendInterruptionSentinel(overlapStarted);
+      }
     }
+  }
 
-    if (!this.endpointing.overlapping) {
-      this.endpointing.onStartOfSpeech(startedAt, true);
+  private startOverlapInference(
+    speechDuration: number,
+    startedAt: number,
+    userSpeakingSpan?: Span,
+  ): OverlapSpeechStarted | undefined {
+    if (!this.isInterruptionEnabled || !this.isAgentSpeaking || this.overlapOpen) {
+      return undefined;
     }
+    this.interruptionDetected = undefined;
     this.turnBackchannelOverAgent = false;
     this.overlapInCurrentTurn = true;
     this.overlapOpen = true;
     // A later overlap must re-arm a gate released by a failed interruption attempt.
     this.syncTranscriptGate();
-    return this.trySendInterruptionSentinel(
-      InterruptionStreamSentinel.overlapSpeechStarted(speechDuration, startedAt, userSpeakingSpan),
+    return InterruptionStreamSentinel.overlapSpeechStarted(
+      speechDuration,
+      startedAt,
+      userSpeakingSpan,
     );
   }
 
   /** End interruption inference when overlap speech ends. */
   async onEndOfOverlapSpeech(endedAt: number, userSpeakingSpan?: Span, agentEnded = false) {
+    if (!agentEnded) {
+      this.activeUserSpeakingSpan = undefined;
+    }
+    const overlapEnded = this.closeOverlap(endedAt, userSpeakingSpan, agentEnded);
+    if (overlapEnded) {
+      return this.trySendInterruptionSentinel(overlapEnded);
+    }
+  }
+
+  private closeOverlap(
+    endedAt: number,
+    userSpeakingSpan?: Span,
+    agentEnded = false,
+  ): OverlapSpeechEnded | undefined {
     // The overlap ends once, on the first of a verdict, the user stopping, the agent stopping,
     // or teardown, so a call can arrive with it already closed.
     if (!this.isInterruptionEnabled || !this.overlapOpen) {
-      return;
+      return undefined;
     }
     this.overlapOpen = false;
     if (
@@ -926,9 +969,7 @@ export class AudioRecognition {
       userSpeakingSpan.setAttribute(traceTypes.ATTR_IS_INTERRUPTION, 'false');
     }
 
-    return this.trySendInterruptionSentinel(
-      InterruptionStreamSentinel.overlapSpeechEnded(endedAt, agentEnded),
-    );
+    return InterruptionStreamSentinel.overlapSpeechEnded(endedAt, agentEnded);
   }
 
   private syncTranscriptGate(): void {
@@ -998,23 +1039,31 @@ export class AudioRecognition {
   }
 
   private async trySendInterruptionSentinel(
-    frame: AudioFrame | InterruptionSentinel,
+    frame: AudioFrame | InterruptionSentinel | InterruptionSentinel[],
   ): Promise<boolean> {
-    if (
-      this.isInterruptionEnabled &&
-      this.interruptionStreamChannel &&
-      !this.interruptionStreamChannel.closed
-    ) {
-      try {
-        await this.interruptionStreamChannel.write(frame);
-        return true;
-      } catch (e: unknown) {
-        this.logger.warn(
-          `could not forward interruption sentinel: ${e instanceof Error ? e.message : String(e)}`,
-        );
+    const frames = Array.isArray(frame) ? frame : [frame];
+    let sent = false;
+    const write = async () => {
+      if (
+        this.isInterruptionEnabled &&
+        this.interruptionStreamChannel &&
+        !this.interruptionStreamChannel.closed
+      ) {
+        try {
+          for (const item of frames) {
+            await this.interruptionStreamChannel.write(item);
+          }
+          sent = true;
+        } catch (e: unknown) {
+          this.logger.warn(
+            `could not forward interruption sentinel: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
       }
-    }
-    return false;
+    };
+    this.interruptionSentinelWrite = this.interruptionSentinelWrite.then(write, write);
+    await this.interruptionSentinelWrite;
+    return sent;
   }
 
   private ensureUserTurnSpan(startTime?: number): Span {

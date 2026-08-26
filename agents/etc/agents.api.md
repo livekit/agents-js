@@ -573,8 +573,6 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         outputType?: z.ZodType<T>;
         outputOptions?: RunOutputOptions | null;
     }): RunResult<T>;
-    // Warning: (ae-forgotten-export) The symbol "SpeechHandle" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     say(text: string | ReadableStream_2<string>, options?: {
         audio?: ReadableStream_2<AudioFrame>;
@@ -2758,7 +2756,6 @@ export const createUserTurnExceededEvent: (input: {
 }) => UserTurnExceededEvent;
 
 // Warning: (ae-missing-release-tag) "createWarmTransferTask" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTaskOptions"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTask"
 //
 // @public
@@ -4218,6 +4215,12 @@ export const initializeLogger: (input: LoggerOptions) => void;
 //
 // @public (undocumented)
 function initPinoCloudExporter(config: PinoCloudExporterConfig): void;
+
+// @public
+export interface InputDetails {
+    // (undocumented)
+    modality: 'audio' | 'text';
+}
 
 // Warning: (ae-missing-release-tag) "InputSpeechStartedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -5913,6 +5916,9 @@ export interface ResolvedSessionConnectOptions {
     ttsConnOptions: APIConnectOptions;
 }
 
+// @public
+export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
+
 // Warning: (ae-missing-release-tag) "resolveEnvVar" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -6112,7 +6118,6 @@ export class RunContext<UserData = UnknownUserData> {
     get updates(): readonly [FunctionCall, FunctionCallOutput][];
     // (undocumented)
     get userData(): UserData;
-    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SpeechHandle"
     waitForPlayout(): Promise<void>;
 }
 
@@ -6662,6 +6667,98 @@ enum SpeechEventType {
     PREFLIGHT_TRANSCRIPT = 5,
     RECOGNITION_USAGE = 4,
     START_OF_SPEECH = 0
+}
+
+// @public
+export class SpeechHandle {
+    // @internal
+    readonly [SPEECH_HANDLE_SYMBOL] = true;
+    constructor(_id: string, _allowInterruptions: boolean,
+    _stepIndex: number, _inputDetails?: InputDetails, parent?: SpeechHandle | undefined);
+    // (undocumented)
+    addDoneCallback(callback: (sh: SpeechHandle) => void): void;
+    // @internal (undocumented)
+    _addItemAddedCallback(callback: (item: ChatItem) => void): void;
+    // @internal
+    _agentTurnContext?: Context;
+    // (undocumented)
+    get allowInterruptions(): boolean;
+    set allowInterruptions(value: boolean);
+    // @internal (undocumented)
+    _authorizeGeneration(): void;
+    // @internal (undocumented)
+    _cancel(): SpeechHandle;
+    // (undocumented)
+    get chatItems(): ChatItem[];
+    // @internal (undocumented)
+    _clearAuthorization(): void;
+    // (undocumented)
+    static create(options?: {
+        allowInterruptions?: boolean;
+        stepIndex?: number;
+        inputDetails?: InputDetails;
+        parent?: SpeechHandle;
+    }): SpeechHandle;
+    // (undocumented)
+    done(): boolean;
+    exception(): unknown;
+    // @internal (undocumented)
+    get _hasGenerations(): boolean;
+    // @internal (undocumented)
+    _holdInterruptions(): void;
+    // (undocumented)
+    get id(): string;
+    // (undocumented)
+    get inputDetails(): InputDetails;
+    interrupt(force?: boolean): SpeechHandle;
+    // (undocumented)
+    get interrupted(): boolean;
+    // @internal (undocumented)
+    _itemAdded(items: ChatItem[]): void;
+    // @internal (undocumented)
+    _markDone(error?: unknown): void;
+    // @internal (undocumented)
+    _markGenerationDone(): void;
+    // @internal (undocumented)
+    _markScheduled(): void;
+    // @internal
+    _maybeRunFinalOutput?: unknown;
+    // (undocumented)
+    get numSteps(): number;
+    // @internal (undocumented)
+    _numSteps: number;
+    // (undocumented)
+    readonly parent?: SpeechHandle | undefined;
+    // @internal (undocumented)
+    _releaseInterruptions(): void;
+    // (undocumented)
+    removeDoneCallback(callback: (sh: SpeechHandle) => void): void;
+    // @internal (undocumented)
+    _removeItemAddedCallback(callback: (item: ChatItem) => void): void;
+    // (undocumented)
+    get scheduled(): boolean;
+    static SPEECH_PRIORITY_HIGH: number;
+    static SPEECH_PRIORITY_LOW: number;
+    static SPEECH_PRIORITY_NORMAL: number;
+    // @internal (undocumented)
+    _stepIndex: number;
+    // @internal (undocumented)
+    _tasks: Task<void>[];
+    then<R1 = ResolvedSpeechHandle, R2 = never>(onFulfilled?: ((value: ResolvedSpeechHandle) => R1 | PromiseLike<R1>) | null, onRejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null): Promise<R1 | R2>;
+    // @internal (undocumented)
+    _waitForAuthorization(): Promise<void>;
+    // @internal (undocumented)
+    _waitForGeneration(stepIdx?: number): Promise<void>;
+    waitForPlayout(): Promise<void>;
+    // @internal (undocumented)
+    _waitForScheduled(): Promise<void>;
+    // (undocumented)
+    waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void>;
+}
+
+// @public
+export class SpeechHandleCircularWaitError extends Error {
+    constructor(functionCallName: string);
 }
 
 // Warning: (ae-missing-release-tag) "SpeechmaticsModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -8626,6 +8723,10 @@ declare namespace voice {
         createTimedString,
         isTimedString,
         RunContext,
+        SpeechHandle,
+        SpeechHandleCircularWaitError,
+        InputDetails,
+        ResolvedSpeechHandle,
         testing,
         RunOutputOptions,
         textTransforms,
@@ -8815,6 +8916,9 @@ interface WarmTransferResult {
     humanAgentIdentity: string;
 }
 
+// @public
+type WarmTransferSpeech = string | ((session: AgentSession) => SpeechHandle);
+
 // Warning: (ae-missing-release-tag) "WarmTransferTask" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "createWarmTransferTask"
 //
@@ -8829,12 +8933,16 @@ class WarmTransferTask extends AgentTask<WarmTransferResult> {
 //
 // @public (undocumented)
 interface WarmTransferTaskOptions {
+    abortSignal?: AbortSignal;
     // (undocumented)
     allowInterruptions?: boolean;
+    // @deprecated
     callerHangupInstruction?: string | null;
+    callerHangupSpeech?: WarmTransferSpeech;
     // (undocumented)
     chatCtx?: ChatContext;
     dtmf?: string | null;
+    greetingSpeech?: WarmTransferSpeech;
     holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "InstructionParts"
     instructions?: InstructionParts | string;
@@ -8969,6 +9077,7 @@ declare namespace workflows {
         TaskGroupResult,
         WarmTransferTask,
         createWarmTransferTask,
+        WarmTransferSpeech,
         WarmTransferResult,
         WarmTransferTaskOptions,
         InstructionParts
@@ -8978,7 +9087,7 @@ declare namespace workflows {
 // Warning: (ae-missing-release-tag) "XAIModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type XAIModels = 'xai/grok-4-1-fast-non-reasoning' | 'xai/grok-4-1-fast-reasoning' | 'xai/grok-4.20-0309-non-reasoning' | 'xai/grok-4.20-0309-reasoning' | 'xai/grok-4.20-multi-agent-0309';
+type XAIModels = 'xai/grok-4-1-fast-non-reasoning' | 'xai/grok-4-1-fast-reasoning' | 'xai/grok-4.20-0309-non-reasoning' | 'xai/grok-4.20-0309-reasoning' | 'xai/grok-4.20-multi-agent-0309' | 'xai/grok-4.3' | 'xai/grok-4.5';
 
 // Warning: (ae-missing-release-tag) "XaiOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -9032,9 +9141,9 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/utils.ts:501:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:988:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1631:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1631:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1631:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"

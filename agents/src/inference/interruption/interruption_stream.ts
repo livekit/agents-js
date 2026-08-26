@@ -337,7 +337,7 @@ export class InterruptionStreamBase {
           predictionDuration: chunk.predictionDurationInS * 1000,
           detectionDelay: chunk.detectionDelayInS * 1000,
           numInterruptions: chunk.isInterruption ? 1 : 0,
-          numBackchannels: chunk.isInterruption ? 0 : 1,
+          numBackchannels: !chunk.isInterruption && !chunk.agentEnded ? 1 : 0,
           numRequests: chunk.numRequests,
           metadata: {
             modelProvider: this.model.provider,

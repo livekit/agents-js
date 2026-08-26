@@ -154,7 +154,7 @@ export class DynamicEndpointing extends BaseEndpointing {
   override onStartOfAgentSpeech(startedAt: number): void {
     this.#agentSpeechStartedAt = startedAt;
     this.#agentSpeechEndedAt = undefined;
-    this._overlapping = false;
+    this._overlapping = this.#speaking;
   }
 
   override onEndOfAgentSpeech(endedAt: number): void {

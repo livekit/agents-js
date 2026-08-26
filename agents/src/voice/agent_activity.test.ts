@@ -101,7 +101,7 @@ function buildMainTaskRunner() {
     _currentSpeech: SpeechHandle | undefined;
     _schedulingPaused: boolean;
     _authorizationPaused: boolean;
-    _drainBlockedTasks: Task<void>[];
+    _drainBlockedTasks: Set<Task<void>>;
     _mainTask: { result: Promise<void> } | undefined;
     logger: {
       info: () => void;
@@ -118,7 +118,7 @@ function buildMainTaskRunner() {
     _currentSpeech: undefined as SpeechHandle | undefined,
     _schedulingPaused: false,
     _authorizationPaused: false,
-    _drainBlockedTasks: [] as Task<void>[],
+    _drainBlockedTasks: new Set<Task<void>>(),
     _mainTask: undefined as { result: Promise<void> } | undefined,
     logger: {
       info: () => {},
@@ -452,12 +452,12 @@ describe('AgentActivity - mainTask', () => {
     }
   });
 
-  it('does not deadlock cancelling a paused speech whose generation never finishes', async () => {
+  it('does not end paused agent speech twice when cancelling it', async () => {
     const handle = SpeechHandle.create({ allowInterruptions: true });
     handle._authorizeGeneration();
     const onEndOfAgentSpeech = (
       AgentActivity.prototype as unknown as {
-        onEndOfAgentSpeech: (endedAt: number, options?: { paused?: boolean }) => Promise<void>;
+        onEndOfAgentSpeech: (endedAt: number) => Promise<void>;
       }
     ).onEndOfAgentSpeech;
 
@@ -507,7 +507,7 @@ describe('AgentActivity - mainTask', () => {
     expect(result).toBe('resolved');
     expect(handle.interrupted).toBe(true);
     expect(fakeActivity.pausedSpeech).toBeUndefined();
-    expect(fakeActivity.audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledOnce();
+    expect(fakeActivity.audioRecognition.onEndOfAgentSpeech).not.toHaveBeenCalled();
   });
 });
 
@@ -1896,6 +1896,9 @@ describe('AgentActivity - preemptive generation reconciliation', () => {
     const speechHandle = SpeechHandle.create();
     const scheduleSpeech = vi.fn();
     const generateReply = vi.fn();
+    const speechQueue = new Heap<[number, number, SpeechHandle]>(
+      (a, b) => b[0] - a[0] || a[1] - b[1],
+    );
 
     const fakeActivity = {
       _preemptiveGenerationCount: 1,
@@ -1924,6 +1927,7 @@ describe('AgentActivity - preemptive generation reconciliation', () => {
       },
       scheduleSpeech,
       generateReply,
+      speechQueue,
     };
     Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
 

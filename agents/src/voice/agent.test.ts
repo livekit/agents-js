@@ -5,12 +5,14 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { ChatContext, ChatMessage, tool } from '../llm/index.js';
+import { ChatContext, ChatMessage, ToolError, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { SynthesizeStream } from '../tts/index.js';
 import { Task } from '../utils.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
 import { AgentActivity, agentActivityStorage } from './agent_activity.js';
+import { AgentSession } from './agent_session.js';
+import { FakeLLM } from './testing/fake_llm.js';
 import { defaultEndpointingOptions } from './turn_config/endpointing.js';
 import { defaultInterruptionOptions } from './turn_config/interruption.js';
 
@@ -24,6 +26,34 @@ async function collectReadableStream<T>(stream: ReadableStream<T>): Promise<T[]>
     chunks.push(chunk);
   }
   return chunks;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeout: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new TimeoutError(timeout)), timeout);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+class TimeoutError extends Error {
+  constructor(timeout: number) {
+    super(`timed out after ${timeout}ms`);
+  }
+}
+
+async function closeWithTimeout(session: AgentSession): Promise<void> {
+  try {
+    await withTimeout(session.close(), 30_000);
+  } catch (error) {
+    if (!(error instanceof TimeoutError)) throw error;
+  }
 }
 
 describe('Agent', () => {
@@ -486,6 +516,8 @@ describe('Agent', () => {
       agent: oldAgent,
       agentSession: mockSession,
       _onEnterTask: undefined,
+      _addDrainBlockedTasks: vi.fn(),
+      _withInlineTaskSlot: async ({ fn }: { fn: () => Promise<unknown> }) => fn(),
       llm: undefined,
       close: async () => {},
     };
@@ -527,6 +559,8 @@ describe('Agent', () => {
         agent: oldAgent,
         agentSession: mockSession,
         _onEnterTask: undefined,
+        _addDrainBlockedTasks: vi.fn(),
+        _withInlineTaskSlot: async ({ fn }: { fn: () => Promise<unknown> }) => fn(),
         llm: undefined,
         close: async () => {},
       };
@@ -639,6 +673,8 @@ describe('Agent', () => {
       agent: oldAgent,
       agentSession: mockSession,
       _onEnterTask: undefined,
+      _addDrainBlockedTasks: vi.fn(),
+      _withInlineTaskSlot: async ({ fn }: { fn: () => Promise<unknown> }) => fn(),
       llm: undefined,
       close: closeOldActivity,
     };
@@ -655,6 +691,183 @@ describe('Agent', () => {
     await expect(wrapper.result).resolves.toBe('ok');
     expect(closeOldActivity).toHaveBeenCalledTimes(1);
   });
+
+  it('runs parallel AgentTasks in turn', async () => {
+    class DialogTask extends AgentTask<void> {
+      constructor() {
+        super({
+          instructions: 'dialog task',
+          tools: [
+            tool({
+              name: 'finish',
+              description: 'Complete the dialog.',
+              parameters: z.object({}),
+              execute: async () => {
+                this.complete(undefined);
+                return 'done';
+              },
+            }),
+          ],
+        });
+      }
+
+      async onEnter() {
+        this.session.generateReply({ instructions: 'dialog_greeting' });
+      }
+    }
+
+    class ParallelDialogAgent extends Agent {
+      outcomes: string[] = [];
+
+      constructor() {
+        super({
+          instructions: 'root agent',
+          tools: [
+            tool({
+              name: 'open_name_dialog',
+              description: 'Collect the name.',
+              parameters: z.object({}),
+              execute: async () => this.open('name'),
+            }),
+            tool({
+              name: 'open_email_dialog',
+              description: 'Collect the email.',
+              parameters: z.object({}),
+              execute: async () => this.open('email'),
+            }),
+          ],
+        });
+      }
+
+      private async open(which: string): Promise<string> {
+        try {
+          await new DialogTask().run();
+        } catch (error) {
+          if (!(error instanceof ToolError)) throw error;
+          this.outcomes.push(`${which}:refused`);
+          return `${which} refused: ${error.message}`;
+        }
+        this.outcomes.push(`${which}:ran`);
+        return `${which} captured`;
+      }
+    }
+
+    const llm = new FakeLLM([
+      {
+        input: 'go',
+        toolCalls: [
+          { name: 'open_name_dialog', args: {} },
+          { name: 'open_email_dialog', args: {} },
+        ],
+      },
+      { input: 'instructions:dialog_greeting', content: 'what is it?' },
+      { input: 'done', toolCalls: [{ name: 'finish', args: {} }] },
+    ]);
+    const agent = new ParallelDialogAgent();
+    const session = new AgentSession({ llm });
+    try {
+      await session.start({ agent });
+
+      await withTimeout(session.run({ userInput: 'go' }).wait(), 5000);
+      const first = session.currentAgent;
+      expect(first).toBeInstanceOf(DialogTask);
+
+      await withTimeout(session.run({ userInput: 'done' }).wait(), 5000);
+      const second = session.currentAgent;
+      expect(second).toBeInstanceOf(DialogTask);
+      expect(second).not.toBe(first);
+
+      await withTimeout(session.run({ userInput: 'done' }).wait(), 5000);
+      expect(session.currentAgent).toBe(agent);
+    } finally {
+      await closeWithTimeout(session);
+    }
+
+    expect(agent.outcomes.sort()).toEqual(['email:ran', 'name:ran']);
+    const outputs = agent.chatCtx.items.filter(
+      (item) =>
+        item.type === 'function_call_output' &&
+        (item.callId === 'fake_call_0' || item.callId === 'fake_call_1'),
+    );
+    expect(new Set(outputs.map((item) => item.callId))).toEqual(
+      new Set(['fake_call_0', 'fake_call_1']),
+    );
+    expect(outputs.some((item) => item.output.includes('refused'))).toBe(false);
+  }, 35_000);
+
+  it('allows a nested AgentTask from a later turn', async () => {
+    class InnerTask extends AgentTask<void> {
+      constructor() {
+        super({ instructions: 'inner task' });
+      }
+
+      async onEnter() {
+        this.session.generateReply({ instructions: 'inner_greeting' });
+      }
+    }
+
+    class OuterTask extends AgentTask<void> {
+      constructor() {
+        super({
+          instructions: 'outer task',
+          tools: [
+            tool({
+              name: 'start_inner',
+              description: 'Transition into the inner task.',
+              parameters: z.object({}),
+              execute: async () => {
+                await new InnerTask().run();
+                this.complete(undefined);
+                return 'inner completed';
+              },
+            }),
+          ],
+        });
+      }
+
+      async onEnter() {
+        this.session.generateReply({ instructions: 'outer_greeting' });
+      }
+    }
+
+    class RootAgent extends Agent {
+      constructor() {
+        super({
+          instructions: 'root agent',
+          tools: [
+            tool({
+              name: 'start_outer',
+              description: 'Transition into the outer task.',
+              parameters: z.object({}),
+              execute: async () => {
+                await new OuterTask().run();
+                return 'outer completed';
+              },
+            }),
+          ],
+        });
+      }
+    }
+
+    const llm = new FakeLLM([
+      { input: 'go', toolCalls: [{ name: 'start_outer', args: {} }] },
+      { input: 'instructions:outer_greeting', content: 'what is your name?' },
+      { input: 'Dana', toolCalls: [{ name: 'start_inner', args: {} }] },
+      { input: 'instructions:inner_greeting', content: 'and your date of birth?' },
+    ]);
+    const session = new AgentSession({ llm });
+    try {
+      await session.start({ agent: new RootAgent() });
+
+      await withTimeout(session.run({ userInput: 'go' }).wait(), 5000);
+      expect(session.currentAgent).toBeInstanceOf(OuterTask);
+
+      await withTimeout(session.run({ userInput: 'Dana' }).wait(), 5000);
+      expect(session.currentAgent).toBeInstanceOf(InnerTask);
+    } finally {
+      await closeWithTimeout(session);
+    }
+  }, 35_000);
 
   describe('Agent constructor option migration', () => {
     it('should set allowInterruptions to false via deprecated constructor field', () => {
