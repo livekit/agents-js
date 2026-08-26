@@ -54,7 +54,10 @@ export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 
 export type XaiSTTModels = 'xai/stt-1';
 
-export type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard';
+export type SpeechmaticsModels =
+  | 'speechmatics/enhanced'
+  | 'speechmatics/standard'
+  | 'speechmatics/linden-1';
 
 export type InworldSTTModels = 'inworld/inworld-stt-1';
 
@@ -158,9 +161,9 @@ export interface SpeechmaticsOptions {
   domain?: string;
   /** BCP-47 locale for output formatting. */
   output_locale?: string;
-  /** Maximum delay in seconds. Valid range is 0.7-4.0. Default: 1.0. */
+  /** Maximum delay in seconds. Valid range is 0.7-4.0. Default: 1.0. RT only. */
   max_delay?: number;
-  /** Maximum delay mode. */
+  /** Maximum delay mode. RT only. */
   max_delay_mode?: 'flexible' | 'fixed' | string;
   /** Enable diarization for modes other than "none". */
   diarization?:
@@ -178,17 +181,17 @@ export interface SpeechmaticsOptions {
   prefer_current_speaker?: boolean;
   /** Enable partial results. Default: true, overridden by the gateway. */
   enable_partials?: boolean;
-  /** Enable entity recognition. */
+  /** Enable entity recognition. RT only. */
   enable_entities?: boolean;
   /** Punctuation override configuration. */
   punctuation_overrides?: Record<string, unknown>;
-  /** Additional vocabulary entries for custom dictionary support. */
+  /** Additional vocabulary entries for custom dictionary support. RT only. */
   additional_vocab?: Array<Record<string, unknown>>;
-  /** Seconds of silence before finalizing an utterance. */
+  /** Seconds of silence before finalizing an utterance. RT only. */
   end_of_utterance_silence_trigger?: number;
-  /** Audio filtering configuration. */
+  /** Audio filtering configuration. RT only. */
   audio_filtering_config?: Record<string, unknown>;
-  /** Transcript filtering configuration. */
+  /** Transcript filtering configuration. RT only. */
   transcript_filtering_config?: Record<string, unknown>;
 }
 
@@ -256,6 +259,10 @@ function keytermsExtraForModel(
 
   const extraKwargs = opts?.extraKwargs ?? {};
   const sessionKeyterms = opts?.sessionKeyterms ?? [];
+
+  if (model === 'speechmatics/linden-1') {
+    return undefined;
+  }
 
   if (model.startsWith('speechmatics/')) {
     // keep existing entries as-is (they may carry sounds_like etc.); append new session terms
@@ -382,18 +389,18 @@ export function normalizeSTTFallback(
   return [makeFallback(fallback)];
 }
 
-function isSpeechmaticsModel(model: string | undefined): boolean {
-  return model?.startsWith('speechmatics/') ?? false;
+function isSpeechmaticsRTModel(model: string | undefined): boolean {
+  return (model?.startsWith('speechmatics/') && model !== 'speechmatics/linden-1') ?? false;
 }
 
 function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VAD | undefined {
-  const speechmatics = isSpeechmaticsModel(model);
-  if (vad && !speechmatics) {
+  const speechmaticsRT = isSpeechmaticsRTModel(model);
+  if (vad && !speechmaticsRT) {
     log().warn({ model }, '`vad` will be ignored: model handles endpointing server-side');
     return undefined;
   }
-  if (speechmatics && vad === undefined) {
-    // Speechmatics doesn't endpoint server-side, so fall back to the in-tree
+  if (speechmaticsRT && vad === undefined) {
+    // Speechmatics RT doesn't endpoint server-side, so fall back to the in-tree
     // local inference VAD rather than the deprecated silero plugin.
     return new InferenceVAD();
   }
@@ -470,9 +477,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       interimResults: true,
       alignedTranscript,
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
-      keyterms:
-        keytermsExtraForModel(typeof opts?.model === 'string' ? opts.model : undefined) !==
-        undefined,
+      keyterms: keytermsExtraForModel(initialModel) !== undefined,
     });
 
     const {
