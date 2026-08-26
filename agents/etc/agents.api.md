@@ -3984,6 +3984,19 @@ export function getLanguageRegion(language: string): string | undefined;
 // @public (undocumented)
 type GoogleModels = 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
 
+// Warning: (ae-missing-release-tag) "GoogleSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
+
+// Warning: (ae-missing-release-tag) "GoogleSTTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface GoogleSTTOptions {
+    custom_vocabulary?: string[];
+    language_codes?: string[];
+}
+
 // Warning: (ae-internal-missing-underscore) The name "gracefullyCancel" should be prefixed with an underscore because the declaration is marked as @internal
 //
 // @internal (undocumented)
@@ -7141,6 +7154,7 @@ declare namespace stt_2 {
         XaiSTTModels,
         SpeechmaticsModels,
         InworldSTTModels,
+        GoogleSTTModels,
         CartesiaOptions,
         DeepgramOptions,
         DeepgramFluxOptions,
@@ -7148,6 +7162,7 @@ declare namespace stt_2 {
         XaiOptions,
         SpeechmaticsOptions,
         InworldSTTOptions,
+        GoogleSTTOptions,
         STTLanguages,
         STTModels,
         ModelWithLanguage,
@@ -7243,7 +7258,7 @@ export type STTModelUsage = {
 // Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxModels ? DeepgramFluxOptions : TModel extends DeepgramModels ? DeepgramOptions : TModel extends CartesiaModels ? CartesiaOptions : TModel extends AssemblyaiModels ? AssemblyAIOptions : TModel extends XaiSTTModels ? XaiOptions : TModel extends SpeechmaticsModels ? SpeechmaticsOptions : TModel extends InworldSTTModels ? InworldSTTOptions : Record<string, unknown>;
+type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxModels ? DeepgramFluxOptions : TModel extends DeepgramModels ? DeepgramOptions : TModel extends CartesiaModels ? CartesiaOptions : TModel extends AssemblyaiModels ? AssemblyAIOptions : TModel extends XaiSTTModels ? XaiOptions : TModel extends SpeechmaticsModels ? SpeechmaticsOptions : TModel extends InworldSTTModels ? InworldSTTOptions : TModel extends GoogleSTTModels ? GoogleSTTOptions : Record<string, unknown>;
 
 // Warning: (ae-missing-release-tag) "supportedNonverbals" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
