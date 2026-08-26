@@ -1477,6 +1477,16 @@ export const ATTRIBUTE_REDACTION_ENABLED = "lk.redaction.enabled";
 // @public
 export const ATTRIBUTE_SIMULATION_ENABLED = "lk.simulation.enabled";
 
+// Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATION_JOB_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export const ATTRIBUTE_SIMULATION_JOB_ID = "lk.simulation.job_id";
+
+// Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATION_RUN_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export const ATTRIBUTE_SIMULATION_RUN_ID = "lk.simulation.run_id";
+
 // Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATOR" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -4519,7 +4529,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // (undocumented)
     _onSessionEnd(): Promise<void>;
     // @internal (undocumented)
-    _otelMetadata(options?: ResolvedRecordingOptions): Record<string, boolean> | undefined;
+    _otelMetadata(options?: ResolvedRecordingOptions): Record<string, boolean | string> | undefined;
     // @internal (undocumented)
     _primaryAgentSession?: AgentSession;
     // (undocumented)
@@ -6558,7 +6568,6 @@ export class SimulationContext {
     _beginFinalize(opts: {
         simulatorVerdict: SimulationVerdict;
         run?: SimulationRun;
-        job?: SimulationRun_Job;
     }): void;
     // @internal (undocumented)
     _dispatch: SimulationDispatch;
@@ -6567,11 +6576,10 @@ export class SimulationContext {
     get jobContext(): JobContext;
     // (undocumented)
     get scenario(): Scenario;
-    // (undocumented)
-    get simulationJob(): SimulationRun_Job | undefined;
+    get simulationJobId(): string;
     get simulationMode(): SimulationMode;
-    // (undocumented)
     get simulationRun(): SimulationRun | undefined;
+    get simulationRunId(): string;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "userVerdict"
     get simulatorVerdict(): SimulationVerdict;
     userdata(): ScenarioUserdata;

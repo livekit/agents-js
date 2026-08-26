@@ -6,6 +6,7 @@ import type { Room } from '@livekit/rtc-node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { JobContext, type JobProcess, type RunningJobInfo } from './job.js';
+import { SimulationContext, parseSimulationDispatch } from './simulation.js';
 
 const { deleteRoomMock, roomServiceClientMock } = vi.hoisted(() => ({
   deleteRoomMock: vi.fn(async () => {}),
@@ -271,16 +272,31 @@ describe('JobContext telemetry metadata', () => {
     ).toEqual({ 'lk.redaction.enabled': true });
   });
 
-  it('includes simulation when the job has simulation dispatch metadata', () => {
+  it('includes simulation identity when the job has simulation dispatch metadata', () => {
     const ctx = createJobContext({
       job: {
         id: 'job-id',
         room: { name: 'assigned-room' },
         attributes: {
-          'lk.simulator.dispatch': JSON.stringify({ simulationRunId: 'sim-run' }),
+          'lk.simulator.dispatch': JSON.stringify({
+            simulationRunId: 'run_abc',
+            jobId: 'job_def',
+          }),
         },
       },
     } as unknown as Partial<RunningJobInfo>);
+
+    expect(ctx._otelMetadata()).toEqual({
+      'lk.simulation.enabled': true,
+      'lk.simulation.run_id': 'run_abc',
+      'lk.simulation.job_id': 'job_def',
+    });
+  });
+
+  it('omits blank simulation ids', () => {
+    const ctx = createJobContext();
+    const simulation = new SimulationContext(parseSimulationDispatch('{}'), ctx);
+    vi.spyOn(ctx, 'simulationContext').mockReturnValue(simulation);
 
     expect(ctx._otelMetadata()).toEqual({ 'lk.simulation.enabled': true });
   });

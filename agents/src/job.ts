@@ -25,6 +25,8 @@ import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetr
 import {
   ATTRIBUTE_REDACTION_ENABLED,
   ATTRIBUTE_SIMULATION_ENABLED,
+  ATTRIBUTE_SIMULATION_JOB_ID,
+  ATTRIBUTE_SIMULATION_RUN_ID,
   ATTRIBUTE_SIMULATOR,
   ATTRIBUTE_SIMULATOR_DISPATCH,
   recordingEnabled,
@@ -585,20 +587,16 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   }
 
   /** @internal */
-  _otelMetadata(options?: ResolvedRecordingOptions): Record<string, boolean> | undefined {
-    const metadata: Record<string, boolean> = {};
-    const dispatch = this.job.attributes?.[ATTRIBUTE_SIMULATOR_DISPATCH];
-    if (dispatch) {
-      try {
-        const parsed = JSON.parse(dispatch) as {
-          simulationRunId?: unknown;
-          simulation_run_id?: unknown;
-        };
-        if (parsed.simulationRunId || parsed.simulation_run_id) {
-          metadata[ATTRIBUTE_SIMULATION_ENABLED] = true;
-        }
-      } catch {
-        // Ignore malformed simulation dispatch metadata, matching Python's parse-failure behavior.
+  _otelMetadata(options?: ResolvedRecordingOptions): Record<string, boolean | string> | undefined {
+    const metadata: Record<string, boolean | string> = {};
+    const simulation = this.simulationContext();
+    if (simulation) {
+      metadata[ATTRIBUTE_SIMULATION_ENABLED] = true;
+      if (simulation.simulationRunId) {
+        metadata[ATTRIBUTE_SIMULATION_RUN_ID] = simulation.simulationRunId;
+      }
+      if (simulation.simulationJobId) {
+        metadata[ATTRIBUTE_SIMULATION_JOB_ID] = simulation.simulationJobId;
       }
     }
     if (this._redactionEnabled || options?.redaction) {
