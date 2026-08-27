@@ -61,6 +61,8 @@ export type SpeechmaticsModels =
 
 export type InworldSTTModels = 'inworld/inworld-stt-1';
 
+export type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
+
 export interface CartesiaOptions {
   /** Minimum volume threshold. Ink Whisper only. Default: not specified. */
   min_volume?: number;
@@ -216,6 +218,13 @@ export interface InworldSTTOptions {
   vad_threshold?: number;
 }
 
+export interface GoogleSTTOptions {
+  /** BCP-47 language codes. Omit or pass an empty list to detect the language. */
+  language_codes?: string[];
+  /** Up to 1000 terms that bias recognition. */
+  custom_vocabulary?: string[];
+}
+
 export type STTLanguages =
   | 'multi'
   | 'en'
@@ -330,7 +339,8 @@ type _STTModels =
   | ElevenlabsSTTModels
   | XaiSTTModels
   | SpeechmaticsModels
-  | InworldSTTModels;
+  | InworldSTTModels
+  | GoogleSTTModels;
 
 export type STTModels = _STTModels | 'auto' | AnyString;
 
@@ -350,7 +360,9 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxMo
             ? SpeechmaticsOptions
             : TModel extends InworldSTTModels
               ? InworldSTTOptions
-              : Record<string, unknown>;
+              : TModel extends GoogleSTTModels
+                ? GoogleSTTOptions
+                : Record<string, unknown>;
 
 /** Inference Fallback Adapter: configuration for a fallback STT model that runs server-side in LiveKit Inference, providing automatic fallback between providers. Extra fields are passed through to the provider. */
 export interface STTFallbackModel {
