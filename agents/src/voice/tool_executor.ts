@@ -18,7 +18,7 @@ import {
   tool,
 } from '../llm/tool_context.js';
 import { log } from '../log.js';
-import { Future } from '../utils.js';
+import { Future, Task } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import type { PromptTemplate, RunContext, UpdatePromptArgs } from './run_context.js';
 
@@ -157,7 +157,7 @@ export class ToolExecutor {
   private runningTasks = new Map<string, RunningTask>();
   private duplicateLock = new Mutex();
   private pendingUpdates: PendingUpdate[] = [];
-  private _replyTask?: Promise<void>;
+  private _replyTask?: Task<void>;
   private _replyTaskDone = false;
   toolOptions: AsyncToolOptions;
 
@@ -175,7 +175,7 @@ export class ToolExecutor {
   private owningActivity: ToolExecutorActivity | null;
 
   get replyTask(): Promise<void> | undefined {
-    return this._replyTask;
+    return this._replyTask?.result;
   }
 
   setOwningActivity(activity: ToolExecutorActivity | null): void {
@@ -298,7 +298,7 @@ export class ToolExecutor {
 
   async waitForAll(): Promise<void> {
     await Promise.allSettled([...this.runningTasks.values()].map((task) => task.promise));
-    if (this._replyTask) await this._replyTask;
+    if (this._replyTask) await this._replyTask.result;
   }
 
   async cancel(callId: string): Promise<boolean> {
@@ -429,15 +429,24 @@ export class ToolExecutor {
     this.pendingUpdates.push({ ctx, items, target });
     if (this._replyTask === undefined || this._replyTaskDone) {
       this._replyTaskDone = false;
-      this._replyTask = this.deliverReply(ctx.session).catch((error) => {
-        log().warn(
-          { error },
-          'deliverReply failed; async tool result may not trigger a follow-up reply',
-        );
-      });
+      // A Task, not a bare promise: RunResult._watchHandle registers a done
+      // callback on whatever it is handed, and a promise has none. Watching a
+      // promise threw and left the handle permanently un-watched, so a run
+      // driven by session.run() never settled.
+      this._replyTask = Task.from(
+        () =>
+          this.deliverReply(ctx.session).catch((error) => {
+            log().warn(
+              { error },
+              'deliverReply failed; async tool result may not trigger a follow-up reply',
+            );
+          }),
+        undefined,
+        'ToolExecutor.deliverReply',
+      );
       const runState = (
         ctx.session as unknown as {
-          _globalRunState?: { _watchHandle?: (p: Promise<void>) => void };
+          _globalRunState?: { _watchHandle?: (handle: Task<void>) => void };
         }
       )._globalRunState;
       runState?._watchHandle?.(this._replyTask);
