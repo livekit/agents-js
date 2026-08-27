@@ -93,8 +93,8 @@ export class STT extends stt.STT {
       vertexai,
       credentials,
       credentialsPath,
-      project: project ?? process.env.GOOGLE_CLOUD_PROJECT,
-      location: location ?? process.env.GOOGLE_CLOUD_LOCATION,
+      project,
+      location,
       httpOptions,
     };
   }
@@ -246,10 +246,12 @@ class SpeechStream extends stt.SpeechStream {
       if (error instanceof APIError) throw error;
 
       if (error instanceof GenAIAPIError) {
-        this.#logger.warn(
-          { errorType: errorName(error), 'lk.pii.error': String(error) },
-          'Gemini STT request failed',
-        );
+        const fields = { errorType: errorName(error), 'lk.pii.error': String(error) };
+        if (isSessionDurationClose(error)) {
+          this.#logger.debug(fields, 'Gemini STT request failed');
+        } else {
+          this.#logger.warn(fields, 'Gemini STT request failed');
+        }
         throw new APIStatusError({
           message: `Gemini STT request failed (${errorName(error)})`,
           options: { statusCode: Number(error.status) || -1, body: null },
@@ -279,55 +281,72 @@ class SpeechStream extends stt.SpeechStream {
   }
 
   async #createClient(): Promise<GoogleGenAI> {
-    let credentials = this.#opts.credentials;
-    let project = this.#opts.project;
+    let creds: object | undefined;
+    let projectId = this.#opts.project;
 
-    if (credentials !== undefined) {
-      if (typeof credentials === 'string') {
-        credentials = JSON.parse(credentials) as object;
+    if (this.#opts.credentials) {
+      if (typeof this.#opts.credentials === 'string') {
+        const jsonAccountInfo = JSON.parse(this.#opts.credentials) as Record<string, unknown>;
+        projectId = projectId ?? (jsonAccountInfo.project_id as string | undefined);
+        creds = jsonAccountInfo;
+      } else {
+        creds = this.#opts.credentials;
       }
     } else if (this.#opts.credentialsPath) {
-      credentials = JSON.parse(await readFile(this.#opts.credentialsPath, 'utf8')) as object;
+      const jsonAccountInfo = JSON.parse(
+        await readFile(this.#opts.credentialsPath, 'utf8'),
+      ) as Record<string, unknown>;
+      projectId = projectId ?? (jsonAccountInfo.project_id as string | undefined);
+      creds = jsonAccountInfo;
     }
 
-    if (!project && credentials && 'project_id' in credentials) {
-      project = String(credentials.project_id);
+    // Env fallbacks (GOOGLE_API_KEY/GEMINI_API_KEY, GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION,
+    // GOOGLE_GENAI_USE_VERTEXAI) are resolved by the genai client itself, so only explicitly
+    // passed options participate in the backend choice here.
+    let isEnterprise = this.#opts.vertexai;
+    if (isEnterprise === undefined) {
+      if (this.#opts.apiKey !== undefined) {
+        isEnterprise = false;
+      } else if (creds || projectId || this.#opts.location) {
+        isEnterprise = true;
+      }
     }
 
-    const envVertex =
-      process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' ||
-      process.env.GOOGLE_GENAI_USE_VERTEXAI === '1';
-    const vertexai =
-      this.#opts.vertexai ??
-      (!this.#opts.apiKey && (envVertex || !!(credentials || project || this.#opts.location)));
+    const clientOptions: types.GoogleGenAIOptions = {
+      apiKey: this.#opts.apiKey,
+      httpOptions: this.#opts.httpOptions,
+    };
 
-    const clientOptions: types.GoogleGenAIOptions = vertexai
-      ? {
-          enterprise: true,
-          project,
-          location: this.#opts.location ?? 'global',
-          httpOptions: this.#opts.httpOptions,
-          googleAuthOptions: credentials
-            ? {
-                credentials,
-                scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-              }
-            : undefined,
-        }
-      : {
-          apiKey: this.#opts.apiKey ?? process.env.GOOGLE_API_KEY,
-          httpOptions: this.#opts.httpOptions,
+    if (isEnterprise) {
+      clientOptions.enterprise = true;
+      if (projectId) clientOptions.project = projectId;
+      clientOptions.location = this.#opts.location ?? 'global';
+      if (creds) {
+        clientOptions.googleAuthOptions = {
+          credentials: creds,
+          scopes: ['https://www.googleapis.com/auth/cloud-platform'],
         };
+      }
+    }
 
     return new GoogleGenAI(clientOptions);
   }
 
   #connectConfig(): types.LiveConnectConfig {
-    const languageCodes =
-      this.#opts.languageCodes ?? (this.#opts.language ? [this.#opts.language] : []);
+    let langCodes = this.#opts.languageCodes;
+    if (langCodes === undefined && this.#opts.language) {
+      langCodes = [this.#opts.language];
+    }
+
+    // An empty list means "detect the language", per
+    // https://ai.google.dev/gemini-api/docs/live-api/live-transcribe
+    // Both backends accept these -- verified against gemini-3.5-transcribe-live on the
+    // Gemini Developer API, which takes them the same as Vertex.
     const inputAudioTranscription: types.AudioTranscriptionConfig = {
-      customVocabulary: this.#opts.customVocabulary,
-      ...(languageCodes.length > 0 ? { languageHints: { languageCodes } } : { languageAuto: {} }),
+      languageCodes: langCodes ?? [],
+      customVocabulary: this.#opts.customVocabulary?.length
+        ? this.#opts.customVocabulary
+        : undefined,
     };
 
     return {
