@@ -1,5 +1,49 @@
 # @livekit/agents
 
+## 1.7.1
+
+### Patch Changes
+
+- Preserve adaptive interruption boundaries when agent playout pauses or enters a tool-call thinking gap. - [#2290](https://github.com/livekit/agents-js/pull/2290) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add Speechmatics Linden inference STT model support. - [#2353](https://github.com/livekit/agents-js/pull/2353) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add Grok 4.3 and Grok 4.5 to the supported xAI inference models. - [#2338](https://github.com/livekit/agents-js/pull/2338) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `callerHangupSpeech` for deterministic text or custom speech handles during warm transfers. - [#2299](https://github.com/livekit/agents-js/pull/2299) ([@chenghao-mou](https://github.com/chenghao-mou))
+  Export `SpeechHandle` and deprecate `callerHangupInstruction`.
+
+- fix(voice): avoid AgentTask handoff deadlock during session close - [#1776](https://github.com/livekit/agents-js/pull/1776) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Report recording chat-item timestamps in Unix seconds and warn that audio redaction may be inaccurate for realtime sessions. - [#2348](https://github.com/livekit/agents-js/pull/2348) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add Gemini 3.5 Transcribe Live to LiveKit inference and the Google beta plugin. - [#2352](https://github.com/livekit/agents-js/pull/2352) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  `stt.SpeechStream` now resets its retry budget after every final transcript, so `maxRetry`
+  bounds consecutive failures rather than the lifetime of the stream. Providers that recycle
+  their socket on a fixed interval (such as Gemini Live's 10-minute session cap) previously
+  exhausted the budget and stopped recognizing on long sessions.
+
+- Add the deployed LiveKit Cloud region to every log record. - [#2344](https://github.com/livekit/agents-js/pull/2344) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `greetingSpeech` for optional answer-time speech during warm transfers. - [#2300](https://github.com/livekit/agents-js/pull/2300) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Include the JavaScript SDK version in Cloud observability session reports. - [#2340](https://github.com/livekit/agents-js/pull/2340) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Send deployment environment in worker registration. - [#1677](https://github.com/livekit/agents-js/pull/1677) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Prevent delayed cleanup from an interrupted reply from overwriting the agent state owned by a newer reply. - [#2341](https://github.com/livekit/agents-js/pull/2341) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Interrupt superseded queued replies when a new user turn arrives during interrupted speech cleanup. - [#2342](https://github.com/livekit/agents-js/pull/2342) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Serialize inline AgentTasks launched by parallel tool calls. - [#2313](https://github.com/livekit/agents-js/pull/2313) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Stamp simulation run and job IDs on session telemetry and expose them on `SimulationContext`. - [#2351](https://github.com/livekit/agents-js/pull/2351) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add an optional `abortSignal` to `WarmTransferTask`. Aborting stops waiting for a pending dial or ends an active consultation, and `run()` rejects with the signal reason. - [#2295](https://github.com/livekit/agents-js/pull/2295) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Report the worker protocol version on the `/worker` endpoint so LiveKit Cloud recognizes agent deployment support. - [#1677](https://github.com/livekit/agents-js/pull/1677) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.7.0
 
 ### Minor Changes

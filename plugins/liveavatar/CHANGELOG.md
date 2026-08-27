@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-liveavatar
 
+## 1.7.1
+
+### Patch Changes
+
+- Updated dependencies [[`d5ee95f`](https://github.com/livekit/agents-js/commit/d5ee95fec5707c3ff6cb79805d036388597628c9), [`87a6458`](https://github.com/livekit/agents-js/commit/87a64584b75c04a7a39e6c0ee65c9eca12eb1860), [`480fd99`](https://github.com/livekit/agents-js/commit/480fd99ad1ec6a839f986b19c437969f894bbd8d), [`ea4d5b0`](https://github.com/livekit/agents-js/commit/ea4d5b0f96dffb869fd26ae80e1fc075c154e19f), [`3790deb`](https://github.com/livekit/agents-js/commit/3790deb75c10754d84649f8e1772129fab2463af), [`8c0a96a`](https://github.com/livekit/agents-js/commit/8c0a96ac8a53dc6188cbed6da0172dac50265a0d), [`ed95f82`](https://github.com/livekit/agents-js/commit/ed95f820b3c2063d956447acdc91539537a5a563), [`a0cfa2f`](https://github.com/livekit/agents-js/commit/a0cfa2fb220a2db20ed4783135ccaef97db31541), [`7646117`](https://github.com/livekit/agents-js/commit/7646117a61c9ac5fcaabf286203f952dc18483be), [`461ccf7`](https://github.com/livekit/agents-js/commit/461ccf7b8c7187cf644fc809e020c4aae635758b), [`8c88e3b`](https://github.com/livekit/agents-js/commit/8c88e3b3acb3ab32dc2d7b19073379f726704015), [`94b4800`](https://github.com/livekit/agents-js/commit/94b48004d0a98cc4d00288dea8ae183807d92fa0), [`83c8d39`](https://github.com/livekit/agents-js/commit/83c8d39221fd540b996d1ebd450db28c4aa5c111), [`0da1e11`](https://github.com/livekit/agents-js/commit/0da1e1165e8afa82f5993a22dbac17efadce6187), [`57aa345`](https://github.com/livekit/agents-js/commit/57aa34556a255ed0166366813d5f022b4eae4f94), [`e53106c`](https://github.com/livekit/agents-js/commit/e53106c2b5ff7cf1fa66854a4c61ff9d464406a3), [`8c88e3b`](https://github.com/livekit/agents-js/commit/8c88e3b3acb3ab32dc2d7b19073379f726704015)]:
+  - @livekit/agents@1.7.1
+
 ## 1.7.0
 
 ### Patch Changes
