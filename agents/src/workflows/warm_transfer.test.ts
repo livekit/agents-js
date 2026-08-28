@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { SIPParticipantInfo } from '@livekit/protocol';
-import { ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
+import { DisconnectReason, ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient } from 'livekit-server-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as job from '../job.js';
 import type { JobContext } from '../job.js';
-import { ChatContext, type FunctionTool } from '../llm/index.js';
+import { ChatContext, type FunctionTool, ToolError } from '../llm/index.js';
 import { AgentTask } from '../voice/agent.js';
 import { AgentSession } from '../voice/agent_session.js';
 import { BackgroundAudioPlayer } from '../voice/background_audio.js';
@@ -492,6 +492,71 @@ describe('createWarmTransferTask', () => {
     controller.abort(reason);
 
     expect(complete).toHaveBeenCalledWith(reason);
+  });
+
+  it('completes when the human agent hangs up after a participant move fails', async () => {
+    const controller = new AbortController();
+    mockDial();
+    let humanAgentRoom: Room | undefined;
+    vi.spyOn(AgentSession.prototype, 'start').mockImplementation(async (startOptions) => {
+      humanAgentRoom = startOptions.room;
+    });
+    vi.spyOn(RoomServiceClient.prototype, 'moveParticipant').mockRejectedValue(
+      new Error('move failed'),
+    );
+    const { complete, create } = setupTransfer(controller.signal);
+
+    const options = create.mock.calls[0]![0];
+    await options.onEnter!({} as never);
+    const connect = (options.tools as FunctionTool[]).find(
+      (entry) => entry.name === 'connect_to_caller',
+    )!;
+
+    await expect(connect.execute({}, {} as never)).rejects.toThrow('move failed');
+    expect(complete).not.toHaveBeenCalled();
+
+    humanAgentRoom!.emit(RoomEvent.Disconnected, DisconnectReason.CLIENT_INITIATED);
+
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledWith(
+      new ToolError(`room closed: ${DisconnectReason.CLIENT_INITIATED}`),
+    );
+  });
+
+  it('ignores the human agent room closing while the participant move is in flight', async () => {
+    const controller = new AbortController();
+    mockDial();
+    let humanAgentRoom: Room | undefined;
+    vi.spyOn(AgentSession.prototype, 'start').mockImplementation(async (startOptions) => {
+      humanAgentRoom = startOptions.room;
+    });
+    let finishMove!: () => void;
+    const move = new Promise<void>((resolve) => {
+      finishMove = resolve;
+    });
+    const moveParticipant = vi
+      .spyOn(RoomServiceClient.prototype, 'moveParticipant')
+      .mockReturnValue(move as never);
+    const { complete, create } = setupTransfer(controller.signal);
+
+    const options = create.mock.calls[0]![0];
+    await options.onEnter!({} as never);
+    const connect = (options.tools as FunctionTool[]).find(
+      (entry) => entry.name === 'connect_to_caller',
+    )!;
+    const merging = connect.execute({}, {} as never);
+    await vi.waitFor(() => expect(moveParticipant).toHaveBeenCalled());
+
+    // Moving the human agent out tears their room down; that is the expected
+    // end of a successful merge, not a failure.
+    humanAgentRoom!.emit(RoomEvent.Disconnected, DisconnectReason.CLIENT_INITIATED);
+    expect(complete).not.toHaveBeenCalled();
+
+    finishMove();
+    await merging;
+
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledWith({ humanAgentIdentity: 'human-agent-sip' });
   });
 
   it('starts greeting speech only after the outbound SIP call answers', async () => {

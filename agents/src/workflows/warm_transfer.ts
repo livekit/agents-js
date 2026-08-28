@@ -590,6 +590,10 @@ export function createWarmTransferTask({
             setResult(asError(abortSignal.reason ?? new Error('warm transfer aborted')));
             return;
           }
+          // The move failed, so the human agent is still in their own room: a
+          // close is a failure again, not the post-move teardown `mergeCalls`
+          // detached for.
+          humanAgentRoom?.on(RoomEvent.Disconnected, onHumanAgentRoomClose);
           abortSignal?.addEventListener('abort', onAbort, { once: true });
           throw error;
         }
