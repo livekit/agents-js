@@ -710,7 +710,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     chatCtx: llm.ChatContext,
     addMockAudio: boolean = false,
   ): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]> {
-    const newChatCtx = chatCtx.copy();
+    const newChatCtx = chatCtx.copy({
+      excludeHandoff: true,
+      excludeConfigUpdate: true,
+    });
     if (addMockAudio) {
       newChatCtx.items.push(createMockAudioItem());
     } else {
