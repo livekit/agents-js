@@ -1049,7 +1049,9 @@ async function forwardAudio(
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
   const cancelReader = () => {
-    void reader.cancel().catch((error) => {
+    // Cancel with a reason so producers still writing into the stream see a
+    // real error instead of `undefined`.
+    void reader.cancel(new Error('audio forwarding aborted')).catch((error) => {
       logger.debug({ error }, 'failed to cancel TTS stream reader after abort');
     });
   };
