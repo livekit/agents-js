@@ -19,22 +19,30 @@ vi.mock('pino-pretty', async () => {
 });
 
 const OTEL_ENABLED_KEY = Symbol.for('@livekit/agents:otelEnabled');
-const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
-const stdoutIsTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
 
 function resetOtelLoggingState() {
   delete (globalThis as Record<symbol, unknown>)[OTEL_ENABLED_KEY];
   initializeLogger({ pretty: false, level: 'silent' });
 }
 
+// process.platform is non-writable and stdout.isTTY is absent off a TTY, so
+// neither can be set by plain assignment.
+function stubConsole(platform: NodeJS.Platform, isTTY: boolean | undefined) {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  Object.defineProperty(process.stdout, 'isTTY', { value: isTTY, configurable: true });
+}
+
+// vitest.setup.ts imported log.js before the pino-pretty mock above was
+// registered, so a fresh copy is needed to observe the mock.
+vi.resetModules();
+const { initializeLogger: initializePrettyLogger } = await import('./log.js');
+
 describe('pretty logging', () => {
+  const { platform } = process;
+  const { isTTY } = process.stdout;
+
   afterEach(() => {
-    Object.defineProperty(process, 'platform', platformDescriptor);
-    if (stdoutIsTTYDescriptor) {
-      Object.defineProperty(process.stdout, 'isTTY', stdoutIsTTYDescriptor);
-    } else {
-      Reflect.deleteProperty(process.stdout, 'isTTY');
-    }
+    stubConsole(platform, isTTY);
     prettyMocks.pinoPretty.mockClear();
     initializeLogger({ pretty: false, level: 'silent' });
   });
@@ -45,11 +53,8 @@ describe('pretty logging', () => {
     ['linux', true, undefined],
   ] as const)(
     'selects the pino-pretty destination on %s when isTTY is %s',
-    async (platform, isTTY, destination) => {
-      Object.defineProperty(process, 'platform', { ...platformDescriptor, value: platform });
-      Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: isTTY });
-      vi.resetModules();
-      const { initializeLogger: initializePrettyLogger } = await import('./log.js');
+    (platform, isTTY, destination) => {
+      stubConsole(platform, isTTY);
 
       initializePrettyLogger({ pretty: true, level: 'silent' });
 
