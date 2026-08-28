@@ -9,6 +9,7 @@ import { BaseEndpointing } from './turn_config/endpointing.js';
 
 function createHooks(): RecognitionHooks {
   return {
+    interruptionByAudioActivityEnabled: false,
     onOverlapSpeech: () => {},
     onBackchannelConfirmed: () => {},
     onStartOfSpeech: () => {},

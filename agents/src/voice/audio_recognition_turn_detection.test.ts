@@ -77,6 +77,7 @@ interface RecognitionInternals {
 
 function makeHooks(): RecognitionHooks {
   return {
+    interruptionByAudioActivityEnabled: false,
     onOverlapSpeech: vi.fn(),
     onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),

@@ -50,6 +50,7 @@ class SilentVAD extends VAD {
 
 function createHooks(): RecognitionHooks {
   return {
+    interruptionByAudioActivityEnabled: false,
     onOverlapSpeech: vi.fn(),
     onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),

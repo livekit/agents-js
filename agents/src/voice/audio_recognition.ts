@@ -144,6 +144,7 @@ export interface PreemptiveGenerationInfo {
 }
 
 export interface RecognitionHooks {
+  interruptionByAudioActivityEnabled: boolean;
   onOverlapSpeech: (ev: OverlappingSpeechEvent) => void;
   onBackchannelConfirmed: () => void;
   onStartOfSpeech: (ev: VADEvent) => void;
@@ -268,6 +269,8 @@ export interface AudioRecognitionOptions {
   sttModel?: string;
   /** STT provider name for tracing */
   sttProvider?: string;
+  /** Whether the active STT provides transcript alignment timestamps. */
+  sttAlignedTranscript?: boolean;
   /** Getter for linked participant for span attribution */
   getLinkedParticipant?: () => ParticipantLike | undefined;
   /** Predicate used to substitute silence for STT while still forwarding real audio elsewhere. */
@@ -324,6 +327,7 @@ export class AudioRecognition {
   private rootSpanContext?: Context;
   private sttModel?: string;
   private sttProvider?: string;
+  private sttAlignedTranscript: boolean;
   private getLinkedParticipant?: () => ParticipantLike | undefined;
 
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
@@ -429,6 +433,7 @@ export class AudioRecognition {
     this.rootSpanContext = opts.rootSpanContext;
     this.sttModel = opts.sttModel;
     this.sttProvider = opts.sttProvider;
+    this.sttAlignedTranscript = opts.sttAlignedTranscript ?? false;
     this.getLinkedParticipant = opts.getLinkedParticipant;
     this.transcriptionTimeout = opts.transcriptionTimeout ?? undefined;
 
@@ -548,6 +553,11 @@ export class AudioRecognition {
   /** @internal */
   get inputStartedAt() {
     return this.sttPipeline?.inputStartedAt;
+  }
+
+  /** @internal */
+  get userSpeaking(): boolean {
+    return this.speaking;
   }
 
   /** @internal */
@@ -684,7 +694,12 @@ export class AudioRecognition {
 
   async updateStt(
     stt: STTNode | undefined,
-    options: { model?: string; provider?: string; resetContext?: boolean } = {},
+    options: {
+      model?: string;
+      provider?: string;
+      alignedTranscript?: boolean;
+      resetContext?: boolean;
+    } = {},
   ): Promise<void> {
     const unlock = await this.sttLifecycleLock.lock();
     try {
@@ -694,6 +709,9 @@ export class AudioRecognition {
       }
       if (Object.hasOwn(options, 'provider')) {
         this.sttProvider = options.provider;
+      }
+      if (Object.hasOwn(options, 'alignedTranscript')) {
+        this.sttAlignedTranscript = options.alignedTranscript ?? false;
       }
       if (options.resetContext) {
         this.lastLanguage = undefined;
@@ -720,7 +738,7 @@ export class AudioRecognition {
     try {
       this.vad = vad;
       this.usingDefaultVad = usingDefaultVad;
-      this.isInterruptionEnabled = !!(this.interruptionDetection && this.vad);
+      this.setInterruptionEnabled(!!(this.interruptionDetection && this.vad));
 
       await this.vadTask?.cancelAndWait();
       this.vadTask = undefined;
@@ -819,9 +837,9 @@ export class AudioRecognition {
    * a new active-speech interval.
    */
   async onStartOfAgentSpeech(startedAt: number) {
+    this.transcriptGateActive = false;
     this.isAgentSpeaking = true;
     this.agentSpeechStartedAt = startedAt;
-    this.syncTranscriptGate();
     this.endpointing.onStartOfAgentSpeech(startedAt);
     this.userTurnTracker = { words: 0, transcript: '' };
 
@@ -859,7 +877,8 @@ export class AudioRecognition {
     }
 
     if (!this.isInterruptionEnabled) {
-      this.drainTranscriptGate();
+      this.flushHeldTranscripts();
+      this.overlapOpen = false;
       this.isAgentSpeaking = false;
       this.agentSpeechStartedAt = undefined;
       return Promise.resolve();
@@ -877,15 +896,15 @@ export class AudioRecognition {
     // Queue detector boundaries before transcript hooks can start another overlap.
     const detectorReset = this.trySendInterruptionSentinel(sentinels);
 
-    if (wasAgentSpeaking) {
+    if (wasAgentSpeaking && this.transcriptGateActive) {
       this.logger.trace(
         { vadSpeechStartedAt: this.activeVadSpeechStartedAt },
         'flushing held transcripts',
       );
-      this.releaseTranscriptGate(endedAt, this.activeVadSpeechStartedAt);
+      this.flushHeldTranscripts(endedAt, this.activeVadSpeechStartedAt);
     }
 
-    this.drainTranscriptGate();
+    this.overlapOpen = false;
     this.isAgentSpeaking = false;
     this.agentSpeechStartedAt = undefined;
 
@@ -925,12 +944,27 @@ export class AudioRecognition {
     if (!this.isInterruptionEnabled || !this.isAgentSpeaking || this.overlapOpen) {
       return undefined;
     }
+
+    const startBoundary = this.backchannelBoundary?.[0] ?? 0;
+    const startedInBoundary =
+      startBoundary > 0 &&
+      this.agentSpeechStartedAt !== undefined &&
+      startedAt <= this.agentSpeechStartedAt + startBoundary;
+    if (
+      this.hooks.interruptionByAudioActivityEnabled ||
+      this.backchannelBoundaryActive ||
+      startedInBoundary
+    ) {
+      this.hooks.interruptionByAudioActivityEnabled = true;
+      this.flushHeldTranscripts();
+      return undefined;
+    }
+
     this.interruptionDetected = undefined;
     this.turnBackchannelOverAgent = false;
     this.overlapInCurrentTurn = true;
     this.overlapOpen = true;
-    // A later overlap must re-arm a gate released by a failed interruption attempt.
-    this.syncTranscriptGate();
+    this.transcriptGateActive = true;
     return InterruptionStreamSentinel.overlapSpeechStarted(
       speechDuration,
       startedAt,
@@ -972,33 +1006,36 @@ export class AudioRecognition {
     return InterruptionStreamSentinel.overlapSpeechEnded(endedAt, agentEnded);
   }
 
-  private syncTranscriptGate(): void {
-    this.transcriptGateActive = this.isAgentSpeaking && this.isInterruptionEnabled;
-  }
-
-  private transcriptFlushStart(now: number, vadSpeechStartedAt?: number): number {
+  private trimHeldTranscripts(resolvedAt: number, vadSpeechStartedAt?: number): void {
     const endBoundary = this.backchannelBoundary?.[1] ?? 0;
-    let flushStart = now - endBoundary;
+    let trimStart = resolvedAt - endBoundary;
     if (vadSpeechStartedAt !== undefined) {
-      flushStart = Math.min(flushStart, vadSpeechStartedAt);
+      trimStart = Math.min(trimStart, vadSpeechStartedAt);
     }
     if (this.agentSpeechStartedAt !== undefined) {
-      flushStart = Math.max(flushStart, this.agentSpeechStartedAt);
+      trimStart = Math.max(trimStart, this.agentSpeechStartedAt);
     }
-    return flushStart;
-  }
 
-  private trimHeldTranscripts(flushStart: number): void {
-    while (
-      this.transcriptBuffer.length > 0 &&
-      (this.transcriptBuffer[0]!.createdAt ?? Number.NEGATIVE_INFINITY) < flushStart
-    ) {
+    while (this.transcriptBuffer.length > 0) {
+      const event = this.transcriptBuffer[0]!;
+      const shouldTrim =
+        event.speechEndTime !== undefined
+          ? event.speechEndTime < trimStart &&
+            (this.agentSpeechStartedAt === undefined ||
+              this.agentSpeechStartedAt < event.speechEndTime)
+          : (event.createdAt ?? Number.NEGATIVE_INFINITY) < trimStart;
+      if (!shouldTrim) {
+        break;
+      }
       this.transcriptBuffer.shift();
     }
   }
 
-  private drainTranscriptGate(): void {
+  private flushHeldTranscripts(resolvedAt?: number, vadSpeechStartedAt?: number): void {
     this.transcriptGateActive = false;
+    if (resolvedAt !== undefined) {
+      this.trimHeldTranscripts(resolvedAt, vadSpeechStartedAt);
+    }
     if (this.transcriptBuffer.length === 0) {
       return;
     }
@@ -1011,30 +1048,11 @@ export class AudioRecognition {
     }
   }
 
-  private releaseTranscriptGate(at: number, vadSpeechStartedAt?: number): void {
-    if (!this.transcriptGateActive) {
-      return;
-    }
-    const flushStart = this.transcriptFlushStart(at, vadSpeechStartedAt);
-    this.trimHeldTranscripts(flushStart);
-    this.drainTranscriptGate();
-  }
-
-  releaseTranscriptsForAudioActivity(): void {
-    if (!this.transcriptGateActive) {
-      return;
-    }
-    this.releaseTranscriptGate(Date.now(), this.activeVadSpeechStartedAt);
-  }
-
   private setInterruptionEnabled(enabled: boolean): void {
-    const wasEnabled = this.isInterruptionEnabled;
     this.isInterruptionEnabled = enabled;
     if (!enabled) {
       this.interruptionDetected = undefined;
-      this.drainTranscriptGate();
-    } else if (!wasEnabled) {
-      this.syncTranscriptGate();
+      this.flushHeldTranscripts();
     }
   }
 
@@ -1105,6 +1123,20 @@ export class AudioRecognition {
   private async onSTTEvent(ev: SpeechEvent) {
     ev.createdAt ??= Date.now();
 
+    const firstAlternative = ev.alternatives?.[0];
+    if (
+      ev.speechEndTime === undefined &&
+      this.sttAlignedTranscript &&
+      firstAlternative !== undefined &&
+      firstAlternative.endTime > 0 &&
+      this.inputStartedAt !== undefined
+    ) {
+      const speechEndTime = this.inputStartedAt + firstAlternative.endTime * 1000;
+      if (speechEndTime <= ev.createdAt) {
+        ev = { ...ev, speechEndTime };
+      }
+    }
+
     // Collect provider-known STT ids for this user turn. The actual attribute is
     // written once when the user_turn span ends (see _endUserTurnSpan), to avoid
     // ordering issues with span creation.
@@ -1136,6 +1168,9 @@ export class AudioRecognition {
     // Interim and preflight transcripts may never be followed by a final transcript.
     if (ev.type === SpeechEventType.FINAL_TRANSCRIPT && ev.alternatives?.[0]?.text) {
       this.markTurnTranscribed();
+      if (this.isAgentSpeaking && !this.transcriptGateActive) {
+        this.hooks.interruptionByAudioActivityEnabled = true;
+      }
     }
 
     if (ev.type !== SpeechEventType.RECOGNITION_USAGE && this.transcriptGateActive) {
@@ -1399,11 +1434,10 @@ export class AudioRecognition {
     }
 
     this.interruptionDetected = ev.isInterruption;
-    if (ev.isInterruption) {
-      this.releaseTranscriptGate(ev.detectedAt, ev.overlapStartedAt);
+    if (ev.isInterruption && this.transcriptGateActive) {
+      this.flushHeldTranscripts(ev.detectedAt, ev.overlapStartedAt);
     } else if (this.transcriptGateActive) {
-      const flushStart = this.transcriptFlushStart(ev.detectedAt, this.activeVadSpeechStartedAt);
-      this.trimHeldTranscripts(flushStart);
+      this.trimHeldTranscripts(ev.detectedAt, this.activeVadSpeechStartedAt);
     }
 
     if (this.overlapInCurrentTurn && !ev.agentEnded) {
@@ -2178,7 +2212,7 @@ export class AudioRecognition {
         });
       }
     }
-    this.drainTranscriptGate();
+    this.flushHeldTranscripts();
     this.logger.debug('Interruption task closed');
   }
 

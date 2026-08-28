@@ -11,6 +11,7 @@ import type { STTNode } from './io.js';
 
 function createHooks() {
   const hooks: RecognitionHooks = {
+    interruptionByAudioActivityEnabled: false,
     onOverlapSpeech: vi.fn(),
     onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),

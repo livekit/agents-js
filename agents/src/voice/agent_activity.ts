@@ -725,6 +725,7 @@ export class AgentActivity implements RecognitionHooks {
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
+      sttAlignedTranscript: Boolean(this.stt?.capabilities.alignedTranscript),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
       shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
       transcriptionTimeout: this.agentSession.sessionOptions.transcriptionTimeout,
@@ -850,6 +851,16 @@ export class AgentActivity implements RecognitionHooks {
 
   get currentSpeech(): SpeechHandle | undefined {
     return this._currentSpeech;
+  }
+
+  get interruptionByAudioActivityEnabled(): boolean {
+    return this.isInterruptionByAudioActivityEnabled;
+  }
+
+  set interruptionByAudioActivityEnabled(enabled: boolean) {
+    this.audioRecognition?.cancelBackchannelBoundary();
+    this.isInterruptionByAudioActivityEnabled =
+      enabled && this.isDefaultInterruptionByAudioActivityEnabled;
   }
 
   get vad(): VAD | undefined {
@@ -1233,6 +1244,7 @@ export class AgentActivity implements RecognitionHooks {
               {
                 model: resolvedStt?.model,
                 provider: resolvedStt?.provider,
+                alignedTranscript: Boolean(resolvedStt?.capabilities.alignedTranscript),
                 resetContext: true,
               },
             );
@@ -1332,6 +1344,7 @@ export class AgentActivity implements RecognitionHooks {
               {
                 model: previous.resolvedStt?.model,
                 provider: previous.resolvedStt?.provider,
+                alignedTranscript: Boolean(previous.resolvedStt?.capabilities.alignedTranscript),
                 resetContext: true,
               },
             );
@@ -1889,7 +1902,6 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.agentSession._aecWarmupRemaining > 0) {
       // Disable interruption from audio activity while AEC warmup is active.
-      this.pendingInterruption = undefined;
       return;
     }
 
@@ -1898,8 +1910,6 @@ export class AgentActivity implements RecognitionHooks {
       this.pendingInterruption = undefined;
       return;
     }
-
-    this.audioRecognition?.releaseTranscriptsForAudioActivity();
 
     if (
       this.stt &&
@@ -1910,7 +1920,6 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(shubhra): better word splitting for multi-language
       const wordCount = splitWords(text ?? '', true).length;
       if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
-        this.pendingInterruption = undefined;
         return;
       }
     }
@@ -1965,9 +1974,8 @@ export class AgentActivity implements RecognitionHooks {
         );
         this.realtimeSession?.interrupt();
         this._currentSpeech.interrupt();
-        this.pendingInterruption = undefined;
       }
-    } else {
+    } else if (this._currentSpeech === undefined || !this._currentSpeech.interrupted) {
       this.pendingInterruption = undefined;
     }
   }
@@ -5334,17 +5342,16 @@ export class AgentActivity implements RecognitionHooks {
           this.isInterruptionByAudioActivityEnabled
         ) {
           this.logger.trace('backchannel boundary expired');
-          this.isInterruptionByAudioActivityEnabled = false;
+          this.interruptionByAudioActivityEnabled = false;
         }
       };
-    } else {
-      this.isInterruptionByAudioActivityEnabled = false;
+    } else if (!audioRecognition || !audioRecognition.userSpeaking) {
+      this.interruptionByAudioActivityEnabled = false;
     }
   }
 
   private restoreInterruptionByAudioActivity(): void {
-    this.audioRecognition?.cancelBackchannelBoundary();
-    this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
+    this.interruptionByAudioActivityEnabled = true;
   }
 
   private fallbackToVadInterruption(error?: InterruptionDetectionError): void {

@@ -119,6 +119,8 @@ export interface SpeechEvent {
   recognitionUsage?: RecognitionUsage;
   /** Wall-clock time when this event was created, in milliseconds. STT boundaries populate it. */
   createdAt?: number;
+  /** Wall-clock time when the recognized speech ended, in milliseconds, when known. */
+  speechEndTime?: number;
 }
 
 /**

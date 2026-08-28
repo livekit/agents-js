@@ -25,13 +25,14 @@ type RecognitionInternals = {
   userTurnStart?: number;
   vadTask?: Task<void>;
   onSTTEvent: (event: SpeechEvent) => Promise<void>;
-  drainTranscriptGate: () => void;
+  flushHeldTranscripts: () => void;
   createVadTask: (vad: VAD, signal: AbortSignal) => Promise<void>;
   armTranscriptionTimeout: (speechDuration: number, elapsedDelay: number) => void;
 };
 
 function createHooks(): RecognitionHooks {
   return {
+    interruptionByAudioActivityEnabled: false,
     onOverlapSpeech: vi.fn(),
     onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
@@ -125,7 +126,7 @@ describe('AudioRecognition transcription timeout', () => {
     expect(hooks.onFinalTranscript).not.toHaveBeenCalled();
     expect(hooks.onTranscriptionTimeout).not.toHaveBeenCalled();
 
-    internals.drainTranscriptGate();
+    internals.flushHeldTranscripts();
 
     expect(hooks.onFinalTranscript).toHaveBeenCalledOnce();
     expect(recognition.currentTranscript).toBe('held transcript');
