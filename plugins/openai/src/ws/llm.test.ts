@@ -1,13 +1,20 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ChatContext, ConnectionPool, initializeLogger, stream } from '@livekit/agents';
+import {
+  APIStatusError,
+  ChatContext,
+  ConnectionPool,
+  initializeLogger,
+  stream,
+} from '@livekit/agents';
 import { llm, llmStrict } from '@livekit/agents-plugins-test';
-import { describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { describe, expect, it, vi } from 'vitest';
 import { LLM } from '../responses/llm.js';
-import type { ResponsesWebSocket } from './llm.js';
-import { WSLLM, WSLLMStream, buildResponsesWsUrl } from './llm.js';
-import type { WsServerEvent } from './types.js';
+import { ResponsesWebSocket, WSLLM, WSLLMStream, buildResponsesWsUrl } from './llm.js';
+import type { WsResponseCreateEvent, WsServerEvent } from './types.js';
+import { wsServerEventSchema } from './types.js';
 
 initializeLogger({ level: 'silent', pretty: false });
 
@@ -100,6 +107,54 @@ const TEXT_DELTA: WsServerEvent = {
   delta: 'hello',
 };
 
+function responseIncomplete(reason?: string): WsServerEvent {
+  return {
+    type: 'response.incomplete',
+    response: {
+      id: 'resp_1',
+      ...(reason === undefined ? {} : { incomplete_details: { reason } }),
+    },
+  };
+}
+
+describe('OpenAI Responses WS incomplete events', () => {
+  it.each(['max_output_tokens', 'content_filter'])('parses the provider reason %s', (reason) => {
+    const parsed = wsServerEventSchema.parse(responseIncomplete(reason));
+
+    expect(parsed.type).toBe('response.incomplete');
+    if (parsed.type !== 'response.incomplete') throw new Error('expected incomplete event');
+    expect(parsed.response.incomplete_details?.reason).toBe(reason);
+  });
+
+  it('closes the request channel after the terminal frame', async () => {
+    class RecordingSocket extends EventEmitter {
+      readyState = 1;
+      sent: string[] = [];
+
+      send(data: string): void {
+        this.sent.push(data);
+      }
+
+      close(): void {}
+    }
+
+    const socket = new RecordingSocket();
+    const transport = new ResponsesWebSocket(socket as never);
+    const channel = transport.sendRequest({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      input: [],
+    });
+
+    socket.emit('message', Buffer.from(JSON.stringify(responseIncomplete('max_output_tokens'))));
+    const events = [];
+    for await (const event of channel.stream()) events.push(event);
+
+    expect(events).toEqual([responseIncomplete('max_output_tokens')]);
+    expect(socket.sent).toHaveLength(1);
+  });
+});
+
 /** Replays the given frames, then dies the way a socket going quiet does. */
 class StallingConnection {
   attempts = 0;
@@ -171,6 +226,76 @@ describe('OpenAI Responses WS retry eligibility', () => {
   it('does not retry once generated text has reached the caller', async () => {
     expect(await attemptsUntilStall([RESPONSE_CREATED, TEXT_DELTA], 2)).toBe(1);
   });
+});
+
+describe('OpenAI Responses WS incomplete handling', () => {
+  it.each([
+    ['max_output_tokens', 'max_output_tokens'],
+    [undefined, 'reason unavailable'],
+  ] as const)(
+    'surfaces %s as non-retryable without updating context',
+    async (reason, expectedMessage) => {
+      class ReplayConnection {
+        attempts = 0;
+        payloads: WsResponseCreateEvent[] = [];
+
+        sendRequest(payload: WsResponseCreateEvent): stream.StreamChannel<WsServerEvent> {
+          this.attempts++;
+          this.payloads.push(payload);
+          const channel = stream.createStreamChannel<WsServerEvent>();
+          void (async () => {
+            await channel.write(RESPONSE_CREATED);
+            await channel.write(responseIncomplete(reason));
+            await channel.close();
+          })();
+          return channel;
+        }
+
+        close(): void {}
+      }
+
+      const model = new WSLLM({ model: 'gpt-4.1', apiKey: 'test-key' });
+      const onCompleted = vi.spyOn(model, '_onResponseCompleted');
+      const errorEvent = new Promise<Error>((resolve) => {
+        model.once('error', (event) => resolve(event.error));
+      });
+      const conn = new ReplayConnection();
+      let connectCalls = 0;
+      const pool = new ConnectionPool<ResponsesWebSocket>({
+        connectCb: async () => {
+          connectCalls++;
+          return conn as unknown as ResponsesWebSocket;
+        },
+      });
+      const chatCtx = ChatContext.empty();
+      chatCtx.addMessage({ role: 'user', content: 'hi' });
+      const llmStream = new WSLLMStream(model, {
+        pool,
+        model: 'gpt-4.1',
+        chatCtx,
+        fullChatCtx: chatCtx,
+        connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 5000 },
+        modelOptions: {},
+        strictToolSchema: true,
+      });
+
+      for await (const _chunk of llmStream) void _chunk;
+      const error = await errorEvent;
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect(error.message).toContain(expectedMessage);
+      expect((error as APIStatusError).statusCode).toBe(-1);
+      expect((error as APIStatusError).retryable).toBe(false);
+      expect(conn.attempts).toBe(1);
+      expect(onCompleted).not.toHaveBeenCalled();
+
+      await pool.withConnection(async (pooled) => expect(pooled).toBe(conn));
+      expect(connectCalls).toBe(1);
+      expect(conn.payloads[0]).not.toHaveProperty('previous_response_id');
+      await pool.close();
+      await model.aclose();
+    },
+  );
 });
 
 if (hasOpenAIApiKey) {
