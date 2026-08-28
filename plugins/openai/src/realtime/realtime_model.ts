@@ -710,7 +710,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     chatCtx: llm.ChatContext,
     addMockAudio: boolean = false,
   ): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]> {
-    const newChatCtx = chatCtx.copy();
+    const newChatCtx = chatCtx.copy({ excludeHandoff: true, excludeConfigUpdate: true });
     if (addMockAudio) {
       newChatCtx.items.push(createMockAudioItem());
     } else {
@@ -748,7 +748,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       events.push({
         type: 'conversation.item.create',
         item: await livekitItemToOpenAIItem(chatItem),
-        previous_item_id: previousId ?? undefined,
+        previous_item_id: previousId ?? 'root',
         event_id: shortuuid('chat_ctx_create_'),
       } as api_proto.ConversationItemCreateEvent);
     };

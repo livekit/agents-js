@@ -1096,6 +1096,46 @@ describe('RealtimeSession chat context update events', () => {
     expect((events[0] as api_proto.ConversationItemDeleteEvent).item_id).toBe('item_1');
     expect((events[1] as api_proto.ConversationItemCreateEvent).item.id).toBe('item_1');
   });
+
+  it.each([
+    [
+      'agent config updates',
+      new llm.AgentConfigUpdate({ id: 'parent_config', instructions: 'parent instructions' }),
+    ],
+    [
+      'agent handoffs',
+      new llm.AgentHandoffItem({
+        id: 'task_handoff',
+        oldAgentId: 'task',
+        newAgentId: 'parent',
+      }),
+    ],
+  ])('ignores %s while restoring conversation history', async (_label, metadataItem) => {
+    const taskMessage = llm.ChatMessage.create({
+      id: 'task_message',
+      role: 'assistant',
+      content: ['task complete'],
+    });
+    const session = createChatCtxUpdateSession(taskMessage);
+
+    const events = await session.createChatCtxUpdateEvents(
+      new llm.ChatContext([
+        metadataItem,
+        llm.ChatMessage.create({
+          id: 'parent_message',
+          role: 'user',
+          content: ['remember this'],
+        }),
+        taskMessage,
+      ]),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('conversation.item.create');
+    const createEvent = events[0] as api_proto.ConversationItemCreateEvent;
+    expect(createEvent.item.id).toBe('parent_message');
+    expect(createEvent.previous_item_id).toBe('root');
+  });
 });
 
 describe('RealtimeSession.updateOptions', () => {
