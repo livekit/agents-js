@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { SIPOutboundConfig } from '@livekit/protocol';
-import { type DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
+import { DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'livekit-server-sdk';
 import { z } from 'zod';
 import type { LLMModels, STTModelString, TTSModelString } from '../inference/index.js';
@@ -279,7 +279,9 @@ export function createWarmTransferTask({
   };
 
   const onHumanAgentRoomClose = (reason: DisconnectReason): void => {
-    logger.debug({ reason }, 'human agent room closed');
+    if (!task.done) {
+      logger.warn({ reason }, 'human agent room disconnected before transfer completed');
+    }
     humanAgentFailedFut.resolve();
     setResult(new ToolError(`room closed: ${reason}`));
   };
@@ -589,6 +591,11 @@ export function createWarmTransferTask({
           if (abortSignal?.aborted) {
             setResult(asError(abortSignal.reason ?? new Error('warm transfer aborted')));
             return;
+          }
+          const room = humanAgentRoom;
+          room?.on(RoomEvent.Disconnected, onHumanAgentRoomClose);
+          if (room && !room.isConnected && !task.done) {
+            onHumanAgentRoomClose(DisconnectReason.UNKNOWN_REASON);
           }
           abortSignal?.addEventListener('abort', onAbort, { once: true });
           throw error;
