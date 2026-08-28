@@ -1096,6 +1096,38 @@ describe('RealtimeSession chat context update events', () => {
     expect((events[0] as api_proto.ConversationItemDeleteEvent).item_id).toBe('item_1');
     expect((events[1] as api_proto.ConversationItemCreateEvent).item.id).toBe('item_1');
   });
+
+  it('ignores session metadata when creating provider events', async () => {
+    const existingMessage = llm.ChatMessage.create({
+      id: 'item_1',
+      role: 'assistant',
+      content: ['What is two plus two?'],
+    });
+    const session = createChatCtxUpdateSession(existingMessage);
+
+    const events = await session.createChatCtxUpdateEvents(
+      new llm.ChatContext([
+        existingMessage,
+        new llm.AgentConfigUpdate({
+          id: 'item_config',
+          instructions: 'Ask the next math question.',
+        }),
+        new llm.AgentHandoffItem({
+          id: 'item_handoff',
+          oldAgentId: 'agent_1',
+          newAgentId: 'agent_2',
+        }),
+        llm.ChatMessage.create({ id: 'item_2', role: 'user', content: ['four'] }),
+      ]),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'conversation.item.create',
+      previous_item_id: 'item_1',
+      item: { id: 'item_2' },
+    });
+  });
 });
 
 describe('RealtimeSession.updateOptions', () => {
