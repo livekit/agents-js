@@ -26,9 +26,11 @@ export class ParticipantAudioInputStream extends AudioInput {
   private noiseCancellation?: NoiseCancellationOptions;
   private frameProcessor?: FrameProcessor<AudioFrame>;
   private publication: RemoteTrackPublication | null = null;
+  private track: RemoteTrack | null = null;
   private participantIdentity: string | null = null;
   private currentInputId: string | null = null;
   private attached = true;
+  private closed = false;
   private logger = log();
 
   constructor({
@@ -53,6 +55,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
+    this.room.on(RoomEvent.TrackUnsubscribed, this.onTrackUnsubscribed);
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
   }
 
@@ -151,6 +154,7 @@ export class ParticipantAudioInputStream extends AudioInput {
       this.currentInputId = null;
     }
 
+    this.track = null;
     this.publication = null;
   }
 
@@ -164,13 +168,15 @@ export class ParticipantAudioInputStream extends AudioInput {
       'onTrackSubscribed in _input',
     );
     if (
+      this.closed ||
       this.participantIdentity !== participant.identity ||
       publication.source !== TrackSource.SOURCE_MICROPHONE ||
-      (this.publication && this.publication.sid === publication.sid)
+      (this.publication?.sid === publication.sid && this.track === track)
     ) {
       return false;
     }
     this.closeStream();
+    this.track = track;
     this.publication = publication;
     const attachedStream = resampleStream({
       stream: this.createStream(track),
@@ -188,6 +194,32 @@ export class ParticipantAudioInputStream extends AudioInput {
     return true;
   };
 
+  private onTrackUnsubscribed = (
+    track: RemoteTrack,
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ) => {
+    if (
+      this.track !== track ||
+      this.publication?.sid !== publication.sid ||
+      participant.identity !== this.participantIdentity
+    ) {
+      return;
+    }
+
+    this.closeStream();
+
+    // Same-publication replacements arrive through TrackSubscribed.
+    for (const candidate of participant.trackPublications.values()) {
+      if (candidate.sid === publication.sid || !candidate.track) {
+        continue;
+      }
+      if (this.onTrackSubscribed(candidate.track, candidate, participant)) {
+        return;
+      }
+    }
+  };
+
   private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
     return new AudioStream(track, {
       sampleRate: this.sampleRate,
@@ -202,7 +234,13 @@ export class ParticipantAudioInputStream extends AudioInput {
   }
 
   override async close() {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+
     this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
+    this.room.off(RoomEvent.TrackUnsubscribed, this.onTrackUnsubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.closeStream();
     await super.close();
