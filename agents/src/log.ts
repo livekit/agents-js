@@ -24,7 +24,17 @@ export { log, loggerOptions, type LoggerOptions };
 const createLogger = ({ pretty, level }: LoggerOptions): Logger => {
   const logLevel = level || 'info';
   const streams: { stream: DestinationStream; level: string }[] = [
-    { stream: pretty ? pinoPretty({ colorize: true }) : process.stdout, level: logLevel },
+    {
+      stream: pretty
+        ? pinoPretty({
+            colorize: true,
+            ...(process.platform === 'win32' && process.stdout.isTTY
+              ? { destination: process.stdout }
+              : {}),
+          })
+        : process.stdout,
+      level: logLevel,
+    },
     { stream: new OtelDestination(), level: 'debug' },
   ];
 
