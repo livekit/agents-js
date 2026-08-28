@@ -632,6 +632,12 @@ export class AgentSession<
     return recordingEnabled(this.sessionOptions.recordingOptions);
   }
 
+  /** @internal True when project or session redaction is enabled. */
+  _redactionEnabled = false;
+
+  /** @internal Whether the realtime audio-redaction warning was emitted for this session. */
+  _warnedRealtimeAudioRedaction = false;
+
   /** @internal - Timestamp when the session started (milliseconds) */
   _startedAt?: number;
 
@@ -1027,6 +1033,10 @@ export class AgentSession<
         await ctx.initRecording(this.sessionOptions.recordingOptions);
       }
     }
+
+    this._redactionEnabled = Boolean(
+      ctx?.job.enableRedaction || this.sessionOptions.recordingOptions.redaction,
+    );
 
     this.sessionSpan = tracer.startSpan({
       name: 'agent_session',

@@ -24,6 +24,11 @@ export function msToTimestamp(ms: number): Timestamp {
   return Timestamp.fromDate(new Date(ms));
 }
 
+export function msToUnixSeconds(ms: number): number {
+  const timestamp = msToTimestamp(ms);
+  return Number(timestamp.seconds) + timestamp.nanos / 1e9;
+}
+
 function encodeMetrics(metrics: MetricsReport): pb.MetricsReport {
   const report = new pb.MetricsReport();
   // wall-clock metrics are seconds here and Timestamps on the wire

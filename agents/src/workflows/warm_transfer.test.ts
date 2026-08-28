@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { SIPParticipantInfo } from '@livekit/protocol';
-import { ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
+import { DisconnectReason, ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient } from 'livekit-server-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as job from '../job.js';
 import type { JobContext } from '../job.js';
 import { ChatContext, type FunctionTool } from '../llm/index.js';
+import { log } from '../log.js';
 import { AgentTask } from '../voice/agent.js';
 import { AgentSession } from '../voice/agent_session.js';
 import { BackgroundAudioPlayer } from '../voice/background_audio.js';
@@ -91,10 +92,14 @@ const mockDial = (sipParticipant: Promise<unknown> = Promise.resolve({})) => {
   vi.stubEnv('LIVEKIT_API_KEY', 'api-key');
   vi.stubEnv('LIVEKIT_API_SECRET', 'api-secret');
   vi.spyOn(AccessToken.prototype, 'toJwt').mockResolvedValue('token');
-  vi.spyOn(Room.prototype, 'connect').mockImplementation(async function () {
+  const connect = vi.spyOn(Room.prototype, 'connect').mockImplementation(async function () {
     Object.defineProperty(this, 'name', {
       configurable: true,
       value: 'caller-room-human-agent',
+    });
+    Object.defineProperty(this, 'isConnected', {
+      configurable: true,
+      get: () => true,
     });
   });
   const disconnect = vi.spyOn(Room.prototype, 'disconnect').mockResolvedValue();
@@ -105,7 +110,7 @@ const mockDial = (sipParticipant: Promise<unknown> = Promise.resolve({})) => {
     .spyOn(SipClient.prototype, 'createSipParticipant')
     .mockReturnValue(sipParticipant as never);
   vi.spyOn(BackgroundAudioPlayer.prototype, 'close').mockResolvedValue();
-  return { close, createSipParticipant, disconnect, shutdown };
+  return { close, connect, createSipParticipant, disconnect, shutdown };
 };
 
 const setupTransfer = (abortSignal: AbortSignal) => {
@@ -493,6 +498,58 @@ describe('createWarmTransferTask', () => {
 
     expect(complete).toHaveBeenCalledWith(reason);
   });
+
+  it.each(['before', 'after'] as const)(
+    'observes human agent room closure %s a participant move failure',
+    async (timing) => {
+      const controller = new AbortController();
+      const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+      const { connect: connectRoom } = mockDial();
+      let failMove!: (error: Error) => void;
+      const move = new Promise<void>((_resolve, reject) => {
+        failMove = reject;
+      });
+      const moveParticipant = vi
+        .spyOn(RoomServiceClient.prototype, 'moveParticipant')
+        .mockReturnValue(move as never);
+      const { complete, create } = setupTransfer(controller.signal);
+
+      const options = create.mock.calls[0]![0];
+      await options.onEnter!({} as never);
+      const connect = (options.tools as FunctionTool[]).find(
+        (entry) => entry.name === 'connect_to_caller',
+      )!;
+      const humanAgentRoom = connectRoom.mock.instances[0]!;
+      const isConnected = vi.spyOn(humanAgentRoom, 'isConnected', 'get').mockReturnValue(true);
+
+      const merging = connect.execute({}, {} as never);
+      await vi.waitFor(() => expect(moveParticipant).toHaveBeenCalled());
+      if (timing === 'before') {
+        isConnected.mockReturnValue(false);
+        humanAgentRoom.emit(RoomEvent.Disconnected, DisconnectReason.CLIENT_INITIATED);
+      }
+
+      failMove(new Error('move failed'));
+      await expect(merging).rejects.toThrow('move failed');
+      if (timing === 'after') {
+        expect(complete).not.toHaveBeenCalled();
+        isConnected.mockReturnValue(false);
+        humanAgentRoom.emit(RoomEvent.Disconnected, DisconnectReason.CLIENT_INITIATED);
+      }
+
+      const expectedReason =
+        timing === 'before' ? DisconnectReason.UNKNOWN_REASON : DisconnectReason.CLIENT_INITIATED;
+      expect(warn).toHaveBeenCalledWith(
+        { reason: expectedReason },
+        'human agent room disconnected before transfer completed',
+      );
+      expect(complete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: `room closed: ${expectedReason}`,
+        }),
+      );
+    },
+  );
 
   it('starts greeting speech only after the outbound SIP call answers', async () => {
     vi.stubEnv('LIVEKIT_API_KEY', 'api-key');

@@ -54,9 +54,14 @@ export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 
 export type XaiSTTModels = 'xai/stt-1';
 
-export type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard';
+export type SpeechmaticsModels =
+  | 'speechmatics/enhanced'
+  | 'speechmatics/standard'
+  | 'speechmatics/linden-1';
 
 export type InworldSTTModels = 'inworld/inworld-stt-1';
+
+export type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
 
 export interface CartesiaOptions {
   /** Minimum volume threshold. Ink Whisper only. Default: not specified. */
@@ -158,9 +163,9 @@ export interface SpeechmaticsOptions {
   domain?: string;
   /** BCP-47 locale for output formatting. */
   output_locale?: string;
-  /** Maximum delay in seconds. Valid range is 0.7-4.0. Default: 1.0. */
+  /** Maximum delay in seconds. Valid range is 0.7-4.0. Default: 1.0. RT only. */
   max_delay?: number;
-  /** Maximum delay mode. */
+  /** Maximum delay mode. RT only. */
   max_delay_mode?: 'flexible' | 'fixed' | string;
   /** Enable diarization for modes other than "none". */
   diarization?:
@@ -178,17 +183,17 @@ export interface SpeechmaticsOptions {
   prefer_current_speaker?: boolean;
   /** Enable partial results. Default: true, overridden by the gateway. */
   enable_partials?: boolean;
-  /** Enable entity recognition. */
+  /** Enable entity recognition. RT only. */
   enable_entities?: boolean;
   /** Punctuation override configuration. */
   punctuation_overrides?: Record<string, unknown>;
-  /** Additional vocabulary entries for custom dictionary support. */
+  /** Additional vocabulary entries for custom dictionary support. RT only. */
   additional_vocab?: Array<Record<string, unknown>>;
-  /** Seconds of silence before finalizing an utterance. */
+  /** Seconds of silence before finalizing an utterance. RT only. */
   end_of_utterance_silence_trigger?: number;
-  /** Audio filtering configuration. */
+  /** Audio filtering configuration. RT only. */
   audio_filtering_config?: Record<string, unknown>;
-  /** Transcript filtering configuration. */
+  /** Transcript filtering configuration. RT only. */
   transcript_filtering_config?: Record<string, unknown>;
 }
 
@@ -211,6 +216,13 @@ export interface InworldSTTOptions {
   min_end_of_turn_silence_when_confident?: number;
   /** VAD threshold (0.0–1.0). Default: 0.5. */
   vad_threshold?: number;
+}
+
+export interface GoogleSTTOptions {
+  /** BCP-47 language codes. Omit or pass an empty list to detect the language. */
+  language_codes?: string[];
+  /** Up to 1000 terms that bias recognition. */
+  custom_vocabulary?: string[];
 }
 
 export type STTLanguages =
@@ -256,6 +268,10 @@ function keytermsExtraForModel(
 
   const extraKwargs = opts?.extraKwargs ?? {};
   const sessionKeyterms = opts?.sessionKeyterms ?? [];
+
+  if (model === 'speechmatics/linden-1') {
+    return undefined;
+  }
 
   if (model.startsWith('speechmatics/')) {
     // keep existing entries as-is (they may carry sounds_like etc.); append new session terms
@@ -323,7 +339,8 @@ type _STTModels =
   | ElevenlabsSTTModels
   | XaiSTTModels
   | SpeechmaticsModels
-  | InworldSTTModels;
+  | InworldSTTModels
+  | GoogleSTTModels;
 
 export type STTModels = _STTModels | 'auto' | AnyString;
 
@@ -343,7 +360,9 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxMo
             ? SpeechmaticsOptions
             : TModel extends InworldSTTModels
               ? InworldSTTOptions
-              : Record<string, unknown>;
+              : TModel extends GoogleSTTModels
+                ? GoogleSTTOptions
+                : Record<string, unknown>;
 
 /** Inference Fallback Adapter: configuration for a fallback STT model that runs server-side in LiveKit Inference, providing automatic fallback between providers. Extra fields are passed through to the provider. */
 export interface STTFallbackModel {
@@ -382,18 +401,18 @@ export function normalizeSTTFallback(
   return [makeFallback(fallback)];
 }
 
-function isSpeechmaticsModel(model: string | undefined): boolean {
-  return model?.startsWith('speechmatics/') ?? false;
+function isSpeechmaticsRTModel(model: string | undefined): boolean {
+  return (model?.startsWith('speechmatics/') && model !== 'speechmatics/linden-1') ?? false;
 }
 
 function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VAD | undefined {
-  const speechmatics = isSpeechmaticsModel(model);
-  if (vad && !speechmatics) {
+  const speechmaticsRT = isSpeechmaticsRTModel(model);
+  if (vad && !speechmaticsRT) {
     log().warn({ model }, '`vad` will be ignored: model handles endpointing server-side');
     return undefined;
   }
-  if (speechmatics && vad === undefined) {
-    // Speechmatics doesn't endpoint server-side, so fall back to the in-tree
+  if (speechmaticsRT && vad === undefined) {
+    // Speechmatics RT doesn't endpoint server-side, so fall back to the in-tree
     // local inference VAD rather than the deprecated silero plugin.
     return new InferenceVAD();
   }
@@ -470,9 +489,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       interimResults: true,
       alignedTranscript,
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
-      keyterms:
-        keytermsExtraForModel(typeof opts?.model === 'string' ? opts.model : undefined) !==
-        undefined,
+      keyterms: keytermsExtraForModel(initialModel) !== undefined,
     });
 
     const {

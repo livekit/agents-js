@@ -117,6 +117,8 @@ export type ApiVersion = 'v1' | 'v1beta1';
 
 declare namespace beta {
     export {
+        STT_3 as GeminiSTT,
+        STTOptions_2 as GeminiSTTOptions,
         TTS_3 as TTS,
         CustomPronunciationParams,
         CustomPronunciations,
@@ -415,6 +417,57 @@ export type SpeechLanguages = 'en-US' | 'ja-JP' | 'en-IN' | 'en-GB' | 'hi-IN' | 
 //
 // @public (undocumented)
 export type SpeechModels = 'long' | 'short' | 'telephony' | 'medical_dictation' | 'medical_conversation' | 'chirp' | 'chirp_2' | 'latest_long' | 'latest_short';
+
+// Warning: (ae-forgotten-export) The symbol "stt_2" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "STT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+class STT_3 extends stt_2.STT {
+    constructor(input?: Partial<STTOptions_2>);
+    // (undocumented)
+    readonly label = "google.gemini.STT";
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    protected _recognize(): Promise<stt_2.SpeechEvent>;
+    // (undocumented)
+    stream(options?: {
+        language?: string;
+        connOptions?: APIConnectOptions;
+    }): stt_2.SpeechStream;
+}
+
+// Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface STTOptions_2 {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    credentials?: object | string;
+    // (undocumented)
+    credentialsPath?: string;
+    // (undocumented)
+    customVocabulary?: string[];
+    // (undocumented)
+    httpOptions?: types.HttpOptions;
+    // (undocumented)
+    language: string | null;
+    // (undocumented)
+    languageCodes?: string[];
+    // (undocumented)
+    location?: string;
+    // (undocumented)
+    model: string;
+    // (undocumented)
+    project?: string;
+    // (undocumented)
+    sampleRate: number;
+    // (undocumented)
+    vertexai?: boolean;
+}
 
 // Warning: (ae-missing-release-tag) "ToolCodeExecution" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //

@@ -561,6 +561,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     //
     // @internal (undocumented)
     _recorderIO?: RecorderIO;
+    // @internal
+    _redactionEnabled: boolean;
     // (undocumented)
     resumeReplyAuthorization(): void;
     // @internal (undocumented)
@@ -662,6 +664,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     _waitForIdleHoldReleased(): Promise<boolean>;
     // @internal
     _warnedExpressiveTemplate: boolean;
+    // @internal
+    _warnedRealtimeAudioRedaction: boolean;
 }
 
 // Warning: (ae-missing-release-tag) "AgentSessionEventTypes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1476,6 +1480,16 @@ export const ATTRIBUTE_REDACTION_ENABLED = "lk.redaction.enabled";
 //
 // @public
 export const ATTRIBUTE_SIMULATION_ENABLED = "lk.simulation.enabled";
+
+// Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATION_JOB_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export const ATTRIBUTE_SIMULATION_JOB_ID = "lk.simulation.job_id";
+
+// Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATION_RUN_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export const ATTRIBUTE_SIMULATION_RUN_ID = "lk.simulation.run_id";
 
 // Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATOR" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -3974,6 +3988,19 @@ export function getLanguageRegion(language: string): string | undefined;
 // @public (undocumented)
 type GoogleModels = 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
 
+// Warning: (ae-missing-release-tag) "GoogleSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
+
+// Warning: (ae-missing-release-tag) "GoogleSTTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface GoogleSTTOptions {
+    custom_vocabulary?: string[];
+    language_codes?: string[];
+}
+
 // Warning: (ae-internal-missing-underscore) The name "gracefullyCancel" should be prefixed with an underscore because the declaration is marked as @internal
 //
 // @internal (undocumented)
@@ -4519,7 +4546,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // (undocumented)
     _onSessionEnd(): Promise<void>;
     // @internal (undocumented)
-    _otelMetadata(options?: ResolvedRecordingOptions): Record<string, boolean> | undefined;
+    _otelMetadata(options?: ResolvedRecordingOptions): Record<string, boolean | string> | undefined;
     // @internal (undocumented)
     _primaryAgentSession?: AgentSession;
     // (undocumented)
@@ -6558,7 +6585,6 @@ export class SimulationContext {
     _beginFinalize(opts: {
         simulatorVerdict: SimulationVerdict;
         run?: SimulationRun;
-        job?: SimulationRun_Job;
     }): void;
     // @internal (undocumented)
     _dispatch: SimulationDispatch;
@@ -6567,11 +6593,10 @@ export class SimulationContext {
     get jobContext(): JobContext;
     // (undocumented)
     get scenario(): Scenario;
-    // (undocumented)
-    get simulationJob(): SimulationRun_Job | undefined;
+    get simulationJobId(): string;
     get simulationMode(): SimulationMode;
-    // (undocumented)
     get simulationRun(): SimulationRun | undefined;
+    get simulationRunId(): string;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "userVerdict"
     get simulatorVerdict(): SimulationVerdict;
     userdata(): ScenarioUserdata;
@@ -6765,7 +6790,7 @@ export class SpeechHandleCircularWaitError extends Error {
 // Warning: (ae-missing-release-tag) "SpeechmaticsModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard';
+type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard' | 'speechmatics/linden-1';
 
 // Warning: (ae-missing-release-tag) "SpeechmaticsOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -7139,6 +7164,7 @@ declare namespace stt_2 {
         XaiSTTModels,
         SpeechmaticsModels,
         InworldSTTModels,
+        GoogleSTTModels,
         CartesiaOptions,
         DeepgramOptions,
         DeepgramFluxOptions,
@@ -7146,6 +7172,7 @@ declare namespace stt_2 {
         XaiOptions,
         SpeechmaticsOptions,
         InworldSTTOptions,
+        GoogleSTTOptions,
         STTLanguages,
         STTModels,
         ModelWithLanguage,
@@ -7241,7 +7268,7 @@ export type STTModelUsage = {
 // Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxModels ? DeepgramFluxOptions : TModel extends DeepgramModels ? DeepgramOptions : TModel extends CartesiaModels ? CartesiaOptions : TModel extends AssemblyaiModels ? AssemblyAIOptions : TModel extends XaiSTTModels ? XaiOptions : TModel extends SpeechmaticsModels ? SpeechmaticsOptions : TModel extends InworldSTTModels ? InworldSTTOptions : Record<string, unknown>;
+type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxModels ? DeepgramFluxOptions : TModel extends DeepgramModels ? DeepgramOptions : TModel extends CartesiaModels ? CartesiaOptions : TModel extends AssemblyaiModels ? AssemblyAIOptions : TModel extends XaiSTTModels ? XaiOptions : TModel extends SpeechmaticsModels ? SpeechmaticsOptions : TModel extends InworldSTTModels ? InworldSTTOptions : TModel extends GoogleSTTModels ? GoogleSTTOptions : Record<string, unknown>;
 
 // Warning: (ae-missing-release-tag) "supportedNonverbals" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -9138,13 +9165,13 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:194:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:363:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/stt/stt.ts:364:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:501:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:988:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1631:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1631:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1631:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:994:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1641:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1641:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1641:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
