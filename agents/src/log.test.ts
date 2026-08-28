@@ -10,12 +10,57 @@ import {
 } from './telemetry/pino_otel_transport.js';
 import { REDACTED_EXCEPTION_MESSAGE } from './telemetry/utils.js';
 
+const prettyMocks = vi.hoisted(() => ({ pinoPretty: vi.fn() }));
+
+vi.mock('pino-pretty', async () => {
+  const { PassThrough } = await import('node:stream');
+  prettyMocks.pinoPretty.mockImplementation(() => new PassThrough());
+  return { build: prettyMocks.pinoPretty };
+});
+
 const OTEL_ENABLED_KEY = Symbol.for('@livekit/agents:otelEnabled');
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+const stdoutIsTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
 
 function resetOtelLoggingState() {
   delete (globalThis as Record<symbol, unknown>)[OTEL_ENABLED_KEY];
   initializeLogger({ pretty: false, level: 'silent' });
 }
+
+describe('pretty logging', () => {
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', platformDescriptor);
+    if (stdoutIsTTYDescriptor) {
+      Object.defineProperty(process.stdout, 'isTTY', stdoutIsTTYDescriptor);
+    } else {
+      Reflect.deleteProperty(process.stdout, 'isTTY');
+    }
+    prettyMocks.pinoPretty.mockClear();
+    initializeLogger({ pretty: false, level: 'silent' });
+  });
+
+  it.each([
+    ['win32', true, process.stdout],
+    ['win32', false, undefined],
+    ['linux', true, undefined],
+  ] as const)(
+    'selects the pino-pretty destination on %s when isTTY is %s',
+    async (platform, isTTY, destination) => {
+      Object.defineProperty(process, 'platform', { ...platformDescriptor, value: platform });
+      Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: isTTY });
+      vi.resetModules();
+      const { initializeLogger: initializePrettyLogger } = await import('./log.js');
+
+      initializePrettyLogger({ pretty: true, level: 'silent' });
+
+      expect(prettyMocks.pinoPretty).toHaveBeenCalledOnce();
+      expect(prettyMocks.pinoPretty).toHaveBeenCalledWith({
+        colorize: true,
+        ...(destination && { destination }),
+      });
+    },
+  );
+});
 
 describe('OTEL logging', () => {
   afterEach(() => {
