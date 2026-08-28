@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { enableOtelLogging, initializeLogger, log } from './log.js';
 import {
   PinoCloudExporter,
@@ -32,14 +32,17 @@ function stubConsole(platform: NodeJS.Platform, isTTY: boolean | undefined) {
   Object.defineProperty(process.stdout, 'isTTY', { value: isTTY, configurable: true });
 }
 
-// vitest.setup.ts imported log.js before the pino-pretty mock above was
-// registered, so a fresh copy is needed to observe the mock.
-vi.resetModules();
-const { initializeLogger: initializePrettyLogger } = await import('./log.js');
-
 describe('pretty logging', () => {
+  let initializePrettyLogger = initializeLogger;
   const { platform } = process;
   const { isTTY } = process.stdout;
+
+  beforeAll(async () => {
+    // vitest.setup.ts imported log.js before the pino-pretty mock above was
+    // registered, so a fresh copy is needed to observe the mock.
+    vi.resetModules();
+    ({ initializeLogger: initializePrettyLogger } = await import('./log.js'));
+  });
 
   afterEach(() => {
     stubConsole(platform, isTTY);
