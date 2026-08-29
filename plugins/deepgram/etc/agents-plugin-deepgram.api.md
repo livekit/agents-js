@@ -27,6 +27,11 @@ export class ChunkedStream extends tts.ChunkedStream {
     protected run(): Promise<void>;
 }
 
+// Warning: (ae-missing-release-tag) "FluxRedaction" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type FluxRedaction = 'numbers' | 'aggressive_numbers';
+
 // Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -147,6 +152,9 @@ export class STTv2 extends stt.STT {
     // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
     // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
     // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
+    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
+    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
+    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
     constructor(opts?: Partial<STTv2Options>);
     // (undocumented)
     readonly label = "deepgram.STTv2";
@@ -185,6 +193,9 @@ export interface STTv2Options {
     mipOptOut?: boolean;
     // (undocumented)
     model: V2Models | string;
+    numerals: boolean;
+    profanityFilter: boolean;
+    redact?: FluxRedaction;
     // (undocumented)
     sampleRate: number;
     // (undocumented)

@@ -21,6 +21,9 @@ const _CLOSE_MSG = JSON.stringify({ type: 'CloseStream' });
 
 // --- Configuration ---
 
+/** Redaction modes supported by the Deepgram Flux API. */
+export type FluxRedaction = 'numbers' | 'aggressive_numbers';
+
 /**
  * Configuration options for STTv2 (Deepgram Flux model).
  */
@@ -35,6 +38,12 @@ export interface STTv2Options {
   eotThreshold?: number;
   eotTimeoutMs?: number;
   mipOptOut?: boolean;
+  /** Whether to convert spoken numbers into numerical formats. */
+  numerals: boolean;
+  /** Whether to filter profanity from the transcription. Applied at connection time. */
+  profanityFilter: boolean;
+  /** Redact numbers at connection time. Flux does not support entity redaction. */
+  redact?: FluxRedaction;
   tags?: string[];
   /**
    * List of language hints to bias the model for improved accuracy.
@@ -51,6 +60,8 @@ const defaultSTTv2Options: Omit<STTv2Options, 'apiKey'> = {
   endpointUrl: 'wss://api.deepgram.com/v2/listen',
   language: 'en',
   mipOptOut: false,
+  numerals: false,
+  profanityFilter: false,
 };
 
 function validateTags(tags: string[]): string[] {
@@ -113,6 +124,9 @@ export class STTv2 extends stt.STT {
    * @param opts.eotThreshold - End-of-turn detection threshold (default: 0.7)
    * @param opts.eotTimeoutMs - End-of-turn timeout in ms (default: 3000)
    * @param opts.keyterms - List of key terms to improve recognition
+   * @param opts.numerals - Whether to convert spoken numbers into numerical formats
+   * @param opts.profanityFilter - Whether to filter profanity from the transcription
+   * @param opts.redact - Number redaction mode; Flux does not support entity redaction
    * @param opts.tags - Tags for usage reporting (max 128 chars each)
    * @param opts.languageHint - List of language hints to bias the model for improved accuracy.
    *   Only usable with `flux-general-multi`.
@@ -188,7 +202,7 @@ export class STTv2 extends stt.STT {
   }
 
   /**
-   * Update STT options. Changes will take effect on the next stream.
+   * Update STT options.
    *
    * @param opts - Partial options to update
    */
@@ -205,6 +219,16 @@ export class STTv2 extends stt.STT {
         opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
     };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
+
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (stream) {
+        stream.updateOptions(nextOpts);
+      } else {
+        this.#streams.delete(ref);
+      }
+    }
+
     // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 244-249 lines
     if (
       this.#opts.languageHint &&
@@ -300,6 +324,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
     this.#reconnectEvent.set();
   }
 
+  /** @internal */
+  get _reconnectPending(): boolean {
+    return this.#reconnectEvent.isSet;
+  }
+
   #onEndOfSpeech() {
     if (this._pendingKeyterm !== null) {
       this.updateOptions({ keyterms: this._pendingKeyterm });
@@ -313,7 +342,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
       try {
         this.#reconnectEvent.clear();
 
-        const url = this.#getDeepgramUrl();
+        const baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
+        const url = `${baseUrl}?${queryString.stringify(this._liveConfig())}`;
         this.#logger.debug('connecting to Deepgram');
 
         this.#ws = new WebSocket(url, {
@@ -535,8 +565,9 @@ class SpeechStreamv2 extends stt.SpeechStream {
     this.queue.put(usageEvent);
   }
 
-  #getDeepgramUrl(): string {
-    const params: Record<string, string | string[]> = {
+  /** @internal */
+  _liveConfig(): Record<string, string | string[] | boolean> {
+    const params: Record<string, string | string[] | boolean> = {
       model: this.#opts.model,
       sample_rate: this.#opts.sampleRate.toString(),
       encoding: 'linear16',
@@ -557,9 +588,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
       params.language_hint = this.#opts.languageHint;
     }
 
-    const baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
-    const qs = queryString.stringify(params);
-    return `${baseUrl}?${qs}`;
+    if (this.#opts.numerals) params.numerals = this.#opts.numerals;
+    if (this.#opts.profanityFilter) params.profanity_filter = this.#opts.profanityFilter;
+    if (this.#opts.redact !== undefined) params.redact = this.#opts.redact;
+
+    return params;
   }
 
   override close() {
