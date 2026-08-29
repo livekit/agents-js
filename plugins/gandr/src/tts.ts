@@ -28,10 +28,10 @@ export interface TTSOptions {
   speed?: number;
   /**
    * Output audio format. `pcm` (headerless) is what LiveKit consumes.
-   * `wav` also works; the endpoint defaults to `mp3`, which the doors
-   * deliberately do not encode, so always pass an explicit format.
+   * `wav` also works; the endpoint defaults to `mp3` when no format is
+   * given, so always pass an explicit format.
    */
-  responseFormat?: 'mp3' | 'opus' | 'aac' | 'flac' | 'wav' | 'pcm';
+  responseFormat?: 'mp3' | 'wav' | 'pcm';
   /** Base URL of the OpenAI-compatible audio shim. Defaults to tts.gandr.ai/v1. */
   baseURL?: string;
 }
