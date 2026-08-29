@@ -25,6 +25,7 @@ describe('Mistral Provider Format - toChatCtx', () => {
     expect(entries).toEqual([
       { type: 'message.input', role: 'user', content: 'Hello' },
       { type: 'message.output', role: 'assistant', content: 'Hi there!' },
+      { type: 'message.input', role: 'user', content: '(empty)' },
     ]);
     expect(formatData.instructions).toBe('');
   });
@@ -251,6 +252,29 @@ describe('Mistral Provider Format - toChatCtx', () => {
     expect(entries).toEqual([{ type: 'message.input', role: 'user', content: 'Hello' }]);
   });
 
+  it('should inject a trailing user message after an assistant', () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+    ctx.addMessage({ role: 'assistant', content: 'Hi there' });
+
+    const [entries] = toChatCtx(ctx);
+
+    expect(entries.at(-1)).toEqual({
+      type: 'message.input',
+      role: 'user',
+      content: '(empty)',
+    });
+  });
+
+  it('should skip trailing user message injection when disabled', () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'assistant', content: 'Hi there' });
+
+    const [entries] = toChatCtx(ctx, false);
+
+    expect(entries).toEqual([{ type: 'message.output', role: 'assistant', content: 'Hi there' }]);
+  });
+
   it('should handle empty chat context', () => {
     const ctx = ChatContext.empty();
 
@@ -304,6 +328,7 @@ describe('Mistral Provider Format - toChatCtx', () => {
     expect(entries).toEqual([
       { type: 'message.input', role: 'user', content: 'Hello' },
       { type: 'message.output', role: 'assistant', content: 'Hi there!' },
+      { type: 'message.input', role: 'user', content: '(empty)' },
     ]);
   });
 
@@ -347,6 +372,7 @@ describe('Mistral Provider Format - toChatCtx', () => {
         result: 'Sunny, 22C',
       },
       { type: 'message.output', role: 'assistant', content: 'It is sunny and 22C in Paris.' },
+      { type: 'message.input', role: 'user', content: '(empty)' },
     ]);
   });
 });
