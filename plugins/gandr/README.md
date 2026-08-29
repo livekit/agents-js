@@ -22,7 +22,7 @@ const session = new voice.AgentSession({
 });
 ```
 
-Get a key at [gandr.ai](https://gandr.ai). The free tier is 100,000 tokens.
+Get a key at [gandr.ai](https://gandr.ai). The free tier is 50,000 tokens.
 
 ## Voices
 
