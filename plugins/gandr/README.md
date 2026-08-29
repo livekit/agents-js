@@ -37,8 +37,8 @@ alias onto those voices automatically, so an unmodified OpenAI client pointed at
 
 - **Streams in chunks as it is generated**, so playback starts while the rest is
   still rendering. The plugin requests `response_format: 'pcm'` (headerless
-  s16le) which LiveKit plays directly; the endpoint's own default format would
-  need an encoder the doors do not ship, so an explicit format is always sent.
+  s16le) which LiveKit plays directly; the endpoint's own default format is
+  mp3, so an explicit format is always sent.
 - **Errors map to the framework exception classes**: a 4xx or 5xx raises
   `APIStatusError`, a dead connection raises `APIConnectionError`, and a
   timeout raises `APITimeoutError`, so `FallbackAdapter` and LiveKit's retry
