@@ -882,7 +882,7 @@ export class AgentSession<
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
-          'RoomIO audio input is enabled but input.audio is already set, ignoring..',
+          'RoomIO audio input is enabled; preserving and using the existing input.audio',
         );
       }
 
@@ -894,7 +894,7 @@ export class AgentSession<
 
       if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
         this.logger.warn(
-          'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
+          'RoomIO transcription output is enabled; preserving and using the existing output.transcription',
         );
       }
 
