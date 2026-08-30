@@ -1975,11 +1975,17 @@ export class AudioRecognition {
     const unlock = await this.sttLifecycleLock.lock();
     try {
       const pipeline = this.sttPipeline;
+      const consumerTask = this.sttConsumerTask;
+      try {
+        await consumerTask?.cancelAndWait();
+      } finally {
+        if (this.sttConsumerTask === consumerTask) {
+          this.sttConsumerTask = undefined;
+        }
+      }
+
       this.sttPipeline = undefined;
       this.sttOwnershipTransferred = pipeline !== undefined;
-
-      await this.sttConsumerTask?.cancelAndWait();
-      this.sttConsumerTask = undefined;
 
       return pipeline;
     } finally {

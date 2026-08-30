@@ -1131,6 +1131,8 @@ export class AgentSession<
         if (!nextActivity) {
           throw new Error('AgentSession is closing, cannot use say()');
         }
+        // Keep Python parity: the queued activity creates the refused speech, then its paused
+        // scheduler interrupts the handle so the speech task can settle.
         return nextActivity.say(text, options);
       }
       return activity.say(text, options);

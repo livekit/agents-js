@@ -2280,7 +2280,8 @@ export class AgentActivity implements RecognitionHooks {
       });
     };
 
-    const task = Task.from(wrappedFn, controller, name);
+    const taskController = controller ?? new AbortController();
+    const task = Task.from(wrappedFn, taskController, name);
     _setActivityTaskInfo(task, { speechHandle: ownedSpeechHandle, inlineTask });
 
     this.speechTasks.add(task);
@@ -2289,6 +2290,15 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     if (ownedSpeechHandle) {
+      const interruptOwnedSpeech = () => ownedSpeechHandle.interrupt(true);
+      taskController.signal.addEventListener('abort', interruptOwnedSpeech, { once: true });
+      if (taskController.signal.aborted) {
+        interruptOwnedSpeech();
+      }
+      task.addDoneCallback(() => {
+        taskController.signal.removeEventListener('abort', interruptOwnedSpeech);
+      });
+
       ownedSpeechHandle._tasks.push(task);
       task.addDoneCallback(() => {
         if (ownedSpeechHandle._tasks.every((t) => t.done)) {
@@ -4856,8 +4866,17 @@ export class AgentActivity implements RecognitionHooks {
   ): void {
     // when force=true, we allow tool responses to bypass scheduling pause
     // This allows for tool responses to be generated before the AgentActivity is finalized
-    if (this.schedulingPaused && !force) {
-      throw new SchedulingPausedError();
+    const schedulingPaused = this.schedulingPaused && !force;
+    if (schedulingPaused || this._mainTask?.done) {
+      this.logger.warn(
+        { speech_id: speechHandle.id, scheduling_paused: schedulingPaused },
+        'attempting to schedule a new SpeechHandle while speech scheduling is paused or stopped; the speech will be cancelled',
+      );
+      speechHandle.interrupt(true);
+      if (schedulingPaused) {
+        throw new SchedulingPausedError();
+      }
+      return;
     }
 
     // Monotonic time to avoid near 0 collisions
