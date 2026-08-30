@@ -516,8 +516,8 @@ function wordsToSpeechData(
   return {
     language: language as LanguageCode,
     text,
-    startTime: words.length ? ((words[0]!['start'] as number) ?? 0) : 0,
-    endTime: words.length ? ((words[words.length - 1]!['end'] as number) ?? 0) : 0,
+    startTime: words.length ? (words[0]!['start'] as number) ?? 0 : 0,
+    endTime: words.length ? (words[words.length - 1]!['end'] as number) ?? 0 : 0,
     confidence: 0,
     words:
       words.length > 0
