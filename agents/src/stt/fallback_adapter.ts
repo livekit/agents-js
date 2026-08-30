@@ -510,6 +510,9 @@ class FallbackSpeechStream extends SpeechStream {
 
         try {
           for await (const ev of child) {
+            // The parent can close while a child has a transcript in flight.
+            // Stop cleanly instead of treating the closed queue as a provider failure.
+            if (this.queue.closed) return;
             this.fallbackAdapter._setActiveStt(sttInstance);
             this.queue.put(ev);
           }

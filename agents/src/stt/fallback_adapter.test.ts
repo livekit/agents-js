@@ -314,6 +314,36 @@ describe('FallbackSpeechStream (streaming path)', () => {
     expect(adapter.status[1]?.available).toBe(true);
   });
 
+  it('keeps the provider available when a late transcript arrives after stream close', async () => {
+    const primary = new FakeSTT({
+      label: 'primary',
+      fakeTranscript: 'late transcript',
+      fakeTimeoutMs: 50,
+    });
+    const adapter = new FallbackAdapter({
+      sttInstances: [primary],
+      maxRetryPerSTT: 0,
+    });
+
+    const availabilityChanges: Array<{ stt: STT; available: boolean }> = [];
+    (adapter as unknown as EventEmitter).on(
+      'stt_availability_changed',
+      (ev: { stt: STT; available: boolean }) => {
+        availabilityChanges.push(ev);
+      },
+    );
+
+    const stream = adapter.stream();
+    await primary.streamCh.next();
+    stream.close();
+    await delay(150);
+
+    expect(availabilityChanges).toEqual([]);
+    expect(adapter.status[0]?.available).toBe(true);
+
+    await adapter.close();
+  });
+
   it('stream switches to the secondary provider when the primary errors', async () => {
     const primary = new FakeSTT({
       label: 'primary',
