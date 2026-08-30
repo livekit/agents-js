@@ -75,6 +75,54 @@ async function collectUntilEnd(stream: sttLib.SpeechStream): Promise<sttLib.Spee
   return events;
 }
 
+async function processStreamEvents(
+  messages: Record<string, unknown>[],
+  expectedEventCount: number,
+  serverVad: { vadSilenceThresholdSecs: number } | null,
+): Promise<sttLib.SpeechEvent[]> {
+  const { wss, baseURL } = await startWebSocketServer();
+  wss.on('connection', (ws) => {
+    ws.once('message', () => {
+      for (const message of messages) ws.send(JSON.stringify(message));
+    });
+  });
+
+  const stream = new STT({
+    apiKey: 'test-key',
+    baseURL,
+    model: 'scribe_v2_realtime',
+    serverVad,
+  }).stream();
+  const events: sttLib.SpeechEvent[] = [];
+  try {
+    stream.pushFrame(makeFrame());
+    for await (const event of stream) {
+      events.push(event);
+      if (events.length === expectedEventCount) break;
+    }
+    return events;
+  } finally {
+    stream.close();
+    await closeWebSocketServer(wss);
+  }
+}
+
+function partialTranscript(text: string): Record<string, unknown> {
+  return { message_type: 'partial_transcript', text, words: [] };
+}
+
+function committedTranscript(text: string): Record<string, unknown> {
+  return { message_type: 'committed_transcript', text, words: [] };
+}
+
+function interimTexts(events: sttLib.SpeechEvent[]): string[] {
+  return events.flatMap((event) =>
+    event.type === sttLib.SpeechEventType.INTERIM_TRANSCRIPT
+      ? [event.alternatives?.[0]?.text ?? '']
+      : [],
+  );
+}
+
 const TRANSCRIPT =
   'It could not have been ten seconds, and yet it seemed a long time that their hands were clasped together.';
 
@@ -150,6 +198,50 @@ describe('ElevenLabs STT integration', () => {
 });
 
 describe('ElevenLabs STT', () => {
+  it('forwards advancing partial transcripts', async () => {
+    const events = await processStreamEvents(
+      [partialTranscript('yeah'), partialTranscript('yeah please')],
+      3,
+      { vadSilenceThresholdSecs: 0.5 },
+    );
+
+    expect(interimTexts(events)).toEqual(['yeah', 'yeah please']);
+  });
+
+  it('drops re-sent partial transcripts', async () => {
+    const events = await processStreamEvents(
+      Array.from({ length: 5 }, () => partialTranscript('yeah please')),
+      2,
+      { vadSilenceThresholdSecs: 0.5 },
+    );
+
+    expect(interimTexts(events)).toEqual(['yeah please']);
+    expect(events.map((event) => event.type)).toEqual([
+      sttLib.SpeechEventType.START_OF_SPEECH,
+      sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+    ]);
+  });
+
+  it('forwards the same words again after a commit', async () => {
+    const events = await processStreamEvents(
+      [partialTranscript('right'), committedTranscript('right'), partialTranscript('right')],
+      6,
+      { vadSilenceThresholdSecs: 0.5 },
+    );
+
+    expect(interimTexts(events)).toEqual(['right', 'right']);
+  });
+
+  it('forwards the same words again after an empty commit', async () => {
+    const events = await processStreamEvents(
+      [partialTranscript('right'), committedTranscript(''), partialTranscript('right')],
+      5,
+      null,
+    );
+
+    expect(interimTexts(events)).toEqual(['right', 'right']);
+  });
+
   it('calculates confidence from spoken-word logprobs', async () => {
     const event = await recognizeWords([
       { type: 'word', logprob: -0.01 },
