@@ -344,6 +344,52 @@ describe('FallbackSpeechStream (streaming path)', () => {
     await adapter.close();
   });
 
+  it('closes recovery probes when a late transcript arrives after stream close', async () => {
+    const primary = new FakeSTT({
+      label: 'primary',
+      fakeException: new APIError('primary down'),
+    });
+    const fallback = new FakeSTT({
+      label: 'fallback',
+      fakeTranscript: 'late transcript',
+      fakeTimeoutMs: 50,
+    });
+    const adapter = new FallbackAdapter({
+      sttInstances: [primary, fallback],
+      maxRetryPerSTT: 0,
+    });
+
+    (adapter as unknown as EventEmitter).on(
+      'stt_availability_changed',
+      (ev: { stt: STT; available: boolean }) => {
+        if (ev.stt === primary && !ev.available) {
+          // Keep the recovery probe alive until the parent stream tears it down.
+          primary.updateOptions({ fakeException: null });
+        }
+      },
+    );
+
+    const stream = adapter.stream();
+    stream.endInput();
+
+    await primary.streamCh.next(); // failed main stream
+    const recoveryProbe = (await primary.streamCh.next()).value;
+    await fallback.streamCh.next();
+
+    stream.close();
+    await delay(150);
+
+    let recoveryProbeClosed = false;
+    try {
+      recoveryProbe?.endInput();
+    } catch {
+      recoveryProbeClosed = true;
+    }
+    await adapter.close();
+
+    expect(recoveryProbeClosed).toBe(true);
+  });
+
   it('stream switches to the secondary provider when the primary errors', async () => {
     const primary = new FakeSTT({
       label: 'primary',
