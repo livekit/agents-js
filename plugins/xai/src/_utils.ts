@@ -75,9 +75,7 @@ export const connectWebSocket = async ({
       new APIConnectionError({ message: `failed to connect to xAI (${errorName(error)})` }),
     );
   const onClose = () =>
-    fut.reject(
-      new APIConnectionError({ message: 'failed to connect to xAI (CloseEvent)' }),
-    );
+    fut.reject(new APIConnectionError({ message: 'failed to connect to xAI (CloseEvent)' }));
 
   ws.on('open', onOpen);
   ws.on('unexpected-response', onUnexpectedResponse);
