@@ -238,11 +238,17 @@ export class ConnectionPool<T> {
     this.prewarmController = controller;
 
     // Start prewarm in background
-    this._prewarmImpl(controller.signal).catch((error: unknown) => {
-      if (loggerOptions()) {
-        log().warn({ exceptionType: safeErrorType(error) }, 'failed to prewarm connection pool');
-      }
-    });
+    this._prewarmImpl(controller.signal)
+      .catch((error: unknown) => {
+        if (loggerOptions()) {
+          log().warn({ exceptionType: safeErrorType(error) }, 'failed to prewarm connection pool');
+        }
+      })
+      .finally(() => {
+        if (this.prewarmController === controller) {
+          this.prewarmController = undefined;
+        }
+      });
   }
 
   private async _prewarmImpl(signal: AbortSignal): Promise<void> {

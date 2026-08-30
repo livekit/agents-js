@@ -339,6 +339,28 @@ describe('ConnectionPool', () => {
         process.off('unhandledRejection', onUnhandled);
       }
     });
+
+    it('retries after failure', async () => {
+      let attempts = 0;
+      const pool = new ConnectionPool<number>({
+        connectCb: async () => {
+          attempts += 1;
+          if (attempts === 1) {
+            throw new Error('temporary prewarm failure');
+          }
+          return attempts;
+        },
+      });
+
+      pool.prewarm();
+      await vi.waitFor(() => expect(attempts).toBe(1));
+
+      pool.prewarm();
+      await vi.waitFor(() => expect(attempts).toBe(2));
+
+      expect(await pool.get()).toBe(2);
+      expect(attempts).toBe(2);
+    });
   });
 
   describe('close', () => {
