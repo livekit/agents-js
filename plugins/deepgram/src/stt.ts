@@ -712,7 +712,7 @@ const liveTranscriptionToSpeechData = (
   return alts.map((alt) => {
     const wordsData: any[] = alt['words'] ?? [];
     const detectedLanguage =
-      language === 'multi' ? (alt['languages']?.[0] ?? language) : (alt['language'] ?? language);
+      language === 'multi' ? alt['languages']?.[0] ?? language : alt['language'] ?? language;
 
     return {
       language: normalizeLanguage(detectedLanguage),
