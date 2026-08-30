@@ -16,7 +16,8 @@ import {
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { type RawData, WebSocket } from 'ws';
+import type { RawData, WebSocket } from 'ws';
+import { connectWebSocket } from './_utils.js';
 
 const SAMPLE_RATE = 24000;
 const NUM_CHANNELS = 1;
@@ -240,8 +241,9 @@ export class TTS extends tts.TTS {
         timeoutMs: timeout,
       });
     } catch (e) {
+      if (e instanceof APIStatusError || e instanceof APIConnectionError) throw e;
       throw new APIConnectionError({
-        message: `failed to connect to xAI: ${(e as Error).message ?? 'unknown error'}`,
+        message: `failed to connect to xAI (${errorName(e)})`,
       });
     }
   }
@@ -472,57 +474,4 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 }
 
-const connectWebSocket = async ({
-  url,
-  headers,
-  timeoutMs,
-}: {
-  url: string;
-  headers: Record<string, string>;
-  timeoutMs: number;
-}): Promise<WebSocket> => {
-  const ws = new WebSocket(url, { headers, handshakeTimeout: timeoutMs });
-  const fut = new Future<void>();
-
-  let timeout: NodeJS.Timeout | undefined;
-  const cleanup = () => {
-    if (timeout) clearTimeout(timeout);
-    ws.off('open', onOpen);
-    ws.off('error', onError);
-    ws.off('close', onClose);
-  };
-
-  const onOpen = () => fut.resolve();
-  const onError = (error: Error) => fut.reject(error);
-  const onClose = (code: number, reason: Buffer) =>
-    fut.reject(
-      new Error(`websocket closed before open (code=${code}, reason=${reason.toString()})`),
-    );
-
-  ws.on('open', onOpen);
-  ws.on('error', onError);
-  ws.on('close', onClose);
-
-  if (timeoutMs > 0) {
-    timeout = setTimeout(() => fut.reject(new Error('connect timeout')), timeoutMs);
-  }
-
-  try {
-    await fut.await;
-    return ws;
-  } catch (e) {
-    try {
-      ws.on('error', () => {});
-      if (ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      } else {
-        ws.terminate();
-      }
-    } catch {
-      // ignore
-    }
-    throw e;
-  } finally {
-    cleanup();
-  }
-};
+const errorName = (error: unknown): string => (error instanceof Error ? error.name : typeof error);

@@ -4,6 +4,8 @@
 import type { LanguageCode } from '@livekit/agents';
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   type AudioBuffer,
   AudioByteStream,
   Future,
@@ -16,6 +18,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
 import { WebSocket } from 'ws';
 import { PeriodicCollector } from './_utils.js';
 
@@ -229,17 +232,19 @@ export class SpeechStream extends stt.SpeechStream {
         }
       }
 
-      ws = new WebSocket(streamURL, {
-        headers: { Authorization: `Bearer ${this.#apiKey}` },
-      });
+      try {
+        ws = new WebSocket(streamURL, {
+          headers: { Authorization: `Bearer ${this.#apiKey}` },
+        });
+        await waitForWsOpen(ws);
+      } catch (error) {
+        if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+        throw new APIConnectionError({
+          message: `failed to connect to xAI (${errorName(error)})`,
+        });
+      }
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
-        });
-
         await this.#runWS(ws);
       } catch (e) {
         if (!this.closed && !this.input.closed) {
@@ -458,6 +463,51 @@ export class SpeechStream extends stt.SpeechStream {
   }
 }
 
+async function waitForWsOpen(ws: WebSocket): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      ws.off('open', onOpen);
+      ws.off('unexpected-response', onUnexpectedResponse);
+      ws.off('error', onError);
+      ws.off('close', onClose);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+      cleanup();
+      response.resume();
+      ws.on('error', () => {});
+      ws.close();
+      const statusCode = response.statusCode ?? -1;
+      reject(
+        new APIStatusError({
+          message: `xAI WebSocket connection rejected with status ${statusCode}`,
+          options: { statusCode },
+        }),
+      );
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(new APIConnectionError({ message: `failed to connect to xAI (${errorName(error)})` }));
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new APIConnectionError({ message: 'failed to connect to xAI (CloseEvent)' }));
+    };
+
+    ws.once('open', onOpen);
+    ws.once('unexpected-response', onUnexpectedResponse);
+    ws.once('error', onError);
+    ws.once('close', onClose);
+  });
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
 function wordsToSpeechData(
   words: Record<string, unknown>[],
   text: string,
@@ -466,8 +516,8 @@ function wordsToSpeechData(
   return {
     language: language as LanguageCode,
     text,
-    startTime: words.length ? (words[0]!['start'] as number) ?? 0 : 0,
-    endTime: words.length ? (words[words.length - 1]!['end'] as number) ?? 0 : 0,
+    startTime: words.length ? ((words[0]!['start'] as number) ?? 0) : 0,
+    endTime: words.length ? ((words[words.length - 1]!['end'] as number) ?? 0) : 0,
     confidence: 0,
     words:
       words.length > 0

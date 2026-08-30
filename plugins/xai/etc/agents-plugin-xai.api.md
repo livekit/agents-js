@@ -28,7 +28,7 @@ import { TrackPublishOptions } from '@livekit/rtc-node';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
-import { WebSocket as WebSocket_2 } from 'ws';
+import type { WebSocket as WebSocket_2 } from 'ws';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 import { z } from 'zod';
 
@@ -239,7 +239,7 @@ export interface TTSOptions {
 
 // Warnings were encountered during analysis:
 //
-// src/stt.ts:147:22 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
+// src/stt.ts:150:22 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

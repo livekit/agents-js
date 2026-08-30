@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger, tts } from '@livekit/agents';
+import { APIStatusError, initializeLogger, tts } from '@livekit/agents';
 import { once } from 'node:events';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
+import { connectWebSocket } from './_utils.js';
 import type { GrokVoices } from './tts.js';
 import { TTS } from './tts.js';
 
@@ -88,6 +89,34 @@ describe('xAI TTS', () => {
       expect(xai.model).toBe('unknown');
     } finally {
       await xai.close();
+    }
+  });
+
+  it('redacts API keys from rejected WebSocket handshakes', async () => {
+    const secret = 'secret-api-key-do-not-log';
+    const wss = new WebSocketServer({
+      host: '127.0.0.1',
+      port: 0,
+      verifyClient: (_info, done) => done(false, 401, 'Unauthorized'),
+    });
+    await once(wss, 'listening');
+    const address = wss.address();
+    if (address === null || typeof address === 'string') {
+      throw new Error('expected websocket server to listen on a TCP port');
+    }
+    try {
+      const error = await connectWebSocket({
+        url: `ws://127.0.0.1:${address.port}`,
+        headers: { Authorization: `Bearer ${secret}` },
+        timeoutMs: 5_000,
+      }).catch((error: unknown) => error);
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect((error as APIStatusError).statusCode).toBe(401);
+      expect((error as Error).message).not.toContain(secret);
+      expect(String(error)).not.toContain(secret);
+    } finally {
+      await closeWebSocketServer(wss);
     }
   });
 });

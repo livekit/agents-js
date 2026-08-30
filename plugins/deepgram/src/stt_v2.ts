@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   AudioByteStream,
   Event,
   calculateAudioDurationSeconds,
@@ -12,6 +14,7 @@ import {
   stt,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
+import type { IncomingMessage } from 'node:http';
 import * as queryString from 'node:querystring';
 import { WebSocket } from 'ws';
 import { PeriodicCollector } from './_utils.js';
@@ -316,26 +319,17 @@ class SpeechStreamv2 extends stt.SpeechStream {
         const url = this.#getDeepgramUrl();
         this.#logger.debug('connecting to Deepgram');
 
-        this.#ws = new WebSocket(url, {
-          headers: { Authorization: `Token ${this.#opts.apiKey}` },
-        });
-
-        // 1. Wait for Connection Open
-        await new Promise<void>((resolve, reject) => {
-          if (!this.#ws) return reject(new Error('WebSocket not initialized'));
-
-          const onOpen = () => {
-            this.#ws?.off('error', onError);
-            resolve();
-          };
-          const onError = (err: Error) => {
-            this.#ws?.off('open', onOpen);
-            reject(err);
-          };
-
-          this.#ws.once('open', onOpen);
-          this.#ws.once('error', onError);
-        });
+        try {
+          this.#ws = new WebSocket(url, {
+            headers: { Authorization: `Token ${this.#opts.apiKey}` },
+          });
+          await waitForWsOpen(this.#ws);
+        } catch (error) {
+          if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+          throw new APIConnectionError({
+            message: `failed to connect to Deepgram (${errorName(error)})`,
+          });
+        }
 
         // 2. Run Concurrent Tasks (Send & Receive)
         const sendPromise = this.#sendTask();
@@ -566,6 +560,55 @@ class SpeechStreamv2 extends stt.SpeechStream {
     super.close();
     this.#ws?.close();
   }
+}
+
+async function waitForWsOpen(ws: WebSocket): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      ws.off('open', onOpen);
+      ws.off('unexpected-response', onUnexpectedResponse);
+      ws.off('error', onError);
+      ws.off('close', onClose);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+      cleanup();
+      response.resume();
+      ws.on('error', () => {});
+      ws.close();
+      const statusCode = response.statusCode ?? -1;
+      reject(
+        new APIStatusError({
+          message: `Deepgram WebSocket connection rejected with status ${statusCode}`,
+          options: { statusCode },
+        }),
+      );
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(
+        new APIConnectionError({
+          message: `failed to connect to Deepgram (${errorName(error)})`,
+        }),
+      );
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new APIConnectionError({ message: 'failed to connect to Deepgram (CloseEvent)' }));
+    };
+
+    ws.once('open', onOpen);
+    ws.once('unexpected-response', onUnexpectedResponse);
+    ws.once('error', onError);
+    ws.once('close', onClose);
+  });
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 // --- Helpers ---

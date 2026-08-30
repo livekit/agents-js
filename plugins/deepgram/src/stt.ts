@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   type AudioBuffer,
   AudioByteStream,
   AudioEnergyFilter,
@@ -17,6 +19,7 @@ import {
   waitForAbort,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
+import type { IncomingMessage } from 'node:http';
 import { WebSocket } from 'ws';
 import { PeriodicCollector } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
@@ -321,17 +324,19 @@ export class SpeechStream extends stt.SpeechStream {
       };
       appendSearchParams(streamURL, params);
 
-      ws = new WebSocket(streamURL, {
-        headers: { Authorization: `Token ${this.#opts.apiKey}` },
-      });
+      try {
+        ws = new WebSocket(streamURL, {
+          headers: { Authorization: `Token ${this.#opts.apiKey}` },
+        });
+        await waitForWsOpen(ws, 'Deepgram');
+      } catch (error) {
+        if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+        throw new APIConnectionError({
+          message: `failed to connect to Deepgram (${errorName(error)})`,
+        });
+      }
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
-        });
-
         await this.#runWS(ws);
       } catch (e) {
         if (!this.closed && !this.input.closed) {
@@ -595,6 +600,56 @@ export class SpeechStream extends stt.SpeechStream {
   }
 }
 
+async function waitForWsOpen(ws: WebSocket, provider: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      ws.off('open', onOpen);
+      ws.off('unexpected-response', onUnexpectedResponse);
+      ws.off('error', onError);
+      ws.off('close', onClose);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+      cleanup();
+      response.resume();
+      ws.on('error', () => {});
+      ws.close();
+      // Authentication headers can appear in WebSocket handshake errors.
+      const statusCode = response.statusCode ?? -1;
+      reject(
+        new APIStatusError({
+          message: `${provider} WebSocket connection rejected with status ${statusCode}`,
+          options: { statusCode },
+        }),
+      );
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(
+        new APIConnectionError({
+          message: `failed to connect to ${provider} (${errorName(error)})`,
+        }),
+      );
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new APIConnectionError({ message: `failed to connect to ${provider} (CloseEvent)` }));
+    };
+
+    ws.once('open', onOpen);
+    ws.once('unexpected-response', onUnexpectedResponse);
+    ws.once('error', onError);
+    ws.once('close', onClose);
+  });
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
 function appendSearchParams(url: URL, params: Record<string, unknown>) {
   Object.entries(params).forEach(([key, value]) => {
     if (value === undefined || value === null) return;
@@ -657,7 +712,7 @@ const liveTranscriptionToSpeechData = (
   return alts.map((alt) => {
     const wordsData: any[] = alt['words'] ?? [];
     const detectedLanguage =
-      language === 'multi' ? alt['languages']?.[0] ?? language : alt['language'] ?? language;
+      language === 'multi' ? (alt['languages']?.[0] ?? language) : (alt['language'] ?? language);
 
     return {
       language: normalizeLanguage(detectedLanguage),
