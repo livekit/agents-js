@@ -102,6 +102,30 @@ class AlwaysFailingStream extends SpeechStream {
 
 const connOptions: APIConnectOptions = { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 10_000 };
 
+describe('SpeechStream wall-clock anchor', () => {
+  it('seeds startTime when the stream starts', async () => {
+    const before = Date.now();
+    const stream = new DurationCapSTT(0).stream({ connOptions });
+    await delay(0);
+
+    expect(stream.startTime).toBeGreaterThanOrEqual(before);
+    expect(stream.startTime).toBeLessThanOrEqual(Date.now());
+    await stream.close();
+  });
+
+  it('allows providers to refine startTime and rejects negative values', async () => {
+    const stream = new DurationCapSTT(0).stream({ connOptions });
+    await delay(0);
+
+    stream.startTime = 12_345;
+    expect(stream.startTime).toBe(12_345);
+    expect(() => {
+      stream.startTime = -1;
+    }).toThrow('startTime must be non-negative');
+    await stream.close();
+  });
+});
+
 describe('SpeechStream retry budget', () => {
   beforeAll(() => {
     initializeLogger({ pretty: false });

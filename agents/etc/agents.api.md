@@ -6870,6 +6870,8 @@ abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
     protected resampler?: AudioResampler;
     // (undocumented)
     protected abstract run(): Promise<void>;
+    get startTime(): number;
+    set startTime(value: number);
     // (undocumented)
     get startTimeOffset(): number;
     set startTimeOffset(value: number);

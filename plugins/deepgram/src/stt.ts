@@ -419,6 +419,7 @@ export class SpeechStream extends stt.SpeechStream {
     });
 
     const sendTask = async () => {
+      let sentAudioDuration = 0;
       const samples100Ms = Math.floor(this.#opts.sampleRate / 10);
       const stream = new AudioByteStream(
         this.#opts.sampleRate,
@@ -458,6 +459,11 @@ export class SpeechStream extends stt.SpeechStream {
           for await (const frame of frames) {
             if (this.#audioEnergyFilter.pushFrame(frame)) {
               const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+              // Deepgram's clock advances only for transmitted audio. Re-anchor
+              // continuously so silence removed by AudioEnergyFilter does not
+              // make provider-relative word times drift from wall clock.
+              this.startTime = Date.now() - (sentAudioDuration + frameDuration) * 1000;
+              sentAudioDuration += frameDuration;
               this.#audioDurationCollector.push(frameDuration);
               ws.send(frame.data.buffer);
             }
@@ -547,7 +553,12 @@ export class SpeechStream extends stt.SpeechStream {
                 // a non-empty transcript (deepgram doesn't have a SpeechEnded event)
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
-                  putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  const relativeEndTime =
+                    json['channel']?.['alternatives']?.[0]?.['words']?.at(-1)?.['end'];
+                  putMessage({
+                    type: stt.SpeechEventType.END_OF_SPEECH,
+                    speechEndTime: this.#toSpeechEndTime(relativeEndTime),
+                  });
                   this.#onEndOfSpeech();
                 }
 
@@ -559,7 +570,10 @@ export class SpeechStream extends stt.SpeechStream {
               case 'UtteranceEnd': {
                 if (this.#speaking) {
                   this.#speaking = false;
-                  putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  putMessage({
+                    type: stt.SpeechEventType.END_OF_SPEECH,
+                    speechEndTime: this.#toSpeechEndTime(json['last_word_end']),
+                  });
                   this.#onEndOfSpeech();
                 }
                 break;
@@ -595,6 +609,14 @@ export class SpeechStream extends stt.SpeechStream {
     closing = true;
     ws.close();
     clearInterval(keepalive);
+  }
+
+  #toSpeechEndTime(relativeEndTime: unknown): number | undefined {
+    return typeof relativeEndTime === 'number' &&
+      Number.isFinite(relativeEndTime) &&
+      relativeEndTime >= 0
+      ? this.startTime + relativeEndTime * 1000
+      : undefined;
   }
 
   private onAudioDurationReport(duration: number) {

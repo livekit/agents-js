@@ -821,6 +821,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let closing = false;
       let finalReceived = false;
       let vadStream: VADStream | null = null;
+      let pendingSpeechEndTime: number | undefined;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
 
@@ -869,6 +870,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       const send = async (socket: WebSocket, signal: AbortSignal) => {
+        let audioStarted = false;
         const audioStream = new AudioByteStream(
           this.opts.sampleRate,
           1,
@@ -903,6 +905,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             }
 
             for (const frame of frames) {
+              if (!audioStarted) {
+                this.startTime = Date.now();
+                audioStarted = true;
+              }
               this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
               const base64 = Buffer.from(frame.data.buffer).toString('base64');
               const msg = { type: 'input_audio', audio: base64 };
@@ -938,6 +944,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (result.done) break;
             if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
             if (socket.readyState !== 1) return;
+            pendingSpeechEndTime =
+              Date.now() - result.value.silenceDuration - result.value.inferenceDuration;
             socket.send(JSON.stringify({ type: 'session.finalize' }));
           }
         } catch (e) {
@@ -992,7 +1000,12 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 this.processTranscript(event, SpeechEventType.INTERIM_TRANSCRIPT);
                 break;
               case 'final_transcript':
-                this.processTranscript(event, SpeechEventType.FINAL_TRANSCRIPT);
+                this.processTranscript(
+                  event,
+                  SpeechEventType.FINAL_TRANSCRIPT,
+                  pendingSpeechEndTime,
+                );
+                pendingSpeechEndTime = undefined;
                 break;
               case 'preflight_transcript':
                 this.processTranscript(event, SpeechEventType.PREFLIGHT_TRANSCRIPT);
@@ -1081,7 +1094,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
   }
 
-  private processTranscript(data: SttTranscriptEvent, eventType: SpeechEventType) {
+  private processTranscript(
+    data: SttTranscriptEvent,
+    eventType: SpeechEventType,
+    capturedSpeechEndTime?: number,
+  ) {
     // Check if queue is closed to avoid race condition during disconnect
     if (this.queue.closed) return;
 
@@ -1127,6 +1144,16 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       if (eventType === SpeechEventType.FINAL_TRANSCRIPT) {
+        const lastWordEnd = data.words.at(-1)?.end;
+        const providerEndTime =
+          typeof lastWordEnd === 'number'
+            ? lastWordEnd
+            : data.duration > 0
+              ? data.start + data.duration
+              : undefined;
+        const speechEndTime =
+          capturedSpeechEndTime ??
+          (providerEndTime !== undefined ? this.startTime + providerEndTime * 1000 : undefined);
         if (this.speechDuration > 0) {
           this.queue.put({
             type: SpeechEventType.RECOGNITION_USAGE,
@@ -1139,12 +1166,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         this.queue.put({
           type: SpeechEventType.FINAL_TRANSCRIPT,
           requestId,
+          speechEndTime,
           alternatives: [speechData],
         });
 
         if (this.speaking) {
           this.speaking = false;
-          this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
+          this.queue.put({ type: SpeechEventType.END_OF_SPEECH, speechEndTime });
           this.onEndOfSpeech();
         }
       } else {

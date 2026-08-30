@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIStatusError, DEFAULT_API_CONNECT_OPTIONS } from '@livekit/agents';
+import { APIStatusError, DEFAULT_API_CONNECT_OPTIONS, stt as sttLib } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { AudioFrame } from '@livekit/rtc-node';
@@ -38,6 +38,15 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<vo
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('timed out waiting for condition');
+}
+
+async function collectUntilEnd(stream: sttLib.SpeechStream): Promise<sttLib.SpeechEvent[]> {
+  const events: sttLib.SpeechEvent[] = [];
+  for await (const event of stream) {
+    events.push(event);
+    if (event.type === sttLib.SpeechEventType.END_OF_SPEECH) break;
+  }
+  return events;
 }
 
 describe('Deepgram streaming language detection', () => {
@@ -127,6 +136,66 @@ describe('Deepgram streaming flush', () => {
       stream.pushFrame(makeFrame(480));
       stream.flush();
       await waitUntil(() => wire.join(',') === 'audio,Finalize');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+describe('Deepgram speech end time', () => {
+  it('maps a speech-final result boundary', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    wss.on('connection', (ws) => {
+      ws.once('message', () => {
+        ws.send(JSON.stringify({ type: 'SpeechStarted' }));
+        ws.send(
+          JSON.stringify({
+            type: 'Results',
+            metadata: { request_id: 'request' },
+            is_final: true,
+            speech_final: true,
+            start: 0,
+            duration: 0.1,
+            channel: {
+              alternatives: [
+                {
+                  transcript: 'hello',
+                  confidence: 1,
+                  words: [{ word: 'hello', start: 0, end: 0.08, confidence: 1 }],
+                },
+              ],
+            },
+          }),
+        );
+      });
+    });
+
+    const stream = new STT({ apiKey: 'test-key', baseUrl }).stream();
+    try {
+      stream.pushFrame(makeFrame(1600));
+      const events = await collectUntilEnd(stream);
+      expect(events.at(-1)?.speechEndTime).toBe(stream.startTime + 80);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('maps an utterance-end last-word boundary', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    wss.on('connection', (ws) => {
+      ws.once('message', () => {
+        ws.send(JSON.stringify({ type: 'SpeechStarted' }));
+        ws.send(JSON.stringify({ type: 'UtteranceEnd', last_word_end: 0.08 }));
+      });
+    });
+
+    const stream = new STT({ apiKey: 'test-key', baseUrl }).stream();
+    try {
+      stream.pushFrame(makeFrame(1600));
+      const events = await collectUntilEnd(stream);
+      expect(events.at(-1)?.speechEndTime).toBe(stream.startTime + 80);
     } finally {
       stream.close();
       await closeWebSocketServer(wss);

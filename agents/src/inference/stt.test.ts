@@ -45,6 +45,7 @@ function makeSpeechStream() {
     speaking: false,
     requestId: 'req-1',
     speechDuration: 0,
+    _startTime: 10_000,
     _startTimeOffset: 0,
     _pendingExtra: undefined,
     opts: { language: 'en' },
@@ -126,6 +127,37 @@ describe('Inference STT start of speech', () => {
 
     stream['processStartOfSpeech']();
     expect(events.map(({ type }) => type)).toContain(SpeechEventType.START_OF_SPEECH);
+  });
+
+  it('maps provider-relative and captured VAD speech end times', () => {
+    const relative = makeSpeechStream();
+    relative.stream['processTranscript'](
+      transcript('provider endpoint', true),
+      SpeechEventType.FINAL_TRANSCRIPT,
+    );
+    expect(relative.events.at(-1)?.speechEndTime).toBe(11_000);
+
+    const captured = makeSpeechStream();
+    captured.stream['processTranscript'](
+      transcript('vad endpoint', true),
+      SpeechEventType.FINAL_TRANSCRIPT,
+      9_500,
+    );
+    expect(captured.events.at(-1)?.speechEndTime).toBe(9_500);
+  });
+
+  it('prefers the last provider word over the transcript window end', () => {
+    const { stream, events } = makeSpeechStream();
+    stream['processTranscript'](
+      {
+        ...transcript('word endpoint', true),
+        duration: 2,
+        words: [{ word: 'endpoint', start: 0.5, end: 1.5, confidence: 1 }],
+      },
+      SpeechEventType.FINAL_TRANSCRIPT,
+    );
+
+    expect(events.at(-1)?.speechEndTime).toBe(11_500);
   });
 });
 

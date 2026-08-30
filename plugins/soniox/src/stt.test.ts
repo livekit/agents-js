@@ -152,7 +152,9 @@ const END_TOKEN_FINAL: SonioxToken = { text: '<end>', is_final: true } as Soniox
 
 function runProcess(
   messages: SonioxMessage[],
-  options: { isTranslationMode: boolean; startTimeOffset?: number } = { isTranslationMode: false },
+  options: { isTranslationMode: boolean; startTime?: number; startTimeOffset?: number } = {
+    isTranslationMode: false,
+  },
 ): stt.SpeechEvent[] {
   const state = newProcessMessageState();
   const events: stt.SpeechEvent[] = [];
@@ -160,6 +162,7 @@ function runProcess(
     events.push(
       ...processMessage(state, msg, {
         isTranslationMode: options.isTranslationMode,
+        startTime: options.startTime ?? 0,
         startTimeOffset: options.startTimeOffset ?? 0,
       }),
     );
@@ -403,6 +406,45 @@ describe('processMessage', () => {
       stt.SpeechEventType.RECOGNITION_USAGE,
     ]);
     expect(events.at(-1)?.recognitionUsage?.audioDuration).toBeCloseTo(1.5);
+  });
+
+  it('maps source token timing to the endpoint speech end time', () => {
+    const events = runProcess(
+      [
+        {
+          tokens: [
+            { ...finalToken('Hello world.', 'en'), start_ms: 100, end_ms: 900 },
+            END_TOKEN_FINAL,
+          ],
+        },
+      ],
+      { isTranslationMode: false, startTime: 10_000 },
+    );
+
+    expect(events.find((event) => event.type === stt.SpeechEventType.END_OF_SPEECH)).toHaveProperty(
+      'speechEndTime',
+      10_900,
+    );
+  });
+
+  it('uses original token timing for translated endpoints', () => {
+    const events = runProcess(
+      [
+        {
+          tokens: [
+            { ...finalToken('Hello.', 'en', 'original'), start_ms: 100, end_ms: 800 },
+            finalToken('Hola.', 'es', 'translation'),
+            END_TOKEN_FINAL,
+          ],
+        },
+      ],
+      { isTranslationMode: true, startTime: 10_000 },
+    );
+
+    expect(events.find((event) => event.type === stt.SpeechEventType.END_OF_SPEECH)).toHaveProperty(
+      'speechEndTime',
+      10_800,
+    );
   });
 });
 

@@ -460,6 +460,7 @@ export class SpeechStream extends stt.SpeechStream {
     });
 
     const sendTask = async () => {
+      let audioStarted = false;
       const samplesPerBuffer = Math.floor((this.#opts.sampleRate * this.#opts.bufferSizeMs) / 1000);
       const audioStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerBuffer);
 
@@ -487,6 +488,10 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           for (const frame of frames) {
+            if (!audioStarted) {
+              this.startTime = Date.now();
+              audioStarted = true;
+            }
             this.#speechDurationInS += frame.samplesPerChannel / frame.sampleRate;
             ws.send(frame.data.buffer);
           }
@@ -681,8 +686,16 @@ export class SpeechStream extends stt.SpeechStream {
     // If the user asked for formatted turns, wait for a formatted final.
     const waitingForFormatted = this.#opts.formatTurns === true && !turnIsFormatted;
     if (endOfTurn && !waitingForFormatted) {
+      const providerEndTime = words.at(-1)?.end;
+      const speechEndTime =
+        typeof providerEndTime === 'number' &&
+        Number.isFinite(providerEndTime) &&
+        providerEndTime >= 0
+          ? this.startTime + providerEndTime
+          : undefined;
       this.queue.put({
         type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+        speechEndTime,
         alternatives: [
           {
             language,
@@ -696,7 +709,7 @@ export class SpeechStream extends stt.SpeechStream {
         ],
       });
 
-      this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+      this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH, speechEndTime });
       if (this.#speechDurationInS > 0) {
         this.queue.put({
           type: stt.SpeechEventType.RECOGNITION_USAGE,

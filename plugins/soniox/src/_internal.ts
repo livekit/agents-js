@@ -86,6 +86,7 @@ export class TokenAccumulator {
   #confidenceSum = 0;
   #confidenceCount = 0;
   #hasStartTime = false;
+  #hasEndTime = false;
   #langSegments: LangSegment[] = [];
   // Map iteration is insertion-ordered; the strict `>` in #getLanguage means
   // the first-inserted language wins on ties. Python uses min(last-updated)
@@ -99,6 +100,10 @@ export class TokenAccumulator {
 
   get confidence(): number {
     return this.#confidenceCount === 0 ? 0 : this.#confidenceSum / this.#confidenceCount;
+  }
+
+  get hasEndTime(): boolean {
+    return this.#hasEndTime;
   }
 
   update(token: SonioxToken): void {
@@ -118,6 +123,7 @@ export class TokenAccumulator {
     }
     if (token.end_ms !== undefined) {
       this.endTime = token.end_ms;
+      this.#hasEndTime = true;
     }
     if (token.confidence !== undefined) {
       this.#confidenceSum += token.confidence;
@@ -142,6 +148,7 @@ export class TokenAccumulator {
     this.#confidenceSum = 0;
     this.#confidenceCount = 0;
     this.#hasStartTime = false;
+    this.#hasEndTime = false;
     this.#langSegments = [];
     this.#langStats.clear();
   }
@@ -207,6 +214,7 @@ export const newProcessMessageState = (): ProcessMessageState => ({
 
 export interface ProcessMessageOptions {
   isTranslationMode: boolean;
+  startTime: number;
   startTimeOffset: number;
 }
 
@@ -215,12 +223,15 @@ function* sendEndpointTranscript(
   options: ProcessMessageOptions,
 ): Generator<stt.SpeechEvent> {
   if (state.final.text) {
+    const timing = options.isTranslationMode ? state.finalOriginal : state.final;
+    const speechEndTime = timing.hasEndTime ? options.startTime + timing.endTime : undefined;
     if (!state.isSpeaking) {
       state.isSpeaking = true;
       yield { type: stt.SpeechEventType.START_OF_SPEECH };
     }
     yield {
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+      speechEndTime,
       alternatives: [
         {
           ...state.final.toSpeechData(options.startTimeOffset),
@@ -232,7 +243,7 @@ function* sendEndpointTranscript(
         },
       ],
     };
-    yield { type: stt.SpeechEventType.END_OF_SPEECH };
+    yield { type: stt.SpeechEventType.END_OF_SPEECH, speechEndTime };
     state.final.reset();
     state.finalOriginal.reset();
     state.isSpeaking = false;

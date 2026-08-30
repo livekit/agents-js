@@ -125,6 +125,9 @@ describe('AssemblyAI STT metadata', () => {
           },
         },
       ]);
+      expect(
+        events.find((event) => event.type === sttLib.SpeechEventType.END_OF_SPEECH),
+      ).toHaveProperty('speechEndTime', stream.startTime + 500);
     } finally {
       await closeWebSocketServer(wss);
     }
