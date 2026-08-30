@@ -4856,8 +4856,17 @@ export class AgentActivity implements RecognitionHooks {
   ): void {
     // when force=true, we allow tool responses to bypass scheduling pause
     // This allows for tool responses to be generated before the AgentActivity is finalized
-    if (this.schedulingPaused && !force) {
-      throw new SchedulingPausedError();
+    const schedulingPaused = this.schedulingPaused && !force;
+    if (schedulingPaused || this._mainTask?.done) {
+      this.logger.warn(
+        { speech_id: speechHandle.id, scheduling_paused: schedulingPaused },
+        'attempting to schedule a new SpeechHandle while speech scheduling is paused or stopped; the speech will be cancelled',
+      );
+      speechHandle.interrupt(true);
+      if (schedulingPaused) {
+        throw new SchedulingPausedError();
+      }
+      return;
     }
 
     // Monotonic time to avoid near 0 collisions
