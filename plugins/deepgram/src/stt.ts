@@ -397,13 +397,11 @@ export class SpeechStream extends stt.SpeechStream {
 
     // gets cancelled also when sendTask is complete
     const wsMonitor = Task.from(async (controller) => {
-      const closed = new Promise<void>(async (_, reject) => {
+      const closed = new Promise<void>((_, reject) => {
         ws.once('close', (code) => {
           if (!closing) {
             this.#logger.error({ code }, 'Deepgram WebSocket closed unexpectedly');
-            reject(
-              new APIConnectionError({ message: 'Deepgram WebSocket closed unexpectedly' }),
-            );
+            reject(new APIConnectionError({ message: 'Deepgram WebSocket closed unexpectedly' }));
           }
         });
         ws.once('error', (error) => {

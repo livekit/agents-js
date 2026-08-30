@@ -276,7 +276,7 @@ export class SpeechStream extends stt.SpeechStream {
     let closing = false;
 
     const wsMonitor = Task.from(async (controller) => {
-      const closed = new Promise<void>(async (_, reject) => {
+      const closed = new Promise<void>((_, reject) => {
         ws.once('close', (code) => {
           if (!closing) {
             this.#logger.error({ code }, 'xAI WebSocket closed unexpectedly');
