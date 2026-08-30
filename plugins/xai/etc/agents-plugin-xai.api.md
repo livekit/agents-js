@@ -28,7 +28,7 @@ import { TrackPublishOptions } from '@livekit/rtc-node';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
-import type { WebSocket as WebSocket_2 } from 'ws';
+import { WebSocket as WebSocket_2 } from 'ws';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 import { z } from 'zod';
 

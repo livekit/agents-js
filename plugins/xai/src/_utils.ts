@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { waitForWebSocketOpen } from '@livekit/agents';
-import { WebSocket } from 'ws';
-
 export class PeriodicCollector<T> {
   private duration: number;
   private callback: (value: T) => void;
@@ -36,32 +33,3 @@ export class PeriodicCollector<T> {
     this.lastFlushTime = performance.now() / 1000;
   }
 }
-
-export const connectWebSocket = async ({
-  url,
-  headers,
-  timeoutMs,
-}: {
-  url: string;
-  headers: Record<string, string>;
-  timeoutMs: number;
-}): Promise<WebSocket> => {
-  const ws = new WebSocket(url, { headers, handshakeTimeout: timeoutMs });
-
-  try {
-    await waitForWebSocketOpen(ws, 'xAI');
-    return ws;
-  } catch (e) {
-    try {
-      ws.on('error', () => {});
-      if (ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      } else {
-        ws.terminate();
-      }
-    } catch {
-      // ignore
-    }
-    throw e;
-  }
-};

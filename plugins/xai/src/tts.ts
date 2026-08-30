@@ -14,10 +14,10 @@ import {
   shortuuid,
   tokenize,
   tts,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import type { RawData, WebSocket } from 'ws';
-import { connectWebSocket } from './_utils.js';
+import { type RawData, WebSocket } from 'ws';
 
 const SAMPLE_RATE = 24000;
 const NUM_CHANNELS = 1;
@@ -234,13 +234,24 @@ export class TTS extends tts.TTS {
       );
     }
 
+    const ws = new WebSocket(url, {
+      headers: { Authorization: `Bearer ${this.#opts.apiKey}` },
+      handshakeTimeout: timeout,
+    });
     try {
-      return await connectWebSocket({
-        url: url.toString(),
-        headers: { Authorization: `Bearer ${this.#opts.apiKey}` },
-        timeoutMs: timeout,
-      });
+      await waitForWebSocketOpen(ws, 'xAI');
+      return ws;
     } catch (e) {
+      try {
+        ws.on('error', () => {});
+        if (ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        } else {
+          ws.terminate();
+        }
+      } catch {
+        // ignore
+      }
       if (e instanceof APIStatusError || e instanceof APIConnectionError) throw e;
       throw new APIConnectionError({
         message: `failed to connect to xAI (${errorName(e)})`,
