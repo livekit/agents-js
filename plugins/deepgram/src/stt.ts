@@ -379,6 +379,7 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #runWS(ws: WebSocket) {
     this.#resetWS = new Future();
+    this.#speaking = false;
     let closing = false;
 
     const keepalive = setInterval(() => {
@@ -442,7 +443,8 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           for await (const frame of frames) {
-            if (this.#audioEnergyFilter.pushFrame(frame)) {
+            const energyGateOpen = this.#audioEnergyFilter.pushFrame(frame);
+            if (this.#speaking || energyGateOpen) {
               const frameDuration = frame.samplesPerChannel / frame.sampleRate;
               this.#audioDurationCollector.push(frameDuration);
               ws.send(frame.data.buffer);
