@@ -2,13 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ReadableStream, type ReadableStreamDefaultController } from 'node:stream/web';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { Agent, AgentTask } from './agent.js';
 import { SchedulingPausedError } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes } from './events.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -22,21 +23,19 @@ async function waitFor(cond: () => boolean, timeoutMs: number): Promise<boolean>
   return false;
 }
 
-async function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
-  const result = await Promise.race([
-    p.then(
-      () => 'settled' as const,
-      () => 'settled' as const,
-    ),
-    sleep(ms).then(() => 'timeout' as const),
-  ]);
-  return result === 'settled';
+async function resolvesWithin(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`promise did not resolve within ${ms}ms`)), ms);
+  });
+
+  await Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
 describe('AgentSession.say() during an AgentTask pause', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
-  it('cancels the refused speech so the task hand-back and session close complete', async () => {
+  it('rejects refused speech before creation so task hand-back and session close complete', async () => {
     class TransferTask extends AgentTask<void> {
       constructor() {
         super({ instructions: 'transfer task' });
@@ -79,7 +78,7 @@ describe('AgentSession.say() during an AgentTask pause', () => {
     const session = new AgentSession({ llm });
     const internals = session as unknown as {
       activity?: { schedulingPaused: boolean };
-      nextActivity?: { speechTasks: Set<{ done: boolean }> };
+      nextActivity?: object;
     };
     await session.start({ agent });
 
@@ -93,20 +92,12 @@ describe('AgentSession.say() during an AgentTask pause', () => {
       ),
     ).toBe(true);
 
-    // say() during the pause is routed to the task activity, which has not started yet
-    const taskActivity = internals.nextActivity!;
-    let sayError: unknown;
-    try {
-      session.say('oops');
-    } catch (error) {
-      sayError = error;
-    }
-    expect(sayError).toBeInstanceOf(SchedulingPausedError);
-
-    // the refused speech must not leave a parked speech task behind
-    expect(await waitFor(() => [...taskActivity.speechTasks].every((t) => t.done), 1000)).toBe(
-      true,
-    );
+    // say() during the pause must fail before it creates speech on the task activity
+    const onSpeechCreated = vi.fn();
+    session.on(AgentSessionEventTypes.SpeechCreated, onSpeechCreated);
+    expect(() => session.say('oops')).toThrow(SchedulingPausedError);
+    expect(onSpeechCreated).not.toHaveBeenCalled();
+    session.off(AgentSessionEventTypes.SpeechCreated, onSpeechCreated);
 
     // let the hold speech finish so the pause completes and the task activity starts
     holdController.enqueue('please hold');
@@ -124,6 +115,6 @@ describe('AgentSession.say() during an AgentTask pause', () => {
       ),
     ).toBe(true);
 
-    expect(await settlesWithin(session.close(), 3000)).toBe(true);
+    await expect(resolvesWithin(session.close(), 3000)).resolves.toBeUndefined();
   }, 30_000);
 });

@@ -75,6 +75,7 @@ import type { Agent } from './agent.js';
 import {
   AgentActivity,
   type ReusableResources,
+  SchedulingPausedError,
   cleanupReusableResources,
   isSchedulingPausedError,
 } from './agent_activity.js';
@@ -1131,7 +1132,7 @@ export class AgentSession<
         if (!nextActivity) {
           throw new Error('AgentSession is closing, cannot use say()');
         }
-        return nextActivity.say(text, options);
+        throw new SchedulingPausedError();
       }
       return activity.say(text, options);
     };

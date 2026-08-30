@@ -2280,7 +2280,8 @@ export class AgentActivity implements RecognitionHooks {
       });
     };
 
-    const task = Task.from(wrappedFn, controller, name);
+    const taskController = controller ?? new AbortController();
+    const task = Task.from(wrappedFn, taskController, name);
     _setActivityTaskInfo(task, { speechHandle: ownedSpeechHandle, inlineTask });
 
     this.speechTasks.add(task);
@@ -2289,6 +2290,15 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     if (ownedSpeechHandle) {
+      const interruptOwnedSpeech = () => ownedSpeechHandle.interrupt(true);
+      taskController.signal.addEventListener('abort', interruptOwnedSpeech, { once: true });
+      if (taskController.signal.aborted) {
+        interruptOwnedSpeech();
+      }
+      task.addDoneCallback(() => {
+        taskController.signal.removeEventListener('abort', interruptOwnedSpeech);
+      });
+
       ownedSpeechHandle._tasks.push(task);
       task.addDoneCallback(() => {
         if (ownedSpeechHandle._tasks.every((t) => t.done)) {
