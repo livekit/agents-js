@@ -351,7 +351,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
           break;
         }
       } catch (error) {
-        this.#logger.error('Deepgram stream error', { error });
+        this.#logger.error({ errorType: errorName(error) }, 'Deepgram stream error');
         throw error; // Let Base Class handle retry logic
       } finally {
         if (this.#ws?.readyState === WebSocket.OPEN) {

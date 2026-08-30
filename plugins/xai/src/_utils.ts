@@ -74,9 +74,9 @@ export const connectWebSocket = async ({
     fut.reject(
       new APIConnectionError({ message: `failed to connect to xAI (${errorName(error)})` }),
     );
-  const onClose = (code: number, reason: Buffer) =>
+  const onClose = () =>
     fut.reject(
-      new Error(`websocket closed before open (code=${code}, reason=${reason.toString()})`),
+      new APIConnectionError({ message: 'failed to connect to xAI (CloseEvent)' }),
     );
 
   ws.on('open', onOpen);
