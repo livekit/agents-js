@@ -284,9 +284,10 @@ describe('AudioRecognition STT pipeline handoff', () => {
 
       expect(state.sttPipeline).toBe(pipeline);
       expect(state.sttOwnershipTransferred).toBe(false);
+      expect(state.sttConsumerTask).toBeUndefined();
 
-      state.sttConsumerTask = undefined;
-      await expect(recognition.detachSttPipeline()).resolves.toBe(pipeline);
+      await expect(recognition.close()).resolves.toBeUndefined();
+      expect(state.sttPipeline).toBeUndefined();
     } finally {
       await consumerTask.result.catch(() => undefined);
       await recognition.close();
