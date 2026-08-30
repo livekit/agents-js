@@ -117,19 +117,7 @@ export class STTv2 extends stt.STT {
   /**
    * Create a new Deepgram STTv2 instance.
    *
-   * @param opts - Configuration options
-   * @param opts.apiKey - Deepgram API key (defaults to `DEEPGRAM_API_KEY` env var)
-   * @param opts.model - Model to use (default: `flux-general-en`)
-   * @param opts.eagerEotThreshold - Threshold (0.3-0.9) for preemptive generation
-   * @param opts.eotThreshold - End-of-turn detection threshold (default: 0.7)
-   * @param opts.eotTimeoutMs - End-of-turn timeout in ms (default: 3000)
-   * @param opts.keyterms - List of key terms to improve recognition
-   * @param opts.numerals - Whether to convert spoken numbers into numerical formats
-   * @param opts.profanityFilter - Whether to filter profanity from the transcription
-   * @param opts.redact - Number redaction mode; Flux does not support entity redaction
-   * @param opts.tags - Tags for usage reporting (max 128 chars each)
-   * @param opts.languageHint - List of language hints to bias the model for improved accuracy.
-   *   Only usable with `flux-general-multi`.
+   * @param opts - Configuration options. See {@link STTv2Options}.
    *
    * @throws Error if no API key is provided
    */
