@@ -35,7 +35,7 @@ async function resolvesWithin(p: Promise<unknown>, ms: number): Promise<void> {
 describe('AgentSession.say() during an AgentTask pause', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
-  it('rejects refused speech before creation so task hand-back and session close complete', async () => {
+  it('interrupts refused speech so task hand-back and session close complete', async () => {
     class TransferTask extends AgentTask<void> {
       constructor() {
         super({ instructions: 'transfer task' });
@@ -78,7 +78,7 @@ describe('AgentSession.say() during an AgentTask pause', () => {
     const session = new AgentSession({ llm });
     const internals = session as unknown as {
       activity?: { schedulingPaused: boolean };
-      nextActivity?: object;
+      nextActivity?: { speechTasks: Set<{ done: boolean }> };
     };
     await session.start({ agent });
 
@@ -92,12 +92,19 @@ describe('AgentSession.say() during an AgentTask pause', () => {
       ),
     ).toBe(true);
 
-    // say() during the pause must fail before it creates speech on the task activity
+    // say() during the pause is routed to the task activity, which has not started yet
+    const taskActivity = internals.nextActivity!;
     const onSpeechCreated = vi.fn();
     session.on(AgentSessionEventTypes.SpeechCreated, onSpeechCreated);
     expect(() => session.say('oops')).toThrow(SchedulingPausedError);
-    expect(onSpeechCreated).not.toHaveBeenCalled();
+    expect(onSpeechCreated).toHaveBeenCalledOnce();
+    expect(onSpeechCreated.mock.calls[0]![0].speechHandle.interrupted).toBe(true);
     session.off(AgentSessionEventTypes.SpeechCreated, onSpeechCreated);
+
+    // the refused speech must not leave a parked speech task behind
+    expect(await waitFor(() => [...taskActivity.speechTasks].every((t) => t.done), 1000)).toBe(
+      true,
+    );
 
     // let the hold speech finish so the pause completes and the task activity starts
     holdController.enqueue('please hold');
