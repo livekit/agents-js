@@ -115,6 +115,8 @@ export interface RecognitionUsage {
 export interface SpeechEvent {
   type: SpeechEventType;
   alternatives?: [SpeechData, ...SpeechData[]];
+  /** Wall-clock time when speech ended, in milliseconds since the Unix epoch. */
+  speechEndTime?: number;
   requestId?: string;
   recognitionUsage?: RecognitionUsage;
 }

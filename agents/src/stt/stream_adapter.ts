@@ -104,7 +104,8 @@ export class StreamAdapterWrapper extends SpeechStream {
             this.output.put({ type: SpeechEventType.START_OF_SPEECH });
             break;
           case VADEventType.END_OF_SPEECH:
-            this.output.put({ type: SpeechEventType.END_OF_SPEECH });
+            const speechEndTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
+            this.output.put({ type: SpeechEventType.END_OF_SPEECH, speechEndTime });
 
             try {
               const event = await this.#stt.recognize(ev.frames, this.abortSignal);
@@ -112,7 +113,10 @@ export class StreamAdapterWrapper extends SpeechStream {
                 continue;
               }
 
-              this.output.put(event);
+              this.output.put({
+                ...event,
+                speechEndTime: event.speechEndTime ?? speechEndTime,
+              });
               break;
             } catch (error) {
               let logger = log();
