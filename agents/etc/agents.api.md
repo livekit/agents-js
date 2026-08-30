@@ -8916,6 +8916,11 @@ export function waitForTrackPublication(input: {
     includeLocal?: false;
 }): Promise<RemoteTrackPublication>;
 
+// Warning: (ae-internal-missing-underscore) The name "waitForWebSocketOpen" should be prefixed with an underscore because the declaration is marked as @internal
+//
+// @internal (undocumented)
+export function waitForWebSocketOpen(ws: WebSocket_2, provider: string): Promise<void>;
+
 // Warning: (ae-missing-release-tag) "waitUntilAborted" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -9156,7 +9161,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:194:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:358:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
-// src/utils.ts:501:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
+// src/utils.ts:549:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:988:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts

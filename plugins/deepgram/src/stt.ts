@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   type AudioBuffer,
   AudioByteStream,
   AudioEnergyFilter,
@@ -15,6 +17,7 @@ import {
   normalizeLanguage,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
@@ -321,17 +324,19 @@ export class SpeechStream extends stt.SpeechStream {
       };
       appendSearchParams(streamURL, params);
 
-      ws = new WebSocket(streamURL, {
-        headers: { Authorization: `Token ${this.#opts.apiKey}` },
-      });
+      try {
+        ws = new WebSocket(streamURL, {
+          headers: { Authorization: `Token ${this.#opts.apiKey}` },
+        });
+        await waitForWebSocketOpen(ws, 'Deepgram');
+      } catch (error) {
+        if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+        throw new APIConnectionError({
+          message: `failed to connect to Deepgram (${errorName(error)})`,
+        });
+      }
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
-        });
-
         await this.#runWS(ws);
       } catch (e) {
         if (!this.closed && !this.input.closed) {
@@ -392,11 +397,20 @@ export class SpeechStream extends stt.SpeechStream {
 
     // gets cancelled also when sendTask is complete
     const wsMonitor = Task.from(async (controller) => {
-      const closed = new Promise<void>(async (_, reject) => {
-        ws.once('close', (code, reason) => {
+      const closed = new Promise<void>((_, reject) => {
+        ws.once('close', (code) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            this.#logger.error({ code }, 'Deepgram WebSocket closed unexpectedly');
+            reject(new APIConnectionError({ message: 'Deepgram WebSocket closed unexpectedly' }));
+          }
+        });
+        ws.once('error', (error) => {
+          if (!closing) {
+            reject(
+              new APIConnectionError({
+                message: `Deepgram WebSocket failed (${errorName(error)})`,
+              }),
+            );
           }
         });
       });
@@ -593,6 +607,10 @@ export class SpeechStream extends stt.SpeechStream {
     };
     this.queue.put(usageEvent);
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 function appendSearchParams(url: URL, params: Record<string, unknown>) {

@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   AudioByteStream,
   Event,
   calculateAudioDurationSeconds,
@@ -10,6 +12,7 @@ import {
   log,
   normalizeLanguage,
   stt,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import * as queryString from 'node:querystring';
@@ -334,26 +337,17 @@ class SpeechStreamv2 extends stt.SpeechStream {
         const url = `${baseUrl}?${queryString.stringify(this._liveConfig())}`;
         this.#logger.debug('connecting to Deepgram');
 
-        this.#ws = new WebSocket(url, {
-          headers: { Authorization: `Token ${this.#opts.apiKey}` },
-        });
-
-        // 1. Wait for Connection Open
-        await new Promise<void>((resolve, reject) => {
-          if (!this.#ws) return reject(new Error('WebSocket not initialized'));
-
-          const onOpen = () => {
-            this.#ws?.off('error', onError);
-            resolve();
-          };
-          const onError = (err: Error) => {
-            this.#ws?.off('open', onOpen);
-            reject(err);
-          };
-
-          this.#ws.once('open', onOpen);
-          this.#ws.once('error', onError);
-        });
+        try {
+          this.#ws = new WebSocket(url, {
+            headers: { Authorization: `Token ${this.#opts.apiKey}` },
+          });
+          await waitForWebSocketOpen(this.#ws, 'Deepgram');
+        } catch (error) {
+          if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+          throw new APIConnectionError({
+            message: `failed to connect to Deepgram (${errorName(error)})`,
+          });
+        }
 
         // 2. Run Concurrent Tasks (Send & Receive)
         const sendPromise = this.#sendTask();
@@ -375,7 +369,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
           break;
         }
       } catch (error) {
-        this.#logger.error('Deepgram stream error', { error });
+        this.#logger.error({ errorType: errorName(error) }, 'Deepgram stream error');
         throw error; // Let Base Class handle retry logic
       } finally {
         if (this.#ws?.readyState === WebSocket.OPEN) {
@@ -587,6 +581,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
     super.close();
     this.#ws?.close();
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 // --- Helpers ---

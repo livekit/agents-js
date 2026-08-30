@@ -14,11 +14,14 @@ import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
+import type { IncomingMessage } from 'node:http';
 import {
   ReadableStream,
   TransformStream,
   type TransformStreamDefaultController,
 } from 'node:stream/web';
+import type { WebSocket } from 'ws';
+import { APIConnectionError, APIStatusError } from './_exceptions.js';
 import { log } from './log.js';
 
 /**
@@ -42,6 +45,52 @@ export type Expand<T> = T extends Function
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
 export const noop = () => {};
+
+/** @internal */
+export async function waitForWebSocketOpen(ws: WebSocket, provider: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      ws.off('open', onOpen);
+      ws.off('unexpected-response', onUnexpectedResponse);
+      ws.off('error', onError);
+      ws.off('close', onClose);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+      cleanup();
+      response.resume();
+      ws.on('error', noop);
+      ws.close();
+      const statusCode = response.statusCode ?? -1;
+      reject(
+        new APIStatusError({
+          message: `${provider} WebSocket connection rejected with status ${statusCode}`,
+          options: { statusCode },
+        }),
+      );
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(
+        new APIConnectionError({
+          message: `failed to connect to ${provider} (${error.name})`,
+        }),
+      );
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new APIConnectionError({ message: `failed to connect to ${provider} (CloseEvent)` }));
+    };
+
+    ws.once('open', onOpen);
+    ws.once('unexpected-response', onUnexpectedResponse);
+    ws.once('error', onError);
+    ws.once('close', onClose);
+  });
+}
 
 export const isPending = async (promise: Promise<unknown>): Promise<Throws<boolean, Error>> => {
   const sentinel = Symbol('sentinel');
