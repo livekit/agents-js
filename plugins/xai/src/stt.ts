@@ -15,10 +15,10 @@ import {
   mergeFrames,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
-import type { IncomingMessage } from 'node:http';
 import { WebSocket } from 'ws';
 import { PeriodicCollector } from './_utils.js';
 
@@ -236,7 +236,7 @@ export class SpeechStream extends stt.SpeechStream {
         ws = new WebSocket(streamURL, {
           headers: { Authorization: `Bearer ${this.#apiKey}` },
         });
-        await waitForWsOpen(ws);
+        await waitForWebSocketOpen(ws, 'xAI');
       } catch (error) {
         if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
         throw new APIConnectionError({
@@ -468,47 +468,6 @@ export class SpeechStream extends stt.SpeechStream {
       this.#logger.warn(`received unexpected message from xAI: ${msgType}`);
     }
   }
-}
-
-async function waitForWsOpen(ws: WebSocket): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const cleanup = () => {
-      ws.off('open', onOpen);
-      ws.off('unexpected-response', onUnexpectedResponse);
-      ws.off('error', onError);
-      ws.off('close', onClose);
-    };
-    const onOpen = () => {
-      cleanup();
-      resolve();
-    };
-    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
-      cleanup();
-      response.resume();
-      ws.on('error', () => {});
-      ws.close();
-      const statusCode = response.statusCode ?? -1;
-      reject(
-        new APIStatusError({
-          message: `xAI WebSocket connection rejected with status ${statusCode}`,
-          options: { statusCode },
-        }),
-      );
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(new APIConnectionError({ message: `failed to connect to xAI (${errorName(error)})` }));
-    };
-    const onClose = () => {
-      cleanup();
-      reject(new APIConnectionError({ message: 'failed to connect to xAI (CloseEvent)' }));
-    };
-
-    ws.once('open', onOpen);
-    ws.once('unexpected-response', onUnexpectedResponse);
-    ws.once('error', onError);
-    ws.once('close', onClose);
-  });
 }
 
 function errorName(error: unknown): string {

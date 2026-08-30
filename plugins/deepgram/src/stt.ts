@@ -17,9 +17,9 @@ import {
   normalizeLanguage,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import type { IncomingMessage } from 'node:http';
 import { WebSocket } from 'ws';
 import { PeriodicCollector } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
@@ -328,7 +328,7 @@ export class SpeechStream extends stt.SpeechStream {
         ws = new WebSocket(streamURL, {
           headers: { Authorization: `Token ${this.#opts.apiKey}` },
         });
-        await waitForWsOpen(ws, 'Deepgram');
+        await waitForWebSocketOpen(ws, 'Deepgram');
       } catch (error) {
         if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
         throw new APIConnectionError({
@@ -607,52 +607,6 @@ export class SpeechStream extends stt.SpeechStream {
     };
     this.queue.put(usageEvent);
   }
-}
-
-async function waitForWsOpen(ws: WebSocket, provider: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const cleanup = () => {
-      ws.off('open', onOpen);
-      ws.off('unexpected-response', onUnexpectedResponse);
-      ws.off('error', onError);
-      ws.off('close', onClose);
-    };
-    const onOpen = () => {
-      cleanup();
-      resolve();
-    };
-    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
-      cleanup();
-      response.resume();
-      ws.on('error', () => {});
-      ws.close();
-      // Authentication headers can appear in WebSocket handshake errors.
-      const statusCode = response.statusCode ?? -1;
-      reject(
-        new APIStatusError({
-          message: `${provider} WebSocket connection rejected with status ${statusCode}`,
-          options: { statusCode },
-        }),
-      );
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(
-        new APIConnectionError({
-          message: `failed to connect to ${provider} (${errorName(error)})`,
-        }),
-      );
-    };
-    const onClose = () => {
-      cleanup();
-      reject(new APIConnectionError({ message: `failed to connect to ${provider} (CloseEvent)` }));
-    };
-
-    ws.once('open', onOpen);
-    ws.once('unexpected-response', onUnexpectedResponse);
-    ws.once('error', onError);
-    ws.once('close', onClose);
-  });
 }
 
 function errorName(error: unknown): string {
