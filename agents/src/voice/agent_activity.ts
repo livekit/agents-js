@@ -736,7 +736,6 @@ export class AgentActivity implements RecognitionHooks {
       // Disable stt node if stt is not provided
       stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
       vad: recognitionVad,
-      usingDefaultVad: this.usingDefaultVad,
       turnDetector:
         typeof this._resolvedTurnDetection === 'string' ? undefined : this._resolvedTurnDetection,
       turnDetectionMode: this.turnDetectionMode,
@@ -1223,7 +1222,6 @@ export class AgentActivity implements RecognitionHooks {
         resolvedVad: this.vad,
         resolvedLlm: this.llm,
         resolvedTts: this.tts,
-        usingDefaultVad: this.usingDefaultVad,
       };
       const nextLlm = options.llm !== undefined ? options.llm ?? undefined : this.agentSession.llm;
       const nextTts = options.tts !== undefined ? options.tts ?? undefined : this.agentSession.tts;
@@ -1282,7 +1280,7 @@ export class AgentActivity implements RecognitionHooks {
 
           this.agent._vad = options.vad as VAD | null;
           if (this.audioRecognition !== undefined) {
-            await this.audioRecognition.updateVad(this.vad, this.usingDefaultVad);
+            await this.audioRecognition.updateVad(this.vad);
           }
           if (this.vad instanceof VAD) {
             this.vad.on('metrics_collected', this.onMetricsCollected);
@@ -1369,7 +1367,7 @@ export class AgentActivity implements RecognitionHooks {
         }
         if (options.vad !== undefined) {
           try {
-            await this.audioRecognition?.updateVad(previous.resolvedVad, previous.usingDefaultVad);
+            await this.audioRecognition?.updateVad(previous.resolvedVad);
           } catch (rollbackError) {
             rollbackErrors.push(rollbackError);
           }

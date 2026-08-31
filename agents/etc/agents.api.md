@@ -6673,6 +6673,7 @@ interface SpeechEvent {
     recognitionUsage?: RecognitionUsage;
     // (undocumented)
     requestId?: string;
+    speechEndTime?: number;
     // (undocumented)
     type: SpeechEventType;
 }
