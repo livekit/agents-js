@@ -31,6 +31,11 @@ export interface CompletionUsage {
   promptCachedTokens: number;
   /** Tokens used to write to the prompt cache. */
   cacheCreationTokens?: number;
+  /**
+   * Completion tokens spent on hidden reasoning. Already included in `completionTokens`.
+   * Providers that do not report this separately leave it unset.
+   */
+  reasoningTokens?: number;
   totalTokens: number;
   /** The service tier used for processing (e.g. 'default', 'priority', 'flex'). */
   serviceTier?: string;
@@ -350,6 +355,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       promptTokens: usage?.promptTokens || 0,
       promptCachedTokens: usage?.promptCachedTokens || 0,
       cacheCreationTokens: usage?.cacheCreationTokens || 0,
+      reasoningTokens: usage?.reasoningTokens || 0,
       totalTokens: usage?.totalTokens || 0,
       tokensPerSecond: (() => {
         if (durationMs <= 0) {
@@ -370,6 +376,12 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         [traceTypes.ATTR_GEN_AI_USAGE_INPUT_TOKENS]: metrics.promptTokens,
         [traceTypes.ATTR_GEN_AI_USAGE_OUTPUT_TOKENS]: metrics.completionTokens,
       });
+      if (metrics.reasoningTokens) {
+        this.#llmRequestSpan.setAttribute(
+          traceTypes.ATTR_GEN_AI_USAGE_REASONING_TOKENS,
+          metrics.reasoningTokens,
+        );
+      }
 
       if (completionStartTime) {
         this.#llmRequestSpan.setAttribute(

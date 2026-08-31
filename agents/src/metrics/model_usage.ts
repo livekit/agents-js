@@ -41,6 +41,8 @@ export type LLMModelUsage = {
   outputAudioTokens: number;
   /** Output text tokens. */
   outputTextTokens: number;
+  /** Output tokens spent on hidden reasoning. Already included in `outputTokens`. */
+  outputReasoningTokens?: number;
   /** Total session connection duration in milliseconds (for session-based billing like xAI). */
   sessionDurationMs: number;
 };
@@ -163,6 +165,7 @@ export class ModelUsageCollector {
         outputTokens: 0,
         outputAudioTokens: 0,
         outputTextTokens: 0,
+        outputReasoningTokens: 0,
         sessionDurationMs: 0,
       };
       this.llmUsage.set(key, usage);
@@ -247,6 +250,8 @@ export class ModelUsageCollector {
       usage.inputCacheCreationTokens =
         (usage.inputCacheCreationTokens ?? 0) + (metrics.cacheCreationTokens ?? 0);
       usage.outputTokens += metrics.completionTokens;
+      usage.outputReasoningTokens =
+        (usage.outputReasoningTokens ?? 0) + (metrics.reasoningTokens ?? 0);
     } else if (metrics.type === 'realtime_model_metrics') {
       const [provider, model] = this.extractProviderModel(metrics);
       const usage = this.getLLMUsage(provider, model);

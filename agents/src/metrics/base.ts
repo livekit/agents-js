@@ -35,6 +35,11 @@ export type LLMMetrics = {
   promptCachedTokens: number;
   /** Tokens used to write to the prompt cache. Not all providers report this. */
   cacheCreationTokens?: number;
+  /**
+   * Completion tokens spent on hidden reasoning. Already included in `completionTokens`.
+   * Not all providers report this separately.
+   */
+  reasoningTokens?: number;
   totalTokens: number;
   tokensPerSecond: number;
   speechId?: string;

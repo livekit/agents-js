@@ -396,6 +396,40 @@ describe('inference.LLM X-LiveKit-Inference-Priority header', () => {
   });
 });
 
+describe('inference.LLM reasoning usage', () => {
+  it('reports reasoning tokens from completion token details', async () => {
+    const chunks = await collectChatChunks([
+      {
+        id: 'chatcmpl_test',
+        choices: [],
+        usage: {
+          completion_tokens: 40,
+          prompt_tokens: 7,
+          total_tokens: 47,
+          completion_tokens_details: { reasoning_tokens: 32 },
+        },
+      },
+    ]);
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]?.usage?.reasoningTokens).toBe(32);
+    expect(chunks[0]?.usage?.completionTokens).toBe(40);
+    expect(chunks[0]?.usage?.totalTokens).toBe(47);
+  });
+
+  it('defaults reasoning tokens to zero without completion token details', async () => {
+    const chunks = await collectChatChunks([
+      {
+        id: 'chatcmpl_test',
+        choices: [],
+        usage: { completion_tokens: 0, prompt_tokens: 7, total_tokens: 0 },
+      },
+    ]);
+
+    expect(chunks[0]?.usage?.reasoningTokens).toBe(0);
+  });
+});
+
 describe('inference.LLM streamed tool calls', () => {
   it('does not expose content alongside tool calls', async () => {
     const chunks = await collectChatChunks(

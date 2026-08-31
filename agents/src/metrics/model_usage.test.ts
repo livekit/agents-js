@@ -120,6 +120,37 @@ describe('model_usage', () => {
         expect((usage[0] as LLMModelUsage).inputCacheCreationTokens).toBe(50);
       });
 
+      it('should aggregate reasoning tokens without adding them to output tokens', () => {
+        const metrics: LLMMetrics = {
+          type: 'llm_metrics',
+          label: 'test',
+          requestId: 'req1',
+          timestamp: Date.now(),
+          durationMs: 100,
+          ttftMs: 50,
+          cancelled: false,
+          completionTokens: 100,
+          promptTokens: 20,
+          promptCachedTokens: 0,
+          reasoningTokens: 64,
+          totalTokens: 120,
+          tokensPerSecond: 10,
+        };
+
+        collector.collect(metrics);
+        collector.collect({
+          ...metrics,
+          completionTokens: 50,
+          reasoningTokens: 8,
+          totalTokens: 70,
+        });
+
+        const usage = collector.flatten();
+        expect(usage).toHaveLength(1);
+        expect((usage[0] as LLMModelUsage).outputReasoningTokens).toBe(72);
+        expect((usage[0] as LLMModelUsage).outputTokens).toBe(150);
+      });
+
       it('should aggregate LLM metrics by provider and model', () => {
         const metrics1: LLMMetrics = {
           type: 'llm_metrics',
