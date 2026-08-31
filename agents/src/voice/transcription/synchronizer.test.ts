@@ -294,6 +294,76 @@ describe('TranscriptionSynchronizer enabled behavior', () => {
       await synchronizer.close();
     }
   });
+
+  it('flushes a zero-duration segment while an audible segment awaits playback finish', async () => {
+    const audioOutput = new MockAudioOutput();
+    const textOutput = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(audioOutput, textOutput);
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    try {
+      await synchronizer.textOutput.captureText('audible reply');
+      await synchronizer.textOutput.flush();
+      await synchronizer.audioOutput.captureFrame(frame);
+      synchronizer.audioOutput.flush();
+      audioOutput.onPlaybackStarted(Date.now());
+
+      await synchronizer.textOutput.captureText('silent reply');
+      await synchronizer.textOutput.flush();
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+      synchronizer.audioOutput.flush();
+      await synchronizer.barrier();
+
+      const transcript = textOutput.captured.join('');
+      expect(transcript).toContain('silent reply');
+      expect(transcript.split('silent reply')).toHaveLength(2);
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+      audioOutput.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(0);
+    } finally {
+      await synchronizer.close();
+    }
+  });
+
+  it('does not apply a rotated segment audio flush to the following silent segment', async () => {
+    const audioOutput = new MockAudioOutput();
+    const textOutput = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(audioOutput, textOutput);
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    try {
+      await synchronizer.textOutput.captureText('audible reply');
+      await synchronizer.textOutput.flush();
+      await synchronizer.audioOutput.captureFrame(frame);
+      audioOutput.onPlaybackStarted(Date.now());
+
+      await synchronizer.textOutput.captureText('silent reply');
+      await synchronizer.textOutput.flush();
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+      const silentSegment = synchronizer._impl;
+      synchronizer.audioOutput.flush();
+
+      expect(synchronizer._impl).toBe(silentSegment);
+      expect(silentSegment.audioInputEnded).toBe(false);
+      expect(textOutput.captured.join('')).not.toContain('silent reply');
+
+      synchronizer.audioOutput.flush();
+      await synchronizer.barrier();
+
+      const transcript = textOutput.captured.join('');
+      expect(transcript).toContain('silent reply');
+      expect(transcript.split('silent reply')).toHaveLength(2);
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+      audioOutput.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(0);
+    } finally {
+      await synchronizer.close();
+    }
+  });
 });
 
 describe('TranscriptionSynchronizer attachment warnings', () => {
