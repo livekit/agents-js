@@ -14,6 +14,7 @@ import {
   closeAgentSession,
   finalizeSession,
   flushJobLogs,
+  runShutdownCallbacks,
   validateSessionEndTimeout,
 } from './job_lifecycle.js';
 import { log } from './log.js';
@@ -189,15 +190,7 @@ export async function runConsole({
       if (jobCtx) {
         // Run job shutdown callbacks (e.g. AvatarSession.aclose) like the normal
         // worker path does; runConsole bypasses the ProcPool so it must drain them.
-        const results = await Promise.allSettled(jobCtx.shutdownCallbacks.map((cb) => cb()));
-        for (const result of results) {
-          if (result.status === 'rejected') {
-            logger.error(
-              { exceptionType: safeErrorType(result.reason) },
-              'error while running shutdown callback',
-            );
-          }
-        }
+        await runShutdownCallbacks(jobCtx.shutdownCallbacks, sessionEndTimeout, logger);
       }
     } finally {
       await flushJobLogs(logger);

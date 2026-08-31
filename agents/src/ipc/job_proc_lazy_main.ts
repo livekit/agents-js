@@ -9,7 +9,12 @@ import type { Logger } from 'pino';
 import { safeErrorType } from '../error_utils.js';
 import { type Agent, isAgent } from '../generator.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
-import { closeAgentSession, finalizeSession, flushJobLogs } from '../job_lifecycle.js';
+import {
+  closeAgentSession,
+  finalizeSession,
+  flushJobLogs,
+  runShutdownCallbacks,
+} from '../job_lifecycle.js';
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import { Future, shortuuid } from '../utils.js';
@@ -128,8 +133,9 @@ const startJob = (
   const onConnect = () => {
     connect = true;
   };
-  const onShutdown = () => {
+  const onShutdown = (reason: string) => {
     shutdown = true;
+    logger.debug({ 'lk.pii.shutdownReason': reason }, 'user requested job shutdown');
     closeEvent.emit('close', EXIT_REASON.userShutdown);
   };
 
@@ -200,17 +206,7 @@ const startJob = (
         logger.error({ exceptionType: safeErrorType(error) }, 'error while disconnecting room');
       }
 
-      const results = await Promise.allSettled(
-        ctx.shutdownCallbacks.map((callback) => Promise.resolve().then(() => callback())),
-      );
-      for (const result of results) {
-        if (result.status === 'rejected') {
-          logger.error(
-            { exceptionType: safeErrorType(result.reason) },
-            'error while running shutdown callback',
-          );
-        }
-      }
+      await runShutdownCallbacks(ctx.shutdownCallbacks, sessionEndTimeout, logger);
     } finally {
       try {
         await flushJobLogs(logger);

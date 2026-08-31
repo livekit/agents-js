@@ -167,7 +167,10 @@ export class ServerOptions {
   numIdleProcesses: number;
   drainTimeout: number;
   shutdownProcessTimeout: number;
-  /** Maximum time to wait for `onSessionEnd`, in milliseconds. Defaults to five minutes. */
+  /**
+   * Maximum time to wait for `onSessionEnd` and, separately, registered shutdown callbacks.
+   * Defaults to five minutes.
+   */
   sessionEndTimeout: number;
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
@@ -229,7 +232,10 @@ export class ServerOptions {
     /** Number of milliseconds to wait for current jobs to finish upon shutdown. */
     drainTimeout?: number;
     shutdownProcessTimeout?: number;
-    /** Maximum number of milliseconds to wait for `onSessionEnd` to complete. */
+    /**
+     * Maximum number of milliseconds to wait for `onSessionEnd` and, separately, registered
+     * shutdown callbacks.
+     */
     sessionEndTimeout?: number;
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;

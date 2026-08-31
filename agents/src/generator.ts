@@ -6,7 +6,11 @@ import type { SimulationContext } from './simulation.js';
 
 export const AGENT_DEFINITION_SYMBOL = Symbol.for('livekit.agents.AgentDefinition');
 
-/** @see {@link defineAgent} */
+/**
+ * Defines the entrypoint and lifecycle callbacks for an agent.
+ *
+ * @see {@link defineAgent}
+ */
 export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
   entry: (ctx: JobContext<ProcessUserData>) => Promise<void>;
   prewarm?: (proc: JobProcess<ProcessUserData>) => unknown;
@@ -16,6 +20,8 @@ export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
    *
    * The worker stops waiting after `ServerOptions.sessionEndTimeout`. JavaScript cannot cancel the
    * returned promise, so timed-out work can continue until the job process exits.
+   *
+   * @param ctx - The job context for the completed session.
    */
   onSessionEnd?: (ctx: JobContext<ProcessUserData>) => Promise<void> | void;
   /** Called when a simulation run driving this agent ends. Read the

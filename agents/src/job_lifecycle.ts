@@ -13,6 +13,7 @@ const SESSION_CLOSE_TIMEOUT = 60 * 1000;
 const OTEL_LOG_FLUSH_TIMEOUT = 10 * 1000;
 
 type SessionEndCallback = (ctx: JobContext) => unknown;
+type ShutdownCallback = () => Promise<void>;
 
 export function validateSessionEndTimeout(timeout: number): number {
   if (!Number.isFinite(timeout) || timeout < 0) {
@@ -84,6 +85,44 @@ export async function finalizeSession(
     await ctx._onSessionEnd();
   } catch (error) {
     logger.error({ exceptionType: safeErrorType(error) }, 'error in ctx._onSessionEnd');
+  }
+}
+
+export async function runShutdownCallbacks(
+  callbacks: readonly ShutdownCallback[],
+  timeout: number,
+  logger: Logger,
+): Promise<void> {
+  const callbacksPromise = Promise.allSettled(
+    callbacks.map((callback) => Promise.resolve().then(() => callback())),
+  );
+
+  try {
+    const results = await waitUntilTimeout(callbacksPromise, timeout);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        logger.error(
+          { exceptionType: safeErrorType(result.reason) },
+          'error while running shutdown callback',
+        );
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof IdleTimeoutError)) {
+      throw error;
+    }
+
+    void callbacksPromise.then((results) => {
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          logger.debug(
+            { exceptionType: safeErrorType(result.reason) },
+            'shutdown callback rejected after shutdown timeout',
+          );
+        }
+      }
+    });
+    logger.error({ timeout }, 'shutdown callbacks timed out; proceeding with job shutdown');
   }
 }
 

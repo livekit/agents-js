@@ -4,7 +4,12 @@
 import type { Logger } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JobContext } from './job.js';
-import { closeAgentSession, finalizeSession, flushJobLogs } from './job_lifecycle.js';
+import {
+  closeAgentSession,
+  finalizeSession,
+  flushJobLogs,
+  runShutdownCallbacks,
+} from './job_lifecycle.js';
 import { flushOtelLogs } from './telemetry/index.js';
 import type { AgentSession } from './voice/agent_session.js';
 
@@ -175,6 +180,68 @@ describe('closeAgentSession', () => {
       'AgentSession.close() failed; proceeding with shutdown so registered callbacks still run.',
     );
     expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
+  });
+});
+
+describe('runShutdownCallbacks', () => {
+  it('does not expose callback errors', async () => {
+    const secret = 'secret shutdown callback payload';
+    const logger = createLogger();
+
+    await runShutdownCallbacks(
+      [
+        async () => {
+          throw new TypeError(secret);
+        },
+      ],
+      1000,
+      logger,
+    );
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { exceptionType: 'TypeError' },
+      'error while running shutdown callback',
+    );
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
+  });
+
+  it('stops waiting after the shutdown callback timeout', async () => {
+    vi.useFakeTimers();
+    const logger = createLogger();
+    const callback = vi.fn(() => new Promise<void>(() => {}));
+    const completion = runShutdownCallbacks([callback], 1000, logger);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await completion;
+
+    expect(callback).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      { timeout: 1000 },
+      'shutdown callbacks timed out; proceeding with job shutdown',
+    );
+  });
+
+  it('does not expose a callback error that arrives after its timeout', async () => {
+    vi.useFakeTimers();
+    const secret = 'secret late shutdown callback payload';
+    const logger = createLogger();
+    let rejectCallback!: (error: Error) => void;
+    const callback = new Promise<void>((_, reject) => {
+      rejectCallback = reject;
+    });
+    const completion = runShutdownCallbacks([() => callback], 1000, logger);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await completion;
+    rejectCallback(new RangeError(secret));
+
+    await vi.waitFor(() =>
+      expect(logger.debug).toHaveBeenCalledWith(
+        { exceptionType: 'RangeError' },
+        'shutdown callback rejected after shutdown timeout',
+      ),
+    );
+    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(secret);
   });
 });
 
