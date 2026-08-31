@@ -5488,7 +5488,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this.logger.info(
       {
-        error: error?.message,
+        error,
         label: error?.label,
       },
       'adaptive interruption disabled due to unrecoverable error, falling back to VAD-based interruption',

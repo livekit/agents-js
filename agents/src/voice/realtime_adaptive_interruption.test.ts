@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
+import { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type {
   InterruptionSentinel,
   OverlappingSpeechEvent,
@@ -220,6 +221,32 @@ describe('realtime adaptive interruption', () => {
 
     expect(activity.isInterruptionDetectionEnabled).toBe(false);
     expect(activity.interruptionDetector).toBeUndefined();
+  });
+
+  it('keeps interruption failures structured for log redaction', () => {
+    const activity = Object.create(AgentActivity.prototype) as any;
+    const error = new InterruptionDetectionError(
+      'wss://provider.example?api_key=secret',
+      Date.now(),
+      'adaptive-interruption',
+      false,
+    );
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    Object.assign(activity, {
+      audioRecognition: { disableInterruptionDetection: vi.fn().mockResolvedValue(undefined) },
+      interruptionDetector: { off: vi.fn() },
+      isInterruptionDetectionEnabled: true,
+      logger,
+      pendingInterruption: overlapEvent({ isInterruption: true }),
+      restoreInterruptionByAudioActivity: vi.fn(),
+    });
+
+    activity.fallbackToVadInterruption(error);
+
+    expect(logger.info).toHaveBeenCalledWith(
+      { error, label: 'adaptive-interruption' },
+      'adaptive interruption disabled due to unrecoverable error, falling back to VAD-based interruption',
+    );
   });
 
   it('owns the adaptive verdict transition', () => {
