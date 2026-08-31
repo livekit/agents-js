@@ -50,13 +50,14 @@ describe('finalizeSession', () => {
   });
 
   it('continues internal cleanup when the application callback rejects', async () => {
+    const secret = 'secret callback payload';
     const internalCleanup = vi.fn(async () => {});
     const logger = createLogger();
 
     await finalizeSession(
       createJobContext(internalCleanup),
       async () => {
-        throw new Error('callback failed');
+        throw new TypeError(secret);
       },
       1000,
       logger,
@@ -64,9 +65,10 @@ describe('finalizeSession', () => {
 
     expect(internalCleanup).toHaveBeenCalledOnce();
     expect(logger.error).toHaveBeenCalledWith(
-      { error: expect.objectContaining({ message: 'callback failed' }) },
+      { exceptionType: 'TypeError' },
       'error while executing the onSessionEnd callback',
     );
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
   });
 
   it('continues internal cleanup when the application callback times out', async () => {
@@ -89,6 +91,54 @@ describe('finalizeSession', () => {
       'onSessionEnd timed out; proceeding with internal session cleanup',
     );
   });
+
+  it('does not expose a callback error that arrives after its timeout', async () => {
+    vi.useFakeTimers();
+    const secret = 'secret late callback payload';
+    const logger = createLogger();
+    let rejectCallback!: (error: Error) => void;
+    const callback = new Promise<void>((_, reject) => {
+      rejectCallback = reject;
+    });
+    const completion = finalizeSession(
+      createJobContext(async () => {}),
+      () => callback,
+      1000,
+      logger,
+    );
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await completion;
+    rejectCallback(new Error(secret));
+
+    await vi.waitFor(() =>
+      expect(logger.debug).toHaveBeenCalledWith(
+        { exceptionType: 'Error' },
+        'onSessionEnd rejected after shutdown timeout',
+      ),
+    );
+    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(secret);
+  });
+
+  it('does not expose internal cleanup errors', async () => {
+    const secret = 'secret session report payload';
+    const logger = createLogger();
+
+    await finalizeSession(
+      createJobContext(async () => {
+        throw new Error(secret);
+      }),
+      undefined,
+      1000,
+      logger,
+    );
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { exceptionType: 'Error' },
+      'error in ctx._onSessionEnd',
+    );
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
+  });
 });
 
 describe('closeAgentSession', () => {
@@ -107,6 +157,24 @@ describe('closeAgentSession', () => {
       { timeout: 60_000 },
       'AgentSession.close() timed out; proceeding with shutdown so registered callbacks still run.',
     );
+  });
+
+  it('continues without exposing an immediate close error', async () => {
+    const secret = 'secret close payload';
+    const logger = createLogger();
+    const session: Pick<AgentSession, 'close'> = {
+      close: async () => {
+        throw new Error(secret);
+      },
+    };
+
+    await closeAgentSession(session, logger);
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { exceptionType: 'Error' },
+      'AgentSession.close() failed; proceeding with shutdown so registered callbacks still run.',
+    );
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
   });
 });
 
@@ -130,5 +198,19 @@ describe('flushJobLogs', () => {
       { timeout: 10_000 },
       'OTEL log flush timed out; proceeding with job shutdown',
     );
+  });
+
+  it('does not expose log exporter errors', async () => {
+    const secret = 'secret exporter response';
+    const logger = createLogger();
+    flushOtelLogsMock.mockRejectedValue(new Error(secret));
+
+    await flushJobLogs(logger);
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { exceptionType: 'Error' },
+      'Failed to flush OTEL logs',
+    );
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
   });
 });

@@ -132,7 +132,6 @@ describe('IPC send on dead process', () => {
 describe('staged job shutdown', () => {
   async function createProc({
     closeTimeout = 20,
-    sessionEndShutdownTimeout = 1000,
     pingTimeout = 60_000,
     completeSessionEnd = false,
   } = {}) {
@@ -188,8 +187,8 @@ describe('staged job shutdown', () => {
         return 'job';
       }
 
-      protected get sessionEndShutdownTimeout() {
-        return sessionEndShutdownTimeout;
+      protected get stagedShutdown() {
+        return true;
       }
 
       createProcess(): ChildProcess {
@@ -224,7 +223,7 @@ describe('staged job shutdown', () => {
     await close;
   });
 
-  it('still bounds teardown after onSessionEnd completes', async () => {
+  it('still bounds process teardown after session-end handling completes', async () => {
     const { killSpy, proc } = await createProc({ completeSessionEnd: true });
 
     await proc.close();

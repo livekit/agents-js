@@ -6,6 +6,7 @@ import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
+import { safeErrorType } from '../error_utils.js';
 import { type Agent, isAgent } from '../generator.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
 import { closeAgentSession, finalizeSession, flushJobLogs } from '../job_lifecycle.js';
@@ -17,6 +18,12 @@ import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
+const EXIT_REASON = {
+  roomDisconnected: 'room disconnected',
+  userShutdown: 'user shutdown',
+  shutdownRequest: 'shutdown request',
+  entrypointError: 'entrypoint error',
+} as const;
 
 const safeSend = (msg: IPCMessage): boolean => {
   try {
@@ -31,7 +38,10 @@ const safeSend = (msg: IPCMessage): boolean => {
     if (error instanceof Error && error.message.includes('Channel closed')) {
       log().debug({ msgCase: msg.case }, 'IPC channel closed, message not sent');
     } else {
-      log().error({ error, msgCase: msg.case }, 'IPC send failed unexpectedly');
+      log().error(
+        { exceptionType: safeErrorType(error), msgCase: msg.case },
+        'IPC send failed unexpectedly',
+      );
     }
     return false;
   }
@@ -111,16 +121,16 @@ const startJob = (
   const room = new Room();
   room.on(RoomEvent.Disconnected, () => {
     if (!shutdown) {
-      closeEvent.emit('close', false);
+      closeEvent.emit('close', EXIT_REASON.roomDisconnected);
     }
   });
 
   const onConnect = () => {
     connect = true;
   };
-  const onShutdown = (reason: string) => {
+  const onShutdown = () => {
     shutdown = true;
-    closeEvent.emit('close', true, reason);
+    closeEvent.emit('close', EXIT_REASON.userShutdown);
   };
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
@@ -140,7 +150,7 @@ const startJob = (
       const closePromise = once(closeEvent, 'close').then((close) => {
         logger.debug('shutting down');
         shutdown = true;
-        safeSend({ case: 'exiting', value: { reason: close[1] } });
+        safeSend({ case: 'exiting', value: { reason: close[0] } });
       });
 
       // Run the job function within the AsyncLocalStorage context
@@ -165,40 +175,51 @@ const startJob = (
           clearTimeout(unconnectedTimeout);
         });
     } catch (error) {
-      logger.error({ error }, 'error in entry function');
+      logger.error({ exceptionType: safeErrorType(error) }, 'error in entry function');
       shutdown = true;
       safeSend({
         case: 'exiting',
-        value: { reason: error instanceof Error ? error.message : String(error) },
+        value: { reason: EXIT_REASON.entrypointError },
       });
     }
 
-    // Close the primary agent session if it exists
-    if (ctx._primaryAgentSession) {
-      await closeAgentSession(ctx._primaryAgentSession, logger);
-    }
-
     safeSend({ case: 'sessionEndStarted', value: undefined });
-    await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
-    safeSend({ case: 'shuttingDown', value: undefined });
 
     try {
-      await room.disconnect();
-      logger.debug('disconnected from room');
-
-      const shutdownTasks = [];
-      for (const callback of ctx.shutdownCallbacks) {
-        shutdownTasks.push(callback());
+      // Close the primary agent session if it exists
+      if (ctx._primaryAgentSession) {
+        await closeAgentSession(ctx._primaryAgentSession, logger);
       }
-      await ThrowsPromise.all(shutdownTasks).catch((error) =>
-        logger.error({ error }, 'error while shutting down the job'),
-      );
-    } finally {
-      await flushJobLogs(logger);
-    }
 
-    safeSend({ case: 'done', value: undefined });
-    joinFuture.resolve();
+      await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
+
+      try {
+        await room.disconnect();
+        logger.debug('disconnected from room');
+      } catch (error) {
+        logger.error({ exceptionType: safeErrorType(error) }, 'error while disconnecting room');
+      }
+
+      const results = await Promise.allSettled(
+        ctx.shutdownCallbacks.map((callback) => Promise.resolve().then(() => callback())),
+      );
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          logger.error(
+            { exceptionType: safeErrorType(result.reason) },
+            'error while running shutdown callback',
+          );
+        }
+      }
+    } finally {
+      try {
+        await flushJobLogs(logger);
+      } finally {
+        safeSend({ case: 'shuttingDown', value: undefined });
+        safeSend({ case: 'done', value: undefined });
+        joinFuture.resolve();
+      }
+    }
   })();
 
   return { ctx, task };
@@ -256,7 +277,10 @@ const startJob = (
     let logger = log().child({ pid: proc.pid });
 
     process.on('unhandledRejection', (reason) => {
-      logger.debug({ error: reason }, 'Unhandled promise rejection');
+      logger.debug(
+        { exceptionType: safeErrorType(reason) },
+        'Unhandled promise rejection in job process',
+      );
     });
 
     logger.debug('initializing job runner');
@@ -310,7 +334,7 @@ const startJob = (
             safeSend({ case: 'shuttingDown', value: undefined });
             join.resolve();
           }
-          closeEvent.emit('close', 'shutdownRequest');
+          closeEvent.emit('close', EXIT_REASON.shutdownRequest);
           clearTimeout(orphanedTimeout);
           process.off('message', messageHandler);
         }
@@ -330,7 +354,7 @@ const startJob = (
       await dispose();
       logger.debug('native resources disposed');
     } catch (error) {
-      logger.warn({ error }, 'failed to dispose native resources');
+      logger.warn({ exceptionType: safeErrorType(error) }, 'failed to dispose native resources');
     }
 
     logger.debug('Job process shutdown');

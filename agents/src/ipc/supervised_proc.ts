@@ -4,6 +4,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import pidusage from 'pidusage';
+import { safeErrorType } from '../error_utils.js';
 import type { RunningJobInfo } from '../job.js';
 import { log, loggerOptions } from '../log.js';
 import { Future } from '../utils.js';
@@ -76,8 +77,8 @@ export abstract class SupervisedProc {
   abstract mainTask(child: ChildProcess): Promise<void>;
   protected abstract get processKind(): string;
 
-  protected get sessionEndShutdownTimeout(): number | undefined {
-    return undefined;
+  protected get stagedShutdown(): boolean {
+    return false;
   }
 
   get started(): boolean {
@@ -103,8 +104,10 @@ export abstract class SupervisedProc {
 
     this.#started = true;
     this.#startedAt = performance.now();
-    this.run().catch((err) => {
-      this.#logger.child({ err }).warn('supervised process run failed');
+    this.run().catch((error) => {
+      this.#logger
+        .child({ exceptionType: safeErrorType(error) })
+        .warn('supervised process run failed');
       // Note: we intentionally do NOT kill the child process here. Killing it
       // would race with initialize()'s `once(proc, 'message')`, causing
       // initialize() to hang forever and deadlocking the caller (proc_pool).
@@ -194,10 +197,10 @@ export abstract class SupervisedProc {
       }
     };
     this.proc!.on('message', listener);
-    this.proc!.on('error', (err) => {
+    this.proc!.on('error', (error) => {
       if (this.#closing) return;
       this.#logger
-        .child({ err })
+        .child({ exceptionType: safeErrorType(error) })
         .warn('job process exited unexpectedly; this likely means the error above caused a crash');
       this.clearTimers();
       this.#join.resolve();
@@ -301,8 +304,7 @@ export abstract class SupervisedProc {
 
       this.proc.send({ case: 'shutdownRequest' });
 
-      const sessionEndTimeout = this.sessionEndShutdownTimeout;
-      if (sessionEndTimeout === undefined) {
+      if (!this.stagedShutdown) {
         await this.waitForExit(this.#opts.closeTimeout);
         return;
       }
@@ -327,13 +329,7 @@ export abstract class SupervisedProc {
         return;
       }
 
-      if (
-        !(await this.waitForShutdownStage(
-          this.#shuttingDown,
-          sessionEndTimeout + SHUTDOWN_STAGE_GRACE,
-          'job did not finish session-end handling in time',
-        ))
-      ) {
+      if (!(await this.waitForShutdownCompletion(this.#shuttingDown))) {
         return;
       }
 
@@ -367,6 +363,17 @@ export abstract class SupervisedProc {
       await this.#join.await;
     }
 
+    return result === 'stage';
+  }
+
+  private async waitForShutdownCompletion(stage: Future): Promise<boolean> {
+    if (this.#join.done) return false;
+    if (stage.done) return true;
+
+    const result = await Promise.race([
+      stage.await.then(() => 'stage' as const),
+      this.#join.await.then(() => 'exit' as const),
+    ]);
     return result === 'stage';
   }
 

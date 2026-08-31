@@ -28,7 +28,7 @@ import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
-import { DEFAULT_SESSION_END_TIMEOUT } from './job_lifecycle.js';
+import { DEFAULT_SESSION_END_TIMEOUT, validateSessionEndTimeout } from './job_lifecycle.js';
 import { log } from './log.js';
 import { Future, rejectOnAbort } from './utils.js';
 import { version } from './version.js';
@@ -271,7 +271,7 @@ export class ServerOptions {
     this.numIdleProcesses = numIdleProcesses || Default.numIdleProcesses(production);
     this.drainTimeout = drainTimeout;
     this.shutdownProcessTimeout = shutdownProcessTimeout;
-    this.sessionEndTimeout = sessionEndTimeout;
+    this.sessionEndTimeout = validateSessionEndTimeout(sessionEndTimeout);
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
     // agentNameIsEnv may be passed explicitly when ServerOptions is re-constructed (e.g.

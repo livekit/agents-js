@@ -3,19 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { safeErrorType } from './error_utils.js';
 import { log, loggerOptions } from './log.js';
 import { waitForAbort } from './utils.js';
-
-const safeErrorType = (error: unknown): string => {
-  if (error instanceof AggregateError) return 'AggregateError';
-  if (error instanceof EvalError) return 'EvalError';
-  if (error instanceof RangeError) return 'RangeError';
-  if (error instanceof ReferenceError) return 'ReferenceError';
-  if (error instanceof SyntaxError) return 'SyntaxError';
-  if (error instanceof TypeError) return 'TypeError';
-  if (error instanceof URIError) return 'URIError';
-  return error instanceof Error ? 'Error' : typeof error;
-};
 
 /**
  * Helper class to manage persistent connections like websockets.

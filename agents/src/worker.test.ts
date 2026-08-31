@@ -44,4 +44,13 @@ describe('ServerOptions sessionEndTimeout', () => {
     });
     expect(options.sessionEndTimeout).toBe(12_345);
   });
+
+  it.each([-1, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN])(
+    'rejects invalid value %s',
+    (sessionEndTimeout) => {
+      expect(() => new ServerOptions({ agent: 'test-agent.js', sessionEndTimeout })).toThrow(
+        'sessionEndTimeout must be a finite, non-negative number',
+      );
+    },
+  );
 });

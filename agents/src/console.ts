@@ -4,6 +4,7 @@
 import { Job, JobType, Room as RoomModel } from '@livekit/protocol';
 import { Room } from '@livekit/rtc-node';
 import { pathToFileURL } from 'node:url';
+import { safeErrorType } from './error_utils.js';
 import { type Agent, isAgent } from './generator.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
@@ -13,6 +14,7 @@ import {
   closeAgentSession,
   finalizeSession,
   flushJobLogs,
+  validateSessionEndTimeout,
 } from './job_lifecycle.js';
 import { log } from './log.js';
 import { Future, shortuuid } from './utils.js';
@@ -69,6 +71,7 @@ export async function runConsole({
   record: boolean;
   sessionEndTimeout?: number;
 }): Promise<void> {
+  validateSessionEndTimeout(sessionEndTimeout);
   const logger = log();
 
   const sep = connectAddr.lastIndexOf(':');
@@ -166,7 +169,7 @@ export async function runConsole({
       try {
         await fn();
       } catch (error) {
-        logger.error({ error }, `error in ${step}`);
+        logger.error({ exceptionType: safeErrorType(error) }, `error in ${step}`);
       }
     };
 
@@ -189,7 +192,10 @@ export async function runConsole({
         const results = await Promise.allSettled(jobCtx.shutdownCallbacks.map((cb) => cb()));
         for (const result of results) {
           if (result.status === 'rejected') {
-            logger.error({ error: result.reason }, 'error while running shutdown callback');
+            logger.error(
+              { exceptionType: safeErrorType(result.reason) },
+              'error while running shutdown callback',
+            );
           }
         }
       }
