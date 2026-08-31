@@ -13,6 +13,7 @@ export class ProcPool {
   agent: string;
   initializeTimeout: number;
   closeTimeout: number;
+  sessionEndTimeout: number;
   executors: JobExecutor[] = [];
   tasks: Promise<void>[] = [];
   started = false;
@@ -31,6 +32,7 @@ export class ProcPool {
     numIdleProcesses: number,
     initializeTimeout: number,
     closeTimeout: number,
+    sessionEndTimeout: number,
     inferenceExecutor: InferenceExecutor | undefined,
     memoryWarnMB: number,
     memoryLimitMB: number,
@@ -41,6 +43,7 @@ export class ProcPool {
     }
     this.initializeTimeout = initializeTimeout;
     this.closeTimeout = closeTimeout;
+    this.sessionEndTimeout = sessionEndTimeout;
     this.inferenceExecutor = inferenceExecutor;
     this.memoryWarnMB = memoryWarnMB;
     this.memoryLimitMB = memoryLimitMB;
@@ -67,6 +70,7 @@ export class ProcPool {
         this.inferenceExecutor,
         this.initializeTimeout,
         this.closeTimeout,
+        this.sessionEndTimeout,
         this.memoryWarnMB,
         this.memoryLimitMB,
         2500,
@@ -86,6 +90,7 @@ export class ProcPool {
       this.inferenceExecutor,
       this.initializeTimeout,
       this.closeTimeout,
+      this.sessionEndTimeout,
       this.memoryWarnMB,
       this.memoryLimitMB,
       2500,

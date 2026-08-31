@@ -5,7 +5,9 @@ import { type ExportResult, ExportResultCode } from '@opentelemetry/core';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import FormData from 'form-data';
+import { EventEmitter } from 'node:events';
 import http from 'node:http';
+import type { ClientRequest } from 'node:http';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
@@ -38,6 +40,8 @@ function makeReport(recordingOptions: SessionReport['options']['recordingOptions
 
 function mockFormSubmit(statusCode: number, body: Buffer = Buffer.alloc(0)) {
   return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit(_opts, cb) {
+    const request = new EventEmitter() as ClientRequest;
+    request.destroy = vi.fn(() => request);
     const res = new PassThrough() as PassThrough & {
       statusCode: number;
       statusMessage: string;
@@ -53,7 +57,7 @@ function mockFormSubmit(statusCode: number, body: Buffer = Buffer.alloc(0)) {
       res.emit('end');
     });
     cb?.(null, res as never);
-    return {} as never;
+    return request;
   });
 }
 

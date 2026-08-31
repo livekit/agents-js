@@ -77,4 +77,15 @@ describe('SimpleOTLPHttpLogExporter attribute conversion', () => {
     expect(payload).toContain('"key":"lk.pii.keyterms"');
     expect(payload).toContain('"kvlistValue"');
   });
+
+  it('bounds direct session-report log requests at 900 seconds', async () => {
+    const signal = new AbortController().signal;
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(signal);
+
+    await exportAttributes({ value: 'test' });
+
+    const init = fetchSpy.mock.calls.at(-1)?.[1] as RequestInit | undefined;
+    expect(timeoutSpy).toHaveBeenCalledWith(900_000);
+    expect(init?.signal).toBe(signal);
+  });
 });

@@ -21,7 +21,7 @@ import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 import { SimulationContext, parseSimulationDispatch } from './simulation.js';
-import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
+import { setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import {
   ATTRIBUTE_REDACTION_ENABLED,
   ATTRIBUTE_SIMULATION_ENABLED,
@@ -493,12 +493,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
     // Explicitly clear the recorded events to avoid leaking memory
     session._recordedEvents = [];
-
-    try {
-      await flushOtelLogs();
-    } catch (error) {
-      this.#logger.error({ error }, 'Failed to flush OTEL logs');
-    }
   }
 
   /**

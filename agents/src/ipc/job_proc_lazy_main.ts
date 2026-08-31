@@ -8,15 +8,15 @@ import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
+import { closeAgentSession, finalizeSession, flushJobLogs } from '../job_lifecycle.js';
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
-import { Future, IdleTimeoutError, shortuuid, waitUntilTimeout } from '../utils.js';
+import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
-const SESSION_CLOSE_TIMEOUT = 60 * 1000;
 
 const safeSend = (msg: IPCMessage): boolean => {
   try {
@@ -101,6 +101,8 @@ const startJob = (
   closeEvent: EventEmitter,
   logger: Logger,
   joinFuture: Future,
+  sessionEndTimeout: number,
+  onSessionEnd?: (ctx: JobContext) => unknown,
   onSimulationEnd?: (ctx: SimulationContext) => unknown,
 ): JobTask => {
   let connect = false;
@@ -173,44 +175,25 @@ const startJob = (
 
     // Close the primary agent session if it exists
     if (ctx._primaryAgentSession) {
-      const sessionClosePromise = ctx._primaryAgentSession.close();
-      try {
-        await waitUntilTimeout(sessionClosePromise, SESSION_CLOSE_TIMEOUT);
-      } catch (error) {
-        if (!(error instanceof IdleTimeoutError)) {
-          throw error;
-        }
-
-        void sessionClosePromise.catch((sessionCloseError) =>
-          logger.debug(
-            { error: sessionCloseError },
-            'AgentSession.close() rejected after shutdown timeout',
-          ),
-        );
-        logger.error(
-          { timeout: SESSION_CLOSE_TIMEOUT },
-          'AgentSession.close() timed out; proceeding with shutdown so registered callbacks still run.',
-        );
-      }
+      await closeAgentSession(ctx._primaryAgentSession, logger);
     }
 
-    // Generate and save/upload session report
+    await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
+
     try {
-      await ctx._onSessionEnd();
-    } catch (error) {
-      logger.error({ error }, 'error in ctx._onSessionEnd');
-    }
+      await room.disconnect();
+      logger.debug('disconnected from room');
 
-    await room.disconnect();
-    logger.debug('disconnected from room');
-
-    const shutdownTasks = [];
-    for (const callback of ctx.shutdownCallbacks) {
-      shutdownTasks.push(callback());
+      const shutdownTasks = [];
+      for (const callback of ctx.shutdownCallbacks) {
+        shutdownTasks.push(callback());
+      }
+      await ThrowsPromise.all(shutdownTasks).catch((error) =>
+        logger.error({ error }, 'error while shutting down the job'),
+      );
+    } finally {
+      await flushJobLogs(logger);
     }
-    await ThrowsPromise.all(shutdownTasks).catch((error) =>
-      logger.error({ error }, 'error while shutting down the job'),
-    );
 
     safeSend({ case: 'done', value: undefined });
     joinFuture.resolve();
@@ -227,7 +210,12 @@ const startJob = (
     //   [0] `node'
     //   [1] import.meta.filename
     //   [2] import.meta.filename of function containing entry file
+    //   [3] sessionEndTimeout
     const moduleFile = process.argv[2];
+    const sessionEndTimeout = Number(process.argv[3]);
+    if (!Number.isFinite(sessionEndTimeout) || sessionEndTimeout < 0) {
+      throw new Error(`Invalid sessionEndTimeout: ${process.argv[3]}`);
+    }
     const agent: Agent = await import(pathToFileURL(moduleFile!).pathname).then((module) => {
       // Handle both ESM (module.default is the agent) and CJS (module.default.default is the agent)
       const agent =
@@ -306,6 +294,8 @@ const startJob = (
             closeEvent,
             logger,
             join,
+            sessionEndTimeout,
+            agent.onSessionEnd,
             agent.onSimulationEnd,
           );
           logger.debug('job started');

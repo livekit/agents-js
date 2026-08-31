@@ -10,6 +10,14 @@ export const AGENT_DEFINITION_SYMBOL = Symbol.for('livekit.agents.AgentDefinitio
 export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
   entry: (ctx: JobContext<ProcessUserData>) => Promise<void>;
   prewarm?: (proc: JobProcess<ProcessUserData>) => unknown;
+  /**
+   * Called after the primary agent session closes and before its report is generated.
+   * Errors are logged and do not stop session cleanup.
+   *
+   * The worker stops waiting after `ServerOptions.sessionEndTimeout`. JavaScript cannot cancel the
+   * returned promise, so timed-out work can continue until the job process exits.
+   */
+  onSessionEnd?: (ctx: JobContext<ProcessUserData>) => Promise<void> | void;
   /** Called when a simulation run driving this agent ends. Read the
    * simulator's verdict via `ctx.simulatorVerdict` and veto a pass from your
    * own checks with `ctx.fail(reason)`. Never called for normal sessions. */

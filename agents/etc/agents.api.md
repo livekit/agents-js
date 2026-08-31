@@ -249,6 +249,7 @@ export interface AgentCreateOptions<UserData = any> extends AgentOptions<UserDat
 export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
     // (undocumented)
     entry: (ctx: JobContext<ProcessUserData>) => Promise<void>;
+    onSessionEnd?: (ctx: JobContext<ProcessUserData>) => Promise<void> | void;
     onSimulationEnd?: (ctx: SimulationContext) => unknown;
     // (undocumented)
     prewarm?: (proc: JobProcess<ProcessUserData>) => unknown;
@@ -6325,6 +6326,7 @@ export class ServerOptions {
         numIdleProcesses?: number;
         drainTimeout?: number;
         shutdownProcessTimeout?: number;
+        sessionEndTimeout?: number;
         initializeProcessTimeout?: number;
         permissions?: WorkerPermissions;
         agentName?: string;
@@ -6383,6 +6385,7 @@ export class ServerOptions {
     requestFunc: (job: JobRequest) => Promise<void>;
     // (undocumented)
     serverType: JobType;
+    sessionEndTimeout: number;
     // (undocumented)
     shutdownProcessTimeout: number;
     // (undocumented)

@@ -30,3 +30,18 @@ describe('AgentServer connection failures', () => {
     }
   });
 });
+
+describe('ServerOptions sessionEndTimeout', () => {
+  it('defaults to five minutes', () => {
+    const options = new ServerOptions({ agent: 'test-agent.js' });
+    expect(options.sessionEndTimeout).toBe(300_000);
+  });
+
+  it('accepts an override', () => {
+    const options = new ServerOptions({
+      agent: 'test-agent.js',
+      sessionEndTimeout: 12_345,
+    });
+    expect(options.sessionEndTimeout).toBe(12_345);
+  });
+});

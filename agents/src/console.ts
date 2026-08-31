@@ -8,6 +8,12 @@ import { type Agent, isAgent } from './generator.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from './job.js';
+import {
+  DEFAULT_SESSION_END_TIMEOUT,
+  closeAgentSession,
+  finalizeSession,
+  flushJobLogs,
+} from './job_lifecycle.js';
 import { log } from './log.js';
 import { Future, shortuuid } from './utils.js';
 import { AgentsConsole, TcpAudioInput, TcpAudioOutput } from './voice/console_io.js';
@@ -56,10 +62,12 @@ export async function runConsole({
   agentPath,
   connectAddr,
   record,
+  sessionEndTimeout = DEFAULT_SESSION_END_TIMEOUT,
 }: {
   agentPath: string;
   connectAddr: string;
   record: boolean;
+  sessionEndTimeout?: number;
 }): Promise<void> {
   const logger = log();
 
@@ -164,24 +172,29 @@ export async function runConsole({
 
     const session = ctx?._primaryAgentSession;
     if (session) {
-      await guarded('AgentSession.close', () => session.close());
+      await guarded('AgentSession.close', () => closeAgentSession(session, logger));
     }
     const jobCtx = ctx;
     if (jobCtx) {
-      await guarded('ctx._onSessionEnd', () => jobCtx._onSessionEnd());
+      await finalizeSession(jobCtx, agent.onSessionEnd, sessionEndTimeout, logger);
     }
-    await guarded('transport.close', () => transport.close());
-    await guarded('room.disconnect', () => room.disconnect());
 
-    if (jobCtx) {
-      // Run job shutdown callbacks (e.g. AvatarSession.aclose) like the normal
-      // worker path does; runConsole bypasses the ProcPool so it must drain them.
-      const results = await Promise.allSettled(jobCtx.shutdownCallbacks.map((cb) => cb()));
-      for (const result of results) {
-        if (result.status === 'rejected') {
-          logger.error({ error: result.reason }, 'error while running shutdown callback');
+    try {
+      await guarded('transport.close', () => transport.close());
+      await guarded('room.disconnect', () => room.disconnect());
+
+      if (jobCtx) {
+        // Run job shutdown callbacks (e.g. AvatarSession.aclose) like the normal
+        // worker path does; runConsole bypasses the ProcPool so it must drain them.
+        const results = await Promise.allSettled(jobCtx.shutdownCallbacks.map((cb) => cb()));
+        for (const result of results) {
+          if (result.status === 'rejected') {
+            logger.error({ error: result.reason }, 'error while running shutdown callback');
+          }
         }
       }
+    } finally {
+      await flushJobLogs(logger);
     }
 
     const proc_ = inferenceProc;

@@ -34,7 +34,7 @@ describe('ProcPool warmed process lock handling', () => {
   it('releases lock token from the dequeued warmed process entry', async (): Promise<
     Throws<void, Error>
   > => {
-    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
+    const pool = new ProcPool('agent', 1, 1000, 1000, 300_000, undefined, 0, 0);
     const unlock = vi.fn();
     const executor = createMockExecutor();
     const jobInfo = {
@@ -53,7 +53,7 @@ describe('ProcPool warmed process lock handling', () => {
   });
 
   it('releases queued lock tokens during close', async () => {
-    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
+    const pool = new ProcPool('agent', 1, 1000, 1000, 300_000, undefined, 0, 0);
     const unlock = vi.fn();
     const executor = createMockExecutor();
 
@@ -66,7 +66,7 @@ describe('ProcPool warmed process lock handling', () => {
   });
 
   it('releases both init and proc locks when closed before proc starts', async () => {
-    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
+    const pool = new ProcPool('agent', 1, 1000, 1000, 300_000, undefined, 0, 0);
     const initUnlock = vi.fn();
     const procUnlock = vi.fn();
     pool.closed = true;
@@ -84,7 +84,7 @@ describe('ProcPool warmed process lock handling', () => {
     // Regression: initMutex must be released after enqueue, not after join().
     // Child procs are one-shot, so holding initMutex through join() serialises
     // the pool to effective concurrency 1 regardless of numIdleProcesses.
-    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
+    const pool = new ProcPool('agent', 1, 1000, 1000, 300_000, undefined, 0, 0);
     const initUnlock = vi.fn();
     const procUnlock = vi.fn();
 
@@ -109,6 +109,18 @@ describe('ProcPool warmed process lock handling', () => {
       const watchPromise = pool.procWatchTask(procUnlock);
       await flushMicrotasks();
 
+      expect(jobProcExecutorSpy).toHaveBeenCalledWith(
+        'agent',
+        undefined,
+        1000,
+        1000,
+        300_000,
+        0,
+        0,
+        2500,
+        60000,
+        500,
+      );
       // initMutex released while proc.join() is still pending.
       expect(initUnlock).toHaveBeenCalledTimes(1);
       expect(pool.warmedProcQueue.items.length).toBe(1);
@@ -128,7 +140,7 @@ describe('ProcPool warmed process lock handling', () => {
   it('releases initMutex in finally when initialization fails before enqueue', async (): Promise<
     Throws<void, Error>
   > => {
-    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
+    const pool = new ProcPool('agent', 1, 1000, 1000, 300_000, undefined, 0, 0);
     const initUnlock = vi.fn();
     const procUnlock = vi.fn();
 

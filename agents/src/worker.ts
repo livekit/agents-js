@@ -28,6 +28,7 @@ import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
+import { DEFAULT_SESSION_END_TIMEOUT } from './job_lifecycle.js';
 import { log } from './log.js';
 import { Future, rejectOnAbort } from './utils.js';
 import { version } from './version.js';
@@ -166,6 +167,8 @@ export class ServerOptions {
   numIdleProcesses: number;
   drainTimeout: number;
   shutdownProcessTimeout: number;
+  /** Maximum time to wait for `onSessionEnd`, in milliseconds. Defaults to five minutes. */
+  sessionEndTimeout: number;
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
@@ -193,6 +196,7 @@ export class ServerOptions {
     numIdleProcesses = undefined,
     drainTimeout = DRAIN_TIMEOUT,
     shutdownProcessTimeout = 60 * 1000,
+    sessionEndTimeout = DEFAULT_SESSION_END_TIMEOUT,
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
     agentName = '',
@@ -225,6 +229,8 @@ export class ServerOptions {
     /** Number of milliseconds to wait for current jobs to finish upon shutdown. */
     drainTimeout?: number;
     shutdownProcessTimeout?: number;
+    /** Maximum number of milliseconds to wait for `onSessionEnd` to complete. */
+    sessionEndTimeout?: number;
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
     /**
@@ -265,6 +271,7 @@ export class ServerOptions {
     this.numIdleProcesses = numIdleProcesses || Default.numIdleProcesses(production);
     this.drainTimeout = drainTimeout;
     this.shutdownProcessTimeout = shutdownProcessTimeout;
+    this.sessionEndTimeout = sessionEndTimeout;
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
     // agentNameIsEnv may be passed explicitly when ServerOptions is re-constructed (e.g.
@@ -392,6 +399,7 @@ export class AgentServer {
       opts.numIdleProcesses,
       opts.initializeProcessTimeout,
       opts.shutdownProcessTimeout,
+      opts.sessionEndTimeout,
       this.#inferenceExecutor,
       opts.jobMemoryWarnMB,
       opts.jobMemoryLimitMB,

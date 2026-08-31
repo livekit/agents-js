@@ -19,6 +19,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   #jobStatus?: JobStatus;
   #runningJob?: RunningJobInfo;
   #agent: string;
+  #sessionEndTimeout: number;
   #inferenceExecutor?: InferenceExecutor;
   #inferenceTasks: Promise<void>[] = [];
   #logger = log();
@@ -28,6 +29,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     inferenceExecutor: InferenceExecutor | undefined,
     initializeTimeout: number,
     closeTimeout: number,
+    sessionEndTimeout: number,
     memoryWarnMB: number,
     memoryLimitMB: number,
     pingInterval: number,
@@ -44,6 +46,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
       highPingThreshold,
     );
     this.#agent = agent;
+    this.#sessionEndTimeout = sessionEndTimeout;
     this.#inferenceExecutor = inferenceExecutor;
   }
 
@@ -78,7 +81,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     const isTypeScript = currentFileExtension === '.ts';
     const forkOptions = isTypeScript ? { execArgv: process.execArgv } : undefined;
 
-    return fork(forkUrl, [this.#agent], forkOptions);
+    return fork(forkUrl, [this.#agent, String(this.#sessionEndTimeout)], forkOptions);
   }
 
   async mainTask(proc: ChildProcess) {
