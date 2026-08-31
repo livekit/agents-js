@@ -142,7 +142,7 @@ describe('staged job shutdown', () => {
       exitCode: number | null;
       killed: boolean;
       send: (message: IPCMessage) => boolean;
-      kill: () => boolean;
+      kill: (signal?: NodeJS.Signals | number) => boolean;
     };
 
     const child = new EventEmitter() as TestChild;
@@ -233,7 +233,7 @@ describe('staged job shutdown', () => {
 
     await proc.close();
 
-    expect(killSpy).toHaveBeenCalledOnce();
+    expect(killSpy).toHaveBeenCalledExactlyOnceWith('SIGKILL');
   });
 
   it('kills the child when it does not acknowledge shutdown', async () => {
@@ -241,7 +241,7 @@ describe('staged job shutdown', () => {
 
     await proc.close();
 
-    expect(killSpy).toHaveBeenCalledOnce();
+    expect(killSpy).toHaveBeenCalledExactlyOnceWith('SIGKILL');
   });
 
   it('kills an over-limit child without starting staged shutdown', async () => {
@@ -254,7 +254,7 @@ describe('staged job shutdown', () => {
 
     await internals.checkMemoryUsage();
 
-    expect(killSpy).toHaveBeenCalledOnce();
+    expect(killSpy).toHaveBeenCalledExactlyOnceWith('SIGKILL');
     expect(sendSpy).not.toHaveBeenCalledWith(expect.objectContaining({ case: 'shutdownRequest' }));
   });
 });

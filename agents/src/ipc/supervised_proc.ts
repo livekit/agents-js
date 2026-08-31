@@ -127,7 +127,7 @@ export abstract class SupervisedProc {
       this.#logger.warn('job is unresponsive');
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);
-      this.proc!.kill();
+      this.proc!.kill('SIGKILL');
       this.#join.resolve();
     }, this.#opts.pingTimeout);
 
@@ -244,7 +244,7 @@ export abstract class SupervisedProc {
       // On timeout (or a bad first message) the child is still alive — kill it
       // so a failed initialize doesn't leak the process.
       if (this.proc && this.proc.exitCode === null && !this.proc.killed) {
-        this.proc.kill();
+        this.proc.kill('SIGKILL');
       }
       throw err;
     } finally {
@@ -324,7 +324,7 @@ export abstract class SupervisedProc {
 
     if (result === 'timeout') {
       this.#logger.child({ timeout }).error(timeoutMessage);
-      this.proc?.kill();
+      this.proc?.kill('SIGKILL');
       await this.#join.await;
     }
 
@@ -356,7 +356,7 @@ export abstract class SupervisedProc {
 
     if (result === 'timeout') {
       this.#logger.child({ timeout }).error('job shutdown is taking too much time');
-      this.proc?.kill();
+      this.proc?.kill('SIGKILL');
       await this.#join.await;
     }
   }
@@ -403,7 +403,7 @@ export abstract class SupervisedProc {
         .error(`${this.processKind} process exceeded memory limit, killing it`);
       this.#closing = true;
       this.clearTimers();
-      this.proc?.kill();
+      this.proc?.kill('SIGKILL');
     } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
       if (this.shouldEmitMemoryWarning(memoryMB)) {
         const advisory = this.#opts.memoryLimitMB <= 0;
