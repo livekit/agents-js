@@ -5,7 +5,6 @@ import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
 import { extname } from 'node:path';
 import type { RunningJobInfo } from '../job.js';
-import { getSessionEndShutdownTimeout } from '../job_lifecycle.js';
 import { log } from '../log.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
@@ -45,7 +44,6 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
       pingInterval,
       pingTimeout,
       highPingThreshold,
-      getSessionEndShutdownTimeout(sessionEndTimeout, closeTimeout),
     );
     this.#agent = agent;
     this.#sessionEndTimeout = sessionEndTimeout;

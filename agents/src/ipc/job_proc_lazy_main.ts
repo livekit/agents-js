@@ -14,6 +14,7 @@ import {
   finalizeSession,
   flushJobLogs,
   runShutdownCallbacks,
+  waitForEntrypointShutdown,
 } from '../job_lifecycle.js';
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
@@ -25,9 +26,8 @@ import type { IPCMessage } from './message.js';
 const ORPHANED_TIMEOUT = 15 * 1000;
 const EXIT_REASON = {
   roomDisconnected: 'room disconnected',
-  userShutdown: 'user shutdown',
   shutdownRequest: 'shutdown request',
-  entrypointError: 'entrypoint error',
+  jobCrashed: 'job crashed',
 } as const;
 
 const safeSend = (msg: IPCMessage): boolean => {
@@ -135,7 +135,7 @@ const startJob = (
   };
   const onShutdown = (reason: string) => {
     shutdown = true;
-    closeEvent.emit('close', EXIT_REASON.userShutdown, reason);
+    closeEvent.emit('close', reason);
   };
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
@@ -157,15 +157,12 @@ const startJob = (
         shutdown = true;
         safeSend({
           case: 'exiting',
-          value: {
-            category: close[0],
-            ...(close[1] !== undefined ? { 'lk.pii.shutdown_reason': close[1] } : {}),
-          },
+          value: { reason: close[0] },
         });
       });
 
       // Run the job function within the AsyncLocalStorage context
-      await runWithJobContextAsync(ctx, async () => {
+      const entrypointPromise = runWithJobContextAsync(ctx, async () => {
         const { tracer, traceTypes } = await import('../telemetry/index.js');
         return tracer.startActiveSpan(
           async (span) => {
@@ -176,47 +173,62 @@ const startJob = (
           },
           { name: 'job_entrypoint' },
         );
-      })
-        .then(async () => {
-          if (!shutdown) {
-            await closePromise;
-          }
-        })
-        .finally(async () => {
-          clearTimeout(unconnectedTimeout);
-        });
-    } catch (error) {
-      logger.error({ exceptionType: safeErrorType(error) }, 'error in entry function');
-      shutdown = true;
-      safeSend({
-        case: 'exiting',
-        value: { category: EXIT_REASON.entrypointError },
       });
+
+      const entrypointResult = entrypointPromise.then(
+        () => ({ status: 'fulfilled' as const }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      );
+      const entrypointFailure = new Promise<{ status: 'rejected'; error: unknown }>((resolve) => {
+        void entrypointResult.then((result) => {
+          if (result.status === 'rejected') resolve(result);
+        });
+      });
+      const trigger = await Promise.race([
+        closePromise.then(() => ({ status: 'shutdown' as const })),
+        entrypointFailure,
+      ]);
+
+      if (trigger.status === 'rejected') {
+        logger.error({ exceptionType: safeErrorType(trigger.error) }, 'error in entry function');
+        shutdown = true;
+        safeSend({
+          case: 'exiting',
+          value: { reason: EXIT_REASON.jobCrashed },
+        });
+      } else {
+        await waitForEntrypointShutdown(entrypointPromise, logger);
+      }
+    } finally {
+      clearTimeout(unconnectedTimeout);
     }
 
-    safeSend({ case: 'sessionEndStarted', value: undefined });
-
     try {
-      // Close the primary agent session if it exists
-      if (ctx._primaryAgentSession) {
-        await closeAgentSession(ctx._primaryAgentSession, logger);
-      }
+      await runWithJobContextAsync(ctx, async () => {
+        try {
+          // Close the primary agent session if it exists
+          if (ctx._primaryAgentSession) {
+            await closeAgentSession(ctx._primaryAgentSession, logger);
+          }
 
-      await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
+          await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
+        } finally {
+          safeSend({ case: 'shuttingDown', value: undefined });
+        }
 
-      try {
-        await room.disconnect();
-        logger.debug('disconnected from room');
-      } catch (error) {
-        logger.error({ exceptionType: safeErrorType(error) }, 'error while disconnecting room');
-      }
+        try {
+          await room.disconnect();
+          logger.debug('disconnected from room');
+        } catch (error) {
+          logger.error({ exceptionType: safeErrorType(error) }, 'error while disconnecting room');
+        }
 
-      await runShutdownCallbacks(ctx.shutdownCallbacks, sessionEndTimeout, logger);
+        await runShutdownCallbacks(ctx.shutdownCallbacks, logger);
+      });
     } finally {
       try {
         await flushJobLogs(logger);
       } finally {
-        safeSend({ case: 'shuttingDown', value: undefined });
         safeSend({ case: 'done', value: undefined });
         joinFuture.resolve();
       }
@@ -331,11 +343,10 @@ const startJob = (
         case 'shutdownRequest': {
           safeSend({ case: 'shutdownRequestAck', value: undefined });
           if (!job) {
-            safeSend({ case: 'sessionEndStarted', value: undefined });
             safeSend({ case: 'shuttingDown', value: undefined });
             join.resolve();
           }
-          closeEvent.emit('close', EXIT_REASON.shutdownRequest);
+          closeEvent.emit('close', msg.value?.reason ?? EXIT_REASON.shutdownRequest);
           clearTimeout(orphanedTimeout);
           process.off('message', messageHandler);
         }

@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Logger } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { JobContext } from './job.js';
+import { type JobContext, getJobContext } from './job.js';
 import {
   closeAgentSession,
   finalizeSession,
   flushJobLogs,
-  getSessionEndShutdownTimeout,
   runShutdownCallbacks,
+  waitForEntrypointShutdown,
 } from './job_lifecycle.js';
 import { flushOtelLogs } from './telemetry/index.js';
 import type { AgentSession } from './voice/agent_session.js';
@@ -24,6 +24,7 @@ function createLogger(): Logger {
   return {
     debug: vi.fn(),
     error: vi.fn(),
+    warn: vi.fn(),
   } as unknown as Logger;
 }
 
@@ -36,9 +37,46 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('getSessionEndShutdownTimeout', () => {
-  it('covers every bounded child lifecycle phase', () => {
-    expect(getSessionEndShutdownTimeout(1000, 2000)).toBe(974_000);
+describe('waitForEntrypointShutdown', () => {
+  it('does not expose an entrypoint error during shutdown', async () => {
+    const secret = 'secret entrypoint payload';
+    const logger = createLogger();
+
+    await waitForEntrypointShutdown(Promise.reject(new TypeError(secret)), logger);
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { exceptionType: 'TypeError' },
+      'error in entry function',
+    );
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
+  });
+
+  it('continues after 15 seconds and safely handles a later rejection', async () => {
+    vi.useFakeTimers();
+    const secret = 'secret late entrypoint payload';
+    const logger = createLogger();
+    let rejectEntrypoint!: (error: Error) => void;
+    const entrypoint = new Promise<void>((_, reject) => {
+      rejectEntrypoint = reject;
+    });
+    const completion = waitForEntrypointShutdown(entrypoint, logger);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await completion;
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      { timeout: 15_000 },
+      'entrypoint did not exit in time; proceeding with session cleanup',
+    );
+
+    rejectEntrypoint(new Error(secret));
+    await vi.waitFor(() =>
+      expect(logger.debug).toHaveBeenCalledWith(
+        { exceptionType: 'Error' },
+        'entrypoint rejected after shutdown timeout',
+      ),
+    );
+    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(secret);
   });
 });
 
@@ -59,6 +97,21 @@ describe('finalizeSession', () => {
     );
 
     expect(calls).toEqual(['application', 'internal']);
+  });
+
+  it('keeps the job context active through application and internal cleanup', async () => {
+    const ctx: JobContext = createJobContext(async () => {
+      expect(getJobContext()).toBe(ctx);
+    });
+
+    await finalizeSession(
+      ctx,
+      () => {
+        expect(getJobContext()).toBe(ctx);
+      },
+      1000,
+      createLogger(),
+    );
   });
 
   it('continues internal cleanup when the application callback rejects', async () => {
@@ -152,51 +205,29 @@ describe('finalizeSession', () => {
     expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
   });
 
-  it('stops waiting after the internal session cleanup timeout', async () => {
+  it('does not apply the application callback timeout to internal cleanup', async () => {
     vi.useFakeTimers();
-    const logger = createLogger();
-    const completion = finalizeSession(
-      createJobContext(() => new Promise<void>(() => {})),
-      undefined,
-      1000,
-      logger,
-    );
-
-    await vi.advanceTimersByTimeAsync(900_000);
-    await completion;
-
-    expect(logger.error).toHaveBeenCalledWith(
-      { timeout: 900_000 },
-      'internal session cleanup timed out; proceeding with job shutdown',
-    );
-  });
-
-  it('does not expose an internal cleanup error that arrives after its timeout', async () => {
-    vi.useFakeTimers();
-    const secret = 'secret late session report payload';
-    const logger = createLogger();
-    let rejectCleanup!: (error: Error) => void;
-    const cleanup = new Promise<void>((_, reject) => {
-      rejectCleanup = reject;
+    let resolveCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      resolveCleanup = resolve;
     });
+    let completed = false;
     const completion = finalizeSession(
       createJobContext(() => cleanup),
       undefined,
       1000,
-      logger,
+      createLogger(),
     );
+    void completion.then(() => {
+      completed = true;
+    });
 
     await vi.advanceTimersByTimeAsync(900_000);
-    await completion;
-    rejectCleanup(new Error(secret));
+    expect(completed).toBe(false);
 
-    await vi.waitFor(() =>
-      expect(logger.debug).toHaveBeenCalledWith(
-        { exceptionType: 'Error' },
-        'ctx._onSessionEnd rejected after shutdown timeout',
-      ),
-    );
-    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(secret);
+    resolveCleanup();
+    await completion;
+    expect(completed).toBe(true);
   });
 });
 
@@ -248,7 +279,6 @@ describe('runShutdownCallbacks', () => {
           throw new TypeError(secret);
         },
       ],
-      1000,
       logger,
     );
 
@@ -257,45 +287,6 @@ describe('runShutdownCallbacks', () => {
       'error while running shutdown callback',
     );
     expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
-  });
-
-  it('stops waiting after the shutdown callback timeout', async () => {
-    vi.useFakeTimers();
-    const logger = createLogger();
-    const callback = vi.fn(() => new Promise<void>(() => {}));
-    const completion = runShutdownCallbacks([callback], 1000, logger);
-
-    await vi.advanceTimersByTimeAsync(1000);
-    await completion;
-
-    expect(callback).toHaveBeenCalledOnce();
-    expect(logger.error).toHaveBeenCalledWith(
-      { timeout: 1000 },
-      'shutdown callbacks timed out; proceeding with job shutdown',
-    );
-  });
-
-  it('does not expose a callback error that arrives after its timeout', async () => {
-    vi.useFakeTimers();
-    const secret = 'secret late shutdown callback payload';
-    const logger = createLogger();
-    let rejectCallback!: (error: Error) => void;
-    const callback = new Promise<void>((_, reject) => {
-      rejectCallback = reject;
-    });
-    const completion = runShutdownCallbacks([() => callback], 1000, logger);
-
-    await vi.advanceTimersByTimeAsync(1000);
-    await completion;
-    rejectCallback(new RangeError(secret));
-
-    await vi.waitFor(() =>
-      expect(logger.debug).toHaveBeenCalledWith(
-        { exceptionType: 'RangeError' },
-        'shutdown callback rejected after shutdown timeout',
-      ),
-    );
-    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(secret);
   });
 });
 

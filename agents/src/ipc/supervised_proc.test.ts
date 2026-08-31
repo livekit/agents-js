@@ -133,8 +133,8 @@ describe('staged job shutdown', () => {
   async function createProc({
     closeTimeout = 20,
     pingTimeout = 60_000,
+    acknowledgeShutdown = true,
     completeSessionEnd = false,
-    shutdownCompletionTimeout = 100,
     memoryLimitMB = 0,
   } = {}) {
     type TestChild = EventEmitter & {
@@ -159,14 +159,12 @@ describe('staged job shutdown', () => {
         );
       } else if (message.case === 'shutdownRequest') {
         queueMicrotask(() => {
-          child.emit('message', {
-            case: 'shutdownRequestAck',
-            value: undefined,
-          } satisfies IPCMessage);
-          child.emit('message', {
-            case: 'sessionEndStarted',
-            value: undefined,
-          } satisfies IPCMessage);
+          if (acknowledgeShutdown) {
+            child.emit('message', {
+              case: 'shutdownRequestAck',
+              value: undefined,
+            } satisfies IPCMessage);
+          }
           if (completeSessionEnd) {
             child.emit('message', { case: 'shuttingDown', value: undefined } satisfies IPCMessage);
           }
@@ -200,16 +198,7 @@ describe('staged job shutdown', () => {
       async mainTask() {}
     }
 
-    const proc = new TestProc(
-      100,
-      closeTimeout,
-      0,
-      memoryLimitMB,
-      5000,
-      pingTimeout,
-      2500,
-      shutdownCompletionTimeout,
-    );
+    const proc = new TestProc(100, closeTimeout, 0, memoryLimitMB, 5000, pingTimeout, 2500);
     await proc.start();
     await proc.initialize();
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -217,11 +206,16 @@ describe('staged job shutdown', () => {
     return { child, killSpy, proc, sendSpy };
   }
 
-  it('allows session-end handling to exceed the process close timeout', async () => {
+  it('waits for session-end handling without applying the process close timeout', async () => {
     const { child, killSpy, proc, sendSpy } = await createProc({ pingTimeout: 30 });
     const close = proc.close();
 
-    await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledWith({ case: 'shutdownRequest' }));
+    await vi.waitFor(() =>
+      expect(sendSpy).toHaveBeenCalledWith({
+        case: 'shutdownRequest',
+        value: { reason: 'shutdown request' },
+      }),
+    );
     await new Promise((resolve) => setTimeout(resolve, 40));
 
     expect(killSpy).not.toHaveBeenCalled();
@@ -242,8 +236,8 @@ describe('staged job shutdown', () => {
     expect(killSpy).toHaveBeenCalledOnce();
   });
 
-  it('kills the child when session-end shutdown does not complete', async () => {
-    const { killSpy, proc } = await createProc({ shutdownCompletionTimeout: 30 });
+  it('kills the child when it does not acknowledge shutdown', async () => {
+    const { killSpy, proc } = await createProc({ acknowledgeShutdown: false });
 
     await proc.close();
 
@@ -261,7 +255,7 @@ describe('staged job shutdown', () => {
     await internals.checkMemoryUsage();
 
     expect(killSpy).toHaveBeenCalledOnce();
-    expect(sendSpy).not.toHaveBeenCalledWith({ case: 'shutdownRequest' });
+    expect(sendSpy).not.toHaveBeenCalledWith(expect.objectContaining({ case: 'shutdownRequest' }));
   });
 });
 

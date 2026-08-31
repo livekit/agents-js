@@ -18,6 +18,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from 'pino';
+import { safeErrorType } from './error_utils.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 import { SimulationContext, parseSimulationDispatch } from './simulation.js';
@@ -477,7 +478,10 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
             'Session report uploaded to LiveKit Cloud',
           );
         } catch (error) {
-          this.#logger.error({ error }, 'Failed to upload session report');
+          this.#logger.error(
+            { exceptionType: safeErrorType(error) },
+            'Failed to upload session report',
+          );
         }
       }
     }

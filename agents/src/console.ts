@@ -190,7 +190,7 @@ export async function runConsole({
       if (jobCtx) {
         // Run job shutdown callbacks (e.g. AvatarSession.aclose) like the normal
         // worker path does; runConsole bypasses the ProcPool so it must drain them.
-        await runShutdownCallbacks(jobCtx.shutdownCallbacks, sessionEndTimeout, logger);
+        await runShutdownCallbacks(jobCtx.shutdownCallbacks, logger);
       }
     } finally {
       await flushJobLogs(logger);

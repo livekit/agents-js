@@ -39,10 +39,6 @@ export type IPCMessage =
       value: undefined;
     }
   | {
-      case: 'sessionEndStarted';
-      value: undefined;
-    }
-  | {
       case: 'shuttingDown';
       value: undefined;
     }
@@ -56,7 +52,7 @@ export type IPCMessage =
     }
   | {
       case: 'exiting';
-      value: { category: string; 'lk.pii.shutdown_reason'?: string };
+      value: { reason: string };
     }
   | {
       case: 'done';

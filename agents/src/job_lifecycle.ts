@@ -3,15 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Logger } from 'pino';
 import { safeErrorType } from './error_utils.js';
-import type { JobContext } from './job.js';
+import { type JobContext, runWithJobContextAsync } from './job.js';
 import { flushOtelLogs } from './telemetry/index.js';
-import { RECORDING_UPLOAD_TOTAL_TIMEOUT_MS } from './telemetry/recording_upload.js';
 import { IdleTimeoutError, waitUntilTimeout } from './utils.js';
 import type { AgentSession } from './voice/agent_session.js';
 
 export const DEFAULT_SESSION_END_TIMEOUT = 300 * 1000;
+const ENTRYPOINT_SHUTDOWN_TIMEOUT = 15 * 1000;
 const SESSION_CLOSE_TIMEOUT = 60 * 1000;
-const SESSION_REPORT_TIMEOUT = RECORDING_UPLOAD_TOTAL_TIMEOUT_MS;
 const OTEL_LOG_FLUSH_TIMEOUT = 10 * 1000;
 
 type SessionEndCallback = (ctx: JobContext) => unknown;
@@ -24,19 +23,36 @@ export function validateSessionEndTimeout(timeout: number): number {
   return timeout;
 }
 
-/** Maximum time from session-end start through the child's completion signal. */
-export function getSessionEndShutdownTimeout(
-  sessionEndTimeout: number,
-  shutdownProcessTimeout: number,
-): number {
-  return (
-    SESSION_CLOSE_TIMEOUT +
-    sessionEndTimeout +
-    SESSION_REPORT_TIMEOUT +
-    shutdownProcessTimeout +
-    sessionEndTimeout +
-    OTEL_LOG_FLUSH_TIMEOUT
+export async function waitForEntrypointShutdown(
+  entrypointPromise: Promise<unknown>,
+  logger: Logger,
+): Promise<void> {
+  const resultPromise = entrypointPromise.then(
+    () => ({ status: 'fulfilled' as const }),
+    (error: unknown) => ({ status: 'rejected' as const, error }),
   );
+
+  try {
+    const result = await waitUntilTimeout(resultPromise, ENTRYPOINT_SHUTDOWN_TIMEOUT);
+    if (result.status === 'rejected') {
+      logger.error({ exceptionType: safeErrorType(result.error) }, 'error in entry function');
+    }
+  } catch (error) {
+    if (!(error instanceof IdleTimeoutError)) throw error;
+
+    void resultPromise.then((result) => {
+      if (result.status === 'rejected') {
+        logger.debug(
+          { exceptionType: safeErrorType(result.error) },
+          'entrypoint rejected after shutdown timeout',
+        );
+      }
+    });
+    logger.warn(
+      { timeout: ENTRYPOINT_SHUTDOWN_TIMEOUT },
+      'entrypoint did not exit in time; proceeding with session cleanup',
+    );
+  }
 }
 
 export async function closeAgentSession(
@@ -73,87 +89,54 @@ export async function finalizeSession(
   sessionEndTimeout: number,
   logger: Logger,
 ): Promise<void> {
-  if (onSessionEnd) {
-    const callbackPromise = Promise.resolve().then(() => onSessionEnd(ctx));
-    try {
-      await waitUntilTimeout(callbackPromise, sessionEndTimeout);
-    } catch (error) {
-      if (error instanceof IdleTimeoutError) {
-        void callbackPromise.catch((callbackError) =>
-          logger.debug(
-            { exceptionType: safeErrorType(callbackError) },
-            'onSessionEnd rejected after shutdown timeout',
-          ),
-        );
-        logger.error(
-          { timeout: sessionEndTimeout },
-          'onSessionEnd timed out; proceeding with internal session cleanup',
-        );
-      } else {
-        logger.error(
-          { exceptionType: safeErrorType(error) },
-          'error while executing the onSessionEnd callback',
-        );
+  await runWithJobContextAsync(ctx, async () => {
+    if (onSessionEnd) {
+      const callbackPromise = Promise.resolve().then(() => onSessionEnd(ctx));
+      try {
+        await waitUntilTimeout(callbackPromise, sessionEndTimeout);
+      } catch (error) {
+        if (error instanceof IdleTimeoutError) {
+          void callbackPromise.catch((callbackError) =>
+            logger.debug(
+              { exceptionType: safeErrorType(callbackError) },
+              'onSessionEnd rejected after shutdown timeout',
+            ),
+          );
+          logger.error(
+            { timeout: sessionEndTimeout },
+            'onSessionEnd timed out; proceeding with internal session cleanup',
+          );
+        } else {
+          logger.error(
+            { exceptionType: safeErrorType(error) },
+            'error while executing the onSessionEnd callback',
+          );
+        }
       }
     }
-  }
 
-  const internalCleanupPromise = Promise.resolve().then(() => ctx._onSessionEnd());
-  try {
-    await waitUntilTimeout(internalCleanupPromise, SESSION_REPORT_TIMEOUT);
-  } catch (error) {
-    if (error instanceof IdleTimeoutError) {
-      void internalCleanupPromise.catch((cleanupError) =>
-        logger.debug(
-          { exceptionType: safeErrorType(cleanupError) },
-          'ctx._onSessionEnd rejected after shutdown timeout',
-        ),
-      );
-      logger.error(
-        { timeout: SESSION_REPORT_TIMEOUT },
-        'internal session cleanup timed out; proceeding with job shutdown',
-      );
-    } else {
+    try {
+      await ctx._onSessionEnd();
+    } catch (error) {
       logger.error({ exceptionType: safeErrorType(error) }, 'error in ctx._onSessionEnd');
     }
-  }
+  });
 }
 
 export async function runShutdownCallbacks(
   callbacks: readonly ShutdownCallback[],
-  timeout: number,
   logger: Logger,
 ): Promise<void> {
-  const callbacksPromise = Promise.allSettled(
+  const results = await Promise.allSettled(
     callbacks.map((callback) => Promise.resolve().then(() => callback())),
   );
-
-  try {
-    const results = await waitUntilTimeout(callbacksPromise, timeout);
-    for (const result of results) {
-      if (result.status === 'rejected') {
-        logger.error(
-          { exceptionType: safeErrorType(result.reason) },
-          'error while running shutdown callback',
-        );
-      }
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      logger.error(
+        { exceptionType: safeErrorType(result.reason) },
+        'error while running shutdown callback',
+      );
     }
-  } catch (error) {
-    if (!(error instanceof IdleTimeoutError)) {
-      throw error;
-    }
-
-    void callbacksPromise.then((results) => {
-      for (const result of results) {
-        if (result.status === 'rejected') {
-          logger.debug(
-            { exceptionType: safeErrorType(result.reason) },
-            'shutdown callback rejected after shutdown timeout',
-          );
-        }
-      }
-    });
-    logger.error({ timeout }, 'shutdown callbacks timed out; proceeding with job shutdown');
   }
 }
 

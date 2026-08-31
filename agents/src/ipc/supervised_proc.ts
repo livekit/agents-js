@@ -13,7 +13,6 @@ import type { IPCMessage } from './message.js';
 const MEMORY_MONITOR_INTERVAL = 5000;
 const MEMORY_WARN_COOLDOWN = 120000;
 const MEMORY_WARN_RESET_DELTA_MB = 50;
-const SHUTDOWN_STAGE_GRACE = 5000;
 
 export interface ProcOpts {
   /** Timeout for process initialization in milliseconds. */
@@ -30,8 +29,6 @@ export interface ProcOpts {
   pingTimeout: number;
   /** Threshold for warning about unresponsive processes in milliseconds. */
   highPingThreshold: number;
-  /** Timeout for the staged shutdown lifecycle in milliseconds. */
-  shutdownCompletionTimeout: number;
 }
 
 export abstract class SupervisedProc {
@@ -50,7 +47,6 @@ export abstract class SupervisedProc {
   protected init = new Future();
   #join = new Future();
   #shutdownRequestAck = new Future();
-  #sessionEndStarted = new Future();
   #shuttingDown = new Future();
   #closePromise?: Promise<void>;
   #logger = log().child({ runningJob: this.#runningJob });
@@ -63,7 +59,6 @@ export abstract class SupervisedProc {
     pingInterval: number,
     pingTimeout: number,
     highPingThreshold: number,
-    shutdownCompletionTimeout = closeTimeout,
   ) {
     this.#opts = {
       initializeTimeout,
@@ -73,7 +68,6 @@ export abstract class SupervisedProc {
       pingInterval,
       pingTimeout,
       highPingThreshold,
-      shutdownCompletionTimeout,
     };
   }
 
@@ -156,22 +150,11 @@ export abstract class SupervisedProc {
           break;
         }
         case 'exiting': {
-          this.#logger
-            .child({
-              exitCategory: msg.value.category,
-              ...(msg.value['lk.pii.shutdown_reason'] !== undefined
-                ? { 'lk.pii.shutdown_reason': msg.value['lk.pii.shutdown_reason'] }
-                : {}),
-            })
-            .debug('job exiting');
+          this.#logger.child({ 'lk.pii.shutdown_reason': msg.value.reason }).debug('job exiting');
           break;
         }
         case 'shutdownRequestAck': {
           if (!this.#shutdownRequestAck.done) this.#shutdownRequestAck.resolve();
-          break;
-        }
-        case 'sessionEndStarted': {
-          if (!this.#sessionEndStarted.done) this.#sessionEndStarted.resolve();
           break;
         }
         case 'shuttingDown': {
@@ -180,7 +163,6 @@ export abstract class SupervisedProc {
         }
         case 'done': {
           if (!this.#shutdownRequestAck.done) this.#shutdownRequestAck.resolve();
-          if (!this.#sessionEndStarted.done) this.#sessionEndStarted.resolve();
           if (!this.#shuttingDown.done) this.#shuttingDown.resolve();
           this.#closing = true;
           this.proc!.off('message', listener);
@@ -294,7 +276,10 @@ export abstract class SupervisedProc {
         return;
       }
 
-      this.proc.send({ case: 'shutdownRequest' });
+      this.proc.send({
+        case: 'shutdownRequest',
+        value: { reason: 'shutdown request' },
+      } satisfies IPCMessage);
 
       if (!this.stagedShutdown) {
         await this.waitForExit(this.#opts.closeTimeout);
@@ -311,25 +296,7 @@ export abstract class SupervisedProc {
         return;
       }
 
-      if (
-        !(await this.waitForShutdownStage(
-          this.#sessionEndStarted,
-          this.#opts.closeTimeout + SHUTDOWN_STAGE_GRACE,
-          'job did not begin session-end handling in time',
-        ))
-      ) {
-        return;
-      }
-
-      if (
-        !(await this.waitForShutdownStage(
-          this.#shuttingDown,
-          this.#opts.shutdownCompletionTimeout,
-          'job did not complete session-end shutdown in time',
-        ))
-      ) {
-        return;
-      }
+      if (!(await this.waitForShutdownCompletion())) return;
 
       await this.waitForExit(this.#opts.closeTimeout);
     } finally {
@@ -361,6 +328,17 @@ export abstract class SupervisedProc {
       await this.#join.await;
     }
 
+    return result === 'stage';
+  }
+
+  private async waitForShutdownCompletion(): Promise<boolean> {
+    if (this.#join.done) return false;
+    if (this.#shuttingDown.done) return true;
+
+    const result = await Promise.race([
+      this.#shuttingDown.await.then(() => 'stage' as const),
+      this.#join.await.then(() => 'exit' as const),
+    ]);
     return result === 'stage';
   }
 

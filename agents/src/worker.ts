@@ -168,8 +168,7 @@ export class ServerOptions {
   drainTimeout: number;
   shutdownProcessTimeout: number;
   /**
-   * Maximum time to wait for `onSessionEnd` and, separately, registered shutdown callbacks.
-   * Defaults to five minutes.
+   * Maximum time to wait for `onSessionEnd`. Defaults to five minutes.
    */
   sessionEndTimeout: number;
   initializeProcessTimeout: number;
@@ -233,8 +232,7 @@ export class ServerOptions {
     drainTimeout?: number;
     shutdownProcessTimeout?: number;
     /**
-     * Maximum number of milliseconds to wait for `onSessionEnd` and, separately, registered
-     * shutdown callbacks.
+     * Maximum number of milliseconds to wait for `onSessionEnd`.
      */
     sessionEndTimeout?: number;
     initializeProcessTimeout?: number;
