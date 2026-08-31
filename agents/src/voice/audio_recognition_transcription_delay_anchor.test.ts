@@ -185,6 +185,48 @@ describe('AudioRecognition transcription delay anchor', () => {
     },
   );
 
+  it.each([SpeechEventType.FINAL_TRANSCRIPT, SpeechEventType.PREFLIGHT_TRANSCRIPT])(
+    'prefers an absolute speech end over a batch-relative %s timestamp',
+    async (type) => {
+      const now = 20_000;
+      vi.spyOn(Date, 'now').mockReturnValue(now);
+      const { internals } = makeRecognition({
+        inputStartedAt: 1_000,
+        mode: 'stt',
+      });
+      internals.lastSpeakingTime = now - 600;
+
+      await internals.onSTTEvent({
+        type: SpeechEventType.END_OF_SPEECH,
+        speechEndTime: now - 400,
+      });
+      await internals.onSTTEvent({
+        ...speechEvent(type, 1, 'hello'),
+        speechEndTime: now - 400,
+      });
+
+      expect(internals.lastSpeakingTime).toBe(now - 400);
+    },
+  );
+
+  it('keeps the wired VAD anchor over an absolute transcript boundary in VAD mode', async () => {
+    const now = 20_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const { internals } = makeRecognition({
+      vad: {} as VAD,
+      inputStartedAt: 1_000,
+      mode: 'vad',
+    });
+    internals.lastSpeakingTime = now - 600;
+
+    await internals.onSTTEvent({
+      ...finalTranscript(1),
+      speechEndTime: now - 400,
+    });
+
+    expect(internals.lastSpeakingTime).toBe(now - 600);
+  });
+
   it('anchors STT end-of-speech on a real provider timestamp', async () => {
     const now = 20_000;
     vi.spyOn(Date, 'now').mockReturnValue(now);

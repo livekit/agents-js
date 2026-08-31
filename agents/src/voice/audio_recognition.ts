@@ -1232,20 +1232,24 @@ export class AudioRecognition {
       firstAlternative !== undefined &&
       firstAlternative.endTime > 0 &&
       inputStartedAt !== undefined;
+    const hasAbsoluteSpeechEndTime = ev.speechEndTime !== undefined;
     // clamp to now: a reused STT stream's clock can be far ahead of this
     // activity's input epoch (e.g. after a handoff), and a future
     // lastSpeakingTime would stall the EOU bounce task for that long
     // (1.4.5 silence regression from #1603; see audio_recognition_eou.test.ts)
-    const sttLastSpeakingTime = hasSTTEndTime
-      ? Math.min(firstAlternative.endTime * 1000 + inputStartedAt, Date.now())
-      : Date.now();
+    const sttLastSpeakingTime =
+      ev.speechEndTime !== undefined
+        ? Math.min(ev.speechEndTime, Date.now())
+        : hasSTTEndTime
+          ? Math.min(firstAlternative.endTime * 1000 + inputStartedAt, Date.now())
+          : Date.now();
     // Prefer STT timing when no VAD anchor exists. In STT turn detection, a real
     // timestamp or an explicit end-of-speech event owns the turn boundary too.
     const useSTTSpeakingTime =
       this.vad === undefined ||
       this.lastSpeakingTime === undefined ||
       (this.turnDetectionMode === 'stt' &&
-        (hasSTTEndTime || ev.type === SpeechEventType.END_OF_SPEECH));
+        (hasAbsoluteSpeechEndTime || hasSTTEndTime || ev.type === SpeechEventType.END_OF_SPEECH));
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
