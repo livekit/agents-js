@@ -330,6 +330,29 @@ class SegmentSynchronizerImpl {
     }
   }
 
+  /**
+   * Complete a text-only segment that cannot receive playback callbacks.
+   *
+   * @returns `true` only when this call completed the segment, so the caller can rotate it.
+   */
+  tryCompleteZeroDurationSegment(): boolean {
+    if (
+      this.playbackCompleted ||
+      !this.textData.done ||
+      !this.audioData.done ||
+      this.audioData.pushedDuration > 0
+    ) {
+      return false;
+    }
+
+    this.playbackCompleted = true;
+    this.startWallTime ??= Date.now();
+    if (!this.startFuture.done) {
+      this.startFuture.resolve();
+    }
+    return true;
+  }
+
   pause(): void {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.pause called after close');
@@ -862,6 +885,9 @@ class SyncedAudioOutput extends AudioOutput {
       if (this.synchronizer._impl.hasPendingText) {
         // Text is pending - end audio input to allow text processing
         this.synchronizer._impl.endAudioInput();
+        if (this.synchronizer._impl.tryCompleteZeroDurationSegment()) {
+          this.synchronizer.rotateSegment();
+        }
         return;
       }
       // No text and no audio - rotate the segment
@@ -1049,6 +1075,9 @@ class SyncedTextOutput extends TextOutput {
 
     this.capturing = false;
     this.synchronizer._impl.endTextInput();
+    if (this.synchronizer._impl.tryCompleteZeroDurationSegment()) {
+      this.synchronizer.rotateSegment();
+    }
   }
 
   onAttached(): void {
