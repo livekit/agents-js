@@ -527,6 +527,7 @@ export class SpeechStream extends stt.SpeechStream {
   #session: STTHTTPSession;
   #reconnectEvent = new Future<void>();
   #speaking = false;
+  #lastPartialText = '';
   #audioDurationCollector: PeriodicCollector<number>;
   #logger = log();
 
@@ -589,6 +590,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         ws = await this.#connectWs();
+        this.#lastPartialText = '';
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
@@ -863,7 +865,9 @@ export class SpeechStream extends stt.SpeechStream {
 
     if (messageType === 'partial_transcript') {
       this.#logger.debug({ 'lk.pii.data': data }, 'Received message type partial_transcript');
-      if (text) {
+      if (text && text !== this.#lastPartialText) {
+        this.#lastPartialText = text;
+
         if (!this.#speaking) {
           this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
           this.#speaking = true;
@@ -877,6 +881,8 @@ export class SpeechStream extends stt.SpeechStream {
       (messageType === 'committed_transcript' && !this.#opts.includeTimestamps) ||
       (messageType === 'committed_transcript_with_timestamps' && this.#opts.includeTimestamps)
     ) {
+      this.#lastPartialText = '';
+
       if (text) {
         if (!this.#speaking) {
           this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });

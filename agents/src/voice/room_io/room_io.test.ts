@@ -9,7 +9,8 @@ import { RealtimeModel } from '../../llm/index.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { AgentSessionEventTypes, CloseReason, createCloseEvent } from '../events.js';
-import { AudioOutput } from '../io.js';
+import { AudioInput, AudioOutput, TextOutput } from '../io.js';
+import type { TimedString } from '../io.js';
 import { RoomIO } from './room_io.js';
 
 type RoomIOArgs = ConstructorParameters<typeof RoomIO>[0];
@@ -69,8 +70,8 @@ function createFakeRoom() {
 }
 
 type FakeSession = {
-  input: { audio: null };
-  output: { audio: AudioOutput | null; transcription: null };
+  input: { audio: AudioInput | null };
+  output: { audio: AudioOutput | null; transcription: TextOutput | null };
   currentAgent?: { llm?: RealtimeModel };
   llm?: RealtimeModel;
   on: ReturnType<typeof vi.fn>;
@@ -187,6 +188,67 @@ describe('RoomIO external audio output', () => {
       expect(externalOutput.close).not.toHaveBeenCalled();
     },
   );
+});
+
+class ExternalAudioInput extends AudioInput {
+  override close = vi.fn(async () => {});
+}
+
+class ExternalTextOutput extends TextOutput {
+  readonly captured: (string | TimedString)[] = [];
+
+  async captureText(text: string | TimedString): Promise<void> {
+    this.captured.push(text);
+  }
+
+  flush(): void {}
+}
+
+describe('RoomIO external audio input', () => {
+  it('preserves a pre-set input.audio without creating a participant input', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const externalInput = new ExternalAudioInput();
+    session.input.audio = externalInput;
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { textEnabled: false },
+      outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+    });
+
+    roomIO.start();
+
+    expect(Reflect.get(roomIO, 'audioInput')).toBeUndefined();
+    expect(session.input.audio).toBe(externalInput);
+
+    await roomIO.close();
+    expect(externalInput.close).not.toHaveBeenCalled();
+  });
+});
+
+describe('RoomIO external transcription output', () => {
+  it('preserves a pre-set output.transcription and skips the room transcription outputs', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const externalText = new ExternalTextOutput();
+    session.output.transcription = externalText;
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false },
+      outputOptions: { audioEnabled: false },
+    });
+
+    roomIO.start();
+
+    expect(session.output.transcription).toBe(externalText);
+    expect(Reflect.get(roomIO, 'userTranscriptOutput')).toBeUndefined();
+    expect(Reflect.get(roomIO, 'agentTranscriptOutput')).toBeUndefined();
+    expect(Reflect.get(roomIO, 'transcriptionSynchronizer')).toBeUndefined();
+
+    await roomIO.close();
+  });
 });
 
 class FakeRealtimeModel extends RealtimeModel {

@@ -4,6 +4,8 @@
 import type { LanguageCode } from '@livekit/agents';
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   type AudioBuffer,
   AudioByteStream,
   Future,
@@ -13,6 +15,7 @@ import {
   mergeFrames,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
@@ -229,17 +232,19 @@ export class SpeechStream extends stt.SpeechStream {
         }
       }
 
-      ws = new WebSocket(streamURL, {
-        headers: { Authorization: `Bearer ${this.#apiKey}` },
-      });
+      try {
+        ws = new WebSocket(streamURL, {
+          headers: { Authorization: `Bearer ${this.#apiKey}` },
+        });
+        await waitForWebSocketOpen(ws, 'xAI');
+      } catch (error) {
+        if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+        throw new APIConnectionError({
+          message: `failed to connect to xAI (${errorName(error)})`,
+        });
+      }
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
-        });
-
         await this.#runWS(ws);
       } catch (e) {
         if (!this.closed && !this.input.closed) {
@@ -271,11 +276,18 @@ export class SpeechStream extends stt.SpeechStream {
     let closing = false;
 
     const wsMonitor = Task.from(async (controller) => {
-      const closed = new Promise<void>(async (_, reject) => {
-        ws.once('close', (code, reason) => {
+      const closed = new Promise<void>((_, reject) => {
+        ws.once('close', (code) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            this.#logger.error({ code }, 'xAI WebSocket closed unexpectedly');
+            reject(new APIConnectionError({ message: 'xAI WebSocket closed unexpectedly' }));
+          }
+        });
+        ws.once('error', (error) => {
+          if (!closing) {
+            reject(
+              new APIConnectionError({ message: `xAI WebSocket failed (${errorName(error)})` }),
+            );
           }
         });
       });
@@ -456,6 +468,10 @@ export class SpeechStream extends stt.SpeechStream {
       this.#logger.warn(`received unexpected message from xAI: ${msgType}`);
     }
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 function wordsToSpeechData(

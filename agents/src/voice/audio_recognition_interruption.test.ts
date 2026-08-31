@@ -58,7 +58,7 @@ function createRecognition() {
     onSTTEvent: (event: SpeechEvent) => Promise<void>;
     onEndOfAgentSpeech: (endedAt: number, options?: { paused?: boolean }) => Promise<void>;
     disableInterruptionDetection: () => Promise<void>;
-    updateVad: (vad: undefined, usingDefaultVad: boolean) => Promise<void>;
+    updateVad: (vad: undefined) => Promise<void>;
     currentTranscript: string;
     hooks: RecognitionHooks;
   };
@@ -349,7 +349,7 @@ describe('AudioRecognition adaptive transcript gate', () => {
     recognition.transcriptBuffer = [event];
     recognition.processSTTEvent = vi.fn();
 
-    await recognition.updateVad(undefined, false);
+    await recognition.updateVad(undefined);
 
     expect(recognition.processSTTEvent).toHaveBeenCalledWith(event);
     expect(recognition.transcriptGateActive).toBe(false);

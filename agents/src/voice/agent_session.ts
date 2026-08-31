@@ -882,7 +882,7 @@ export class AgentSession<
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
-          'RoomIO audio input is enabled but input.audio is already set, ignoring..',
+          'RoomIO audio input is enabled; preserving and using the existing input.audio',
         );
       }
 
@@ -894,7 +894,7 @@ export class AgentSession<
 
       if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
         this.logger.warn(
-          'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
+          'RoomIO transcription output is enabled; preserving and using the existing output.transcription',
         );
       }
 
@@ -1131,6 +1131,8 @@ export class AgentSession<
         if (!nextActivity) {
           throw new Error('AgentSession is closing, cannot use say()');
         }
+        // Keep Python parity: the queued activity creates the refused speech, then its paused
+        // scheduler interrupts the handle so the speech task can settle.
         return nextActivity.say(text, options);
       }
       return activity.say(text, options);

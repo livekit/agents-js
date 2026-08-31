@@ -2,8 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { ReadableStream } from 'node:stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WebSocket, WebSocketServer } from 'ws';
+import { APIStatusError } from '../src/_exceptions.js';
 import { initializeLogger } from '../src/log.js';
 import {
   Event,
@@ -15,6 +19,7 @@ import {
   isPending,
   resampleStream,
   toStream,
+  waitForWebSocketOpen,
 } from '../src/utils.js';
 
 describe('utils', () => {
@@ -34,6 +39,49 @@ describe('utils', () => {
       controller.abort();
 
       await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    });
+  });
+
+  describe('waitForWebSocketOpen', () => {
+    it('removes handshake listeners after opening', async () => {
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const { port } = server.address() as AddressInfo;
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+
+      try {
+        await waitForWebSocketOpen(ws, 'Test');
+        expect(ws.listenerCount('open')).toBe(0);
+        expect(ws.listenerCount('unexpected-response')).toBe(0);
+        expect(ws.listenerCount('error')).toBe(0);
+        expect(ws.listenerCount('close')).toBe(0);
+      } finally {
+        ws.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it('redacts credentials from rejected handshakes', async () => {
+      const secret = 'secret-api-key-do-not-log';
+      const server = new WebSocketServer({
+        host: '127.0.0.1',
+        port: 0,
+        verifyClient: (_info, done) => done(false, 401, 'Unauthorized'),
+      });
+      await once(server, 'listening');
+      const { port } = server.address() as AddressInfo;
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
+        headers: { Authorization: `Bearer ${secret}` },
+      });
+
+      try {
+        const error = await waitForWebSocketOpen(ws, 'Test').catch((error: unknown) => error);
+        expect(error).toBeInstanceOf(APIStatusError);
+        expect((error as APIStatusError).statusCode).toBe(401);
+        expect(String(error)).not.toContain(secret);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
     });
   });
 

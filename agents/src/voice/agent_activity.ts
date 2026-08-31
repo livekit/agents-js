@@ -732,7 +732,6 @@ export class AgentActivity implements RecognitionHooks {
       // Disable stt node if stt is not provided
       stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
       vad: recognitionVad,
-      usingDefaultVad: this.usingDefaultVad,
       turnDetector:
         typeof this._resolvedTurnDetection === 'string' ? undefined : this._resolvedTurnDetection,
       turnDetectionMode: this.turnDetectionMode,
@@ -1230,7 +1229,6 @@ export class AgentActivity implements RecognitionHooks {
         resolvedVad: this.vad,
         resolvedLlm: this.llm,
         resolvedTts: this.tts,
-        usingDefaultVad: this.usingDefaultVad,
       };
       const nextLlm = options.llm !== undefined ? options.llm ?? undefined : this.agentSession.llm;
       const nextTts = options.tts !== undefined ? options.tts ?? undefined : this.agentSession.tts;
@@ -1290,7 +1288,7 @@ export class AgentActivity implements RecognitionHooks {
 
           this.agent._vad = options.vad as VAD | null;
           if (this.audioRecognition !== undefined) {
-            await this.audioRecognition.updateVad(this.vad, this.usingDefaultVad);
+            await this.audioRecognition.updateVad(this.vad);
           }
           if (this.vad instanceof VAD) {
             this.vad.on('metrics_collected', this.onMetricsCollected);
@@ -1378,7 +1376,7 @@ export class AgentActivity implements RecognitionHooks {
         }
         if (options.vad !== undefined) {
           try {
-            await this.audioRecognition?.updateVad(previous.resolvedVad, previous.usingDefaultVad);
+            await this.audioRecognition?.updateVad(previous.resolvedVad);
           } catch (rollbackError) {
             rollbackErrors.push(rollbackError);
           }
@@ -2318,7 +2316,8 @@ export class AgentActivity implements RecognitionHooks {
       });
     };
 
-    const task = Task.from(wrappedFn, controller, name);
+    const taskController = controller ?? new AbortController();
+    const task = Task.from(wrappedFn, taskController, name);
     _setActivityTaskInfo(task, { speechHandle: ownedSpeechHandle, inlineTask });
 
     this.speechTasks.add(task);
@@ -2327,6 +2326,15 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     if (ownedSpeechHandle) {
+      const interruptOwnedSpeech = () => ownedSpeechHandle.interrupt(true);
+      taskController.signal.addEventListener('abort', interruptOwnedSpeech, { once: true });
+      if (taskController.signal.aborted) {
+        interruptOwnedSpeech();
+      }
+      task.addDoneCallback(() => {
+        taskController.signal.removeEventListener('abort', interruptOwnedSpeech);
+      });
+
       ownedSpeechHandle._tasks.push(task);
       task.addDoneCallback(() => {
         if (ownedSpeechHandle._tasks.every((t) => t.done)) {
@@ -4878,8 +4886,17 @@ export class AgentActivity implements RecognitionHooks {
   ): void {
     // when force=true, we allow tool responses to bypass scheduling pause
     // This allows for tool responses to be generated before the AgentActivity is finalized
-    if (this.schedulingPaused && !force) {
-      throw new SchedulingPausedError();
+    const schedulingPaused = this.schedulingPaused && !force;
+    if (schedulingPaused || this._mainTask?.done) {
+      this.logger.warn(
+        { speech_id: speechHandle.id, scheduling_paused: schedulingPaused },
+        'attempting to schedule a new SpeechHandle while speech scheduling is paused or stopped; the speech will be cancelled',
+      );
+      speechHandle.interrupt(true);
+      if (schedulingPaused) {
+        throw new SchedulingPausedError();
+      }
+      return;
     }
 
     // Monotonic time to avoid near 0 collisions

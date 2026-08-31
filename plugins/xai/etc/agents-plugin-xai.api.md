@@ -239,7 +239,7 @@ export interface TTSOptions {
 
 // Warnings were encountered during analysis:
 //
-// src/stt.ts:147:22 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
+// src/stt.ts:150:22 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

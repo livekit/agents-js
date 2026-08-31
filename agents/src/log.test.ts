@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { enableOtelLogging, initializeLogger, log } from './log.js';
 import {
   PinoCloudExporter,
@@ -10,12 +10,65 @@ import {
 } from './telemetry/pino_otel_transport.js';
 import { REDACTED_EXCEPTION_MESSAGE } from './telemetry/utils.js';
 
+const prettyMocks = vi.hoisted(() => ({ pinoPretty: vi.fn() }));
+
+vi.mock('pino-pretty', async () => {
+  const { PassThrough } = await import('node:stream');
+  prettyMocks.pinoPretty.mockImplementation(() => new PassThrough());
+  return { build: prettyMocks.pinoPretty };
+});
+
 const OTEL_ENABLED_KEY = Symbol.for('@livekit/agents:otelEnabled');
 
 function resetOtelLoggingState() {
   delete (globalThis as Record<symbol, unknown>)[OTEL_ENABLED_KEY];
   initializeLogger({ pretty: false, level: 'silent' });
 }
+
+// process.platform is non-writable and stdout.isTTY is absent off a TTY, so
+// neither can be set by plain assignment.
+function stubConsole(platform: NodeJS.Platform, isTTY: boolean | undefined) {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  Object.defineProperty(process.stdout, 'isTTY', { value: isTTY, configurable: true });
+}
+
+describe('pretty logging', () => {
+  let initializePrettyLogger = initializeLogger;
+  const { platform } = process;
+  const { isTTY } = process.stdout;
+
+  beforeAll(async () => {
+    // vitest.setup.ts imported log.js before the pino-pretty mock above was
+    // registered, so a fresh copy is needed to observe the mock.
+    vi.resetModules();
+    ({ initializeLogger: initializePrettyLogger } = await import('./log.js'));
+  });
+
+  afterEach(() => {
+    stubConsole(platform, isTTY);
+    prettyMocks.pinoPretty.mockClear();
+    initializeLogger({ pretty: false, level: 'silent' });
+  });
+
+  it.each([
+    ['win32', true, process.stdout],
+    ['win32', false, undefined],
+    ['linux', true, undefined],
+  ] as const)(
+    'selects the pino-pretty destination on %s when isTTY is %s',
+    (platform, isTTY, destination) => {
+      stubConsole(platform, isTTY);
+
+      initializePrettyLogger({ pretty: true, level: 'silent' });
+
+      expect(prettyMocks.pinoPretty).toHaveBeenCalledOnce();
+      expect(prettyMocks.pinoPretty).toHaveBeenCalledWith({
+        colorize: true,
+        ...(destination && { destination }),
+      });
+    },
+  );
+});
 
 describe('OTEL logging', () => {
   afterEach(() => {

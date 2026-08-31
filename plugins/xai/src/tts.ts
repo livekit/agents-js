@@ -14,6 +14,7 @@ import {
   shortuuid,
   tokenize,
   tts,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
@@ -233,15 +234,27 @@ export class TTS extends tts.TTS {
       );
     }
 
+    const ws = new WebSocket(url, {
+      headers: { Authorization: `Bearer ${this.#opts.apiKey}` },
+      handshakeTimeout: timeout,
+    });
     try {
-      return await connectWebSocket({
-        url: url.toString(),
-        headers: { Authorization: `Bearer ${this.#opts.apiKey}` },
-        timeoutMs: timeout,
-      });
+      await waitForWebSocketOpen(ws, 'xAI');
+      return ws;
     } catch (e) {
+      try {
+        ws.on('error', () => {});
+        if (ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        } else {
+          ws.terminate();
+        }
+      } catch {
+        // ignore
+      }
+      if (e instanceof APIStatusError || e instanceof APIConnectionError) throw e;
       throw new APIConnectionError({
-        message: `failed to connect to xAI: ${(e as Error).message ?? 'unknown error'}`,
+        message: `failed to connect to xAI (${errorName(e)})`,
       });
     }
   }
@@ -472,57 +485,4 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 }
 
-const connectWebSocket = async ({
-  url,
-  headers,
-  timeoutMs,
-}: {
-  url: string;
-  headers: Record<string, string>;
-  timeoutMs: number;
-}): Promise<WebSocket> => {
-  const ws = new WebSocket(url, { headers, handshakeTimeout: timeoutMs });
-  const fut = new Future<void>();
-
-  let timeout: NodeJS.Timeout | undefined;
-  const cleanup = () => {
-    if (timeout) clearTimeout(timeout);
-    ws.off('open', onOpen);
-    ws.off('error', onError);
-    ws.off('close', onClose);
-  };
-
-  const onOpen = () => fut.resolve();
-  const onError = (error: Error) => fut.reject(error);
-  const onClose = (code: number, reason: Buffer) =>
-    fut.reject(
-      new Error(`websocket closed before open (code=${code}, reason=${reason.toString()})`),
-    );
-
-  ws.on('open', onOpen);
-  ws.on('error', onError);
-  ws.on('close', onClose);
-
-  if (timeoutMs > 0) {
-    timeout = setTimeout(() => fut.reject(new Error('connect timeout')), timeoutMs);
-  }
-
-  try {
-    await fut.await;
-    return ws;
-  } catch (e) {
-    try {
-      ws.on('error', () => {});
-      if (ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      } else {
-        ws.terminate();
-      }
-    } catch {
-      // ignore
-    }
-    throw e;
-  } finally {
-    cleanup();
-  }
-};
+const errorName = (error: unknown): string => (error instanceof Error ? error.name : typeof error);

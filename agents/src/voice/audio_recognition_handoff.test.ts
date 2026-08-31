@@ -6,8 +6,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { Task } from '../utils.js';
 import { AudioRecognition, type RecognitionHooks, STTPipeline } from './audio_recognition.js';
 import type { STTNode } from './io.js';
+
+interface AudioRecognitionTestState {
+  sttPipeline?: STTPipeline;
+  sttOwnershipTransferred: boolean;
+  sttConsumerTask?: Task<void>;
+}
 
 function createHooks() {
   const hooks: RecognitionHooks = {
@@ -254,6 +261,39 @@ describe('AudioRecognition STT pipeline handoff', () => {
       expect((recognition as any).sttPipeline).toBeUndefined();
     } finally {
       await recognition.close();
+    }
+  });
+
+  it('retains pipeline ownership when consumer cancellation fails', async () => {
+    const sttNode: STTNode = async () =>
+      new ReadableStream<SpeechEvent | string>({
+        start() {},
+      });
+    const pipeline = new STTPipeline(sttNode);
+    const { recognition } = createRecognition(sttNode);
+    const state = recognition as unknown as AudioRecognitionTestState;
+    const consumerTask = Task.from(async ({ signal }) => {
+      await new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      throw new Error('consumer cancellation failed');
+    });
+    state.sttPipeline = pipeline;
+    state.sttConsumerTask = consumerTask;
+
+    try {
+      await expect(recognition.detachSttPipeline()).rejects.toThrow('consumer cancellation failed');
+
+      expect(state.sttPipeline).toBe(pipeline);
+      expect(state.sttOwnershipTransferred).toBe(false);
+      expect(state.sttConsumerTask).toBeUndefined();
+
+      await expect(recognition.close()).resolves.toBeUndefined();
+      expect(state.sttPipeline).toBeUndefined();
+    } finally {
+      await consumerTask.result.catch(() => undefined);
+      await recognition.close();
+      await pipeline.close();
     }
   });
 });
