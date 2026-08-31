@@ -660,11 +660,19 @@ describe('uploadSessionReport transport', () => {
   });
 
   it('stops after the initial connection attempt and three retries', async () => {
-    const connectionError = Object.assign(new Error('connect timed out'), { code: 'ETIMEDOUT' });
+    const connectionError = Object.assign(new Error('secret upstream address'), {
+      code: 'ETIMEDOUT',
+    });
     const submitSpy = mockFormSubmitSequence([{ error: connectionError }]);
+    const error = await upload().then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
 
-    await expect(upload()).rejects.toThrow('connect timed out');
-
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('ETIMEDOUT');
+    expect((error as Error).message).not.toContain('secret upstream address');
+    expect(error).not.toHaveProperty('cause');
     expect(submitSpy).toHaveBeenCalledTimes(4);
   });
 
@@ -674,7 +682,7 @@ describe('uploadSessionReport transport', () => {
       const tlsError = Object.assign(new Error('TLS failed'), { code });
       const submitSpy = mockFormSubmitSequence([{ error: tlsError }]);
 
-      await expect(upload()).rejects.toThrow('TLS failed');
+      await expect(upload()).rejects.toThrow(code);
 
       expect(submitSpy).toHaveBeenCalledTimes(1);
     },
@@ -693,21 +701,33 @@ describe('uploadSessionReport transport', () => {
 
   it('does not retry an ordinary error response', async () => {
     const submitSpy = mockFormSubmitSequence([
-      { statusCode: 503, body: Buffer.from('service unavailable') },
+      { statusCode: 503, body: Buffer.from('secret customer response') },
     ]);
+    const error = await upload().then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
 
-    await expect(upload()).rejects.toThrow('503 Service Unavailable');
-
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('status 503');
+    expect((error as Error).message).not.toContain('secret customer response');
+    expect(error).not.toHaveProperty('cause');
     expect(submitSpy).toHaveBeenCalledTimes(1);
   });
 
   it('does not retry a response-body failure', async () => {
     const submitSpy = mockFormSubmitSequence([
-      { statusCode: 200, responseError: new Error('response lost') },
+      { statusCode: 200, responseError: new Error('secret response stream detail') },
     ]);
+    const error = await upload().then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
 
-    await expect(upload()).rejects.toThrow('response lost');
-
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('response body error (status 200)');
+    expect((error as Error).message).not.toContain('secret response stream detail');
+    expect(error).not.toHaveProperty('cause');
     expect(submitSpy).toHaveBeenCalledTimes(1);
   });
 

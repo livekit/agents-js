@@ -118,6 +118,7 @@ export class PinoCloudExporter {
   private jwt: string | null = null;
   private pendingLogs: any[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
+  private flushChain: Promise<void> = Promise.resolve();
 
   constructor(config: PinoCloudExporterConfig) {
     this.config = config;
@@ -184,24 +185,29 @@ export class PinoCloudExporter {
     };
   }
 
-  async flush(): Promise<void> {
+  flush(): Promise<void> {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
 
-    if (this.pendingLogs.length === 0) {
-      return;
-    }
+    const flush = this.flushChain.then(() => this.flushPendingLogs());
+    this.flushChain = flush;
+    return flush;
+  }
 
-    const logs = this.pendingLogs;
-    this.pendingLogs = [];
+  private async flushPendingLogs(): Promise<void> {
+    while (this.pendingLogs.length > 0) {
+      const logs = this.pendingLogs;
+      this.pendingLogs = [];
 
-    try {
-      await this.sendLogs(logs);
-    } catch (error) {
-      this.pendingLogs = [...logs, ...this.pendingLogs];
-      console.error('[PinoCloudExporter] Failed to flush logs:', error);
+      try {
+        await this.sendLogs(logs);
+      } catch {
+        this.pendingLogs = [...logs, ...this.pendingLogs];
+        console.error('[PinoCloudExporter] Failed to flush logs');
+        return;
+      }
     }
   }
 
@@ -252,8 +258,8 @@ export class PinoCloudExporter {
     });
 
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Log export failed: ${response.status} ${response.statusText} - ${text}`);
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`Log export failed: status ${response.status}`);
     }
   }
 

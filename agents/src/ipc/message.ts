@@ -35,6 +35,18 @@ export type IPCMessage =
       value: { reason?: string };
     }
   | {
+      case: 'shutdownRequestAck';
+      value: undefined;
+    }
+  | {
+      case: 'sessionEndStarted';
+      value: undefined;
+    }
+  | {
+      case: 'shuttingDown';
+      value: undefined;
+    }
+  | {
       case: 'inferenceRequest';
       value: { method: string; requestId: string; data: unknown };
     }

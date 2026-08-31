@@ -178,7 +178,9 @@ const startJob = (
       await closeAgentSession(ctx._primaryAgentSession, logger);
     }
 
+    safeSend({ case: 'sessionEndStarted', value: undefined });
     await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
+    safeSend({ case: 'shuttingDown', value: undefined });
 
     try {
       await room.disconnect();
@@ -302,7 +304,10 @@ const startJob = (
           break;
         }
         case 'shutdownRequest': {
+          safeSend({ case: 'shutdownRequestAck', value: undefined });
           if (!job) {
+            safeSend({ case: 'sessionEndStarted', value: undefined });
+            safeSend({ case: 'shuttingDown', value: undefined });
             join.resolve();
           }
           closeEvent.emit('close', 'shutdownRequest');

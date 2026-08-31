@@ -12,6 +12,7 @@ import type { IPCMessage } from './message.js';
 const MEMORY_MONITOR_INTERVAL = 5000;
 const MEMORY_WARN_COOLDOWN = 120000;
 const MEMORY_WARN_RESET_DELTA_MB = 50;
+const SHUTDOWN_STAGE_GRACE = 5000;
 
 export interface ProcOpts {
   /** Timeout for process initialization in milliseconds. */
@@ -45,6 +46,10 @@ export abstract class SupervisedProc {
   #lastMemoryWarnMB = 0;
   protected init = new Future();
   #join = new Future();
+  #shutdownRequestAck = new Future();
+  #sessionEndStarted = new Future();
+  #shuttingDown = new Future();
+  #closePromise?: Promise<void>;
   #logger = log().child({ runningJob: this.#runningJob });
 
   constructor(
@@ -70,6 +75,10 @@ export abstract class SupervisedProc {
   abstract createProcess(): ChildProcess;
   abstract mainTask(child: ChildProcess): Promise<void>;
   protected abstract get processKind(): string;
+
+  protected get sessionEndShutdownTimeout(): number | undefined {
+    return undefined;
+  }
 
   get started(): boolean {
     return this.#started;
@@ -162,7 +171,22 @@ export abstract class SupervisedProc {
           this.#logger.child({ reason: msg.value.reason }).debug('job exiting');
           break;
         }
+        case 'shutdownRequestAck': {
+          if (!this.#shutdownRequestAck.done) this.#shutdownRequestAck.resolve();
+          break;
+        }
+        case 'sessionEndStarted': {
+          if (!this.#sessionEndStarted.done) this.#sessionEndStarted.resolve();
+          break;
+        }
+        case 'shuttingDown': {
+          if (!this.#shuttingDown.done) this.#shuttingDown.resolve();
+          break;
+        }
         case 'done': {
+          if (!this.#shutdownRequestAck.done) this.#shutdownRequestAck.resolve();
+          if (!this.#sessionEndStarted.done) this.#sessionEndStarted.resolve();
+          if (!this.#shuttingDown.done) this.#shuttingDown.resolve();
           this.#closing = true;
           this.proc!.off('message', listener);
           break;
@@ -255,24 +279,114 @@ export abstract class SupervisedProc {
     }
   }
 
-  async close() {
+  close(): Promise<void> {
     if (!this.#started) {
-      return;
+      return Promise.resolve();
     }
+    this.#closePromise ??= this.closeOnce();
+    return this.#closePromise;
+  }
+
+  private async closeOnce(): Promise<void> {
     this.#closing = true;
+    this.clearTimers();
 
-    if (this.proc?.connected) {
+    try {
+      if (this.#join.done) return;
+
+      if (!this.proc?.connected) {
+        await this.waitForExit(this.#opts.closeTimeout);
+        return;
+      }
+
       this.proc.send({ case: 'shutdownRequest' });
+
+      const sessionEndTimeout = this.sessionEndShutdownTimeout;
+      if (sessionEndTimeout === undefined) {
+        await this.waitForExit(this.#opts.closeTimeout);
+        return;
+      }
+
+      if (
+        !(await this.waitForShutdownStage(
+          this.#shutdownRequestAck,
+          this.#opts.closeTimeout,
+          'job did not acknowledge shutdown in time',
+        ))
+      ) {
+        return;
+      }
+
+      if (
+        !(await this.waitForShutdownStage(
+          this.#sessionEndStarted,
+          this.#opts.closeTimeout + SHUTDOWN_STAGE_GRACE,
+          'job did not begin session-end handling in time',
+        ))
+      ) {
+        return;
+      }
+
+      if (
+        !(await this.waitForShutdownStage(
+          this.#shuttingDown,
+          sessionEndTimeout + SHUTDOWN_STAGE_GRACE,
+          'job did not finish session-end handling in time',
+        ))
+      ) {
+        return;
+      }
+
+      await this.waitForExit(this.#opts.closeTimeout);
+    } finally {
+      this.clearTimers();
+    }
+  }
+
+  private async waitForShutdownStage(
+    stage: Future,
+    timeout: number,
+    timeoutMessage: string,
+  ): Promise<boolean> {
+    if (this.#join.done) return false;
+    if (stage.done) return true;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      stage.await.then(() => 'stage' as const),
+      this.#join.await.then(() => 'exit' as const),
+      new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), timeout);
+      }),
+    ]);
+    clearTimeout(timer);
+
+    if (result === 'timeout') {
+      this.#logger.child({ timeout }).error(timeoutMessage);
+      this.proc?.kill();
+      await this.#join.await;
     }
 
-    const timer = setTimeout(() => {
-      this.#logger.error('job shutdown is taking too much time');
-      this.proc!.kill();
-    }, this.#opts.closeTimeout);
-    await this.#join.await.then(() => {
-      clearTimeout(timer);
-      this.clearTimers();
-    });
+    return result === 'stage';
+  }
+
+  private async waitForExit(timeout: number): Promise<void> {
+    if (this.#join.done) return;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      this.#join.await.then(() => 'exit' as const),
+      new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), timeout);
+      }),
+    ]);
+    clearTimeout(timer);
+
+    if (result === 'timeout') {
+      this.#logger.child({ timeout }).error('job shutdown is taking too much time');
+      this.proc?.kill();
+      await this.#join.await;
+    }
   }
 
   async launchJob(info: RunningJobInfo) {

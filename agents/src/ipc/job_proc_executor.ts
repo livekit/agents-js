@@ -6,6 +6,7 @@ import { fork } from 'node:child_process';
 import { extname } from 'node:path';
 import type { RunningJobInfo } from '../job.js';
 import { log } from '../log.js';
+import { RECORDING_UPLOAD_SHUTDOWN_TIMEOUT_MS } from '../telemetry/recording_upload.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
 import { JobStatus } from './job_executor.js';
@@ -71,6 +72,10 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
 
   protected get processKind(): string {
     return 'job';
+  }
+
+  protected get sessionEndShutdownTimeout(): number | undefined {
+    return this.#sessionEndTimeout + RECORDING_UPLOAD_SHUTDOWN_TIMEOUT_MS;
   }
 
   createProcess(): ChildProcess {

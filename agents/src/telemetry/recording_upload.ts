@@ -15,6 +15,12 @@ export const RECORDING_UPLOAD_CONNECT_TIMEOUT_MS = 30_000;
 export const RECORDING_UPLOAD_TOTAL_TIMEOUT_MS = 900_000;
 
 const RECORDING_UPLOAD_MAX_RETRIES = 3;
+const RECORDING_UPLOAD_MAX_LOCAL_RETRY_DELAY_MS = (2 ** RECORDING_UPLOAD_MAX_RETRIES - 1) * 1_000;
+// Allow failed connections and local backoff before one full final attempt.
+export const RECORDING_UPLOAD_SHUTDOWN_TIMEOUT_MS =
+  RECORDING_UPLOAD_TOTAL_TIMEOUT_MS +
+  RECORDING_UPLOAD_CONNECT_TIMEOUT_MS * RECORDING_UPLOAD_MAX_RETRIES +
+  RECORDING_UPLOAD_MAX_LOCAL_RETRY_DELAY_MS;
 
 interface RetryInfo extends Message<RetryInfo> {
   retryDelay?: Duration;
@@ -34,18 +40,15 @@ const RpcStatus = proto3.makeMessageType<RpcStatus>('google.rpc.Status', () => [
 
 type UploadResponse = {
   statusCode: number;
-  statusMessage: string;
   body: Buffer;
 };
 
 class RecordingUploadAttemptError extends Error {
   constructor(
-    message: string,
-    readonly retryableConnectionFailure: boolean,
     readonly failure: string,
-    options?: ErrorOptions,
+    readonly retryableConnectionFailure: boolean,
   ) {
-    super(message, options);
+    super(`Failed to upload session report: ${failure}`);
     this.name = 'RecordingUploadAttemptError';
   }
 }
@@ -76,11 +79,7 @@ export async function uploadRecording(options: {
 
       const retryDelayMs = parseRetryDelay(response.body);
       if (retryDelayMs === undefined || attempt === RECORDING_UPLOAD_MAX_RETRIES) {
-        throw new RecordingUploadAttemptError(
-          `Failed to upload session report: ${response.statusCode} ${response.statusMessage} - ${response.body.toString('utf8')}`,
-          false,
-          `status ${response.statusCode}`,
-        );
+        throw new RecordingUploadAttemptError(`status ${response.statusCode}`, false);
       }
       retry = { delayMs: retryDelayMs, failure: `status ${response.statusCode}` };
     } catch (error) {
@@ -191,15 +190,8 @@ function submitRecordingUpload(options: {
       }
       assignedSocket.once(socketReadyEvent, markConnected);
     };
-    const onFormError = (error: Error) => {
-      fail(
-        new RecordingUploadAttemptError(
-          `Failed to upload session report: ${error.message}`,
-          false,
-          error.name,
-          { cause: error },
-        ),
-      );
+    const onFormError = () => {
+      fail(new RecordingUploadAttemptError('multipart body error', false));
       request?.destroy();
     };
 
@@ -216,14 +208,7 @@ function submitRecordingUpload(options: {
         (error, incomingResponse) => {
           if (error) {
             const failure = requestFailureName(error);
-            fail(
-              new RecordingUploadAttemptError(
-                `Failed to upload session report: ${error.message}`,
-                !connected && !isTlsError(error),
-                failure,
-                { cause: error },
-              ),
-            );
+            fail(new RecordingUploadAttemptError(failure, !connected && !isTlsError(error)));
             return;
           }
 
@@ -234,36 +219,25 @@ function submitRecordingUpload(options: {
           incomingResponse.on('data', (chunk) => {
             if (collectBody) chunks.push(Buffer.from(chunk));
           });
-          incomingResponse.once('error', (readError) => {
+          incomingResponse.once('error', () => {
             fail(
               new RecordingUploadAttemptError(
-                `Failed to upload session report: ${incomingResponse.statusCode} ${incomingResponse.statusMessage} (body read error: ${readError.message})`,
+                `response body error (status ${incomingResponse.statusCode ?? 0})`,
                 false,
-                readError.name,
-                { cause: readError },
               ),
             );
           });
           incomingResponse.once('end', () => {
             succeed({
               statusCode: incomingResponse.statusCode ?? 0,
-              statusMessage: incomingResponse.statusMessage ?? '',
               body: Buffer.concat(chunks),
             });
           });
           incomingResponse.resume();
         },
       );
-    } catch (error) {
-      const cause = toError(error);
-      fail(
-        new RecordingUploadAttemptError(
-          `Failed to upload session report: ${cause.message}`,
-          false,
-          cause.name,
-          { cause },
-        ),
-      );
+    } catch {
+      fail(new RecordingUploadAttemptError('request setup error', false));
       return;
     }
 
@@ -275,9 +249,8 @@ function submitRecordingUpload(options: {
       connectTimer = setTimeout(() => {
         abort(
           new RecordingUploadAttemptError(
-            `Failed to upload session report: connection timed out after ${RECORDING_UPLOAD_CONNECT_TIMEOUT_MS / 1_000} seconds`,
+            `connection timed out after ${RECORDING_UPLOAD_CONNECT_TIMEOUT_MS / 1_000} seconds`,
             true,
-            'connection timeout',
           ),
         );
       }, RECORDING_UPLOAD_CONNECT_TIMEOUT_MS);
@@ -287,9 +260,8 @@ function submitRecordingUpload(options: {
     totalTimer = setTimeout(() => {
       abort(
         new RecordingUploadAttemptError(
-          `Failed to upload session report: request timed out after ${RECORDING_UPLOAD_TOTAL_TIMEOUT_MS / 1_000} seconds`,
+          `request timed out after ${RECORDING_UPLOAD_TOTAL_TIMEOUT_MS / 1_000} seconds`,
           false,
-          'total timeout',
         ),
       );
     }, RECORDING_UPLOAD_TOTAL_TIMEOUT_MS);
@@ -298,7 +270,8 @@ function submitRecordingUpload(options: {
 }
 
 function requestFailureName(error: Error): string {
-  return (error as NodeJS.ErrnoException).code ?? error.name;
+  const code = (error as NodeJS.ErrnoException).code;
+  return typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : 'request error';
 }
 
 function isTlsError(error: Error): boolean {
@@ -317,8 +290,4 @@ function isTlsError(error: Error): boolean {
     code.includes('PATH_LENGTH') ||
     code.includes('HOSTNAME_MISMATCH')
   );
-}
-
-function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
 }

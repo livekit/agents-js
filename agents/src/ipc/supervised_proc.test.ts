@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { ChildProcess } from 'node:child_process';
 import { fork, spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pidusage from 'pidusage';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { IPCMessage } from './message.js';
+import { SupervisedProc } from './supervised_proc.js';
 
 const childScript = join(tmpdir(), 'test_child.mjs');
 
@@ -122,6 +126,110 @@ describe('IPC send on dead process', () => {
 
     expect(sent).toBeGreaterThan(0);
     expect(skipped).toBeGreaterThan(0);
+  });
+});
+
+describe('staged job shutdown', () => {
+  async function createProc({
+    closeTimeout = 20,
+    sessionEndShutdownTimeout = 1000,
+    pingTimeout = 60_000,
+    completeSessionEnd = false,
+  } = {}) {
+    type TestChild = EventEmitter & {
+      connected: boolean;
+      exitCode: number | null;
+      killed: boolean;
+      send: (message: IPCMessage) => boolean;
+      kill: () => boolean;
+    };
+
+    const child = new EventEmitter() as TestChild;
+    child.connected = true;
+    child.exitCode = null;
+    child.killed = false;
+    const sendSpy = vi.fn((message: IPCMessage) => {
+      if (message.case === 'initializeRequest') {
+        queueMicrotask(() =>
+          child.emit('message', {
+            case: 'initializeResponse',
+            value: undefined,
+          } satisfies IPCMessage),
+        );
+      } else if (message.case === 'shutdownRequest') {
+        queueMicrotask(() => {
+          child.emit('message', {
+            case: 'shutdownRequestAck',
+            value: undefined,
+          } satisfies IPCMessage);
+          child.emit('message', {
+            case: 'sessionEndStarted',
+            value: undefined,
+          } satisfies IPCMessage);
+          if (completeSessionEnd) {
+            child.emit('message', { case: 'shuttingDown', value: undefined } satisfies IPCMessage);
+          }
+        });
+      }
+      return true;
+    });
+    const killSpy = vi.fn(() => {
+      child.killed = true;
+      child.connected = false;
+      child.exitCode = 0;
+      queueMicrotask(() => child.emit('exit', 0, null));
+      return true;
+    });
+    child.send = sendSpy;
+    child.kill = killSpy;
+
+    class TestProc extends SupervisedProc {
+      protected get processKind() {
+        return 'job';
+      }
+
+      protected get sessionEndShutdownTimeout() {
+        return sessionEndShutdownTimeout;
+      }
+
+      createProcess(): ChildProcess {
+        return child as unknown as ChildProcess;
+      }
+
+      async mainTask() {}
+    }
+
+    const proc = new TestProc(100, closeTimeout, 0, 0, 5000, pingTimeout, 2500);
+    await proc.start();
+    await proc.initialize();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    return { child, killSpy, proc, sendSpy };
+  }
+
+  it('allows session-end handling to exceed the process close timeout', async () => {
+    const { child, killSpy, proc, sendSpy } = await createProc({ pingTimeout: 30 });
+    const close = proc.close();
+
+    await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledWith({ case: 'shutdownRequest' }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(killSpy).not.toHaveBeenCalled();
+
+    child.emit('message', { case: 'shuttingDown', value: undefined } satisfies IPCMessage);
+    child.emit('message', { case: 'done', value: undefined } satisfies IPCMessage);
+    child.connected = false;
+    child.exitCode = 0;
+    child.emit('exit', 0, null);
+    await close;
+  });
+
+  it('still bounds teardown after onSessionEnd completes', async () => {
+    const { killSpy, proc } = await createProc({ completeSessionEnd: true });
+
+    await proc.close();
+
+    expect(killSpy).toHaveBeenCalledOnce();
   });
 });
 
