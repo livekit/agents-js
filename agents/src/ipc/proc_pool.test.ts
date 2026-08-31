@@ -30,6 +30,26 @@ async function flushMicrotasks(ticks = 10): Promise<void> {
   }
 }
 
+function createControlledJoinExecutor() {
+  let resolveJoin: () => void = () => {};
+  const joinPromise = new Promise<void>((resolve) => {
+    resolveJoin = resolve;
+  });
+  const executor: JobExecutor = {
+    ...createMockExecutor(),
+    join: vi.fn(() => joinPromise),
+  };
+  return { executor, resolveJoin };
+}
+
+function mockJobProcExecutor(executor: JobExecutor) {
+  return vi
+    .spyOn(jobProcExecutorModule, 'JobProcExecutor')
+    .mockImplementation(function MockJobProcExecutor(this: unknown) {
+      return executor as unknown as jobProcExecutorModule.JobProcExecutor;
+    } as unknown as typeof jobProcExecutorModule.JobProcExecutor);
+}
+
 describe('ProcPool warmed process lock handling', () => {
   it('releases lock token from the dequeued warmed process entry', async (): Promise<
     Throws<void, Error>
@@ -87,21 +107,8 @@ describe('ProcPool warmed process lock handling', () => {
     const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
     const initUnlock = vi.fn();
     const procUnlock = vi.fn();
-
-    let joinResolve: () => void = () => {};
-    const joinPromise = new Promise<void>((resolve) => {
-      joinResolve = resolve;
-    });
-    const mockProc: JobExecutor = {
-      ...createMockExecutor(),
-      join: vi.fn(() => joinPromise),
-    };
-
-    const jobProcExecutorSpy = vi
-      .spyOn(jobProcExecutorModule, 'JobProcExecutor')
-      .mockImplementation(function MockJobProcExecutor(this: unknown) {
-        return mockProc as unknown as jobProcExecutorModule.JobProcExecutor;
-      } as unknown as typeof jobProcExecutorModule.JobProcExecutor);
+    const { executor: mockProc, resolveJoin } = createControlledJoinExecutor();
+    const jobProcExecutorSpy = mockJobProcExecutor(mockProc);
 
     pool.initMutex.lock = vi.fn(async () => initUnlock);
 
@@ -114,12 +121,102 @@ describe('ProcPool warmed process lock handling', () => {
       expect(pool.warmedProcQueue.items.length).toBe(1);
       expect(mockProc.join).toHaveBeenCalledTimes(1);
 
-      joinResolve();
+      const warmedProcEntry = await pool.warmedProcQueue.get();
+      warmedProcEntry.unlock();
+      resolveJoin();
       await watchPromise;
 
-      // finally block must not double-release.
+      // The watcher must not release a lock token already claimed by a consumer.
       expect(initUnlock).toHaveBeenCalledTimes(1);
-      expect(procUnlock).not.toHaveBeenCalled();
+      expect(procUnlock).toHaveBeenCalledTimes(1);
+    } finally {
+      jobProcExecutorSpy.mockRestore();
+    }
+  });
+
+  it('evicts a warmed process that exits before it is dequeued', async (): Promise<
+    Throws<void, Error>
+  > => {
+    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
+    const initUnlock = vi.fn();
+    const procUnlock = vi.fn();
+    const { executor: mockProc, resolveJoin } = createControlledJoinExecutor();
+    const jobProcExecutorSpy = mockJobProcExecutor(mockProc);
+
+    pool.initMutex.lock = vi.fn(async () => initUnlock);
+
+    try {
+      const watchPromise = pool.procWatchTask(procUnlock);
+      await flushMicrotasks();
+
+      expect(pool.warmedProcQueue.items).toHaveLength(1);
+
+      resolveJoin();
+      await watchPromise;
+
+      expect(pool.warmedProcQueue.items).toHaveLength(0);
+      expect(procUnlock).toHaveBeenCalledTimes(1);
+    } finally {
+      jobProcExecutorSpy.mockRestore();
+    }
+  });
+
+  it('keeps other warmed processes queued when one exits', async (): Promise<
+    Throws<void, Error>
+  > => {
+    const pool = new ProcPool('agent', 2, 1000, 1000, undefined, 0, 0);
+    const initUnlock = vi.fn();
+    const healthyProcUnlock = vi.fn();
+    const exitedProcUnlock = vi.fn();
+    const healthyProc = createMockExecutor();
+    const { executor: exitedProc, resolveJoin } = createControlledJoinExecutor();
+    const jobProcExecutorSpy = mockJobProcExecutor(exitedProc);
+
+    pool.initMutex.lock = vi.fn(async () => initUnlock);
+    await pool.warmedProcQueue.put({ proc: healthyProc, unlock: healthyProcUnlock });
+
+    try {
+      const watchPromise = pool.procWatchTask(exitedProcUnlock);
+      await flushMicrotasks();
+
+      expect(pool.warmedProcQueue.items).toHaveLength(2);
+
+      resolveJoin();
+      await watchPromise;
+
+      expect(pool.warmedProcQueue.items).toEqual([
+        { proc: healthyProc, unlock: healthyProcUnlock },
+      ]);
+      expect(exitedProcUnlock).toHaveBeenCalledTimes(1);
+      expect(healthyProcUnlock).not.toHaveBeenCalled();
+    } finally {
+      jobProcExecutorSpy.mockRestore();
+    }
+  });
+
+  it('does not double-release a queued process lock during close', async (): Promise<
+    Throws<void, Error>
+  > => {
+    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
+    const initUnlock = vi.fn();
+    const procUnlock = vi.fn();
+    const { executor: mockProc, resolveJoin } = createControlledJoinExecutor();
+    const jobProcExecutorSpy = mockJobProcExecutor(mockProc);
+
+    pool.initMutex.lock = vi.fn(async () => initUnlock);
+    pool.started = true;
+
+    try {
+      const watchPromise = pool.procWatchTask(procUnlock);
+      await flushMicrotasks();
+
+      const closePromise = pool.close();
+      expect(pool.warmedProcQueue.items).toHaveLength(0);
+
+      resolveJoin();
+      await Promise.all([closePromise, watchPromise]);
+
+      expect(procUnlock).toHaveBeenCalledTimes(1);
     } finally {
       jobProcExecutorSpy.mockRestore();
     }
