@@ -105,7 +105,7 @@ export const wsResponseIncompleteEventSchema = z.object({
       id: z.string(),
       incomplete_details: z
         .object({
-          reason: z.string(),
+          reason: z.string().optional(),
         })
         .nullable()
         .optional(),

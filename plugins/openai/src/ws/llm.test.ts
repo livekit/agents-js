@@ -112,7 +112,7 @@ function responseIncomplete(reason?: string): WsServerEvent {
     type: 'response.incomplete',
     response: {
       id: 'resp_1',
-      ...(reason === undefined ? {} : { incomplete_details: { reason } }),
+      incomplete_details: reason === undefined ? {} : { reason },
     },
   };
 }
@@ -124,6 +124,17 @@ describe('OpenAI Responses WS incomplete events', () => {
     expect(parsed.type).toBe('response.incomplete');
     if (parsed.type !== 'response.incomplete') throw new Error('expected incomplete event');
     expect(parsed.response.incomplete_details?.reason).toBe(reason);
+  });
+
+  it('accepts incomplete details without a reason', () => {
+    const parsed = wsServerEventSchema.parse({
+      type: 'response.incomplete',
+      response: { id: 'resp_1', incomplete_details: {} },
+    });
+
+    expect(parsed.type).toBe('response.incomplete');
+    if (parsed.type !== 'response.incomplete') throw new Error('expected incomplete event');
+    expect(parsed.response.incomplete_details?.reason).toBeUndefined();
   });
 
   it('closes the request channel after the terminal frame', async () => {
@@ -146,11 +157,11 @@ describe('OpenAI Responses WS incomplete events', () => {
       input: [],
     });
 
-    socket.emit('message', Buffer.from(JSON.stringify(responseIncomplete('max_output_tokens'))));
+    socket.emit('message', Buffer.from(JSON.stringify(responseIncomplete())));
     const events = [];
     for await (const event of channel.stream()) events.push(event);
 
-    expect(events).toEqual([responseIncomplete('max_output_tokens')]);
+    expect(events).toEqual([responseIncomplete()]);
     expect(socket.sent).toHaveLength(1);
   });
 });
