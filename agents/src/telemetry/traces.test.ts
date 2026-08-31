@@ -555,6 +555,37 @@ describe('uploadSessionReport metadata', () => {
     expect(keytermsOptions.keyterms).toEqual(['Acme Corp']);
   });
 
+  it('marks room and agent names as PII in exported session-report logs', async () => {
+    let scopeAttributes: Record<string, unknown> | undefined;
+    let records: Parameters<SimpleOTLPHttpLogExporter['export']>[0] = [];
+    vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockImplementation(function (value) {
+      records = value;
+      scopeAttributes = (
+        this as unknown as { config: { scopeAttributes?: Record<string, unknown> } }
+      ).config.scopeAttributes;
+      return Promise.resolve();
+    });
+
+    await uploadSessionReport({
+      agentName: 'customer agent',
+      cloudHostname: 'example.livekit.cloud',
+      report: makeReport({
+        audio: false,
+        traces: true,
+        logs: false,
+        transcript: false,
+        redaction: false,
+      }),
+    });
+
+    expect(scopeAttributes).toMatchObject({ 'lk.pii.room_name': 'room-name' });
+    expect(scopeAttributes).not.toHaveProperty('room');
+    expect(records[0]?.attributes).toMatchObject({
+      'lk.pii.agent_name': 'customer agent',
+    });
+    expect(records[0]?.attributes).not.toHaveProperty('agent_name');
+  });
+
   it('sets job, simulation, and redaction fields on the multipart recording header', async () => {
     vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
     const submitSpy = mockSuccessfulFormSubmit();

@@ -5,11 +5,13 @@ import type { Logger } from 'pino';
 import { safeErrorType } from './error_utils.js';
 import type { JobContext } from './job.js';
 import { flushOtelLogs } from './telemetry/index.js';
+import { RECORDING_UPLOAD_TOTAL_TIMEOUT_MS } from './telemetry/recording_upload.js';
 import { IdleTimeoutError, waitUntilTimeout } from './utils.js';
 import type { AgentSession } from './voice/agent_session.js';
 
 export const DEFAULT_SESSION_END_TIMEOUT = 300 * 1000;
 const SESSION_CLOSE_TIMEOUT = 60 * 1000;
+const SESSION_REPORT_TIMEOUT = RECORDING_UPLOAD_TOTAL_TIMEOUT_MS;
 const OTEL_LOG_FLUSH_TIMEOUT = 10 * 1000;
 
 type SessionEndCallback = (ctx: JobContext) => unknown;
@@ -20,6 +22,21 @@ export function validateSessionEndTimeout(timeout: number): number {
     throw new TypeError('sessionEndTimeout must be a finite, non-negative number');
   }
   return timeout;
+}
+
+/** Maximum time from session-end start through the child's completion signal. */
+export function getSessionEndShutdownTimeout(
+  sessionEndTimeout: number,
+  shutdownProcessTimeout: number,
+): number {
+  return (
+    SESSION_CLOSE_TIMEOUT +
+    sessionEndTimeout +
+    SESSION_REPORT_TIMEOUT +
+    shutdownProcessTimeout +
+    sessionEndTimeout +
+    OTEL_LOG_FLUSH_TIMEOUT
+  );
 }
 
 export async function closeAgentSession(
@@ -81,10 +98,24 @@ export async function finalizeSession(
     }
   }
 
+  const internalCleanupPromise = Promise.resolve().then(() => ctx._onSessionEnd());
   try {
-    await ctx._onSessionEnd();
+    await waitUntilTimeout(internalCleanupPromise, SESSION_REPORT_TIMEOUT);
   } catch (error) {
-    logger.error({ exceptionType: safeErrorType(error) }, 'error in ctx._onSessionEnd');
+    if (error instanceof IdleTimeoutError) {
+      void internalCleanupPromise.catch((cleanupError) =>
+        logger.debug(
+          { exceptionType: safeErrorType(cleanupError) },
+          'ctx._onSessionEnd rejected after shutdown timeout',
+        ),
+      );
+      logger.error(
+        { timeout: SESSION_REPORT_TIMEOUT },
+        'internal session cleanup timed out; proceeding with job shutdown',
+      );
+    } else {
+      logger.error({ exceptionType: safeErrorType(error) }, 'error in ctx._onSessionEnd');
+    }
   }
 }
 

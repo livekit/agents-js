@@ -8,6 +8,7 @@ import {
   closeAgentSession,
   finalizeSession,
   flushJobLogs,
+  getSessionEndShutdownTimeout,
   runShutdownCallbacks,
 } from './job_lifecycle.js';
 import { flushOtelLogs } from './telemetry/index.js';
@@ -33,6 +34,12 @@ function createJobContext(onSessionEnd: () => Promise<void>): JobContext {
 afterEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
+});
+
+describe('getSessionEndShutdownTimeout', () => {
+  it('covers every bounded child lifecycle phase', () => {
+    expect(getSessionEndShutdownTimeout(1000, 2000)).toBe(974_000);
+  });
 });
 
 describe('finalizeSession', () => {
@@ -143,6 +150,53 @@ describe('finalizeSession', () => {
       'error in ctx._onSessionEnd',
     );
     expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
+  });
+
+  it('stops waiting after the internal session cleanup timeout', async () => {
+    vi.useFakeTimers();
+    const logger = createLogger();
+    const completion = finalizeSession(
+      createJobContext(() => new Promise<void>(() => {})),
+      undefined,
+      1000,
+      logger,
+    );
+
+    await vi.advanceTimersByTimeAsync(900_000);
+    await completion;
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { timeout: 900_000 },
+      'internal session cleanup timed out; proceeding with job shutdown',
+    );
+  });
+
+  it('does not expose an internal cleanup error that arrives after its timeout', async () => {
+    vi.useFakeTimers();
+    const secret = 'secret late session report payload';
+    const logger = createLogger();
+    let rejectCleanup!: (error: Error) => void;
+    const cleanup = new Promise<void>((_, reject) => {
+      rejectCleanup = reject;
+    });
+    const completion = finalizeSession(
+      createJobContext(() => cleanup),
+      undefined,
+      1000,
+      logger,
+    );
+
+    await vi.advanceTimersByTimeAsync(900_000);
+    await completion;
+    rejectCleanup(new Error(secret));
+
+    await vi.waitFor(() =>
+      expect(logger.debug).toHaveBeenCalledWith(
+        { exceptionType: 'Error' },
+        'ctx._onSessionEnd rejected after shutdown timeout',
+      ),
+    );
+    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(secret);
   });
 });
 

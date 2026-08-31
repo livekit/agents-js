@@ -30,6 +30,8 @@ export interface ProcOpts {
   pingTimeout: number;
   /** Threshold for warning about unresponsive processes in milliseconds. */
   highPingThreshold: number;
+  /** Timeout for the staged shutdown lifecycle in milliseconds. */
+  shutdownCompletionTimeout: number;
 }
 
 export abstract class SupervisedProc {
@@ -61,6 +63,7 @@ export abstract class SupervisedProc {
     pingInterval: number,
     pingTimeout: number,
     highPingThreshold: number,
+    shutdownCompletionTimeout = closeTimeout,
   ) {
     this.#opts = {
       initializeTimeout,
@@ -70,6 +73,7 @@ export abstract class SupervisedProc {
       pingInterval,
       pingTimeout,
       highPingThreshold,
+      shutdownCompletionTimeout,
     };
   }
 
@@ -133,31 +137,12 @@ export abstract class SupervisedProc {
       this.#join.resolve();
     }, this.#opts.pingTimeout);
 
-    this.#memoryMonitorInterval = setInterval(async () => {
-      const memoryMB = await this.getChildMemoryUsageMB();
-      if (memoryMB === 0) {
-        return;
-      }
-
-      this.memoryBaselineMB ??= memoryMB;
-
-      if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
+    this.#memoryMonitorInterval = setInterval(() => {
+      void this.checkMemoryUsage().catch((error) => {
         this.#logger
-          .child(this.memoryLoggingFields(memoryMB))
-          .error(`${this.processKind} process exceeded memory limit, killing it`);
-        this.close();
-      } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
-        if (this.shouldEmitMemoryWarning(memoryMB)) {
-          const advisory = this.#opts.memoryLimitMB <= 0;
-          this.#logger
-            .child(this.memoryLoggingFields(memoryMB))
-            .warn(
-              `${this.processKind} process memory usage is above the warning threshold${
-                advisory ? ' (advisory only, the process will not be terminated)' : ''
-              }`,
-            );
-        }
-      }
+          .child({ exceptionType: safeErrorType(error) })
+          .warn('failed to check supervised process memory usage');
+      });
     }, MEMORY_MONITOR_INTERVAL);
 
     const listener = (msg: IPCMessage) => {
@@ -171,7 +156,14 @@ export abstract class SupervisedProc {
           break;
         }
         case 'exiting': {
-          this.#logger.child({ reason: msg.value.reason }).debug('job exiting');
+          this.#logger
+            .child({
+              exitCategory: msg.value.category,
+              ...(msg.value['lk.pii.shutdown_reason'] !== undefined
+                ? { 'lk.pii.shutdown_reason': msg.value['lk.pii.shutdown_reason'] }
+                : {}),
+            })
+            .debug('job exiting');
           break;
         }
         case 'shutdownRequestAck': {
@@ -329,7 +321,13 @@ export abstract class SupervisedProc {
         return;
       }
 
-      if (!(await this.waitForShutdownCompletion(this.#shuttingDown))) {
+      if (
+        !(await this.waitForShutdownStage(
+          this.#shuttingDown,
+          this.#opts.shutdownCompletionTimeout,
+          'job did not complete session-end shutdown in time',
+        ))
+      ) {
         return;
       }
 
@@ -363,17 +361,6 @@ export abstract class SupervisedProc {
       await this.#join.await;
     }
 
-    return result === 'stage';
-  }
-
-  private async waitForShutdownCompletion(stage: Future): Promise<boolean> {
-    if (this.#join.done) return false;
-    if (stage.done) return true;
-
-    const result = await Promise.race([
-      stage.await.then(() => 'stage' as const),
-      this.#join.await.then(() => 'exit' as const),
-    ]);
     return result === 'stage';
   }
 
@@ -421,6 +408,35 @@ export abstract class SupervisedProc {
         return 0;
       }
       throw err;
+    }
+  }
+
+  private async checkMemoryUsage(): Promise<void> {
+    const memoryMB = await this.getChildMemoryUsageMB();
+    if (memoryMB === 0) {
+      return;
+    }
+
+    this.memoryBaselineMB ??= memoryMB;
+
+    if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
+      this.#logger
+        .child(this.memoryLoggingFields(memoryMB))
+        .error(`${this.processKind} process exceeded memory limit, killing it`);
+      this.#closing = true;
+      this.clearTimers();
+      this.proc?.kill();
+    } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
+      if (this.shouldEmitMemoryWarning(memoryMB)) {
+        const advisory = this.#opts.memoryLimitMB <= 0;
+        this.#logger
+          .child(this.memoryLoggingFields(memoryMB))
+          .warn(
+            `${this.processKind} process memory usage is above the warning threshold${
+              advisory ? ' (advisory only, the process will not be terminated)' : ''
+            }`,
+          );
+      }
     }
   }
 

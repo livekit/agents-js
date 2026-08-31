@@ -22,6 +22,7 @@ export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
    * returned promise, so timed-out work can continue until the job process exits.
    *
    * @param ctx - The job context for the completed session.
+   * @public
    */
   onSessionEnd?: (ctx: JobContext<ProcessUserData>) => Promise<void> | void;
   /** Called when a simulation run driving this agent ends. Read the

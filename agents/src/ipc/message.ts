@@ -56,7 +56,7 @@ export type IPCMessage =
     }
   | {
       case: 'exiting';
-      value: { reason?: string };
+      value: { category: string; 'lk.pii.shutdown_reason'?: string };
     }
   | {
       case: 'done';

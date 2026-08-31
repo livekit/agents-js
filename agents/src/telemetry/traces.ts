@@ -47,7 +47,12 @@ import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { uploadRecording } from './recording_upload.js';
-import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
+import {
+  ATTR_AGENT_NAME,
+  ATTR_CLOUD_AGENT_ID,
+  ATTR_DEPLOYMENT_ID,
+  ATTR_ROOM_NAME,
+} from './trace_types.js';
 import { UploadGateTraceExporter, uploadGate } from './upload_gate.js';
 
 export interface StartSpanOptions {
@@ -585,7 +590,7 @@ export async function uploadSessionReport(options: {
     scopeAttributes: {
       room_id: report.roomId,
       job_id: report.jobId,
-      room: report.room,
+      [ATTR_ROOM_NAME]: report.room,
       ...metadata,
     },
   });
@@ -609,7 +614,7 @@ export async function uploadSessionReport(options: {
       ...commonAttrs,
       'session.options': serializeSessionOptions(report.options),
       'session.report_timestamp': report.timestamp,
-      agent_name: agentName,
+      'lk.pii.agent_name': agentName,
       sdk_version: version,
       usage,
     },

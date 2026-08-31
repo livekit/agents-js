@@ -135,8 +135,7 @@ const startJob = (
   };
   const onShutdown = (reason: string) => {
     shutdown = true;
-    logger.debug({ 'lk.pii.shutdownReason': reason }, 'user requested job shutdown');
-    closeEvent.emit('close', EXIT_REASON.userShutdown);
+    closeEvent.emit('close', EXIT_REASON.userShutdown, reason);
   };
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
@@ -156,7 +155,13 @@ const startJob = (
       const closePromise = once(closeEvent, 'close').then((close) => {
         logger.debug('shutting down');
         shutdown = true;
-        safeSend({ case: 'exiting', value: { reason: close[0] } });
+        safeSend({
+          case: 'exiting',
+          value: {
+            category: close[0],
+            ...(close[1] !== undefined ? { 'lk.pii.shutdown_reason': close[1] } : {}),
+          },
+        });
       });
 
       // Run the job function within the AsyncLocalStorage context
@@ -185,7 +190,7 @@ const startJob = (
       shutdown = true;
       safeSend({
         case: 'exiting',
-        value: { reason: EXIT_REASON.entrypointError },
+        value: { category: EXIT_REASON.entrypointError },
       });
     }
 

@@ -134,6 +134,8 @@ describe('staged job shutdown', () => {
     closeTimeout = 20,
     pingTimeout = 60_000,
     completeSessionEnd = false,
+    shutdownCompletionTimeout = 100,
+    memoryLimitMB = 0,
   } = {}) {
     type TestChild = EventEmitter & {
       connected: boolean;
@@ -198,7 +200,16 @@ describe('staged job shutdown', () => {
       async mainTask() {}
     }
 
-    const proc = new TestProc(100, closeTimeout, 0, 0, 5000, pingTimeout, 2500);
+    const proc = new TestProc(
+      100,
+      closeTimeout,
+      0,
+      memoryLimitMB,
+      5000,
+      pingTimeout,
+      2500,
+      shutdownCompletionTimeout,
+    );
     await proc.start();
     await proc.initialize();
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -229,6 +240,28 @@ describe('staged job shutdown', () => {
     await proc.close();
 
     expect(killSpy).toHaveBeenCalledOnce();
+  });
+
+  it('kills the child when session-end shutdown does not complete', async () => {
+    const { killSpy, proc } = await createProc({ shutdownCompletionTimeout: 30 });
+
+    await proc.close();
+
+    expect(killSpy).toHaveBeenCalledOnce();
+  });
+
+  it('kills an over-limit child without starting staged shutdown', async () => {
+    const { killSpy, proc, sendSpy } = await createProc({ memoryLimitMB: 100 });
+    const internals = proc as unknown as {
+      checkMemoryUsage(): Promise<void>;
+      getChildMemoryUsageMB(): Promise<number>;
+    };
+    vi.spyOn(internals, 'getChildMemoryUsageMB').mockResolvedValue(101);
+
+    await internals.checkMemoryUsage();
+
+    expect(killSpy).toHaveBeenCalledOnce();
+    expect(sendSpy).not.toHaveBeenCalledWith({ case: 'shutdownRequest' });
   });
 });
 
