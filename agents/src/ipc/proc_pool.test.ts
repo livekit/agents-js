@@ -30,6 +30,35 @@ async function flushMicrotasks(ticks = 10): Promise<void> {
   }
 }
 
+describe('ProcPool close', () => {
+  it('waits for on-demand executors to close', async () => {
+    const pool = new ProcPool('agent', 0, 1000, 1000, 300_000, undefined, 0, 0);
+    let resolveClose = () => {};
+    const executor = createMockExecutor();
+    executor.close = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClose = resolve;
+        }),
+    );
+    pool.executors.push(executor);
+    pool.started = true;
+
+    let closed = false;
+    const close = pool.close().then(() => {
+      closed = true;
+    });
+    await flushMicrotasks();
+
+    expect(executor.close).toHaveBeenCalledOnce();
+    expect(closed).toBe(false);
+
+    resolveClose();
+    await close;
+    expect(closed).toBe(true);
+  });
+});
+
 describe('ProcPool warmed process lock handling', () => {
   it('releases lock token from the dequeued warmed process entry', async (): Promise<
     Throws<void, Error>
