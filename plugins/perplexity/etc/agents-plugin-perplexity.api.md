@@ -36,7 +36,7 @@ import { z } from 'zod';
 
 // Warning: (ae-forgotten-export) The symbol "LLM_2" needs to be exported by the entry point index.d.ts
 //
-// @public
+// @public @deprecated
 export class LLM extends LLM_2 {
     constructor(opts?: Partial<LLMOptions>);
     // (undocumented)
@@ -115,7 +115,7 @@ export const PERPLEXITY_BASE_URL = "https://api.perplexity.ai";
 const PERPLEXITY_RESPONSES_BASE_URL = "https://api.perplexity.ai/v1";
 
 // @public (undocumented)
-export type PerplexityChatModels = 'sonar-pro';
+export type PerplexityChatModels = 'sonar' | 'sonar-pro' | 'sonar-reasoning-pro' | 'sonar-deep-research';
 
 // @public (undocumented)
 export type PerplexityResponsesModels = 'perplexity/sonar';
