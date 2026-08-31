@@ -223,7 +223,7 @@ describe('realtime adaptive interruption', () => {
     expect(activity.interruptionDetector).toBeUndefined();
   });
 
-  it('keeps interruption failures structured for log redaction', () => {
+  it('logs only safe interruption failure metadata', () => {
     const activity = Object.create(AgentActivity.prototype) as any;
     const error = new InterruptionDetectionError(
       'wss://provider.example?api_key=secret',
@@ -244,9 +244,10 @@ describe('realtime adaptive interruption', () => {
     activity.fallbackToVadInterruption(error);
 
     expect(logger.info).toHaveBeenCalledWith(
-      { error, label: 'adaptive-interruption' },
+      { errorType: 'InterruptionDetectionError', label: 'adaptive-interruption' },
       'adaptive interruption disabled due to unrecoverable error, falling back to VAD-based interruption',
     );
+    expect(JSON.stringify(logger.info.mock.calls[0]![0])).not.toContain('secret');
   });
 
   it('owns the adaptive verdict transition', () => {
