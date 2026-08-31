@@ -382,7 +382,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
 
   async #sendTask() {
     if (!this.#ws) return;
-    let audioStarted = false;
 
     // Buffer audio into 50ms chunks (Parity)
     const samples50ms = Math.floor(this.#opts.sampleRate / 20);
@@ -428,10 +427,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
         }
 
         for (const frame of frames) {
-          if (!audioStarted) {
-            this.startTime = Date.now();
-            audioStarted = true;
-          }
           this.#audioDurationCollector.push(calculateAudioDurationSeconds(frame));
 
           if (this.#ws!.readyState === WebSocket.OPEN) {
@@ -519,9 +514,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
         this.queue.put({
           type: stt.SpeechEventType.END_OF_SPEECH,
           requestId: this.#requestId,
-          speechEndTime: this.#toSpeechEndTime(
-            (data.words as Array<Record<string, unknown>> | undefined)?.at(-1)?.end,
-          ),
         });
         this.#onEndOfSpeech();
       }
@@ -542,14 +534,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
         alternatives: [alts[0]!, ...alts.slice(1)],
       });
     }
-  }
-
-  #toSpeechEndTime(relativeEndTime: unknown): number | undefined {
-    return typeof relativeEndTime === 'number' &&
-      Number.isFinite(relativeEndTime) &&
-      relativeEndTime >= 0
-      ? this.startTime + relativeEndTime * 1000
-      : undefined;
   }
 
   #onAudioDurationReport(duration: number) {

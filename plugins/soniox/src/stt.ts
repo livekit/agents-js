@@ -230,7 +230,6 @@ export class SpeechStream extends stt.SpeechStream {
     const state = newProcessMessageState();
     const options = {
       isTranslationMode: this.#opts.translation !== undefined,
-      startTime: this.startTime,
       startTimeOffset: this.startTimeOffset,
     };
 
@@ -281,10 +280,7 @@ export class SpeechStream extends stt.SpeechStream {
     // connection (per Soniox protocol: an empty frame ends the session). We then
     // let `listenTask` observe that final response rather than tearing down the
     // moment the input runs dry.
-    const sendTask = this.#sendAudio(ws, () => {
-      this.startTime = Date.now();
-      options.startTime = this.startTime;
-    });
+    const sendTask = this.#sendAudio(ws);
     const finalize = sendTask.then(() => {
       if (this.abortSignal.aborted || ws.readyState !== WebSocket.OPEN) {
         return;
@@ -309,9 +305,8 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  async #sendAudio(ws: WebSocket, onFirstAudio: () => void): Promise<void> {
+  async #sendAudio(ws: WebSocket): Promise<void> {
     const abortPromise = waitForAbort(this.abortSignal);
-    let audioStarted = false;
     while (!this.closed) {
       const result = await Promise.race([this.input.next(), abortPromise]);
       if (result === undefined || result.done) {
@@ -321,10 +316,6 @@ export class SpeechStream extends stt.SpeechStream {
       const data = result.value;
       if (data === SpeechStream.FLUSH_SENTINEL) {
         continue;
-      }
-      if (!audioStarted) {
-        onFirstAudio();
-        audioStarted = true;
       }
       // Send only this frame's bytes. `data.data` may be a view into a larger
       // ArrayBuffer (non-zero byteOffset / partial span), so `.buffer` alone

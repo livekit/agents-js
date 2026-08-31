@@ -319,7 +319,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private logger = log();
   private _connOptions: APIConnectOptions;
   private _startTimeOffset: number = 0;
-  private _startTime: number = Date.now();
   private _numRetries: number = 0;
 
   protected abortController = new AbortController();
@@ -368,10 +367,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     while (this._numRetries <= this._connOptions.maxRetry) {
       try {
         // Keep provider-relative transcript timestamps linear across reconnect attempts.
-        const now = Date.now();
-        this._startTimeOffset += (now - lastStartTime) / 1000;
-        this._startTime = now;
-        lastStartTime = now;
+        this._startTimeOffset += (Date.now() - lastStartTime) / 1000;
+        lastStartTime = Date.now();
         return await this.run();
       } catch (error) {
         // If the stream was intentionally aborted (e.g. session shutdown), exit
@@ -489,18 +486,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected get abortSignal(): AbortSignal {
     return this.abortController.signal;
-  }
-
-  /** Wall-clock anchor for provider-relative timestamps, in milliseconds since the Unix epoch. */
-  get startTime(): number {
-    return this._startTime;
-  }
-
-  set startTime(value: number) {
-    if (value < 0) {
-      throw new Error('startTime must be non-negative');
-    }
-    this._startTime = value;
   }
 
   get startTimeOffset(): number {
