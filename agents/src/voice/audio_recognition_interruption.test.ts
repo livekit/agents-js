@@ -25,10 +25,10 @@ function createHooks(): RecognitionHooks {
   };
 }
 
-function createRecognition() {
+function createRecognition(turnDetectionMode: 'manual' | 'stt' = 'manual') {
   const recognition = new AudioRecognition({
     recognitionHooks: createHooks(),
-    turnDetectionMode: 'manual',
+    turnDetectionMode,
     minEndpointingDelay: 0,
     maxEndpointingDelay: 0,
   });
@@ -355,6 +355,47 @@ describe('AudioRecognition adaptive transcript gate', () => {
     expect(recognition.transcriptGateActive).toBe(false);
     expect(recognition.transcriptBuffer).toEqual([]);
   });
+
+  it('keeps the gate closed while replaying a held speech start at agent speech end', async () => {
+    const recognition = createRecognition('stt');
+    recognition.isInterruptionEnabled = true;
+    await recognition.onStartOfAgentSpeech(9_000);
+    recognition.activeVadSpeechStartedAt = 9_500;
+    recognition.transcriptGateActive = true;
+    recognition.transcriptBuffer = [{ type: SpeechEventType.START_OF_SPEECH, createdAt: 9_500 }];
+    recognition.hooks.onStartOfSpeech = vi.fn((event) => {
+      void recognition.onStartOfOverlapSpeech(event.speechDuration, 9_500);
+    });
+
+    await recognition.onEndOfAgentSpeech(10_000);
+
+    expect(recognition.hooks.onStartOfSpeech).toHaveBeenCalledOnce();
+    expect(recognition.isAgentSpeaking).toBe(false);
+    expect(recognition.transcriptGateActive).toBe(false);
+    expect(recognition.transcriptBuffer).toEqual([]);
+  });
+
+  it.each([false, true])(
+    'releases stale transcripts after agent speech already ended (gate active: %s)',
+    async (gateActive) => {
+      const recognition = createRecognition();
+      const event = transcript('held', { createdAt: 9_500 });
+      recognition.isInterruptionEnabled = true;
+      recognition.isAgentSpeaking = false;
+      recognition.agentSpeechStartedAt = 9_000;
+      recognition.activeVadSpeechStartedAt = 9_500;
+      recognition.transcriptGateActive = gateActive;
+      recognition.transcriptBuffer = [event];
+      recognition.processSTTEvent = vi.fn();
+
+      await recognition.onEndOfAgentSpeech(10_000);
+
+      expect(recognition.processSTTEvent).toHaveBeenCalledOnce();
+      expect(recognition.processSTTEvent).toHaveBeenCalledWith(event);
+      expect(recognition.transcriptGateActive).toBe(false);
+      expect(recognition.transcriptBuffer).toEqual([]);
+    },
+  );
 
   it('tears down recognition state before detector completion', async () => {
     const recognition = createRecognition();

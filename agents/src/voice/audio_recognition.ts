@@ -858,11 +858,12 @@ export class AudioRecognition {
     if (wasAgentSpeaking) {
       this.endpointing.onEndOfAgentSpeech(endedAt);
     }
+    // Replayed STT events must observe the post-playout state.
+    this.isAgentSpeaking = false;
 
     if (!this.isInterruptionEnabled) {
       this.flushHeldTranscripts();
       this.overlapOpen = false;
-      this.isAgentSpeaking = false;
       this.agentSpeechStartedAt = undefined;
       return Promise.resolve();
     }
@@ -879,16 +880,10 @@ export class AudioRecognition {
     // Queue detector boundaries before transcript hooks can start another overlap.
     const detectorReset = this.trySendInterruptionSentinel(sentinels);
 
-    if (wasAgentSpeaking && this.transcriptGateActive) {
-      this.logger.trace(
-        { vadSpeechStartedAt: this.activeVadSpeechStartedAt },
-        'flushing held transcripts',
-      );
-      this.flushHeldTranscripts(endedAt, this.activeVadSpeechStartedAt);
-    }
-
     this.overlapOpen = false;
-    this.isAgentSpeaking = false;
+
+    this.flushHeldTranscripts(endedAt, this.activeVadSpeechStartedAt);
+
     this.agentSpeechStartedAt = undefined;
 
     return this.finishEndOfAgentSpeech(detectorReset);
@@ -1015,6 +1010,19 @@ export class AudioRecognition {
   }
 
   private flushHeldTranscripts(resolvedAt?: number, vadSpeechStartedAt?: number): void {
+    const gateWasActive = this.transcriptGateActive;
+    if (gateWasActive || this.transcriptBuffer.length > 0) {
+      this.logger.trace(
+        {
+          eventCount: this.transcriptBuffer.length,
+          gateWasActive,
+          resolvedAt,
+          vadSpeechStartedAt,
+        },
+        'flushing held transcripts',
+      );
+    }
+
     this.transcriptGateActive = false;
     if (resolvedAt !== undefined) {
       this.trimHeldTranscripts(resolvedAt, vadSpeechStartedAt);
