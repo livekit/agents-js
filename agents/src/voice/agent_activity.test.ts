@@ -111,6 +111,7 @@ function buildMainTaskRunner() {
     };
     getDrainPendingSpeechTasks?: () => Task<void>[];
     wakeupMainTask?: () => void;
+    cancelPreemptiveGeneration: ReturnType<typeof vi.fn>;
   } = {
     q_updated,
     speechQueue,
@@ -120,6 +121,7 @@ function buildMainTaskRunner() {
     _authorizationPaused: false,
     _drainBlockedTasks: new Set<Task<void>>(),
     _mainTask: undefined as { result: Promise<void> } | undefined,
+    cancelPreemptiveGeneration: vi.fn(),
     logger: {
       info: () => {},
       debug: () => {},
