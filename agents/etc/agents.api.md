@@ -531,7 +531,7 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         force?: boolean;
     }): Future<void, Error>;
     // (undocumented)
-    get interruptionDetection(): "adaptive" | "vad" | undefined;
+    get interruptionDetection(): "vad" | "adaptive" | undefined;
     // @internal (undocumented)
     readonly _keytermDetector: KeytermDetector;
     get keyterms(): string[];
@@ -561,6 +561,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     //
     // @internal (undocumented)
     _recorderIO?: RecorderIO;
+    // @internal
+    _redactionEnabled: boolean;
     // (undocumented)
     resumeReplyAuthorization(): void;
     // @internal (undocumented)
@@ -662,6 +664,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     _waitForIdleHoldReleased(): Promise<boolean>;
     // @internal
     _warnedExpressiveTemplate: boolean;
+    // @internal
+    _warnedRealtimeAudioRedaction: boolean;
 }
 
 // Warning: (ae-missing-release-tag) "AgentSessionEventTypes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -2727,6 +2731,12 @@ export function createTimedString(opts: {
 //
 // @public (undocumented)
 export const createToolOptions: <UserData extends UnknownUserData>(toolCallId: string, userData?: UserData) => ToolOptions<UserData>;
+
+// Warning: (ae-missing-release-tag) "createTwilioConnectorWarmTransferTask" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "TwilioConnectorWarmTransferTask"
+//
+// @public
+function createTwilioConnectorWarmTransferTask(options: TwilioConnectorWarmTransferTaskOptions): AgentTask<WarmTransferResult>;
 
 // Warning: (ae-missing-release-tag) "createUserInputTranscribedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -5354,6 +5364,17 @@ export type OpenAIFunctionParameters = {
 // @public (undocumented)
 type OpenAIModels = 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
 
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTaskOptions"
+//
+// @public
+type OriginateHumanAgent = (options: {
+    roomName: string;
+    identity: string;
+    room: Room;
+    jobCtx: JobContext;
+    signal: AbortSignal;
+}) => Promise<void>;
+
 // Warning: (ae-forgotten-export) The symbol "TextOutput" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "ParalellTextOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -5958,7 +5979,7 @@ export function resolveExpressiveOptions(expr: ExpressiveOptions, options: {
 // Warning: (ae-missing-release-tag) "RimeModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
+type RimeModels = 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
 
 // Warning: (ae-missing-release-tag) "RimeOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -6725,6 +6746,8 @@ export class SpeechHandle {
     exception(): unknown;
     // @internal (undocumented)
     get _hasGenerations(): boolean;
+    // @internal (undocumented)
+    _holdInterruptions(): void;
     // (undocumented)
     get id(): string;
     // (undocumented)
@@ -6748,6 +6771,8 @@ export class SpeechHandle {
     _numSteps: number;
     // (undocumented)
     readonly parent?: SpeechHandle | undefined;
+    // @internal (undocumented)
+    _releaseInterruptions(): void;
     // (undocumented)
     removeDoneCallback(callback: (sh: SpeechHandle) => void): void;
     // @internal (undocumented)
@@ -8405,6 +8430,28 @@ class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
 // @public
 type TurnDetectorVersion = 'v1' | 'v1-mini';
 
+// Warning: (ae-missing-release-tag) "TwilioConnectorWarmTransferTask" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "createTwilioConnectorWarmTransferTask"
+//
+// @public
+class TwilioConnectorWarmTransferTask extends AgentTask<WarmTransferResult> {
+    constructor(options: TwilioConnectorWarmTransferTaskOptions);
+    // (undocumented)
+    run(): Promise<WarmTransferResult>;
+}
+
+// Warning: (ae-missing-release-tag) "TwilioConnectorWarmTransferTaskOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "createTwilioConnectorWarmTransferTask"
+//
+// @public
+interface TwilioConnectorWarmTransferTaskOptions extends Omit<WarmTransferTaskOptions, 'sipCallTo' | 'sipTrunkId' | 'sipConnection' | 'sipNumber' | 'sipHeaders' | 'dtmf' | 'ringingTimeout' | 'humanAgentIdentity' | 'originateHumanAgent'> {
+    phoneNumber: string;
+    ringingTimeout?: number | null;
+    twilioAccountSid?: string;
+    twilioAuthToken?: string;
+    twilioFromNumber: string;
+}
+
 // Warning: (ae-missing-release-tag) "UnexpectedModelBehavior" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -8968,10 +9015,13 @@ interface WarmTransferTaskOptions {
     dtmf?: string | null;
     greetingSpeech?: WarmTransferSpeech;
     holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferResult"
+    humanAgentIdentity?: string;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "InstructionParts"
     instructions?: InstructionParts | string;
     // (undocumented)
     llm?: LLM | RealtimeModel | LLMModels | null;
+    originateHumanAgent?: OriginateHumanAgent;
     ringingTimeout?: number | null;
     roomName?: string;
     sipCallTo?: string;
@@ -9099,8 +9149,12 @@ declare namespace workflows {
         TaskCompletedEvent,
         TaskGroupOptions,
         TaskGroupResult,
+        TwilioConnectorWarmTransferTask,
         WarmTransferTask,
+        createTwilioConnectorWarmTransferTask,
         createWarmTransferTask,
+        OriginateHumanAgent,
+        TwilioConnectorWarmTransferTaskOptions,
         WarmTransferSpeech,
         WarmTransferResult,
         WarmTransferTaskOptions,
@@ -9161,13 +9215,13 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:194:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:358:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
-// src/utils.ts:549:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
+// src/stt/stt.ts:361:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:988:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:994:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1643:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1643:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1643:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
