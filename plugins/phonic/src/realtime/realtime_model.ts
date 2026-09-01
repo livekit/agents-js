@@ -77,6 +77,16 @@ export interface RealtimeModelOptions {
   instructions?: string;
 }
 
+/**
+ * The subset of {@link RealtimeModelOptions} that can be changed mid-session via
+ * `RealtimeModel.updateConfig` / `RealtimeSession.updateConfig`. Connection-level fields
+ * (`apiKey`, `model`, `connOptions`, `baseUrl`) and `instructions` (managed through the Agent
+ * handoff) are intentionally excluded.
+ */
+export type PhonicSessionConfigUpdate = Partial<
+  Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'instructions'>
+>;
+
 // Phonic's built-in tools, referenced by name in `phonicTools`. A configsForTools entry for one of
 // these carries its built-in config (below) so it is sent to Phonic as an inline object, not a name.
 const BUILT_IN_TOOL_NAMES = new Set([
@@ -103,6 +113,9 @@ export interface PhonicToolConfig {
 export class RealtimeModel extends llm.RealtimeModel {
   /** @internal */
   _options: RealtimeModelOptions;
+
+  /** @internal the live session, used to forward mid-session `updateConfig` calls */
+  _activeSession?: RealtimeSession;
 
   get model(): string {
     return this._options.model;
@@ -369,7 +382,23 @@ export class RealtimeModel extends llm.RealtimeModel {
    * Create a new realtime session
    */
   session(): RealtimeSession {
-    return new RealtimeSession(this);
+    const session = new RealtimeSession(this);
+    this._activeSession = session;
+    return session;
+  }
+
+  /**
+   * Change one or more Phonic config fields on the active session mid-conversation (e.g. switch
+   * `defaultLanguage` when advancing to the next task). Forwards to
+   * `RealtimeSession.updateConfig`, which applies the change immediately via a Phonic `reset`.
+   * No-op (with a warning) when there is no active session.
+   */
+  async updateConfig(config: PhonicSessionConfigUpdate): Promise<void> {
+    if (!this._activeSession) {
+      log().warn('Phonic updateConfig called but there is no active session');
+      return;
+    }
+    await this._activeSession.updateConfig(config);
   }
 
   async close(): Promise<void> {}
@@ -392,6 +421,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private _tools: llm.ToolContext = llm.ToolContext.empty();
   private _chatCtx = llm.ChatContext.empty();
 
+  private phonicModel: RealtimeModel;
   private options: RealtimeModelOptions;
   private bstream: AudioByteStream;
   private inputResampler?: AudioResampler;
@@ -420,6 +450,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
+    this.phonicModel = realtimeModel;
     this.options = realtimeModel._options;
 
     this.client = new PhonicClient({
@@ -637,12 +668,19 @@ export class RealtimeSession extends llm.RealtimeSession {
       this._chatCtx = chatCtx.copy();
     }
 
+    this.sendMidSessionReset();
+  }
+
+  /**
+   * Rebuild the Phonic config from the current options, instructions, tools and conversation
+   * history and send a `reset`, so a mid-session change (an Agent handoff via `_updateSession`
+   * or a config change via `updateConfig`) takes effect. No-op if the socket isn't open yet.
+   */
+  private sendMidSessionReset(): void {
     let systemPrompt = this.options.instructions ?? '';
-    if (chatCtx !== undefined) {
-      const history = this.buildTurnHistory(chatCtx);
-      if (history) {
-        systemPrompt += CONVERSATION_HISTORY_PREFIX + history;
-      }
+    const history = this.buildTurnHistory(this._chatCtx);
+    if (history) {
+      systemPrompt += CONVERSATION_HISTORY_PREFIX + history;
     }
 
     this.closeCurrentGeneration({ interrupted: true });
@@ -660,6 +698,46 @@ export class RealtimeSession extends llm.RealtimeSession {
         config: this.buildConfigOptions({ systemPrompt, toolsPayload }),
       });
     }
+  }
+
+  /**
+   * Change one or more Phonic config fields mid-session (e.g. `defaultLanguage`, `voice`,
+   * `boostedKeywords`, no-input-poke settings). The merged config is applied immediately by sending
+   * a Phonic `reset`; fields left unset keep their current values. Instructions and tools are driven
+   * by the Agent handoff (`updateInstructions`/`updateTools`) and are not accepted here.
+   *
+   * Typically called around a task advance — e.g. `updateConfig({ defaultLanguage: 'es' })` — to
+   * switch the language (or any other field) for the next question. When the default language
+   * changes and the caller doesn't set `additionalLanguages`, the previous default is rotated into
+   * `additionalLanguages` (and the new default removed) so the language set stays intact — the API
+   * rejects a default that also appears in `additionalLanguages`.
+   */
+  async updateConfig(config: PhonicSessionConfigUpdate): Promise<void> {
+    if (this.closed) {
+      this.#logger.warn('updateConfig called on a closed Phonic session');
+      return;
+    }
+    if (
+      config.defaultLanguage !== undefined &&
+      config.defaultLanguage !== this.options.defaultLanguage &&
+      config.additionalLanguages === undefined
+    ) {
+      const previousDefault = this.options.defaultLanguage;
+      config = {
+        ...config,
+        additionalLanguages: [
+          ...(previousDefault !== undefined ? [previousDefault] : []),
+          ...(this.options.additionalLanguages ?? []),
+        ].filter((lang, i, arr) => lang !== config.defaultLanguage && arr.indexOf(lang) === i),
+      };
+    }
+    Object.assign(this.options, config);
+    if (!this.configSent) {
+      // Not connected yet — the initial config send will pick up the merged values.
+      return;
+    }
+    await this.readyToStart.await;
+    this.sendMidSessionReset();
   }
 
   updateOptions(_options: { toolChoice?: llm.ToolChoice | null }): void {
@@ -779,6 +857,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async close(): Promise<void> {
     this.closed = true;
+    if (this.phonicModel._activeSession === this) {
+      this.phonicModel._activeSession = undefined;
+    }
     this.closedFuture.resolve();
     this.instructionsReady.resolve();
     this.toolsReady.resolve();
