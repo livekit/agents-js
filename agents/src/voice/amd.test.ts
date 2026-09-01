@@ -88,6 +88,29 @@ class StaticLLM extends LLM {
   }
 }
 
+class SequentialLLM extends LLM {
+  constructor(private readonly responses: string[]) {
+    super();
+  }
+
+  label(): string {
+    return 'sequential-llm';
+  }
+
+  chat(): LLMStream {
+    const response = this.responses.shift();
+    if (response === undefined) throw new Error('no response configured');
+    return {
+      async *[Symbol.asyncIterator](): AsyncGenerator<ChatChunk> {
+        yield {
+          id: 'sequential',
+          delta: { role: 'assistant', content: response },
+        };
+      },
+    } as unknown as LLMStream;
+  }
+}
+
 class MockSession extends EventEmitter {
   llm?: LLM;
   pauseReplyAuthorization = vi.fn();
@@ -494,7 +517,7 @@ describe('AMD', () => {
     expect(setAmd).toHaveBeenCalledWith(null);
   });
 
-  it('should fall back to session.llm when no cloud creds are available', async () => {
+  it('should inherit session models when cloud inference is unavailable', async () => {
     vi.stubEnv('LIVEKIT_URL', '');
     try {
       const session = new MockSession();
@@ -502,6 +525,10 @@ describe('AMD', () => {
       llm.on('error', () => {});
       session.llm = llm;
       const amd = new AMD(asAgentSession(session), { detectionTimeoutMs: 50 });
+
+      expect((amd as unknown as { llm: LLM }).llm).toBe(llm);
+      expect((amd as unknown as { stt?: STT }).stt).toBeUndefined();
+      expect((amd as unknown as { source: string }).source).toBe('stt');
 
       const promise = amd.execute();
       pushTranscript(amd, 'Hello?');
@@ -512,6 +539,93 @@ describe('AMD', () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it('should reuse session models when null is explicit on cloud', () => {
+    vi.stubEnv('LIVEKIT_URL', 'wss://test.livekit.cloud');
+    vi.stubEnv('LIVEKIT_API_KEY', 'key');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'test-secret-that-is-at-least-32-bytes');
+    const session = new MockSession();
+    const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+    session.llm = llm;
+
+    const amd = new AMD(asAgentSession(session), {
+      llm: null,
+      stt: null,
+      suppressCompatibilityWarning: true,
+    });
+
+    expect((amd as unknown as { llm: LLM }).llm).toBe(llm);
+    expect((amd as unknown as { stt?: STT }).stt).toBeUndefined();
+    expect((amd as unknown as { source: string }).source).toBe('stt');
+  });
+
+  it('should auto-select cloud defaults when models are omitted', () => {
+    vi.stubEnv('LIVEKIT_URL', 'wss://test.livekit.cloud');
+    vi.stubEnv('LIVEKIT_API_KEY', 'key');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'test-secret-that-is-at-least-32-bytes');
+    const session = new MockSession();
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+
+    const amd = new AMD(asAgentSession(session), { suppressCompatibilityWarning: true });
+
+    expect((amd as unknown as { llm: LLM }).llm.model).toBe('google/gemini-3.1-flash-lite');
+    expect((amd as unknown as { stt?: STT }).stt?.model).toBe('cartesia/ink-whisper');
+    expect((amd as unknown as { source: string }).source).toBe('amd_stt');
+  });
+
+  it('should inherit a null LLM and use the omitted cloud STT default', () => {
+    vi.stubEnv('LIVEKIT_URL', 'wss://test.livekit.cloud');
+    vi.stubEnv('LIVEKIT_API_KEY', 'key');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'test-secret-that-is-at-least-32-bytes');
+    const session = new MockSession();
+    const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+    session.llm = llm;
+
+    const amd = new AMD(asAgentSession(session), {
+      llm: null,
+      suppressCompatibilityWarning: true,
+    });
+
+    expect((amd as unknown as { llm: LLM }).llm).toBe(llm);
+    expect((amd as unknown as { stt?: STT }).stt?.model).toBe('cartesia/ink-whisper');
+    expect((amd as unknown as { source: string }).source).toBe('amd_stt');
+  });
+
+  it('should use the omitted cloud LLM default and inherit a null STT', () => {
+    vi.stubEnv('LIVEKIT_URL', 'wss://test.livekit.cloud');
+    vi.stubEnv('LIVEKIT_API_KEY', 'key');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'test-secret-that-is-at-least-32-bytes');
+    const session = new MockSession();
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+
+    const amd = new AMD(asAgentSession(session), {
+      stt: null,
+      suppressCompatibilityWarning: true,
+    });
+
+    expect((amd as unknown as { llm: LLM }).llm.model).toBe('google/gemini-3.1-flash-lite');
+    expect((amd as unknown as { stt?: STT }).stt).toBeUndefined();
+    expect((amd as unknown as { source: string }).source).toBe('stt');
+  });
+
+  it('should use explicit models instead of cloud defaults', () => {
+    vi.stubEnv('LIVEKIT_URL', 'wss://test.livekit.cloud');
+    vi.stubEnv('LIVEKIT_API_KEY', 'key');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'test-secret-that-is-at-least-32-bytes');
+    const session = new MockSession();
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+    const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      stt: 'deepgram/nova-3',
+      suppressCompatibilityWarning: true,
+    });
+
+    expect((amd as unknown as { llm: LLM }).llm).toBe(llm);
+    expect((amd as unknown as { stt?: STT }).stt?.model).toBe('deepgram/nova-3');
+    expect((amd as unknown as { source: string }).source).toBe('amd_stt');
   });
 
   it('should throw when no cloud creds and session has no compatible LLM', () => {
@@ -753,7 +867,30 @@ describe('AMD', () => {
     await expect(promise).resolves.toMatchObject({ category: AMDCategory.MACHINE_VM });
   }, 5_000);
 
-  it('uses maxEndpointingDelay for transcripts without speech end', async () => {
+  it('uses maxEndpointingDelay to emit a human without VAD boundaries', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.HUMAN, reason: 'live person' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      maxEndpointingDelayMs: 30,
+      detectionTimeoutMs: 5_000,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    await waitForListening(amd);
+    pushTranscript(amd, 'hello');
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.HUMAN,
+      reason: 'live person',
+    });
+  }, 5_000);
+
+  it('uses maxEndpointingDelay to emit a machine without VAD boundaries', async () => {
     const session = new MockSession();
     const llm = new StaticLLM(
       JSON.stringify({ category: AMDCategory.MACHINE_VM, reason: 'voicemail greeting' }),
@@ -762,7 +899,7 @@ describe('AMD', () => {
     const amd = new AMD(asAgentSession(session), {
       llm,
       maxEndpointingDelayMs: 30,
-      detectionTimeoutMs: 80,
+      detectionTimeoutMs: 5_000,
       suppressCompatibilityWarning: true,
     });
 
@@ -771,6 +908,59 @@ describe('AMD', () => {
     pushTranscript(amd, 'Please leave a message after the tone');
 
     await expect(promise).resolves.toMatchObject({ category: AMDCategory.MACHINE_VM });
+  }, 5_000);
+
+  it('waits for the latest transcript chunk before transcript EOT', async () => {
+    const session = new MockSession();
+    const llm = new SequentialLLM([
+      JSON.stringify({ category: AMDCategory.HUMAN, reason: 'partial greeting' }),
+      JSON.stringify({ category: AMDCategory.MACHINE_VM, reason: 'complete greeting' }),
+    ]);
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      maxEndpointingDelayMs: 80,
+      detectionTimeoutMs: 5_000,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    await waitForListening(amd);
+    pushTranscript(amd, 'hello');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await waitForPending(promise, 0)).toBe(false);
+
+    pushTranscript(amd, "you've reached");
+    expect(await waitForPending(promise, 50)).toBe(false);
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.MACHINE_VM,
+      transcript: "hello you've reached",
+    });
+  }, 5_000);
+
+  it('preserves the transcript on detection timeout', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.UNCERTAIN, reason: 'not enough context' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      detectionTimeoutMs: 80,
+      maxEndpointingDelayMs: 30,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    await waitForListening(amd);
+    pushTranscript(amd, 'hello');
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.UNCERTAIN,
+      reason: 'detection_timeout',
+      transcript: 'hello',
+    });
   }, 5_000);
 
   it('subtracts already-elapsed silence from maxEndpointingDelay on speech end', async () => {

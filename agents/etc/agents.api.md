@@ -858,14 +858,14 @@ export interface AMDOptions {
     humanSpeechThresholdMs?: number;
     // (undocumented)
     interruptOnMachine?: boolean;
-    llm?: LLM | string;
+    llm?: LLM | string | null;
     machineSilenceThresholdMs?: number;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "DEFAULT_MAX_ENDPOINTING_DELAY_MS"
     maxEndpointingDelayMs?: number;
     noSpeechTimeoutMs?: number;
     participantIdentity?: string;
     prompt?: string;
-    stt?: STT | string;
+    stt?: STT | string | null;
     suppressCompatibilityWarning?: boolean;
     waitUntilFinished?: boolean;
 }
