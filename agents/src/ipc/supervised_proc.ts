@@ -150,7 +150,7 @@ export abstract class SupervisedProc {
           break;
         }
         case 'exiting': {
-          this.#logger.child({ 'lk.pii.shutdown_reason': msg.value.reason }).debug('job exiting');
+          this.#logger.child({ reason: msg.value.reason }).debug('job exiting');
           break;
         }
         case 'shutdownRequestAck': {

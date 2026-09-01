@@ -8,7 +8,9 @@ import { unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pidusage from 'pidusage';
+import type { Logger } from 'pino';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { log } from '../log.js';
 import type { IPCMessage } from './message.js';
 import { SupervisedProc } from './supervised_proc.js';
 
@@ -226,6 +228,31 @@ describe('staged job shutdown', () => {
     child.exitCode = 0;
     child.emit('exit', 0, null);
     await close;
+  });
+
+  it('logs the exit reason with the Python-compatible reason field', async () => {
+    const debug = vi.fn();
+    const childLogger = vi.fn().mockReturnValue({ debug } as unknown as Logger);
+    const logger = { child: childLogger } as unknown as Logger;
+    const rootChild = vi.spyOn(log(), 'child').mockReturnValueOnce(logger);
+
+    try {
+      const { child, proc } = await createProc();
+      child.emit('message', {
+        case: 'exiting',
+        value: { reason: 'user requested' },
+      } satisfies IPCMessage);
+
+      expect(childLogger).toHaveBeenCalledExactlyOnceWith({ reason: 'user requested' });
+
+      child.emit('message', { case: 'done', value: undefined } satisfies IPCMessage);
+      child.connected = false;
+      child.exitCode = 0;
+      child.emit('exit', 0, null);
+      await proc.join();
+    } finally {
+      rootChild.mockRestore();
+    }
   });
 
   it('still bounds process teardown after session-end handling completes', async () => {
