@@ -555,7 +555,7 @@ describe('uploadSessionReport metadata', () => {
     expect(keytermsOptions.keyterms).toEqual(['Acme Corp']);
   });
 
-  it('marks room and agent names as PII in exported session-report logs', async () => {
+  it('uses Python-compatible room and agent_name fields in exported session-report logs', async () => {
     let scopeAttributes: Record<string, unknown> | undefined;
     let records: Parameters<SimpleOTLPHttpLogExporter['export']>[0] = [];
     vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockImplementation(function (value) {
@@ -578,12 +578,12 @@ describe('uploadSessionReport metadata', () => {
       }),
     });
 
-    expect(scopeAttributes).toMatchObject({ 'lk.pii.room_name': 'room-name' });
-    expect(scopeAttributes).not.toHaveProperty('room');
+    expect(scopeAttributes).toMatchObject({ room: 'room-name' });
+    expect(scopeAttributes).not.toHaveProperty('lk.pii.room_name');
     expect(records[0]?.attributes).toMatchObject({
-      'lk.pii.agent_name': 'customer agent',
+      agent_name: 'customer agent',
     });
-    expect(records[0]?.attributes).not.toHaveProperty('agent_name');
+    expect(records[0]?.attributes).not.toHaveProperty('lk.pii.agent_name');
   });
 
   it('sets job, simulation, and redaction fields on the multipart recording header', async () => {
