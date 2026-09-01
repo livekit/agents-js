@@ -4941,6 +4941,9 @@ export class AgentActivity implements RecognitionHooks {
     if (this._schedulingPaused) return;
 
     this._schedulingPaused = true;
+    // A parked preemptive generation is never scheduled, so the wait below would never end.
+    // Cancel it after pausing scheduling, when no new one can be created.
+    this.cancelPreemptiveGeneration();
     if (blockedTasks.length > 0) {
       this._addDrainBlockedTasks(blockedTasks);
     }
