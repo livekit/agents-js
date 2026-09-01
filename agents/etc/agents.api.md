@@ -3048,6 +3048,12 @@ export function createTimedString(opts: {
 // @public (undocumented)
 export const createToolOptions: <UserData extends UnknownUserData>(toolCallId: string, userData?: UserData) => ToolOptions<UserData>;
 
+// Warning: (ae-missing-release-tag) "createTwilioConnectorWarmTransferTask" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "TwilioConnectorWarmTransferTask"
+//
+// @public
+function createTwilioConnectorWarmTransferTask(options: TwilioConnectorWarmTransferTaskOptions): AgentTask<WarmTransferResult>;
+
 // Warning: (ae-missing-release-tag) "createUserInputTranscribedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -6039,6 +6045,17 @@ export type OpenAIFunctionParameters = {
 //
 // @public (undocumented)
 type OpenAIModels = 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
+
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTaskOptions"
+//
+// @public
+type OriginateHumanAgent = (options: {
+    roomName: string;
+    identity: string;
+    room: Room;
+    jobCtx: JobContext;
+    signal: AbortSignal;
+}) => Promise<void>;
 
 // Warning: (ae-forgotten-export) The symbol "TextOutput" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "ParalellTextOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -9390,6 +9407,28 @@ class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
 // @public
 type TurnDetectorVersion = 'v1' | 'v1-mini';
 
+// Warning: (ae-missing-release-tag) "TwilioConnectorWarmTransferTask" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "createTwilioConnectorWarmTransferTask"
+//
+// @public
+class TwilioConnectorWarmTransferTask extends AgentTask<WarmTransferResult> {
+    constructor(options: TwilioConnectorWarmTransferTaskOptions);
+    // (undocumented)
+    run(): Promise<WarmTransferResult>;
+}
+
+// Warning: (ae-missing-release-tag) "TwilioConnectorWarmTransferTaskOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "createTwilioConnectorWarmTransferTask"
+//
+// @public
+interface TwilioConnectorWarmTransferTaskOptions extends Omit<WarmTransferTaskOptions, 'sipCallTo' | 'sipTrunkId' | 'sipConnection' | 'sipNumber' | 'sipHeaders' | 'dtmf' | 'ringingTimeout' | 'humanAgentIdentity' | 'originateHumanAgent'> {
+    phoneNumber: string;
+    ringingTimeout?: number | null;
+    twilioAccountSid?: string;
+    twilioAuthToken?: string;
+    twilioFromNumber: string;
+}
+
 // Warning: (ae-missing-release-tag) "UnexpectedModelBehavior" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -9953,10 +9992,13 @@ interface WarmTransferTaskOptions {
     dtmf?: string | null;
     greetingSpeech?: WarmTransferSpeech;
     holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferResult"
+    humanAgentIdentity?: string;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "InstructionParts"
     instructions?: InstructionParts | string;
     // (undocumented)
     llm?: LLM | RealtimeModel | LLMModels | null;
+    originateHumanAgent?: OriginateHumanAgent;
     ringingTimeout?: number | null;
     roomName?: string;
     sipCallTo?: string;
@@ -10089,8 +10131,12 @@ declare namespace workflows {
         TaskCompletedEvent,
         TaskGroupOptions,
         TaskGroupResult,
+        TwilioConnectorWarmTransferTask,
         WarmTransferTask,
+        createTwilioConnectorWarmTransferTask,
         createWarmTransferTask,
+        OriginateHumanAgent,
+        TwilioConnectorWarmTransferTaskOptions,
         WarmTransferSpeech,
         WarmTransferResult,
         WarmTransferTaskOptions,
