@@ -26,9 +26,16 @@ export class ParticipantAudioInputStream extends AudioInput {
   private noiseCancellation?: NoiseCancellationOptions;
   private frameProcessor?: FrameProcessor<AudioFrame>;
   private publication: RemoteTrackPublication | null = null;
+  private track: RemoteTrack | null = null;
   private participantIdentity: string | null = null;
-  private currentInputId: string | null = null;
+  private currentInput: {
+    id: string;
+    stream: ReadableStream<AudioFrame>;
+    pipe: Promise<void>;
+  } | null = null;
+  private streamTransition: Promise<void> | null = null;
   private attached = true;
+  private closed = false;
   private logger = log();
 
   constructor({
@@ -53,6 +60,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
+    this.room.on(RoomEvent.TrackUnsubscribed, this.onTrackUnsubscribed);
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
   }
 
@@ -146,12 +154,85 @@ export class ParticipantAudioInputStream extends AudioInput {
   };
 
   private closeStream() {
-    if (this.currentInputId) {
-      void this.multiStream.removeInputStream(this.currentInputId);
-      this.currentInputId = null;
+    this.updateStream(null, null);
+  }
+
+  private updateStream(track: RemoteTrack | null, publication: RemoteTrackPublication | null) {
+    this.track = track;
+    this.publication = publication;
+
+    if (track && publication && !this.streamTransition && !this.currentInput) {
+      this.openStream(track);
+      return;
     }
 
-    this.publication = null;
+    const previousTransition = this.streamTransition ?? Promise.resolve();
+    const transition = previousTransition.then(async () => {
+      try {
+        await this.closeCurrentInput();
+        if (
+          !track ||
+          !publication ||
+          this.closed ||
+          this.track !== track ||
+          this.publication !== publication
+        ) {
+          return;
+        }
+        this.openStream(track);
+      } catch {
+        this.logger.error('failed to update participant audio input');
+      }
+    });
+    this.streamTransition = transition;
+    void transition.then(() => {
+      if (this.streamTransition === transition) {
+        this.streamTransition = null;
+      }
+    });
+  }
+
+  private async closeCurrentInput() {
+    const input = this.currentInput;
+    this.currentInput = null;
+
+    if (input) {
+      try {
+        await this.multiStream.removeInputStream(input.id);
+      } catch {
+        this.logger.warn('failed to remove participant audio input stream');
+      }
+
+      const [cancelResult] = await Promise.allSettled([input.stream.cancel(), input.pipe]);
+      if (cancelResult.status === 'rejected') {
+        this.logger.warn('failed to cancel participant audio input stream');
+      }
+    }
+  }
+
+  private openStream(track: RemoteTrack) {
+    const output = new TransformStream<AudioFrame, AudioFrame>({
+      transform: (frame, controller) => {
+        if (this.attached) {
+          controller.enqueue(frame);
+        }
+      },
+    });
+    const inputPipe = resampleStream({
+      stream: this.createStream(track),
+      outputRate: this.sampleRate,
+    }).pipeTo(output.writable);
+    const input = {
+      id: this.multiStream.addInputStream(output.readable),
+      stream: output.readable,
+      pipe: inputPipe,
+    };
+    this.currentInput = input;
+    void inputPipe.catch(() => {
+      if (this.currentInput === input) {
+        this.logger.error('participant audio input stream failed');
+      }
+    });
   }
 
   private onTrackSubscribed = (
@@ -164,28 +245,41 @@ export class ParticipantAudioInputStream extends AudioInput {
       'onTrackSubscribed in _input',
     );
     if (
+      this.closed ||
       this.participantIdentity !== participant.identity ||
       publication.source !== TrackSource.SOURCE_MICROPHONE ||
-      (this.publication && this.publication.sid === publication.sid)
+      (this.publication?.sid === publication.sid && this.track === track)
     ) {
       return false;
     }
-    this.closeStream();
-    this.publication = publication;
-    const attachedStream = resampleStream({
-      stream: this.createStream(track),
-      outputRate: this.sampleRate,
-    }).pipeThrough(
-      new TransformStream<AudioFrame, AudioFrame>({
-        transform: (frame, controller) => {
-          if (this.attached) {
-            controller.enqueue(frame);
-          }
-        },
-      }),
-    );
-    this.currentInputId = this.multiStream.addInputStream(attachedStream);
+    this.updateStream(track, publication);
     return true;
+  };
+
+  private onTrackUnsubscribed = (
+    track: RemoteTrack,
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ) => {
+    if (
+      this.track !== track ||
+      this.publication?.sid !== publication.sid ||
+      participant.identity !== this.participantIdentity
+    ) {
+      return;
+    }
+
+    this.closeStream();
+
+    // Same-publication replacements arrive through TrackSubscribed.
+    for (const candidate of participant.trackPublications.values()) {
+      if (candidate.sid === publication.sid || !candidate.track) {
+        continue;
+      }
+      if (this.onTrackSubscribed(candidate.track, candidate, participant)) {
+        return;
+      }
+    }
   };
 
   private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
@@ -202,9 +296,16 @@ export class ParticipantAudioInputStream extends AudioInput {
   }
 
   override async close() {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+
     this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
+    this.room.off(RoomEvent.TrackUnsubscribed, this.onTrackUnsubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.closeStream();
+    await this.streamTransition;
     await super.close();
 
     this.frameProcessor?.close();
