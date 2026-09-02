@@ -197,10 +197,18 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.currentInput = null;
 
     if (input) {
-      await this.multiStream.removeInputStream(input.id);
+      try {
+        await this.multiStream.removeInputStream(input.id);
+      } catch (error) {
+        this.logger.warn({ error }, 'failed to remove participant audio input stream');
+      }
+
       const [cancelResult] = await Promise.allSettled([input.stream.cancel(), input.pipe]);
       if (cancelResult.status === 'rejected') {
-        throw cancelResult.reason;
+        this.logger.warn(
+          { error: cancelResult.reason },
+          'failed to cancel participant audio input stream',
+        );
       }
     }
   }

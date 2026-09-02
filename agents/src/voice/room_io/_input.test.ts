@@ -181,6 +181,31 @@ describe('ParticipantAudioInputStream', () => {
     await input.close();
   });
 
+  it('starts a replacement after the superseded stream errors', async () => {
+    const { input, participant, publication, room, source } = createParticipantInput();
+    input.setParticipant(participant.identity);
+    const reader = input.stream.getReader();
+    const currentInput = Reflect.get(input, 'currentInput') as { pipe: Promise<void> };
+    const replacement = createAudioStream();
+    const replacementTrack = {} as RemoteTrack;
+    audioStreams.push(replacement.stream);
+
+    source.controller().error(new Error('source failed'));
+    await expect(currentInput.pipe).rejects.toThrow('source failed');
+
+    publication.track = replacementTrack;
+    room.emit(RoomEvent.TrackSubscribed, replacementTrack, publication, participant);
+
+    await vi.waitFor(() => expect(audioStreams).toHaveLength(0));
+    expect(audioStreamLifecycle).toEqual(['create', 'create']);
+    const replacementFrame = createFrame(4);
+    replacement.controller().enqueue(replacementFrame);
+    await expect(reader.read()).resolves.toMatchObject({ done: false, value: replacementFrame });
+
+    reader.releaseLock();
+    await input.close();
+  });
+
   it('closes the active track on unsubscribe', async () => {
     const { input, participant, publication, room, source, track } = createParticipantInput();
     input.setParticipant(participant.identity);
