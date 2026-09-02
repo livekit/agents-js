@@ -131,8 +131,37 @@ export abstract class SupervisedProc {
       this.#join.resolve();
     }, this.#opts.pingTimeout);
 
+    const checkMemoryUsage = async (): Promise<void> => {
+      const memoryMB = await this.getChildMemoryUsageMB();
+      if (memoryMB === 0) {
+        return;
+      }
+
+      this.memoryBaselineMB ??= memoryMB;
+
+      if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
+        this.#logger
+          .child(this.memoryLoggingFields(memoryMB))
+          .error(`${this.processKind} process exceeded memory limit, killing it`);
+        this.#closing = true;
+        this.clearTimers();
+        this.proc?.kill('SIGKILL');
+      } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
+        if (this.shouldEmitMemoryWarning(memoryMB)) {
+          const advisory = this.#opts.memoryLimitMB <= 0;
+          this.#logger
+            .child(this.memoryLoggingFields(memoryMB))
+            .warn(
+              `${this.processKind} process memory usage is above the warning threshold${
+                advisory ? ' (advisory only, the process will not be terminated)' : ''
+              }`,
+            );
+        }
+      }
+    };
+
     this.#memoryMonitorInterval = setInterval(() => {
-      void this.checkMemoryUsage().catch((error) => {
+      void checkMemoryUsage().catch((error) => {
         this.#logger
           .child({ exceptionType: safeErrorType(error) })
           .warn('failed to check supervised process memory usage');
@@ -268,11 +297,61 @@ export abstract class SupervisedProc {
     this.#closing = true;
     this.clearTimers();
 
+    const waitForStage = async (
+      stage: Future,
+      timeout?: { ms: number; message: string },
+    ): Promise<boolean> => {
+      if (this.#join.done) return false;
+      if (stage.done) return true;
+
+      const stageOrExit = Promise.race([
+        stage.await.then(() => 'stage' as const),
+        this.#join.await.then(() => 'exit' as const),
+      ]);
+      if (!timeout) return (await stageOrExit) === 'stage';
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        stageOrExit,
+        new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), timeout.ms);
+        }),
+      ]);
+      clearTimeout(timer);
+
+      if (result === 'timeout') {
+        this.#logger.child({ timeout: timeout.ms }).error(timeout.message);
+        this.proc?.kill('SIGKILL');
+        await this.#join.await;
+      }
+
+      return result === 'stage';
+    };
+
+    const waitForExitOrKill = async (timeout: number): Promise<void> => {
+      if (this.#join.done) return;
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        this.#join.await.then(() => 'exit' as const),
+        new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), timeout);
+        }),
+      ]);
+      clearTimeout(timer);
+
+      if (result === 'timeout') {
+        this.#logger.child({ timeout }).error('job shutdown is taking too much time');
+        this.proc?.kill('SIGKILL');
+        await this.#join.await;
+      }
+    };
+
     try {
       if (this.#join.done) return;
 
       if (!this.proc?.connected) {
-        await this.waitForExit(this.#opts.closeTimeout);
+        await waitForExitOrKill(this.#opts.closeTimeout);
         return;
       }
 
@@ -282,82 +361,24 @@ export abstract class SupervisedProc {
       } satisfies IPCMessage);
 
       if (!this.stagedShutdown) {
-        await this.waitForExit(this.#opts.closeTimeout);
+        await waitForExitOrKill(this.#opts.closeTimeout);
         return;
       }
 
       if (
-        !(await this.waitForShutdownStage(
-          this.#shutdownRequestAck,
-          this.#opts.closeTimeout,
-          'job did not acknowledge shutdown in time',
-        ))
+        !(await waitForStage(this.#shutdownRequestAck, {
+          ms: this.#opts.closeTimeout,
+          message: 'job did not acknowledge shutdown in time',
+        }))
       ) {
         return;
       }
 
-      if (!(await this.waitForShutdownCompletion())) return;
+      if (!(await waitForStage(this.#shuttingDown))) return;
 
-      await this.waitForExit(this.#opts.closeTimeout);
+      await waitForExitOrKill(this.#opts.closeTimeout);
     } finally {
       this.clearTimers();
-    }
-  }
-
-  private async waitForShutdownStage(
-    stage: Future,
-    timeout: number,
-    timeoutMessage: string,
-  ): Promise<boolean> {
-    if (this.#join.done) return false;
-    if (stage.done) return true;
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const result = await Promise.race([
-      stage.await.then(() => 'stage' as const),
-      this.#join.await.then(() => 'exit' as const),
-      new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => resolve('timeout'), timeout);
-      }),
-    ]);
-    clearTimeout(timer);
-
-    if (result === 'timeout') {
-      this.#logger.child({ timeout }).error(timeoutMessage);
-      this.proc?.kill('SIGKILL');
-      await this.#join.await;
-    }
-
-    return result === 'stage';
-  }
-
-  private async waitForShutdownCompletion(): Promise<boolean> {
-    if (this.#join.done) return false;
-    if (this.#shuttingDown.done) return true;
-
-    const result = await Promise.race([
-      this.#shuttingDown.await.then(() => 'stage' as const),
-      this.#join.await.then(() => 'exit' as const),
-    ]);
-    return result === 'stage';
-  }
-
-  private async waitForExit(timeout: number): Promise<void> {
-    if (this.#join.done) return;
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const result = await Promise.race([
-      this.#join.await.then(() => 'exit' as const),
-      new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => resolve('timeout'), timeout);
-      }),
-    ]);
-    clearTimeout(timer);
-
-    if (result === 'timeout') {
-      this.#logger.child({ timeout }).error('job shutdown is taking too much time');
-      this.proc?.kill('SIGKILL');
-      await this.#join.await;
     }
   }
 
@@ -386,35 +407,6 @@ export abstract class SupervisedProc {
         return 0;
       }
       throw err;
-    }
-  }
-
-  private async checkMemoryUsage(): Promise<void> {
-    const memoryMB = await this.getChildMemoryUsageMB();
-    if (memoryMB === 0) {
-      return;
-    }
-
-    this.memoryBaselineMB ??= memoryMB;
-
-    if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
-      this.#logger
-        .child(this.memoryLoggingFields(memoryMB))
-        .error(`${this.processKind} process exceeded memory limit, killing it`);
-      this.#closing = true;
-      this.clearTimers();
-      this.proc?.kill('SIGKILL');
-    } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
-      if (this.shouldEmitMemoryWarning(memoryMB)) {
-        const advisory = this.#opts.memoryLimitMB <= 0;
-        this.#logger
-          .child(this.memoryLoggingFields(memoryMB))
-          .warn(
-            `${this.processKind} process memory usage is above the warning threshold${
-              advisory ? ' (advisory only, the process will not be terminated)' : ''
-            }`,
-          );
-      }
     }
   }
 

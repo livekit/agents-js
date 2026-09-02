@@ -272,17 +272,23 @@ describe('staged job shutdown', () => {
   });
 
   it('kills an over-limit child without starting staged shutdown', async () => {
-    const { killSpy, proc, sendSpy } = await createProc({ memoryLimitMB: 100 });
-    const internals = proc as unknown as {
-      checkMemoryUsage(): Promise<void>;
-      getChildMemoryUsageMB(): Promise<number>;
-    };
-    vi.spyOn(internals, 'getChildMemoryUsageMB').mockResolvedValue(101);
+    vi.useFakeTimers({ toFake: ['setInterval'] });
+    try {
+      const { killSpy, proc, sendSpy } = await createProc({ memoryLimitMB: 100 });
+      const internals = proc as unknown as {
+        getChildMemoryUsageMB(): Promise<number>;
+      };
+      vi.spyOn(internals, 'getChildMemoryUsageMB').mockResolvedValue(101);
 
-    await internals.checkMemoryUsage();
+      await vi.runOnlyPendingTimersAsync();
 
-    expect(killSpy).toHaveBeenCalledExactlyOnceWith('SIGKILL');
-    expect(sendSpy).not.toHaveBeenCalledWith(expect.objectContaining({ case: 'shutdownRequest' }));
+      expect(killSpy).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+      expect(sendSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ case: 'shutdownRequest' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
