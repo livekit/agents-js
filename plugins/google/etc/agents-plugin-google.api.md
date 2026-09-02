@@ -399,7 +399,7 @@ class RealtimeModel_2 extends llm.RealtimeModel {
     // @internal (undocumented)
     _options: RealtimeOptions;
     // Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
-    session(): RealtimeSession_2;
+    session(options?: llm.RealtimeSessionOptions): RealtimeSession_2;
     updateOptions(options: {
         voice?: Voice | string;
         temperature?: number;

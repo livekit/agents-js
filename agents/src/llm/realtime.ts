@@ -99,6 +99,23 @@ export interface InputTranscriptionCompleted {
 
 export interface RealtimeSessionReconnectedEvent {}
 
+/**
+ * Initial configuration for a {@link RealtimeSession}.
+ *
+ * The framework passes these when creating a session so that providers whose
+ * configuration is fixed at connect time (e.g. tools serialized into the
+ * connection setup frame) can apply it to the very first connection instead of
+ * reconnecting once the same values arrive through `_updateSession`.
+ */
+export interface RealtimeSessionOptions {
+  /** Initial system instructions. */
+  instructions?: string;
+  /** Initial chat context. */
+  chatCtx?: ChatContext;
+  /** Initial tool context. */
+  tools?: ToolContext;
+}
+
 export abstract class RealtimeModel {
   private _capabilities: RealtimeCapabilities;
 
@@ -121,7 +138,7 @@ export abstract class RealtimeModel {
     return 'RealtimeModel';
   }
 
-  abstract session(): RealtimeSession;
+  abstract session(options?: RealtimeSessionOptions): RealtimeSession;
 
   abstract close(): Promise<void>;
 }

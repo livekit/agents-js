@@ -252,6 +252,63 @@ describe('Google Realtime model text parts', () => {
   });
 });
 
+type SeededSessionInternals = {
+  options: { instructions?: string };
+  sessionShouldClose: { isSet: boolean };
+};
+
+describe('Google Realtime initial session options', () => {
+  // These tests never yield to the event loop between session() and close():
+  // #mainTask is parked behind its first await the whole time, so no
+  // connection attempt is made, and close() makes it exit before connecting.
+  const lookup = llm.tool({
+    name: 'lookup',
+    description: 'look something up',
+    execute: async () => 'ok',
+  });
+
+  it('seeds tools, instructions, and chat context from session options', async () => {
+    const tools = new llm.ToolContext([lookup]);
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hi there' });
+
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({
+      instructions: 'be brief',
+      chatCtx,
+      tools,
+    });
+    const internals = session as unknown as SeededSessionInternals;
+
+    try {
+      expect(session.tools.equals(tools)).toBe(true);
+      expect(session.chatCtx.items.map((item) => item.id)).toEqual(
+        chatCtx.items.map((item) => item.id),
+      );
+      expect(internals.options.instructions).toBe('be brief');
+
+      // the framework re-applies the same config via _updateSession right after
+      // creating the session; that must not schedule a reconnect
+      void session.updateTools(tools.copy());
+      void session.updateInstructions('be brief');
+      expect(internals.sessionShouldClose.isSet).toBe(false);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('still restarts when tools actually change after an unseeded start', async () => {
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session();
+    const internals = session as unknown as SeededSessionInternals;
+
+    try {
+      void session.updateTools(new llm.ToolContext([lookup]));
+      expect(internals.sessionShouldClose.isSet).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe('Google Realtime initial history seeding', () => {
   function historyConfigFor(model: string) {
     const { capabilities } = new RealtimeModel({ model, apiKey: 'test-key' });

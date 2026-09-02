@@ -531,7 +531,7 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         force?: boolean;
     }): Future<void, Error>;
     // (undocumented)
-    get interruptionDetection(): "adaptive" | "vad" | undefined;
+    get interruptionDetection(): "vad" | "adaptive" | undefined;
     // @internal (undocumented)
     readonly _keytermDetector: KeytermDetector;
     get keyterms(): string[];
@@ -4777,6 +4777,7 @@ declare namespace llm {
         MessageGeneration,
         RealtimeCapabilities,
         RealtimeModelError,
+        RealtimeSessionOptions,
         RealtimeSessionReconnectedEvent,
         RemoteChatContext,
         computeChatCtxDiff,
@@ -5687,7 +5688,7 @@ export abstract class RealtimeModel {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    abstract session(): RealtimeSession;
+    abstract session(options?: RealtimeSessionOptions): RealtimeSession;
 }
 
 // Warning: (ae-missing-release-tag) "RealtimeModelError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -5774,6 +5775,15 @@ export abstract class RealtimeSession extends EventEmitter {
     _updateSession(instructions?: string, chatCtx?: ChatContext, tools?: ToolContext): Promise<void>;
     // (undocumented)
     abstract updateTools(tools: ToolContext): Promise<void>;
+}
+
+// Warning: (ae-missing-release-tag) "RealtimeSessionOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface RealtimeSessionOptions {
+    chatCtx?: ChatContext;
+    instructions?: string;
+    tools?: ToolContext;
 }
 
 // Warning: (ae-missing-release-tag) "RealtimeSessionReconnectedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -5958,7 +5968,7 @@ export function resolveExpressiveOptions(expr: ExpressiveOptions, options: {
 // Warning: (ae-missing-release-tag) "RimeModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
+type RimeModels = 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
 
 // Warning: (ae-missing-release-tag) "RimeOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -9165,9 +9175,9 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/utils.ts:549:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:988:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1626:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1631:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1631:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1631:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"

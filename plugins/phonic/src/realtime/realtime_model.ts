@@ -368,8 +368,8 @@ export class RealtimeModel extends llm.RealtimeModel {
   /**
    * Create a new realtime session
    */
-  session(): RealtimeSession {
-    return new RealtimeSession(this);
+  session(options?: llm.RealtimeSessionOptions): RealtimeSession {
+    return new RealtimeSession(this, options);
   }
 
   async close(): Promise<void> {}
@@ -418,7 +418,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private systemPromptPostfix = '';
   private pendingUserText?: string;
 
-  constructor(realtimeModel: RealtimeModel) {
+  constructor(realtimeModel: RealtimeModel, sessionOptions?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
     this.options = realtimeModel._options;
 
@@ -432,6 +432,19 @@ export class RealtimeSession extends llm.RealtimeSession {
       PHONIC_NUM_CHANNELS,
       (PHONIC_INPUT_SAMPLE_RATE * PHONIC_INPUT_FRAME_MS) / 1000,
     );
+
+    // Seed before connect() starts: the config frame waits on instructionsReady
+    // and toolsReady, and the pre-config update paths apply synchronously.
+    if (sessionOptions?.instructions !== undefined) {
+      void this.updateInstructions(sessionOptions.instructions);
+    }
+    if (sessionOptions?.chatCtx !== undefined) {
+      void this.updateChatCtx(sessionOptions.chatCtx);
+    }
+    if (sessionOptions?.tools !== undefined) {
+      void this.updateTools(sessionOptions.tools);
+    }
+
     this.connectTask = this.connect().catch((error: unknown) => {
       const normalizedError = asError(error);
       this.emitError(normalizedError, false);
