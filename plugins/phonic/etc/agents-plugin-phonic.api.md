@@ -128,7 +128,7 @@ class RealtimeModel extends llm.RealtimeModel {
     // (undocumented)
     get provider(): string;
     session(): RealtimeSession_2;
-    updateConfig(config: PhonicSessionConfigUpdate): Promise<void>;
+    updateOptions(config: PhonicSessionConfigUpdate): void;
 }
 
 // Warning: (ae-missing-release-tag) "RealtimeModelOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
