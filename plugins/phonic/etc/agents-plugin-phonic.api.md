@@ -32,11 +32,10 @@ import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 import { z } from 'zod';
 
-// Warning: (ae-missing-release-tag) "PhonicSessionConfigUpdate" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents-plugin-phonic" does not have an export "RealtimeModelOptions"
+// Warning: (ae-missing-release-tag) "PhonicConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-type PhonicSessionConfigUpdate = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'instructions'>>;
+type PhonicConfig = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'instructions'>>;
 
 // Warning: (ae-missing-release-tag) "PhonicToolConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -61,7 +60,7 @@ declare namespace realtime {
         RealtimeModel,
         RealtimeModelOptions,
         PhonicToolConfig,
-        PhonicSessionConfigUpdate,
+        PhonicConfig,
         Voice
     }
 }
@@ -128,7 +127,7 @@ class RealtimeModel extends llm.RealtimeModel {
     // (undocumented)
     get provider(): string;
     session(): RealtimeSession_2;
-    updateOptions(config: PhonicSessionConfigUpdate): void;
+    updateOptions(config: PhonicConfig): void;
 }
 
 // Warning: (ae-missing-release-tag) "RealtimeModelOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

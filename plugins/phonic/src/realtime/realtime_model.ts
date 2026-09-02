@@ -78,12 +78,12 @@ export interface RealtimeModelOptions {
 }
 
 /**
- * The subset of {@link RealtimeModelOptions} that can be changed mid-session via
- * `RealtimeModel.updateOptions` / `RealtimeSession.updateOptions`. Connection-level fields
- * (`apiKey`, `model`, `connOptions`, `baseUrl`) and `instructions` (managed through the Agent
- * handoff) are intentionally excluded.
+ * Phonic config fields that can be changed mid-session via `RealtimeModel.updateOptions` /
+ * `RealtimeSession.updateOptions` — every field is optional so an update carries only what changes.
+ * Connection-level fields (`apiKey`, `model`, `connOptions`, `baseUrl`) and `instructions` (managed
+ * through the Agent handoff) are excluded.
  */
-export type PhonicSessionConfigUpdate = Partial<
+export type PhonicConfig = Partial<
   Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'instructions'>
 >;
 
@@ -394,12 +394,12 @@ export class RealtimeModel extends llm.RealtimeModel {
    * `additionalLanguages` (and the new default removed) so the language set stays intact — the API
    * rejects a default that also appears there. No-op (with a warning) when there is no active session.
    */
-  updateOptions(config: PhonicSessionConfigUpdate): void {
+  updateOptions(config: PhonicConfig): void {
     if (!this._activeSession) {
       log().warn('Phonic updateOptions called but there is no active session');
       return;
     }
-    this._activeSession.updateOptions(config);
+    this._activeSession.updateOptions({ config });
   }
 
   async close(): Promise<void> {}
@@ -703,36 +703,56 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   /**
-   * Change Phonic config fields mid-session (e.g. `defaultLanguage`, `voice`, `boostedKeywords`,
-   * no-input-poke settings). The merged config is applied immediately by sending a Phonic `reset`;
-   * fields left unset keep their current values. Instructions and tools are driven by the Agent
-   * handoff (`updateInstructions`/`updateTools`) and are not accepted here. `toolChoice` (the base
+   * Change Phonic config fields mid-session via `options.config` (e.g. `defaultLanguage`, `voice`,
+   * `boostedKeywords`, no-input-poke settings). The merged config is applied immediately by sending
+   * a Phonic `reset`; fields left unset keep their current values. Instructions are driven by the
+   * Agent handoff (`updateInstructions`) and aren't accepted here. `toolChoice` (the base
    * `updateOptions` param, sent by the framework) is not supported by Phonic and is ignored.
    *
-   * Typically called around a task advance — e.g. `updateOptions({ defaultLanguage: 'es' })` — to
-   * switch the language (or any other field) for the next reply. When the default language changes
-   * and the caller doesn't set `additionalLanguages`, the previous default is rotated into
+   * Typically driven by `RealtimeModel.updateOptions(config)` around a task advance to switch the
+   * language (or any other field) for the next reply. When the default language changes and the
+   * caller doesn't set `additionalLanguages`, the previous default is rotated into
    * `additionalLanguages` (and the new default removed) so the language set stays intact — the API
    * rejects a default that also appears in `additionalLanguages`.
    */
-  updateOptions(options: { toolChoice?: llm.ToolChoice | null } & PhonicSessionConfigUpdate): void {
-    if (this.closed) return;
-    // Phonic doesn't support toolChoice (the framework sends it every turn); ignore it.
-    const { toolChoice: _toolChoice, ...config } = options;
-    if (Object.keys(config).length === 0) return;
+  updateOptions(options: { toolChoice?: llm.ToolChoice | null; config?: PhonicConfig }): void {
+    // Phonic doesn't support toolChoice (the framework sends it every turn); ignore it. Config
+    // changes come in via `config`.
+    if (this.closed || options.config === undefined || Object.keys(options.config).length === 0) {
+      return;
+    }
+    const config = { ...options.config };
 
     if (
       config.defaultLanguage !== undefined &&
       config.defaultLanguage !== this.options.defaultLanguage &&
       config.additionalLanguages === undefined
     ) {
-      const previousDefault = this.options.defaultLanguage;
+      const previousDefaultLanguage = this.options.defaultLanguage;
       config.additionalLanguages = [
-        ...(previousDefault !== undefined ? [previousDefault] : []),
+        ...(previousDefaultLanguage !== undefined ? [previousDefaultLanguage] : []),
         ...(this.options.additionalLanguages ?? []),
       ].filter((lang, i, arr) => lang !== config.defaultLanguage && arr.indexOf(lang) === i);
     }
-    Object.assign(this.options, config);
+    let changed = false;
+    const opts = this.options as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(config)) {
+      if (opts[key] !== value) {
+        opts[key] = value;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+
+    // Tool-related fields are cached in configsForTools/toolDefinitions; rebuild them so the reset
+    // carries the new tool behavior rather than the previously-serialized one.
+    if (
+      'configsForTools' in config ||
+      'forbidSpeechAfterToolCall' in config ||
+      'phonicTools' in config
+    ) {
+      this.toolDefinitions = this.buildToolDefinitions(this._tools);
+    }
 
     if (!this.configSent || this.optionsResetScheduled) return;
     // updateOptions is synchronous; coalesce into a single background reset (the options are already
