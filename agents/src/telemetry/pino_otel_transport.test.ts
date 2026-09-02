@@ -70,7 +70,10 @@ describe('PinoCloudExporter flush', () => {
     exporter.emit({ level: 30, time: 0, msg: 'record' });
     await exporter.flush();
 
-    expect(consoleError).toHaveBeenCalledWith('[PinoCloudExporter] Failed to flush logs');
+    expect(consoleError).toHaveBeenCalledWith(
+      '[PinoCloudExporter] Failed to flush logs:',
+      expect.objectContaining({ message: 'Log export failed: status 500' }),
+    );
     expect(JSON.stringify(consoleError.mock.calls)).not.toContain('secret customer response');
   });
 });

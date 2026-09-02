@@ -9,6 +9,17 @@ import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
 import { JobProcExecutor } from './job_proc_executor.js';
 
+type ProcPoolOptions = {
+  agent: string;
+  numIdleProcesses: number;
+  initializeTimeout: number;
+  closeTimeout: number;
+  sessionEndTimeout: number;
+  inferenceExecutor?: InferenceExecutor;
+  memoryWarnMB: number;
+  memoryLimitMB: number;
+};
+
 export class ProcPool {
   agent: string;
   initializeTimeout: number;
@@ -27,16 +38,16 @@ export class ProcPool {
   memoryWarnMB: number;
   memoryLimitMB: number;
 
-  constructor(
-    agent: string,
-    numIdleProcesses: number,
-    initializeTimeout: number,
-    closeTimeout: number,
-    sessionEndTimeout: number,
-    inferenceExecutor: InferenceExecutor | undefined,
-    memoryWarnMB: number,
-    memoryLimitMB: number,
-  ) {
+  constructor({
+    agent,
+    numIdleProcesses,
+    initializeTimeout,
+    closeTimeout,
+    sessionEndTimeout,
+    inferenceExecutor,
+    memoryWarnMB,
+    memoryLimitMB,
+  }: ProcPoolOptions) {
     this.agent = agent;
     if (numIdleProcesses > 0) {
       this.procMutex = new MultiMutex(numIdleProcesses);
@@ -65,38 +76,36 @@ export class ProcPool {
       // Release exactly the slot that produced this warmed process.
       entry.unlock();
     } else {
-      proc = new JobProcExecutor(
-        this.agent,
-        this.inferenceExecutor,
-        this.initializeTimeout,
-        this.closeTimeout,
-        this.sessionEndTimeout,
-        this.memoryWarnMB,
-        this.memoryLimitMB,
-        2500,
-        60000,
-        500,
-      );
+      proc = new JobProcExecutor({
+        agent: this.agent,
+        inferenceExecutor: this.inferenceExecutor,
+        initializeTimeout: this.initializeTimeout,
+        closeTimeout: this.closeTimeout,
+        memoryWarnMB: this.memoryWarnMB,
+        memoryLimitMB: this.memoryLimitMB,
+        pingInterval: 2500,
+        pingTimeout: 60000,
+        highPingThreshold: 500,
+      });
       this.executors.push(proc);
       await proc.start();
-      await proc.initialize();
+      await proc.initialize({ sessionEndTimeout: this.sessionEndTimeout });
     }
     await proc.launchJob(info);
   }
 
   async procWatchTask(procUnlock: () => void) {
-    const proc = new JobProcExecutor(
-      this.agent,
-      this.inferenceExecutor,
-      this.initializeTimeout,
-      this.closeTimeout,
-      this.sessionEndTimeout,
-      this.memoryWarnMB,
-      this.memoryLimitMB,
-      2500,
-      60000,
-      500,
-    );
+    const proc = new JobProcExecutor({
+      agent: this.agent,
+      inferenceExecutor: this.inferenceExecutor,
+      initializeTimeout: this.initializeTimeout,
+      closeTimeout: this.closeTimeout,
+      memoryWarnMB: this.memoryWarnMB,
+      memoryLimitMB: this.memoryLimitMB,
+      pingInterval: 2500,
+      pingTimeout: 60000,
+      highPingThreshold: 500,
+    });
 
     try {
       this.executors.push(proc);
@@ -111,7 +120,7 @@ export class ProcPool {
 
         await proc.start();
         try {
-          await proc.initialize();
+          await proc.initialize({ sessionEndTimeout: this.sessionEndTimeout });
           await this.warmedProcQueue.put({ proc, unlock: procUnlock });
           procUnlockTransferred = true;
           // Release initMutex after enqueue — holding it through join() serialises

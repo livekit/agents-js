@@ -53,4 +53,10 @@ describe('ServerOptions sessionEndTimeout', () => {
       );
     },
   );
+
+  it('rejects values above the Node.js timer limit', () => {
+    expect(
+      () => new ServerOptions({ agent: 'test-agent.js', sessionEndTimeout: 2_147_483_648 }),
+    ).toThrow('sessionEndTimeout must not exceed 2147483647 milliseconds');
+  });
 });

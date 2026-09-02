@@ -10,7 +10,7 @@ import { log } from '../log.js';
 import { shortuuid } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
-import { SupervisedProc } from './supervised_proc.js';
+import { type ProcOpts, SupervisedProc } from './supervised_proc.js';
 
 class PendingInference {
   promise = new ThrowsPromise<{ requestId: string; data: unknown; error?: Error }, never>(
@@ -32,32 +32,11 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
 
   constructor({
     runners,
-    initializeTimeout,
-    closeTimeout,
-    memoryWarnMB,
-    memoryLimitMB,
-    pingInterval,
-    pingTimeout,
-    highPingThreshold,
-  }: {
+    ...opts
+  }: ProcOpts & {
     runners: { [id: string]: string };
-    initializeTimeout: number;
-    closeTimeout: number;
-    memoryWarnMB: number;
-    memoryLimitMB: number;
-    pingInterval: number;
-    pingTimeout: number;
-    highPingThreshold: number;
   }) {
-    super(
-      initializeTimeout,
-      closeTimeout,
-      memoryWarnMB,
-      memoryLimitMB,
-      pingInterval,
-      pingTimeout,
-      highPingThreshold,
-    );
+    super(opts);
     this.#runners = runners;
   }
 

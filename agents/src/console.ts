@@ -4,7 +4,6 @@
 import { Job, JobType, Room as RoomModel } from '@livekit/protocol';
 import { Room } from '@livekit/rtc-node';
 import { pathToFileURL } from 'node:url';
-import { safeErrorType } from './error_utils.js';
 import { type Agent, isAgent } from './generator.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
@@ -170,7 +169,7 @@ export async function runConsole({
       try {
         await fn();
       } catch (error) {
-        logger.error({ exceptionType: safeErrorType(error) }, `error in ${step}`);
+        logger.error({ error }, `error in ${step}`);
       }
     };
 

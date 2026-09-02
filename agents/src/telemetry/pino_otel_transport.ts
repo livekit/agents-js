@@ -203,9 +203,9 @@ export class PinoCloudExporter {
 
       try {
         await this.sendLogs(logs);
-      } catch {
+      } catch (error) {
         this.pendingLogs = [...logs, ...this.pendingLogs];
-        console.error('[PinoCloudExporter] Failed to flush logs');
+        console.error('[PinoCloudExporter] Failed to flush logs:', error);
         return;
       }
     }

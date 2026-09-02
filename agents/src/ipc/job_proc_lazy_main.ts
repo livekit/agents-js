@@ -6,7 +6,6 @@ import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
-import { safeErrorType } from '../error_utils.js';
 import { type Agent, isAgent } from '../generator.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
 import {
@@ -44,10 +43,7 @@ const safeSend = (msg: IPCMessage): boolean => {
     if (error instanceof Error && error.message.includes('Channel closed')) {
       log().debug({ msgCase: msg.case }, 'IPC channel closed, message not sent');
     } else {
-      log().error(
-        { exceptionType: safeErrorType(error), msgCase: msg.case },
-        'IPC send failed unexpectedly',
-      );
+      log().error({ error, msgCase: msg.case }, 'IPC send failed unexpectedly');
     }
     return false;
   }
@@ -176,30 +172,11 @@ const startJob = (
         );
       });
 
-      const entrypointResult = entrypointPromise.then(
-        () => ({ status: 'fulfilled' as const }),
-        (error: unknown) => ({ status: 'rejected' as const, error }),
-      );
-      const entrypointFailure = new Promise<{ status: 'rejected'; error: unknown }>((resolve) => {
-        void entrypointResult.then((result) => {
-          if (result.status === 'rejected') resolve(result);
-        });
+      void entrypointPromise.catch(() => {
+        closeEvent.emit('close', EXIT_REASON.jobCrashed);
       });
-      const trigger = await Promise.race([
-        closePromise.then(() => ({ status: 'shutdown' as const })),
-        entrypointFailure,
-      ]);
-
-      if (trigger.status === 'rejected') {
-        logger.error({ exceptionType: safeErrorType(trigger.error) }, 'error in entry function');
-        shutdown = true;
-        safeSend({
-          case: 'exiting',
-          value: { reason: EXIT_REASON.jobCrashed },
-        });
-      } else {
-        await waitForEntrypointShutdown(entrypointPromise, logger);
-      }
+      await closePromise;
+      await waitForEntrypointShutdown(entrypointPromise, logger);
     } finally {
       clearTimeout(unconnectedTimeout);
     }
@@ -221,7 +198,7 @@ const startJob = (
           await room.disconnect();
           logger.debug('disconnected from room');
         } catch (error) {
-          logger.error({ exceptionType: safeErrorType(error) }, 'error while disconnecting room');
+          logger.error({ error }, 'error while disconnecting room');
         }
 
         await runShutdownCallbacks(ctx.shutdownCallbacks, logger);
@@ -243,13 +220,7 @@ const startJob = (
   if (process.send) {
     const join = new Future();
 
-    // process.argv:
-    //   [0] `node'
-    //   [1] import.meta.filename
-    //   [2] import.meta.filename of function containing entry file
-    //   [3] sessionEndTimeout
     const moduleFile = process.argv[2];
-    const sessionEndTimeout = validateSessionEndTimeout(Number(process.argv[3]));
     const agent: Agent = await import(pathToFileURL(moduleFile!).pathname).then((module) => {
       // Handle both ESM (module.default is the agent) and CJS (module.default.default is the agent)
       const agent =
@@ -277,21 +248,19 @@ const startJob = (
       logger.debug('SIGTERM received in job proc');
     });
 
-    await once(process, 'message').then(([msg]: IPCMessage[]) => {
+    const sessionEndTimeout = await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;
       if (msg.case !== 'initializeRequest') {
         throw new Error('first message must be InitializeRequest');
       }
       initializeLogger(msg.value.loggerOptions);
+      return validateSessionEndTimeout(msg.value.sessionEndTimeout ?? Number.NaN);
     });
     const proc = new JobProcess();
     let logger = log().child({ pid: proc.pid });
 
     process.on('unhandledRejection', (reason) => {
-      logger.debug(
-        { exceptionType: safeErrorType(reason) },
-        'Unhandled promise rejection in job process',
-      );
+      logger.debug({ error: reason }, 'Unhandled promise rejection in job process');
     });
 
     logger.debug('initializing job runner');
@@ -345,8 +314,6 @@ const startJob = (
             join.resolve();
           }
           closeEvent.emit('close', msg.value?.reason ?? EXIT_REASON.shutdownRequest);
-          clearTimeout(orphanedTimeout);
-          process.off('message', messageHandler);
         }
       }
     };
@@ -354,6 +321,8 @@ const startJob = (
     process.on('message', messageHandler);
 
     await join.await;
+    clearTimeout(orphanedTimeout);
+    process.off('message', messageHandler);
 
     // Dispose native FFI resources (Rust FfiServer, tokio runtimes, libwebrtc)
     // before process.exit() to prevent libc++abi mutex crash during teardown.
@@ -364,7 +333,7 @@ const startJob = (
       await dispose();
       logger.debug('native resources disposed');
     } catch (error) {
-      logger.warn({ exceptionType: safeErrorType(error) }, 'failed to dispose native resources');
+      logger.warn({ error }, 'failed to dispose native resources');
     }
 
     logger.debug('Job process shutdown');

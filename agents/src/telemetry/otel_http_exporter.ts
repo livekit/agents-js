@@ -10,8 +10,9 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
-import { RECORDING_UPLOAD_TOTAL_TIMEOUT_MS } from './recording_upload.js';
 import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
+
+const OTLP_LOG_EXPORT_TIMEOUT_MS = 10_000;
 
 export interface SimpleLogRecord {
   /** Log message body */
@@ -94,7 +95,7 @@ export class SimpleOTLPHttpLogExporter {
         'Content-Type': 'application/json',
       },
       body: payloadJson,
-      signal: AbortSignal.timeout(RECORDING_UPLOAD_TOTAL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(OTLP_LOG_EXPORT_TIMEOUT_MS),
     });
 
     if (!response.ok) {

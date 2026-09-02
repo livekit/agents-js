@@ -15,6 +15,19 @@ export const RECORDING_UPLOAD_CONNECT_TIMEOUT_MS = 30_000;
 export const RECORDING_UPLOAD_TOTAL_TIMEOUT_MS = 900_000;
 
 const RECORDING_UPLOAD_MAX_RETRIES = 3;
+const RETRYABLE_CONNECTION_ERROR_CODES = new Set([
+  'EADDRNOTAVAIL',
+  'EAI_AGAIN',
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTDOWN',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+]);
 
 interface RetryInfo extends Message<RetryInfo> {
   retryDelay?: Duration;
@@ -202,7 +215,12 @@ function submitRecordingUpload(options: {
         (error, incomingResponse) => {
           if (error) {
             const failure = requestFailureName(error);
-            fail(new RecordingUploadAttemptError(failure, !connected && !isTlsError(error)));
+            fail(
+              new RecordingUploadAttemptError(
+                failure,
+                !connected && isRetryableConnectionError(error),
+              ),
+            );
             return;
           }
 
@@ -268,20 +286,7 @@ function requestFailureName(error: Error): string {
   return typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : 'request error';
 }
 
-function isTlsError(error: Error): boolean {
-  const code = (error as NodeJS.ErrnoException).code ?? '';
-  return (
-    code === 'EPROTO' ||
-    code.includes('CERT') ||
-    code.includes('CRL') ||
-    code.includes('TLS') ||
-    code.includes('SSL') ||
-    code.includes('OSSL') ||
-    code.includes('X509') ||
-    code.includes('UNABLE_TO_VERIFY') ||
-    code.includes('INVALID_CA') ||
-    code.includes('INVALID_PURPOSE') ||
-    code.includes('PATH_LENGTH') ||
-    code.includes('HOSTNAME_MISMATCH')
-  );
+function isRetryableConnectionError(error: Error): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return typeof code === 'string' && RETRYABLE_CONNECTION_ERROR_CODES.has(code);
 }

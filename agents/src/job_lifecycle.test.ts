@@ -38,22 +38,18 @@ afterEach(() => {
 });
 
 describe('waitForEntrypointShutdown', () => {
-  it('does not expose an entrypoint error during shutdown', async () => {
-    const secret = 'secret entrypoint payload';
+  it('logs an entrypoint error during shutdown', async () => {
+    const error = new TypeError('entrypoint failed');
     const logger = createLogger();
 
-    await waitForEntrypointShutdown(Promise.reject(new TypeError(secret)), logger);
+    await waitForEntrypointShutdown(Promise.reject(error), logger);
 
-    expect(logger.error).toHaveBeenCalledWith(
-      { exceptionType: 'TypeError' },
-      'error in entry function',
-    );
-    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
+    expect(logger.error).toHaveBeenCalledWith({ error }, 'error in entry function');
   });
 
   it('continues after 15 seconds and safely handles a later rejection', async () => {
     vi.useFakeTimers();
-    const secret = 'secret late entrypoint payload';
+    const error = new Error('late entrypoint failure');
     const logger = createLogger();
     let rejectEntrypoint!: (error: Error) => void;
     const entrypoint = new Promise<void>((_, reject) => {
@@ -69,14 +65,13 @@ describe('waitForEntrypointShutdown', () => {
       'entrypoint did not exit in time; proceeding with session cleanup',
     );
 
-    rejectEntrypoint(new Error(secret));
+    rejectEntrypoint(error);
     await vi.waitFor(() =>
       expect(logger.debug).toHaveBeenCalledWith(
-        { exceptionType: 'Error' },
+        { error },
         'entrypoint rejected after shutdown timeout',
       ),
     );
-    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(secret);
   });
 });
 
@@ -115,14 +110,14 @@ describe('finalizeSession', () => {
   });
 
   it('continues internal cleanup when the application callback rejects', async () => {
-    const secret = 'secret callback payload';
+    const error = new TypeError('callback failed');
     const internalCleanup = vi.fn(async () => {});
     const logger = createLogger();
 
     await finalizeSession(
       createJobContext(internalCleanup),
       async () => {
-        throw new TypeError(secret);
+        throw error;
       },
       1000,
       logger,
@@ -130,10 +125,9 @@ describe('finalizeSession', () => {
 
     expect(internalCleanup).toHaveBeenCalledOnce();
     expect(logger.error).toHaveBeenCalledWith(
-      { exceptionType: 'TypeError' },
+      { error },
       'error while executing the onSessionEnd callback',
     );
-    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
   });
 
   it('continues internal cleanup when the application callback times out', async () => {
@@ -157,9 +151,9 @@ describe('finalizeSession', () => {
     );
   });
 
-  it('does not expose a callback error that arrives after its timeout', async () => {
+  it('logs a callback error that arrives after its timeout', async () => {
     vi.useFakeTimers();
-    const secret = 'secret late callback payload';
+    const error = new Error('late callback failure');
     const logger = createLogger();
     let rejectCallback!: (error: Error) => void;
     const callback = new Promise<void>((_, reject) => {
@@ -174,35 +168,30 @@ describe('finalizeSession', () => {
 
     await vi.advanceTimersByTimeAsync(1000);
     await completion;
-    rejectCallback(new Error(secret));
+    rejectCallback(error);
 
     await vi.waitFor(() =>
       expect(logger.debug).toHaveBeenCalledWith(
-        { exceptionType: 'Error' },
+        { error },
         'onSessionEnd rejected after shutdown timeout',
       ),
     );
-    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(secret);
   });
 
-  it('does not expose internal cleanup errors', async () => {
-    const secret = 'secret session report payload';
+  it('logs internal cleanup errors', async () => {
+    const error = new Error('session report failed');
     const logger = createLogger();
 
     await finalizeSession(
       createJobContext(async () => {
-        throw new Error(secret);
+        throw error;
       }),
       undefined,
       1000,
       logger,
     );
 
-    expect(logger.error).toHaveBeenCalledWith(
-      { exceptionType: 'Error' },
-      'error in ctx._onSessionEnd',
-    );
-    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
+    expect(logger.error).toHaveBeenCalledWith({ error }, 'error in ctx._onSessionEnd');
   });
 
   it('does not apply the application callback timeout to internal cleanup', async () => {
@@ -249,44 +238,39 @@ describe('closeAgentSession', () => {
     );
   });
 
-  it('continues without exposing an immediate close error', async () => {
-    const secret = 'secret close payload';
+  it('continues after logging an immediate close error', async () => {
+    const error = new Error('close failed');
     const logger = createLogger();
     const session: Pick<AgentSession, 'close'> = {
       close: async () => {
-        throw new Error(secret);
+        throw error;
       },
     };
 
     await closeAgentSession(session, logger);
 
     expect(logger.error).toHaveBeenCalledWith(
-      { exceptionType: 'Error' },
+      { error },
       'AgentSession.close() failed; proceeding with shutdown so registered callbacks still run.',
     );
-    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
   });
 });
 
 describe('runShutdownCallbacks', () => {
-  it('does not expose callback errors', async () => {
-    const secret = 'secret shutdown callback payload';
+  it('logs callback errors', async () => {
+    const error = new TypeError('shutdown callback failed');
     const logger = createLogger();
 
     await runShutdownCallbacks(
       [
         async () => {
-          throw new TypeError(secret);
+          throw error;
         },
       ],
       logger,
     );
 
-    expect(logger.error).toHaveBeenCalledWith(
-      { exceptionType: 'TypeError' },
-      'error while running shutdown callback',
-    );
-    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
+    expect(logger.error).toHaveBeenCalledWith({ error }, 'error while running shutdown callback');
   });
 });
 
@@ -312,17 +296,13 @@ describe('flushJobLogs', () => {
     );
   });
 
-  it('does not expose log exporter errors', async () => {
-    const secret = 'secret exporter response';
+  it('continues after logging log exporter errors', async () => {
+    const error = new Error('exporter failed');
     const logger = createLogger();
-    flushOtelLogsMock.mockRejectedValue(new Error(secret));
+    flushOtelLogsMock.mockRejectedValue(error);
 
     await flushJobLogs(logger);
 
-    expect(logger.error).toHaveBeenCalledWith(
-      { exceptionType: 'Error' },
-      'Failed to flush OTEL logs',
-    );
-    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(secret);
+    expect(logger.error).toHaveBeenCalledWith({ error }, 'Failed to flush OTEL logs');
   });
 });

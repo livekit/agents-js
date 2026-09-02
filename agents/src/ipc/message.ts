@@ -12,6 +12,7 @@ export type IPCMessage =
         pingInterval?: number;
         pingTimeout?: number;
         highPingThreshold?: number;
+        sessionEndTimeout?: number;
       };
     }
   | {

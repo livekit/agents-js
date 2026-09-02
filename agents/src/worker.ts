@@ -398,16 +398,16 @@ export class AgentServer {
 
     this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded();
 
-    this.#procPool = new ProcPool(
-      opts.agent,
-      opts.numIdleProcesses,
-      opts.initializeProcessTimeout,
-      opts.shutdownProcessTimeout,
-      opts.sessionEndTimeout,
-      this.#inferenceExecutor,
-      opts.jobMemoryWarnMB,
-      opts.jobMemoryLimitMB,
-    );
+    this.#procPool = new ProcPool({
+      agent: opts.agent,
+      numIdleProcesses: opts.numIdleProcesses,
+      initializeTimeout: opts.initializeProcessTimeout,
+      closeTimeout: opts.shutdownProcessTimeout,
+      sessionEndTimeout: opts.sessionEndTimeout,
+      inferenceExecutor: this.#inferenceExecutor,
+      memoryWarnMB: opts.jobMemoryWarnMB,
+      memoryLimitMB: opts.jobMemoryLimitMB,
+    });
 
     this.#opts = opts;
 

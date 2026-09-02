@@ -10,7 +10,7 @@ import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
 import { JobStatus } from './job_executor.js';
 import type { IPCMessage } from './message.js';
-import { SupervisedProc } from './supervised_proc.js';
+import { type ProcOpts, SupervisedProc } from './supervised_proc.js';
 
 const currentFileExtension = extname(import.meta.url);
 
@@ -19,34 +19,20 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   #jobStatus?: JobStatus;
   #runningJob?: RunningJobInfo;
   #agent: string;
-  #sessionEndTimeout: number;
   #inferenceExecutor?: InferenceExecutor;
   #inferenceTasks: Promise<void>[] = [];
   #logger = log();
 
-  constructor(
-    agent: string,
-    inferenceExecutor: InferenceExecutor | undefined,
-    initializeTimeout: number,
-    closeTimeout: number,
-    sessionEndTimeout: number,
-    memoryWarnMB: number,
-    memoryLimitMB: number,
-    pingInterval: number,
-    pingTimeout: number,
-    highPingThreshold: number,
-  ) {
-    super(
-      initializeTimeout,
-      closeTimeout,
-      memoryWarnMB,
-      memoryLimitMB,
-      pingInterval,
-      pingTimeout,
-      highPingThreshold,
-    );
+  constructor({
+    agent,
+    inferenceExecutor,
+    ...opts
+  }: ProcOpts & {
+    agent: string;
+    inferenceExecutor?: InferenceExecutor;
+  }) {
+    super(opts);
     this.#agent = agent;
-    this.#sessionEndTimeout = sessionEndTimeout;
     this.#inferenceExecutor = inferenceExecutor;
   }
 
@@ -73,10 +59,6 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     return 'job';
   }
 
-  protected get stagedShutdown(): boolean {
-    return true;
-  }
-
   createProcess(): ChildProcess {
     const forkUrl = new URL(`./job_proc_lazy_main${currentFileExtension}`, import.meta.url);
 
@@ -85,7 +67,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     const isTypeScript = currentFileExtension === '.ts';
     const forkOptions = isTypeScript ? { execArgv: process.execArgv } : undefined;
 
-    return fork(forkUrl, [this.#agent, String(this.#sessionEndTimeout)], forkOptions);
+    return fork(forkUrl, [this.#agent], forkOptions);
   }
 
   async mainTask(proc: ChildProcess) {
