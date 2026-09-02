@@ -28,7 +28,12 @@ export class ParticipantAudioInputStream extends AudioInput {
   private publication: RemoteTrackPublication | null = null;
   private track: RemoteTrack | null = null;
   private participantIdentity: string | null = null;
-  private currentInputId: string | null = null;
+  private currentInput: {
+    id: string;
+    stream: ReadableStream<AudioFrame>;
+    pipe: Promise<void>;
+  } | null = null;
+  private streamTransition: Promise<void> | null = null;
   private attached = true;
   private closed = false;
   private logger = log();
@@ -149,13 +154,80 @@ export class ParticipantAudioInputStream extends AudioInput {
   };
 
   private closeStream() {
-    if (this.currentInputId) {
-      void this.multiStream.removeInputStream(this.currentInputId);
-      this.currentInputId = null;
+    this.updateStream(null, null);
+  }
+
+  private updateStream(track: RemoteTrack | null, publication: RemoteTrackPublication | null) {
+    this.track = track;
+    this.publication = publication;
+
+    if (track && publication && !this.streamTransition && !this.currentInput) {
+      this.openStream(track);
+      return;
     }
 
-    this.track = null;
-    this.publication = null;
+    const previousTransition = this.streamTransition ?? Promise.resolve();
+    const transition = previousTransition.then(async () => {
+      try {
+        await this.closeCurrentInput();
+        if (
+          !track ||
+          !publication ||
+          this.closed ||
+          this.track !== track ||
+          this.publication !== publication
+        ) {
+          return;
+        }
+        this.openStream(track);
+      } catch (error) {
+        this.logger.error({ error }, 'failed to update participant audio input');
+      }
+    });
+    this.streamTransition = transition;
+    void transition.then(() => {
+      if (this.streamTransition === transition) {
+        this.streamTransition = null;
+      }
+    });
+  }
+
+  private async closeCurrentInput() {
+    const input = this.currentInput;
+    this.currentInput = null;
+
+    if (input) {
+      await this.multiStream.removeInputStream(input.id);
+      const [cancelResult] = await Promise.allSettled([input.stream.cancel(), input.pipe]);
+      if (cancelResult.status === 'rejected') {
+        throw cancelResult.reason;
+      }
+    }
+  }
+
+  private openStream(track: RemoteTrack) {
+    const output = new TransformStream<AudioFrame, AudioFrame>({
+      transform: (frame, controller) => {
+        if (this.attached) {
+          controller.enqueue(frame);
+        }
+      },
+    });
+    const inputPipe = resampleStream({
+      stream: this.createStream(track),
+      outputRate: this.sampleRate,
+    }).pipeTo(output.writable);
+    const input = {
+      id: this.multiStream.addInputStream(output.readable),
+      stream: output.readable,
+      pipe: inputPipe,
+    };
+    this.currentInput = input;
+    void inputPipe.catch((error) => {
+      if (this.currentInput === input) {
+        this.logger.error({ error }, 'participant audio input stream failed');
+      }
+    });
   }
 
   private onTrackSubscribed = (
@@ -175,22 +247,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     ) {
       return false;
     }
-    this.closeStream();
-    this.track = track;
-    this.publication = publication;
-    const attachedStream = resampleStream({
-      stream: this.createStream(track),
-      outputRate: this.sampleRate,
-    }).pipeThrough(
-      new TransformStream<AudioFrame, AudioFrame>({
-        transform: (frame, controller) => {
-          if (this.attached) {
-            controller.enqueue(frame);
-          }
-        },
-      }),
-    );
-    this.currentInputId = this.multiStream.addInputStream(attachedStream);
+    this.updateStream(track, publication);
     return true;
   };
 
@@ -243,6 +300,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room.off(RoomEvent.TrackUnsubscribed, this.onTrackUnsubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.closeStream();
+    await this.streamTransition;
     await super.close();
 
     this.frameProcessor?.close();

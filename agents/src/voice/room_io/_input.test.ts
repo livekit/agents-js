@@ -17,12 +17,14 @@ import { AgentInput } from '../io.js';
 import { ParticipantAudioInputStream } from './_input.js';
 
 const audioStreams = vi.hoisted(() => [] as ReadableStream<AudioFrame>[]);
+const audioStreamLifecycle = vi.hoisted(() => [] as string[]);
 
 vi.mock('@livekit/rtc-node', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
     AudioStream: vi.fn(function MockAudioStream() {
+      audioStreamLifecycle.push('create');
       const stream = audioStreams.shift();
       if (!stream) {
         throw new Error('No mock audio stream configured');
@@ -34,12 +36,13 @@ vi.mock('@livekit/rtc-node', async (importOriginal) => {
 
 const nextTick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-function createAudioStream() {
+function createAudioStream(onCancel?: () => void | Promise<void>) {
   let controller!: ReadableStreamDefaultController<AudioFrame>;
   const stream = new ReadableStream<AudioFrame>({
     start(streamController) {
       controller = streamController;
     },
+    cancel: onCancel,
   });
   return { stream, controller: () => controller };
 }
@@ -48,8 +51,11 @@ function createFrame(value: number): AudioFrame {
   return new AudioFrame(new Int16Array([value]), 24000, 1, 1);
 }
 
-function createParticipantInput(frameProcessor?: FrameProcessor<AudioFrame>) {
-  const source = createAudioStream();
+function createParticipantInput(
+  frameProcessor?: FrameProcessor<AudioFrame>,
+  onCancel?: () => void | Promise<void>,
+) {
+  const source = createAudioStream(onCancel);
   audioStreams.push(source.stream);
 
   const track = {} as RemoteTrack;
@@ -83,6 +89,7 @@ function createParticipantInput(frameProcessor?: FrameProcessor<AudioFrame>) {
 describe('ParticipantAudioInputStream', () => {
   afterEach(() => {
     audioStreams.length = 0;
+    audioStreamLifecycle.length = 0;
     vi.clearAllMocks();
   });
 
@@ -149,6 +156,28 @@ describe('ParticipantAudioInputStream', () => {
     await expect(reader.read()).resolves.toMatchObject({ done: false, value: frame });
 
     reader.releaseLock();
+    await input.close();
+  });
+
+  it('cancels the superseded stream before starting replacement', async () => {
+    const onCancel = vi.fn(() => audioStreamLifecycle.push('cancel'));
+    const { input, participant, publication, room, source } = createParticipantInput(
+      undefined,
+      onCancel,
+    );
+    input.setParticipant(participant.identity);
+    const replacement = createAudioStream();
+    const replacementTrack = {} as RemoteTrack;
+    audioStreams.push(replacement.stream);
+
+    publication.track = replacementTrack;
+    room.emit(RoomEvent.TrackSubscribed, replacementTrack, publication, participant);
+
+    await vi.waitFor(() => expect(audioStreams).toHaveLength(0));
+    expect(onCancel).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(source.stream.locked).toBe(false));
+    expect(audioStreamLifecycle).toEqual(['create', 'cancel', 'create']);
+
     await input.close();
   });
 
