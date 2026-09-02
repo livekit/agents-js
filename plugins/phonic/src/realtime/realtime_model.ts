@@ -399,7 +399,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       log().warn('Phonic updateOptions called but there is no active session');
       return;
     }
-    this._activeSession.updateOptions({ config });
+    this._activeSession.updateOptions(config);
   }
 
   async close(): Promise<void> {}
@@ -703,8 +703,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   /**
-   * Change Phonic config fields mid-session via `options.config` (e.g. `defaultLanguage`, `voice`,
-   * `boostedKeywords`, no-input-poke settings). The merged config is applied immediately by sending
+   * Change Phonic config fields mid-session (e.g. `defaultLanguage`, `voice`, `boostedKeywords`,
+   * no-input-poke settings). Only the fields you pass are changed and applied immediately by sending
    * a Phonic `reset`; fields left unset keep their current values. Instructions are driven by the
    * Agent handoff (`updateInstructions`) and aren't accepted here. `toolChoice` (the base
    * `updateOptions` param, sent by the framework) is not supported by Phonic and is ignored.
@@ -715,13 +715,13 @@ export class RealtimeSession extends llm.RealtimeSession {
    * `additionalLanguages` (and the new default removed) so the language set stays intact — the API
    * rejects a default that also appears in `additionalLanguages`.
    */
-  updateOptions(options: { toolChoice?: llm.ToolChoice | null; config?: PhonicConfig }): void {
-    // Phonic doesn't support toolChoice (the framework sends it every turn); ignore it. Config
-    // changes come in via `config`.
-    if (this.closed || options.config === undefined || Object.keys(options.config).length === 0) {
+  updateOptions(options: PhonicConfig & { toolChoice?: llm.ToolChoice | null }): void {
+    // toolChoice is the base updateOptions param (the framework sends it every turn); Phonic does
+    // not support it and ignores it. Every other field is an optional config change.
+    const { toolChoice: _toolChoice, ...config } = options;
+    if (this.closed || Object.keys(config).length === 0) {
       return;
     }
-    const config = { ...options.config };
 
     if (
       config.defaultLanguage !== undefined &&
