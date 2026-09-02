@@ -180,8 +180,8 @@ export class ParticipantAudioInputStream extends AudioInput {
           return;
         }
         this.openStream(track);
-      } catch (error) {
-        this.logger.error({ error }, 'failed to update participant audio input');
+      } catch {
+        this.logger.error('failed to update participant audio input');
       }
     });
     this.streamTransition = transition;
@@ -199,16 +199,13 @@ export class ParticipantAudioInputStream extends AudioInput {
     if (input) {
       try {
         await this.multiStream.removeInputStream(input.id);
-      } catch (error) {
-        this.logger.warn({ error }, 'failed to remove participant audio input stream');
+      } catch {
+        this.logger.warn('failed to remove participant audio input stream');
       }
 
       const [cancelResult] = await Promise.allSettled([input.stream.cancel(), input.pipe]);
       if (cancelResult.status === 'rejected') {
-        this.logger.warn(
-          { error: cancelResult.reason },
-          'failed to cancel participant audio input stream',
-        );
+        this.logger.warn('failed to cancel participant audio input stream');
       }
     }
   }
@@ -231,9 +228,9 @@ export class ParticipantAudioInputStream extends AudioInput {
       pipe: inputPipe,
     };
     this.currentInput = input;
-    void inputPipe.catch((error) => {
+    void inputPipe.catch(() => {
       if (this.currentInput === input) {
-        this.logger.error({ error }, 'participant audio input stream failed');
+        this.logger.error('participant audio input stream failed');
       }
     });
   }
