@@ -14,6 +14,7 @@ import {
   finalizeSession,
   flushJobLogs,
   runShutdownCallbacks,
+  validateSessionEndTimeout,
   waitForEntrypointShutdown,
 } from '../job_lifecycle.js';
 import { initializeLogger, log } from '../log.js';
@@ -248,10 +249,7 @@ const startJob = (
     //   [2] import.meta.filename of function containing entry file
     //   [3] sessionEndTimeout
     const moduleFile = process.argv[2];
-    const sessionEndTimeout = Number(process.argv[3]);
-    if (!Number.isFinite(sessionEndTimeout) || sessionEndTimeout < 0) {
-      throw new Error(`Invalid sessionEndTimeout: ${process.argv[3]}`);
-    }
+    const sessionEndTimeout = validateSessionEndTimeout(Number(process.argv[3]));
     const agent: Agent = await import(pathToFileURL(moduleFile!).pathname).then((module) => {
       // Handle both ESM (module.default is the agent) and CJS (module.default.default is the agent)
       const agent =
