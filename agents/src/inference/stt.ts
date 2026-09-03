@@ -50,8 +50,6 @@ export type AssemblyaiModels =
   | 'assemblyai/u3-rt-pro'
   | 'assemblyai/universal-3-5-pro';
 
-export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
-
 export type XaiSTTModels = 'xai/stt-1';
 
 export type SpeechmaticsModels =
@@ -314,7 +312,6 @@ const WORD_ALIGNED_MODELS = new Set([
   'assemblyai/universal-streaming-multilingual',
   'assemblyai/u3-rt-pro',
   'assemblyai/universal-3-5-pro',
-  'elevenlabs/scribe_v2_realtime',
   'xai/stt-1',
   'speechmatics/enhanced',
   'speechmatics/standard',
@@ -336,7 +333,6 @@ type _STTModels =
   | DeepgramFluxModels
   | CartesiaModels
   | AssemblyaiModels
-  | ElevenlabsSTTModels
   | XaiSTTModels
   | SpeechmaticsModels
   | InworldSTTModels
