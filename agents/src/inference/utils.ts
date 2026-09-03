@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AccessToken } from 'livekit-server-sdk';
+import type { IncomingMessage } from 'node:http';
+import { text } from 'node:stream/consumers';
 import { WebSocket } from 'ws';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { getJobContext } from '../job.js';
@@ -51,6 +53,37 @@ export async function createAccessToken(
   token.addInferenceGrant({ perform: true });
 
   return await token.toJwt();
+}
+
+async function statusErrorFromResponse(response: IncomingMessage): Promise<APIStatusError> {
+  const statusCode = response.statusCode ?? -1;
+  let message = `Unexpected server response: ${statusCode}`;
+  let body: object | null = null;
+  let rawBody = '';
+
+  try {
+    rawBody = (await text(response)).trim();
+  } catch {
+    // The HTTP status still identifies the handshake failure when the body cannot be read.
+  }
+
+  if (rawBody) {
+    try {
+      const parsed: unknown = JSON.parse(rawBody);
+      if (parsed !== null && typeof parsed === 'object') {
+        body = parsed;
+        if ('error' in parsed && typeof parsed.error === 'string' && parsed.error) {
+          message = parsed.error;
+        }
+      } else {
+        message = rawBody;
+      }
+    } catch {
+      message = rawBody;
+    }
+  }
+
+  return new APIStatusError({ message, options: { statusCode, body } });
 }
 
 /**
@@ -109,18 +142,18 @@ export async function connectWs(
       resolve(socket);
     };
 
+    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+      void statusErrorFromResponse(response).then((error) => {
+        clearTimeout(timeout);
+        socket.terminate();
+        reject(error);
+      });
+    };
+
     const onError = (err: unknown) => {
       clearTimeout(timeout);
-      if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
-        reject(
-          new APIStatusError({
-            message: 'LiveKit gateway quota exceeded',
-            options: { statusCode: 429 },
-          }),
-        );
-      } else {
-        reject(new APIConnectionError({ message: 'Error connecting to LiveKit WebSocket' }));
-      }
+      const message = err instanceof Error ? err.message : 'Error connecting to LiveKit WebSocket';
+      reject(new APIConnectionError({ message }));
     };
 
     const onClose = () => {
@@ -134,6 +167,7 @@ export async function connectWs(
       }
     };
     socket.once('open', onOpen);
+    socket.once('unexpected-response', onUnexpectedResponse);
     socket.once('error', onError);
     socket.once('close', onClose);
   });
