@@ -2,4 +2,4 @@
 '@livekit/agents': patch
 ---
 
-Surface inference gateway HTTP status codes when a WebSocket handshake fails.
+Surface inference gateway status errors from WebSocket handshakes and active STT sessions.
