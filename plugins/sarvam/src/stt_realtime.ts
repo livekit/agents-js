@@ -631,6 +631,11 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
     // Drain any audio still buffered in the framer (endInput() without a trailing flush()).
     if (!this.#sessionEnded && !signal.aborted && ws.readyState === WebSocket.OPEN) {
       this.#sendAudioFrames(ws, audioStream.flush());
+      if (this.#activeEndpointing === 'manual' && this.#manualSpeechStarted) {
+        this.#safeSendJson(ws, { event: 'speech_end' });
+        this.#manualSpeechStarted = false;
+        this.#endManualUtterance();
+      }
     }
 
     this.#flushLocalUsageFallback();

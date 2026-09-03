@@ -365,4 +365,27 @@ describe('Sarvam realtime STT', () => {
     const binaryPayloads = socket.sent.filter((d): d is Buffer => Buffer.isBuffer(d));
     expect(binaryPayloads.some((p) => p.byteLength === 400)).toBe(true);
   });
+
+  it('ends the manual-mode turn when input ends without a trailing flush()', async () => {
+    const sttRealtime = new STTRealtime({ apiKey: 'test-key', endpointing: 'manual' });
+    const stream = sttRealtime.stream();
+
+    const socket = await waitForSocket();
+    await onceOpen(socket);
+
+    stream.pushFrame(toneFrame(new Array(200).fill(1000)));
+    stream.endInput();
+    await new Promise((r) => setTimeout(r, 0));
+    socket.close(1000, '');
+
+    const events: sttNamespace.SpeechEvent[] = [];
+    for await (const event of stream) events.push(event);
+
+    const jsonPayloads = socket.sent
+      .filter((d): d is string => typeof d === 'string')
+      .map((d) => JSON.parse(d) as { event: string });
+    expect(jsonPayloads.some((p) => p.event === 'speech_start')).toBe(true);
+    expect(jsonPayloads.some((p) => p.event === 'speech_end')).toBe(true);
+    expect(events.some((e) => e.type === stt.SpeechEventType.END_OF_SPEECH)).toBe(true);
+  });
 });
