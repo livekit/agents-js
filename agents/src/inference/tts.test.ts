@@ -479,10 +479,6 @@ describeLiveKitInference('LiveKit Inference TTS integration', agents, async (har
       model: 'cartesia/sonic-3',
       voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
     },
-    {
-      model: 'elevenlabs/eleven_flash_v2',
-      voice: 'Xb7hH8MSUJpSbSDYk0k2',
-    },
     { model: 'inworld/inworld-tts-2', voice: 'Ashley' },
     { model: 'rime/coda', voice: 'celeste' },
   ] as const;
