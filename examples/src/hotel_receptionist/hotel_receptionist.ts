@@ -862,7 +862,8 @@ function createTools() {
     }),
 
     lookup_restaurant_reservation: llm.tool({
-      description: 'Look up a confirmed restaurant reservation by last name and confirmation code.',
+      description:
+        'Look up a confirmed restaurant reservation by last name and confirmation code. Use this before a modification that keeps some details "the same", so you know the current values being kept.',
       parameters: z.object({ last_name: z.string(), confirmation_code: z.string() }),
       execute: async ({ last_name, confirmation_code }, { ctx }: llm.ToolOptions<UserData>) => {
         const code = confirmation_code.replaceAll(' ', '').toUpperCase();
@@ -896,13 +897,21 @@ function createTools() {
 
     modify_restaurant_reservation: llm.tool({
       description:
-        'Move an existing restaurant reservation to a new date/time and optionally party size.',
+        "Move an existing restaurant reservation to a new date/time and optionally party size. Relay the party size from this tool's return when confirming; it's how a wrong count gets caught.",
       parameters: z.object({
         last_name: z.string(),
         confirmation_code: z.string(),
         new_date: z.string(),
         new_time: z.string(),
-        new_party_size: z.number().int().min(1).max(maxPartySize).optional(),
+        new_party_size: z
+          .number()
+          .int()
+          .min(1)
+          .max(maxPartySize)
+          .optional()
+          .describe(
+            'New number of guests, ONLY when the caller states the new number. "Keep it the same" means OMIT this parameter; the reservation keeps its current size when omitted. Never fill it with a number the caller did not say.',
+          ),
       }),
       execute: async (
         { last_name, confirmation_code, new_date, new_time, new_party_size },
@@ -920,7 +929,7 @@ function createTools() {
         reservation.date = parseDate(new_date);
         reservation.time = new_time;
         reservation.partySize = new_party_size ?? reservation.partySize;
-        return `reservation updated to ${reservation.time} on ${formatDate(reservation.date)} for ${reservation.partySize}, code ${speakCode(reservation.code)}`;
+        return `reservation updated to ${reservation.time} on ${formatDate(reservation.date)} for ${reservation.partySize}, code ${speakCode(reservation.code)} | confirm the new date, time, AND the party size above to the caller; if the party size is not what they expect, this is their chance to catch it`;
       },
     }),
 
