@@ -22,6 +22,17 @@ import { z } from 'zod';
 // process (loaded once per host), and the silero VAD (~2MB, in-process)
 // lazy-loads on first stream.
 export default defineAgent({
+  onSessionEnd: (ctx: JobContext) => {
+    const report = ctx.makeSessionReport();
+    log().info(
+      {
+        jobId: report.jobId,
+        eventCount: report.events.length,
+        chatItemCount: report.chatHistory.items.length,
+      },
+      'onSessionEnd callback completed',
+    );
+  },
   entry: async (ctx: JobContext) => {
     const agent = Agent.create({
       instructions:
