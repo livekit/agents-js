@@ -20,7 +20,7 @@ import { z } from 'zod';
 function createInfoTask(info: string): AgentTask<string> {
   const task = AgentTask.create<string>({
     instructions: `Collect the user's information. around ${info}. Once you have the information, call the saveUserInfo tool to save the information to the database IMMEDIATELY. DO NOT have chitchat with the user, just collect the information and call the saveUserInfo tool.`,
-    tts: 'elevenlabs/eleven_turbo_v2_5',
+    tts: 'deepgram/aura-2',
     tools: [
       llm.tool({
         name: 'saveUserInfo',

@@ -44,14 +44,6 @@ export type CartesiaModels =
 
 export type DeepgramTTSModels = 'deepgram/aura' | 'deepgram/aura-2';
 
-export type ElevenlabsModels =
-  | 'elevenlabs/eleven_flash_v2'
-  | 'elevenlabs/eleven_flash_v2_5'
-  | 'elevenlabs/eleven_turbo_v2'
-  | 'elevenlabs/eleven_turbo_v2_5'
-  | 'elevenlabs/eleven_multilingual_v2'
-  | 'elevenlabs/eleven_v3';
-
 export type InworldModels =
   | 'inworld/inworld-tts-2'
   | 'inworld/inworld-tts-1.5-max'
@@ -81,29 +73,6 @@ export interface CartesiaOptions {
   add_timestamps?: boolean;
   add_phoneme_timestamps?: boolean;
   use_normalized_timestamps?: boolean;
-}
-
-export interface ElevenlabsOptions {
-  /** Inactivity timeout in seconds. Default: 60. */
-  inactivity_timeout?: number;
-  /** Text normalization mode. Default: "auto". */
-  apply_text_normalization?: 'auto' | 'off' | 'on';
-  auto_mode?: boolean;
-  enable_logging?: boolean;
-  enable_ssml_parsing?: boolean;
-  sync_alignment?: boolean;
-  language_code?: string;
-  /** Voice stability tuning, typically in the range [0, 1]. */
-  stability?: number;
-  /** Voice similarity tuning, typically in the range [0, 1]. */
-  similarity_boost?: number;
-  /** Style exaggeration tuning, typically in the range [0, 1]. */
-  style?: number;
-  /** Speech speed multiplier. */
-  speed?: number;
-  use_speaker_boost?: boolean;
-  chunk_length_schedule?: number[];
-  preferred_alignment?: string;
 }
 
 export interface DeepgramTTSOptions {
@@ -179,7 +148,6 @@ export interface FishAudioOptions {
 type _TTSModels =
   | CartesiaModels
   | DeepgramTTSModels
-  | ElevenlabsModels
   | RimeModels
   | InworldModels
   | XaiTTSModels
@@ -188,7 +156,6 @@ type _TTSModels =
 export type TTSModels =
   | CartesiaModels
   | DeepgramTTSModels
-  | ElevenlabsModels
   | RimeModels
   | InworldModels
   | XaiTTSModels
@@ -201,17 +168,15 @@ export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
   ? CartesiaOptions
   : TModel extends DeepgramTTSModels
     ? DeepgramTTSOptions
-    : TModel extends ElevenlabsModels
-      ? ElevenlabsOptions
-      : TModel extends RimeModels
-        ? RimeOptions
-        : TModel extends InworldModels
-          ? InworldOptions
-          : TModel extends XaiTTSModels
-            ? XaiTTSOptions
-            : TModel extends FishAudioModels
-              ? FishAudioOptions
-              : Record<string, unknown>;
+    : TModel extends RimeModels
+      ? RimeOptions
+      : TModel extends InworldModels
+        ? InworldOptions
+        : TModel extends XaiTTSModels
+          ? XaiTTSOptions
+          : TModel extends FishAudioModels
+            ? FishAudioOptions
+            : Record<string, unknown>;
 
 /** Parse a model string into [model, voice]. Voice is undefined if not specified. */
 export function parseTTSModelString(model: string): [string, string | undefined] {
@@ -240,9 +205,6 @@ export function hasAlignedTranscript(
   if (provider === 'cartesia') {
     return Boolean(opts.add_timestamps);
   }
-  if (provider === 'elevenlabs') {
-    return Boolean(opts.sync_alignment);
-  }
   if (provider === 'inworld') {
     return opts.timestamp_type === 'WORD' || opts.timestamp_type === 'CHARACTER';
   }
@@ -251,7 +213,7 @@ export function hasAlignedTranscript(
 
 /** Inference Fallback Adapter: configuration for a fallback TTS model that runs server-side in LiveKit Inference, providing automatic fallback between providers. */
 export interface TTSFallbackModel {
-  /** Model name (e.g. "cartesia/sonic", "elevenlabs/eleven_flash_v2", "rime/coda"). */
+  /** Model name (e.g. "cartesia/sonic", "deepgram/aura-2", "rime/coda"). */
   model: string;
   /** Voice to use for the model. */
   voice: string;
