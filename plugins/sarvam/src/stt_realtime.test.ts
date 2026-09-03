@@ -177,7 +177,7 @@ describe('Sarvam realtime STT', () => {
     const eosIndex = events.findIndex((e) => e.type === stt.SpeechEventType.END_OF_SPEECH);
     const finalIndex = events.findIndex((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT);
     expect(eosIndex).toBeGreaterThanOrEqual(0);
-    expect(finalIndex).toBeGreaterThan(eosIndex);
+    expect(finalIndex).toBeLessThan(eosIndex);
 
     expect(events.some((e) => e.type === stt.SpeechEventType.RECOGNITION_USAGE)).toBe(true);
   });
@@ -318,5 +318,51 @@ describe('Sarvam realtime STT', () => {
 
     expect(errors).toHaveLength(1);
     expect(String((errors[0] as { error: Error }).error.message)).toMatch(/mono/i);
+  });
+
+  it('keeps a live stream on its original wire encoding after updateOptions', async () => {
+    const sttRealtime = new STTRealtime({ apiKey: 'test-key', encoding: 'linear16' });
+    const stream = sttRealtime.stream();
+
+    const socket = await waitForSocket();
+    await onceOpen(socket);
+
+    stream.pushFrame(toneFrame(new Array(800).fill(1000)));
+    await new Promise((r) => setTimeout(r, 0));
+
+    stream.updateOptions({ encoding: 'mulaw' });
+
+    stream.pushFrame(toneFrame(new Array(800).fill(1000)));
+    stream.endInput();
+    await new Promise((r) => setTimeout(r, 0));
+    socket.close(1000, '');
+
+    const events: sttNamespace.SpeechEvent[] = [];
+    for await (const event of stream) events.push(event);
+
+    const binaryPayloads = socket.sent.filter((d): d is Buffer => Buffer.isBuffer(d));
+    expect(binaryPayloads.length).toBeGreaterThanOrEqual(2);
+    for (const payload of binaryPayloads) {
+      expect(payload.byteLength).toBe(1600); // still linear16 (2 bytes/sample), not mulaw
+    }
+  });
+
+  it('sends the final buffered audio chunk when input ends without a trailing flush()', async () => {
+    const sttRealtime = new STTRealtime({ apiKey: 'test-key' });
+    const stream = sttRealtime.stream();
+
+    const socket = await waitForSocket();
+    await onceOpen(socket);
+
+    stream.pushFrame(toneFrame(new Array(200).fill(1000)));
+    stream.endInput();
+    await new Promise((r) => setTimeout(r, 0));
+    socket.close(1000, '');
+
+    const events: sttNamespace.SpeechEvent[] = [];
+    for await (const event of stream) events.push(event);
+
+    const binaryPayloads = socket.sent.filter((d): d is Buffer => Buffer.isBuffer(d));
+    expect(binaryPayloads.some((p) => p.byteLength === 400)).toBe(true);
   });
 });

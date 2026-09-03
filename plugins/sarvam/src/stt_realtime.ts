@@ -474,6 +474,11 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
       connectionOnly.push('vadPrefixPaddingMs');
       next = { ...next, vadPrefixPaddingMs: previous.vadPrefixPaddingMs };
     }
+    if (next.encoding !== previous.encoding) {
+      // Server's decoder is fixed at connect time by the `encoding` query param.
+      connectionOnly.push('encoding');
+      next = { ...next, encoding: previous.encoding };
+    }
     if (connectionOnly.length > 0) {
       this.#logger.warn(
         { options: connectionOnly },
@@ -611,18 +616,7 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
         );
       }
 
-      for (const frame of frames) {
-        if (this.#activeEndpointing === 'manual' && !this.#manualSpeechStarted) {
-          this.#safeSendJson(ws, { event: 'speech_start' });
-          this.#manualSpeechStarted = true;
-          this.#beginManualUtterance();
-        }
-
-        const duration = frame.samplesPerChannel / frame.sampleRate;
-        this.#audioDurationCollector.push(duration);
-        this.#audioPosition += duration;
-        this.#safeSendBinary(ws, encodePcmForWire(this.#opts.encoding, frame));
-      }
+      this.#sendAudioFrames(ws, frames);
 
       if (isFlush) {
         this.#audioDurationCollector.flush();
@@ -634,9 +628,29 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
       }
     }
 
+    // Drain any audio still buffered in the framer (endInput() without a trailing flush()).
+    if (!this.#sessionEnded && !signal.aborted && ws.readyState === WebSocket.OPEN) {
+      this.#sendAudioFrames(ws, audioStream.flush());
+    }
+
     this.#flushLocalUsageFallback();
     if (!this.#sessionEnded && !signal.aborted && ws.readyState === WebSocket.OPEN) {
       this.#safeSendJson(ws, { event: 'end' });
+    }
+  }
+
+  #sendAudioFrames(ws: WebSocket, frames: AudioFrame[]): void {
+    for (const frame of frames) {
+      if (this.#activeEndpointing === 'manual' && !this.#manualSpeechStarted) {
+        this.#safeSendJson(ws, { event: 'speech_start' });
+        this.#manualSpeechStarted = true;
+        this.#beginManualUtterance();
+      }
+
+      const duration = frame.samplesPerChannel / frame.sampleRate;
+      this.#audioDurationCollector.push(duration);
+      this.#audioPosition += duration;
+      this.#safeSendBinary(ws, encodePcmForWire(this.#opts.encoding, frame));
     }
   }
 
@@ -825,9 +839,11 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
     if (this.#activeEndpointing !== 'vad') {
       this.#emitEndOfSpeech();
     } else if (!this.#eosEmittedForUtterance) {
-      this.#emitEndOfSpeech();
+      // Commit a pending final first so consumers never see END_OF_SPEECH before it.
       if (this.#finalReceivedForUtterance) {
         this.#tryCommitUtterance();
+      } else {
+        this.#emitEndOfSpeech();
       }
     }
     this.#completeUtterance();
