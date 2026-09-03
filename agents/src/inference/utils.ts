@@ -4,7 +4,6 @@
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AccessToken } from 'livekit-server-sdk';
 import type { IncomingMessage } from 'node:http';
-import { text } from 'node:stream/consumers';
 import { WebSocket } from 'ws';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { getJobContext } from '../job.js';
@@ -21,6 +20,8 @@ export const STAGING_INFERENCE_URL = 'https://agent-gateway.staging.livekit.clou
 /** LiveKit Agent Gateway routing header names. */
 export const INFERENCE_PROVIDER_HEADER = 'X-LiveKit-Inference-Provider';
 export const INFERENCE_PRIORITY_HEADER = 'X-LiveKit-Inference-Priority';
+
+const MAX_ERROR_BODY_BYTES = 64 * 1024;
 
 /**
  * Get the default inference URL based on the environment.
@@ -55,35 +56,62 @@ export async function createAccessToken(
   return await token.toJwt();
 }
 
+async function readResponseBody(
+  response: IncomingMessage,
+): Promise<{ rawBody: string; truncated: boolean }> {
+  const output = Buffer.allocUnsafe(MAX_ERROR_BODY_BYTES);
+  let length = 0;
+  let truncated = false;
+
+  for await (const chunk of response) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const copyLength = Math.min(bytes.length, MAX_ERROR_BODY_BYTES - length);
+    bytes.copy(output, length, 0, copyLength);
+    length += copyLength;
+
+    if (copyLength < bytes.length) {
+      truncated = true;
+      break;
+    }
+  }
+
+  return {
+    rawBody: output.subarray(0, length).toString('utf8').trim(),
+    truncated,
+  };
+}
+
 async function statusErrorFromResponse(response: IncomingMessage): Promise<APIStatusError> {
   const statusCode = response.statusCode ?? -1;
-  let message = `Unexpected server response: ${statusCode}`;
   let body: object | null = null;
   let rawBody = '';
+  let truncated = false;
 
   try {
-    rawBody = (await text(response)).trim();
+    ({ rawBody, truncated } = await readResponseBody(response));
   } catch {
     // The HTTP status still identifies the handshake failure when the body cannot be read.
   }
 
-  if (rawBody) {
+  if (truncated) {
+    body = { error: rawBody, truncated: true };
+  } else if (rawBody) {
     try {
       const parsed: unknown = JSON.parse(rawBody);
       if (parsed !== null && typeof parsed === 'object') {
         body = parsed;
-        if ('error' in parsed && typeof parsed.error === 'string' && parsed.error) {
-          message = parsed.error;
-        }
       } else {
-        message = rawBody;
+        body = { error: parsed };
       }
     } catch {
-      message = rawBody;
+      body = { error: rawBody };
     }
   }
 
-  return new APIStatusError({ message, options: { statusCode, body } });
+  return new APIStatusError({
+    message: `Unexpected server response: ${statusCode}`,
+    options: { statusCode, body },
+  });
 }
 
 /**
@@ -145,8 +173,8 @@ export async function connectWs(
     const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
       void statusErrorFromResponse(response).then((error) => {
         clearTimeout(timeout);
-        socket.terminate();
         reject(error);
+        socket.terminate();
       });
     };
 

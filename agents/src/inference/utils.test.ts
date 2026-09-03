@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 
 describe('connectWs', () => {
-  it('surfaces a structured gateway error from a rejected handshake', async () => {
+  it('surfaces a structured gateway error in the response body', async () => {
     const body = {
       type: 'inference_quota_exceeded',
       error: 'STT connection limit exceeded, category: MaxConcurrentGatewaySTT',
@@ -51,25 +51,27 @@ describe('connectWs', () => {
 
     expect(error).toBeInstanceOf(APIStatusError);
     expect(error).toMatchObject({
-      message: body.error,
+      message: 'Unexpected server response: 429',
       statusCode: 429,
       retryable: true,
       body,
     });
+    expect((error as Error).stack).not.toContain(body.error);
   });
 
-  it('surfaces a plain-text error from a rejected handshake', async () => {
+  it('surfaces a plain-text gateway error in the response body', async () => {
     const url = await rejectWebSocket(401, 'invalid authorization token');
 
     const error = await connectWs(url, {}, 1_000).catch((error: unknown) => error);
 
     expect(error).toBeInstanceOf(APIStatusError);
     expect(error).toMatchObject({
-      message: 'invalid authorization token',
+      message: 'Unexpected server response: 401',
       statusCode: 401,
       retryable: false,
-      body: null,
+      body: { error: 'invalid authorization token' },
     });
+    expect((error as Error).stack).not.toContain('invalid authorization token');
   });
 
   it('falls back to the status when a rejected handshake has no body', async () => {
@@ -84,6 +86,23 @@ describe('connectWs', () => {
       retryable: true,
       body: null,
     });
+  });
+
+  it('limits oversized gateway response bodies', async () => {
+    const url = await rejectWebSocket(502, 'x'.repeat(70 * 1024));
+
+    const error = await connectWs(url, {}, 1_000).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect(error).toMatchObject({
+      message: 'Unexpected server response: 502',
+      statusCode: 502,
+      body: { truncated: true },
+    });
+    const body = (error as APIStatusError).body as { error: string };
+    expect(Buffer.byteLength(body.error)).toBe(64 * 1024);
+    expect(body.error.startsWith('x')).toBe(true);
+    expect(body.error.endsWith('x')).toBe(true);
   });
 
   it('preserves the message from a network error', async () => {
