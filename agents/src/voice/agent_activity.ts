@@ -69,7 +69,7 @@ import type {
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
-import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
 import { isFlushSentinel } from '../types.js';
@@ -596,7 +596,11 @@ export class AgentActivity implements RecognitionHooks {
     const { spanName, runOnEnter, reuseResources } = options;
     const startSpan = tracer.startSpan({
       name: spanName,
-      attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
+      attributes: {
+        [traceTypes.ATTR_AGENT_LABEL]: this.agent.id,
+        [traceTypes.ATTR_GEN_AI_OPERATION_NAME]: traceTypes.GenAIOperationName.CREATE_AGENT,
+        [traceTypes.ATTR_GEN_AI_AGENT_NAME]: this.agent.id,
+      },
       context: ROOT_CONTEXT,
     });
 
@@ -3942,6 +3946,17 @@ export class AgentActivity implements RecognitionHooks {
     }
   };
 
+  /**
+   * An agent turn is the convention's `invoke_agent`: the framework running the agent
+   * in-process, with the inference (`chat`) and tool (`execute_tool`) spans nested underneath.
+   */
+  private recordAgentTurn(span: Span): void {
+    genAI.setAgentAttributes(span, {
+      operation: traceTypes.GenAIOperationName.INVOKE_AGENT,
+      agentName: this.agent.id,
+    });
+  }
+
   private pipelineReplyTask = async (
     stateLease: AgentStateLease,
     chatCtx: ChatContext,
@@ -3953,7 +3968,8 @@ export class AgentActivity implements RecognitionHooks {
     _previousUserMetrics?: MetricsReport,
   ): Promise<void> =>
     tracer.startActiveSpan(
-      async (span) =>
+      async (span) => (
+        this.recordAgentTurn(span),
         this._pipelineReplyTaskImpl({
           stateLease,
           chatCtx,
@@ -3964,7 +3980,8 @@ export class AgentActivity implements RecognitionHooks {
           newMessage,
           span,
           _previousUserMetrics,
-        }),
+        })
+      ),
       {
         name: 'agent_turn',
         context: this.agentSession.rootSpanContext,
@@ -3979,7 +3996,8 @@ export class AgentActivity implements RecognitionHooks {
     addToChatCtx: boolean = true,
   ): Promise<void> {
     return tracer.startActiveSpan(
-      async (span) =>
+      async (span) => (
+        this.recordAgentTurn(span),
         this._realtimeGenerationTaskImpl({
           stateLease,
           ev,
@@ -3987,7 +4005,8 @@ export class AgentActivity implements RecognitionHooks {
           replyAbortController,
           addToChatCtx,
           span,
-        }),
+        })
+      ),
       {
         name: 'agent_turn',
         context: this.agentSession.rootSpanContext,

@@ -19,6 +19,8 @@ export {
   type PinoCloudExporterUrlConfig,
   type PinoLogObject,
 } from './pino_otel_transport.js';
+export * as genAI from './gen_ai.js';
+export { PIIRedactingSpanProcessor, isPIIAttribute, redactAttributes } from './pii.js';
 export * as traceTypes from './trace_types.js';
 export {
   FanoutSpanProcessor,

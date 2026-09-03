@@ -31,7 +31,7 @@ import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-import { traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, traceTypes, tracer } from '../telemetry/index.js';
 import { stripAllMarkup } from '../tts/provider_format.js';
 import {
   type FlushSentinel,
@@ -640,12 +640,19 @@ export function performLLMInference(
     );
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
-    if (model) {
-      span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
-    }
-    if (provider) {
-      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
-    }
+    // OTel GenAI semantic conventions: the llm_node is the framework's inference step
+    genAI.setRequestAttributes(span, {
+      operation: traceTypes.GenAIOperationName.CHAT,
+      provider,
+      model,
+      stream: true,
+      outputType: traceTypes.GenAIOutputType.TEXT,
+    });
+    genAI.setContentAttributes(span, {
+      systemInstructions: genAI.toSystemInstructions(chatCtx),
+      inputMessages: genAI.toInputMessages(chatCtx),
+      toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
+    });
 
     let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk | FlushSentinel> | null =
       null;
@@ -754,6 +761,20 @@ export function performLLMInference(
       );
       if (data.ttft !== undefined) {
         span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
+      }
+      {
+        const finishReason = genAI.finishReasonFor({ functionCalls: data.generatedToolCalls });
+        genAI.setResponseAttributes(span, {
+          finishReasons: [finishReason],
+          timeToFirstChunk: data.ttft,
+        });
+        genAI.setContentAttributes(span, {
+          outputMessages: genAI.toOutputMessages({
+            text: data.generatedText,
+            functionCalls: data.generatedToolCalls,
+            finishReason,
+          }),
+        });
       }
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();
@@ -1368,6 +1389,12 @@ export function performToolExecutions({
       const _tracableToolExecutionImpl = async (toolExecTask: Promise<unknown>, span: Span) => {
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
+        genAI.setToolAttributes(span, {
+          name: toolCall.name,
+          callId: toolCall.callId,
+          description: isFunctionTool(tool) ? tool.description : undefined,
+          args: toolCall.args,
+        });
 
         // Only completed executions produce tool output. An interrupted execution may still
         // finish in the background and must remain retryable rather than becoming a synthetic
@@ -1390,6 +1417,10 @@ export function performToolExecutions({
               traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR,
               toolOutput.toolCallOutput.isError,
             );
+            genAI.setToolResult(span, {
+              result: toolOutput.toolCallOutput.output,
+              isError: toolOutput.toolCallOutput.isError,
+            });
           }
         } catch (rawError) {
           logger.error(
@@ -1411,6 +1442,7 @@ export function performToolExecutions({
               toolOutput.toolCallOutput.output,
             );
             span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
+            genAI.setToolResult(span, { isError: true });
           }
         } finally {
           if (toolOutput) toolCompleted(toolOutput);

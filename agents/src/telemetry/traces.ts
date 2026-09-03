@@ -47,6 +47,7 @@ import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import type { ObservabilityEndpoint } from './observability_endpoint.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
+import { PIIRedactingSpanProcessor } from './pii.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { uploadRecording } from './recording_upload.js';
 import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
@@ -267,6 +268,24 @@ interface CustomProviderConfig {
 }
 
 const customProviderConfigs = new WeakMap<TracerProvider, CustomProviderConfig>();
+/** Providers that already carry the in-process PII stripper — installed at most once. */
+const piiRedactionInstalled = new WeakSet<TracerProvider>();
+
+/**
+ * Installs {@link PIIRedactingSpanProcessor} on a provider LiveKit does not own.
+ *
+ * The processor strips PII in `onEnding`, which the SDK dispatches to every registered
+ * processor before any processor's `onEnd`, so it protects the integrator's exporters
+ * regardless of the order they were registered in.
+ */
+function installPIIRedaction(
+  provider: TracerProvider,
+  registerSpanProcessor: SpanProcessorRegistrar,
+): void {
+  if (piiRedactionInstalled.has(provider)) return;
+  piiRedactionInstalled.add(provider);
+  registerSpanProcessor(new PIIRedactingSpanProcessor());
+}
 
 /** Options for configuring a custom tracer provider. */
 export interface SetTracerProviderOptions {
@@ -350,6 +369,7 @@ export function setTracerProvider(
   }
 
   if (registerSpanProcessor) {
+    installPIIRedaction(provider, registerSpanProcessor);
     customProviderConfigs.set(provider, {
       registerSpanProcessor,
       createCloudSpanProcessor: options?.createCloudSpanProcessor,
@@ -458,6 +478,8 @@ export async function setupCloudTracer(
         const tracerProvider = new NodeTracerProvider({
           resource,
           spanProcessors: [
+            // strips PII while the span is still mutable, ahead of every exporter's onEnd
+            new PIIRedactingSpanProcessor(),
             new MetadataSpanProcessor(sessionMetadata),
             new BatchSpanProcessor(createCloudExporter()),
           ],
@@ -490,6 +512,7 @@ export async function setupCloudTracer(
           // Resource shared by all exporters, so applying `resource` here would also relabel
           // the spans going to the user's own backend. room_id/job_id — the keys Cloud
           // correlates on — still ride along as span attributes via MetadataSpanProcessor.
+          installPIIRedaction(existingProvider, config.registerSpanProcessor);
           config.registerSpanProcessor(new MetadataSpanProcessor(sessionMetadata));
           config.registerSpanProcessor(cloudSpanProcessor);
         }
