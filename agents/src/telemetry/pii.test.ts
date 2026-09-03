@@ -84,11 +84,6 @@ describe('PIIRedactingSpanProcessor', () => {
     expect(span.events.map((e) => e.name)).toContain(traceTypes.EVENT_GEN_AI_USER_MESSAGE);
   });
 
-  it('lets the project flag override allowPii', () => {
-    // redaction mandated in the dashboard is not weakened by a local grant
-    expect(leaked(emit({ allowPii: true, redaction: true }).attributes)).toEqual([]);
-  });
-
   it('still hands LiveKit Cloud the PII the project allows', () => {
     const stripped = emit({});
     const restored = restorePii(stripped);
@@ -102,11 +97,13 @@ describe('PIIRedactingSpanProcessor', () => {
     expect(restored.name).toBe(stripped.name);
   });
 
-  it('withholds PII from LiveKit Cloud too when the project mandates redaction', () => {
-    const stripped = emit({ redaction: true });
+  it('withholds PII from every destination when the project mandates redaction', () => {
+    // redaction mandated in the dashboard is not weakened by a local grant, and nothing is
+    // stashed for LiveKit Cloud to restore
+    const stripped = emit({ allowPii: true, redaction: true });
 
-    expect(restorePii(stripped)).toBe(stripped);
     expect(leaked(stripped.attributes)).toEqual([]);
+    expect(restorePii(stripped)).toBe(stripped);
   });
 
   it('protects an exporter registered before it', () => {

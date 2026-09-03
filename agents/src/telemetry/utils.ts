@@ -83,7 +83,6 @@ export function recordRealtimeMetrics(span: Span, metrics: RealtimeModelMetrics)
     // inference span, which knows whether this session outputs audio
     [traceTypes.ATTR_GEN_AI_OPERATION_NAME]: traceTypes.GenAIOperationName.GENERATE_CONTENT,
     [traceTypes.ATTR_REALTIME_MODEL_METRICS]: JSON.stringify(metrics),
-    // official per-modality usage names
     ...(realtimeUsageAttributes(metrics) as Record<string, number>),
     // unofficial spellings LangFuse reads, kept alongside the official ones
     [traceTypes.ATTR_GEN_AI_USAGE_INPUT_TEXT_TOKENS]: metrics.inputTokenDetails.textTokens,

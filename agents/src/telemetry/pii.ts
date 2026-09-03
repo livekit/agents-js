@@ -121,8 +121,8 @@ export class PIIRedactingSpanProcessor implements SpanProcessor {
     const piiKeys = Object.keys(attributes).filter(
       (key) => isPIIAttribute(key) || REDACTED_EXCEPTION_ATTRIBUTES.has(key),
     );
-    const contentEvents = events.filter((event) => PII_EVENT_NAMES.has(event.name));
-    if (!piiKeys.length && !contentEvents.length) return;
+    const kept = events.filter((event) => !PII_EVENT_NAMES.has(event.name));
+    if (!piiKeys.length && kept.length === events.length) return;
 
     if (!projectRedaction) {
       // LiveKit Cloud still receives what the project allows
@@ -137,10 +137,8 @@ export class PIIRedactingSpanProcessor implements SpanProcessor {
       }
     }
 
-    const kept = events.filter((event) => !PII_EVENT_NAMES.has(event.name));
     for (const event of kept) {
-      if (!event.attributes) continue;
-      for (const key of Object.keys(event.attributes)) {
+      for (const key of Object.keys(event.attributes ?? {})) {
         if (isPIIAttribute(key)) {
           delete (event.attributes as Record<string, unknown>)[key];
         }

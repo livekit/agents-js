@@ -116,25 +116,15 @@ export const ATTR_REALTIME_MODEL_METRICS = 'lk.realtime_model_metrics';
 /** End-to-end latency in seconds. */
 export const ATTR_E2E_LATENCY = 'lk.e2e_latency';
 
-// ---------------------------------------------------------------------------
-// OpenTelemetry GenAI semantic conventions
-//
-// Mirrors the attribute registry of the OpenTelemetry GenAI semantic conventions
-// (https://github.com/open-telemetry/semantic-conventions-genai, docs at
-// https://opentelemetry.io/docs/specs/semconv/gen-ai/). Datadog Agent Observability,
-// Langfuse, Braintrust and others ingest these directly, so the names must stay
-// byte-for-byte identical to the registry.
-//
-// Attributes the spec flags as "may contain sensitive information" are listed in
-// `telemetry/pii.ts` GEN_AI_PII_ATTRIBUTES and are stripped in-process when redaction
-// is enabled — the `lk.pii.` marker segment cannot be used on a standard name.
-// ---------------------------------------------------------------------------
+// OpenTelemetry GenAI semantic conventions, mirroring the attribute registry of
+// https://github.com/open-telemetry/semantic-conventions-genai. Backends ingest these
+// directly, so the names must stay byte-for-byte identical to the registry. The ones the
+// spec flags as sensitive are listed in GEN_AI_PII_ATTRIBUTES in ./pii.ts, since a
+// standard name cannot carry the `lk.pii.` marker segment.
 
-// -- operation & provider --
 export const ATTR_GEN_AI_OPERATION_NAME = 'gen_ai.operation.name';
 export const ATTR_GEN_AI_PROVIDER_NAME = 'gen_ai.provider.name';
 
-// -- request --
 export const ATTR_GEN_AI_REQUEST_MODEL = 'gen_ai.request.model';
 export const ATTR_GEN_AI_REQUEST_MAX_TOKENS = 'gen_ai.request.max_tokens';
 export const ATTR_GEN_AI_REQUEST_CHOICE_COUNT = 'gen_ai.request.choice.count';
@@ -151,7 +141,6 @@ export const ATTR_GEN_AI_REQUEST_REASONING_LEVEL = 'gen_ai.request.reasoning.lev
 export const ATTR_GEN_AI_REQUEST_PREVIOUS_RESPONSE_ID = 'gen_ai.request.previous_response.id';
 export const ATTR_GEN_AI_REQUEST_STREAM_CURSOR = 'gen_ai.request.stream_cursor';
 
-// -- response --
 export const ATTR_GEN_AI_RESPONSE_ID = 'gen_ai.response.id';
 export const ATTR_GEN_AI_RESPONSE_MODEL = 'gen_ai.response.model';
 export const ATTR_GEN_AI_RESPONSE_FINISH_REASONS = 'gen_ai.response.finish_reasons';
@@ -159,7 +148,6 @@ export const ATTR_GEN_AI_RESPONSE_STATUS = 'gen_ai.response.status';
 /** Time to first chunk of a streaming response, in seconds. */
 export const ATTR_GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK = 'gen_ai.response.time_to_first_chunk';
 
-// -- usage --
 export const ATTR_GEN_AI_USAGE_INPUT_TOKENS = 'gen_ai.usage.input_tokens';
 export const ATTR_GEN_AI_USAGE_OUTPUT_TOKENS = 'gen_ai.usage.output_tokens';
 export const ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS = 'gen_ai.usage.cache_read.input_tokens';
@@ -179,17 +167,14 @@ export const ATTR_GEN_AI_USAGE_IMAGE_CACHE_READ_INPUT_TOKENS =
   'gen_ai.usage.image.cache_read.input_tokens';
 export const ATTR_GEN_AI_TOKEN_TYPE = 'gen_ai.token.type';
 
-// -- conversation --
 export const ATTR_GEN_AI_CONVERSATION_ID = 'gen_ai.conversation.id';
 export const ATTR_GEN_AI_CONVERSATION_COMPACTED = 'gen_ai.conversation.compacted';
 
-// -- agent --
 export const ATTR_GEN_AI_AGENT_ID = 'gen_ai.agent.id';
 export const ATTR_GEN_AI_AGENT_NAME = 'gen_ai.agent.name';
 export const ATTR_GEN_AI_AGENT_DESCRIPTION = 'gen_ai.agent.description';
 export const ATTR_GEN_AI_AGENT_VERSION = 'gen_ai.agent.version';
 
-// -- tools --
 export const ATTR_GEN_AI_TOOL_NAME = 'gen_ai.tool.name';
 export const ATTR_GEN_AI_TOOL_CALL_ID = 'gen_ai.tool.call.id';
 export const ATTR_GEN_AI_TOOL_DESCRIPTION = 'gen_ai.tool.description';
@@ -198,13 +183,11 @@ export const ATTR_GEN_AI_TOOL_CALL_ARGUMENTS = 'gen_ai.tool.call.arguments';
 export const ATTR_GEN_AI_TOOL_CALL_RESULT = 'gen_ai.tool.call.result';
 export const ATTR_GEN_AI_TOOL_DEFINITIONS = 'gen_ai.tool.definitions';
 
-// -- content (opt-in, sensitive) --
 export const ATTR_GEN_AI_SYSTEM_INSTRUCTIONS = 'gen_ai.system_instructions';
 export const ATTR_GEN_AI_INPUT_MESSAGES = 'gen_ai.input.messages';
 export const ATTR_GEN_AI_OUTPUT_MESSAGES = 'gen_ai.output.messages';
 export const ATTR_GEN_AI_OUTPUT_TYPE = 'gen_ai.output.type';
 
-// -- retrieval / memory / evaluation / prompt / workflow --
 export const ATTR_GEN_AI_DATA_SOURCE_ID = 'gen_ai.data_source.id';
 export const ATTR_GEN_AI_EMBEDDINGS_DIMENSION_COUNT = 'gen_ai.embeddings.dimension.count';
 export const ATTR_GEN_AI_RETRIEVAL_DOCUMENTS = 'gen_ai.retrieval.documents';
@@ -225,7 +208,6 @@ export const ATTR_GEN_AI_PROMPT_VERSION = 'gen_ai.prompt.version';
 export const ATTR_GEN_AI_PROMPT_VARIABLE = 'gen_ai.prompt.variable';
 export const ATTR_GEN_AI_WORKFLOW_NAME = 'gen_ai.workflow.name';
 
-// -- shared (non gen_ai namespace) attributes used on GenAI spans --
 export const ATTR_ERROR_TYPE = 'error.type';
 export const ATTR_SERVER_ADDRESS = 'server.address';
 export const ATTR_SERVER_PORT = 'server.port';
