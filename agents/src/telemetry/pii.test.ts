@@ -127,6 +127,13 @@ describe('PIIFilteringSpanProcessor', () => {
       exported.status.message,
     ]);
     expect(serialized).not.toContain('my pin is 1234');
+
+    // ... while LiveKit Cloud still receives all three, per the project's setting
+    // recordException records it on the `exception` event and the status, not the
+    // span attributes, which is why both are restored
+    const restored = restorePii(exported);
+    expect(restored.status.message).toBe('my pin is 1234');
+    expect(JSON.stringify(restored.events)).toContain('my pin is 1234');
   });
 
   it('protects an exporter registered before it', () => {

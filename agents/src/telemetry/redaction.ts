@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Attributes } from '@opentelemetry/api';
+import type { Attributes, SpanStatus } from '@opentelemetry/api';
 import type { ReadableSpan, Span as SdkSpan, TimedEvent } from '@opentelemetry/sdk-trace-node';
 
 // Type-only imports on purpose: this module is pulled in near the top of the telemetry
@@ -28,17 +28,23 @@ export function allowPiiFromEnv(): boolean | undefined {
 
 const RAW_ATTRIBUTES = Symbol('lkRawAttributes');
 const RAW_EVENTS = Symbol('lkRawEvents');
+const RAW_STATUS = Symbol('lkRawStatus');
 
 interface PiiStash {
   [RAW_ATTRIBUTES]?: Attributes;
   [RAW_EVENTS]?: TimedEvent[];
+  [RAW_STATUS]?: SpanStatus;
 }
 
-/** Keeps the pre-redaction payload for {@link restorePii} to hand LiveKit Cloud. */
+/** Keeps the pre-filter payload for {@link restorePii} to hand LiveKit Cloud. */
 export function stashPii(span: SdkSpan): void {
   const stash = span as unknown as PiiStash;
   stash[RAW_ATTRIBUTES] = { ...span.attributes };
-  stash[RAW_EVENTS] = [...span.events];
+  stash[RAW_EVENTS] = span.events.map((event) => ({
+    ...event,
+    attributes: { ...event.attributes },
+  }));
+  stash[RAW_STATUS] = { ...span.status };
 }
 
 /**
@@ -59,6 +65,10 @@ export function restorePii(span: ReadableSpan): ReadableSpan {
   Object.defineProperty(view, 'attributes', { value: attributes, enumerable: true });
   Object.defineProperty(view, 'events', {
     value: stash[RAW_EVENTS] ?? span.events,
+    enumerable: true,
+  });
+  Object.defineProperty(view, 'status', {
+    value: stash[RAW_STATUS] ?? span.status,
     enumerable: true,
   });
   return view;
