@@ -220,46 +220,58 @@ function buildConfigUpdatePayload(
 // PCM wire encoders
 // ---------------------------------------------------------------------------
 
+// Faithful port of the standard ITU-T G.711 reference encoders (the same `linear2ulaw`/
+// `linear2alaw` algorithm — segment tables, bit-exact shifts and masks — found in Sun's
+// canonical g711.c and used by virtually every G.711 implementation since).
 const MULAW_BIAS = 0x84;
-const MULAW_CLIP = 32635;
-// Table-based exponent lookup for G.711 encoders — standard reference implementation
-// (same shape as the classic Sun `g711.c` tables ported to JS in most audio libraries).
-const G711_EXPONENT_TABLE = [
-  0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6,
-  6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7,
-  7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-  7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-];
+const MULAW_CLIP = 8159;
+const SEG_UEND = [0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff];
+const SEG_AEND = [0x1f, 0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff];
+
+function search(val: number, table: number[]): number {
+  for (let i = 0; i < table.length; i++) {
+    if (val <= table[i]!) return i;
+  }
+  return table.length;
+}
 
 function linearToMulaw(sample: number): number {
-  let s = sample;
-  const sign = s < 0 ? 0x80 : 0x00;
-  if (sign !== 0) s = -s;
-  if (s > MULAW_CLIP) s = MULAW_CLIP;
-  s += MULAW_BIAS;
-  const exponent = G711_EXPONENT_TABLE[(s >> 7) & 0xff]!;
-  const mantissa = (s >> (exponent + 3)) & 0x0f;
-  return ~(sign | (exponent << 4) | mantissa) & 0xff;
+  let pcm = sample >> 2;
+  let mask: number;
+  if (pcm < 0) {
+    pcm = -pcm;
+    mask = 0x7f;
+  } else {
+    mask = 0xff;
+  }
+  if (pcm > MULAW_CLIP) pcm = MULAW_CLIP;
+  pcm += MULAW_BIAS >> 2;
+
+  const seg = search(pcm, SEG_UEND);
+  if (seg >= 8) return 0x7f ^ mask;
+  const uval = (seg << 4) | ((pcm >> (seg + 1)) & 0x0f);
+  return (uval ^ mask) & 0xff;
 }
 
 function linearToAlaw(sample: number): number {
-  let s = sample;
-  const sign = s < 0 ? 0x80 : 0x00;
-  if (sign === 0) s = -s;
-  // A-law operates on the sample directly (no bias); clip to 12-bit magnitude.
-  if (s > 0xfff) s = 0xfff;
-  let byte: number;
-  if (s >= 256) {
-    const exponent = G711_EXPONENT_TABLE[(s >> 8) & 0x7f]!;
-    const mantissa = (s >> (exponent + 3)) & 0x0f;
-    byte = (exponent << 4) | mantissa;
+  let pcm = sample >> 3;
+  let mask: number;
+  if (pcm >= 0) {
+    mask = 0xd5;
   } else {
-    byte = s >> 4;
+    mask = 0x55;
+    pcm = -pcm - 1;
   }
-  return (byte ^ sign ^ 0x55) & 0xff;
+
+  const seg = search(pcm, SEG_AEND);
+  if (seg >= 8) return (0x7f ^ mask) & 0xff;
+  let aval = seg << 4;
+  aval |= seg < 2 ? (pcm >> 1) & 0x0f : (pcm >> seg) & 0x0f;
+  return (aval ^ mask) & 0xff;
 }
 
-function encodePcmForWire(encoding: RealtimeEncoding, frame: AudioFrame): Buffer {
+/** @internal exported only for unit tests */
+export function encodePcmForWire(encoding: RealtimeEncoding, frame: AudioFrame): Buffer {
   const int16 = frame.data;
   switch (encoding) {
     case 'linear16':
@@ -403,6 +415,7 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
   #opts: ResolvedRealtimeOptions;
   #logger = log();
   #onClose?: () => void;
+  #closeNotified = false;
   #ws?: WebSocket;
 
   #requestId = '';
@@ -490,6 +503,17 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
       // already closing/closed
     }
     super.close();
+    this.#notifyClosed();
+  }
+
+  /**
+   * Notify {@link STTRealtime} that this stream is done, so it stops forwarding
+   * `updateOptions()` calls to it. Idempotent: called from both `close()` (caller-initiated)
+   * and `run()`'s `finally` (natural completion or error), which can race each other.
+   */
+  #notifyClosed(): void {
+    if (this.#closeNotified) return;
+    this.#closeNotified = true;
     this.#onClose?.();
   }
 
@@ -502,14 +526,31 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
       },
     });
     this.#ws = ws;
+    // Scoped to this connection attempt: aborted once the server->client side settles (session
+    // ended, or the socket closed) so the client->server audio pump — which would otherwise
+    // block forever on this.input.next() waiting for a frame that may never come — stops too.
+    const audioAbort = new AbortController();
 
     try {
       await waitForWebSocketOpen(ws, 'Sarvam realtime STT');
 
-      await Promise.race([
-        Promise.all([this.#processAudio(ws), this.#processMessages(ws)]),
-        waitForAbort(this.abortSignal),
+      const audioTask = this.#processAudio(ws, audioAbort.signal);
+      const messagesTask = this.#processMessages(ws);
+
+      const first = await Promise.race([
+        audioTask.then(() => 'audio' as const),
+        messagesTask.then(() => 'messages' as const),
+        waitForAbort(this.abortSignal).then(() => 'abort' as const),
       ]);
+      if (first === 'abort') return;
+
+      // Whichever side finished first, stop the other and wait for it to settle. If audio
+      // finished first (endInput()/flush()), this just waits for any trailing server messages
+      // (e.g. a final transcript, session.end) as before. If messages finished first (server
+      // ended the session or closed cleanly before the caller ended input), this now unblocks
+      // the audio pump instead of leaving it hanging.
+      audioAbort.abort();
+      await Promise.all([audioTask, messagesTask]);
     } catch (error) {
       if (this.abortSignal.aborted) return;
       if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
@@ -517,12 +558,14 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
         message: `Sarvam realtime STT connection failed: ${error instanceof Error ? error.message : String(error)}`,
       });
     } finally {
+      audioAbort.abort();
       try {
         ws.close();
       } catch {
         // already closing/closed
       }
       this.#ws = undefined;
+      this.#notifyClosed();
     }
   }
 
@@ -530,26 +573,43 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
   // Client -> server (audio pump)
   // -------------------------------------------------------------------------
 
-  async #processAudio(ws: WebSocket): Promise<void> {
+  async #processAudio(ws: WebSocket, signal: AbortSignal): Promise<void> {
     const samplesPerChannel = Math.max(
       Math.floor((this.#opts.sampleRate * AUDIO_CHUNK_MS) / 1000),
       1,
     );
     const audioStream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS, samplesPerChannel);
 
-    for await (const data of this.input) {
-      if (this.#sessionEnded || ws.readyState !== WebSocket.OPEN) break;
+    while (!this.#sessionEnded && ws.readyState === WebSocket.OPEN && !signal.aborted) {
+      let result: IteratorResult<AudioFrame | typeof RealtimeSpeechStream.FLUSH_SENTINEL>;
+      try {
+        result = await this.input.next({ signal });
+      } catch (error) {
+        if (signal.aborted) break;
+        throw error;
+      }
+      if (result.done) break;
+
+      const data = result.value;
       this.#sendPendingConfigUpdate(ws);
 
       const isFlush = data === RealtimeSpeechStream.FLUSH_SENTINEL;
-      const frames: AudioFrame[] = isFlush
-        ? audioStream.flush()
-        : audioStream.write(
-            (data as AudioFrame).data.buffer.slice(
-              (data as AudioFrame).data.byteOffset,
-              (data as AudioFrame).data.byteOffset + (data as AudioFrame).data.byteLength,
-            ) as ArrayBuffer,
+      let frames: AudioFrame[];
+      if (isFlush) {
+        frames = audioStream.flush();
+      } else {
+        if (data.channels !== NUM_CHANNELS) {
+          throw new Error(
+            `Sarvam realtime STT only supports mono audio (${NUM_CHANNELS} channel), got ${data.channels} channels`,
           );
+        }
+        frames = audioStream.write(
+          data.data.buffer.slice(
+            data.data.byteOffset,
+            data.data.byteOffset + data.data.byteLength,
+          ) as ArrayBuffer,
+        );
+      }
 
       for (const frame of frames) {
         if (this.#activeEndpointing === 'manual' && !this.#manualSpeechStarted) {
@@ -575,7 +635,7 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
     }
 
     this.#flushLocalUsageFallback();
-    if (!this.#sessionEnded) {
+    if (!this.#sessionEnded && !signal.aborted && ws.readyState === WebSocket.OPEN) {
       this.#safeSendJson(ws, { event: 'end' });
     }
   }
@@ -912,21 +972,27 @@ export class RealtimeSpeechStream extends stt.SpeechStream {
   }
 
   #handleErrorEvent(data: RealtimeServerEvent): void {
+    const code = data.code ?? 'unknown';
     if (!data.is_fatal) {
       this.#logger.warn(
-        { code: data.code, message: data.message },
+        { code, 'lk.pii.message': data.message },
         'non-fatal Sarvam realtime STT error',
       );
       return;
     }
     const statusCode = typeof data.status_code === 'number' ? data.status_code : -1;
+    this.#logger.error(
+      { code, statusCode, 'lk.pii.message': data.message },
+      'fatal Sarvam realtime STT error',
+    );
+    // The raw provider message/payload may carry account or transcript-adjacent details, so it's
+    // only logged (tagged lk.pii.* above) — the thrown error's own message and body stay generic.
     throw new APIStatusError({
-      message: `Sarvam realtime STT error: ${data.message ?? data.code ?? 'unknown'}`,
+      message: `Sarvam realtime STT error (${code})`,
       options: {
         statusCode,
         requestId: this.#requestId || null,
-        body: data as unknown as object,
-        retryable: data.code === 'model_unavailable',
+        retryable: code === 'model_unavailable',
       },
     });
   }

@@ -6,7 +6,7 @@ import type { stt as sttNamespace } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RealtimeSpeechStream } from './stt_realtime.js';
-import { STTRealtime } from './stt_realtime.js';
+import { STTRealtime, encodePcmForWire } from './stt_realtime.js';
 
 interface ServerEvent {
   event: string;
@@ -87,6 +87,33 @@ type FakeWebSocketInstance = InstanceType<typeof FakeWebSocket>;
 
 function frame(): AudioFrame {
   return new AudioFrame(new Int16Array(160), 16000, 1, 160);
+}
+
+function toneFrame(samples: number[]): AudioFrame {
+  return new AudioFrame(new Int16Array(samples), 16000, 1, samples.length);
+}
+
+// Standard ITU G.711 A-law decoder — independent of this plugin's encoder, used to round-trip
+// verify linearToAlaw's output rather than asserting on encoder-internal byte values.
+function alawDecode(aVal: number): number {
+  aVal ^= 0x55;
+  let t = (aVal & 0x0f) << 4;
+  const seg = (aVal & 0x70) >> 4;
+  if (seg === 0) t += 8;
+  else if (seg === 1) t += 0x108;
+  else {
+    t += 0x108;
+    t <<= seg - 1;
+  }
+  return aVal & 0x80 ? t : -t;
+}
+
+// Standard ITU G.711 mu-law decoder — independent of this plugin's encoder.
+function mulawDecode(uVal: number): number {
+  uVal = ~uVal & 0xff;
+  let t = ((uVal & 0x0f) << 3) + 0x84;
+  t <<= (uVal & 0x70) >> 4;
+  return uVal & 0x80 ? 0x84 - t : t - 0x84;
 }
 
 async function waitForSocket(): Promise<FakeWebSocketInstance> {
@@ -198,5 +225,98 @@ describe('Sarvam realtime STT', () => {
   it('throws when _recognize is called (streaming only)', async () => {
     const sttRealtime = new STTRealtime({ apiKey: 'test-key' });
     await expect(sttRealtime._recognize()).rejects.toThrow(/only supports streaming/i);
+  });
+
+  it('encodes A-law samples with the correct sign and magnitude (regression for inverted sign bug)', () => {
+    // Round-trip through an independent reference decoder — not the encoder's own logic —
+    // so this actually catches a sign inversion instead of just re-asserting the bug.
+    // Values well above A-law's quantization floor (its lowest segment collapses everything
+    // under ~16 to one bucket, so sign isn't meaningful that close to zero — see below).
+    for (const sample of [100, 5000, 16000, 32000, -100, -5000, -16000, -32000]) {
+      const encoded = encodePcmForWire('alaw', toneFrame([sample]));
+      const decoded = alawDecode(encoded[0]!);
+      expect(Math.sign(decoded)).toBe(Math.sign(sample));
+      // A-law is lossy/companded, not lossless — allow generous relative tolerance.
+      expect(Math.abs(decoded - sample)).toBeLessThan(Math.abs(sample) * 0.15 + 32);
+    }
+
+    // A-law's zero code decodes to a small nonzero value by design (segment-0 offset of 8) —
+    // just confirm it stays near silence rather than asserting an exact sign.
+    const zeroEncoded = encodePcmForWire('alaw', toneFrame([0]));
+    expect(Math.abs(alawDecode(zeroEncoded[0]!))).toBeLessThanOrEqual(8);
+  });
+
+  it('encodes mu-law samples with the correct sign and magnitude', () => {
+    for (const sample of [100, 5000, 16000, 32000, -100, -5000, -16000, -32000]) {
+      const encoded = encodePcmForWire('mulaw', toneFrame([sample]));
+      const decoded = mulawDecode(encoded[0]!);
+      expect(Math.sign(decoded)).toBe(Math.sign(sample));
+      expect(Math.abs(decoded - sample)).toBeLessThan(Math.abs(sample) * 0.15 + 32);
+    }
+  });
+
+  it('does not hang when the server ends the session before the caller ends input', async () => {
+    const sttRealtime = new STTRealtime({ apiKey: 'test-key' });
+    const stream = sttRealtime.stream();
+    stream.pushFrame(frame());
+    // Deliberately not calling endInput()/flush() — the caller may keep the stream open
+    // across turns, so a server-initiated end must not depend on the caller closing input.
+
+    const socket = await waitForSocket();
+    await onceOpen(socket);
+    send(socket, { event: 'vad.speech_start' });
+    send(socket, { event: 'transcript.final', text: 'done' });
+    send(socket, { event: 'vad.speech_end' });
+    send(socket, { event: 'session.end', audio_duration_s: 1 });
+    socket.close(1000, '');
+
+    const drain = (async () => {
+      const events: sttNamespace.SpeechEvent[] = [];
+      for await (const event of stream) events.push(event);
+      return events;
+    })();
+    const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2000));
+
+    const result = await Promise.race([drain, timeout]);
+    expect(result).not.toBe('timeout');
+    expect(
+      texts(result as sttNamespace.SpeechEvent[], stt.SpeechEventType.FINAL_TRANSCRIPT),
+    ).toEqual(['done']);
+  });
+
+  it('stops forwarding updateOptions to a stream that completed naturally', async () => {
+    const sttRealtime = new STTRealtime({ apiKey: 'test-key' });
+    const stream = sttRealtime.stream();
+    const updateOptionsSpy = vi.spyOn(stream, 'updateOptions');
+    stream.pushFrame(frame());
+    stream.endInput();
+
+    await scriptAndDrain(stream, (socket) => {
+      send(socket, { event: 'session.end', audio_duration_s: 1 });
+    });
+
+    sttRealtime.updateOptions({ language: 'hi-IN' });
+    expect(updateOptionsSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-mono audio instead of silently corrupting it', async () => {
+    const sttRealtime = new STTRealtime({ apiKey: 'test-key' });
+    const errors: unknown[] = [];
+    sttRealtime.on('error', (e) => errors.push(e));
+
+    const stream = sttRealtime.stream();
+    const stereoFrame = new AudioFrame(new Int16Array(320), 16000, 2, 160);
+    stream.pushFrame(stereoFrame);
+    stream.endInput();
+
+    // Deliberately not synchronizing with the socket's 'open' event here: the channel
+    // validation error fires almost synchronously once the (mocked) socket opens, which can
+    // close the socket before this test's own listener attaches — waiting on 'open' again
+    // would then hang forever. Draining the stream is enough to observe the error.
+    const events: sttNamespace.SpeechEvent[] = [];
+    for await (const event of stream) events.push(event);
+
+    expect(errors).toHaveLength(1);
+    expect(String((errors[0] as { error: Error }).error.message)).toMatch(/mono/i);
   });
 });
