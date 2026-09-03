@@ -19,7 +19,7 @@
  * Content capture is on by default, matching the `lk.pii.*` content LiveKit already records,
  * and can be turned off process-wide with {@link setCaptureContent} or the
  * `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` environment variable. It is stripped
- * in-process for redaction-enabled sessions regardless — see `telemetry/pii.ts`.
+ * before any exporter that is not LiveKit Cloud's regardless — see `telemetry/pii.ts`.
  */
 import type { Attributes, Span } from '@opentelemetry/api';
 import { getJobContext } from '../job.js';
