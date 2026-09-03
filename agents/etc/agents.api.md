@@ -4331,6 +4331,11 @@ interface GatewayOptions {
     apiSecret: string;
 }
 
+// Warning: (ae-missing-release-tag) "GEN_AI_PROVIDER_NAMES" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const GEN_AI_PROVIDER_NAMES: ReadonlySet<string>;
+
 declare namespace genAI {
     export {
         setCaptureContent,
@@ -6116,6 +6121,13 @@ export enum PluginEventTypes {
 // @public (undocumented)
 export type ProviderFormat = 'openai' | 'openai.responses' | 'google' | 'mistralai';
 
+// @internal
+const _providerTables: {
+    byHost: Record<string, string>;
+    byHostSuffix: readonly [string, string][];
+    byName: Record<string, string>;
+};
+
 // Warning: (ae-missing-release-tag) "ProviderTool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -6788,7 +6800,7 @@ export type ScenarioUserdata = {
 //
 // @public (undocumented)
 const sendDtmfEvents: FunctionTool<    {
-events: ("1" | "0" | "2" | "3" | "4" | "5" | "6" | "7" | "#" | "*" | "8" | "9" | "A" | "B" | "C" | "D")[];
+events: ("0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "#" | "*" | "8" | "9" | "A" | "B" | "C" | "D")[];
 }, unknown, string>;
 
 // Warning: (ae-missing-release-tag) "SentenceStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -8785,6 +8797,8 @@ declare namespace traceTypes {
         GenAIOperationName,
         GenAIOutputType,
         GenAIFinishReason,
+        GEN_AI_PROVIDER_NAMES,
+        _providerTables,
         ATTR_GEN_AI_USAGE_INPUT_TEXT_TOKENS,
         ATTR_GEN_AI_USAGE_INPUT_AUDIO_TOKENS,
         ATTR_GEN_AI_USAGE_INPUT_CACHED_TOKENS,

@@ -282,7 +282,7 @@ const piiRedactionInstalled = new WeakSet<TracerProvider>();
 function installPIIRedaction(
   provider: TracerProvider,
   registerSpanProcessor: SpanProcessorRegistrar | undefined,
-  allowPii: boolean,
+  allowPii: boolean | undefined,
 ): void {
   if (piiRedactionInstalled.has(provider)) return;
 
@@ -299,7 +299,9 @@ function installPIIRedaction(
   }
 
   piiRedactionInstalled.add(provider);
-  registerSpanProcessor(new PIIRedactingSpanProcessor(allowPii || allowPiiFromEnv()));
+  // PII flows to every exporter unless withheld: the GenAI conventions are only useful to a
+  // backend that can render the conversation
+  registerSpanProcessor(new PIIRedactingSpanProcessor(allowPii ?? allowPiiFromEnv() ?? true));
 }
 
 /** Options for configuring a custom tracer provider. */
@@ -331,13 +333,13 @@ export interface SetTracerProviderOptions {
    */
   createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessor;
   /**
-   * Let this provider's exporters receive conversational content, tool payloads and other
-   * user data.
+   * Whether this provider's exporters may receive conversational content, tool payloads and
+   * other user data.
    *
-   * Off by default: PII is stripped in-process before any exporter that is not LiveKit
-   * Cloud's, so a Datadog or Langfuse pipeline sees only the non-content attributes. Turn it
-   * on when the backend is meant to show conversations. Ignored when the project mandates
-   * redaction — that setting is not weakened from here.
+   * Defaults to `true` (or `LIVEKIT_TELEMETRY_ALLOW_PII`, when set), since a GenAI backend
+   * can only render the conversation if it receives it. Pass `false` to strip PII in-process
+   * before every exporter but LiveKit Cloud's, leaving them the non-content attributes.
+   * Ignored when the project mandates redaction — that setting is not weakened from here.
    */
   allowPii?: boolean;
 }
@@ -393,7 +395,7 @@ export function setTracerProvider(
     );
   }
 
-  installPIIRedaction(provider, registerSpanProcessor, options?.allowPii ?? false);
+  installPIIRedaction(provider, registerSpanProcessor, options?.allowPii);
 
   if (registerSpanProcessor) {
     customProviderConfigs.set(provider, {
@@ -505,7 +507,7 @@ export async function setupCloudTracer(
           resource,
           spanProcessors: [
             // strips PII while the span is still mutable, ahead of every exporter's onEnd
-            new PIIRedactingSpanProcessor(allowPiiFromEnv()),
+            new PIIRedactingSpanProcessor(allowPiiFromEnv() ?? true),
             new MetadataSpanProcessor(sessionMetadata),
             new BatchSpanProcessor(createCloudExporter()),
           ],
@@ -538,7 +540,7 @@ export async function setupCloudTracer(
           // Resource shared by all exporters, so applying `resource` here would also relabel
           // the spans going to the user's own backend. room_id/job_id — the keys Cloud
           // correlates on — still ride along as span attributes via MetadataSpanProcessor.
-          installPIIRedaction(existingProvider, config.registerSpanProcessor, false);
+          installPIIRedaction(existingProvider, config.registerSpanProcessor, undefined);
           config.registerSpanProcessor(new MetadataSpanProcessor(sessionMetadata));
           config.registerSpanProcessor(cloudSpanProcessor);
         }

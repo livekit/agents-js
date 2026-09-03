@@ -37,7 +37,7 @@ const SAFE_ATTRS: Attributes = {
 function emit(options: { redaction?: boolean; exporterFirst?: boolean; allowPii?: boolean }) {
   const exporter = new InMemorySpanExporter();
   const exportProcessor = new SimpleSpanProcessor(exporter);
-  const redactProcessor = new PIIRedactingSpanProcessor(options.allowPii ?? false);
+  const redactProcessor = new PIIRedactingSpanProcessor(options.allowPii ?? true);
   const provider = new BasicTracerProvider({
     spanProcessors: options.exporterFirst
       ? [exportProcessor, redactProcessor]
@@ -59,8 +59,8 @@ function leaked(attributes: Attributes): string[] {
 }
 
 describe('PIIRedactingSpanProcessor', () => {
-  it('never lets a third-party exporter receive PII', () => {
-    const span = emit({});
+  it('withholds PII from third-party exporters on request', () => {
+    const span = emit({ allowPii: false });
 
     expect(leaked(span.attributes)).toEqual([]);
     for (const [key, value] of Object.entries(SAFE_ATTRS)) {
@@ -75,8 +75,9 @@ describe('PIIRedactingSpanProcessor', () => {
     expect(events['llm_started']).toEqual({ n: 1 });
   });
 
-  it('leaves everything in place for a provider granted allowPii', () => {
-    const span = emit({ allowPii: true });
+  it('lets exporters receive PII by default', () => {
+    // the GenAI conventions are only useful to a backend that can render the conversation
+    const span = emit({});
 
     for (const [key, value] of Object.entries(PII_ATTRS)) {
       expect(span.attributes[key]).toEqual(value);
@@ -85,7 +86,7 @@ describe('PIIRedactingSpanProcessor', () => {
   });
 
   it('still hands LiveKit Cloud the PII the project allows', () => {
-    const stripped = emit({});
+    const stripped = emit({ allowPii: false });
     const restored = restorePii(stripped);
 
     for (const [key, value] of Object.entries(PII_ATTRS)) {
@@ -108,7 +109,7 @@ describe('PIIRedactingSpanProcessor', () => {
 
   it('protects an exporter registered before it', () => {
     // onEnding runs for every processor before any onEnd, so ordering cannot leak PII
-    expect(leaked(emit({ exporterFirst: true }).attributes)).toEqual([]);
+    expect(leaked(emit({ allowPii: false, exporterFirst: true }).attributes)).toEqual([]);
   });
 
   it.each([

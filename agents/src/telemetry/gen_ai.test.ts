@@ -201,3 +201,45 @@ describe('gen_ai span attributes', () => {
     expect(errored.exporter.getFinishedSpans()[0]!.attributes['error.type']).toBe('429');
   });
 });
+
+// Every `provider` value a plugin actually reports. The convention makes the registry
+// spelling mandatory for a provider it enumerates, so a plugin returning a display name or a
+// base-URL host must still land on it.
+describe('provider normalization', () => {
+  it.each([
+    // base-URL hosts, from the OpenAI-compatible clients
+    ['api.openai.com', 'openai'],
+    ['api.anthropic.com', 'anthropic'],
+    ['api.mistral.ai', 'mistral_ai'],
+    ['api.groq.com', 'groq'],
+    ['api.x.ai', 'x_ai'],
+    ['my-co.openai.azure.com', 'azure.ai.openai'],
+    ['bedrock-runtime.us-east-1.amazonaws.com', 'aws.bedrock'],
+    // display names
+    ['AWS Bedrock', 'aws.bedrock'],
+    ['MistralAI', 'mistral_ai'],
+    ['Vertex AI', 'gcp.vertex_ai'],
+    ['Vertex AI Model Garden', 'gcp.vertex_ai'],
+    ['Gemini', 'gcp.gemini'],
+    ['google', 'gcp.gen_ai'],
+    ['xAI', 'x_ai'],
+    ['xai', 'x_ai'],
+    ['Perplexity', 'perplexity'],
+    // outside the registry: the convention allows a custom value, so it passes through
+    ['MiniMax', 'MiniMax'],
+    ['api.cerebras.ai', 'api.cerebras.ai'],
+  ])('resolves %s', (reported, expected) => {
+    expect(traceTypes.genAIProviderName(reported as string)).toBe(expected);
+  });
+
+  it('only targets registry values', () => {
+    // a typo in a mapping would emit a value no backend recognises
+    const { byHost, byHostSuffix, byName } = traceTypes._providerTables;
+    const targets = [
+      ...Object.values(byHost),
+      ...Object.values(byName),
+      ...byHostSuffix.map(([, v]) => v),
+    ];
+    expect(targets.filter((t) => !traceTypes.GEN_AI_PROVIDER_NAMES.has(t))).toEqual([]);
+  });
+});

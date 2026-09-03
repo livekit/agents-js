@@ -253,34 +253,106 @@ export const GenAIFinishReason = {
 } as const;
 
 /**
- * `gen_ai.provider.name` is an open enum: the registry enumerates the providers it has
- * modelled, and instrumentations use the plugin's own provider id otherwise. This maps
- * LiveKit plugin provider ids onto the registry spelling where they differ, so a
- * Datadog/Langfuse backend recognises the provider flavour.
+ * The `gen_ai.provider.name` values the registry enumerates.
+ *
+ * For a provider on this list the convention says the registry spelling MUST be used, since
+ * backends treat the attribute as the discriminator for provider-specific parsing. A provider
+ * that is not on it MAY report a custom value, so those pass through untouched.
  */
-const GEN_AI_PROVIDER_ALIASES: Record<string, string> = {
-  azure: 'azure.ai.openai',
-  azure_openai: 'azure.ai.openai',
-  azure_ai: 'azure.ai.inference',
-  bedrock: 'aws.bedrock',
-  aws: 'aws.bedrock',
-  google: 'gcp.gen_ai',
-  gemini: 'gcp.gemini',
-  vertex: 'gcp.vertex_ai',
-  vertexai: 'gcp.vertex_ai',
-  google_vertex: 'gcp.vertex_ai',
-  watsonx: 'ibm.watsonx.ai',
-  xai: 'x_ai',
-  grok: 'x_ai',
-  mistral: 'mistral_ai',
-  moonshot: 'moonshot_ai',
+export const GEN_AI_PROVIDER_NAMES: ReadonlySet<string> = new Set([
+  'openai',
+  'gcp.gen_ai',
+  'gcp.vertex_ai',
+  'gcp.gemini',
+  'anthropic',
+  'cohere',
+  'azure.ai.inference',
+  'azure.ai.openai',
+  'ibm.watsonx.ai',
+  'aws.bedrock',
+  'perplexity',
+  'x_ai',
+  'deepseek',
+  'groq',
+  'mistral_ai',
+  'moonshot_ai',
+]);
+
+// Plugins report `provider` either as a display name ('AWS Bedrock', 'MistralAI') or, for the
+// OpenAI-compatible clients, as the base URL's host ('api.mistral.ai'). Both are mapped here:
+// by host first, then by the display name reduced to lowercase alphanumerics, so
+// 'AWS Bedrock' / 'aws_bedrock' / 'awsbedrock' all resolve alike.
+const PROVIDER_BY_HOST: Record<string, string> = {
+  'api.anthropic.com': 'anthropic',
+  'api.cohere.ai': 'cohere',
+  'api.cohere.com': 'cohere',
+  'api.deepseek.com': 'deepseek',
+  'api.groq.com': 'groq',
+  'api.mistral.ai': 'mistral_ai',
+  'api.moonshot.ai': 'moonshot_ai',
+  'api.moonshot.cn': 'moonshot_ai',
+  'api.openai.com': 'openai',
+  'api.perplexity.ai': 'perplexity',
+  'api.x.ai': 'x_ai',
+  'generativelanguage.googleapis.com': 'gcp.gemini',
 };
 
-/** Normalize a LiveKit plugin provider id to its GenAI registry spelling. */
+const PROVIDER_BY_HOST_SUFFIX: readonly [string, string][] = [
+  ['.openai.azure.com', 'azure.ai.openai'],
+  ['.services.ai.azure.com', 'azure.ai.inference'],
+  ['.aiplatform.googleapis.com', 'gcp.vertex_ai'],
+  ['.amazonaws.com', 'aws.bedrock'],
+];
+
+const PROVIDER_BY_NAME: Record<string, string> = {
+  amazonbedrock: 'aws.bedrock',
+  anthropic: 'anthropic',
+  awsbedrock: 'aws.bedrock',
+  azureaiinference: 'azure.ai.inference',
+  azureopenai: 'azure.ai.openai',
+  bedrock: 'aws.bedrock',
+  cohere: 'cohere',
+  deepseek: 'deepseek',
+  gemini: 'gcp.gemini',
+  google: 'gcp.gen_ai',
+  googlecloudplatform: 'gcp.gen_ai',
+  googlegenai: 'gcp.gen_ai',
+  groq: 'groq',
+  ibmwatsonxai: 'ibm.watsonx.ai',
+  mistral: 'mistral_ai',
+  mistralai: 'mistral_ai',
+  moonshot: 'moonshot_ai',
+  moonshotai: 'moonshot_ai',
+  openai: 'openai',
+  perplexity: 'perplexity',
+  vertexai: 'gcp.vertex_ai',
+  vertexaimodelgarden: 'gcp.vertex_ai',
+  watsonx: 'ibm.watsonx.ai',
+  xai: 'x_ai',
+};
+
+/** Normalize a LiveKit plugin's `provider` to its GenAI registry spelling. */
 export function genAIProviderName(provider: string | undefined | null): string | undefined {
-  if (!provider) return undefined;
-  return GEN_AI_PROVIDER_ALIASES[provider] ?? provider;
+  const value = provider?.trim();
+  if (!value) return undefined;
+
+  const host = value.toLowerCase();
+  if (PROVIDER_BY_HOST[host]) return PROVIDER_BY_HOST[host];
+  for (const [suffix, mapped] of PROVIDER_BY_HOST_SUFFIX) {
+    if (host.endsWith(suffix)) return mapped;
+  }
+
+  const canonical = host.replace(/[^a-z0-9]/g, '');
+  // a provider outside the registry keeps its own id, which the convention allows
+  return PROVIDER_BY_NAME[canonical] ?? value;
 }
+
+/** @internal Exposed for the guard test that walks the plugins' provider values. */
+export const _providerTables = {
+  byHost: PROVIDER_BY_HOST,
+  byHostSuffix: PROVIDER_BY_HOST_SUFFIX,
+  byName: PROVIDER_BY_NAME,
+};
 
 // Unofficial OpenTelemetry GenAI attributes, recognized by LangFuse
 // https://langfuse.com/integrations/native/opentelemetry#usage

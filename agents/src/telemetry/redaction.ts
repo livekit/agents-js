@@ -11,16 +11,19 @@ import type { ReadableSpan, Span as SdkSpan, TimedEvent } from '@opentelemetry/s
 export const REDACTED_EXCEPTION_MESSAGE = 'exception details redacted';
 
 const ALLOW_PII_ENV_VAR = 'LIVEKIT_TELEMETRY_ALLOW_PII';
-const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
+const FALSY = new Set(['0', 'false', 'no', 'off']);
 
 /**
- * Grant third-party exporters PII without a {@link setTracerProvider} call site.
+ * The `LIVEKIT_TELEMETRY_ALLOW_PII` setting, or `undefined` when unset.
  *
- * Only for integrators who let the framework adopt the ambient OpenTelemetry provider (a
- * NodeSDK-style setup) and so have nowhere to pass `allowPii`.
+ * For integrators who let the framework adopt the ambient OpenTelemetry provider (a
+ * NodeSDK-style setup) and so have nowhere to pass `allowPii`. Set it to `0` to withhold
+ * conversational content from third-party exporters.
  */
-export function allowPiiFromEnv(): boolean {
-  return TRUTHY.has((process.env[ALLOW_PII_ENV_VAR] ?? '').trim().toLowerCase());
+export function allowPiiFromEnv(): boolean | undefined {
+  const raw = process.env[ALLOW_PII_ENV_VAR];
+  if (raw === undefined) return undefined;
+  return !FALSY.has(raw.trim().toLowerCase());
 }
 
 const RAW_ATTRIBUTES = Symbol('lkRawAttributes');
