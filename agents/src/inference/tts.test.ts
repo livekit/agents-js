@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { type WebSocket, WebSocketServer } from 'ws';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
@@ -30,6 +33,41 @@ function makeTts(overrides: Record<string, unknown> = {}) {
   };
   return new TTS({ ...defaults, ...overrides });
 }
+
+describe('Inference TTS connection', () => {
+  it('includes the model in the dial URL', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let resolveRequestUrl!: (url: string) => void;
+    const requestUrl = new Promise<string>((resolve) => {
+      resolveRequestUrl = resolve;
+    });
+
+    server.on('connection', (_socket, request) => {
+      resolveRequestUrl(request.url ?? '');
+    });
+
+    const tts = makeTts({
+      model: 'cartesia/sonic-3',
+      baseURL: `http://127.0.0.1:${address.port}`,
+    });
+    let socket: WebSocket | undefined;
+
+    try {
+      socket = await tts.connectWs(1_000);
+
+      expect(new URL(await requestUrl, 'ws://127.0.0.1').searchParams.get('model')).toBe(
+        'cartesia/sonic-3',
+      );
+    } finally {
+      socket?.terminate();
+      for (const client of server.clients) client.terminate();
+      await tts.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
 
 describe('parseTTSModelString', () => {
   it('simple model without voice', () => {
