@@ -30,7 +30,37 @@ export class ChunkedStream extends tts.ChunkedStream {
     protected run(): Promise<void>;
 }
 
+// Warning: (ae-missing-release-tag) "RealtimeEncoding" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type RealtimeEncoding = 'linear16' | 'linear32' | 'mulaw' | 'alaw';
+
+// Warning: (ae-missing-release-tag) "RealtimeEndpointing" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type RealtimeEndpointing = 'vad' | 'manual';
+
 // Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "RealtimeSpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export class RealtimeSpeechStream extends stt.SpeechStream {
+    // Warning: (ae-forgotten-export) The symbol "ResolvedRealtimeOptions" needs to be exported by the entry point index.d.ts
+    constructor(sttInstance: STTRealtime, opts: ResolvedRealtimeOptions, connOptions: APIConnectOptions, onClose?: () => void);
+    // (undocumented)
+    close(): void;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected run(): Promise<void>;
+    updateOptions(opts: Partial<STTRealtimeOptions>): void;
+}
+
+// Warning: (ae-missing-release-tag) "RealtimeStreamType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type RealtimeStreamType = 'fast' | 'balanced' | 'simulated';
+
 // Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -83,6 +113,56 @@ export type STTModes = 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'c
 //
 // @public
 export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options;
+
+// Warning: (ae-missing-release-tag) "STTRealtime" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class STTRealtime extends stt.STT {
+    constructor(opts?: Partial<STTRealtimeOptions>);
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    _recognize(): Promise<stt.SpeechEvent>;
+    // (undocumented)
+    stream(options?: {
+        language?: string;
+        connOptions?: APIConnectOptions;
+    }): RealtimeSpeechStream;
+    updateOptions(opts: Partial<STTRealtimeOptions>): void;
+}
+
+// Warning: (ae-missing-release-tag) "STTRealtimeLanguages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type STTRealtimeLanguages = 'auto' | 'as-IN' | 'bn-IN' | 'brx-IN' | 'doi-IN' | 'en-IN' | 'gu-IN' | 'hi-IN' | 'kn-IN' | 'kok-IN' | 'ks-IN' | 'mai-IN' | 'ml-IN' | 'mni-IN' | 'mr-IN' | 'ne-IN' | 'or-IN' | 'pa-IN' | 'sa-IN' | 'sat-IN' | 'sd-IN' | 'ta-IN' | 'te-IN' | 'ur-IN';
+
+// Warning: (ae-missing-release-tag) "STTRealtimeModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type STTRealtimeModel = 'saaras:v3-realtime';
+
+// Warning: (ae-missing-release-tag) "STTRealtimeOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface STTRealtimeOptions {
+    apiKey?: string;
+    encoding?: RealtimeEncoding;
+    endpointing?: RealtimeEndpointing;
+    language?: STTRealtimeLanguages | string;
+    mode?: STTModes | string;
+    prompt?: string;
+    returnTimestamps?: boolean;
+    sampleRate?: number;
+    streamType?: RealtimeStreamType;
+    vadMinSilenceMs?: number;
+    vadMinSpeechMs?: number;
+    vadPrefixPaddingMs?: number;
+    vadSotThreshold?: number;
+}
 
 // Warning: (ae-forgotten-export) The symbol "STTBaseOptions" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "STTTranslateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
