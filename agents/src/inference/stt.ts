@@ -420,6 +420,7 @@ export type STTEncoding = 'pcm_s16le';
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_CANCEL_TIMEOUT = 5000;
+const INACTIVITY_TIMEOUT_ERROR_CODE = 2007;
 
 export interface InferenceSTTOptions<TModel extends STTModels> {
   model?: TModel;
@@ -719,7 +720,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
 
     const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
-    const url = `${baseURL}/stt`;
+    const url = `${baseURL}/stt?model=${encodeURIComponent(this.model)}`;
     const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
 
     const socket = await connectWs(url, headers, timeout);
@@ -815,17 +816,34 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       // Create fresh resources for each connection attempt
       let ws: WebSocket | null = null;
       let closing = false;
+      let cleanedUp = false;
       let finalReceived = false;
+      let sessionCloseSent = false;
       let vadStream: VADStream | null = null;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
 
+      const sendSessionClose = (socket: WebSocket) => {
+        if (sessionCloseSent || socket.readyState !== 1) return;
+        sessionCloseSent = true;
+        socket.send(JSON.stringify({ type: 'session.close' }));
+      };
+
       const resourceCleanup = () => {
-        if (closing) return;
+        if (cleanedUp) return;
+        cleanedUp = true;
         closing = true;
-        eventChannel.close();
-        ws?.removeAllListeners();
-        ws?.close();
+        void eventChannel.close().catch((error) => {
+          this.#logger.debug({ error }, 'Failed to close STT event channel');
+        });
+        if (ws) {
+          try {
+            sendSessionClose(ws);
+          } catch (error) {
+            this.#logger.debug({ error }, 'Failed to send session.close');
+          }
+          ws.close();
+        }
       };
 
       const createWsListener = async (ws: WebSocket, signal: AbortSignal) => {
@@ -839,7 +857,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           ws.on('message', (data) => {
             const json = JSON.parse(data.toString()) as SttServerEvent;
-            eventChannel.write(json);
+            void eventChannel.write(json).catch((error) => {
+              this.#logger.debug({ error }, 'Failed to queue STT server event');
+            });
           });
 
           ws.on('error', (e) => {
@@ -849,10 +869,12 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           });
 
           ws.on('close', (code: number) => {
+            const expectedClose = closing || finalReceived;
             resourceCleanup();
 
-            if (!closing) return this.#logger.error('WebSocket closed unexpectedly');
-            if (finalReceived) return resolve();
+            if (expectedClose) return resolve();
+
+            this.#logger.error('WebSocket closed unexpectedly');
 
             reject(
               new APIStatusError({
@@ -909,6 +931,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           closing = true;
           vadStream?.endInput();
           socket.send(JSON.stringify({ type: 'session.finalize' }));
+          sendSessionClose(socket);
         } catch (e) {
           if ((e as Error).message === 'Send aborted') {
             // Expected abort, don't log
@@ -996,7 +1019,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               case 'error':
                 this.#logger.error({ error: event }, 'Received error from LiveKit STT');
                 resourceCleanup();
-                throw new APIError(`LiveKit STT returned error: ${JSON.stringify(event)}`);
+                throw new APIError(`LiveKit STT returned error: ${JSON.stringify(event)}`, {
+                  retryable: event.code !== INACTIVITY_TIMEOUT_ERROR_CODE,
+                });
             }
           }
         } finally {
