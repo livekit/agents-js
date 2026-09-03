@@ -126,25 +126,11 @@ export const ATTR_GEN_AI_OPERATION_NAME = 'gen_ai.operation.name';
 export const ATTR_GEN_AI_PROVIDER_NAME = 'gen_ai.provider.name';
 
 export const ATTR_GEN_AI_REQUEST_MODEL = 'gen_ai.request.model';
-export const ATTR_GEN_AI_REQUEST_MAX_TOKENS = 'gen_ai.request.max_tokens';
-export const ATTR_GEN_AI_REQUEST_CHOICE_COUNT = 'gen_ai.request.choice.count';
-export const ATTR_GEN_AI_REQUEST_TEMPERATURE = 'gen_ai.request.temperature';
-export const ATTR_GEN_AI_REQUEST_TOP_P = 'gen_ai.request.top_p';
-export const ATTR_GEN_AI_REQUEST_TOP_K = 'gen_ai.request.top_k';
-export const ATTR_GEN_AI_REQUEST_STOP_SEQUENCES = 'gen_ai.request.stop_sequences';
-export const ATTR_GEN_AI_REQUEST_FREQUENCY_PENALTY = 'gen_ai.request.frequency_penalty';
-export const ATTR_GEN_AI_REQUEST_PRESENCE_PENALTY = 'gen_ai.request.presence_penalty';
-export const ATTR_GEN_AI_REQUEST_ENCODING_FORMATS = 'gen_ai.request.encoding_formats';
-export const ATTR_GEN_AI_REQUEST_SEED = 'gen_ai.request.seed';
 export const ATTR_GEN_AI_REQUEST_STREAM = 'gen_ai.request.stream';
-export const ATTR_GEN_AI_REQUEST_REASONING_LEVEL = 'gen_ai.request.reasoning.level';
-export const ATTR_GEN_AI_REQUEST_PREVIOUS_RESPONSE_ID = 'gen_ai.request.previous_response.id';
-export const ATTR_GEN_AI_REQUEST_STREAM_CURSOR = 'gen_ai.request.stream_cursor';
 
 export const ATTR_GEN_AI_RESPONSE_ID = 'gen_ai.response.id';
 export const ATTR_GEN_AI_RESPONSE_MODEL = 'gen_ai.response.model';
 export const ATTR_GEN_AI_RESPONSE_FINISH_REASONS = 'gen_ai.response.finish_reasons';
-export const ATTR_GEN_AI_RESPONSE_STATUS = 'gen_ai.response.status';
 /** Time to first chunk of a streaming response, in seconds. */
 export const ATTR_GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK = 'gen_ai.response.time_to_first_chunk';
 
@@ -155,25 +141,12 @@ export const ATTR_GEN_AI_USAGE_CACHE_WRITE_INPUT_TOKENS = 'gen_ai.usage.cache_wr
 export const ATTR_GEN_AI_USAGE_REASONING_OUTPUT_TOKENS = 'gen_ai.usage.reasoning.output_tokens';
 export const ATTR_GEN_AI_USAGE_TEXT_INPUT_TOKENS = 'gen_ai.usage.text.input_tokens';
 export const ATTR_GEN_AI_USAGE_TEXT_OUTPUT_TOKENS = 'gen_ai.usage.text.output_tokens';
-export const ATTR_GEN_AI_USAGE_TEXT_CACHE_READ_INPUT_TOKENS =
-  'gen_ai.usage.text.cache_read.input_tokens';
 export const ATTR_GEN_AI_USAGE_AUDIO_INPUT_TOKENS = 'gen_ai.usage.audio.input_tokens';
 export const ATTR_GEN_AI_USAGE_AUDIO_OUTPUT_TOKENS = 'gen_ai.usage.audio.output_tokens';
-export const ATTR_GEN_AI_USAGE_AUDIO_CACHE_READ_INPUT_TOKENS =
-  'gen_ai.usage.audio.cache_read.input_tokens';
-export const ATTR_GEN_AI_USAGE_IMAGE_INPUT_TOKENS = 'gen_ai.usage.image.input_tokens';
-export const ATTR_GEN_AI_USAGE_IMAGE_OUTPUT_TOKENS = 'gen_ai.usage.image.output_tokens';
-export const ATTR_GEN_AI_USAGE_IMAGE_CACHE_READ_INPUT_TOKENS =
-  'gen_ai.usage.image.cache_read.input_tokens';
-export const ATTR_GEN_AI_TOKEN_TYPE = 'gen_ai.token.type';
 
 export const ATTR_GEN_AI_CONVERSATION_ID = 'gen_ai.conversation.id';
-export const ATTR_GEN_AI_CONVERSATION_COMPACTED = 'gen_ai.conversation.compacted';
 
-export const ATTR_GEN_AI_AGENT_ID = 'gen_ai.agent.id';
 export const ATTR_GEN_AI_AGENT_NAME = 'gen_ai.agent.name';
-export const ATTR_GEN_AI_AGENT_DESCRIPTION = 'gen_ai.agent.description';
-export const ATTR_GEN_AI_AGENT_VERSION = 'gen_ai.agent.version';
 
 export const ATTR_GEN_AI_TOOL_NAME = 'gen_ai.tool.name';
 export const ATTR_GEN_AI_TOOL_CALL_ID = 'gen_ai.tool.call.id';
@@ -188,29 +161,16 @@ export const ATTR_GEN_AI_INPUT_MESSAGES = 'gen_ai.input.messages';
 export const ATTR_GEN_AI_OUTPUT_MESSAGES = 'gen_ai.output.messages';
 export const ATTR_GEN_AI_OUTPUT_TYPE = 'gen_ai.output.type';
 
-export const ATTR_GEN_AI_DATA_SOURCE_ID = 'gen_ai.data_source.id';
-export const ATTR_GEN_AI_EMBEDDINGS_DIMENSION_COUNT = 'gen_ai.embeddings.dimension.count';
 export const ATTR_GEN_AI_RETRIEVAL_DOCUMENTS = 'gen_ai.retrieval.documents';
 export const ATTR_GEN_AI_RETRIEVAL_QUERY_TEXT = 'gen_ai.retrieval.query.text';
-export const ATTR_GEN_AI_RETRIEVAL_TOP_K = 'gen_ai.retrieval.top_k';
-export const ATTR_GEN_AI_MEMORY_STORE_ID = 'gen_ai.memory.store.id';
-export const ATTR_GEN_AI_MEMORY_RECORD_ID = 'gen_ai.memory.record.id';
-export const ATTR_GEN_AI_MEMORY_RECORD_COUNT = 'gen_ai.memory.record.count';
 export const ATTR_GEN_AI_MEMORY_QUERY_TEXT = 'gen_ai.memory.query.text';
 export const ATTR_GEN_AI_MEMORY_RECORDS = 'gen_ai.memory.records';
-export const ATTR_GEN_AI_EVALUATION_NAME = 'gen_ai.evaluation.name';
-export const ATTR_GEN_AI_EVALUATION_SCORE_VALUE = 'gen_ai.evaluation.score.value';
-export const ATTR_GEN_AI_EVALUATION_SCORE_LABEL = 'gen_ai.evaluation.score.label';
 export const ATTR_GEN_AI_EVALUATION_EXPLANATION = 'gen_ai.evaluation.explanation';
-export const ATTR_GEN_AI_PROMPT_NAME = 'gen_ai.prompt.name';
-export const ATTR_GEN_AI_PROMPT_VERSION = 'gen_ai.prompt.version';
 /** Template attribute: the concrete key is `gen_ai.prompt.variable.<name>`. */
 export const ATTR_GEN_AI_PROMPT_VARIABLE = 'gen_ai.prompt.variable';
 export const ATTR_GEN_AI_WORKFLOW_NAME = 'gen_ai.workflow.name';
 
 export const ATTR_ERROR_TYPE = 'error.type';
-export const ATTR_SERVER_ADDRESS = 'server.address';
-export const ATTR_SERVER_PORT = 'server.port';
 
 /** Well-known `gen_ai.operation.name` values. */
 export const GenAIOperationName = {
@@ -375,16 +335,6 @@ export const EVENT_GEN_AI_CLIENT_INFERENCE_OPERATION_DETAILS =
   'gen_ai.client.inference.operation.details';
 
 // OpenTelemetry GenAI metric names
-export const METRIC_GEN_AI_CLIENT_TOKEN_USAGE = 'gen_ai.client.token.usage';
-export const METRIC_GEN_AI_CLIENT_OPERATION_DURATION = 'gen_ai.client.operation.duration';
-export const METRIC_GEN_AI_CLIENT_TIME_TO_FIRST_CHUNK =
-  'gen_ai.client.operation.time_to_first_chunk';
-export const METRIC_GEN_AI_CLIENT_TIME_PER_OUTPUT_CHUNK =
-  'gen_ai.client.operation.time_per_output_chunk';
-export const METRIC_GEN_AI_INVOKE_AGENT_DURATION = 'gen_ai.invoke_agent.duration';
-export const METRIC_GEN_AI_INVOKE_AGENT_INFERENCE_CALLS = 'gen_ai.invoke_agent.inference_calls';
-export const METRIC_GEN_AI_INVOKE_AGENT_TOOL_CALLS = 'gen_ai.invoke_agent.tool_calls';
-export const METRIC_GEN_AI_EXECUTE_TOOL_DURATION = 'gen_ai.execute_tool.duration';
 
 // Exception attributes
 export const ATTR_EXCEPTION_TRACE = 'exception.stacktrace';

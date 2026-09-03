@@ -84,21 +84,6 @@ export function isPIIAttribute(key: string): boolean {
   return key.startsWith(traceTypes.ATTR_GEN_AI_PROMPT_VARIABLE);
 }
 
-/** Returns `attributes` without any PII entry, and with exception details removed. */
-export function filterAttributes<T extends Record<string, unknown>>(attributes: T): Partial<T> {
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(attributes)) {
-    if (isPIIAttribute(key) || key === traceTypes.ATTR_EXCEPTION_TRACE) continue;
-    if (key === traceTypes.ATTR_EXCEPTION_MESSAGE) {
-      // `error.type` still names the class; only the free-form message goes
-      out[key] = REDACTED_EXCEPTION_MESSAGE;
-      continue;
-    }
-    out[key] = attributes[key];
-  }
-  return out as Partial<T>;
-}
-
 /**
  * Drops PII attributes so they never reach an exporter that is not LiveKit Cloud's.
  *
