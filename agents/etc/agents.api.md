@@ -26,8 +26,7 @@ import OpenAI from 'openai';
 import { Participant } from '@livekit/rtc-node';
 import { ParticipantKind } from '@livekit/rtc-node';
 import type * as proto from '@livekit/protocol';
-import type { ReadableSpan } from '@opentelemetry/sdk-trace-node';
-import type { ReadableSpan as ReadableSpan_2 } from '@opentelemetry/sdk-trace-base';
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
 import { RemoteParticipant } from '@livekit/rtc-node';
@@ -45,11 +44,9 @@ import { SimulationRun } from '@livekit/protocol';
 import { SimulationRun_Job } from '@livekit/protocol';
 import type { SIPOutboundConfig } from '@livekit/protocol';
 import { Span } from '@opentelemetry/api';
-import type { Span as Span_2 } from '@opentelemetry/sdk-trace-node';
-import type { Span as Span_3 } from '@opentelemetry/sdk-trace-base';
+import type { Span as Span_2 } from '@opentelemetry/sdk-trace-base';
 import type { SpanExporter } from '@opentelemetry/sdk-trace-base';
-import type { SpanProcessor } from '@opentelemetry/sdk-trace-node';
-import type { SpanProcessor as SpanProcessor_2 } from '@opentelemetry/sdk-trace-base';
+import type { SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -4014,16 +4011,16 @@ interface FallbackAdapterOptions_2 {
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "FanoutSpanProcessor"
 //
 // @public
-class FanoutSpanProcessor implements SpanProcessor_2 {
-    add(processor: SpanProcessor_2): void;
+class FanoutSpanProcessor implements SpanProcessor {
+    add(processor: SpanProcessor): void;
     // (undocumented)
     forceFlush(): Promise<void>;
     // (undocumented)
-    onEnd(span: ReadableSpan_2): void;
+    onEnd(span: ReadableSpan): void;
     // (undocumented)
-    onEnding(span: Span_3): void;
+    onEnding(span: Span_2): void;
     // (undocumented)
-    onStart(span: Span_3, parentContext: Context): void;
+    onStart(span: Span_2, parentContext: Context): void;
     // (undocumented)
     shutdown(): Promise<void>;
 }
@@ -4944,11 +4941,6 @@ export function isImmutableArray(array: unknown): boolean;
 //
 // @public (undocumented)
 export const isPending: (promise: Promise<unknown>) => Promise<Throws<boolean, Error>>;
-
-// Warning: (ae-missing-release-tag) "isPIIAttribute" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-function isPIIAttribute(key: string): boolean;
 
 // Warning: (ae-missing-release-tag) "isProviderTool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -5977,23 +5969,6 @@ export interface ParticipantTranscriptionOutputOptions extends TranscriptionOutp
     jsonFormat?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "PIIRedactingSpanProcessor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-class PIIRedactingSpanProcessor implements SpanProcessor {
-    constructor(allowPii?: boolean);
-    // (undocumented)
-    forceFlush(): Promise<void>;
-    // (undocumented)
-    onEnd(_span: ReadableSpan): void;
-    // (undocumented)
-    onEnding(span: Span_2): void;
-    // (undocumented)
-    onStart(_span: Span_2, _parentContext: Context): void;
-    // (undocumented)
-    shutdown(): Promise<void>;
-}
-
 // Warning: (ae-missing-release-tag) "PinoCloudExporter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -6378,11 +6353,6 @@ export function recordingEnabled(options: Record<string, unknown>): boolean;
 //
 // @public (undocumented)
 function recordRealtimeMetrics(span: Span, metrics: RealtimeModelMetrics): void;
-
-// Warning: (ae-missing-release-tag) "redactAttributes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-function redactAttributes<T extends Record<string, unknown>>(attributes: T): Partial<T>;
 
 // Warning: (ae-missing-release-tag) "REDACTED_EXCEPTION_MESSAGE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -7149,7 +7119,7 @@ function setTracerProvider(provider: TracerProvider, options?: SetTracerProvider
 // @public
 interface SetTracerProviderOptions {
     allowPii?: boolean;
-    createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessor_2;
+    createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessor;
     metadata?: Attributes;
     // Warning: (ae-forgotten-export) The symbol "SpanProcessorRegistrar" needs to be exported by the entry point index.d.ts
     registerSpanProcessor?: SpanProcessorRegistrar;
@@ -7287,7 +7257,7 @@ export function sortedToolNames(toolCtx: ToolContext | undefined): string[];
 // Warning: (ae-missing-release-tag) "SpanProcessorLike" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public @deprecated (undocumented)
-type SpanProcessorLike = SpanProcessor_2;
+type SpanProcessorLike = SpanProcessor;
 
 // Warning: (ae-missing-release-tag) "SpeechCreatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -8159,9 +8129,6 @@ declare namespace telemetry {
         PinoCloudExporterConfig,
         PinoLogObject,
         genAI,
-        PIIRedactingSpanProcessor,
-        isPIIAttribute,
-        redactAttributes,
         REDACTED_EXCEPTION_MESSAGE,
         traceTypes,
         FanoutSpanProcessor,

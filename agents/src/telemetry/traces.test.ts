@@ -22,7 +22,7 @@ import { log } from '../log.js';
 import { version } from '../version.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
-import { PIIRedactingSpanProcessor } from './pii.js';
+import { PIIFilteringSpanProcessor } from './pii.js';
 import {
   type CloudSpanProcessorOptions,
   setTracerProvider,
@@ -272,7 +272,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     // stripper; setupCloudTracer registers the session metadata processor plus the built-in
     // (SDK 2.x) cloud exporter.
     expect(registeredProcessors).toHaveLength(4);
-    expect(registeredProcessors[1]).toBeInstanceOf(PIIRedactingSpanProcessor);
+    expect(registeredProcessors[1]).toBeInstanceOf(PIIFilteringSpanProcessor);
     const setAttributes = vi.fn();
     registeredProcessors[2]!.onStart({ setAttributes } as never, otelContext.active());
     // agent_name rides the session metadata so spans (and logs) carry it even on
@@ -308,7 +308,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     expect(createCloudSpanProcessor).toHaveBeenCalledOnce();
     // the PII stripper, the session metadata processor, then the factory's cloud processor
     expect(registeredProcessors).toHaveLength(3);
-    expect(registeredProcessors[0]).toBeInstanceOf(PIIRedactingSpanProcessor);
+    expect(registeredProcessors[0]).toBeInstanceOf(PIIFilteringSpanProcessor);
     expect(registeredProcessors[2]).toBe(factoryProcessor);
   });
 

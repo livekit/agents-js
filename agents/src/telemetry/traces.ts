@@ -47,7 +47,7 @@ import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import type { ObservabilityEndpoint } from './observability_endpoint.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
-import { PIIRedactingSpanProcessor } from './pii.js';
+import { PIIFilteringSpanProcessor } from './pii.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { uploadRecording } from './recording_upload.js';
 import { allowPiiFromEnv } from './redaction.js';
@@ -273,7 +273,7 @@ const customProviderConfigs = new WeakMap<TracerProvider, CustomProviderConfig>(
 const piiRedactionInstalled = new WeakSet<TracerProvider>();
 
 /**
- * Installs {@link PIIRedactingSpanProcessor} on a provider LiveKit does not own.
+ * Installs {@link PIIFilteringSpanProcessor} on a provider LiveKit does not own.
  *
  * The processor strips PII in `onEnding`, which the SDK dispatches to every registered
  * processor before any processor's `onEnd`, so it protects the integrator's exporters
@@ -301,7 +301,7 @@ function installPIIRedaction(
   piiRedactionInstalled.add(provider);
   // PII flows to every exporter unless withheld: the GenAI conventions are only useful to a
   // backend that can render the conversation
-  registerSpanProcessor(new PIIRedactingSpanProcessor(allowPii ?? allowPiiFromEnv() ?? true));
+  registerSpanProcessor(new PIIFilteringSpanProcessor(allowPii ?? allowPiiFromEnv() ?? true));
 }
 
 /** Options for configuring a custom tracer provider. */
@@ -507,7 +507,7 @@ export async function setupCloudTracer(
           resource,
           spanProcessors: [
             // strips PII while the span is still mutable, ahead of every exporter's onEnd
-            new PIIRedactingSpanProcessor(allowPiiFromEnv() ?? true),
+            new PIIFilteringSpanProcessor(allowPiiFromEnv() ?? true),
             new MetadataSpanProcessor(sessionMetadata),
             new BatchSpanProcessor(createCloudExporter()),
           ],

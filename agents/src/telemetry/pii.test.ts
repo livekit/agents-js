@@ -9,7 +9,7 @@ import {
 } from '@opentelemetry/sdk-trace-node';
 import { describe, expect, it } from 'vitest';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
-import { PIIRedactingSpanProcessor, isPIIAttribute } from './pii.js';
+import { PIIFilteringSpanProcessor, isPIIAttribute } from './pii.js';
 import { restorePii } from './redaction.js';
 import * as traceTypes from './trace_types.js';
 
@@ -37,7 +37,7 @@ const SAFE_ATTRS: Attributes = {
 function emit(options: { redaction?: boolean; exporterFirst?: boolean; allowPii?: boolean }) {
   const exporter = new InMemorySpanExporter();
   const exportProcessor = new SimpleSpanProcessor(exporter);
-  const redactProcessor = new PIIRedactingSpanProcessor(options.allowPii ?? true);
+  const redactProcessor = new PIIFilteringSpanProcessor(options.allowPii ?? true);
   const provider = new BasicTracerProvider({
     spanProcessors: options.exporterFirst
       ? [exportProcessor, redactProcessor]
@@ -58,7 +58,7 @@ function leaked(attributes: Attributes): string[] {
   return Object.keys(PII_ATTRS).filter((key) => key in attributes);
 }
 
-describe('PIIRedactingSpanProcessor', () => {
+describe('PIIFilteringSpanProcessor', () => {
   it('withholds PII from third-party exporters on request', () => {
     const span = emit({ allowPii: false });
 

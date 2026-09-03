@@ -5,14 +5,18 @@
 /**
  * In-process stripping of personally identifiable information from telemetry.
  *
+ * Field-level filtering, not entity-level redaction: a matching attribute is dropped whole,
+ * never scanned and masked. "Redaction" in this codebase means the project setting (LiveKit
+ * Cloud dashboard, or `record: { redaction: true }`); this module is what the client does
+ * about it.
+ *
  * LiveKit marks attributes carrying conversational content, tool payloads, or other user data
  * with a dot-delimited `pii` segment (`lk.pii.<name>`), and the GenAI content attributes carry
  * the same kind of payload under names the semantic convention fixes, where the marker cannot
- * be applied.
- *
- * {@link PIIRedactingSpanProcessor} strips both before any exporter that is not LiveKit
- * Cloud's, whose own handling is the project's setting in the dashboard rather than ours to
- * second-guess. {@link restorePii} puts the payload back on that one export path.
+ * be applied. Both are filtered before any exporter that is not LiveKit Cloud's — and before
+ * every exporter, Cloud included, once the project has enabled redaction, so the client never
+ * depends on a collector to strip a new key. {@link restorePii} puts the payload back on
+ * LiveKit Cloud's export path when the project still allows it.
  */
 import type { Context } from '@opentelemetry/api';
 import type { ReadableSpan, Span as SdkSpan, SpanProcessor } from '@opentelemetry/sdk-trace-node';
@@ -81,7 +85,7 @@ export function isPIIAttribute(key: string): boolean {
 }
 
 /** Returns `attributes` without any PII entry, and with exception details removed. */
-export function redactAttributes<T extends Record<string, unknown>>(attributes: T): Partial<T> {
+export function filterAttributes<T extends Record<string, unknown>>(attributes: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(attributes)) {
     if (isPIIAttribute(key) || key === traceTypes.ATTR_EXCEPTION_TRACE) continue;
@@ -96,7 +100,7 @@ export function redactAttributes<T extends Record<string, unknown>>(attributes: 
 }
 
 /**
- * Strips PII so it never reaches an exporter that is not LiveKit Cloud's.
+ * Drops PII attributes so they never reach an exporter that is not LiveKit Cloud's.
  *
  * Runs in `onEnding`, which the SDK dispatches to every registered processor *before* any
  * processor's `onEnd` and while the span is still mutable. Registration order therefore does
@@ -107,7 +111,7 @@ export function redactAttributes<T extends Record<string, unknown>>(attributes: 
  * granted PII (`setTracerProvider(provider, { allowPii: true })`). The project's redaction
  * setting overrides that grant and strips for every destination, Cloud included.
  */
-export class PIIRedactingSpanProcessor implements SpanProcessor {
+export class PIIFilteringSpanProcessor implements SpanProcessor {
   constructor(private readonly allowPii: boolean = false) {}
 
   onStart(_span: SdkSpan, _parentContext: Context): void {}
