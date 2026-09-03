@@ -252,10 +252,10 @@ export function finishReasonFor(params: {
   functionCalls?: readonly unknown[];
   interrupted?: boolean;
 }): string {
-  if (params.functionCalls?.length) return traceTypes.GenAIFinishReason.TOOL_CALL;
-  // the caller stopped reading the stream; the convention has no `cancelled` value and
-  // treats an abnormally ended generation as `error`
+  // checked first: a generation that emitted a tool call and then failed ended abnormally,
+  // and the convention has no `cancelled` value for that
   if (params.interrupted) return traceTypes.GenAIFinishReason.ERROR;
+  if (params.functionCalls?.length) return traceTypes.GenAIFinishReason.TOOL_CALL;
   return traceTypes.GenAIFinishReason.STOP;
 }
 

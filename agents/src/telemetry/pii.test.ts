@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { Attributes } from '@opentelemetry/api';
+import { SpanStatusCode } from '@opentelemetry/api';
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
@@ -105,6 +106,27 @@ describe('PIIFilteringSpanProcessor', () => {
 
     expect(leaked(stripped.attributes)).toEqual([]);
     expect(restorePii(stripped)).toBe(stripped);
+  });
+
+  it('withholds exception details from third-party exporters', () => {
+    // recordException resolves the project's setting, so with redaction off it writes the
+    // real message onto the span, its `exception` event and the span status
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new PIIFilteringSpanProcessor(false), new SimpleSpanProcessor(exporter)],
+    });
+    const span = provider.getTracer('test').startSpan('llm_request');
+    span.recordException(new Error('my pin is 1234'));
+    span.setStatus({ code: SpanStatusCode.ERROR, message: 'my pin is 1234' });
+    span.end();
+
+    const exported = exporter.getFinishedSpans()[0]!;
+    const serialized = JSON.stringify([
+      exported.attributes,
+      exported.events.map((e) => e.attributes),
+      exported.status.message,
+    ]);
+    expect(serialized).not.toContain('my pin is 1234');
   });
 
   it('protects an exporter registered before it', () => {

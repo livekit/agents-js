@@ -94,6 +94,8 @@ describe('gen_ai builders', () => {
     expect(genAI.finishReasonFor({})).toBe('stop');
     expect(genAI.finishReasonFor({ interrupted: true })).toBe('error');
     expect(genAI.finishReasonFor({ functionCalls: [{}] })).toBe('tool_call');
+    // a tool call emitted before the generation failed is not a successful handoff
+    expect(genAI.finishReasonFor({ functionCalls: [{}], interrupted: true })).toBe('error');
   });
 });
 
@@ -217,6 +219,7 @@ describe('provider normalization', () => {
     ['bedrock-runtime.us-east-1.amazonaws.com', 'aws.bedrock'],
     // display names
     ['AWS Bedrock', 'aws.bedrock'],
+    ['Amazon', 'aws.bedrock'],
     ['MistralAI', 'mistral_ai'],
     ['Vertex AI', 'gcp.vertex_ai'],
     ['Vertex AI Model Garden', 'gcp.vertex_ai'],

@@ -265,6 +265,7 @@ const PROVIDER_BY_HOST_SUFFIX: readonly [string, string][] = [
 ];
 
 const PROVIDER_BY_NAME: Record<string, string> = {
+  amazon: 'aws.bedrock',
   amazonbedrock: 'aws.bedrock',
   anthropic: 'anthropic',
   awsbedrock: 'aws.bedrock',

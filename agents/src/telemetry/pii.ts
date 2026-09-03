@@ -19,6 +19,7 @@
  * LiveKit Cloud's export path when the project still allows it.
  */
 import type { Context } from '@opentelemetry/api';
+import { SpanStatusCode } from '@opentelemetry/api';
 import type { ReadableSpan, Span as SdkSpan, SpanProcessor } from '@opentelemetry/sdk-trace-node';
 import { REDACTED_EXCEPTION_MESSAGE, stashPii } from './redaction.js';
 import * as traceTypes from './trace_types.js';
@@ -111,7 +112,14 @@ export class PIIFilteringSpanProcessor implements SpanProcessor {
       (key) => isPIIAttribute(key) || REDACTED_EXCEPTION_ATTRIBUTES.has(key),
     );
     const kept = events.filter((event) => !PII_EVENT_NAMES.has(event.name));
-    if (!piiKeys.length && kept.length === events.length) return;
+    const eventCarriesPii = kept.some((event) =>
+      Object.keys(event.attributes ?? {}).some(
+        (key) => isPIIAttribute(key) || REDACTED_EXCEPTION_ATTRIBUTES.has(key),
+      ),
+    );
+    if (!piiKeys.length && kept.length === events.length && !eventCarriesPii) {
+      if (span.status.code !== SpanStatusCode.ERROR || !span.status.message) return;
+    }
 
     if (!projectRedaction) {
       // LiveKit Cloud still receives what the project allows
@@ -127,15 +135,24 @@ export class PIIFilteringSpanProcessor implements SpanProcessor {
     }
 
     for (const event of kept) {
-      for (const key of Object.keys(event.attributes ?? {})) {
-        if (isPIIAttribute(key)) {
-          delete (event.attributes as Record<string, unknown>)[key];
+      const attrs = event.attributes as Record<string, unknown> | undefined;
+      for (const key of Object.keys(attrs ?? {})) {
+        if (key === traceTypes.ATTR_EXCEPTION_MESSAGE) {
+          attrs![key] = REDACTED_EXCEPTION_MESSAGE;
+        } else if (isPIIAttribute(key) || REDACTED_EXCEPTION_ATTRIBUTES.has(key)) {
+          delete attrs![key];
         }
       }
     }
     if (kept.length !== events.length) {
       events.length = 0;
       events.push(...kept);
+    }
+
+    // recordException also puts the message in the span status. setStatus still applies
+    // here: the SDK marks the span ended only after onEnding returns.
+    if (span.status.code === SpanStatusCode.ERROR && span.status.message) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: REDACTED_EXCEPTION_MESSAGE });
     }
   }
 
