@@ -611,6 +611,7 @@ describe('Inference STT connection lifecycle', () => {
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
     const messageTypes: string[] = [];
+    const transcripts: string[] = [];
     let requestUrl: string | undefined;
     let resolveSocketClosed!: () => void;
     const socketClosed = new Promise<void>((resolve) => {
@@ -624,6 +625,13 @@ describe('Inference STT connection lifecycle', () => {
         const event = JSON.parse(raw.toString()) as { type: string };
         messageTypes.push(event.type);
         if (event.type === 'session.close') {
+          socket.send(
+            JSON.stringify({
+              type: 'final_transcript',
+              transcript: 'final words',
+              language: 'en',
+            }),
+          );
           socket.send(JSON.stringify({ type: 'session.closed' }));
         }
       });
@@ -638,8 +646,10 @@ describe('Inference STT connection lifecycle', () => {
 
     try {
       stream.endInput();
-      for await (const _ of stream) {
-        /* drain */
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+        }
       }
       await socketClosed;
 
@@ -647,6 +657,45 @@ describe('Inference STT connection lifecycle', () => {
         'deepgram/nova-3',
       );
       expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+      expect(transcripts).toEqual(['final words']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('reports a disconnect before session.closed after input ends', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type === 'session.close') socket.close(1011, 'missing session.closed');
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const errors: Error[] = [];
+    stt.on('error', ({ error }) => errors.push(error));
+    const stream = stt.stream();
+
+    try {
+      stream.endInput();
+      for await (const _ of stream) {
+        /* drain */
+      }
+
+      expect(connectionCount).toBe(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ retryable: false, statusCode: 1011 });
     } finally {
       stream.close();
       for (const client of server.clients) client.terminate();
@@ -712,7 +761,7 @@ describe('Inference STT connection lifecycle', () => {
           JSON.stringify({
             type: 'error',
             code: 2007,
-            message: 'session closed due to agent inactivity',
+            message: 'customer content must not reach the API error',
           }),
         );
       });
@@ -734,7 +783,11 @@ describe('Inference STT connection lifecycle', () => {
 
       expect(connectionCount).toBe(1);
       expect(errors).toHaveLength(1);
-      expect(errors[0]).toMatchObject({ retryable: false });
+      expect(errors[0]).toMatchObject({
+        message: 'LiveKit STT returned an error',
+        body: { code: 2007 },
+        retryable: false,
+      });
     } finally {
       stream.close();
       for (const client of server.clients) client.terminate();

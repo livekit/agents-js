@@ -815,7 +815,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       const vad = await this.stt.vadPromise;
       // Create fresh resources for each connection attempt
       let ws: WebSocket | null = null;
-      let closing = false;
+      let inputEnded = false;
       let cleanedUp = false;
       let finalReceived = false;
       let sessionCloseSent = false;
@@ -832,7 +832,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       const resourceCleanup = () => {
         if (cleanedUp) return;
         cleanedUp = true;
-        closing = true;
         void eventChannel.close().catch((error) => {
           this.#logger.debug({ error }, 'Failed to close STT event channel');
         });
@@ -869,7 +868,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           });
 
           ws.on('close', (code: number) => {
-            const expectedClose = closing || finalReceived;
+            const expectedClose = finalReceived || signal.aborted;
             resourceCleanup();
 
             if (expectedClose) return resolve();
@@ -879,7 +878,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             reject(
               new APIStatusError({
                 message: 'LiveKit STT connection closed unexpectedly',
-                options: { statusCode: code },
+                options: { statusCode: code, retryable: !inputEnded },
               }),
             );
           });
@@ -928,7 +927,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             }
           }
 
-          closing = true;
+          inputEnded = true;
           vadStream?.endInput();
           socket.send(JSON.stringify({ type: 'session.finalize' }));
           sendSessionClose(socket);
@@ -1017,9 +1016,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 this.processTranscript(event, SpeechEventType.PREFLIGHT_TRANSCRIPT);
                 break;
               case 'error':
-                this.#logger.error({ error: event }, 'Received error from LiveKit STT');
+                this.#logger.error({ 'lk.pii.event': event }, 'Received error from LiveKit STT');
                 resourceCleanup();
-                throw new APIError(`LiveKit STT returned error: ${JSON.stringify(event)}`, {
+                throw new APIError('LiveKit STT returned an error', {
+                  body: { code: event.code },
                   retryable: event.code !== INACTIVITY_TIMEOUT_ERROR_CODE,
                 });
             }
