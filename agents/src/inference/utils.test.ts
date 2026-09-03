@@ -74,12 +74,14 @@ describe('connectWs', () => {
     });
   });
 
-  it('preserves the message from a network error', async () => {
+  it('does not expose the message from a network error', async () => {
     const error = await connectWs('ws://127.0.0.1:1', {}, 1_000).catch((error: unknown) => error);
 
     expect(error).toBeInstanceOf(APIConnectionError);
-    expect(error).toMatchObject({ retryable: true });
-    expect((error as Error).message).toContain('ECONNREFUSED');
+    expect(error).toMatchObject({
+      message: 'Error connecting to LiveKit WebSocket',
+      retryable: true,
+    });
   });
 
   it('times out an unresponsive handshake', async () => {

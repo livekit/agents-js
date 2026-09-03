@@ -122,10 +122,9 @@ export async function connectWs(
       socket.terminate();
     };
 
-    const onError = (err: unknown) => {
+    const onError = () => {
       clearTimeout(timeout);
-      const message = err instanceof Error ? err.message : 'Error connecting to LiveKit WebSocket';
-      reject(new APIConnectionError({ message }));
+      reject(new APIConnectionError({ message: 'Error connecting to LiveKit WebSocket' }));
     };
 
     const onClose = () => {
