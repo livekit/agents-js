@@ -1,13 +1,31 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { Attributes } from '@opentelemetry/api';
 import { type Span, SpanStatusCode, context as otelContext, trace } from '@opentelemetry/api';
 import { getJobContext } from '../job.js';
 import type { RealtimeModelMetrics } from '../metrics/base.js';
+import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
 import { realtimeUsageAttributes, setErrorType } from './gen_ai.js';
 import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 import * as traceTypes from './trace_types.js';
 import { tracer } from './traces.js';
+
+/**
+ * Whether the project has mandated PII redaction.
+ *
+ * Set in the LiveKit Cloud dashboard (or per session with `record: { redaction: true }`) and
+ * never weakened from here — when it is on, PII is stripped for every destination, LiveKit
+ * Cloud included. `spanAttributes` lets a span ended outside the job's async context resolve
+ * from the flag stamped on it at span start.
+ *
+ * Stripping PII for *third-party* exporters is not this flag: that is the default, and is
+ * lifted per provider with `setTracerProvider(provider, { allowPii: true })`.
+ */
+export function redactionEnabled(spanAttributes?: Attributes): boolean {
+  if (spanAttributes?.[ATTRIBUTE_REDACTION_ENABLED]) return true;
+  return getJobContext(false)?._redactionEnabled ?? false;
+}
 
 export { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 
@@ -24,7 +42,7 @@ export function recordException(
   error: Error,
   options: RecordExceptionOptions = {},
 ): void {
-  const redacted = options.redacted ?? getJobContext(false)?._redactionEnabled ?? false;
+  const redacted = options.redacted ?? redactionEnabled();
 
   // `error.type` is the GenAI/HTTP conventions' low-cardinality error identifier; unlike the
   // message it never carries user data, so it is set either way
@@ -61,12 +79,9 @@ export function recordException(
 
 export function recordRealtimeMetrics(span: Span, metrics: RealtimeModelMetrics): void {
   const attrs: Record<string, string | number | boolean> = {
-    // a realtime turn is a multimodal generation: `generate_content` is the convention's
-    // operation for it, and the model answers with speech
+    // a realtime turn is a multimodal generation; `gen_ai.output.type` is set on the
+    // inference span, which knows whether this session outputs audio
     [traceTypes.ATTR_GEN_AI_OPERATION_NAME]: traceTypes.GenAIOperationName.GENERATE_CONTENT,
-    [traceTypes.ATTR_GEN_AI_OUTPUT_TYPE]: traceTypes.GenAIOutputType.SPEECH,
-    [traceTypes.ATTR_GEN_AI_REQUEST_MODEL]: metrics.label || 'unknown',
-    [traceTypes.ATTR_GEN_AI_RESPONSE_MODEL]: metrics.label || 'unknown',
     [traceTypes.ATTR_REALTIME_MODEL_METRICS]: JSON.stringify(metrics),
     // official per-modality usage names
     ...(realtimeUsageAttributes(metrics) as Record<string, number>),
@@ -78,6 +93,14 @@ export function recordRealtimeMetrics(span: Span, metrics: RealtimeModelMetrics)
     [traceTypes.ATTR_GEN_AI_USAGE_OUTPUT_AUDIO_TOKENS]: metrics.outputTokenDetails.audioTokens,
   };
 
+  // `metrics.label` names the plugin, not the model, so it is never reported as one
+  const modelName = metrics.metadata?.modelName;
+  if (modelName) {
+    attrs[traceTypes.ATTR_GEN_AI_REQUEST_MODEL] = modelName;
+    attrs[traceTypes.ATTR_GEN_AI_RESPONSE_MODEL] = modelName;
+  }
+  const provider = traceTypes.genAIProviderName(metrics.metadata?.modelProvider);
+  if (provider) attrs[traceTypes.ATTR_GEN_AI_PROVIDER_NAME] = provider;
   if (metrics.requestId) attrs[traceTypes.ATTR_GEN_AI_RESPONSE_ID] = metrics.requestId;
   if (metrics.ttftMs !== undefined && metrics.ttftMs >= 0) {
     attrs[traceTypes.ATTR_GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK] = metrics.ttftMs / 1000;

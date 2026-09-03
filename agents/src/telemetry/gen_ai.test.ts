@@ -80,12 +80,14 @@ describe('gen_ai builders', () => {
       parameters: z.object({ location: z.string() }),
       execute: async () => 'sunny',
     });
-    const definitions = genAI.toToolDefinitions([getWeather]);
-    expect(definitions[0]!.type).toBe('function');
-    expect(definitions[0]!.name).toBe('get_weather');
-    expect(
-      (definitions[0]!.parameters as { properties: Record<string, unknown> }).properties,
-    ).toHaveProperty('location');
+    // `parameters` is omitted: the convention marks it NOT RECOMMENDED by default
+    expect(genAI.toToolDefinitions([getWeather])).toEqual([
+      {
+        type: 'function',
+        name: 'get_weather',
+        description: 'Get the current weather in a given location',
+      },
+    ]);
   });
 
   it("uses the convention's finish-reason values", () => {

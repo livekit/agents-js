@@ -3996,17 +3996,23 @@ export class AgentActivity implements RecognitionHooks {
     addToChatCtx: boolean = true,
   ): Promise<void> {
     return tracer.startActiveSpan(
-      async (span) => (
-        this.recordAgentTurn(span),
-        this._realtimeGenerationTaskImpl({
-          stateLease,
-          ev,
-          modelSettings,
-          replyAbortController,
-          addToChatCtx,
-          span,
-        })
-      ),
+      async (span) => {
+        this.recordAgentTurn(span);
+        const inferenceSpan = tracer.startSpan({ name: 'realtime_inference' });
+        try {
+          return await this._realtimeGenerationTaskImpl({
+            stateLease,
+            ev,
+            modelSettings,
+            replyAbortController,
+            addToChatCtx,
+            span,
+            inferenceSpan,
+          });
+        } finally {
+          inferenceSpan.end();
+        }
+      },
       {
         name: 'agent_turn',
         context: this.agentSession.rootSpanContext,
@@ -4021,6 +4027,7 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController,
     addToChatCtx,
     span,
+    inferenceSpan,
   }: {
     stateLease: AgentStateLease;
     ev: GenerationCreatedEvent;
@@ -4028,6 +4035,7 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController: AbortController;
     addToChatCtx: boolean;
     span: Span;
+    inferenceSpan: Span;
   }): Promise<void> {
     const { speechHandle } = stateLease;
     speechHandle._agentTurnContext = otelContext.active();
@@ -4050,10 +4058,20 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('llm is not a realtime model');
     }
 
-    // Store span for metrics recording when they arrive later
-    span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, realtimeModel.model);
+    genAI.setRequestAttributes(inferenceSpan, {
+      operation: traceTypes.GenAIOperationName.GENERATE_CONTENT,
+      provider: realtimeModel.provider,
+      model: realtimeModel.model,
+      stream: true,
+      // a realtime model can be configured text-only
+      outputType: this.agentSession.output.audioEnabled
+        ? traceTypes.GenAIOutputType.SPEECH
+        : traceTypes.GenAIOutputType.TEXT,
+    });
+    // the provider metrics land here rather than on `agent_turn`; they can arrive after the
+    // turn ends, in which case recordRealtimeMetrics opens its own child span
     if (this.realtimeSpans && ev.responseId) {
-      this.realtimeSpans.set(ev.responseId, span);
+      this.realtimeSpans.set(ev.responseId, inferenceSpan);
     }
 
     this.logger.debug(

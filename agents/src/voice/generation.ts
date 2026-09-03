@@ -659,6 +659,8 @@ export function performLLMInference(
     let llmStream: ReadableStream<string | ChatChunk | FlushSentinel> | null = null;
     const startTime = performance.now() / 1000; // Convert to seconds
     let firstTokenReceived = false;
+    let interrupted = false;
+    let failed = false;
 
     try {
       llmStream = await node(chatCtx, toolCtx, modelSettings);
@@ -741,9 +743,11 @@ export function performLLMInference(
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         // Abort signal was triggered, handle gracefully
+        interrupted = true;
         return;
       }
       // surface inference silent errors even when this task's rejection is never awaited
+      failed = true;
       logger.error({ error }, 'error in llm node');
       throw error;
     } finally {
@@ -763,7 +767,12 @@ export function performLLMInference(
         span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
       }
       {
-        const finishReason = genAI.finishReasonFor({ functionCalls: data.generatedToolCalls });
+        // the finally block also runs for a cancelled or failed generation, which must not
+        // be reported as a normal stop
+        const finishReason = genAI.finishReasonFor({
+          functionCalls: data.generatedToolCalls,
+          interrupted: interrupted || failed || signal.aborted,
+        });
         genAI.setResponseAttributes(span, {
           finishReasons: [finishReason],
           timeToFirstChunk: data.ttft,

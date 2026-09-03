@@ -24,12 +24,12 @@
 import type { Attributes, Span } from '@opentelemetry/api';
 import { getJobContext } from '../job.js';
 import type { ChatContext, ChatItem } from '../llm/chat_context.js';
-import { isInstructions } from '../llm/chat_context.js';
-import type { FunctionTool, ProviderTool } from '../llm/tool_context.js';
-import { isFunctionTool, isProviderTool } from '../llm/tool_context.js';
-import { toJsonSchema } from '../llm/utils.js';
 import type { RealtimeModelMetrics } from '../metrics/base.js';
 import * as traceTypes from './trace_types.js';
+
+// Only type-only imports from `llm` here: a runtime import would pull the whole llm graph
+// in behind the telemetry barrel, which llm itself imports. Chat items and tools are
+// matched on their own `type` discriminants instead.
 
 const FALSY = new Set(['0', 'false', 'no', 'off']);
 
@@ -86,7 +86,7 @@ function messageParts(item: ChatItem): MessagePart[] {
     for (const content of item.content) {
       if (typeof content === 'string') {
         parts.push(textPart(content));
-      } else if (isInstructions(content)) {
+      } else if (content.type === 'instructions') {
         parts.push(textPart(content.value));
       } else if (content.type === 'image_content') {
         // a data: URL is inline bytes, which the convention models as a blob; recording the
@@ -225,35 +225,29 @@ export function toOutputMessages(params: {
   return [message];
 }
 
-/** `gen_ai.tool.definitions` — the tools offered to the model for this call. */
+/**
+ * `parameters` is deliberately omitted: the convention marks it NOT RECOMMENDED by default
+ * because a schema is large, and building one per request would be pure overhead for
+ * telemetry. Tools are matched structurally for the layering reason above.
+ */
 export function toToolDefinitions(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tools: readonly unknown[] | Record<string, FunctionTool<any, any, any> | ProviderTool>,
+  tools: readonly unknown[] | Record<string, unknown>,
 ): MessagePart[] {
   const entries = Array.isArray(tools) ? tools : Object.values(tools ?? {});
   const definitions: MessagePart[] = [];
-  for (const tool of entries) {
-    if (isFunctionTool(tool)) {
+  for (const entry of entries) {
+    const tool = entry as { type?: string; name?: string; description?: string; id?: string };
+    if (tool?.type === 'function' && tool.name) {
       const definition: MessagePart = { type: 'function', name: tool.name };
       if (tool.description) definition.description = tool.description;
-      if (tool.parameters) {
-        try {
-          // the convention's FunctionToolDefinition.parameters is a JSON Schema draft-07
-          // document, not the Zod schema a LiveKit tool is declared with
-          definition.parameters = toJsonSchema(tool.parameters, false);
-        } catch {
-          // a tool whose schema can't be converted must not break tracing
-        }
-      }
       definitions.push(definition);
-    } else if (isProviderTool(tool)) {
+    } else if (tool?.type === 'provider' && tool.id) {
       definitions.push({ type: tool.id, name: tool.id });
     }
   }
   return definitions;
 }
 
-/** The convention's finish reason for a completed LiveKit generation. */
 export function finishReasonFor(params: {
   functionCalls?: readonly unknown[];
   interrupted?: boolean;

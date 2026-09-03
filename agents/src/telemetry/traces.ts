@@ -50,6 +50,7 @@ import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exp
 import { PIIRedactingSpanProcessor } from './pii.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { uploadRecording } from './recording_upload.js';
+import { allowPiiFromEnv } from './redaction.js';
 import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
 import { UploadGateTraceExporter, uploadGate } from './upload_gate.js';
 
@@ -280,11 +281,25 @@ const piiRedactionInstalled = new WeakSet<TracerProvider>();
  */
 function installPIIRedaction(
   provider: TracerProvider,
-  registerSpanProcessor: SpanProcessorRegistrar,
+  registerSpanProcessor: SpanProcessorRegistrar | undefined,
+  allowPii: boolean,
 ): void {
   if (piiRedactionInstalled.has(provider)) return;
+
+  if (!registerSpanProcessor) {
+    // never reached for a provider we own. addSpanProcessor is deliberately not used as a
+    // fallback: OpenTelemetry 2.x removed it, and attaching to an integrator's provider
+    // without being handed a registrar is not ours to do
+    console.warn(
+      'Unable to install LiveKit PII redaction on the custom tracer provider, so its ' +
+        'exporters may receive conversational content. Pass registerSpanProcessor to ' +
+        'setTracerProvider, or set OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false.',
+    );
+    return;
+  }
+
   piiRedactionInstalled.add(provider);
-  registerSpanProcessor(new PIIRedactingSpanProcessor());
+  registerSpanProcessor(new PIIRedactingSpanProcessor(allowPii || allowPiiFromEnv()));
 }
 
 /** Options for configuring a custom tracer provider. */
@@ -315,6 +330,16 @@ export interface SetTracerProviderOptions {
    * active. The returned processor must use OpenTelemetry SDK 2.x.
    */
   createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessor;
+  /**
+   * Let this provider's exporters receive conversational content, tool payloads and other
+   * user data.
+   *
+   * Off by default: PII is stripped in-process before any exporter that is not LiveKit
+   * Cloud's, so a Datadog or Langfuse pipeline sees only the non-content attributes. Turn it
+   * on when the backend is meant to show conversations. Ignored when the project mandates
+   * redaction — that setting is not weakened from here.
+   */
+  allowPii?: boolean;
 }
 
 /**
@@ -368,8 +393,9 @@ export function setTracerProvider(
     );
   }
 
+  installPIIRedaction(provider, registerSpanProcessor, options?.allowPii ?? false);
+
   if (registerSpanProcessor) {
-    installPIIRedaction(provider, registerSpanProcessor);
     customProviderConfigs.set(provider, {
       registerSpanProcessor,
       createCloudSpanProcessor: options?.createCloudSpanProcessor,
@@ -479,7 +505,7 @@ export async function setupCloudTracer(
           resource,
           spanProcessors: [
             // strips PII while the span is still mutable, ahead of every exporter's onEnd
-            new PIIRedactingSpanProcessor(),
+            new PIIRedactingSpanProcessor(allowPiiFromEnv()),
             new MetadataSpanProcessor(sessionMetadata),
             new BatchSpanProcessor(createCloudExporter()),
           ],
@@ -512,7 +538,7 @@ export async function setupCloudTracer(
           // Resource shared by all exporters, so applying `resource` here would also relabel
           // the spans going to the user's own backend. room_id/job_id — the keys Cloud
           // correlates on — still ride along as span attributes via MetadataSpanProcessor.
-          installPIIRedaction(existingProvider, config.registerSpanProcessor);
+          installPIIRedaction(existingProvider, config.registerSpanProcessor, false);
           config.registerSpanProcessor(new MetadataSpanProcessor(sessionMetadata));
           config.registerSpanProcessor(cloudSpanProcessor);
         }

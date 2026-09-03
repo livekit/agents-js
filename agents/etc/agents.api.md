@@ -4054,7 +4054,7 @@ export class FinalizeSimulationError extends Error {
 
 // Warning: (ae-missing-release-tag) "finishReasonFor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public
+// @public (undocumented)
 function finishReasonFor(params: {
     functionCalls?: readonly unknown[];
     interrupted?: boolean;
@@ -5976,6 +5976,7 @@ export interface ParticipantTranscriptionOutputOptions extends TranscriptionOutp
 //
 // @public
 class PIIRedactingSpanProcessor implements SpanProcessor {
+    constructor(allowPii?: boolean);
     // (undocumented)
     forceFlush(): Promise<void>;
     // (undocumented)
@@ -6375,6 +6376,11 @@ function redactAttributes<T extends Record<string, unknown>>(attributes: T): Par
 //
 // @public (undocumented)
 const REDACTED_EXCEPTION_MESSAGE = "exception details redacted";
+
+// Warning: (ae-missing-release-tag) "redactionEnabled" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+function redactionEnabled(spanAttributes?: Attributes): boolean;
 
 // Warning: (ae-missing-release-tag) "rejectOnAbort" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -6782,7 +6788,7 @@ export type ScenarioUserdata = {
 //
 // @public (undocumented)
 const sendDtmfEvents: FunctionTool<    {
-events: ("0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "#" | "*" | "8" | "9" | "A" | "B" | "C" | "D")[];
+events: ("1" | "0" | "2" | "3" | "4" | "5" | "6" | "7" | "#" | "*" | "8" | "9" | "A" | "B" | "C" | "D")[];
 }, unknown, string>;
 
 // Warning: (ae-missing-release-tag) "SentenceStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -7130,6 +7136,7 @@ function setTracerProvider(provider: TracerProvider, options?: SetTracerProvider
 //
 // @public
 interface SetTracerProviderOptions {
+    allowPii?: boolean;
     createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessor_2;
     metadata?: Attributes;
     // Warning: (ae-forgotten-export) The symbol "SpanProcessorRegistrar" needs to be exported by the entry point index.d.ts
@@ -8143,6 +8150,7 @@ declare namespace telemetry {
         PIIRedactingSpanProcessor,
         isPIIAttribute,
         redactAttributes,
+        REDACTED_EXCEPTION_MESSAGE,
         traceTypes,
         FanoutSpanProcessor,
         flushOtelLogs,
@@ -8154,9 +8162,9 @@ declare namespace telemetry {
         SetTracerProviderOptions,
         SpanProcessorLike,
         StartSpanOptions,
-        REDACTED_EXCEPTION_MESSAGE,
         recordException,
         recordRealtimeMetrics,
+        redactionEnabled,
         RecordExceptionOptions
     }
 }
@@ -8625,7 +8633,7 @@ export function toToolContext<UserData = UnknownUserData>(input: ToolContextLike
 // Warning: (ae-missing-release-tag) "toToolDefinitions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-function toToolDefinitions(tools: readonly unknown[] | Record<string, FunctionTool<any, any, any> | ProviderTool>): MessagePart[];
+function toToolDefinitions(tools: readonly unknown[] | Record<string, unknown>): MessagePart[];
 
 // Warning: (ae-forgotten-export) The symbol "DynamicTracer" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "tracer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

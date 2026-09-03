@@ -6,21 +6,19 @@
  * In-process stripping of personally identifiable information from telemetry.
  *
  * LiveKit marks attributes carrying conversational content, tool payloads, or other user data
- * with a dot-delimited `pii` segment (`lk.pii.<name>`), which PII-enabled projects have
- * stripped at the LiveKit Cloud collector. That only protects records that reach LiveKit
- * Cloud: an integrator's own exporter — Datadog, Langfuse, an OTLP collector — sees whatever
- * the SDK put on the span.
+ * with a dot-delimited `pii` segment (`lk.pii.<name>`), and the GenAI content attributes carry
+ * the same kind of payload under names the semantic convention fixes, where the marker cannot
+ * be applied.
  *
- * The GenAI content attributes make the gap material, since the semantic convention fixes
- * their names and the `lk.pii.` marker cannot be applied to them. So
- * {@link PIIRedactingSpanProcessor} strips them here instead, while the span is still
- * mutable and before any processor's `onEnd` runs.
+ * {@link PIIRedactingSpanProcessor} strips both before any exporter that is not LiveKit
+ * Cloud's, whose own handling is the project's setting in the dashboard rather than ours to
+ * second-guess. {@link restorePii} puts the payload back on that one export path.
  */
-import type { Attributes, Context } from '@opentelemetry/api';
+import type { Context } from '@opentelemetry/api';
 import type { ReadableSpan, Span as SdkSpan, SpanProcessor } from '@opentelemetry/sdk-trace-node';
-import { getJobContext } from '../job.js';
-import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
+import { REDACTED_EXCEPTION_MESSAGE, stashPii } from './redaction.js';
 import * as traceTypes from './trace_types.js';
+import { redactionEnabled } from './utils.js';
 
 /**
  * Mirrors the LiveKit Cloud collector's matcher: a whole dot-delimited `pii` segment,
@@ -63,8 +61,17 @@ const PII_EVENT_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether `key` names an attribute that must be stripped under redaction: it carries a
- * dot-delimited `pii` segment, or it is one of the GenAI content attributes.
+ * Exception details are recorded by `recordException`, which resolves the project's redaction
+ * setting; a third-party exporter must not see them either way.
+ */
+const REDACTED_EXCEPTION_ATTRIBUTES: ReadonlySet<string> = new Set([
+  traceTypes.ATTR_EXCEPTION_MESSAGE,
+  traceTypes.ATTR_EXCEPTION_TRACE,
+]);
+
+/**
+ * Whether `key` names an attribute that must be stripped: it carries a dot-delimited `pii`
+ * segment, or it is one of the GenAI content attributes.
  */
 export function isPIIAttribute(key: string): boolean {
   if (PII_SEGMENT_RE.test(key)) return true;
@@ -73,52 +80,62 @@ export function isPIIAttribute(key: string): boolean {
   return key.startsWith(traceTypes.ATTR_GEN_AI_PROMPT_VARIABLE);
 }
 
-/** Returns `attributes` without any PII entry. */
+/** Returns `attributes` without any PII entry, and with exception details removed. */
 export function redactAttributes<T extends Record<string, unknown>>(attributes: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(attributes)) {
-    if (!isPIIAttribute(key)) {
-      out[key] = attributes[key];
+    if (isPIIAttribute(key) || key === traceTypes.ATTR_EXCEPTION_TRACE) continue;
+    if (key === traceTypes.ATTR_EXCEPTION_MESSAGE) {
+      // `error.type` still names the class; only the free-form message goes
+      out[key] = REDACTED_EXCEPTION_MESSAGE;
+      continue;
     }
+    out[key] = attributes[key];
   }
   return out as Partial<T>;
 }
 
 /**
- * Whether the span belongs to a session that asked for redaction.
- *
- * Resolved from the span's own attributes first: the redaction flag is stamped at span start
- * by the metadata processor, so it stays correct for a span ended outside the job's async
- * context. Spans created before the job registered its recording options fall back to the
- * ambient job context.
- */
-function spanRedactionEnabled(attributes: Attributes | undefined): boolean {
-  if (attributes?.[ATTRIBUTE_REDACTION_ENABLED]) return true;
-  return getJobContext(false)?._redactionEnabled ?? false;
-}
-
-/**
- * Strips PII attributes and content events from every span of a redaction-enabled session.
+ * Strips PII so it never reaches an exporter that is not LiveKit Cloud's.
  *
  * Runs in `onEnding`, which the SDK dispatches to every registered processor *before* any
  * processor's `onEnd` and while the span is still mutable. Registration order therefore does
  * not matter: an exporter the integrator attached before LiveKit's own still sees the
  * redacted span.
+ *
+ * `allowPii` lifts the stripping for a provider whose exporters the integrator has explicitly
+ * granted PII (`setTracerProvider(provider, { allowPii: true })`). The project's redaction
+ * setting overrides that grant and strips for every destination, Cloud included.
  */
 export class PIIRedactingSpanProcessor implements SpanProcessor {
+  constructor(private readonly allowPii: boolean = false) {}
+
   onStart(_span: SdkSpan, _parentContext: Context): void {}
 
   onEnding(span: SdkSpan): void {
-    if (!spanRedactionEnabled(span.attributes)) return;
+    const projectRedaction = redactionEnabled(span.attributes);
+    if (this.allowPii && !projectRedaction) return;
 
-    for (const key of Object.keys(span.attributes)) {
-      if (isPIIAttribute(key)) {
-        delete (span.attributes as Record<string, unknown>)[key];
-      }
+    const attributes = span.attributes as Record<string, unknown>;
+    const events = span.events;
+    const piiKeys = Object.keys(attributes).filter(
+      (key) => isPIIAttribute(key) || REDACTED_EXCEPTION_ATTRIBUTES.has(key),
+    );
+    const contentEvents = events.filter((event) => PII_EVENT_NAMES.has(event.name));
+    if (!piiKeys.length && !contentEvents.length) return;
+
+    if (!projectRedaction) {
+      // LiveKit Cloud still receives what the project allows
+      stashPii(span);
     }
 
-    const events = span.events;
-    if (!events.length) return;
+    for (const key of piiKeys) {
+      if (key === traceTypes.ATTR_EXCEPTION_MESSAGE) {
+        attributes[key] = REDACTED_EXCEPTION_MESSAGE;
+      } else {
+        delete attributes[key];
+      }
+    }
 
     const kept = events.filter((event) => !PII_EVENT_NAMES.has(event.name));
     for (const event of kept) {

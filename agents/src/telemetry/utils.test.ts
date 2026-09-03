@@ -5,12 +5,9 @@ import type { Span } from '@opentelemetry/api';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type JobContext, runWithJobContext } from '../job.js';
+import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 import * as traceTypes from './trace_types.js';
-import {
-  REDACTED_EXCEPTION_MESSAGE,
-  type RecordExceptionOptions,
-  recordException,
-} from './utils.js';
+import { type RecordExceptionOptions, recordException } from './utils.js';
 
 function fakeSpan() {
   return {
