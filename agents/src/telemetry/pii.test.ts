@@ -10,8 +10,9 @@ import {
 } from '@opentelemetry/sdk-trace-node';
 import { describe, expect, it } from 'vitest';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
-import { PIIFilteringSpanProcessor, isPIIAttribute } from './pii.js';
-import { restorePii } from './redaction.js';
+import { PIIFilteringLogProcessor } from './logging.js';
+import { PIIFilteringSpanProcessor } from './pii.js';
+import { REDACTED_EXCEPTION_MESSAGE, isPIIAttribute, restorePii } from './redaction.js';
 import * as traceTypes from './trace_types.js';
 
 // Pins the SDK-side guarantee: PII never reaches an exporter that is not LiveKit Cloud's,
@@ -150,5 +151,39 @@ describe('PIIFilteringSpanProcessor', () => {
     ['lk.piidata.x', false],
   ])('classifies %s', (key, expected) => {
     expect(isPIIAttribute(key as string)).toBe(expected);
+  });
+});
+
+describe('PIIFilteringLogProcessor', () => {
+  it('filters PII and exception details once the project mandates redaction', () => {
+    const attributes: Record<string, unknown> = {
+      [ATTRIBUTE_REDACTION_ENABLED]: true,
+      [traceTypes.ATTR_CHAT_CTX]: '{"items": []}',
+      [traceTypes.ATTR_GEN_AI_INPUT_MESSAGES]: '[{"role": "user"}]',
+      [traceTypes.ATTR_EXCEPTION_MESSAGE]: 'my pin is 1234',
+      [traceTypes.ATTR_EXCEPTION_TRACE]: 'Traceback: "my pin is 1234"',
+      function: 'get_weather',
+    };
+    const record = {
+      attributes,
+      setAttribute(key: string, value: unknown) {
+        attributes[key] = value;
+      },
+    };
+
+    new PIIFilteringLogProcessor().onEmit(record as never);
+
+    expect(attributes).toEqual({
+      [ATTRIBUTE_REDACTION_ENABLED]: true,
+      [traceTypes.ATTR_EXCEPTION_MESSAGE]: REDACTED_EXCEPTION_MESSAGE,
+      function: 'get_weather',
+    });
+  });
+
+  it('leaves records alone when the project has not', () => {
+    const attributes: Record<string, unknown> = { [traceTypes.ATTR_CHAT_CTX]: '{"items": []}' };
+    new PIIFilteringLogProcessor().onEmit({ attributes } as never);
+
+    expect(attributes).toEqual({ [traceTypes.ATTR_CHAT_CTX]: '{"items": []}' });
   });
 });

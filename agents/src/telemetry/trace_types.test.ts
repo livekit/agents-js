@@ -6,7 +6,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { GEN_AI_PII_ATTRIBUTES, isPIIAttribute } from './pii.js';
+import { GEN_AI_PII_ATTRIBUTES, isPIIAttribute } from './redaction.js';
 import * as traceTypes from './trace_types.js';
 
 const PII_SEGMENT_RE = /(^|\.)pii(\.|$)/i;

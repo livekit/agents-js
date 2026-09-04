@@ -5744,6 +5744,18 @@ export interface ParticipantTranscriptionOutputOptions extends TranscriptionOutp
     jsonFormat?: boolean;
 }
 
+// Warning: (ae-missing-release-tag) "PIIFilteringLogProcessor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+class PIIFilteringLogProcessor implements LogRecordProcessor {
+    // (undocumented)
+    forceFlush(): Promise<void>;
+    // (undocumented)
+    onEmit(logRecord: SdkLogRecord): void;
+    // (undocumented)
+    shutdown(): Promise<void>;
+}
+
 // Warning: (ae-missing-release-tag) "PinoCloudExporter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -6545,7 +6557,7 @@ export type ScenarioUserdata = {
 //
 // @public (undocumented)
 const sendDtmfEvents: FunctionTool<    {
-events: ("0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "#" | "*" | "8" | "9" | "A" | "B" | "C" | "D")[];
+events: ("0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "#" | "*" | "A" | "B" | "C" | "D")[];
 }, unknown, string>;
 
 // Warning: (ae-missing-release-tag) "SentenceStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -7894,6 +7906,7 @@ declare namespace telemetry {
     export {
         ExtraDetailsProcessor,
         MetadataLogProcessor,
+        PIIFilteringLogProcessor,
         SimpleOTLPHttpLogExporter,
         SimpleLogRecord,
         SimpleOTLPHttpLogExporterConfig,

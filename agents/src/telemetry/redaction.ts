@@ -3,12 +3,74 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Attributes, SpanStatus } from '@opentelemetry/api';
 import type { ReadableSpan, Span as SdkSpan, TimedEvent } from '@opentelemetry/sdk-trace-node';
+import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
+import * as traceTypes from './trace_types.js';
 
 // Type-only imports on purpose: this module is pulled in near the top of the telemetry
 // barrel (via pino_otel_transport), which job.ts imports, so anything imported here starts
 // evaluating that far earlier inside the job <-> telemetry cycle.
 
 export const REDACTED_EXCEPTION_MESSAGE = 'exception details redacted';
+
+/**
+ * Mirrors the LiveKit Cloud collector's matcher: a whole dot-delimited `pii` segment,
+ * case-insensitive (`lk.chatpii` does not match, `lk.PII.x` does).
+ */
+const PII_SEGMENT_RE = /(^|\.)pii(\.|$)/i;
+
+/**
+ * GenAI attributes that carry content. Their names are fixed by the semantic convention,
+ * so they cannot carry the `lk.pii.` marker and are enumerated here instead.
+ */
+export const GEN_AI_PII_ATTRIBUTES: ReadonlySet<string> = new Set([
+  // flagged "likely to contain sensitive information including user/PII data" by the spec
+  traceTypes.ATTR_GEN_AI_INPUT_MESSAGES,
+  traceTypes.ATTR_GEN_AI_OUTPUT_MESSAGES,
+  traceTypes.ATTR_GEN_AI_SYSTEM_INSTRUCTIONS,
+  traceTypes.ATTR_GEN_AI_TOOL_CALL_ARGUMENTS,
+  traceTypes.ATTR_GEN_AI_TOOL_CALL_RESULT,
+  traceTypes.ATTR_GEN_AI_TOOL_DESCRIPTION,
+  traceTypes.ATTR_GEN_AI_TOOL_DEFINITIONS,
+  // free-form text the caller supplied or the model produced
+  traceTypes.ATTR_GEN_AI_RETRIEVAL_QUERY_TEXT,
+  traceTypes.ATTR_GEN_AI_RETRIEVAL_DOCUMENTS,
+  traceTypes.ATTR_GEN_AI_MEMORY_QUERY_TEXT,
+  traceTypes.ATTR_GEN_AI_MEMORY_RECORDS,
+  traceTypes.ATTR_GEN_AI_EVALUATION_EXPLANATION,
+]);
+
+/**
+ * Events whose body rides on a generic attribute (`content`, `tool_calls`) that cannot be
+ * marked, so the whole event is dropped rather than filtered.
+ */
+export const PII_EVENT_NAMES: ReadonlySet<string> = new Set([
+  traceTypes.EVENT_GEN_AI_SYSTEM_MESSAGE,
+  traceTypes.EVENT_GEN_AI_USER_MESSAGE,
+  traceTypes.EVENT_GEN_AI_ASSISTANT_MESSAGE,
+  traceTypes.EVENT_GEN_AI_TOOL_MESSAGE,
+  traceTypes.EVENT_GEN_AI_CHOICE,
+  traceTypes.EVENT_GEN_AI_CLIENT_INFERENCE_OPERATION_DETAILS,
+]);
+
+/**
+ * Exception details are recorded by `recordException`, which resolves the project's redaction
+ * setting; a third-party exporter must not see them either way.
+ */
+export const REDACTED_EXCEPTION_ATTRIBUTES: ReadonlySet<string> = new Set([
+  traceTypes.ATTR_EXCEPTION_MESSAGE,
+  traceTypes.ATTR_EXCEPTION_TRACE,
+]);
+
+/**
+ * Whether `key` names an attribute that must be stripped: it carries a dot-delimited `pii`
+ * segment, or it is one of the GenAI content attributes.
+ */
+export function isPIIAttribute(key: string): boolean {
+  if (PII_SEGMENT_RE.test(key)) return true;
+  if (GEN_AI_PII_ATTRIBUTES.has(key)) return true;
+  // gen_ai.prompt.variable.<key> holds the values interpolated into a prompt template
+  return key.startsWith(traceTypes.ATTR_GEN_AI_PROMPT_VARIABLE);
+}
 
 const ALLOW_PII_ENV_VAR = 'LIVEKIT_TELEMETRY_ALLOW_PII';
 const FALSY = new Set(['0', 'false', 'no', 'off']);
@@ -20,6 +82,20 @@ const FALSY = new Set(['0', 'false', 'no', 'off']);
  * NodeSDK-style setup) and so have nowhere to pass `allowPii`. Set it to `0` to withhold
  * conversational content from third-party exporters.
  */
+/**
+ * Whether the record's own stamp says the project mandated redaction.
+ *
+ * Attribute-only on purpose: the modules that need this sit at the top of the telemetry
+ * barrel, which job.ts imports, so they cannot reach the ambient job context. The stamp is
+ * applied to every record by the metadata processor.
+ */
+export function redactionEnabledFromAttributes(
+  // loose on purpose: span attributes and log attributes are different OTel types
+  attributes: Record<string, unknown> | undefined,
+): boolean {
+  return Boolean(attributes?.[ATTRIBUTE_REDACTION_ENABLED]);
+}
+
 export function allowPiiFromEnv(): boolean | undefined {
   const raw = process.env[ALLOW_PII_ENV_VAR];
   if (raw === undefined) return undefined;

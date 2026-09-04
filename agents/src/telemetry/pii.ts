@@ -21,69 +21,15 @@
 import type { Context } from '@opentelemetry/api';
 import { SpanStatusCode } from '@opentelemetry/api';
 import type { ReadableSpan, Span as SdkSpan, SpanProcessor } from '@opentelemetry/sdk-trace-node';
-import { REDACTED_EXCEPTION_MESSAGE, stashPii } from './redaction.js';
+import {
+  PII_EVENT_NAMES,
+  REDACTED_EXCEPTION_ATTRIBUTES,
+  REDACTED_EXCEPTION_MESSAGE,
+  isPIIAttribute,
+  stashPii,
+} from './redaction.js';
 import * as traceTypes from './trace_types.js';
 import { redactionEnabled } from './utils.js';
-
-/**
- * Mirrors the LiveKit Cloud collector's matcher: a whole dot-delimited `pii` segment,
- * case-insensitive (`lk.chatpii` does not match, `lk.PII.x` does).
- */
-const PII_SEGMENT_RE = /(^|\.)pii(\.|$)/i;
-
-/**
- * GenAI attributes that carry content. Their names are fixed by the semantic convention,
- * so they cannot carry the `lk.pii.` marker and are enumerated here instead.
- */
-export const GEN_AI_PII_ATTRIBUTES: ReadonlySet<string> = new Set([
-  // flagged "likely to contain sensitive information including user/PII data" by the spec
-  traceTypes.ATTR_GEN_AI_INPUT_MESSAGES,
-  traceTypes.ATTR_GEN_AI_OUTPUT_MESSAGES,
-  traceTypes.ATTR_GEN_AI_SYSTEM_INSTRUCTIONS,
-  traceTypes.ATTR_GEN_AI_TOOL_CALL_ARGUMENTS,
-  traceTypes.ATTR_GEN_AI_TOOL_CALL_RESULT,
-  traceTypes.ATTR_GEN_AI_TOOL_DESCRIPTION,
-  traceTypes.ATTR_GEN_AI_TOOL_DEFINITIONS,
-  // free-form text the caller supplied or the model produced
-  traceTypes.ATTR_GEN_AI_RETRIEVAL_QUERY_TEXT,
-  traceTypes.ATTR_GEN_AI_RETRIEVAL_DOCUMENTS,
-  traceTypes.ATTR_GEN_AI_MEMORY_QUERY_TEXT,
-  traceTypes.ATTR_GEN_AI_MEMORY_RECORDS,
-  traceTypes.ATTR_GEN_AI_EVALUATION_EXPLANATION,
-]);
-
-/**
- * Events whose body rides on a generic attribute (`content`, `tool_calls`) that cannot be
- * marked, so the whole event is dropped rather than filtered.
- */
-const PII_EVENT_NAMES: ReadonlySet<string> = new Set([
-  traceTypes.EVENT_GEN_AI_SYSTEM_MESSAGE,
-  traceTypes.EVENT_GEN_AI_USER_MESSAGE,
-  traceTypes.EVENT_GEN_AI_ASSISTANT_MESSAGE,
-  traceTypes.EVENT_GEN_AI_TOOL_MESSAGE,
-  traceTypes.EVENT_GEN_AI_CHOICE,
-  traceTypes.EVENT_GEN_AI_CLIENT_INFERENCE_OPERATION_DETAILS,
-]);
-
-/**
- * Exception details are recorded by `recordException`, which resolves the project's redaction
- * setting; a third-party exporter must not see them either way.
- */
-const REDACTED_EXCEPTION_ATTRIBUTES: ReadonlySet<string> = new Set([
-  traceTypes.ATTR_EXCEPTION_MESSAGE,
-  traceTypes.ATTR_EXCEPTION_TRACE,
-]);
-
-/**
- * Whether `key` names an attribute that must be stripped: it carries a dot-delimited `pii`
- * segment, or it is one of the GenAI content attributes.
- */
-export function isPIIAttribute(key: string): boolean {
-  if (PII_SEGMENT_RE.test(key)) return true;
-  if (GEN_AI_PII_ATTRIBUTES.has(key)) return true;
-  // gen_ai.prompt.variable.<key> holds the values interpolated into a prompt template
-  return key.startsWith(traceTypes.ATTR_GEN_AI_PROMPT_VARIABLE);
-}
 
 /**
  * Drops PII attributes so they never reach an exporter that is not LiveKit Cloud's.
