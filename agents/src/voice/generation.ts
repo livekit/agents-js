@@ -745,7 +745,9 @@ export function performLLMInference(
         // Python since chunk is defined in the type ChatChunk | string in TypeScript
       }
     } catch (error) {
-      nodeError = error instanceof Error ? error : String(error);
+      // an Error is classified by setErrorType; anything else is never used verbatim,
+      // since error.type is low-cardinality and a thrown value can carry content
+      nodeError = error instanceof Error ? error : 'UnknownError';
       if (error instanceof DOMException && error.name === 'AbortError') {
         // Abort signal was triggered, handle gracefully
         return;

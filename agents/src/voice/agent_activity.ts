@@ -28,7 +28,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
-import { AsyncToolset, type Toolset } from '../llm/index.js';
+import { AsyncToolset, FallbackAdapter, type Toolset } from '../llm/index.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -599,11 +599,14 @@ export class AgentActivity implements RecognitionHooks {
       attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
       context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
     });
+    // a fallback adapter stands for several models and reports a placeholder for both,
+    // which would name the adapter rather than anything that serves inference
+    const singleModel = !(this.llm instanceof FallbackAdapter);
     genAI.setAgentAttributes(startSpan, {
       operation: traceTypes.GenAIOperationName.CREATE_AGENT,
       agentName: this.agent.id,
-      model: this.llm?.model,
-      provider: this.llm?.provider,
+      model: singleModel ? this.llm?.model : undefined,
+      provider: singleModel ? this.llm?.provider : undefined,
     });
 
     this.agent._agentActivity = this;

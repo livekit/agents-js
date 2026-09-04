@@ -1,5 +1,5 @@
 ---
-'@livekit/agents': patch
+'@livekit/agents': minor
 ---
 
 Emit the full OpenTelemetry GenAI semantic conventions on agent spans.
