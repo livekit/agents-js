@@ -34,7 +34,7 @@ import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
 import type { ChatItem } from '../llm/index.js';
-import { enableOtelLogging } from '../log.js';
+import { enableOtelLogging, log } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
 import { encodeChatItem } from '../proto.js';
 import {
@@ -705,8 +705,11 @@ export async function uploadSessionReport(options: {
   if (hasAudio && report.audioRecordingPath) {
     try {
       audioBytes = await fs.readFile(report.audioRecordingPath);
-    } catch {
-      // Upload the remaining report when the optional audio file is unavailable.
+    } catch (error) {
+      log().warn(
+        { error, path: report.audioRecordingPath },
+        'failed to read audio recording for session report upload, uploading without the audio part',
+      );
     }
   }
 

@@ -36,6 +36,31 @@ import type { AgentSession, ResolvedRecordingOptions } from './voice/agent_sessi
 import { AgentsConsole } from './voice/console_io.js';
 import { type SessionReport, createSessionReport, sessionReportToJSON } from './voice/report.js';
 
+/**
+ * Hostname for LiveKit Cloud observability (`LIVEKIT_OBSERVABILITY_URL`, else Cloud job URL).
+ * Invalid overrides are logged and ignored. Path on the override URL is unused.
+ */
+function observabilityHostname(livekitUrl: string): string | undefined {
+  const override = process.env.LIVEKIT_OBSERVABILITY_URL;
+  if (override) {
+    try {
+      return new URL(override).host;
+    } catch (error) {
+      log().warn(
+        { error, url: override },
+        'invalid LIVEKIT_OBSERVABILITY_URL, falling back to the job URL',
+      );
+    }
+  }
+
+  try {
+    const url = new URL(livekitUrl);
+    return url.hostname && isCloud(url) ? url.hostname : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // AsyncLocalStorage for job context, similar to Python's contextvars
 const jobContextStorage = new AsyncLocalStorage<JobContext<unknown>>();
 
@@ -456,16 +481,16 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // Upload session report to LiveKit Cloud if enabled. A fake job (console
     // mode) has no backing cloud URL, so skip the upload entirely.
     if (!this.isFakeJob) {
-      const url = new URL(this.#info.url);
+      const cloudHostname = observabilityHostname(this.#info.url);
 
       if (
         (recordingEnabled(report.options.recordingOptions) || report.enableRecording) &&
-        isCloud(url)
+        cloudHostname
       ) {
         try {
           await uploadSessionReport({
             agentName: this.job.agentName,
-            cloudHostname: url.hostname,
+            cloudHostname,
             report,
             metadata: this._otelMetadata(report.options.recordingOptions),
           });
@@ -557,8 +582,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     }
     this._redactionEnabled = redactionEnabled;
 
-    const url = new URL(this.#info.url);
-    if (!isCloud(url)) {
+    const cloudHostname = observabilityHostname(this.#info.url);
+    if (!cloudHostname) {
       return;
     }
 
@@ -568,11 +593,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
-    this.#logger.debug({ hostname: url.hostname }, 'Configuring session recording (cloud tracer)');
+    this.#logger.debug({ hostname: cloudHostname }, 'Configuring session recording (cloud tracer)');
     await setupCloudTracer({
       roomId: this.job.room!.sid,
       jobId: this.job.id,
-      cloudHostname: url.hostname,
+      cloudHostname,
       agentName: this.job.agentName,
       enableTraces: options.traces,
       enableLogs: options.logs,

@@ -13,10 +13,12 @@ import {
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import FormData from 'form-data';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs/promises';
 import type { ClientRequest } from 'node:http';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
+import { log } from '../log.js';
 import { version } from '../version.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
@@ -562,6 +564,41 @@ describe('uploadSessionReport metadata', () => {
 
     expect(exportSpy).not.toHaveBeenCalled();
     expect(submitSpy).not.toHaveBeenCalled();
+  });
+
+  it('warns and uploads without audio when the recording file cannot be read', async () => {
+    const readError = new Error('ENOENT');
+    vi.spyOn(fs, 'readFile').mockRejectedValue(readError);
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
+    const submitSpy = mockSuccessfulFormSubmit();
+
+    await uploadSessionReport({
+      agentName: 'agent',
+      cloudHostname: 'example.livekit.cloud',
+      report: {
+        ...makeReport({
+          audio: true,
+          traces: false,
+          logs: false,
+          transcript: true,
+          redaction: false,
+        }),
+        audioRecordingPath: '/tmp/missing-recording.ogg',
+        audioRecordingStartedAt: 1_700_000_000_000,
+      },
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      { error: readError, path: '/tmp/missing-recording.ogg' },
+      'failed to read audio recording for session report upload, uploading without the audio part',
+    );
+    expect(submitSpy).toHaveBeenCalledTimes(1);
+    const formData = submitSpy.mock.instances[0] as FormData;
+    const streams = (formData as unknown as { _streams: unknown[] })._streams;
+    expect(streams.some((part) => typeof part === 'string' && part.includes('name="audio"'))).toBe(
+      false,
+    );
   });
 });
 
