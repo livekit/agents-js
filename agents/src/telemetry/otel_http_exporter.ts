@@ -10,7 +10,6 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
-import type { ObservabilityEndpoint } from './observability_endpoint.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
@@ -29,14 +28,27 @@ export interface SimpleLogRecord {
   severityText?: string;
 }
 
-export type SimpleOTLPHttpLogExporterConfig = ObservabilityEndpoint & {
+export interface SimpleOTLPHttpLogExporterConfig {
+  /** @deprecated Pass `observabilityUrl` with `SimpleOTLPHttpLogExporterUrlConfig`. */
+  cloudHostname: string;
   /** Resource attributes (e.g., room_id, job_id) */
   resourceAttributes: Record<string, unknown>;
   /** Scope name for the logger */
   scopeName: string;
   /** Scope attributes */
   scopeAttributes?: Record<string, unknown>;
-};
+}
+
+export interface SimpleOTLPHttpLogExporterUrlConfig {
+  /** Base URL for LiveKit Cloud observability, without a trailing slash. */
+  observabilityUrl: string;
+  /** Resource attributes (e.g., room_id, job_id) */
+  resourceAttributes: Record<string, unknown>;
+  /** Scope name for the logger */
+  scopeName: string;
+  /** Scope attributes */
+  scopeAttributes?: Record<string, unknown>;
+}
 
 /**
  * Simple OTLP HTTP Log Exporter for direct log export
@@ -58,7 +70,7 @@ export type SimpleOTLPHttpLogExporterConfig = ObservabilityEndpoint & {
  * ```
  */
 export class SimpleOTLPHttpLogExporter {
-  private readonly config: SimpleOTLPHttpLogExporterConfig;
+  private readonly config: SimpleOTLPHttpLogExporterConfig | SimpleOTLPHttpLogExporterUrlConfig;
   private jwt: string | null = null;
 
   private static readonly FORCE_DOUBLE_KEYS = new Set([
@@ -71,7 +83,7 @@ export class SimpleOTLPHttpLogExporter {
     'e2eLatency',
   ]);
 
-  constructor(config: SimpleOTLPHttpLogExporterConfig) {
+  constructor(config: SimpleOTLPHttpLogExporterConfig | SimpleOTLPHttpLogExporterUrlConfig) {
     this.config = config;
   }
 

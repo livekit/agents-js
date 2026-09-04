@@ -11,7 +11,6 @@
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
-import type { ObservabilityEndpoint } from './observability_endpoint.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
@@ -25,14 +24,27 @@ export interface PinoLogObject {
   [key: string]: unknown;
 }
 
-export type PinoCloudExporterConfig = ObservabilityEndpoint & {
+export interface PinoCloudExporterConfig {
+  /** @deprecated Pass `observabilityUrl` with `PinoCloudExporterUrlConfig`. */
+  cloudHostname: string;
   roomId: string;
   jobId: string;
   metadata?: Record<string, unknown>;
   loggerName?: string;
   batchSize?: number;
   flushIntervalMs?: number;
-};
+}
+
+export interface PinoCloudExporterUrlConfig {
+  /** Base URL for LiveKit Cloud observability, without a trailing slash. */
+  observabilityUrl: string;
+  roomId: string;
+  jobId: string;
+  metadata?: Record<string, unknown>;
+  loggerName?: string;
+  batchSize?: number;
+  flushIntervalMs?: number;
+}
 
 function mapPinoLevelToSeverity(pinoLevel: number): {
   severityNumber: SeverityNumber;
@@ -112,7 +124,7 @@ function redactSerializedException(value: unknown): unknown {
  * ```
  */
 export class PinoCloudExporter {
-  private readonly config: PinoCloudExporterConfig;
+  private readonly config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig;
   private readonly loggerName: string;
   private readonly batchSize: number;
   private readonly flushIntervalMs: number;
@@ -121,7 +133,7 @@ export class PinoCloudExporter {
   private flushTimer: NodeJS.Timeout | null = null;
   private flushChain: Promise<void> = Promise.resolve();
 
-  constructor(config: PinoCloudExporterConfig) {
+  constructor(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig) {
     this.config = config;
     this.loggerName = config.loggerName || 'livekit.agents';
     this.batchSize = config.batchSize || 100;
@@ -286,7 +298,9 @@ export class PinoCloudExporter {
 
 let globalExporter: PinoCloudExporter | null = null;
 
-export function initPinoCloudExporter(config: PinoCloudExporterConfig): void {
+export function initPinoCloudExporter(
+  config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig,
+): void {
   globalExporter = new PinoCloudExporter(config);
 }
 

@@ -1,16 +1,12 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { initializeLogger } from '../log.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { log } from '../log.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 
 describe('observability endpoint compatibility', () => {
-  beforeEach(() => {
-    initializeLogger({ pretty: false, level: 'silent' });
-  });
-
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -22,9 +18,12 @@ describe('observability endpoint compatibility', () => {
   });
 
   it('resolves the deprecated cloudHostname to the https URL it used to imply', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
     expect(resolveObservabilityUrl({ cloudHostname: 'cloud.livekit.io' })).toBe(
       'https://cloud.livekit.io',
     );
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('throws when neither spelling is provided', () => {

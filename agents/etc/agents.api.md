@@ -4242,7 +4242,7 @@ export const initializeLogger: (input: LoggerOptions) => void;
 // Warning: (ae-missing-release-tag) "initPinoCloudExporter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-function initPinoCloudExporter(config: PinoCloudExporterConfig): void;
+function initPinoCloudExporter(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig): void;
 
 // @public
 export interface InputDetails {
@@ -5467,7 +5467,7 @@ export interface ParticipantTranscriptionOutputOptions extends TranscriptionOutp
 //
 // @public
 class PinoCloudExporter {
-    constructor(config: PinoCloudExporterConfig);
+    constructor(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig);
     // (undocumented)
     emit(logObj: PinoLogObject): void;
     // (undocumented)
@@ -5479,14 +5479,41 @@ class PinoCloudExporter {
 // Warning: (ae-missing-release-tag) "PinoCloudExporterConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type PinoCloudExporterConfig = ObservabilityEndpoint & {
-    roomId: string;
-    jobId: string;
-    metadata?: Record<string, unknown>;
-    loggerName?: string;
+interface PinoCloudExporterConfig {
+    // (undocumented)
     batchSize?: number;
+    // @deprecated (undocumented)
+    cloudHostname: string;
+    // (undocumented)
     flushIntervalMs?: number;
-};
+    // (undocumented)
+    jobId: string;
+    // (undocumented)
+    loggerName?: string;
+    // (undocumented)
+    metadata?: Record<string, unknown>;
+    // (undocumented)
+    roomId: string;
+}
+
+// Warning: (ae-missing-release-tag) "PinoCloudExporterUrlConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface PinoCloudExporterUrlConfig {
+    // (undocumented)
+    batchSize?: number;
+    // (undocumented)
+    flushIntervalMs?: number;
+    // (undocumented)
+    jobId: string;
+    // (undocumented)
+    loggerName?: string;
+    // (undocumented)
+    metadata?: Record<string, unknown>;
+    observabilityUrl: string;
+    // (undocumented)
+    roomId: string;
+}
 
 // Warning: (ae-missing-release-tag) "PinoLogObject" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -6562,18 +6589,30 @@ interface SimpleLogRecord {
 //
 // @public
 class SimpleOTLPHttpLogExporter {
-    constructor(config: SimpleOTLPHttpLogExporterConfig);
+    constructor(config: SimpleOTLPHttpLogExporterConfig | SimpleOTLPHttpLogExporterUrlConfig);
     export(records: SimpleLogRecord[]): Promise<void>;
 }
 
 // Warning: (ae-missing-release-tag) "SimpleOTLPHttpLogExporterConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type SimpleOTLPHttpLogExporterConfig = ObservabilityEndpoint & {
+interface SimpleOTLPHttpLogExporterConfig {
+    // @deprecated (undocumented)
+    cloudHostname: string;
     resourceAttributes: Record<string, unknown>;
-    scopeName: string;
     scopeAttributes?: Record<string, unknown>;
-};
+    scopeName: string;
+}
+
+// Warning: (ae-missing-release-tag) "SimpleOTLPHttpLogExporterUrlConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface SimpleOTLPHttpLogExporterUrlConfig {
+    observabilityUrl: string;
+    resourceAttributes: Record<string, unknown>;
+    scopeAttributes?: Record<string, unknown>;
+    scopeName: string;
+}
 
 // Warning: (ae-missing-release-tag) "SimulationContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "simulatorVerdict"
@@ -7505,11 +7544,13 @@ declare namespace telemetry {
         SimpleOTLPHttpLogExporter,
         SimpleLogRecord,
         SimpleOTLPHttpLogExporterConfig,
+        SimpleOTLPHttpLogExporterUrlConfig,
         emitToOtel,
         flushPinoLogs,
         initPinoCloudExporter,
         PinoCloudExporter,
         PinoCloudExporterConfig,
+        PinoCloudExporterUrlConfig,
         PinoLogObject,
         traceTypes,
         FanoutSpanProcessor,

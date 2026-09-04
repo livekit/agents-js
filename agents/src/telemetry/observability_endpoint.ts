@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { log } from '../log.js';
-
 /**
  * Where the observability exporters send data.
  *
@@ -23,8 +21,6 @@ export type ObservabilityEndpoint =
       cloudHostname: string;
     };
 
-let warnedDeprecatedCloudHostname = false;
-
 /** Resolve an {@link ObservabilityEndpoint} to the base URL consumers append their path to. */
 export function resolveObservabilityUrl(endpoint: ObservabilityEndpoint): string {
   if (endpoint.observabilityUrl) {
@@ -32,12 +28,6 @@ export function resolveObservabilityUrl(endpoint: ObservabilityEndpoint): string
   }
 
   if (endpoint.cloudHostname) {
-    if (!warnedDeprecatedCloudHostname) {
-      warnedDeprecatedCloudHostname = true;
-      log().warn(
-        'cloudHostname is deprecated for LiveKit Cloud observability, use observabilityUrl instead',
-      );
-    }
     return `https://${endpoint.cloudHostname}`;
   }
 
