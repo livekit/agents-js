@@ -4,7 +4,7 @@
 import { type AudioFrame } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { WebSocket } from 'ws';
-import { APIError, APIStatusError } from '../_exceptions.js';
+import { APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
@@ -1018,9 +1018,22 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               case 'error':
                 this.#logger.error({ 'lk.pii.event': event }, 'Received error from LiveKit STT');
                 resourceCleanup();
-                throw new APIError('LiveKit STT returned an error', {
-                  body: { code: event.code },
-                  retryable: event.code !== INACTIVITY_TIMEOUT_ERROR_CODE,
+                if (event.code === INACTIVITY_TIMEOUT_ERROR_CODE) {
+                  throw new APIStatusError({
+                    message: 'LiveKit STT returned an error',
+                    options: {
+                      statusCode: event.code,
+                      body: { code: event.code },
+                      retryable: false,
+                    },
+                  });
+                }
+                throw new APIStatusError({
+                  message: `LiveKit Inference STT returned error: ${event.message}`,
+                  options: {
+                    statusCode: event.code ?? -1,
+                    body: event,
+                  },
                 });
             }
           }

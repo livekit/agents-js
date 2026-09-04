@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
+import { APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
@@ -783,8 +784,10 @@ describe('Inference STT connection lifecycle', () => {
 
       expect(connectionCount).toBe(1);
       expect(errors).toHaveLength(1);
+      expect(errors[0]).toBeInstanceOf(APIStatusError);
       expect(errors[0]).toMatchObject({
         message: 'LiveKit STT returned an error',
+        statusCode: 2007,
         body: { code: 2007 },
         retryable: false,
       });
@@ -793,6 +796,63 @@ describe('Inference STT connection lifecycle', () => {
       for (const client of server.clients) client.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+});
+
+describe('Inference STT errors', () => {
+  async function receiveGatewayError(gatewayError: Record<string, unknown>): Promise<Error> {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+
+    server.on('connection', (socket) => {
+      socket.once('message', () => {
+        setImmediate(() => socket.send(JSON.stringify(gatewayError)));
+      });
+    });
+
+    const stt = makeStt({ baseURL: `http://127.0.0.1:${port}` });
+    const errorPromise = new Promise<Error>((resolve) => {
+      stt.once('error', ({ error }) => resolve(error));
+    });
+    const stream = stt.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1_000 },
+    });
+
+    try {
+      return await errorPromise;
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+
+  it.each([
+    {
+      gatewayError: {
+        type: 'error',
+        message: 'STT connection limit exceeded',
+        code: 429,
+        category: 'MaxConcurrentGatewaySTT',
+        remaining_limit: 0,
+      },
+      statusCode: 429,
+    },
+    {
+      gatewayError: { type: 'error', message: 'unknown gateway failure' },
+      statusCode: -1,
+    },
+  ])('surfaces a mid-session gateway error with status $statusCode', async (testCase) => {
+    const error = await receiveGatewayError(testCase.gatewayError);
+
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect(error).toMatchObject({
+      message: `LiveKit Inference STT returned error: ${testCase.gatewayError.message}`,
+      statusCode: testCase.statusCode,
+      body: testCase.gatewayError,
+      retryable: true,
+    });
   });
 });
 
