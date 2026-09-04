@@ -469,7 +469,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     }
 
     const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
-    const url = `${baseURL}/tts`;
+    const url = `${baseURL}/tts?model=${encodeURIComponent(this.model)}`;
     const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
 
     const params = {
