@@ -1028,13 +1028,17 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                     },
                   });
                 }
-                throw new APIStatusError({
-                  message: `LiveKit Inference STT returned error: ${event.message}`,
+                const error = new APIStatusError({
+                  message: 'LiveKit STT returned an error',
                   options: {
                     statusCode: event.code ?? -1,
                     body: event,
                   },
                 });
+                // Pino serializes enumerable Error fields into retry logs. Keep the gateway
+                // payload available to callers without copying it into telemetry.
+                Object.defineProperty(error, 'body', { enumerable: false });
+                throw error;
             }
           }
         } finally {
