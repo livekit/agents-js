@@ -110,6 +110,34 @@ export interface PhonicToolConfig {
   speech_before_tool_call?: string; // keypad_input / natural_conversation_ending: required|optional|suppressed
 }
 
+/** Tool schema accepted by Phonic's Responses API. */
+export interface PhonicToolDefinition {
+  /** Name used to identify the tool. */
+  name: string;
+  /** Description the model uses to decide when to call the tool. */
+  description: string;
+  /** JSON Schema describing the tool's arguments. */
+  parameters: Record<string, unknown>;
+}
+
+function toPhonicToolDefinition(tool: llm.FunctionTool): PhonicToolDefinition {
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: llm.toJsonSchema(tool.parameters) as Record<string, unknown>,
+  };
+}
+
+/**
+ * Convert LiveKit function tools to Phonic Responses API definitions.
+ *
+ * The returned values contain schemas only; executable functions remain in the
+ * `ToolContext` for the caller to invoke when Phonic returns a tool call.
+ */
+export function toPhonicToolDefinitions(toolContext: llm.ToolContext): PhonicToolDefinition[] {
+  return toolContext.flatten().filter(llm.isFunctionTool).map(toPhonicToolDefinition);
+}
+
 export class RealtimeModel extends llm.RealtimeModel {
   /** @internal */
   _options: RealtimeModelOptions;
@@ -596,15 +624,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       .flatten()
       .filter(llm.isFunctionTool)
       .map((t) => {
-        const cfg = this.configsForTools.get(t.name);
+        const definition = toPhonicToolDefinition(t);
+        const cfg = this.configsForTools.get(definition.name);
         return {
           type: 'custom_websocket',
           tool_schema: {
             type: 'function',
             function: {
-              name: t.name,
-              description: t.description,
-              parameters: llm.toJsonSchema(t.parameters) as Phonic.OpenAiFunctionParameters,
+              ...definition,
+              parameters: definition.parameters as Phonic.OpenAiFunctionParameters,
               strict: true,
             },
           },
