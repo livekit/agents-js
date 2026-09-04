@@ -98,7 +98,7 @@ export class ProcPool {
 
       const unlock = await this.initMutex.lock();
       let initReleased = false;
-      let procUnlockTransferred = false;
+      let warmedProcEntry: { proc: JobExecutor; unlock: () => void } | undefined;
       try {
         if (this.closed) {
           return;
@@ -107,8 +107,9 @@ export class ProcPool {
         await proc.start();
         try {
           await proc.initialize();
-          await this.warmedProcQueue.put({ proc, unlock: procUnlock });
-          procUnlockTransferred = true;
+          const entry = { proc, unlock: procUnlock };
+          await this.warmedProcQueue.put(entry);
+          warmedProcEntry = entry;
           // Release initMutex after enqueue — holding it through join() serialises
           // the pool to concurrency 1 since child procs are one-shot.
           unlock();
@@ -122,8 +123,15 @@ export class ProcPool {
         if (!initReleased) {
           unlock();
         }
-        if (!procUnlockTransferred) {
+        if (!warmedProcEntry) {
           procUnlock();
+        } else {
+          // A missing entry has already been claimed by launchJob() or close().
+          const entryIndex = this.warmedProcQueue.items.indexOf(warmedProcEntry);
+          if (entryIndex !== -1) {
+            this.warmedProcQueue.items.splice(entryIndex, 1);
+            warmedProcEntry.unlock();
+          }
         }
       }
     } finally {
@@ -169,7 +177,9 @@ export class ProcPool {
     }
     this.closed = true;
     this.controller.abort();
-    this.warmedProcQueue.items.forEach((e) => {
+    // Claim queued entries before closing them so their watchers cannot release the same slots.
+    const warmedProcs = this.warmedProcQueue.items.splice(0);
+    warmedProcs.forEach((e) => {
       e.unlock();
       e.proc.close();
     });
