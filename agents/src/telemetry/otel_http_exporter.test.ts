@@ -28,7 +28,7 @@ describe('SimpleOTLPHttpLogExporter attribute conversion', () => {
 
   async function exportAttributes(attributes: Record<string, unknown>): Promise<string> {
     const exporter = new SimpleOTLPHttpLogExporter({
-      cloudHostname: 'cloud.example.com',
+      observabilityUrl: 'https://cloud.example.com',
       resourceAttributes: {},
       scopeName: 'test',
     });

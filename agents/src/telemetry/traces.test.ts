@@ -63,7 +63,7 @@ describe('setupCloudTracer default provider resource', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableLogs: false,
     });
 
@@ -258,7 +258,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: 'my-agent',
       enableTraces: true,
       enableLogs: false,
@@ -297,7 +297,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -316,7 +316,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -343,7 +343,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -430,7 +430,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: true,
@@ -472,7 +472,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report,
     });
 
@@ -498,7 +498,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'customer agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: true,
@@ -522,7 +522,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: false,
@@ -551,7 +551,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: false,
@@ -575,7 +575,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: {
         ...makeReport({
           audio: true,
@@ -662,7 +662,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: 'sdk-name',
       enableTraces: true,
       enableLogs: false,
@@ -680,7 +680,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room2',
       jobId: 'job2',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -698,7 +698,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room3',
       jobId: 'job3',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -716,7 +716,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room4',
       jobId: 'job4',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -731,7 +731,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room5',
       jobId: 'job5',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -749,7 +749,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room6',
       jobId: 'job6',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,

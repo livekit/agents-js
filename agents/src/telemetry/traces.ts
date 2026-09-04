@@ -363,14 +363,14 @@ export function setTracerProvider(
  * Setup OpenTelemetry tracer for LiveKit Cloud observability.
  * This configures OTLP exporters to send traces to LiveKit Cloud.
  *
- * @param options - Configuration for cloud tracer with roomId, jobId, and cloudHostname properties
+ * @param options - Configuration for cloud tracer with roomId, jobId, and observabilityUrl properties
  *
  * @internal
  */
 export async function setupCloudTracer(options: {
   roomId: string;
   jobId: string;
-  cloudHostname: string;
+  observabilityUrl: string;
   agentName?: string;
   enableTraces?: boolean;
   enableLogs?: boolean;
@@ -381,7 +381,7 @@ export async function setupCloudTracer(options: {
   const {
     roomId,
     jobId,
-    cloudHostname,
+    observabilityUrl,
     agentName,
     enableTraces = true,
     enableLogs = true,
@@ -442,7 +442,7 @@ export async function setupCloudTracer(options: {
       );
 
     if (enableTraces) {
-      const url = `https://${cloudHostname}/observability/traces/otlp/v0`;
+      const url = `${observabilityUrl}/observability/traces/otlp/v0`;
       const createCloudExporter = () =>
         new UploadGateTraceExporter({
           url,
@@ -502,7 +502,7 @@ export async function setupCloudTracer(options: {
     if (enableLogs) {
       // Initialize standalone Pino cloud exporter (no OTEL SDK dependency)
       initPinoCloudExporter({
-        cloudHostname,
+        observabilityUrl,
         roomId,
         jobId,
         metadata: options.metadata,
@@ -555,15 +555,15 @@ function serializeSessionOptions(options: SessionReport['options']): Record<stri
 
 /**
  * Upload session report to LiveKit Cloud observability.
- * @param options - Configuration with agentName, cloudHostname, and report
+ * @param options - Configuration with agentName, observabilityUrl, and report
  */
 export async function uploadSessionReport(options: {
   agentName: string;
-  cloudHostname: string;
+  observabilityUrl: string;
   report: SessionReport;
   metadata?: Attributes;
 }): Promise<void> {
-  const { agentName, cloudHostname, report } = options;
+  const { agentName, observabilityUrl, report } = options;
   const metadata = options.metadata ?? {};
 
   if (!recordingEnabled(report.options.recordingOptions)) {
@@ -576,7 +576,7 @@ export async function uploadSessionReport(options: {
   // Create OTLP HTTP exporter for chat history logs
   // Uses raw HTTP JSON format which is required by LiveKit Cloud
   const logExporter = new SimpleOTLPHttpLogExporter({
-    cloudHostname,
+    observabilityUrl,
     resourceAttributes: {
       room_id: report.roomId,
       job_id: report.jobId,
@@ -751,5 +751,5 @@ export async function uploadSessionReport(options: {
     return formData;
   };
 
-  await uploadRecording({ cloudHostname, jwt, createFormData });
+  await uploadRecording({ observabilityUrl, jwt, createFormData });
 }

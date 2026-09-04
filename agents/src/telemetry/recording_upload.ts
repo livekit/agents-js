@@ -61,7 +61,7 @@ class RecordingUploadAttemptError extends Error {
 }
 
 export async function uploadRecording(options: {
-  cloudHostname: string;
+  observabilityUrl: string;
   jwt: string;
   createFormData: () => FormData;
 }): Promise<void> {
@@ -73,7 +73,7 @@ export async function uploadRecording(options: {
     let retry: { delayMs: number; failure: string } | undefined;
     try {
       const response = await submitRecordingUpload({
-        cloudHostname: options.cloudHostname,
+        observabilityUrl: options.observabilityUrl,
         jwt: options.jwt,
         formData: options.createFormData(),
       });
@@ -133,7 +133,7 @@ function parseRetryDelay(body: Uint8Array): number | undefined {
 }
 
 function submitRecordingUpload(options: {
-  cloudHostname: string;
+  observabilityUrl: string;
   jwt: string;
   formData: FormData;
 }): Promise<UploadResponse> {
@@ -204,11 +204,20 @@ function submitRecordingUpload(options: {
 
     options.formData.once('error', onFormError);
     try {
+      // form-data takes host and port separately, so a port in the endpoint must not stay
+      // glued to the hostname — Node would resolve "host:port" as a domain name.
+      const endpoint = new URL(`${options.observabilityUrl}/observability/recordings/v0`);
+      if (endpoint.protocol !== 'https:' && endpoint.protocol !== 'http:') {
+        fail(new RecordingUploadAttemptError(`unsupported scheme ${endpoint.protocol}`, false));
+        return;
+      }
+
       request = options.formData.submit(
         {
-          protocol: 'https:',
-          host: options.cloudHostname,
-          path: '/observability/recordings/v0',
+          protocol: endpoint.protocol,
+          host: endpoint.hostname,
+          ...(endpoint.port ? { port: Number(endpoint.port) } : {}),
+          path: `${endpoint.pathname}${endpoint.search}`,
           method: 'POST',
           headers: { Authorization: `Bearer ${options.jwt}` },
         },

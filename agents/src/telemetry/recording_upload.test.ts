@@ -86,9 +86,9 @@ function mockFormSubmitSequence(outcomes: FormSubmitOutcome[]) {
   });
 }
 
-function upload(): Promise<void> {
+function upload(observabilityUrl = 'https://example.livekit.cloud'): Promise<void> {
   return uploadRecording({
-    cloudHostname: 'example.livekit.cloud',
+    observabilityUrl,
     jwt: 'token',
     createFormData: () => {
       const formData = new FormData();
@@ -112,6 +112,44 @@ describe('recording upload transport', () => {
     vi.useRealTimers();
     uploadGate.reset();
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    {
+      name: 'default https port',
+      url: 'https://example.livekit.cloud',
+      expected: { protocol: 'https:', host: 'example.livekit.cloud' },
+    },
+    {
+      name: 'explicit port kept out of the hostname',
+      url: 'https://obs.example.com:8443',
+      expected: { protocol: 'https:', host: 'obs.example.com', port: 8443 },
+    },
+    {
+      name: 'plaintext scheme',
+      url: 'http://collector.internal',
+      expected: { protocol: 'http:', host: 'collector.internal' },
+    },
+  ])('targets the observability URL with a $name', async ({ url, expected }) => {
+    const submitSpy = mockFormSubmitSequence([{ statusCode: 200 }]);
+
+    await upload(url);
+
+    const options = submitSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(options).toMatchObject({ path: '/observability/recordings/v0', ...expected });
+    // Node resolves `host` as a domain name, so a port must never be glued to it.
+    expect(options.host).not.toContain(':');
+  });
+
+  it('preserves a base path on the observability URL', async () => {
+    const submitSpy = mockFormSubmitSequence([{ statusCode: 200 }]);
+
+    await upload('https://obs.example.com/lk');
+
+    expect(submitSpy.mock.calls[0]![0]).toMatchObject({
+      host: 'obs.example.com',
+      path: '/lk/observability/recordings/v0',
+    });
   });
 
   it('retries connection failures and rebuilds the multipart body', async () => {

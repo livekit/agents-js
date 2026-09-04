@@ -192,7 +192,7 @@ describe('recording disabled upload gate', () => {
       .mockResolvedValue(new Response(statusProto(DISABLED_MSG), { status: 401 }));
     const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     const exporter = new SimpleOTLPHttpLogExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       resourceAttributes: {},
       scopeName: 'test',
     });
@@ -211,7 +211,7 @@ describe('recording disabled upload gate', () => {
       .mockResolvedValueOnce(new Response('{}', { status: 200 }))
       .mockResolvedValueOnce(new Response('invalid token', { status: 401 }));
     const exporter = new SimpleOTLPHttpLogExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       resourceAttributes: {},
       scopeName: 'test',
     });
@@ -231,7 +231,7 @@ describe('recording disabled upload gate', () => {
       .mockResolvedValue(new Response(statusProto(DISABLED_MSG), { status: 401 }));
     const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     const exporter = new PinoCloudExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'room1',
       jobId: 'job1',
     });
@@ -260,12 +260,12 @@ describe('recording disabled upload gate', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report,
     });
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report,
     });
 
@@ -282,7 +282,7 @@ describe('recording disabled upload gate', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: false,

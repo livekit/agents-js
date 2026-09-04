@@ -28,8 +28,8 @@ export interface SimpleLogRecord {
 }
 
 export interface SimpleOTLPHttpLogExporterConfig {
-  /** LiveKit Cloud hostname */
-  cloudHostname: string;
+  /** Base URL for LiveKit Cloud observability, without a trailing slash */
+  observabilityUrl: string;
   /** Resource attributes (e.g., room_id, job_id) */
   resourceAttributes: Record<string, unknown>;
   /** Scope name for the logger */
@@ -47,7 +47,7 @@ export interface SimpleOTLPHttpLogExporterConfig {
  * @example
  * ```typescript
  * const exporter = new SimpleOTLPHttpLogExporter({
- *   cloudHostname: 'cloud.livekit.io',
+ *   observabilityUrl: 'https://cloud.livekit.io',
  *   resourceAttributes: { room_id: 'xxx', job_id: 'yyy' },
  *   scopeName: 'chat_history',
  * });
@@ -84,7 +84,7 @@ export class SimpleOTLPHttpLogExporter {
 
     await this.ensureJwt();
 
-    const endpoint = `https://${this.config.cloudHostname}/observability/logs/otlp/v0`;
+    const endpoint = `${this.config.observabilityUrl}/observability/logs/otlp/v0`;
     const payload = this.buildPayload(records);
     const payloadJson = JSON.stringify(payload);
 

@@ -24,7 +24,8 @@ export interface PinoLogObject {
 }
 
 export interface PinoCloudExporterConfig {
-  cloudHostname: string;
+  /** Base URL for LiveKit Cloud observability, without a trailing slash */
+  observabilityUrl: string;
   roomId: string;
   jobId: string;
   metadata?: Record<string, unknown>;
@@ -98,7 +99,7 @@ function redactSerializedException(value: unknown): unknown {
  * @example
  * ```typescript
  * const exporter = new PinoCloudExporter({
- *   cloudHostname: 'cloud.livekit.io',
+ *   observabilityUrl: 'https://cloud.livekit.io',
  *   roomId: 'RM_xxx',
  *   jobId: 'AJ_xxx',
  * });
@@ -246,7 +247,7 @@ export class PinoCloudExporter {
       ],
     };
 
-    const endpoint = `https://${this.config.cloudHostname}/observability/logs/otlp/v0`;
+    const endpoint = `${this.config.observabilityUrl}/observability/logs/otlp/v0`;
 
     const response = await fetchWithUploadGate(endpoint, {
       method: 'POST',

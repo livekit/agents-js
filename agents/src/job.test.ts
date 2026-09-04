@@ -349,7 +349,7 @@ describe('JobContext recording redaction', () => {
   );
 });
 
-describe('JobContext observability hostname', () => {
+describe('JobContext observability URL', () => {
   const tracesOn = {
     audio: false,
     traces: true,
@@ -373,11 +373,11 @@ describe('JobContext observability hostname', () => {
     }
   });
 
-  it('configures the cloud tracer with the LiveKit Cloud hostname', async () => {
+  it('configures the cloud tracer with the LiveKit Cloud URL', async () => {
     const ctx = createJobContext();
     await ctx.initRecording(tracesOn);
     expect(setupCloudTracerMock).toHaveBeenCalledWith(
-      expect.objectContaining({ cloudHostname: 'example.livekit.cloud' }),
+      expect.objectContaining({ observabilityUrl: 'https://example.livekit.cloud' }),
     );
   });
 
@@ -392,7 +392,25 @@ describe('JobContext observability hostname', () => {
     const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
     await ctx.initRecording(tracesOn);
     expect(setupCloudTracerMock).toHaveBeenCalledWith(
-      expect.objectContaining({ cloudHostname: 'obs.example.com:8443' }),
+      expect.objectContaining({ observabilityUrl: 'https://obs.example.com:8443' }),
+    );
+  });
+
+  it('preserves a plaintext scheme on LIVEKIT_OBSERVABILITY_URL', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'http://collector.internal';
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'http://collector.internal' }),
+    );
+  });
+
+  it('strips a trailing slash so endpoint paths do not double up', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'https://obs.example.com/';
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://obs.example.com' }),
     );
   });
 
@@ -401,11 +419,11 @@ describe('JobContext observability hostname', () => {
     const ctx = createJobContext();
     await ctx.initRecording(tracesOn);
     expect(setupCloudTracerMock).toHaveBeenCalledWith(
-      expect.objectContaining({ cloudHostname: 'override.example.com' }),
+      expect.objectContaining({ observabilityUrl: 'https://override.example.com' }),
     );
   });
 
-  it('falls back to the Cloud hostname when LIVEKIT_OBSERVABILITY_URL is not a valid URL', async () => {
+  it('falls back to the Cloud URL when LIVEKIT_OBSERVABILITY_URL is not a valid URL', async () => {
     process.env.LIVEKIT_OBSERVABILITY_URL = 'not a url';
     const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     const ctx = createJobContext();
@@ -415,7 +433,7 @@ describe('JobContext observability hostname', () => {
       'invalid LIVEKIT_OBSERVABILITY_URL, falling back to the job URL',
     );
     expect(setupCloudTracerMock).toHaveBeenCalledWith(
-      expect.objectContaining({ cloudHostname: 'example.livekit.cloud' }),
+      expect.objectContaining({ observabilityUrl: 'https://example.livekit.cloud' }),
     );
   });
 

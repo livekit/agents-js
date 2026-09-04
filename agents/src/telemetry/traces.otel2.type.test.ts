@@ -71,7 +71,7 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -108,7 +108,7 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -164,7 +164,7 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });

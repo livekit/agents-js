@@ -30,7 +30,7 @@ describe('PinoCloudExporter flush', () => {
       .mockReturnValueOnce(firstRequest)
       .mockResolvedValueOnce(new Response('{}', { status: 200 }));
     const exporter = new PinoCloudExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'room1',
       jobId: 'job1',
     });
@@ -62,7 +62,7 @@ describe('PinoCloudExporter flush', () => {
     );
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const exporter = new PinoCloudExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'room1',
       jobId: 'job1',
     });
