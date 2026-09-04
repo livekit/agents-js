@@ -742,18 +742,6 @@ export class AudioRecognition {
     }
   }
 
-  async stop() {
-    await this.sttConsumerTask?.cancelAndWait();
-    await this.sttForwardTask?.cancelAndWait();
-    await this.vadTask?.cancelAndWait();
-    await this.interruptionTask?.cancelAndWait();
-    if (this.turnDetectorStream !== undefined) {
-      const stream = this.turnDetectorStream;
-      this.turnDetectorStream = undefined;
-      await stream.aclose().catch(() => undefined);
-    }
-  }
-
   async disableInterruptionDetection(): Promise<void> {
     this.isInterruptionEnabled = false;
     this.interruptionDetection = undefined;

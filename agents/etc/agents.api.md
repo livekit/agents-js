@@ -3037,44 +3037,6 @@ export class DynamicEndpointing extends BaseEndpointing {
     }): void;
 }
 
-// Warning: (ae-missing-release-tag) "ElevenlabsModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
-type ElevenlabsModels = 'elevenlabs/eleven_flash_v2' | 'elevenlabs/eleven_flash_v2_5' | 'elevenlabs/eleven_turbo_v2' | 'elevenlabs/eleven_turbo_v2_5' | 'elevenlabs/eleven_multilingual_v2' | 'elevenlabs/eleven_v3';
-
-// Warning: (ae-missing-release-tag) "ElevenlabsOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
-interface ElevenlabsOptions {
-    apply_text_normalization?: 'auto' | 'off' | 'on';
-    // (undocumented)
-    auto_mode?: boolean;
-    // (undocumented)
-    chunk_length_schedule?: number[];
-    // (undocumented)
-    enable_logging?: boolean;
-    // (undocumented)
-    enable_ssml_parsing?: boolean;
-    inactivity_timeout?: number;
-    // (undocumented)
-    language_code?: string;
-    // (undocumented)
-    preferred_alignment?: string;
-    similarity_boost?: number;
-    speed?: number;
-    stability?: number;
-    style?: number;
-    // (undocumented)
-    sync_alignment?: boolean;
-    // (undocumented)
-    use_speaker_boost?: boolean;
-}
-
-// Warning: (ae-missing-release-tag) "ElevenlabsSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
-type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
-
 // Warning: (ae-missing-release-tag) "emitToOtel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -7151,7 +7113,6 @@ declare namespace stt_2 {
         DeepgramFluxModels,
         CartesiaModels,
         AssemblyaiModels,
-        ElevenlabsSTTModels,
         XaiSTTModels,
         SpeechmaticsModels,
         InworldSTTModels,
@@ -8182,13 +8143,11 @@ declare namespace tts_2 {
         normalizeTTSFallback,
         CartesiaModels_2 as CartesiaModels,
         DeepgramTTSModels,
-        ElevenlabsModels,
         InworldModels,
         RimeModels,
         XaiTTSModels,
         FishAudioModels,
         CartesiaOptions_2 as CartesiaOptions,
-        ElevenlabsOptions,
         DeepgramTTSOptions,
         RimeOptions,
         InworldOptions,
@@ -8285,7 +8244,7 @@ export type TTSMetrics = {
 // Warning: (ae-missing-release-tag) "TTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type TTSModels = CartesiaModels_2 | DeepgramTTSModels | ElevenlabsModels | RimeModels | InworldModels | XaiTTSModels | FishAudioModels | AnyString;
+type TTSModels = CartesiaModels_2 | DeepgramTTSModels | RimeModels | InworldModels | XaiTTSModels | FishAudioModels | AnyString;
 
 // Warning: (ae-missing-release-tag) "TTSModelUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -8303,7 +8262,7 @@ export type TTSModelUsage = {
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels_2 ? CartesiaOptions_2 : TModel extends DeepgramTTSModels ? DeepgramTTSOptions : TModel extends ElevenlabsModels ? ElevenlabsOptions : TModel extends RimeModels ? RimeOptions : TModel extends InworldModels ? InworldOptions : TModel extends XaiTTSModels ? XaiTTSOptions : TModel extends FishAudioModels ? FishAudioOptions : Record<string, unknown>;
+type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels_2 ? CartesiaOptions_2 : TModel extends DeepgramTTSModels ? DeepgramTTSOptions : TModel extends RimeModels ? RimeOptions : TModel extends InworldModels ? InworldOptions : TModel extends XaiTTSModels ? XaiTTSOptions : TModel extends FishAudioModels ? FishAudioOptions : Record<string, unknown>;
 
 // Warning: (ae-forgotten-export) The symbol "BaseStreamingTurnDetector" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "TurnDetector" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -9155,7 +9114,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:320:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:282:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:76:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:702:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
