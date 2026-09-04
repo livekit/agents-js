@@ -262,7 +262,7 @@ export abstract class SupervisedProc {
     this.#closing = true;
 
     if (this.proc?.connected) {
-      this.proc.send({ case: 'shutdownRequest' });
+      this.proc.send({ case: 'shutdownRequest', value: { reason: 'parent process shutdown' } });
     }
 
     const timer = setTimeout(() => {
