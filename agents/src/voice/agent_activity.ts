@@ -3249,6 +3249,7 @@ export class AgentActivity implements RecognitionHooks {
           role: 'assistant',
           content: textOut?.text || '',
           interrupted: speechHandle.interrupted,
+          createdAt: replyStartedSpeakingAt ?? Date.now(),
           metrics: replyAssistantMetrics,
         });
         this.agent._chatCtx.insert(message);
