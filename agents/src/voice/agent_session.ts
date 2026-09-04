@@ -55,7 +55,7 @@ import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metri
 import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
-import { traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, traceTypes, tracer } from '../telemetry/index.js';
 import {
   DEFAULT_SPEECH_STEERING_OPTIONS,
   type SpeechSteeringOptions,
@@ -1041,6 +1041,9 @@ export class AgentSession<
     this.sessionSpan = tracer.startSpan({
       name: 'agent_session',
     });
+    // the session is the convention's workflow: agent turns (`invoke_agent`), inference
+    // (`chat`) and tool spans (`execute_tool`) nest underneath it
+    genAI.setWorkflowAttributes(this.sessionSpan, { name: 'agent_session' });
 
     this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 

@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
+export {
+  ExtraDetailsProcessor,
+  MetadataLogProcessor,
+  PIIFilteringLogProcessor,
+} from './logging.js';
 export type { ObservabilityEndpoint } from './observability_endpoint.js';
 export {
   SimpleOTLPHttpLogExporter,
@@ -19,6 +23,8 @@ export {
   type PinoCloudExporterUrlConfig,
   type PinoLogObject,
 } from './pino_otel_transport.js';
+export * as genAI from './gen_ai.js';
+export { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 export * as traceTypes from './trace_types.js';
 export {
   FanoutSpanProcessor,
@@ -33,8 +39,8 @@ export {
   type StartSpanOptions,
 } from './traces.js';
 export {
-  REDACTED_EXCEPTION_MESSAGE,
   recordException,
   recordRealtimeMetrics,
+  redactionEnabled,
   type RecordExceptionOptions,
 } from './utils.js';

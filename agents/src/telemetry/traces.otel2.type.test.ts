@@ -10,6 +10,7 @@ import {
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import http from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PIIFilteringSpanProcessor } from './pii.js';
 import {
   type CloudSpanProcessorOptions,
   FanoutSpanProcessor,
@@ -170,8 +171,9 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     });
 
     expect(tracer.getProvider()).toBe(provider);
-    // session metadata processor + built-in cloud span processor
-    expect(registered).toHaveLength(2);
-    expect(registered[1]).toBeInstanceOf(BatchSpanProcessor);
+    // PII stripper + session metadata processor + built-in cloud span processor
+    expect(registered).toHaveLength(3);
+    expect(registered[0]).toBeInstanceOf(PIIFilteringSpanProcessor);
+    expect(registered[2]).toBeInstanceOf(BatchSpanProcessor);
   });
 });

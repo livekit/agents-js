@@ -22,6 +22,7 @@ import { log } from '../log.js';
 import { version } from '../version.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
+import { PIIFilteringSpanProcessor } from './pii.js';
 import {
   type CloudSpanProcessorOptions,
   setTracerProvider,
@@ -59,6 +60,7 @@ describe('setupCloudTracer default provider resource', () => {
       exportedSpans.push(...spans);
       callback({ code: 0 });
     });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     await setupCloudTracer({
       roomId: 'room1',
@@ -81,6 +83,9 @@ describe('setupCloudTracer default provider resource', () => {
       room_id: 'room1',
       job_id: 'job1',
     });
+    // the framework-owned provider is built with the filtering processor attached, so the
+    // setTracerProvider call that follows must not report redaction as uninstallable
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('PII redaction');
   });
 });
 
@@ -267,11 +272,13 @@ describe('setupCloudTracer with a user-configured provider', () => {
     // No span is created/ended here so the newly attached cloud BatchSpanProcessor has
     // nothing to flush over the network on shutdown.
     expect(tracer.getProvider()).toBe(userProvider);
-    // setTracerProvider registers the user metadata processor; setupCloudTracer registers the
-    // session metadata processor plus the built-in (SDK 2.x) cloud exporter.
-    expect(registeredProcessors).toHaveLength(3);
+    // setTracerProvider registers the user metadata processor and the in-process PII
+    // stripper; setupCloudTracer registers the session metadata processor plus the built-in
+    // (SDK 2.x) cloud exporter.
+    expect(registeredProcessors).toHaveLength(4);
+    expect(registeredProcessors[1]).toBeInstanceOf(PIIFilteringSpanProcessor);
     const setAttributes = vi.fn();
-    registeredProcessors[1]!.onStart({ setAttributes } as never, otelContext.active());
+    registeredProcessors[2]!.onStart({ setAttributes } as never, otelContext.active());
     // agent_name rides the session metadata so spans (and logs) carry it even on
     // the custom-provider path, where the resource is left untouched.
     expect(setAttributes).toHaveBeenCalledWith({
@@ -279,7 +286,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
       job_id: 'job1',
       'lk.agent_name': 'my-agent',
     });
-    expect(registeredProcessors[2]).toBeInstanceOf(BatchSpanProcessor);
+    expect(registeredProcessors[3]).toBeInstanceOf(BatchSpanProcessor);
   });
 
   it('passes the gated exporter to a user-supplied cloud processor factory', async () => {
@@ -303,8 +310,10 @@ describe('setupCloudTracer with a user-configured provider', () => {
     });
 
     expect(createCloudSpanProcessor).toHaveBeenCalledOnce();
-    expect(registeredProcessors).toHaveLength(2);
-    expect(registeredProcessors[1]).toBe(factoryProcessor);
+    // the PII stripper, the session metadata processor, then the factory's cloud processor
+    expect(registeredProcessors).toHaveLength(3);
+    expect(registeredProcessors[0]).toBeInstanceOf(PIIFilteringSpanProcessor);
+    expect(registeredProcessors[2]).toBe(factoryProcessor);
   });
 
   it('requires registerSpanProcessor and never calls addSpanProcessor', async () => {

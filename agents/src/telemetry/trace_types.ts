@@ -116,23 +116,216 @@ export const ATTR_REALTIME_MODEL_METRICS = 'lk.realtime_model_metrics';
 /** End-to-end latency in seconds. */
 export const ATTR_E2E_LATENCY = 'lk.e2e_latency';
 
-// OpenTelemetry GenAI attributes
-// OpenTelemetry specification: https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/
+// OpenTelemetry GenAI semantic conventions, mirroring the attribute registry of
+// https://github.com/open-telemetry/semantic-conventions-genai. Backends ingest these
+// directly, so the names must stay byte-for-byte identical to the registry. The ones the
+// spec flags as sensitive are listed in GEN_AI_PII_ATTRIBUTES in ./pii.ts, since a
+// standard name cannot carry the `lk.pii.` marker segment.
+
 export const ATTR_GEN_AI_OPERATION_NAME = 'gen_ai.operation.name';
-export const ATTR_GEN_AI_REQUEST_MODEL = 'gen_ai.request.model';
-/** The provider name (e.g., 'openai', 'anthropic'). */
 export const ATTR_GEN_AI_PROVIDER_NAME = 'gen_ai.provider.name';
+
+export const ATTR_GEN_AI_REQUEST_MODEL = 'gen_ai.request.model';
+export const ATTR_GEN_AI_REQUEST_STREAM = 'gen_ai.request.stream';
+
+export const ATTR_GEN_AI_RESPONSE_ID = 'gen_ai.response.id';
+export const ATTR_GEN_AI_RESPONSE_MODEL = 'gen_ai.response.model';
+export const ATTR_GEN_AI_RESPONSE_FINISH_REASONS = 'gen_ai.response.finish_reasons';
+/** Time to first chunk of a streaming response, in seconds. */
+export const ATTR_GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK = 'gen_ai.response.time_to_first_chunk';
+
 export const ATTR_GEN_AI_USAGE_INPUT_TOKENS = 'gen_ai.usage.input_tokens';
 export const ATTR_GEN_AI_USAGE_OUTPUT_TOKENS = 'gen_ai.usage.output_tokens';
+export const ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS = 'gen_ai.usage.cache_read.input_tokens';
+export const ATTR_GEN_AI_USAGE_CACHE_WRITE_INPUT_TOKENS = 'gen_ai.usage.cache_write.input_tokens';
+export const ATTR_GEN_AI_USAGE_REASONING_OUTPUT_TOKENS = 'gen_ai.usage.reasoning.output_tokens';
+export const ATTR_GEN_AI_USAGE_TEXT_INPUT_TOKENS = 'gen_ai.usage.text.input_tokens';
+export const ATTR_GEN_AI_USAGE_TEXT_OUTPUT_TOKENS = 'gen_ai.usage.text.output_tokens';
+export const ATTR_GEN_AI_USAGE_AUDIO_INPUT_TOKENS = 'gen_ai.usage.audio.input_tokens';
+export const ATTR_GEN_AI_USAGE_AUDIO_OUTPUT_TOKENS = 'gen_ai.usage.audio.output_tokens';
+
+export const ATTR_GEN_AI_CONVERSATION_ID = 'gen_ai.conversation.id';
+
+export const ATTR_GEN_AI_AGENT_NAME = 'gen_ai.agent.name';
+
+export const ATTR_GEN_AI_TOOL_NAME = 'gen_ai.tool.name';
+export const ATTR_GEN_AI_TOOL_CALL_ID = 'gen_ai.tool.call.id';
+export const ATTR_GEN_AI_TOOL_DESCRIPTION = 'gen_ai.tool.description';
+export const ATTR_GEN_AI_TOOL_TYPE = 'gen_ai.tool.type';
+export const ATTR_GEN_AI_TOOL_CALL_ARGUMENTS = 'gen_ai.tool.call.arguments';
+export const ATTR_GEN_AI_TOOL_CALL_RESULT = 'gen_ai.tool.call.result';
+export const ATTR_GEN_AI_TOOL_DEFINITIONS = 'gen_ai.tool.definitions';
+
+export const ATTR_GEN_AI_SYSTEM_INSTRUCTIONS = 'gen_ai.system_instructions';
+export const ATTR_GEN_AI_INPUT_MESSAGES = 'gen_ai.input.messages';
+export const ATTR_GEN_AI_OUTPUT_MESSAGES = 'gen_ai.output.messages';
+export const ATTR_GEN_AI_OUTPUT_TYPE = 'gen_ai.output.type';
+
+export const ATTR_GEN_AI_RETRIEVAL_DOCUMENTS = 'gen_ai.retrieval.documents';
+export const ATTR_GEN_AI_RETRIEVAL_QUERY_TEXT = 'gen_ai.retrieval.query.text';
+export const ATTR_GEN_AI_MEMORY_QUERY_TEXT = 'gen_ai.memory.query.text';
+export const ATTR_GEN_AI_MEMORY_RECORDS = 'gen_ai.memory.records';
+export const ATTR_GEN_AI_EVALUATION_EXPLANATION = 'gen_ai.evaluation.explanation';
+/** Template attribute: the concrete key is `gen_ai.prompt.variable.<name>`. */
+export const ATTR_GEN_AI_PROMPT_VARIABLE = 'gen_ai.prompt.variable';
+export const ATTR_GEN_AI_WORKFLOW_NAME = 'gen_ai.workflow.name';
+
+export const ATTR_ERROR_TYPE = 'error.type';
+
+/** Well-known `gen_ai.operation.name` values. */
+export const GenAIOperationName = {
+  CHAT: 'chat',
+  GENERATE_CONTENT: 'generate_content',
+  TEXT_COMPLETION: 'text_completion',
+  EMBEDDINGS: 'embeddings',
+  RETRIEVAL: 'retrieval',
+  FETCH_RESPONSE: 'fetch_response',
+  CREATE_AGENT: 'create_agent',
+  INVOKE_AGENT: 'invoke_agent',
+  EXECUTE_TOOL: 'execute_tool',
+  INVOKE_WORKFLOW: 'invoke_workflow',
+  PLAN: 'plan',
+  SEARCH_MEMORY: 'search_memory',
+  CREATE_MEMORY: 'create_memory',
+  UPDATE_MEMORY: 'update_memory',
+  UPSERT_MEMORY: 'upsert_memory',
+  DELETE_MEMORY: 'delete_memory',
+  CREATE_MEMORY_STORE: 'create_memory_store',
+  DELETE_MEMORY_STORE: 'delete_memory_store',
+} as const;
+
+/** Well-known `gen_ai.output.type` values. */
+export const GenAIOutputType = {
+  TEXT: 'text',
+  JSON: 'json',
+  IMAGE: 'image',
+  SPEECH: 'speech',
+} as const;
+
+/** Well-known `gen_ai.response.finish_reasons` values. */
+export const GenAIFinishReason = {
+  STOP: 'stop',
+  LENGTH: 'length',
+  CONTENT_FILTER: 'content_filter',
+  TOOL_CALL: 'tool_call',
+  COMPACTION: 'compaction',
+  ERROR: 'error',
+} as const;
+
+/**
+ * The `gen_ai.provider.name` values the registry enumerates.
+ *
+ * For a provider on this list the convention says the registry spelling MUST be used, since
+ * backends treat the attribute as the discriminator for provider-specific parsing. A provider
+ * that is not on it MAY report a custom value, so those pass through untouched.
+ */
+export const GEN_AI_PROVIDER_NAMES: ReadonlySet<string> = new Set([
+  'openai',
+  'gcp.gen_ai',
+  'gcp.vertex_ai',
+  'gcp.gemini',
+  'anthropic',
+  'cohere',
+  'azure.ai.inference',
+  'azure.ai.openai',
+  'ibm.watsonx.ai',
+  'aws.bedrock',
+  'perplexity',
+  'x_ai',
+  'deepseek',
+  'groq',
+  'mistral_ai',
+  'moonshot_ai',
+]);
+
+// Plugins report `provider` either as a display name ('AWS Bedrock', 'MistralAI') or, for the
+// OpenAI-compatible clients, as the base URL's host ('api.mistral.ai'). Both are mapped here:
+// by host first, then by the display name reduced to lowercase alphanumerics, so
+// 'AWS Bedrock' / 'aws_bedrock' / 'awsbedrock' all resolve alike.
+const PROVIDER_BY_HOST: Record<string, string> = {
+  'api.anthropic.com': 'anthropic',
+  'api.cohere.ai': 'cohere',
+  'api.cohere.com': 'cohere',
+  'api.deepseek.com': 'deepseek',
+  'api.groq.com': 'groq',
+  'api.mistral.ai': 'mistral_ai',
+  'api.moonshot.ai': 'moonshot_ai',
+  'api.moonshot.cn': 'moonshot_ai',
+  'api.openai.com': 'openai',
+  'api.perplexity.ai': 'perplexity',
+  'api.x.ai': 'x_ai',
+  'generativelanguage.googleapis.com': 'gcp.gemini',
+};
+
+const PROVIDER_BY_HOST_SUFFIX: readonly [string, string][] = [
+  ['.openai.azure.com', 'azure.ai.openai'],
+  ['.services.ai.azure.com', 'azure.ai.inference'],
+  ['.aiplatform.googleapis.com', 'gcp.vertex_ai'],
+];
+
+const PROVIDER_BY_NAME: Record<string, string> = {
+  amazon: 'aws.bedrock',
+  amazonbedrock: 'aws.bedrock',
+  anthropic: 'anthropic',
+  awsbedrock: 'aws.bedrock',
+  azureaiinference: 'azure.ai.inference',
+  azureopenai: 'azure.ai.openai',
+  bedrock: 'aws.bedrock',
+  cohere: 'cohere',
+  deepseek: 'deepseek',
+  gemini: 'gcp.gemini',
+  google: 'gcp.gen_ai',
+  googlecloudplatform: 'gcp.gen_ai',
+  googlegenai: 'gcp.gen_ai',
+  groq: 'groq',
+  ibmwatsonxai: 'ibm.watsonx.ai',
+  mistral: 'mistral_ai',
+  mistralai: 'mistral_ai',
+  moonshot: 'moonshot_ai',
+  moonshotai: 'moonshot_ai',
+  openai: 'openai',
+  perplexity: 'perplexity',
+  vertexai: 'gcp.vertex_ai',
+  vertexaimodelgarden: 'gcp.vertex_ai',
+  watsonx: 'ibm.watsonx.ai',
+  xai: 'x_ai',
+};
+
+/** Normalize a LiveKit plugin's `provider` to its GenAI registry spelling. */
+export function genAIProviderName(provider: string | undefined | null): string | undefined {
+  const value = provider?.trim();
+  if (!value) return undefined;
+
+  const host = value.toLowerCase();
+  if (PROVIDER_BY_HOST[host]) return PROVIDER_BY_HOST[host];
+  for (const [suffix, mapped] of PROVIDER_BY_HOST_SUFFIX) {
+    if (host.endsWith(suffix)) return mapped;
+  }
+  // only the Bedrock endpoints, not every AWS service that shares the domain
+  if (host.startsWith('bedrock') && host.endsWith('.amazonaws.com')) return 'aws.bedrock';
+
+  const canonical = host.replace(/[^a-z0-9]/g, '');
+  // a provider outside the registry keeps its own id, which the convention allows
+  return PROVIDER_BY_NAME[canonical] ?? value;
+}
+
+/** @internal Exposed for the guard test that walks the plugins' provider values. */
+export const _providerTables = {
+  byHost: PROVIDER_BY_HOST,
+  byHostSuffix: PROVIDER_BY_HOST_SUFFIX,
+  byName: PROVIDER_BY_NAME,
+};
 
 // Unofficial OpenTelemetry GenAI attributes, recognized by LangFuse
 // https://langfuse.com/integrations/native/opentelemetry#usage
-// but not yet in the official OpenTelemetry specification.
+// but not in the official OpenTelemetry specification. Emitted alongside the official
+// `gen_ai.usage.*.{input,output}_tokens` names above.
 export const ATTR_GEN_AI_USAGE_INPUT_TEXT_TOKENS = 'gen_ai.usage.input_text_tokens';
 export const ATTR_GEN_AI_USAGE_INPUT_AUDIO_TOKENS = 'gen_ai.usage.input_audio_tokens';
 export const ATTR_GEN_AI_USAGE_INPUT_CACHED_TOKENS = 'gen_ai.usage.input_cached_tokens';
 export const ATTR_GEN_AI_USAGE_OUTPUT_TEXT_TOKENS = 'gen_ai.usage.output_text_tokens';
 export const ATTR_GEN_AI_USAGE_OUTPUT_AUDIO_TOKENS = 'gen_ai.usage.output_audio_tokens';
+export const ATTR_GEN_AI_USAGE_REASONING_TOKENS = 'gen_ai.usage.reasoning_tokens';
 
 // OpenTelemetry GenAI event names (for structured logging)
 export const EVENT_GEN_AI_SYSTEM_MESSAGE = 'gen_ai.system.message';
@@ -140,6 +333,10 @@ export const EVENT_GEN_AI_USER_MESSAGE = 'gen_ai.user.message';
 export const EVENT_GEN_AI_ASSISTANT_MESSAGE = 'gen_ai.assistant.message';
 export const EVENT_GEN_AI_TOOL_MESSAGE = 'gen_ai.tool.message';
 export const EVENT_GEN_AI_CHOICE = 'gen_ai.choice';
+export const EVENT_GEN_AI_CLIENT_INFERENCE_OPERATION_DETAILS =
+  'gen_ai.client.inference.operation.details';
+
+// OpenTelemetry GenAI metric names
 
 // Exception attributes
 export const ATTR_EXCEPTION_TRACE = 'exception.stacktrace';

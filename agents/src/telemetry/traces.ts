@@ -47,8 +47,10 @@ import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import type { ObservabilityEndpoint } from './observability_endpoint.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
+import { PIIFilteringSpanProcessor } from './pii.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { uploadRecording } from './recording_upload.js';
+import { allowPiiFromEnv } from './redaction.js';
 import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
 import { UploadGateTraceExporter, uploadGate } from './upload_gate.js';
 
@@ -267,6 +269,40 @@ interface CustomProviderConfig {
 }
 
 const customProviderConfigs = new WeakMap<TracerProvider, CustomProviderConfig>();
+/** Providers that already carry the in-process PII stripper — installed at most once. */
+const piiRedactionInstalled = new WeakSet<TracerProvider>();
+
+/**
+ * Installs {@link PIIFilteringSpanProcessor} on a provider LiveKit does not own.
+ *
+ * The processor strips PII in `onEnding`, which the SDK dispatches to every registered
+ * processor before any processor's `onEnd`, so it protects the integrator's exporters
+ * regardless of the order they were registered in.
+ */
+function installPIIRedaction(
+  provider: TracerProvider,
+  registerSpanProcessor: SpanProcessorRegistrar | undefined,
+  allowPii: boolean | undefined,
+): void {
+  if (piiRedactionInstalled.has(provider)) return;
+
+  if (!registerSpanProcessor) {
+    // never reached for a provider we own. addSpanProcessor is deliberately not used as a
+    // fallback: OpenTelemetry 2.x removed it, and attaching to an integrator's provider
+    // without being handed a registrar is not ours to do
+    console.warn(
+      'Unable to install LiveKit PII redaction on the custom tracer provider, so its ' +
+        'exporters may receive conversational content. Pass registerSpanProcessor to ' +
+        'setTracerProvider, or set OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false.',
+    );
+    return;
+  }
+
+  piiRedactionInstalled.add(provider);
+  // PII flows to every exporter unless withheld: the GenAI conventions are only useful to a
+  // backend that can render the conversation
+  registerSpanProcessor(new PIIFilteringSpanProcessor(allowPii ?? allowPiiFromEnv() ?? true));
+}
 
 /** Options for configuring a custom tracer provider. */
 export interface SetTracerProviderOptions {
@@ -296,6 +332,16 @@ export interface SetTracerProviderOptions {
    * active. The returned processor must use OpenTelemetry SDK 2.x.
    */
   createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessor;
+  /**
+   * Whether this provider's exporters may receive conversational content, tool payloads and
+   * other user data.
+   *
+   * Defaults to `true` (or `LIVEKIT_TELEMETRY_ALLOW_PII`, when set), since a GenAI backend
+   * can only render the conversation if it receives it. Pass `false` to strip PII in-process
+   * before every exporter but LiveKit Cloud's, leaving them the non-content attributes.
+   * Ignored when the project mandates redaction — that setting is not weakened from here.
+   */
+  allowPii?: boolean;
 }
 
 /**
@@ -348,6 +394,8 @@ export function setTracerProvider(
         'OpenTelemetry 2.x.',
     );
   }
+
+  installPIIRedaction(provider, registerSpanProcessor, options?.allowPii);
 
   if (registerSpanProcessor) {
     customProviderConfigs.set(provider, {
@@ -458,10 +506,16 @@ export async function setupCloudTracer(
         const tracerProvider = new NodeTracerProvider({
           resource,
           spanProcessors: [
+            // strips PII while the span is still mutable, ahead of every exporter's onEnd
+            new PIIFilteringSpanProcessor(allowPiiFromEnv() ?? true),
             new MetadataSpanProcessor(sessionMetadata),
             new BatchSpanProcessor(createCloudExporter()),
           ],
         });
+        // the processor above is already attached, so record it: otherwise the
+        // setTracerProvider call below finds no registrar and warns that redaction could
+        // not be installed, on the default path where it demonstrably was
+        piiRedactionInstalled.add(tracerProvider);
         // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
         // and sets the global tracer provider. Both use set-once semantics in the OTel API,
         // so if the user already called NodeSDK.start(), these are safe no-ops.
@@ -490,6 +544,7 @@ export async function setupCloudTracer(
           // Resource shared by all exporters, so applying `resource` here would also relabel
           // the spans going to the user's own backend. room_id/job_id — the keys Cloud
           // correlates on — still ride along as span attributes via MetadataSpanProcessor.
+          installPIIRedaction(existingProvider, config.registerSpanProcessor, undefined);
           config.registerSpanProcessor(new MetadataSpanProcessor(sessionMetadata));
           config.registerSpanProcessor(cloudSpanProcessor);
         }

@@ -6,6 +6,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { OTLPExporterError } from '@opentelemetry/otlp-exporter-base';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { log } from '../log_core.js';
+import { restorePii } from './redaction.js';
 
 const DISABLED_MARKERS = ['data recording is disabled', 'disabled by owner'];
 
@@ -106,7 +107,9 @@ export class UploadGateTraceExporter extends OTLPTraceExporter {
       return;
     }
 
-    super.export(items, (result) => {
+    // PII stripped for third-party exporters is put back here: what LiveKit Cloud may
+    // receive is the project's setting, applied at its collector
+    super.export(items.map(restorePii), (result) => {
       if (isDisabledTraceExport(result)) {
         uploadGate.disable(generation);
         resultCallback({ code: ExportResultCode.SUCCESS });

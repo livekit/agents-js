@@ -69,7 +69,7 @@ import type {
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
-import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
 import { isFlushSentinel } from '../types.js';
@@ -597,7 +597,13 @@ export class AgentActivity implements RecognitionHooks {
     const startSpan = tracer.startSpan({
       name: spanName,
       attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
-      context: ROOT_CONTEXT,
+      context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
+    });
+    genAI.setAgentAttributes(startSpan, {
+      operation: traceTypes.GenAIOperationName.CREATE_AGENT,
+      agentName: this.agent.id,
+      model: this.llm?.model,
+      provider: this.llm?.provider,
     });
 
     this.agent._agentActivity = this;
@@ -3699,6 +3705,7 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
+      agentName: this.agent.id,
       session: this.agentSession,
       speechHandle,
       toolCtx,
@@ -3942,6 +3949,17 @@ export class AgentActivity implements RecognitionHooks {
     }
   };
 
+  /**
+   * An agent turn is the convention's `invoke_agent`: the framework running the agent
+   * in-process, with the inference (`chat`) and tool (`execute_tool`) spans nested underneath.
+   */
+  private recordAgentTurn(span: Span): void {
+    genAI.setAgentAttributes(span, {
+      operation: traceTypes.GenAIOperationName.INVOKE_AGENT,
+      agentName: this.agent.id,
+    });
+  }
+
   private pipelineReplyTask = async (
     stateLease: AgentStateLease,
     chatCtx: ChatContext,
@@ -3953,7 +3971,8 @@ export class AgentActivity implements RecognitionHooks {
     _previousUserMetrics?: MetricsReport,
   ): Promise<void> =>
     tracer.startActiveSpan(
-      async (span) =>
+      async (span) => (
+        this.recordAgentTurn(span),
         this._pipelineReplyTaskImpl({
           stateLease,
           chatCtx,
@@ -3964,7 +3983,8 @@ export class AgentActivity implements RecognitionHooks {
           newMessage,
           span,
           _previousUserMetrics,
-        }),
+        })
+      ),
       {
         name: 'agent_turn',
         context: this.agentSession.rootSpanContext,
@@ -3979,15 +3999,23 @@ export class AgentActivity implements RecognitionHooks {
     addToChatCtx: boolean = true,
   ): Promise<void> {
     return tracer.startActiveSpan(
-      async (span) =>
-        this._realtimeGenerationTaskImpl({
-          stateLease,
-          ev,
-          modelSettings,
-          replyAbortController,
-          addToChatCtx,
-          span,
-        }),
+      async (span) => {
+        this.recordAgentTurn(span);
+        const inferenceSpan = tracer.startSpan({ name: 'realtime_inference' });
+        try {
+          return await this._realtimeGenerationTaskImpl({
+            stateLease,
+            ev,
+            modelSettings,
+            replyAbortController,
+            addToChatCtx,
+            span,
+            inferenceSpan,
+          });
+        } finally {
+          inferenceSpan.end();
+        }
+      },
       {
         name: 'agent_turn',
         context: this.agentSession.rootSpanContext,
@@ -4002,6 +4030,7 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController,
     addToChatCtx,
     span,
+    inferenceSpan,
   }: {
     stateLease: AgentStateLease;
     ev: GenerationCreatedEvent;
@@ -4009,6 +4038,7 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController: AbortController;
     addToChatCtx: boolean;
     span: Span;
+    inferenceSpan: Span;
   }): Promise<void> {
     const { speechHandle } = stateLease;
     speechHandle._agentTurnContext = otelContext.active();
@@ -4031,10 +4061,20 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('llm is not a realtime model');
     }
 
-    // Store span for metrics recording when they arrive later
-    span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, realtimeModel.model);
+    genAI.setRequestAttributes(inferenceSpan, {
+      operation: traceTypes.GenAIOperationName.GENERATE_CONTENT,
+      provider: realtimeModel.provider,
+      model: realtimeModel.model,
+      stream: true,
+      // a realtime model can be configured text-only
+      outputType: this.agentSession.output.audioEnabled
+        ? traceTypes.GenAIOutputType.SPEECH
+        : traceTypes.GenAIOutputType.TEXT,
+    });
+    // the provider metrics land here rather than on `agent_turn`; they can arrive after the
+    // turn ends, in which case recordRealtimeMetrics opens its own child span
     if (this.realtimeSpans && ev.responseId) {
-      this.realtimeSpans.set(ev.responseId, span);
+      this.realtimeSpans.set(ev.responseId, inferenceSpan);
     }
 
     this.logger.debug(
@@ -4368,6 +4408,7 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
+      agentName: this.agent.id,
       session: this.agentSession,
       speechHandle,
       toolCtx,
@@ -5038,10 +5079,12 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async drain(options?: { newActivity?: AgentActivity }): Promise<ReusableResources | undefined> {
-    // Create drain_agent_activity as a ROOT span (new trace) to match Python behavior
+    // parented to the session rather than to whichever speech task is current, so the whole
+    // session stays one trace. Python reaches the same place by inheriting the session
+    // context that AgentSession attaches.
     return tracer.startActiveSpan(async (span) => this._drainImpl(span, options?.newActivity), {
       name: 'drain_agent_activity',
-      context: ROOT_CONTEXT,
+      context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
     });
   }
 

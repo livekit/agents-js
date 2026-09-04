@@ -12,7 +12,7 @@ import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
-import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
+import { REDACTED_EXCEPTION_MESSAGE, isPIIAttribute } from './redaction.js';
 import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
 export interface PinoLogObject {
@@ -177,13 +177,15 @@ export class PinoCloudExporter {
     }
 
     for (const [key, value] of Object.entries(logObj)) {
-      if (!EXCLUDE_FIELDS.has(key)) {
-        const attributeValue =
-          redactionEnabled && (key === 'error' || key === 'err')
-            ? redactSerializedException(value)
-            : value;
-        attributes.push({ key, value: convertValue(attributeValue) });
-      }
+      if (EXCLUDE_FIELDS.has(key)) continue;
+      // once the project mandates redaction the client filters the keys itself rather than
+      // relying on the collector to know them
+      if (redactionEnabled && isPIIAttribute(key)) continue;
+      const attributeValue =
+        redactionEnabled && (key === 'error' || key === 'err')
+          ? redactSerializedException(value)
+          : value;
+      attributes.push({ key, value: convertValue(attributeValue) });
     }
 
     return {
