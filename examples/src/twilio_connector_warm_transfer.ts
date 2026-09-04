@@ -1,6 +1,15 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Warm transfer with the supervisor dialed through the Twilio connector.
+ *
+ * Same support agent as ../warm_transfer.ts, but the escalation runs
+ * TwilioConnectorWarmTransferTask: connectTwilioCall opens an outbound
+ * connector session and the Twilio REST API places the supervisor call with
+ * TwiML that streams it into the session, so no SIP trunk is needed.
+ */
 import {
   type JobContext,
   ServerOptions,
@@ -15,9 +24,12 @@ import {
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 
-const SIP_TRUNK_ID = process.env.LIVEKIT_SIP_OUTBOUND_TRUNK;
-const SUPERVISOR_PHONE_NUMBER = process.env.LIVEKIT_SUPERVISOR_PHONE_NUMBER;
-const SIP_NUMBER = process.env.LIVEKIT_SIP_NUMBER;
+// LiveKit credentials are read from LIVEKIT_URL, LIVEKIT_API_KEY, and
+// LIVEKIT_API_SECRET. Twilio REST credentials and caller ID:
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID; // "ACxxxx..."
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER; // your Twilio number, shown to the supervisor
+const SUPERVISOR_PHONE_NUMBER = process.env.LIVEKIT_SUPERVISOR_PHONE_NUMBER; // "+12003004000"
 
 class SupportAgent extends voice.Agent {
   constructor() {
@@ -38,7 +50,7 @@ Examples on when the tool should be called:
 - User: Yes please.
 ----`,
           execute: async (_, { ctx }) => {
-            const logger = log().child({ example: 'warm-transfer' });
+            const logger = log().child({ example: 'twilio-connector-warm-transfer' });
             logger.info('tool called to transfer to human');
             const holdSpeech = ctx.session.say(
               'Please hold while I connect you to a human agent.',
@@ -47,19 +59,20 @@ Examples on when the tool should be called:
             await holdSpeech.waitForPlayout();
 
             try {
-              if (!SIP_TRUNK_ID || !SUPERVISOR_PHONE_NUMBER) {
+              if (!SUPERVISOR_PHONE_NUMBER || !TWILIO_FROM_NUMBER) {
                 throw new Error(
-                  'LIVEKIT_SIP_OUTBOUND_TRUNK and LIVEKIT_SUPERVISOR_PHONE_NUMBER must be set',
+                  'LIVEKIT_SUPERVISOR_PHONE_NUMBER and TWILIO_FROM_NUMBER must be set',
                 );
               }
 
-              const result = await new workflows.WarmTransferTask({
-                sipCallTo: SUPERVISOR_PHONE_NUMBER,
-                sipTrunkId: SIP_TRUNK_ID,
-                sipNumber: SIP_NUMBER,
+              const result = await new workflows.TwilioConnectorWarmTransferTask({
+                phoneNumber: SUPERVISOR_PHONE_NUMBER,
+                twilioFromNumber: TWILIO_FROM_NUMBER,
+                twilioAccountSid: TWILIO_ACCOUNT_SID,
+                twilioAuthToken: TWILIO_AUTH_TOKEN,
                 chatCtx: ctx.session.history,
                 // Give up if the supervisor doesn't pick up within 25s with
-                // `ringingTimeout: 25000`.
+                // `ringingTimeout: 25000` (default: 30s).
                 instructions: { extra: SUMMARY_INSTRUCTIONS },
                 greetingSpeech: (session) => session.generateReply({ toolChoice: 'none' }),
               }).run();
@@ -159,11 +172,11 @@ Brief summary in 100-200 characters from a first-person perspective
 
 // IMPORTANT: set `agentName` so this worker uses EXPLICIT dispatch. Without it,
 // the worker auto-dispatches an agent into EVERY new room in the project —
-// including the human agent room that WarmTransferTask creates — which puts a
+// including the human agent room that the transfer task creates — which puts a
 // second agent on the line with the human agent and produces overlapping voices.
 cli.runApp(
   new ServerOptions({
     agent: fileURLToPath(import.meta.url),
-    agentName: process.env.AGENT_DISPATCH_NAME ?? 'warm-transfer',
+    agentName: process.env.AGENT_DISPATCH_NAME ?? 'telephony-support-agent',
   }),
 );

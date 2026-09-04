@@ -2,8 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { SIPOutboundConfig } from '@livekit/protocol';
-import { DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
-import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'livekit-server-sdk';
+import {
+  DisconnectReason,
+  type ParticipantKind,
+  type RemoteParticipant,
+  type RemoteTrackPublication,
+  Room,
+  RoomEvent,
+  TrackKind,
+} from '@livekit/rtc-node';
+import {
+  AccessToken,
+  ConnectTwilioCallRequest_TwilioCallDirection,
+  ConnectorClient,
+  RoomServiceClient,
+  SipClient,
+  type VideoGrant,
+} from 'livekit-server-sdk';
 import { z } from 'zod';
 import type { LLMModels, STTModelString, TTSModelString } from '../inference/index.js';
 import { type JobContext, getJobContext } from '../job.js';
@@ -43,6 +58,25 @@ export interface WarmTransferResult {
  * @public
  */
 export type WarmTransferSpeech = string | ((session: AgentSession) => SpeechHandle);
+
+/**
+ * Places the human agent call into the briefing room. See
+ * {@link WarmTransferTaskOptions.originateHumanAgent}.
+ *
+ * @public
+ */
+export type OriginateHumanAgent = (options: {
+  /** Name of the room the human agent is dialed into. */
+  roomName: string;
+  /** Participant identity the human agent joins with. */
+  identity: string;
+  /** Connected client room, for observing the human agent join. */
+  room: Room;
+  /** Job context of the caller session, for reaching LiveKit service APIs. */
+  jobCtx: JobContext;
+  /** Aborts when the transfer is cancelled while the dial is pending. */
+  signal: AbortSignal;
+}) => Promise<void>;
 
 export interface WarmTransferTaskOptions {
   /**
@@ -96,6 +130,19 @@ export interface WarmTransferTaskOptions {
    * attached to it. Must differ from the caller room's name.
    */
   roomName?: string;
+  /**
+   * Participant identity the dialed human agent joins with. Defaults to
+   * `'human-agent-sip'`; {@link WarmTransferResult} reports the value used.
+   */
+  humanAgentIdentity?: string;
+  /**
+   * Hook that places the human agent call into the briefing room, replacing
+   * the default SIP dial (the SIP options above are then unused). It must
+   * resolve once the call is answered and reject when the dial fails. Its
+   * `signal` aborts when the transfer is cancelled while the dial is pending;
+   * the hook should then stop the call it placed.
+   */
+  originateHumanAgent?: OriginateHumanAgent;
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
@@ -146,8 +193,9 @@ type IoState = {
 };
 
 /**
- * Build a warm-transfer {@link AgentTask} that dials a human agent over SIP, briefs them
- * in a private room, and (on confirmation) merges them into the caller room.
+ * Build a warm-transfer {@link AgentTask} that dials a human agent over SIP (or through
+ * the `originateHumanAgent` hook), briefs them in a private room, and (on confirmation)
+ * merges them into the caller room.
  *
  * If the caller hangs up before the merge — including while the human agent's phone is
  * still ringing — the transfer is cancelled: the pending dial is aborted, the human agent
@@ -160,12 +208,14 @@ type IoState = {
 export function createWarmTransferTask({
   abortSignal,
   sipCallTo,
-  sipTrunkId: rawSipTrunkId,
+  sipTrunkId,
   sipConnection,
   sipNumber = process.env.LIVEKIT_SIP_NUMBER ?? '',
   sipHeaders = {},
   dtmf,
   ringingTimeout,
+  humanAgentIdentity = 'human-agent-sip',
+  originateHumanAgent,
   roomName: rawRoomName,
   holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
   greetingSpeech,
@@ -181,30 +231,24 @@ export function createWarmTransferTask({
   tts,
   allowInterruptions,
 }: WarmTransferTaskOptions = {}): AgentTask<WarmTransferResult> {
-  if (!sipCallTo) {
-    throw new Error('`sipCallTo` must be set');
-  }
-
   if (rawRoomName !== undefined && rawRoomName.length === 0) {
     throw new Error('`roomName` must not be empty');
   }
 
-  // Resolve the SIP trunk: an explicit id wins, then a custom connection (which
-  // skips the env fallback so it isn't silently overridden), then the env var.
-  const sipTrunkId =
-    rawSipTrunkId !== undefined
-      ? rawSipTrunkId
-      : sipConnection
-        ? null
-        : process.env.LIVEKIT_SIP_OUTBOUND_TRUNK ?? null;
+  // Resolve the origination up front so a SIP misconfiguration throws at task
+  // creation, not mid-transfer.
+  const originate =
+    originateHumanAgent ??
+    createSipOriginateHumanAgent({
+      sipCallTo,
+      sipTrunkId,
+      sipConnection,
+      sipNumber,
+      sipHeaders,
+      dtmf,
+      ringingTimeout,
+    });
 
-  if (sipTrunkId === null && !sipConnection) {
-    throw new Error(
-      '`LIVEKIT_SIP_OUTBOUND_TRUNK` environment variable, `sipTrunkId`, or `sipConnection` must be set',
-    );
-  }
-
-  const humanAgentIdentity = 'human-agent-sip';
   const backgroundAudio = new BackgroundAudioPlayer();
   const logger = log();
 
@@ -451,8 +495,9 @@ export function createWarmTransferTask({
   /**
    * Dials the human agent into a fresh room and starts a copy of this
    * task there. Every awaited step is raced against `signal`; on abort the
-   * `finally` block tears the half-built room/session down (the room/SIP SDK
-   * calls themselves aren't AbortSignal-aware).
+   * `finally` block tears the half-built room/session down (the room/session
+   * SDK calls aren't AbortSignal-aware; the origination hook also receives the
+   * signal so it can stop a call it already placed).
    */
   const dialHumanAgent = async (signal: AbortSignal): Promise<AgentSession> => {
     if (!callerRoom?.name) {
@@ -533,23 +578,14 @@ export function createWarmTransferTask({
         throw new Error('dial cancelled');
       }
 
-      const sip = new SipClient(ctx.info.url);
       const dialed = await waitUntilAborted(
-        sip.createSipParticipant(
-          sipTrunkId ?? '',
-          sipCallTo,
-          humanAgentRoomName,
-          {
-            participantIdentity: humanAgentIdentity,
-            waitUntilAnswered: true,
-            fromNumber: sipNumber || undefined,
-            headers: sipHeaders,
-            dtmf: dtmf ?? undefined,
-            // SIP API takes whole seconds (BigInt coercion throws on fractional input).
-            ringingTimeout: ringingTimeout != null ? Math.round(ringingTimeout / 1000) : undefined,
-          },
-          sipConnection,
-        ),
+        originate({
+          roomName: humanAgentRoomName,
+          identity: humanAgentIdentity,
+          room,
+          jobCtx: ctx,
+          signal,
+        }),
         signal,
       );
       if (dialed.isAborted) {
@@ -739,6 +775,283 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
   override run(): Promise<WarmTransferResult> {
     return this.#task.run();
   }
+}
+
+/**
+ * Build the default origination: validates the SIP options eagerly and dials
+ * the human agent with `createSipParticipant`, resolving once they answer.
+ */
+function createSipOriginateHumanAgent(options: {
+  sipCallTo?: string;
+  sipTrunkId?: string | null;
+  sipConnection?: SIPOutboundConfig;
+  sipNumber: string;
+  sipHeaders: Record<string, string>;
+  dtmf?: string | null;
+  ringingTimeout?: number | null;
+}): OriginateHumanAgent {
+  const { sipCallTo, sipConnection, sipNumber, sipHeaders, dtmf, ringingTimeout } = options;
+  if (!sipCallTo) {
+    throw new Error('`sipCallTo` must be set');
+  }
+
+  // Resolve the SIP trunk: an explicit id wins, then a custom connection (which
+  // skips the env fallback so it isn't silently overridden), then the env var.
+  const sipTrunkId =
+    options.sipTrunkId !== undefined
+      ? options.sipTrunkId
+      : sipConnection
+        ? null
+        : process.env.LIVEKIT_SIP_OUTBOUND_TRUNK ?? null;
+
+  if (sipTrunkId === null && !sipConnection) {
+    throw new Error(
+      '`LIVEKIT_SIP_OUTBOUND_TRUNK` environment variable, `sipTrunkId`, or `sipConnection` must be set',
+    );
+  }
+
+  return async ({ roomName, identity, jobCtx }) => {
+    const sip = new SipClient(jobCtx.info.url);
+    await sip.createSipParticipant(
+      sipTrunkId ?? '',
+      sipCallTo,
+      roomName,
+      {
+        participantIdentity: identity,
+        waitUntilAnswered: true,
+        fromNumber: sipNumber || undefined,
+        headers: sipHeaders,
+        dtmf: dtmf ?? undefined,
+        // SIP API takes whole seconds (BigInt coercion throws on fractional input).
+        ringingTimeout: ringingTimeout != null ? Math.round(ringingTimeout / 1000) : undefined,
+      },
+      sipConnection,
+    );
+  };
+}
+
+// Twilio reports no-answer/failure only via async status webhooks (not
+// consumed here), so cap the wait to keep an unanswered transfer from hanging.
+const TWILIO_RINGING_TIMEOUT_MS = 30_000;
+
+/**
+ * Options for {@link createTwilioConnectorWarmTransferTask}: the base task
+ * options minus the SIP fields, plus the Twilio credentials used to place the
+ * supervisor call.
+ */
+export interface TwilioConnectorWarmTransferTaskOptions
+  extends Omit<
+    WarmTransferTaskOptions,
+    | 'sipCallTo'
+    | 'sipTrunkId'
+    | 'sipConnection'
+    | 'sipNumber'
+    | 'sipHeaders'
+    | 'dtmf'
+    | 'ringingTimeout'
+    | 'humanAgentIdentity'
+    | 'originateHumanAgent'
+  > {
+  /** Phone number of the human agent to dial, in E.164 format. */
+  phoneNumber: string;
+  /** Twilio number the call is placed from (the caller ID the human agent sees). */
+  twilioFromNumber: string;
+  /** Twilio account SID. Falls back to the `TWILIO_ACCOUNT_SID` environment variable. */
+  twilioAccountSid?: string;
+  /** Twilio auth token. Falls back to the `TWILIO_AUTH_TOKEN` environment variable. */
+  twilioAuthToken?: string;
+  /**
+   * How long to wait, in milliseconds, for the human agent to answer before
+   * giving up and cancelling the call. Defaults to 30 seconds: Twilio reports
+   * no-answer only via status webhooks, which this task does not consume, so
+   * the wait is capped instead. `null` disables the cap.
+   */
+  ringingTimeout?: number | null;
+}
+
+/**
+ * Build a warm-transfer {@link AgentTask} that dials the human agent through
+ * the LiveKit Twilio connector instead of a SIP trunk: `connectTwilioCall`
+ * opens an outbound connector session, the Twilio REST API places the call
+ * with TwiML that streams it into that session, and the dial resolves once the
+ * connector publishes the answered human agent's audio.
+ *
+ * This is the functional core; {@link TwilioConnectorWarmTransferTask} is a
+ * thin class wrapper over it.
+ */
+export function createTwilioConnectorWarmTransferTask(
+  options: TwilioConnectorWarmTransferTaskOptions,
+): AgentTask<WarmTransferResult> {
+  const {
+    phoneNumber,
+    twilioFromNumber,
+    twilioAccountSid = process.env.TWILIO_ACCOUNT_SID ?? '',
+    twilioAuthToken = process.env.TWILIO_AUTH_TOKEN ?? '',
+    ringingTimeout = TWILIO_RINGING_TIMEOUT_MS,
+    ...baseOptions
+  } = options;
+
+  if (!twilioAccountSid || !twilioAuthToken) {
+    throw new Error(
+      'Twilio credentials are required: pass `twilioAccountSid` and `twilioAuthToken` or set' +
+        ' the TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN environment variables',
+    );
+  }
+  const auth = { accountSid: twilioAccountSid, authToken: twilioAuthToken };
+
+  return createWarmTransferTask({
+    ...baseOptions,
+    // the human agent joins through a connector, not SIP
+    humanAgentIdentity: 'human-agent-connector',
+    originateHumanAgent: async ({ roomName, identity, room, jobCtx, signal }) => {
+      const info = jobCtx.info;
+      const connector = new ConnectorClient(info.url, info.apiKey, info.apiSecret);
+      const { connectUrl } = await connector.connectTwilioCall({
+        twilioCallDirection: ConnectTwilioCallRequest_TwilioCallDirection.OUTBOUND,
+        roomName,
+        participantIdentity: identity,
+      });
+
+      const twiml = `<Response><Connect><Stream url=${escapeXmlAttribute(connectUrl)}/></Connect></Response>`;
+      const callSid = await createTwilioCall(auth, {
+        to: phoneNumber,
+        from: twilioFromNumber,
+        twiml,
+      });
+
+      try {
+        await waitForConnectorAnswer({ room, identity, ringingTimeout, signal });
+      } catch (error) {
+        // We gave up waiting; cancel the still-ringing call so it doesn't linger.
+        await cancelTwilioCall(auth, callSid).catch(() => {});
+        throw error;
+      }
+    },
+  });
+}
+
+/**
+ * Class wrapper around {@link createTwilioConnectorWarmTransferTask},
+ * matching the `new WarmTransferTask(options).run()` API.
+ */
+export class TwilioConnectorWarmTransferTask extends AgentTask<WarmTransferResult> {
+  readonly #task: AgentTask<WarmTransferResult>;
+
+  constructor(options: TwilioConnectorWarmTransferTaskOptions) {
+    // The wrapper itself never runs as an agent; run() delegates to the
+    // composed task. Instructions are resolved inside createWarmTransferTask.
+    super({ instructions: '' });
+    this.#task = createTwilioConnectorWarmTransferTask(options);
+  }
+
+  override run(): Promise<WarmTransferResult> {
+    return this.#task.run();
+  }
+}
+
+/**
+ * The connector publishes the human agent's audio track only after the call is
+ * answered, so treat that publication as the answer signal.
+ */
+async function waitForConnectorAnswer(options: {
+  room: Room;
+  identity: string;
+  ringingTimeout: number | null;
+  signal: AbortSignal;
+}): Promise<void> {
+  const { room, identity, ringingTimeout, signal } = options;
+  const answered = new Future<void>();
+
+  const hasPublishedAudio = (participant: RemoteParticipant): boolean =>
+    participant.identity === identity &&
+    [...participant.trackPublications.values()].some((pub) => pub.kind === TrackKind.KIND_AUDIO);
+
+  const resolveIfAnswered = (participant: RemoteParticipant): void => {
+    if (hasPublishedAudio(participant) && !answered.done) {
+      answered.resolve();
+    }
+  };
+  const onTrackPublished = (_: RemoteTrackPublication, participant: RemoteParticipant): void =>
+    resolveIfAnswered(participant);
+
+  room.on(RoomEvent.TrackPublished, onTrackPublished);
+  room.on(RoomEvent.ParticipantConnected, resolveIfAnswered);
+  try {
+    // Checked after the listeners are attached, so a connector that joined and
+    // published before this wait started isn't missed.
+    const existing = room.remoteParticipants.get(identity);
+    if (existing) {
+      resolveIfAnswered(existing);
+    }
+
+    const waitSignal =
+      ringingTimeout != null
+        ? AbortSignal.any([signal, AbortSignal.timeout(ringingTimeout)])
+        : signal;
+    const result = await waitUntilAborted(answered.await, waitSignal);
+    if (result.isAborted) {
+      if (signal.aborted) {
+        throw new Error('dial cancelled');
+      }
+      throw new ToolError('human agent did not answer');
+    }
+  } finally {
+    room.off(RoomEvent.TrackPublished, onTrackPublished);
+    room.off(RoomEvent.ParticipantConnected, resolveIfAnswered);
+  }
+}
+
+const TWILIO_API_BASE = 'https://api.twilio.com/2010-04-01';
+
+interface TwilioRestAuth {
+  accountSid: string;
+  authToken: string;
+}
+
+const twilioRequest = (auth: TwilioRestAuth, path: string, form: Record<string, string>) =>
+  fetch(`${TWILIO_API_BASE}/Accounts/${encodeURIComponent(auth.accountSid)}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${auth.accountSid}:${auth.authToken}`).toString('base64')}`,
+    },
+    body: new URLSearchParams(form),
+  });
+
+/** Place the human agent call with the Twilio REST API; returns the call SID. */
+async function createTwilioCall(
+  auth: TwilioRestAuth,
+  options: { to: string; from: string; twiml: string },
+): Promise<string> {
+  const resp = await twilioRequest(auth, '/Calls.json', {
+    To: options.to,
+    From: options.from,
+    Twiml: options.twiml,
+  });
+  const body = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Twilio call creation failed (${resp.status}): ${redactPhoneNumbers(body)}`);
+  }
+  return (JSON.parse(body) as { sid: string }).sid;
+}
+
+/** Cancel a still-ringing Twilio call. */
+async function cancelTwilioCall(auth: TwilioRestAuth, callSid: string): Promise<void> {
+  await twilioRequest(auth, `/Calls/${encodeURIComponent(callSid)}.json`, { Status: 'canceled' });
+}
+
+/** XML-escape a value and wrap it in double quotes for use as an attribute. */
+function escapeXmlAttribute(value: string): string {
+  const escaped = value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+  return `"${escaped}"`;
+}
+
+/** Mask phone-number-like digit runs before a provider payload is logged or thrown. */
+function redactPhoneNumbers(text: string): string {
+  return text.replace(/\+?\d{7,15}/g, (match) => `...${match.slice(-4)}`);
 }
 
 const renderInstructionPart = (value: Instructions | string): string =>
