@@ -60,6 +60,7 @@ export class SpeechStream extends stt.SpeechStream {
         serverVad?: VADOptions | null;
         noVerbatim?: boolean;
         keyterms?: string[];
+        secondaryLanguages?: string[];
     }): void;
 }
 
@@ -92,6 +93,7 @@ export class STT extends stt.STT {
         tagAudioEvents?: boolean;
         serverVad?: VADOptions | null;
         keyterms?: string[];
+        secondaryLanguages?: string[];
         noVerbatim?: boolean;
     }): void;
 }
@@ -135,6 +137,7 @@ export interface STTOptions {
     noVerbatim?: boolean;
     // (undocumented)
     sampleRate?: STTRealtimeSampleRates;
+    secondaryLanguages?: string[];
     // (undocumented)
     serverVad?: VADOptions | null;
     // (undocumented)

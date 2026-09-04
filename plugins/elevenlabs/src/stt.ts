@@ -66,6 +66,13 @@ export interface STTOptions {
    * characters each. Usage incurs additional costs.
    */
   keyterms?: string[];
+  /**
+   * Language codes to constrain speech prediction to in addition to `languageCode`. Useful for
+   * bilingual applications where audio switches between a primary and a limited set of secondary
+   * languages. Only supported for Scribe v2 realtime. When omitted, the model predicts from its
+   * full set of supported languages.
+   */
+  secondaryLanguages?: string[];
   noVerbatim?: boolean;
   enableLogging?: boolean;
 }
@@ -80,6 +87,7 @@ interface ResolvedSTTOptions {
   sampleRate: STTRealtimeSampleRates;
   serverVad?: VADOptions | null;
   keyterms?: string[];
+  secondaryLanguages?: string[];
   noVerbatim: boolean;
   enableLogging: boolean;
 }
@@ -249,6 +257,14 @@ export class STT extends stt.STT {
       log().warn('Server-side VAD is only supported for Scribe v2 realtime model');
     }
 
+    let secondaryLanguages = opts.secondaryLanguages;
+    if (!useRealtime && secondaryLanguages !== undefined) {
+      log().warn(
+        '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
+      );
+      secondaryLanguages = undefined;
+    }
+
     const includeTimestamps = opts.includeTimestamps ?? false;
     super({
       streaming: useRealtime,
@@ -273,6 +289,7 @@ export class STT extends stt.STT {
       includeTimestamps,
       modelId,
       keyterms: opts.keyterms,
+      secondaryLanguages,
       noVerbatim: opts.noVerbatim ?? false,
       enableLogging: opts.enableLogging ?? true,
     };
@@ -474,6 +491,7 @@ export class STT extends stt.STT {
     tagAudioEvents?: boolean;
     serverVad?: VADOptions | null;
     keyterms?: string[];
+    secondaryLanguages?: string[];
     noVerbatim?: boolean;
   }): void {
     if (opts.tagAudioEvents !== undefined) {
@@ -488,6 +506,18 @@ export class STT extends stt.STT {
       this.#opts.keyterms = opts.keyterms;
     }
 
+    let secondaryLanguages = opts.secondaryLanguages;
+    if (secondaryLanguages !== undefined) {
+      if (this.#opts.modelId === 'scribe_v2_realtime') {
+        this.#opts.secondaryLanguages = secondaryLanguages;
+      } else {
+        this.#logger.warn(
+          '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
+        );
+        secondaryLanguages = undefined;
+      }
+    }
+
     if (opts.noVerbatim !== undefined) {
       this.#opts.noVerbatim = opts.noVerbatim;
     }
@@ -499,6 +529,7 @@ export class STT extends stt.STT {
           serverVad: opts.serverVad,
           noVerbatim: opts.noVerbatim,
           keyterms: opts.keyterms,
+          secondaryLanguages,
         });
       } else {
         this.#streams.delete(ref);
@@ -554,6 +585,7 @@ export class SpeechStream extends stt.SpeechStream {
     serverVad?: VADOptions | null;
     noVerbatim?: boolean;
     keyterms?: string[];
+    secondaryLanguages?: string[];
   }): void {
     if (opts.serverVad !== undefined) {
       this.#opts.serverVad = opts.serverVad;
@@ -569,6 +601,12 @@ export class SpeechStream extends stt.SpeechStream {
     }
     if (opts.keyterms !== undefined) {
       this.#opts.keyterms = opts.keyterms;
+      if (!this.#reconnectEvent.done) {
+        this.#reconnectEvent.resolve();
+      }
+    }
+    if (opts.secondaryLanguages !== undefined) {
+      this.#opts.secondaryLanguages = opts.secondaryLanguages;
       if (!this.#reconnectEvent.done) {
         this.#reconnectEvent.resolve();
       }
@@ -777,6 +815,14 @@ export class SpeechStream extends stt.SpeechStream {
     if (this.#opts.keyterms !== undefined) {
       params.push(
         ...this.#opts.keyterms.map((keyterm) => `keyterms=${encodeURIComponent(keyterm)}`),
+      );
+    }
+
+    if (this.#opts.secondaryLanguages !== undefined) {
+      params.push(
+        ...this.#opts.secondaryLanguages.map(
+          (language) => `secondary_languages=${encodeURIComponent(language)}`,
+        ),
       );
     }
 
