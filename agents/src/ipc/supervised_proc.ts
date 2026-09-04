@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import pidusage from 'pidusage';
 import type { RunningJobInfo } from '../job.js';
 import { log, loggerOptions } from '../log.js';
@@ -12,6 +13,7 @@ import type { IPCMessage } from './message.js';
 const MEMORY_MONITOR_INTERVAL = 5000;
 const MEMORY_WARN_COOLDOWN = 120000;
 const MEMORY_WARN_RESET_DELTA_MB = 50;
+type MemoryMetric = 'pss' | 'rss';
 
 export interface ProcOpts {
   /** Timeout for process initialization in milliseconds. */
@@ -122,7 +124,7 @@ export abstract class SupervisedProc {
     }, this.#opts.pingTimeout);
 
     this.#memoryMonitorInterval = setInterval(async () => {
-      const memoryMB = await this.getChildMemoryUsageMB();
+      const [memoryMB, memoryMetric] = await this.getChildMemoryUsageMB();
       if (memoryMB === 0) {
         return;
       }
@@ -131,14 +133,14 @@ export abstract class SupervisedProc {
 
       if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
         this.#logger
-          .child(this.memoryLoggingFields(memoryMB))
+          .child(this.memoryLoggingFields(memoryMB, memoryMetric))
           .error(`${this.processKind} process exceeded memory limit, killing it`);
         this.close();
       } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
         if (this.shouldEmitMemoryWarning(memoryMB)) {
           const advisory = this.#opts.memoryLimitMB <= 0;
           this.#logger
-            .child(this.memoryLoggingFields(memoryMB))
+            .child(this.memoryLoggingFields(memoryMB, memoryMetric))
             .warn(
               `${this.processKind} process memory usage is above the warning threshold${
                 advisory ? ' (advisory only, the process will not be terminated)' : ''
@@ -286,21 +288,48 @@ export abstract class SupervisedProc {
     this.proc.send({ case: 'startJobRequest', value: { runningJob: info } });
   }
 
-  private async getChildMemoryUsageMB(): Promise<number> {
-    const pid = this.proc?.pid;
+  private async getChildMemoryUsageMB(
+    pid: number | undefined = this.proc?.pid,
+  ): Promise<[number, MemoryMetric]> {
     if (!pid) {
-      return 0;
+      return [0, 'rss'];
     }
+
+    if (process.platform === 'linux') {
+      try {
+        const pssMB = await this.getPssMB(pid);
+        if (pssMB > 0) {
+          return [pssMB, 'pss'];
+        }
+      } catch {}
+    }
+
     try {
       const stats = await pidusage(pid);
-      return stats.memory / (1024 * 1024);
+      return [stats.memory / (1024 * 1024), 'rss'];
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ESRCH') {
-        return 0;
+        return [0, 'rss'];
       }
       throw err;
     }
+  }
+
+  private async getPssMB(pid: number): Promise<number> {
+    let smaps: string;
+    try {
+      smaps = await readFile(`/proc/${pid}/smaps_rollup`, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      smaps = await readFile(`/proc/${pid}/smaps`, 'utf8');
+    }
+    return (
+      Array.from(smaps.matchAll(/^Pss:\s+(\d+) kB$/gm)).reduce(
+        (total, match) => total + Number(match[1]),
+        0,
+      ) / 1024
+    );
   }
 
   private get uptime(): number {
@@ -321,10 +350,14 @@ export abstract class SupervisedProc {
     return false;
   }
 
-  private memoryLoggingFields(memoryMB: number): Record<string, unknown> {
+  private memoryLoggingFields(
+    memoryMB: number,
+    memoryMetric: MemoryMetric,
+  ): Record<string, unknown> {
     const fields: Record<string, unknown> = {
       pid: this.proc?.pid,
       memoryUsageMB: Math.round(memoryMB * 10) / 10,
+      memoryMetric,
       memoryWarnMB: this.#opts.memoryWarnMB,
       memoryLimitMB: this.#opts.memoryLimitMB,
       uptime: this.uptime,
