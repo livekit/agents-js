@@ -644,11 +644,16 @@ export function performLLMInference(
     );
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
-    if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
-    const normalizedProvider = traceTypes.genAIProviderName(provider);
-    if (normalizedProvider) {
-      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, normalizedProvider);
-    }
+    // the configured model and provider describe the inference only once it is known that
+    // this LLM served it; that is decided below, when the nested span is (or is not) there
+    const recordConfiguredModel = () => {
+      if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+      const normalizedProvider = traceTypes.genAIProviderName(provider);
+      if (normalizedProvider) {
+        span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, normalizedProvider);
+      }
+    };
+    let nodeError: Error | string | undefined;
 
     // the GenAI inference attributes belong to the nested `llm_request` span, which is the
     // provider call the convention describes. Setting them here as well made a backend
@@ -740,6 +745,7 @@ export function performLLMInference(
         // Python since chunk is defined in the type ChatChunk | string in TypeScript
       }
     } catch (error) {
+      nodeError = error instanceof Error ? error : String(error);
       if (error instanceof DOMException && error.name === 'AbortError') {
         // Abort signal was triggered, handle gracefully
         return;
@@ -765,16 +771,20 @@ export function performLLMInference(
       }
       // a custom node may have generated this itself, with no nested `llm_request` span to
       // carry the convention's attributes; when there was one, they are already recorded
-      if (!inference.recorded) {
+      if (inference.recorded) {
+        recordConfiguredModel();
+      } else {
+        // a third-party engine served this, so the configured model and provider are left
+        // off rather than crediting it with a call it never made
         genAI.setRequestAttributes(span, {
           operation: traceTypes.GenAIOperationName.CHAT,
-          provider,
-          model,
           stream: true,
           outputType: traceTypes.GenAIOutputType.TEXT,
         });
+        if (nodeError !== undefined) genAI.setErrorType(span, nodeError);
         const finishReason = genAI.finishReasonFor({
           functionCalls: data.generatedToolCalls,
+          interrupted: nodeError !== undefined,
         });
         genAI.setResponseAttributes(span, {
           finishReasons: [finishReason],
@@ -1236,6 +1246,7 @@ export function performToolExecutions({
   toolCtx,
   toolChoice,
   toolCallStream,
+  agentName,
   onToolExecutionStarted = () => {},
   onToolExecutionCompleted = () => {},
   controller,
@@ -1245,6 +1256,8 @@ export function performToolExecutions({
   toolCtx: ToolContext;
   toolChoice?: ToolChoice;
   toolCallStream: ReadableStream<FunctionCall>;
+  /** The agent that invoked these tools — a handoff may already have swapped the session's. */
+  agentName?: string;
   onToolExecutionStarted?: (toolCall: FunctionCall) => void;
   onToolExecutionCompleted?: (toolExecutionOutput: ToolExecutionOutput) => void;
   controller: AbortController;
@@ -1410,6 +1423,7 @@ export function performToolExecutions({
           callId: toolCall.callId,
           description: isFunctionTool(tool) ? tool.description : undefined,
           args: toolCall.args,
+          agentName,
         });
 
         // Only completed executions produce tool output. An interrupted execution may still

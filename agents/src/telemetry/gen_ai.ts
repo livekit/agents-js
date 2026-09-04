@@ -450,6 +450,7 @@ export function setToolAttributes(
     description?: string;
     /** Raw (typically JSON) arguments as produced by the model. */
     args?: string;
+    agentName?: string;
   },
 ): void {
   if (!span.isRecording()) return;
@@ -460,6 +461,7 @@ export function setToolAttributes(
     [traceTypes.ATTR_GEN_AI_TOOL_TYPE]: params.toolType ?? 'function',
   };
   if (params.callId) attrs[traceTypes.ATTR_GEN_AI_TOOL_CALL_ID] = params.callId;
+  if (params.agentName) attrs[traceTypes.ATTR_GEN_AI_AGENT_NAME] = params.agentName;
   const conv = conversationId();
   if (conv) attrs[traceTypes.ATTR_GEN_AI_CONVERSATION_ID] = conv;
   if (captureContent) {
@@ -504,7 +506,7 @@ export function setErrorType(span: Span, error: Error | string): void {
 
 export function setAgentAttributes(
   span: Span,
-  params: { operation: string; agentName: string },
+  params: { operation: string; agentName: string; model?: string; provider?: string },
 ): void {
   if (!span.isRecording()) return;
 
@@ -512,6 +514,11 @@ export function setAgentAttributes(
     [traceTypes.ATTR_GEN_AI_OPERATION_NAME]: params.operation,
     [traceTypes.ATTR_GEN_AI_AGENT_NAME]: params.agentName,
   };
+  // required on create_agent; the model is conditionally required and an agent is
+  // configured with exactly one, which is when the convention asks for it
+  const normalizedProvider = traceTypes.genAIProviderName(params.provider);
+  if (normalizedProvider) attrs[traceTypes.ATTR_GEN_AI_PROVIDER_NAME] = normalizedProvider;
+  if (params.model) attrs[traceTypes.ATTR_GEN_AI_REQUEST_MODEL] = params.model;
   const conv = conversationId();
   if (conv) attrs[traceTypes.ATTR_GEN_AI_CONVERSATION_ID] = conv;
   span.setAttributes(attrs);

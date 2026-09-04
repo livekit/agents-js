@@ -596,12 +596,14 @@ export class AgentActivity implements RecognitionHooks {
     const { spanName, runOnEnter, reuseResources } = options;
     const startSpan = tracer.startSpan({
       name: spanName,
-      attributes: {
-        [traceTypes.ATTR_AGENT_LABEL]: this.agent.id,
-        [traceTypes.ATTR_GEN_AI_OPERATION_NAME]: traceTypes.GenAIOperationName.CREATE_AGENT,
-        [traceTypes.ATTR_GEN_AI_AGENT_NAME]: this.agent.id,
-      },
+      attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
       context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
+    });
+    genAI.setAgentAttributes(startSpan, {
+      operation: traceTypes.GenAIOperationName.CREATE_AGENT,
+      agentName: this.agent.id,
+      model: this.llm?.model,
+      provider: this.llm?.provider,
     });
 
     this.agent._agentActivity = this;
@@ -3703,6 +3705,7 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
+      agentName: this.agent.id,
       session: this.agentSession,
       speechHandle,
       toolCtx,
@@ -4405,6 +4408,7 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
+      agentName: this.agent.id,
       session: this.agentSession,
       speechHandle,
       toolCtx,

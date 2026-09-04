@@ -261,7 +261,6 @@ const PROVIDER_BY_HOST_SUFFIX: readonly [string, string][] = [
   ['.openai.azure.com', 'azure.ai.openai'],
   ['.services.ai.azure.com', 'azure.ai.inference'],
   ['.aiplatform.googleapis.com', 'gcp.vertex_ai'],
-  ['.amazonaws.com', 'aws.bedrock'],
 ];
 
 const PROVIDER_BY_NAME: Record<string, string> = {
@@ -302,6 +301,8 @@ export function genAIProviderName(provider: string | undefined | null): string |
   for (const [suffix, mapped] of PROVIDER_BY_HOST_SUFFIX) {
     if (host.endsWith(suffix)) return mapped;
   }
+  // only the Bedrock endpoints, not every AWS service that shares the domain
+  if (host.startsWith('bedrock') && host.endsWith('.amazonaws.com')) return 'aws.bedrock';
 
   const canonical = host.replace(/[^a-z0-9]/g, '');
   // a provider outside the registry keeps its own id, which the convention allows
