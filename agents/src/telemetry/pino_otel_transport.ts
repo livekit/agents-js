@@ -11,6 +11,7 @@
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
+import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
@@ -24,7 +25,19 @@ export interface PinoLogObject {
 }
 
 export interface PinoCloudExporterConfig {
+  /** @deprecated Pass `observabilityUrl` with `PinoCloudExporterUrlConfig`. */
   cloudHostname: string;
+  roomId: string;
+  jobId: string;
+  metadata?: Record<string, unknown>;
+  loggerName?: string;
+  batchSize?: number;
+  flushIntervalMs?: number;
+}
+
+export interface PinoCloudExporterUrlConfig {
+  /** Base URL for LiveKit Cloud observability, without a trailing slash. */
+  observabilityUrl: string;
   roomId: string;
   jobId: string;
   metadata?: Record<string, unknown>;
@@ -98,7 +111,7 @@ function redactSerializedException(value: unknown): unknown {
  * @example
  * ```typescript
  * const exporter = new PinoCloudExporter({
- *   cloudHostname: 'cloud.livekit.io',
+ *   observabilityUrl: 'https://cloud.livekit.io',
  *   roomId: 'RM_xxx',
  *   jobId: 'AJ_xxx',
  * });
@@ -111,15 +124,16 @@ function redactSerializedException(value: unknown): unknown {
  * ```
  */
 export class PinoCloudExporter {
-  private readonly config: PinoCloudExporterConfig;
+  private readonly config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig;
   private readonly loggerName: string;
   private readonly batchSize: number;
   private readonly flushIntervalMs: number;
   private jwt: string | null = null;
   private pendingLogs: any[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
+  private flushChain: Promise<void> = Promise.resolve();
 
-  constructor(config: PinoCloudExporterConfig) {
+  constructor(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig) {
     this.config = config;
     this.loggerName = config.loggerName || 'livekit.agents';
     this.batchSize = config.batchSize || 100;
@@ -184,24 +198,29 @@ export class PinoCloudExporter {
     };
   }
 
-  async flush(): Promise<void> {
+  flush(): Promise<void> {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
 
-    if (this.pendingLogs.length === 0) {
-      return;
-    }
+    const flush = this.flushChain.then(() => this.flushPendingLogs());
+    this.flushChain = flush;
+    return flush;
+  }
 
-    const logs = this.pendingLogs;
-    this.pendingLogs = [];
+  private async flushPendingLogs(): Promise<void> {
+    while (this.pendingLogs.length > 0) {
+      const logs = this.pendingLogs;
+      this.pendingLogs = [];
 
-    try {
-      await this.sendLogs(logs);
-    } catch (error) {
-      this.pendingLogs = [...logs, ...this.pendingLogs];
-      console.error('[PinoCloudExporter] Failed to flush logs:', error);
+      try {
+        await this.sendLogs(logs);
+      } catch (error) {
+        this.pendingLogs = [...logs, ...this.pendingLogs];
+        console.error('[PinoCloudExporter] Failed to flush logs:', error);
+        return;
+      }
     }
   }
 
@@ -240,7 +259,7 @@ export class PinoCloudExporter {
       ],
     };
 
-    const endpoint = `https://${this.config.cloudHostname}/observability/logs/otlp/v0`;
+    const endpoint = `${resolveObservabilityUrl(this.config)}/observability/logs/otlp/v0`;
 
     const response = await fetchWithUploadGate(endpoint, {
       method: 'POST',
@@ -252,8 +271,8 @@ export class PinoCloudExporter {
     });
 
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Log export failed: ${response.status} ${response.statusText} - ${text}`);
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`Log export failed: status ${response.status}`);
     }
   }
 
@@ -279,7 +298,9 @@ export class PinoCloudExporter {
 
 let globalExporter: PinoCloudExporter | null = null;
 
-export function initPinoCloudExporter(config: PinoCloudExporterConfig): void {
+export function initPinoCloudExporter(
+  config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig,
+): void {
   globalExporter = new PinoCloudExporter(config);
 }
 

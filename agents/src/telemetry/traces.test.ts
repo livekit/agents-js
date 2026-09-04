@@ -12,9 +12,13 @@ import {
 } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import FormData from 'form-data';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs/promises';
+import type { ClientRequest } from 'node:http';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
+import { log } from '../log.js';
 import { version } from '../version.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
@@ -59,7 +63,7 @@ describe('setupCloudTracer default provider resource', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableLogs: false,
     });
 
@@ -254,7 +258,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: 'my-agent',
       enableTraces: true,
       enableLogs: false,
@@ -293,7 +297,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -312,7 +316,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -339,7 +343,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -363,8 +367,15 @@ function makeReport(recordingOptions: SessionReport['options']['recordingOptions
   };
 }
 
+function fakeClientRequest(): ClientRequest {
+  const request = new EventEmitter() as ClientRequest;
+  request.destroy = vi.fn(() => request);
+  return request;
+}
+
 function mockSuccessfulFormSubmit() {
   return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit(_opts, cb) {
+    const request = fakeClientRequest();
     const res = new PassThrough() as PassThrough & {
       statusCode: number;
       statusMessage: string;
@@ -377,7 +388,7 @@ function mockSuccessfulFormSubmit() {
       return res;
     };
     cb?.(null, res as never);
-    return {} as never;
+    return request;
   });
 }
 
@@ -419,7 +430,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: true,
@@ -461,7 +472,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report,
     });
 
@@ -474,13 +485,44 @@ describe('uploadSessionReport metadata', () => {
     expect(keytermsOptions.keyterms).toEqual(['Acme Corp']);
   });
 
+  it('uses Python-compatible room and agent_name fields in exported session-report logs', async () => {
+    let scopeAttributes: Record<string, unknown> | undefined;
+    let records: Parameters<SimpleOTLPHttpLogExporter['export']>[0] = [];
+    vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockImplementation(function (value) {
+      records = value;
+      scopeAttributes = (
+        this as unknown as { config: { scopeAttributes?: Record<string, unknown> } }
+      ).config.scopeAttributes;
+      return Promise.resolve();
+    });
+
+    await uploadSessionReport({
+      agentName: 'customer agent',
+      observabilityUrl: 'https://example.livekit.cloud',
+      report: makeReport({
+        audio: false,
+        traces: true,
+        logs: false,
+        transcript: false,
+        redaction: false,
+      }),
+    });
+
+    expect(scopeAttributes).toMatchObject({ room: 'room-name' });
+    expect(scopeAttributes).not.toHaveProperty('lk.pii.room_name');
+    expect(records[0]?.attributes).toMatchObject({
+      agent_name: 'customer agent',
+    });
+    expect(records[0]?.attributes).not.toHaveProperty('lk.pii.agent_name');
+  });
+
   it('sets job, simulation, and redaction fields on the multipart recording header', async () => {
     vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
     const submitSpy = mockSuccessfulFormSubmit();
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: false,
@@ -509,7 +551,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: false,
@@ -522,6 +564,41 @@ describe('uploadSessionReport metadata', () => {
 
     expect(exportSpy).not.toHaveBeenCalled();
     expect(submitSpy).not.toHaveBeenCalled();
+  });
+
+  it('warns and uploads without audio when the recording file cannot be read', async () => {
+    const readError = new Error('ENOENT');
+    vi.spyOn(fs, 'readFile').mockRejectedValue(readError);
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
+    const submitSpy = mockSuccessfulFormSubmit();
+
+    await uploadSessionReport({
+      agentName: 'agent',
+      observabilityUrl: 'https://example.livekit.cloud',
+      report: {
+        ...makeReport({
+          audio: true,
+          traces: false,
+          logs: false,
+          transcript: true,
+          redaction: false,
+        }),
+        audioRecordingPath: '/tmp/missing-recording.ogg',
+        audioRecordingStartedAt: 1_700_000_000_000,
+      },
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      { error: readError, path: '/tmp/missing-recording.ogg' },
+      'failed to read audio recording for session report upload, uploading without the audio part',
+    );
+    expect(submitSpy).toHaveBeenCalledTimes(1);
+    const formData = submitSpy.mock.instances[0] as FormData;
+    const streams = (formData as unknown as { _streams: unknown[] })._streams;
+    expect(streams.some((part) => typeof part === 'string' && part.includes('name="audio"'))).toBe(
+      false,
+    );
   });
 });
 
@@ -585,7 +662,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: 'sdk-name',
       enableTraces: true,
       enableLogs: false,
@@ -603,7 +680,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room2',
       jobId: 'job2',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -621,7 +698,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room3',
       jobId: 'job3',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -639,7 +716,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room4',
       jobId: 'job4',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -654,7 +731,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room5',
       jobId: 'job5',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -672,7 +749,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room6',
       jobId: 'job6',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,

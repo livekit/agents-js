@@ -1620,7 +1620,8 @@ export class AgentSession<
   }
 
   async close(): Promise<void> {
-    await this.closeImpl(CloseReason.USER_INITIATED);
+    this._closeSoon({ reason: CloseReason.USER_INITIATED });
+    await this.closingTask;
   }
 
   shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): void {

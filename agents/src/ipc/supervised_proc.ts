@@ -45,26 +45,13 @@ export abstract class SupervisedProc {
   #lastMemoryWarnMB = 0;
   protected init = new Future();
   #join = new Future();
+  #shutdownRequestAck = new Future();
+  #shuttingDown = new Future();
+  #closePromise?: Promise<void>;
   #logger = log().child({ runningJob: this.#runningJob });
 
-  constructor(
-    initializeTimeout: number,
-    closeTimeout: number,
-    memoryWarnMB: number,
-    memoryLimitMB: number,
-    pingInterval: number,
-    pingTimeout: number,
-    highPingThreshold: number,
-  ) {
-    this.#opts = {
-      initializeTimeout,
-      closeTimeout,
-      memoryWarnMB,
-      memoryLimitMB,
-      pingInterval,
-      pingTimeout,
-      highPingThreshold,
-    };
+  constructor(opts: ProcOpts) {
+    this.#opts = opts;
   }
 
   abstract createProcess(): ChildProcess;
@@ -94,8 +81,8 @@ export abstract class SupervisedProc {
 
     this.#started = true;
     this.#startedAt = performance.now();
-    this.run().catch((err) => {
-      this.#logger.child({ err }).warn('supervised process run failed');
+    this.run().catch((error) => {
+      this.#logger.child({ error }).warn('supervised process run failed');
       // Note: we intentionally do NOT kill the child process here. Killing it
       // would race with initialize()'s `once(proc, 'message')`, causing
       // initialize() to hang forever and deadlocking the caller (proc_pool).
@@ -117,11 +104,11 @@ export abstract class SupervisedProc {
       this.#logger.warn('job is unresponsive');
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);
-      this.proc!.kill();
+      this.proc!.kill('SIGKILL');
       this.#join.resolve();
     }, this.#opts.pingTimeout);
 
-    this.#memoryMonitorInterval = setInterval(async () => {
+    const checkMemoryUsage = async (): Promise<void> => {
       const memoryMB = await this.getChildMemoryUsageMB();
       if (memoryMB === 0) {
         return;
@@ -133,7 +120,9 @@ export abstract class SupervisedProc {
         this.#logger
           .child(this.memoryLoggingFields(memoryMB))
           .error(`${this.processKind} process exceeded memory limit, killing it`);
-        this.close();
+        this.#closing = true;
+        this.clearTimers();
+        this.proc?.kill('SIGKILL');
       } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
         if (this.shouldEmitMemoryWarning(memoryMB)) {
           const advisory = this.#opts.memoryLimitMB <= 0;
@@ -146,6 +135,12 @@ export abstract class SupervisedProc {
             );
         }
       }
+    };
+
+    this.#memoryMonitorInterval = setInterval(() => {
+      void checkMemoryUsage().catch((error) => {
+        this.#logger.child({ error }).warn('failed to check supervised process memory usage');
+      });
     }, MEMORY_MONITOR_INTERVAL);
 
     const listener = (msg: IPCMessage) => {
@@ -162,7 +157,17 @@ export abstract class SupervisedProc {
           this.#logger.child({ reason: msg.value.reason }).debug('job exiting');
           break;
         }
+        case 'shutdownRequestAck': {
+          if (!this.#shutdownRequestAck.done) this.#shutdownRequestAck.resolve();
+          break;
+        }
+        case 'shuttingDown': {
+          if (!this.#shuttingDown.done) this.#shuttingDown.resolve();
+          break;
+        }
         case 'done': {
+          if (!this.#shutdownRequestAck.done) this.#shutdownRequestAck.resolve();
+          if (!this.#shuttingDown.done) this.#shuttingDown.resolve();
           this.#closing = true;
           this.proc!.off('message', listener);
           break;
@@ -170,10 +175,10 @@ export abstract class SupervisedProc {
       }
     };
     this.proc!.on('message', listener);
-    this.proc!.on('error', (err) => {
+    this.proc!.on('error', (error) => {
       if (this.#closing) return;
       this.#logger
-        .child({ err })
+        .child({ error })
         .warn('job process exited unexpectedly; this likely means the error above caused a crash');
       this.clearTimers();
       this.#join.resolve();
@@ -197,7 +202,7 @@ export abstract class SupervisedProc {
     await this.#join.await;
   }
 
-  async initialize() {
+  async initialize(options: { sessionEndTimeout?: number } = {}) {
     if (!this.proc?.connected) {
       const err = new Error('process not connected');
       this.init.reject(err);
@@ -210,6 +215,7 @@ export abstract class SupervisedProc {
         pingInterval: this.#opts.pingInterval,
         pingTimeout: this.#opts.pingTimeout,
         highPingThreshold: this.#opts.highPingThreshold,
+        ...options,
       },
     });
 
@@ -243,7 +249,7 @@ export abstract class SupervisedProc {
       // On timeout (or a bad first message) the child is still alive — kill it
       // so a failed initialize doesn't leak the process.
       if (this.proc && this.proc.exitCode === null && !this.proc.killed) {
-        this.proc.kill();
+        this.proc.kill('SIGKILL');
       }
       throw err;
     } finally {
@@ -255,24 +261,86 @@ export abstract class SupervisedProc {
     }
   }
 
-  async close() {
+  close(): Promise<void> {
     if (!this.#started) {
-      return;
+      return Promise.resolve();
     }
+    this.#closePromise ??= this.closeOnce();
+    return this.#closePromise;
+  }
+
+  private async closeOnce(): Promise<void> {
     this.#closing = true;
+    clearInterval(this.#memoryMonitorInterval);
 
-    if (this.proc?.connected) {
-      this.proc.send({ case: 'shutdownRequest' });
-    }
+    const waitForShutdownProgress = async (
+      stage: Future,
+      timeout?: { ms: number; message: string },
+    ): Promise<boolean> => {
+      if (stage.done) return true;
+      if (this.#join.done) return false;
 
-    const timer = setTimeout(() => {
-      this.#logger.error('job shutdown is taking too much time');
-      this.proc!.kill();
-    }, this.#opts.closeTimeout);
-    await this.#join.await.then(() => {
+      const stageOrExit =
+        stage === this.#join
+          ? stage.await.then(() => 'stage' as const)
+          : Promise.race([
+              stage.await.then(() => 'stage' as const),
+              this.#join.await.then(() => 'exit' as const),
+            ]);
+      if (!timeout) return (await stageOrExit) === 'stage';
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        stageOrExit,
+        new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), timeout.ms);
+        }),
+      ]);
       clearTimeout(timer);
+
+      if (result === 'timeout') {
+        this.#logger.child({ timeout: timeout.ms }).error(timeout.message);
+        this.proc?.kill('SIGKILL');
+        await this.#join.await;
+      }
+
+      return result === 'stage';
+    };
+
+    try {
+      if (this.#join.done) return;
+
+      if (!this.proc?.connected) {
+        await waitForShutdownProgress(this.#join, {
+          ms: this.#opts.closeTimeout,
+          message: 'job shutdown is taking too much time',
+        });
+        return;
+      }
+
+      this.proc.send({
+        case: 'shutdownRequest',
+        value: { reason: 'shutdown request' },
+      } satisfies IPCMessage);
+
+      if (
+        !(await waitForShutdownProgress(this.#shutdownRequestAck, {
+          ms: this.#opts.closeTimeout,
+          message: 'job did not acknowledge shutdown in time',
+        }))
+      ) {
+        return;
+      }
+
+      if (!(await waitForShutdownProgress(this.#shuttingDown))) return;
+
+      await waitForShutdownProgress(this.#join, {
+        ms: this.#opts.closeTimeout,
+        message: 'job shutdown is taking too much time',
+      });
+    } finally {
       this.clearTimers();
-    });
+    }
   }
 
   async launchJob(info: RunningJobInfo) {

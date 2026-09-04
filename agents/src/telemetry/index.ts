@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
+export type { ObservabilityEndpoint } from './observability_endpoint.js';
 export {
   SimpleOTLPHttpLogExporter,
   type SimpleLogRecord,
   type SimpleOTLPHttpLogExporterConfig,
+  type SimpleOTLPHttpLogExporterUrlConfig,
 } from './otel_http_exporter.js';
 export {
   emitToOtel,
@@ -14,6 +16,7 @@ export {
   initPinoCloudExporter,
   PinoCloudExporter,
   type PinoCloudExporterConfig,
+  type PinoCloudExporterUrlConfig,
   type PinoLogObject,
 } from './pino_otel_transport.js';
 export * as traceTypes from './trace_types.js';

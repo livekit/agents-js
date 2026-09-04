@@ -34,7 +34,7 @@ import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
 import type { ChatItem } from '../llm/index.js';
-import { enableOtelLogging } from '../log.js';
+import { enableOtelLogging, log } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
 import { encodeChatItem } from '../proto.js';
 import {
@@ -44,8 +44,11 @@ import {
 } from '../types.js';
 import { version } from '../version.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
+import type { ObservabilityEndpoint } from './observability_endpoint.js';
+import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
+import { uploadRecording } from './recording_upload.js';
 import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
 import { UploadGateTraceExporter, uploadGate } from './upload_gate.js';
 
@@ -362,29 +365,24 @@ export function setTracerProvider(
  * Setup OpenTelemetry tracer for LiveKit Cloud observability.
  * This configures OTLP exporters to send traces to LiveKit Cloud.
  *
- * @param options - Configuration for cloud tracer with roomId, jobId, and cloudHostname properties
+ * @param options - Configuration for cloud tracer with roomId, jobId, and observabilityUrl properties
  *
  * @internal
  */
-export async function setupCloudTracer(options: {
-  roomId: string;
-  jobId: string;
-  cloudHostname: string;
-  agentName?: string;
-  enableTraces?: boolean;
-  enableLogs?: boolean;
-  metadata?: Attributes;
-}): Promise<void> {
+export async function setupCloudTracer(
+  options: ObservabilityEndpoint & {
+    roomId: string;
+    jobId: string;
+    agentName?: string;
+    enableTraces?: boolean;
+    enableLogs?: boolean;
+    metadata?: Attributes;
+  },
+): Promise<void> {
   uploadGate.reset();
 
-  const {
-    roomId,
-    jobId,
-    cloudHostname,
-    agentName,
-    enableTraces = true,
-    enableLogs = true,
-  } = options;
+  const { roomId, jobId, agentName, enableTraces = true, enableLogs = true } = options;
+  const observabilityUrl = resolveObservabilityUrl(options);
 
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -441,7 +439,7 @@ export async function setupCloudTracer(options: {
       );
 
     if (enableTraces) {
-      const url = `https://${cloudHostname}/observability/traces/otlp/v0`;
+      const url = `${observabilityUrl}/observability/traces/otlp/v0`;
       const createCloudExporter = () =>
         new UploadGateTraceExporter({
           url,
@@ -501,7 +499,7 @@ export async function setupCloudTracer(options: {
     if (enableLogs) {
       // Initialize standalone Pino cloud exporter (no OTEL SDK dependency)
       initPinoCloudExporter({
-        cloudHostname,
+        observabilityUrl,
         roomId,
         jobId,
         metadata: options.metadata,
@@ -554,15 +552,17 @@ function serializeSessionOptions(options: SessionReport['options']): Record<stri
 
 /**
  * Upload session report to LiveKit Cloud observability.
- * @param options - Configuration with agentName, cloudHostname, and report
+ * @param options - Configuration with agentName, observabilityUrl, and report
  */
-export async function uploadSessionReport(options: {
-  agentName: string;
-  cloudHostname: string;
-  report: SessionReport;
-  metadata?: Attributes;
-}): Promise<void> {
-  const { agentName, cloudHostname, report } = options;
+export async function uploadSessionReport(
+  options: ObservabilityEndpoint & {
+    agentName: string;
+    report: SessionReport;
+    metadata?: Attributes;
+  },
+): Promise<void> {
+  const { agentName, report } = options;
+  const observabilityUrl = resolveObservabilityUrl(options);
   const metadata = options.metadata ?? {};
 
   if (!recordingEnabled(report.options.recordingOptions)) {
@@ -575,7 +575,7 @@ export async function uploadSessionReport(options: {
   // Create OTLP HTTP exporter for chat history logs
   // Uses raw HTTP JSON format which is required by LiveKit Cloud
   const logExporter = new SimpleOTLPHttpLogExporter({
-    cloudHostname,
+    observabilityUrl,
     resourceAttributes: {
       room_id: report.roomId,
       job_id: report.jobId,
@@ -679,9 +679,6 @@ export async function uploadSessionReport(options: {
   token.addObservabilityGrant({ write: true });
   const jwt = await token.toJwt();
 
-  const formData = new FormData();
-
-  // Add header (protobuf MetricsRecordingHeader)
   const audioStartTime = report.audioRecordingStartedAt ?? 0;
   const headerMsg = new MetricsRecordingHeader({
     roomId: report.roomId,
@@ -696,47 +693,47 @@ export async function uploadSessionReport(options: {
   });
 
   const headerBytes = Buffer.from(headerMsg.toBinary());
-  formData.append('header', headerBytes, {
-    filename: 'header.binpb',
-    contentType: 'application/protobuf',
-    knownLength: headerBytes.length,
-    header: {
-      'Content-Type': 'application/protobuf',
-      'Content-Length': headerBytes.length.toString(),
-    },
-  });
-
-  // Add chat_history JSON (only when transcript recording is enabled).
-  // Reuse the report layer's serialization so the uploaded chat history carries the
-  // snake_case (Python wire) field names — chat-item toJSON() emits camelCase, and the
-  // snake_case conversion lives only in sessionReportToJSON (toSnakeCaseDeep). Serializing
-  // raw toJSON() here would send camelCase and fail the Python consumer's pydantic validation
-  // (e.g. call_id/arguments/is_error/new_agent_id reported as missing).
+  let chatHistoryBuffer: Buffer | undefined;
   if (report.options.recordingOptions.transcript) {
+    // The report serializer applies the Python-compatible snake_case wire field names.
     const chatHistoryJson = JSON.stringify(sessionReportToJSON(report).chat_history);
-    const chatHistoryBuffer = Buffer.from(chatHistoryJson, 'utf-8');
-    formData.append('chat_history', chatHistoryBuffer, {
-      filename: 'chat_history.json',
-      contentType: 'application/json',
-      knownLength: chatHistoryBuffer.length,
-      header: {
-        'Content-Type': 'application/json',
-        'Content-Length': chatHistoryBuffer.length.toString(),
-      },
-    });
+    chatHistoryBuffer = Buffer.from(chatHistoryJson, 'utf-8');
   }
 
-  // Add audio recording file if available
-  if (
-    report.options.recordingOptions.audio &&
-    report.audioRecordingPath &&
-    report.audioRecordingStartedAt
-  ) {
-    let audioBytes: Buffer;
+  let audioBytes = Buffer.alloc(0);
+  if (hasAudio && report.audioRecordingPath) {
     try {
       audioBytes = await fs.readFile(report.audioRecordingPath);
-    } catch {
-      audioBytes = Buffer.alloc(0);
+    } catch (error) {
+      log().warn(
+        { error, path: report.audioRecordingPath },
+        'failed to read audio recording for session report upload, uploading without the audio part',
+      );
+    }
+  }
+
+  const createFormData = () => {
+    const formData = new FormData();
+    formData.append('header', headerBytes, {
+      filename: 'header.binpb',
+      contentType: 'application/protobuf',
+      knownLength: headerBytes.length,
+      header: {
+        'Content-Type': 'application/protobuf',
+        'Content-Length': headerBytes.length.toString(),
+      },
+    });
+
+    if (chatHistoryBuffer) {
+      formData.append('chat_history', chatHistoryBuffer, {
+        filename: 'chat_history.json',
+        contentType: 'application/json',
+        knownLength: chatHistoryBuffer.length,
+        header: {
+          'Content-Type': 'application/json',
+          'Content-Length': chatHistoryBuffer.length.toString(),
+        },
+      });
     }
 
     if (audioBytes.length > 0) {
@@ -750,61 +747,8 @@ export async function uploadSessionReport(options: {
         },
       });
     }
-  }
+    return formData;
+  };
 
-  // Upload to LiveKit Cloud using form-data's submit method
-  // This properly streams the multipart form with all headers including Content-Length
-  return new ThrowsPromise<void, Error>((resolve, reject) => {
-    const uploadGeneration = uploadGate.generation;
-    formData.submit(
-      {
-        protocol: 'https:',
-        host: cloudHostname,
-        path: '/observability/recordings/v0',
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${jwt}`,
-        },
-      },
-      (err, res) => {
-        if (err) {
-          reject(new Error(`Failed to upload session report: ${err.message}`));
-          return;
-        }
-
-        if (res.statusCode && res.statusCode >= 400) {
-          // Read response body for error details
-          const chunks: Buffer[] = [];
-          res.on('data', (chunk) => {
-            chunks.push(Buffer.from(chunk));
-          });
-          res.on('error', (readErr) => {
-            reject(
-              new Error(
-                `Failed to upload session report: ${res.statusCode} ${res.statusMessage} (body read error: ${readErr.message})`,
-              ),
-            );
-          });
-          res.on('end', () => {
-            const body = Buffer.concat(chunks);
-            if (uploadGate.isDisabledResponse(res.statusCode ?? 0, body)) {
-              uploadGate.disable(uploadGeneration);
-              resolve();
-              return;
-            }
-            reject(
-              new Error(
-                `Failed to upload session report: ${res.statusCode} ${res.statusMessage} - ${body.toString('utf8')}`,
-              ),
-            );
-          });
-          return;
-        }
-
-        res.resume(); // Drain the response
-        res.on('error', (readErr) => reject(new Error(`Response read error: ${readErr.message}`)));
-        res.on('end', () => resolve());
-      },
-    );
-  });
+  await uploadRecording({ observabilityUrl, jwt, createFormData });
 }

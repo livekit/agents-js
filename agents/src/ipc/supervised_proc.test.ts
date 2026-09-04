@@ -1,12 +1,29 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { ChildProcess } from 'node:child_process';
 import { fork, spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pidusage from 'pidusage';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Logger } from 'pino';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { log } from '../log.js';
+import type { IPCMessage } from './message.js';
+import { type ProcOpts, SupervisedProc } from './supervised_proc.js';
+
+const procOptions = (overrides: Partial<ProcOpts> = {}): ProcOpts => ({
+  initializeTimeout: 100,
+  closeTimeout: 20,
+  memoryWarnMB: 0,
+  memoryLimitMB: 0,
+  pingInterval: 5000,
+  pingTimeout: 60000,
+  highPingThreshold: 2500,
+  ...overrides,
+});
 
 const childScript = join(tmpdir(), 'test_child.mjs');
 
@@ -125,6 +142,221 @@ describe('IPC send on dead process', () => {
   });
 });
 
+describe('supervised process shutdown', () => {
+  async function createProc({
+    closeTimeout = 20,
+    pingInterval = 5000,
+    pingTimeout = 60_000,
+    acknowledgeShutdown = true,
+    completeSessionEnd = false,
+    completeWithDone = false,
+    respondToPings = false,
+    memoryLimitMB = 0,
+  } = {}) {
+    type TestChild = EventEmitter & {
+      connected: boolean;
+      exitCode: number | null;
+      killed: boolean;
+      send: (message: IPCMessage) => boolean;
+      kill: (signal?: NodeJS.Signals | number) => boolean;
+    };
+
+    const child = new EventEmitter() as TestChild;
+    child.connected = true;
+    child.exitCode = null;
+    child.killed = false;
+    const sendSpy = vi.fn((message: IPCMessage) => {
+      if (message.case === 'initializeRequest') {
+        queueMicrotask(() =>
+          child.emit('message', {
+            case: 'initializeResponse',
+            value: undefined,
+          } satisfies IPCMessage),
+        );
+      } else if (message.case === 'pingRequest' && respondToPings) {
+        queueMicrotask(() =>
+          child.emit('message', {
+            case: 'pongResponse',
+            value: { lastTimestamp: message.value.timestamp, timestamp: Date.now() },
+          } satisfies IPCMessage),
+        );
+      } else if (message.case === 'shutdownRequest') {
+        queueMicrotask(() => {
+          if (acknowledgeShutdown) {
+            child.emit('message', {
+              case: 'shutdownRequestAck',
+              value: undefined,
+            } satisfies IPCMessage);
+          }
+          if (completeSessionEnd) {
+            child.emit('message', { case: 'shuttingDown', value: undefined } satisfies IPCMessage);
+          }
+          if (completeWithDone) {
+            child.emit('message', { case: 'done', value: undefined } satisfies IPCMessage);
+            child.connected = false;
+            child.exitCode = 0;
+            child.emit('exit', 0, null);
+          }
+        });
+      }
+      return true;
+    });
+    const killSpy = vi.fn(() => {
+      child.killed = true;
+      child.connected = false;
+      child.exitCode = 0;
+      queueMicrotask(() => child.emit('exit', 0, null));
+      return true;
+    });
+    child.send = sendSpy;
+    child.kill = killSpy;
+
+    class TestProc extends SupervisedProc {
+      protected get processKind() {
+        return 'job';
+      }
+
+      createProcess(): ChildProcess {
+        return child as unknown as ChildProcess;
+      }
+
+      async mainTask() {}
+    }
+
+    const proc = new TestProc(
+      procOptions({ closeTimeout, memoryLimitMB, pingInterval, pingTimeout }),
+    );
+    await proc.start();
+    await proc.initialize({ sessionEndTimeout: 300_000 });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    return { child, killSpy, proc, sendSpy };
+  }
+
+  it('waits for session-end handling without applying the process close timeout', async () => {
+    const { child, killSpy, proc, sendSpy } = await createProc({
+      pingInterval: 5,
+      pingTimeout: 30,
+      respondToPings: true,
+    });
+    const close = proc.close();
+
+    await vi.waitFor(() =>
+      expect(sendSpy).toHaveBeenCalledWith({
+        case: 'shutdownRequest',
+        value: { reason: 'shutdown request' },
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(killSpy).not.toHaveBeenCalled();
+
+    child.emit('message', { case: 'shuttingDown', value: undefined } satisfies IPCMessage);
+    child.emit('message', { case: 'done', value: undefined } satisfies IPCMessage);
+    child.connected = false;
+    child.exitCode = 0;
+    child.emit('exit', 0, null);
+    await close;
+  });
+
+  it('sends the session end timeout in the typed initialize request', async () => {
+    const { child, proc, sendSpy } = await createProc();
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        case: 'initializeRequest',
+        value: expect.objectContaining({ sessionEndTimeout: 300_000 }),
+      }),
+    );
+
+    child.emit('message', { case: 'done', value: undefined } satisfies IPCMessage);
+    child.connected = false;
+    child.exitCode = 0;
+    child.emit('exit', 0, null);
+    await proc.join();
+  });
+
+  it('logs the exit reason with the Python-compatible reason field', async () => {
+    const debug = vi.fn();
+    const childLogger = vi.fn().mockReturnValue({ debug } as unknown as Logger);
+    const logger = { child: childLogger } as unknown as Logger;
+    const rootChild = vi.spyOn(log(), 'child').mockReturnValueOnce(logger);
+
+    try {
+      const { child, proc } = await createProc();
+      child.emit('message', {
+        case: 'exiting',
+        value: { reason: 'user requested' },
+      } satisfies IPCMessage);
+
+      expect(childLogger).toHaveBeenCalledExactlyOnceWith({ reason: 'user requested' });
+
+      child.emit('message', { case: 'done', value: undefined } satisfies IPCMessage);
+      child.connected = false;
+      child.exitCode = 0;
+      child.emit('exit', 0, null);
+      await proc.join();
+    } finally {
+      rootChild.mockRestore();
+    }
+  });
+
+  it('still bounds process teardown after session-end handling completes', async () => {
+    const { killSpy, proc } = await createProc({ completeSessionEnd: true });
+
+    await proc.close();
+
+    expect(killSpy).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+  });
+
+  it('kills the child when it does not acknowledge shutdown', async () => {
+    const { killSpy, proc } = await createProc({ acknowledgeShutdown: false });
+
+    await proc.close();
+
+    expect(killSpy).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+  });
+
+  it('keeps the watchdog active while waiting for session-end handling', async () => {
+    const { killSpy, proc } = await createProc({ pingInterval: 5, pingTimeout: 30 });
+
+    await proc.close();
+
+    expect(killSpy).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+  });
+
+  it('accepts done as completion of both shutdown stages', async () => {
+    const { killSpy, proc } = await createProc({
+      acknowledgeShutdown: false,
+      completeWithDone: true,
+    });
+
+    await proc.close();
+
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it('kills an over-limit child without starting staged shutdown', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval'] });
+    try {
+      const { killSpy, proc, sendSpy } = await createProc({ memoryLimitMB: 100 });
+      const internals = proc as unknown as {
+        getChildMemoryUsageMB(): Promise<number>;
+      };
+      vi.spyOn(internals, 'getChildMemoryUsageMB').mockResolvedValue(101);
+
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(killSpy).toHaveBeenCalledExactlyOnceWith('SIGKILL');
+      expect(sendSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ case: 'shutdownRequest' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('init timeout rejection handling', () => {
   it('does not produce unhandled rejection when init times out', async () => {
     // Regression test: before the fix, run() was called without await in start().
@@ -157,15 +389,7 @@ describe('init timeout rejection handling', () => {
       async mainTask() {}
     }
 
-    const proc = new TestProc(
-      50, // initializeTimeout — fires before child responds at 200ms
-      1000, // closeTimeout
-      0, // memoryWarnMB
-      0, // memoryLimitMB
-      5000, // pingInterval
-      60000, // pingTimeout
-      2500, // highPingThreshold
-    );
+    const proc = new TestProc(procOptions({ initializeTimeout: 50, closeTimeout: 1000 }));
 
     await proc.start();
     // initialize() now fails fast: the timeout fires at 50ms and rejects the
@@ -208,7 +432,7 @@ describe('init timeout rejection handling', () => {
       async mainTask() {}
     }
 
-    const proc = new TestProc(50, 1000, 0, 0, 5000, 60000, 2500);
+    const proc = new TestProc(procOptions({ initializeTimeout: 50, closeTimeout: 1000 }));
 
     await proc.start();
     await proc.initialize().catch(() => {}); // times out at 50ms
@@ -241,7 +465,7 @@ describe('init timeout rejection handling', () => {
       async mainTask() {}
     }
 
-    const proc = new TestProc(50, 1000, 0, 0, 5000, 60000, 2500);
+    const proc = new TestProc(procOptions({ initializeTimeout: 50, closeTimeout: 1000 }));
 
     await proc.start();
     const exited = new Promise<void>((r) => proc.proc!.on('exit', () => r()));
@@ -307,8 +531,16 @@ describe('memory warning bookkeeping', () => {
       }
       async mainTask() {}
     }
-    // (initializeTimeout, closeTimeout, memoryWarnMB, memoryLimitMB, pingInterval, pingTimeout, highPingThreshold)
-    return new FakeProc(10000, 10000, memoryWarnMB, memoryLimitMB, 2500, 60000, 500);
+    return new FakeProc(
+      procOptions({
+        initializeTimeout: 10000,
+        closeTimeout: 10000,
+        memoryWarnMB,
+        memoryLimitMB,
+        pingInterval: 2500,
+        highPingThreshold: 500,
+      }),
+    );
   };
 
   it('rate-limits the warning', async () => {

@@ -8,15 +8,26 @@ import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
+import {
+  finalizeSession,
+  flushJobLogs,
+  runShutdownCallbacks,
+  validateSessionEndTimeout,
+  waitForEntrypointShutdown,
+} from '../job_lifecycle.js';
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
-import { Future, IdleTimeoutError, shortuuid, waitUntilTimeout } from '../utils.js';
+import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
-const SESSION_CLOSE_TIMEOUT = 60 * 1000;
+const EXIT_REASON = {
+  roomDisconnected: 'room disconnected',
+  shutdownRequest: 'shutdown request',
+  jobCrashed: 'job crashed',
+} as const;
 
 const safeSend = (msg: IPCMessage): boolean => {
   try {
@@ -101,6 +112,8 @@ const startJob = (
   closeEvent: EventEmitter,
   logger: Logger,
   joinFuture: Future,
+  sessionEndTimeout: number,
+  onSessionEnd?: (ctx: JobContext) => unknown,
   onSimulationEnd?: (ctx: SimulationContext) => unknown,
 ): JobTask => {
   let connect = false;
@@ -109,7 +122,7 @@ const startJob = (
   const room = new Room();
   room.on(RoomEvent.Disconnected, () => {
     if (!shutdown) {
-      closeEvent.emit('close', false);
+      closeEvent.emit('close', EXIT_REASON.roomDisconnected);
     }
   });
 
@@ -118,7 +131,7 @@ const startJob = (
   };
   const onShutdown = (reason: string) => {
     shutdown = true;
-    closeEvent.emit('close', true, reason);
+    closeEvent.emit('close', reason);
   };
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
@@ -138,11 +151,14 @@ const startJob = (
       const closePromise = once(closeEvent, 'close').then((close) => {
         logger.debug('shutting down');
         shutdown = true;
-        safeSend({ case: 'exiting', value: { reason: close[1] } });
+        safeSend({
+          case: 'exiting',
+          value: { reason: close[0] },
+        });
       });
 
       // Run the job function within the AsyncLocalStorage context
-      await runWithJobContextAsync(ctx, async () => {
+      const entrypointPromise = runWithJobContextAsync(ctx, async () => {
         const { tracer, traceTypes } = await import('../telemetry/index.js');
         return tracer.startActiveSpan(
           async (span) => {
@@ -153,67 +169,42 @@ const startJob = (
           },
           { name: 'job_entrypoint' },
         );
-      })
-        .then(async () => {
-          if (!shutdown) {
-            await closePromise;
-          }
-        })
-        .finally(async () => {
-          clearTimeout(unconnectedTimeout);
-        });
-    } catch (error) {
-      logger.error({ error }, 'error in entry function');
-      shutdown = true;
-      safeSend({
-        case: 'exiting',
-        value: { reason: error instanceof Error ? error.message : String(error) },
       });
+
+      void entrypointPromise.catch(() => {
+        closeEvent.emit('close', EXIT_REASON.jobCrashed);
+      });
+      await closePromise;
+      await waitForEntrypointShutdown(entrypointPromise, logger);
+    } finally {
+      clearTimeout(unconnectedTimeout);
     }
 
-    // Close the primary agent session if it exists
-    if (ctx._primaryAgentSession) {
-      const sessionClosePromise = ctx._primaryAgentSession.close();
-      try {
-        await waitUntilTimeout(sessionClosePromise, SESSION_CLOSE_TIMEOUT);
-      } catch (error) {
-        if (!(error instanceof IdleTimeoutError)) {
-          throw error;
+    try {
+      await runWithJobContextAsync(ctx, async () => {
+        try {
+          await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
+        } finally {
+          safeSend({ case: 'shuttingDown', value: undefined });
         }
 
-        void sessionClosePromise.catch((sessionCloseError) =>
-          logger.debug(
-            { error: sessionCloseError },
-            'AgentSession.close() rejected after shutdown timeout',
-          ),
-        );
-        logger.error(
-          { timeout: SESSION_CLOSE_TIMEOUT },
-          'AgentSession.close() timed out; proceeding with shutdown so registered callbacks still run.',
-        );
+        try {
+          await room.disconnect();
+          logger.debug('disconnected from room');
+        } catch (error) {
+          logger.error({ error }, 'error while disconnecting room');
+        }
+
+        await runShutdownCallbacks(ctx.shutdownCallbacks, logger);
+      });
+    } finally {
+      try {
+        await flushJobLogs(logger);
+      } finally {
+        safeSend({ case: 'done', value: undefined });
+        joinFuture.resolve();
       }
     }
-
-    // Generate and save/upload session report
-    try {
-      await ctx._onSessionEnd();
-    } catch (error) {
-      logger.error({ error }, 'error in ctx._onSessionEnd');
-    }
-
-    await room.disconnect();
-    logger.debug('disconnected from room');
-
-    const shutdownTasks = [];
-    for (const callback of ctx.shutdownCallbacks) {
-      shutdownTasks.push(callback());
-    }
-    await ThrowsPromise.all(shutdownTasks).catch((error) =>
-      logger.error({ error }, 'error while shutting down the job'),
-    );
-
-    safeSend({ case: 'done', value: undefined });
-    joinFuture.resolve();
   })();
 
   return { ctx, task };
@@ -223,10 +214,6 @@ const startJob = (
   if (process.send) {
     const join = new Future();
 
-    // process.argv:
-    //   [0] `node'
-    //   [1] import.meta.filename
-    //   [2] import.meta.filename of function containing entry file
     const moduleFile = process.argv[2];
     const agent: Agent = await import(pathToFileURL(moduleFile!).pathname).then((module) => {
       // Handle both ESM (module.default is the agent) and CJS (module.default.default is the agent)
@@ -255,18 +242,19 @@ const startJob = (
       logger.debug('SIGTERM received in job proc');
     });
 
-    await once(process, 'message').then(([msg]: IPCMessage[]) => {
+    const sessionEndTimeout = await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;
       if (msg.case !== 'initializeRequest') {
         throw new Error('first message must be InitializeRequest');
       }
       initializeLogger(msg.value.loggerOptions);
+      return validateSessionEndTimeout(msg.value.sessionEndTimeout ?? Number.NaN);
     });
     const proc = new JobProcess();
     let logger = log().child({ pid: proc.pid });
 
     process.on('unhandledRejection', (reason) => {
-      logger.debug({ error: reason }, 'Unhandled promise rejection');
+      logger.debug({ error: reason }, 'Unhandled promise rejection in job process');
     });
 
     logger.debug('initializing job runner');
@@ -306,18 +294,20 @@ const startJob = (
             closeEvent,
             logger,
             join,
+            sessionEndTimeout,
+            agent.onSessionEnd,
             agent.onSimulationEnd,
           );
           logger.debug('job started');
           break;
         }
         case 'shutdownRequest': {
+          safeSend({ case: 'shutdownRequestAck', value: undefined });
           if (!job) {
+            safeSend({ case: 'shuttingDown', value: undefined });
             join.resolve();
           }
-          closeEvent.emit('close', 'shutdownRequest');
-          clearTimeout(orphanedTimeout);
-          process.off('message', messageHandler);
+          closeEvent.emit('close', msg.value?.reason ?? EXIT_REASON.shutdownRequest);
         }
       }
     };
@@ -325,6 +315,8 @@ const startJob = (
     process.on('message', messageHandler);
 
     await join.await;
+    clearTimeout(orphanedTimeout);
+    process.off('message', messageHandler);
 
     // Dispose native FFI resources (Rust FfiServer, tokio runtimes, libwebrtc)
     // before process.exit() to prevent libc++abi mutex crash during teardown.

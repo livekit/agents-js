@@ -251,6 +251,7 @@ export const runApp = (opts: ServerOptions) => {
         agentPath: opts.agent,
         connectAddr: commandOptions.connectAddr,
         record: commandOptions.record === true,
+        sessionEndTimeout: opts.sessionEndTimeout,
       }).catch((error) => {
         log().fatal(`console mode failed: ${formatErrorMessage(error)}`);
         process.exit(1);
