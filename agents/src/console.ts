@@ -10,7 +10,6 @@ import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from './job.js';
 import {
   DEFAULT_SESSION_END_TIMEOUT,
-  closeAgentSession,
   finalizeSession,
   flushJobLogs,
   runShutdownCallbacks,
@@ -173,10 +172,6 @@ export async function runConsole({
       }
     };
 
-    const session = ctx?._primaryAgentSession;
-    if (session) {
-      await guarded('AgentSession.close', () => closeAgentSession(session, logger));
-    }
     const jobCtx = ctx;
     if (jobCtx) {
       await finalizeSession(jobCtx, agent.onSessionEnd, sessionEndTimeout, logger);

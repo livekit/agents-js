@@ -20,6 +20,8 @@ export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
    *
    * The worker stops waiting after `ServerOptions.sessionEndTimeout`. JavaScript cannot cancel the
    * returned promise, so timed-out work can continue until the job process exits.
+   * The callback is not called if the primary agent session fails to close or exceeds its close
+   * timeout.
    *
    * @param ctx - The job context for the completed session.
    * @public

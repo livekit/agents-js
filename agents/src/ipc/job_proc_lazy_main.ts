@@ -9,7 +9,6 @@ import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
 import {
-  closeAgentSession,
   finalizeSession,
   flushJobLogs,
   runShutdownCallbacks,
@@ -184,11 +183,6 @@ const startJob = (
     try {
       await runWithJobContextAsync(ctx, async () => {
         try {
-          // Close the primary agent session if it exists
-          if (ctx._primaryAgentSession) {
-            await closeAgentSession(ctx._primaryAgentSession, logger);
-          }
-
           await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
         } finally {
           safeSend({ case: 'shuttingDown', value: undefined });

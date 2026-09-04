@@ -5,7 +5,6 @@ import type { Logger } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type JobContext, getJobContext } from './job.js';
 import {
-  closeAgentSession,
   finalizeSession,
   flushJobLogs,
   runShutdownCallbacks,
@@ -28,8 +27,11 @@ function createLogger(): Logger {
   } as unknown as Logger;
 }
 
-function createJobContext(onSessionEnd: () => Promise<void>): JobContext {
-  return { _onSessionEnd: onSessionEnd } as unknown as JobContext;
+function createJobContext(
+  onSessionEnd: () => Promise<void>,
+  session?: Pick<AgentSession, 'close'>,
+): JobContext {
+  return { _onSessionEnd: onSessionEnd, _primaryAgentSession: session } as unknown as JobContext;
 }
 
 afterEach(() => {
@@ -76,6 +78,73 @@ describe('waitForEntrypointShutdown', () => {
 });
 
 describe('finalizeSession', () => {
+  it('closes the primary session before the application callback', async () => {
+    const calls: string[] = [];
+    const ctx = createJobContext(
+      async () => {
+        calls.push('internal');
+      },
+      {
+        close: async () => {
+          calls.push('close');
+        },
+      },
+    );
+
+    await finalizeSession(
+      ctx,
+      () => {
+        calls.push('application');
+      },
+      1000,
+      createLogger(),
+    );
+
+    expect(calls).toEqual(['close', 'application', 'internal']);
+  });
+
+  it('skips the application callback when the primary session fails to close', async () => {
+    const error = new Error('close failed');
+    const applicationCallback = vi.fn();
+    const internalCleanup = vi.fn(async () => {});
+    const logger = createLogger();
+    const ctx = createJobContext(internalCleanup, {
+      close: async () => {
+        throw error;
+      },
+    });
+
+    await finalizeSession(ctx, applicationCallback, 1000, logger);
+
+    expect(applicationCallback).not.toHaveBeenCalled();
+    expect(internalCleanup).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      { error },
+      'AgentSession.close() failed; proceeding with shutdown without running onSessionEnd.',
+    );
+  });
+
+  it('skips the application callback when the primary session close times out', async () => {
+    vi.useFakeTimers();
+    const applicationCallback = vi.fn();
+    const internalCleanup = vi.fn(async () => {});
+    const logger = createLogger();
+    const ctx = createJobContext(internalCleanup, {
+      close: () => new Promise<void>(() => {}),
+    });
+    const completion = finalizeSession(ctx, applicationCallback, 1000, logger);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await completion;
+
+    expect(applicationCallback).not.toHaveBeenCalled();
+    expect(internalCleanup).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      { timeout: 60_000 },
+      'AgentSession.close() timed out; proceeding with shutdown without running onSessionEnd.',
+    );
+  });
+
   it('runs the application callback before internal session cleanup', async () => {
     const calls: string[] = [];
     const ctx = createJobContext(async () => {
@@ -217,42 +286,6 @@ describe('finalizeSession', () => {
     resolveCleanup();
     await completion;
     expect(completed).toBe(true);
-  });
-});
-
-describe('closeAgentSession', () => {
-  it('stops waiting after the session close timeout', async () => {
-    vi.useFakeTimers();
-    const logger = createLogger();
-    const session: Pick<AgentSession, 'close'> = {
-      close: () => new Promise<void>(() => {}),
-    };
-    const completion = closeAgentSession(session, logger);
-
-    await vi.advanceTimersByTimeAsync(60_000);
-    await completion;
-
-    expect(logger.error).toHaveBeenCalledWith(
-      { timeout: 60_000 },
-      'AgentSession.close() timed out; proceeding with shutdown so registered callbacks still run.',
-    );
-  });
-
-  it('continues after logging an immediate close error', async () => {
-    const error = new Error('close failed');
-    const logger = createLogger();
-    const session: Pick<AgentSession, 'close'> = {
-      close: async () => {
-        throw error;
-      },
-    };
-
-    await closeAgentSession(session, logger);
-
-    expect(logger.error).toHaveBeenCalledWith(
-      { error },
-      'AgentSession.close() failed; proceeding with shutdown so registered callbacks still run.',
-    );
   });
 });
 

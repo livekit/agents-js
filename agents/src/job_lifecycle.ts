@@ -5,7 +5,6 @@ import type { Logger } from 'pino';
 import { type JobContext, runWithJobContextAsync } from './job.js';
 import { flushOtelLogs } from './telemetry/index.js';
 import { IdleTimeoutError, waitUntilTimeout } from './utils.js';
-import type { AgentSession } from './voice/agent_session.js';
 
 export const DEFAULT_SESSION_END_TIMEOUT = 300 * 1000;
 const ENTRYPOINT_SHUTDOWN_TIMEOUT = 15 * 1000;
@@ -36,14 +35,15 @@ async function waitOrContinue(
     lateReject: string;
     timeoutLevel?: 'error' | 'warn';
   },
-): Promise<void> {
+): Promise<boolean> {
   const workPromise = Promise.resolve().then(work);
   try {
     await waitUntilTimeout(workPromise, timeout);
+    return true;
   } catch (error) {
     if (!(error instanceof IdleTimeoutError)) {
       logger.error({ error }, messages.error);
-      return;
+      return false;
     }
 
     void workPromise.catch((lateError) => {
@@ -54,6 +54,7 @@ async function waitOrContinue(
     } else {
       logger.error({ timeout }, messages.timeout);
     }
+    return false;
   }
 }
 
@@ -69,27 +70,24 @@ export async function waitForEntrypointShutdown(
   });
 }
 
-export async function closeAgentSession(
-  session: Pick<AgentSession, 'close'>,
-  logger: Logger,
-): Promise<void> {
-  await waitOrContinue(() => session.close(), SESSION_CLOSE_TIMEOUT, logger, {
-    timeout:
-      'AgentSession.close() timed out; proceeding with shutdown so registered callbacks still run.',
-    error:
-      'AgentSession.close() failed; proceeding with shutdown so registered callbacks still run.',
-    lateReject: 'AgentSession.close() rejected after shutdown timeout',
-  });
-}
-
 export async function finalizeSession(
   ctx: JobContext,
   onSessionEnd: SessionEndCallback | undefined,
   sessionEndTimeout: number,
   logger: Logger,
 ): Promise<void> {
+  const session = ctx._primaryAgentSession;
+  const sessionClosed =
+    !session ||
+    (await waitOrContinue(() => session.close(), SESSION_CLOSE_TIMEOUT, logger, {
+      timeout:
+        'AgentSession.close() timed out; proceeding with shutdown without running onSessionEnd.',
+      error: 'AgentSession.close() failed; proceeding with shutdown without running onSessionEnd.',
+      lateReject: 'AgentSession.close() rejected after shutdown timeout',
+    }));
+
   await runWithJobContextAsync(ctx, async () => {
-    if (onSessionEnd) {
+    if (sessionClosed && onSessionEnd) {
       await waitOrContinue(() => onSessionEnd(ctx), sessionEndTimeout, logger, {
         timeout: 'onSessionEnd timed out; proceeding with internal session cleanup',
         error: 'error while executing the onSessionEnd callback',
