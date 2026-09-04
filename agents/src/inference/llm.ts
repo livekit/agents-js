@@ -15,7 +15,6 @@ import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
 import {
   type AnyString,
-  INFERENCE_PRIORITY_HEADER,
   INFERENCE_PROVIDER_HEADER,
   buildMetadataHeaders,
   createAccessToken,
@@ -478,16 +477,13 @@ export class LLMStream extends llm.LLMStream {
       }
 
       const extraHeaders: Record<string, string> = {
-        ...buildMetadataHeaders(),
         ...((requestOptions.extra_headers as Record<string, string> | undefined) ?? {}),
+        ...buildMetadataHeaders(this.inferenceClass),
       };
       const extraBody = requestOptions.extra_body as Record<string, unknown> | undefined;
       const extraQuery = requestOptions.extra_query as Record<string, unknown> | undefined;
       if (this.provider) {
         extraHeaders[INFERENCE_PROVIDER_HEADER] = this.provider;
-      }
-      if (this.inferenceClass !== undefined) {
-        extraHeaders[INFERENCE_PRIORITY_HEADER] = this.inferenceClass;
       }
       delete requestOptions.extra_headers;
       delete requestOptions.extra_body;
