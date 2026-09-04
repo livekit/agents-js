@@ -5342,6 +5342,17 @@ export const oaiBuildFunctionInfo: (toolCtx: ToolContext, toolCallId: string, to
 // @internal (undocumented)
 export const oaiParams: (schema: any, isOpenai?: boolean) => OpenAIFunctionParameters;
 
+// Warning: (ae-missing-release-tag) "ObservabilityEndpoint" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+type ObservabilityEndpoint = {
+    observabilityUrl: string;
+    cloudHostname?: undefined;
+} | {
+    observabilityUrl?: undefined;
+    cloudHostname: string;
+};
+
 // Warning: (ae-missing-release-tag) "OpenAIFunctionParameters" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -5468,21 +5479,14 @@ class PinoCloudExporter {
 // Warning: (ae-missing-release-tag) "PinoCloudExporterConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-interface PinoCloudExporterConfig {
-    // (undocumented)
-    batchSize?: number;
-    // (undocumented)
-    flushIntervalMs?: number;
-    // (undocumented)
-    jobId: string;
-    // (undocumented)
-    loggerName?: string;
-    // (undocumented)
-    metadata?: Record<string, unknown>;
-    observabilityUrl: string;
-    // (undocumented)
+type PinoCloudExporterConfig = ObservabilityEndpoint & {
     roomId: string;
-}
+    jobId: string;
+    metadata?: Record<string, unknown>;
+    loggerName?: string;
+    batchSize?: number;
+    flushIntervalMs?: number;
+};
 
 // Warning: (ae-missing-release-tag) "PinoLogObject" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -6524,10 +6528,9 @@ interface SetTracerProviderOptions {
 }
 
 // @internal
-function setupCloudTracer(options: {
+function setupCloudTracer(options: ObservabilityEndpoint & {
     roomId: string;
     jobId: string;
-    observabilityUrl: string;
     agentName?: string;
     enableTraces?: boolean;
     enableLogs?: boolean;
@@ -6566,12 +6569,11 @@ class SimpleOTLPHttpLogExporter {
 // Warning: (ae-missing-release-tag) "SimpleOTLPHttpLogExporterConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-interface SimpleOTLPHttpLogExporterConfig {
-    observabilityUrl: string;
+type SimpleOTLPHttpLogExporterConfig = ObservabilityEndpoint & {
     resourceAttributes: Record<string, unknown>;
-    scopeAttributes?: Record<string, unknown>;
     scopeName: string;
-}
+    scopeAttributes?: Record<string, unknown>;
+};
 
 // Warning: (ae-missing-release-tag) "SimulationContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "simulatorVerdict"
@@ -7499,6 +7501,7 @@ declare namespace telemetry {
     export {
         ExtraDetailsProcessor,
         MetadataLogProcessor,
+        ObservabilityEndpoint,
         SimpleOTLPHttpLogExporter,
         SimpleLogRecord,
         SimpleOTLPHttpLogExporterConfig,
@@ -8425,9 +8428,8 @@ export class UnexpectedModelBehavior extends Error {
 // Warning: (ae-missing-release-tag) "uploadSessionReport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-function uploadSessionReport(options: {
+function uploadSessionReport(options: ObservabilityEndpoint & {
     agentName: string;
-    observabilityUrl: string;
     report: SessionReport;
     metadata?: Attributes;
 }): Promise<void>;

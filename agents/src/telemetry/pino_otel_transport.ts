@@ -11,6 +11,8 @@
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
+import type { ObservabilityEndpoint } from './observability_endpoint.js';
+import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
@@ -23,16 +25,14 @@ export interface PinoLogObject {
   [key: string]: unknown;
 }
 
-export interface PinoCloudExporterConfig {
-  /** Base URL for LiveKit Cloud observability, without a trailing slash */
-  observabilityUrl: string;
+export type PinoCloudExporterConfig = ObservabilityEndpoint & {
   roomId: string;
   jobId: string;
   metadata?: Record<string, unknown>;
   loggerName?: string;
   batchSize?: number;
   flushIntervalMs?: number;
-}
+};
 
 function mapPinoLevelToSeverity(pinoLevel: number): {
   severityNumber: SeverityNumber;
@@ -247,7 +247,7 @@ export class PinoCloudExporter {
       ],
     };
 
-    const endpoint = `${this.config.observabilityUrl}/observability/logs/otlp/v0`;
+    const endpoint = `${resolveObservabilityUrl(this.config)}/observability/logs/otlp/v0`;
 
     const response = await fetchWithUploadGate(endpoint, {
       method: 'POST',

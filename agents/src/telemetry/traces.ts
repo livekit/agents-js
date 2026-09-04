@@ -44,6 +44,8 @@ import {
 } from '../types.js';
 import { version } from '../version.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
+import type { ObservabilityEndpoint } from './observability_endpoint.js';
+import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { uploadRecording } from './recording_upload.js';
@@ -367,25 +369,20 @@ export function setTracerProvider(
  *
  * @internal
  */
-export async function setupCloudTracer(options: {
-  roomId: string;
-  jobId: string;
-  observabilityUrl: string;
-  agentName?: string;
-  enableTraces?: boolean;
-  enableLogs?: boolean;
-  metadata?: Attributes;
-}): Promise<void> {
+export async function setupCloudTracer(
+  options: ObservabilityEndpoint & {
+    roomId: string;
+    jobId: string;
+    agentName?: string;
+    enableTraces?: boolean;
+    enableLogs?: boolean;
+    metadata?: Attributes;
+  },
+): Promise<void> {
   uploadGate.reset();
 
-  const {
-    roomId,
-    jobId,
-    observabilityUrl,
-    agentName,
-    enableTraces = true,
-    enableLogs = true,
-  } = options;
+  const { roomId, jobId, agentName, enableTraces = true, enableLogs = true } = options;
+  const observabilityUrl = resolveObservabilityUrl(options);
 
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -557,13 +554,15 @@ function serializeSessionOptions(options: SessionReport['options']): Record<stri
  * Upload session report to LiveKit Cloud observability.
  * @param options - Configuration with agentName, observabilityUrl, and report
  */
-export async function uploadSessionReport(options: {
-  agentName: string;
-  observabilityUrl: string;
-  report: SessionReport;
-  metadata?: Attributes;
-}): Promise<void> {
-  const { agentName, observabilityUrl, report } = options;
+export async function uploadSessionReport(
+  options: ObservabilityEndpoint & {
+    agentName: string;
+    report: SessionReport;
+    metadata?: Attributes;
+  },
+): Promise<void> {
+  const { agentName, report } = options;
+  const observabilityUrl = resolveObservabilityUrl(options);
   const metadata = options.metadata ?? {};
 
   if (!recordingEnabled(report.options.recordingOptions)) {

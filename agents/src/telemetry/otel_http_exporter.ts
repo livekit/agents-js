@@ -10,6 +10,8 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
+import type { ObservabilityEndpoint } from './observability_endpoint.js';
+import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
 const OTLP_LOG_EXPORT_TIMEOUT_MS = 10_000;
@@ -27,16 +29,14 @@ export interface SimpleLogRecord {
   severityText?: string;
 }
 
-export interface SimpleOTLPHttpLogExporterConfig {
-  /** Base URL for LiveKit Cloud observability, without a trailing slash */
-  observabilityUrl: string;
+export type SimpleOTLPHttpLogExporterConfig = ObservabilityEndpoint & {
   /** Resource attributes (e.g., room_id, job_id) */
   resourceAttributes: Record<string, unknown>;
   /** Scope name for the logger */
   scopeName: string;
   /** Scope attributes */
   scopeAttributes?: Record<string, unknown>;
-}
+};
 
 /**
  * Simple OTLP HTTP Log Exporter for direct log export
@@ -84,7 +84,7 @@ export class SimpleOTLPHttpLogExporter {
 
     await this.ensureJwt();
 
-    const endpoint = `${this.config.observabilityUrl}/observability/logs/otlp/v0`;
+    const endpoint = `${resolveObservabilityUrl(this.config)}/observability/logs/otlp/v0`;
     const payload = this.buildPayload(records);
     const payloadJson = JSON.stringify(payload);
 
