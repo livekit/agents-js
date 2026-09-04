@@ -18,7 +18,7 @@ import { availableParallelism } from 'node:os';
 import { extname } from 'node:path';
 import { WebSocket } from 'ws';
 import { APIStatusError } from './_exceptions.js';
-import { ATTRIBUTE_AGENT_NAME } from './constants.js';
+import { ATTRIBUTE_AGENT_NAME, ATTRIBUTE_AGENT_VERSION } from './constants.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
 import { _getLocalInferenceModule } from './inference/_warmup.js';
@@ -334,6 +334,7 @@ export class AgentServer {
   #procPool: ProcPool;
 
   #deployment = process.env.LIVEKIT_AGENT_DEPLOYMENT || '';
+  #deployedVersion = process.env.LIVEKIT_DEPLOYED_AGENT_VERSION || '';
   #id = 'unregistered';
   #closed = true;
   #draining = false;
@@ -873,6 +874,9 @@ export class AgentServer {
               // Consumers like `lk agent simulate` find the agent participant by
               // this attribute; without it they never detect the agent joining.
               participantAttributes: {
+                ...(this.#deployedVersion && {
+                  [ATTRIBUTE_AGENT_VERSION]: this.#deployedVersion,
+                }),
                 ...args.attributes,
                 [ATTRIBUTE_AGENT_NAME]: this.#opts.agentName,
               },

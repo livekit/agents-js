@@ -20,6 +20,7 @@ export const TOPIC_CHAT = 'lk.chat';
 
 export const ATTRIBUTE_AGENT_STATE = 'lk.agent.state';
 export const ATTRIBUTE_AGENT_NAME = 'lk.agent.name';
+export const ATTRIBUTE_AGENT_VERSION = 'lk.agent.version';
 
 export const TOPIC_CLIENT_EVENTS = 'lk.agent.events';
 export const RPC_GET_SESSION_STATE = 'lk.agent.get_session_state';
