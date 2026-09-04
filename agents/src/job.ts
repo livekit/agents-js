@@ -36,8 +36,6 @@ import type { AgentSession, ResolvedRecordingOptions } from './voice/agent_sessi
 import { AgentsConsole } from './voice/console_io.js';
 import { type SessionReport, createSessionReport, sessionReportToJSON } from './voice/report.js';
 
-let warnedPlaintextObservability = false;
-
 /**
  * Base URL for LiveKit Cloud observability (`LIVEKIT_OBSERVABILITY_URL`, else the Cloud job URL).
  * Consumers append their endpoint path, so the override keeps its scheme, port, and any base path.
@@ -47,17 +45,7 @@ function observabilityUrl(livekitUrl: string): string | undefined {
   const override = process.env.LIVEKIT_OBSERVABILITY_URL;
   if (override) {
     try {
-      const url = new URL(override);
-      if (url.protocol === 'http:' && !warnedPlaintextObservability) {
-        warnedPlaintextObservability = true;
-        // Only the origin: the override may carry userinfo or a path we should not log.
-        log().warn(
-          { url: `${url.protocol}//${url.host}` },
-          'LIVEKIT_OBSERVABILITY_URL is plaintext http, so session transcripts, audio, and the ' +
-            'observability bearer token are sent unencrypted; prefer https unless the collector ' +
-            'is only reachable over a trusted network',
-        );
-      }
+      new URL(override);
       return override.replace(/\/+$/, '');
     } catch (error) {
       log().warn(

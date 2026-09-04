@@ -396,20 +396,12 @@ describe('JobContext observability URL', () => {
     );
   });
 
-  // The plaintext warning fires once per process, so this must stay the only http case here.
-  it('warns but still uses a plaintext LIVEKIT_OBSERVABILITY_URL', async () => {
+  it('preserves a plaintext scheme on LIVEKIT_OBSERVABILITY_URL', async () => {
     process.env.LIVEKIT_OBSERVABILITY_URL = 'http://collector.internal';
-    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
-
     await ctx.initRecording(tracesOn);
-
     expect(setupCloudTracerMock).toHaveBeenCalledWith(
       expect.objectContaining({ observabilityUrl: 'http://collector.internal' }),
-    );
-    expect(warn).toHaveBeenCalledWith(
-      { url: 'http://collector.internal' },
-      expect.stringContaining('plaintext http'),
     );
   });
 
