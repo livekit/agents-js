@@ -631,7 +631,11 @@ export function performLLMInference(
   const toolCallWriter = toolCallStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
-  const _performLLMInferenceImpl = async (signal: AbortSignal, span: Span) => {
+  const _performLLMInferenceImpl = async (
+    signal: AbortSignal,
+    span: Span,
+    inference: genAI.InferenceMarker,
+  ) => {
     span.setAttribute(
       traceTypes.ATTR_CHAT_CTX,
       // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
@@ -759,6 +763,34 @@ export function performLLMInference(
       if (data.ttft !== undefined) {
         span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
       }
+      // a custom node may have generated this itself, with no nested `llm_request` span to
+      // carry the convention's attributes; when there was one, they are already recorded
+      if (!inference.recorded) {
+        genAI.setRequestAttributes(span, {
+          operation: traceTypes.GenAIOperationName.CHAT,
+          provider,
+          model,
+          stream: true,
+          outputType: traceTypes.GenAIOutputType.TEXT,
+        });
+        const finishReason = genAI.finishReasonFor({
+          functionCalls: data.generatedToolCalls,
+        });
+        genAI.setResponseAttributes(span, {
+          finishReasons: [finishReason],
+          timeToFirstChunk: data.ttft,
+        });
+        genAI.setContentAttributes(span, {
+          systemInstructions: genAI.toSystemInstructions(chatCtx),
+          inputMessages: genAI.toInputMessages(chatCtx),
+          toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
+          outputMessages: genAI.toOutputMessages({
+            text: data.generatedText,
+            functionCalls: data.generatedToolCalls,
+            finishReason,
+          }),
+        });
+      }
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();
       await textWriter.close();
@@ -770,10 +802,11 @@ export function performLLMInference(
   const currentContext = otelContext.active();
 
   const inferenceTask = async (signal: AbortSignal) =>
-    tracer.startActiveSpan(async (span) => _performLLMInferenceImpl(signal, span), {
-      name: 'llm_node',
-      context: currentContext,
-    });
+    tracer.startActiveSpan(
+      async (span) =>
+        genAI.withInferenceTracking((marker) => _performLLMInferenceImpl(signal, span, marker)),
+      { name: 'llm_node', context: currentContext },
+    );
 
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performLLMInference'),

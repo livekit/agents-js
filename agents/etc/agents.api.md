@@ -4114,6 +4114,8 @@ const GEN_AI_PROVIDER_NAMES: ReadonlySet<string>;
 declare namespace genAI {
     export {
         setCaptureContent,
+        withInferenceTracking,
+        markInferenceSpanRecorded,
         toSystemInstructions,
         toInputMessages,
         toOutputMessages,
@@ -4132,6 +4134,7 @@ declare namespace genAI {
         setWorkflowAttributes,
         MessagePart,
         ChatMessagePayload,
+        InferenceMarker,
         ToolCallLike
     }
 }
@@ -4406,6 +4409,14 @@ interface InferenceLLMOptions {
     provider?: string;
     // (undocumented)
     strictToolSchema?: boolean;
+}
+
+// Warning: (ae-missing-release-tag) "InferenceMarker" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface InferenceMarker {
+    // (undocumented)
+    recorded: boolean;
 }
 
 // Warning: (ae-internal-missing-underscore) The name "InferenceRunner" should be prefixed with an underscore because the declaration is marked as @internal
@@ -5309,6 +5320,11 @@ export const logMetrics: (metrics: AgentMetrics) => void;
 //
 // @public
 export function loopAudioFramesFromFile(filePath: string, options?: AudioDecodeOptions): AsyncGenerator<AudioFrame, void, unknown>;
+
+// Warning: (ae-missing-release-tag) "markInferenceSpanRecorded" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+function markInferenceSpanRecorded(): void;
 
 // Warning: (ae-missing-release-tag) "MarkupInfo" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -9492,6 +9508,11 @@ interface WarmTransferTaskOptions {
     // (undocumented)
     vad?: VAD | null;
 }
+
+// Warning: (ae-missing-release-tag) "withInferenceTracking" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T): T;
 
 // Warning: (ae-missing-release-tag) "withMockTools" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "Disposable"

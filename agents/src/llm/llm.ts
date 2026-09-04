@@ -217,6 +217,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       this.closed = true;
     });
 
+    // tells an enclosing `llm_node` span that this call is instrumented, so it does not
+    // record the convention's attributes a second time. Read here rather than in mainTask,
+    // which startSoon defers out of the node's context.
+    genAI.markInferenceSpanRecorded();
+
     // this is a hack to immitate asyncio.create_task so that mainTask
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
@@ -309,11 +314,12 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     }
   };
 
-  private mainTask = async () =>
-    tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
+  private mainTask = async () => {
+    return tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
       name: 'llm_request',
       endOnExit: false,
     });
+  };
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
     this.#llm.emit('error', {

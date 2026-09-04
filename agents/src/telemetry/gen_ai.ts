@@ -22,6 +22,7 @@
  * before any exporter that is not LiveKit Cloud's regardless — see `telemetry/pii.ts`.
  */
 import type { Attributes, Span } from '@opentelemetry/api';
+import { context as otelContext } from '@opentelemetry/api';
 import { getJobContext } from '../job.js';
 import type { ChatContext, ChatItem } from '../llm/chat_context.js';
 import type { RealtimeModelMetrics } from '../metrics/base.js';
@@ -64,6 +65,31 @@ export interface ChatMessagePayload {
   parts: MessagePart[];
   finishReason?: string;
   [key: string]: unknown;
+}
+
+// A custom `llmNode` may do the inference itself — returning a plain string, streaming its
+// own chunks, or calling a third-party engine — and never construct an LLMStream. Those paths
+// have no nested `llm_request` span to carry the convention's attributes, so the node span
+// records them instead. LLMStream marks the context when it does create one, which is what
+// tells the two cases apart.
+const INFERENCE_RECORDED = Symbol('lkInferenceRecorded');
+
+export interface InferenceMarker {
+  recorded: boolean;
+}
+
+/** Runs `fn` with a marker that fills in if an `llm_request` span is created inside it. */
+export function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T): T {
+  const marker: InferenceMarker = { recorded: false };
+  return otelContext.with(otelContext.active().setValue(INFERENCE_RECORDED, marker), () =>
+    fn(marker),
+  );
+}
+
+/** Called where an `llm_request` span is created, so the enclosing node stands down. */
+export function markInferenceSpanRecorded(): void {
+  const marker = otelContext.active().getValue(INFERENCE_RECORDED) as InferenceMarker | undefined;
+  if (marker) marker.recorded = true;
 }
 
 function textPart(content: string): MessagePart {
