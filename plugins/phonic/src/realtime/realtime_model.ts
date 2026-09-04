@@ -616,15 +616,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       .flatten()
       .filter(llm.isFunctionTool)
       .map((t) => {
-        const definition = toPhonicToolDefinition(t);
-        const cfg = this.configsForTools.get(definition.name);
+        const cfg = this.configsForTools.get(t.name);
         return {
           type: 'custom_websocket',
           tool_schema: {
             type: 'function',
             function: {
-              ...definition,
-              parameters: { ...definition.parameters },
+              name: t.name,
+              description: t.description,
+              parameters: llm.toJsonSchema(t.parameters) as Phonic.OpenAiFunctionParameters,
               strict: true,
             },
           },
