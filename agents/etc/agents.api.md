@@ -1851,7 +1851,7 @@ export class BaseEndpointing {
     // (undocumented)
     onEndOfAgentSpeech(_endedAt: number): void;
     // (undocumented)
-    onEndOfSpeech(_endedAt: number, _shouldIgnore?: boolean): void;
+    onEndOfSpeech(_endedAt: number, _interruption?: boolean): void;
     // (undocumented)
     onStartOfAgentSpeech(_startedAt: number): void;
     // (undocumented)
@@ -3024,7 +3024,7 @@ export class DynamicEndpointing extends BaseEndpointing {
     // (undocumented)
     onEndOfAgentSpeech(endedAt: number): void;
     // (undocumented)
-    onEndOfSpeech(endedAt: number, shouldIgnore?: boolean): void;
+    onEndOfSpeech(endedAt: number, interruption?: boolean): void;
     // (undocumented)
     onStartOfAgentSpeech(startedAt: number): void;
     // (undocumented)

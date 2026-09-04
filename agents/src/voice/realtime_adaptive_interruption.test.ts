@@ -373,6 +373,29 @@ function recognitionWithInterruptionStream(): {
 }
 
 describe('AudioRecognition realtime adaptive backchannel verdicts', () => {
+  it.each([undefined, true, false])(
+    'passes the %s interruption verdict to endpointing',
+    (interruption) => {
+      const onEndOfSpeech = vi.fn();
+      const recognition = Object.create(AudioRecognition.prototype) as {
+        speaking: boolean;
+        interruptionDetected?: boolean;
+        endpointing: { onEndOfSpeech: typeof onEndOfSpeech };
+        endEndpointingSpeech: (endedAt: number) => void;
+      };
+      Object.assign(recognition, {
+        speaking: true,
+        interruptionDetected: interruption,
+        endpointing: { onEndOfSpeech },
+      });
+
+      recognition.endEndpointingSpeech(10_000);
+
+      expect(onEndOfSpeech).toHaveBeenCalledOnce();
+      expect(onEndOfSpeech).toHaveBeenCalledWith(10_000, interruption);
+    },
+  );
+
   it('latches user-ended overlap as a backchannel', () => {
     const recognition = recognitionForOverlap();
     recognition.onOverlapSpeechEvent(overlapEvent({ isInterruption: false, agentEnded: false }));
