@@ -601,7 +601,7 @@ export class AgentActivity implements RecognitionHooks {
         [traceTypes.ATTR_GEN_AI_OPERATION_NAME]: traceTypes.GenAIOperationName.CREATE_AGENT,
         [traceTypes.ATTR_GEN_AI_AGENT_NAME]: this.agent.id,
       },
-      context: ROOT_CONTEXT,
+      context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
     });
 
     this.agent._agentActivity = this;
@@ -5075,10 +5075,12 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async drain(options?: { newActivity?: AgentActivity }): Promise<ReusableResources | undefined> {
-    // Create drain_agent_activity as a ROOT span (new trace) to match Python behavior
+    // parented to the session rather than to whichever speech task is current, so the whole
+    // session stays one trace. Python reaches the same place by inheriting the session
+    // context that AgentSession attaches.
     return tracer.startActiveSpan(async (span) => this._drainImpl(span, options?.newActivity), {
       name: 'drain_agent_activity',
-      context: ROOT_CONTEXT,
+      context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
     });
   }
 

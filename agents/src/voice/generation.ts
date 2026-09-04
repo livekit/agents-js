@@ -640,27 +640,22 @@ export function performLLMInference(
     );
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
-    // OTel GenAI semantic conventions: the llm_node is the framework's inference step
-    genAI.setRequestAttributes(span, {
-      operation: traceTypes.GenAIOperationName.CHAT,
-      provider,
-      model,
-      stream: true,
-      outputType: traceTypes.GenAIOutputType.TEXT,
-    });
-    genAI.setContentAttributes(span, {
-      systemInstructions: genAI.toSystemInstructions(chatCtx),
-      inputMessages: genAI.toInputMessages(chatCtx),
-      toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
-    });
+    if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+    const normalizedProvider = traceTypes.genAIProviderName(provider);
+    if (normalizedProvider) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, normalizedProvider);
+    }
+
+    // the GenAI inference attributes belong to the nested `llm_request` span, which is the
+    // provider call the convention describes. Setting them here as well made a backend
+    // summing gen_ai.usage.* over inference spans report twice the calls and tokens, and
+    // serialised the whole chat context onto both spans.
 
     let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk | FlushSentinel> | null =
       null;
     let llmStream: ReadableStream<string | ChatChunk | FlushSentinel> | null = null;
     const startTime = performance.now() / 1000; // Convert to seconds
     let firstTokenReceived = false;
-    let interrupted = false;
-    let failed = false;
 
     try {
       llmStream = await node(chatCtx, toolCtx, modelSettings);
@@ -743,11 +738,9 @@ export function performLLMInference(
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         // Abort signal was triggered, handle gracefully
-        interrupted = true;
         return;
       }
       // surface inference silent errors even when this task's rejection is never awaited
-      failed = true;
       logger.error({ error }, 'error in llm node');
       throw error;
     } finally {
@@ -765,25 +758,6 @@ export function performLLMInference(
       );
       if (data.ttft !== undefined) {
         span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
-      }
-      {
-        // the finally block also runs for a cancelled or failed generation, which must not
-        // be reported as a normal stop
-        const finishReason = genAI.finishReasonFor({
-          functionCalls: data.generatedToolCalls,
-          interrupted: interrupted || failed || signal.aborted,
-        });
-        genAI.setResponseAttributes(span, {
-          finishReasons: [finishReason],
-          timeToFirstChunk: data.ttft,
-        });
-        genAI.setContentAttributes(span, {
-          outputMessages: genAI.toOutputMessages({
-            text: data.generatedText,
-            functionCalls: data.generatedToolCalls,
-            finishReason,
-          }),
-        });
       }
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();

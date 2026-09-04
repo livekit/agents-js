@@ -161,6 +161,8 @@ describe('gen_ai span attributes', () => {
     expect(attrs['gen_ai.usage.input_tokens']).toBe(300);
     expect(attrs['gen_ai.usage.output_tokens']).toBe(180);
     expect(attrs['gen_ai.usage.cache_read.input_tokens']).toBe(40);
+    // both spellings, so the pipeline and realtime paths agree
+    expect(attrs['gen_ai.usage.input_cached_tokens']).toBe(40);
     expect(attrs['gen_ai.usage.cache_write.input_tokens']).toBe(25);
     expect(attrs['gen_ai.usage.reasoning.output_tokens']).toBe(50);
   });

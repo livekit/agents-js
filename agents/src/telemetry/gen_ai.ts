@@ -384,6 +384,10 @@ export function setUsageAttributes(
   };
   if (usage.promptCachedTokens) {
     attrs[traceTypes.ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS] = usage.promptCachedTokens;
+    // the unofficial spelling is what Datadog's mapping table keys on, and the realtime path
+    // emits it; without this, cached tokens were attributed for realtime sessions and
+    // silently absent for pipeline ones
+    attrs[traceTypes.ATTR_GEN_AI_USAGE_INPUT_CACHED_TOKENS] = usage.promptCachedTokens;
   }
   if (usage.cacheCreationTokens) {
     attrs[traceTypes.ATTR_GEN_AI_USAGE_CACHE_WRITE_INPUT_TOKENS] = usage.cacheCreationTokens;
@@ -430,6 +434,8 @@ export function setToolAttributes(
     [traceTypes.ATTR_GEN_AI_TOOL_TYPE]: params.toolType ?? 'function',
   };
   if (params.callId) attrs[traceTypes.ATTR_GEN_AI_TOOL_CALL_ID] = params.callId;
+  const conv = conversationId();
+  if (conv) attrs[traceTypes.ATTR_GEN_AI_CONVERSATION_ID] = conv;
   if (captureContent) {
     if (params.description) attrs[traceTypes.ATTR_GEN_AI_TOOL_DESCRIPTION] = params.description;
     if (params.args !== undefined) {
