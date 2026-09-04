@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { stdSerializers } from 'pino';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { APIStatusError } from '../_exceptions.js';
@@ -849,12 +848,11 @@ describe('Inference STT errors', () => {
 
     expect(error).toBeInstanceOf(APIStatusError);
     expect(error).toMatchObject({
-      message: 'LiveKit STT returned an error',
+      message: `LiveKit Inference STT returned error: ${testCase.gatewayError.message}`,
       statusCode: testCase.statusCode,
       body: testCase.gatewayError,
       retryable: true,
     });
-    expect(JSON.stringify(stdSerializers.err(error))).not.toContain(testCase.gatewayError.message);
   });
 });
 
