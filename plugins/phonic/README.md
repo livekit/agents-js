@@ -59,6 +59,20 @@ export default defineAgent({
 cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
 ```
 
+### Reusing tools with Phonic Responses
+
+Convert an existing LiveKit `ToolContext` into the schema-only definitions accepted by Phonic's
+Responses API:
+
+```typescript
+import * as phonic from '@livekit/agents-plugin-phonic';
+
+const toolDefinitions = phonic.realtime.toPhonicToolDefinitions(toolContext);
+```
+
+The executable functions remain in the `ToolContext`; only their names, descriptions, and parameter
+schemas are returned.
+
 ## Configuration
 
 Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `RealtimeModel`. All other options are optional.

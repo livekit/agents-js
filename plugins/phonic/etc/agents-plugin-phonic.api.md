@@ -61,6 +61,7 @@ declare namespace realtime {
         RealtimeModelOptions,
         PhonicToolConfig,
         PhonicConfig,
+        toPhonicToolDefinitions,
         Voice
     }
 }
@@ -215,6 +216,11 @@ interface RealtimeModelOptions {
     welcomeMessage?: string;
 }
 
+// Warning: (ae-missing-release-tag) "toPhonicToolDefinitions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+function toPhonicToolDefinitions(toolContext: llm.ToolContext): Phonic.ResponsesToolDefinition[];
+
 // Warning: (ae-missing-release-tag) "Voice" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -222,7 +228,7 @@ type Voice = 'sabrina' | 'grant' | 'virginia' | 'landon' | 'eleanor' | 'shelby' 
 
 // Warnings were encountered during analysis:
 //
-// src/realtime/realtime_model.ts:294:7 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_model.ts:314:7 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

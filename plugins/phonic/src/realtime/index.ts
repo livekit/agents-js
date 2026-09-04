@@ -6,5 +6,6 @@ export {
   type RealtimeModelOptions,
   type PhonicToolConfig,
   type PhonicConfig,
+  toPhonicToolDefinitions,
 } from './realtime_model.js';
 export type { Voice } from './api_proto.js';
