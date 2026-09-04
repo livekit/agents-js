@@ -1297,6 +1297,11 @@ const ATTR_GEN_AI_USAGE_OUTPUT_TEXT_TOKENS = "gen_ai.usage.output_text_tokens";
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens";
 
+// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_REASONING_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_GEN_AI_USAGE_REASONING_TOKENS = "gen_ai.usage.reasoning_tokens";
+
 // Warning: (ae-missing-release-tag) "ATTR_INSTRUCTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -2519,6 +2524,7 @@ export interface CompletionUsage {
     promptCachedTokens: number;
     // (undocumented)
     promptTokens: number;
+    reasoningTokens?: number;
     serviceTier?: string;
     // (undocumented)
     totalTokens: number;
@@ -4850,6 +4856,7 @@ export type LLMMetrics = {
     promptTokens: number;
     promptCachedTokens: number;
     cacheCreationTokens?: number;
+    reasoningTokens?: number;
     totalTokens: number;
     tokensPerSecond: number;
     speechId?: string;
@@ -4881,6 +4888,7 @@ export type LLMModelUsage = {
     outputTokens: number;
     outputAudioTokens: number;
     outputTextTokens: number;
+    outputReasoningTokens?: number;
     sessionDurationMs: number;
 };
 
@@ -7988,6 +7996,7 @@ declare namespace traceTypes {
         ATTR_GEN_AI_USAGE_INPUT_CACHED_TOKENS,
         ATTR_GEN_AI_USAGE_OUTPUT_TEXT_TOKENS,
         ATTR_GEN_AI_USAGE_OUTPUT_AUDIO_TOKENS,
+        ATTR_GEN_AI_USAGE_REASONING_TOKENS,
         EVENT_GEN_AI_SYSTEM_MESSAGE,
         EVENT_GEN_AI_USER_MESSAGE,
         EVENT_GEN_AI_ASSISTANT_MESSAGE,
@@ -9118,8 +9127,8 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/chat_context.ts:76:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:702:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
-// src/metrics/base.ts:194:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
+// src/metrics/base.ts:199:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
+// src/metrics/base.ts:203:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:358:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:549:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver

@@ -103,6 +103,31 @@ describe('LLMStream metrics', () => {
 
     expect(metrics.cacheCreationTokens).toBe(42);
   });
+
+  it('defaults reasoning tokens to zero', async () => {
+    const metrics = await collectMetrics(new MockLLM([]));
+
+    expect(metrics.reasoningTokens).toBe(0);
+  });
+
+  it('carries reasoning tokens', async () => {
+    const metrics = await collectMetrics(
+      new MockLLM([
+        {
+          id: '1',
+          usage: {
+            completionTokens: 100,
+            promptTokens: 20,
+            promptCachedTokens: 0,
+            reasoningTokens: 64,
+            totalTokens: 120,
+          },
+        },
+      ]),
+    );
+
+    expect(metrics.reasoningTokens).toBe(64);
+  });
 });
 
 describe('LLM prewarm lifecycle', () => {

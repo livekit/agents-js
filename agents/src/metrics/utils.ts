@@ -18,6 +18,7 @@ export const logMetrics = (metrics: AgentMetrics) => {
         promptCachedTokens: metrics.promptCachedTokens,
         cacheCreationTokens: metrics.cacheCreationTokens ?? 0,
         outputTokens: metrics.completionTokens,
+        reasoningTokens: metrics.reasoningTokens ?? 0,
         tokensPerSecond: roundTwoDecimals(metrics.tokensPerSecond),
       })
       .info('LLM metrics');

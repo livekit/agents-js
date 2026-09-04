@@ -173,6 +173,7 @@ const SAFE_KEYS = new Set([
   'gen_ai.usage.input_cached_tokens',
   'gen_ai.usage.output_text_tokens',
   'gen_ai.usage.output_audio_tokens',
+  'gen_ai.usage.reasoning_tokens',
   'gen_ai.system.message',
   'gen_ai.user.message',
   'gen_ai.assistant.message',
