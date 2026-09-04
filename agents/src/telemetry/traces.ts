@@ -512,6 +512,10 @@ export async function setupCloudTracer(
             new BatchSpanProcessor(createCloudExporter()),
           ],
         });
+        // the processor above is already attached, so record it: otherwise the
+        // setTracerProvider call below finds no registrar and warns that redaction could
+        // not be installed, on the default path where it demonstrably was
+        piiRedactionInstalled.add(tracerProvider);
         // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
         // and sets the global tracer provider. Both use set-once semantics in the OTel API,
         // so if the user already called NodeSDK.start(), these are safe no-ops.

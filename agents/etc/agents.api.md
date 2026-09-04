@@ -245,10 +245,11 @@ export interface AgentCreateOptions<UserData = any> extends AgentOptions<UserDat
 
 // Warning: (ae-missing-release-tag) "AgentDefinition" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
     // (undocumented)
     entry: (ctx: JobContext<ProcessUserData>) => Promise<void>;
+    onSessionEnd?: (ctx: JobContext<ProcessUserData>) => Promise<void> | void;
     onSimulationEnd?: (ctx: SimulationContext) => unknown;
     // (undocumented)
     prewarm?: (proc: JobProcess<ProcessUserData>) => unknown;
@@ -2025,7 +2026,7 @@ export class BaseEndpointing {
     // (undocumented)
     onEndOfAgentSpeech(_endedAt: number): void;
     // (undocumented)
-    onEndOfSpeech(_endedAt: number, _shouldIgnore?: boolean): void;
+    onEndOfSpeech(_endedAt: number, _interruption?: boolean): void;
     // (undocumented)
     onStartOfAgentSpeech(_startedAt: number): void;
     // (undocumented)
@@ -3217,7 +3218,7 @@ export class DynamicEndpointing extends BaseEndpointing {
     // (undocumented)
     onEndOfAgentSpeech(endedAt: number): void;
     // (undocumented)
-    onEndOfSpeech(endedAt: number, shouldIgnore?: boolean): void;
+    onEndOfSpeech(endedAt: number, interruption?: boolean): void;
     // (undocumented)
     onStartOfAgentSpeech(startedAt: number): void;
     // (undocumented)
@@ -3229,44 +3230,6 @@ export class DynamicEndpointing extends BaseEndpointing {
         alpha?: number;
     }): void;
 }
-
-// Warning: (ae-missing-release-tag) "ElevenlabsModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
-type ElevenlabsModels = 'elevenlabs/eleven_flash_v2' | 'elevenlabs/eleven_flash_v2_5' | 'elevenlabs/eleven_turbo_v2' | 'elevenlabs/eleven_turbo_v2_5' | 'elevenlabs/eleven_multilingual_v2' | 'elevenlabs/eleven_v3';
-
-// Warning: (ae-missing-release-tag) "ElevenlabsOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
-interface ElevenlabsOptions {
-    apply_text_normalization?: 'auto' | 'off' | 'on';
-    // (undocumented)
-    auto_mode?: boolean;
-    // (undocumented)
-    chunk_length_schedule?: number[];
-    // (undocumented)
-    enable_logging?: boolean;
-    // (undocumented)
-    enable_ssml_parsing?: boolean;
-    inactivity_timeout?: number;
-    // (undocumented)
-    language_code?: string;
-    // (undocumented)
-    preferred_alignment?: string;
-    similarity_boost?: number;
-    speed?: number;
-    stability?: number;
-    style?: number;
-    // (undocumented)
-    sync_alignment?: boolean;
-    // (undocumented)
-    use_speaker_boost?: boolean;
-}
-
-// Warning: (ae-missing-release-tag) "ElevenlabsSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
-type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 
 // Warning: (ae-missing-release-tag) "emitToOtel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -4524,7 +4487,7 @@ export const initializeLogger: (input: LoggerOptions) => void;
 // Warning: (ae-missing-release-tag) "initPinoCloudExporter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-function initPinoCloudExporter(config: PinoCloudExporterConfig): void;
+function initPinoCloudExporter(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig): void;
 
 // @public
 export interface InputDetails {
@@ -4812,6 +4775,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     deleteRoom(roomName?: string): Promise<void>;
     // (undocumented)
     get inferenceExecutor(): InferenceExecutor;
+    get inferenceHeaders(): Record<string, string>;
     // (undocumented)
     get info(): RunningJobInfo;
     // Warning: (ae-forgotten-export) The symbol "ResolvedRecordingOptions" needs to be exported by the entry point index.d.ts
@@ -5634,6 +5598,17 @@ export const oaiBuildFunctionInfo: (toolCtx: ToolContext, toolCallId: string, to
 // @internal (undocumented)
 export const oaiParams: (schema: any, isOpenai?: boolean) => OpenAIFunctionParameters;
 
+// Warning: (ae-missing-release-tag) "ObservabilityEndpoint" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+type ObservabilityEndpoint = {
+    observabilityUrl: string;
+    cloudHostname?: undefined;
+} | {
+    observabilityUrl?: undefined;
+    cloudHostname: string;
+};
+
 // Warning: (ae-missing-release-tag) "OpenAIFunctionParameters" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -5760,7 +5735,7 @@ class PIIFilteringLogProcessor implements LogRecordProcessor {
 //
 // @public
 class PinoCloudExporter {
-    constructor(config: PinoCloudExporterConfig);
+    constructor(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig);
     // (undocumented)
     emit(logObj: PinoLogObject): void;
     // (undocumented)
@@ -5775,7 +5750,7 @@ class PinoCloudExporter {
 interface PinoCloudExporterConfig {
     // (undocumented)
     batchSize?: number;
-    // (undocumented)
+    // @deprecated (undocumented)
     cloudHostname: string;
     // (undocumented)
     flushIntervalMs?: number;
@@ -5785,6 +5760,25 @@ interface PinoCloudExporterConfig {
     loggerName?: string;
     // (undocumented)
     metadata?: Record<string, unknown>;
+    // (undocumented)
+    roomId: string;
+}
+
+// Warning: (ae-missing-release-tag) "PinoCloudExporterUrlConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface PinoCloudExporterUrlConfig {
+    // (undocumented)
+    batchSize?: number;
+    // (undocumented)
+    flushIntervalMs?: number;
+    // (undocumented)
+    jobId: string;
+    // (undocumented)
+    loggerName?: string;
+    // (undocumented)
+    metadata?: Record<string, unknown>;
+    observabilityUrl: string;
     // (undocumented)
     roomId: string;
 }
@@ -6651,6 +6645,7 @@ export class ServerOptions {
         numIdleProcesses?: number;
         drainTimeout?: number;
         shutdownProcessTimeout?: number;
+        sessionEndTimeout?: number;
         initializeProcessTimeout?: number;
         permissions?: WorkerPermissions;
         agentName?: string;
@@ -6709,6 +6704,7 @@ export class ServerOptions {
     requestFunc: (job: JobRequest) => Promise<void>;
     // (undocumented)
     serverType: JobType;
+    sessionEndTimeout: number;
     // (undocumented)
     shutdownProcessTimeout: number;
     // (undocumented)
@@ -6913,10 +6909,9 @@ interface SetTracerProviderOptions {
 }
 
 // @internal
-function setupCloudTracer(options: {
+function setupCloudTracer(options: ObservabilityEndpoint & {
     roomId: string;
     jobId: string;
-    cloudHostname: string;
     agentName?: string;
     enableTraces?: boolean;
     enableLogs?: boolean;
@@ -6966,7 +6961,7 @@ interface SimpleLogRecord {
 //
 // @public
 class SimpleOTLPHttpLogExporter {
-    constructor(config: SimpleOTLPHttpLogExporterConfig);
+    constructor(config: SimpleOTLPHttpLogExporterConfig | SimpleOTLPHttpLogExporterUrlConfig);
     export(records: SimpleLogRecord[]): Promise<void>;
 }
 
@@ -6974,7 +6969,18 @@ class SimpleOTLPHttpLogExporter {
 //
 // @public (undocumented)
 interface SimpleOTLPHttpLogExporterConfig {
+    // @deprecated (undocumented)
     cloudHostname: string;
+    resourceAttributes: Record<string, unknown>;
+    scopeAttributes?: Record<string, unknown>;
+    scopeName: string;
+}
+
+// Warning: (ae-missing-release-tag) "SimpleOTLPHttpLogExporterUrlConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface SimpleOTLPHttpLogExporterUrlConfig {
+    observabilityUrl: string;
     resourceAttributes: Record<string, unknown>;
     scopeAttributes?: Record<string, unknown>;
     scopeName: string;
@@ -7568,7 +7574,6 @@ declare namespace stt_2 {
         DeepgramFluxModels,
         CartesiaModels,
         AssemblyaiModels,
-        ElevenlabsSTTModels,
         XaiSTTModels,
         SpeechmaticsModels,
         InworldSTTModels,
@@ -7907,14 +7912,17 @@ declare namespace telemetry {
         ExtraDetailsProcessor,
         MetadataLogProcessor,
         PIIFilteringLogProcessor,
+        ObservabilityEndpoint,
         SimpleOTLPHttpLogExporter,
         SimpleLogRecord,
         SimpleOTLPHttpLogExporterConfig,
+        SimpleOTLPHttpLogExporterUrlConfig,
         emitToOtel,
         flushPinoLogs,
         initPinoCloudExporter,
         PinoCloudExporter,
         PinoCloudExporterConfig,
+        PinoCloudExporterUrlConfig,
         PinoLogObject,
         genAI,
         REDACTED_EXCEPTION_MESSAGE,
@@ -8679,13 +8687,11 @@ declare namespace tts_2 {
         normalizeTTSFallback,
         CartesiaModels_2 as CartesiaModels,
         DeepgramTTSModels,
-        ElevenlabsModels,
         InworldModels,
         RimeModels,
         XaiTTSModels,
         FishAudioModels,
         CartesiaOptions_2 as CartesiaOptions,
-        ElevenlabsOptions,
         DeepgramTTSOptions,
         RimeOptions,
         InworldOptions,
@@ -8782,7 +8788,7 @@ export type TTSMetrics = {
 // Warning: (ae-missing-release-tag) "TTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type TTSModels = CartesiaModels_2 | DeepgramTTSModels | ElevenlabsModels | RimeModels | InworldModels | XaiTTSModels | FishAudioModels | AnyString;
+type TTSModels = CartesiaModels_2 | DeepgramTTSModels | RimeModels | InworldModels | XaiTTSModels | FishAudioModels | AnyString;
 
 // Warning: (ae-missing-release-tag) "TTSModelUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -8800,7 +8806,7 @@ export type TTSModelUsage = {
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels_2 ? CartesiaOptions_2 : TModel extends DeepgramTTSModels ? DeepgramTTSOptions : TModel extends ElevenlabsModels ? ElevenlabsOptions : TModel extends RimeModels ? RimeOptions : TModel extends InworldModels ? InworldOptions : TModel extends XaiTTSModels ? XaiTTSOptions : TModel extends FishAudioModels ? FishAudioOptions : Record<string, unknown>;
+type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels_2 ? CartesiaOptions_2 : TModel extends DeepgramTTSModels ? DeepgramTTSOptions : TModel extends RimeModels ? RimeOptions : TModel extends InworldModels ? InworldOptions : TModel extends XaiTTSModels ? XaiTTSOptions : TModel extends FishAudioModels ? FishAudioOptions : Record<string, unknown>;
 
 // Warning: (ae-forgotten-export) The symbol "BaseStreamingTurnDetector" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "TurnDetector" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -8912,9 +8918,8 @@ export class UnexpectedModelBehavior extends Error {
 // Warning: (ae-missing-release-tag) "uploadSessionReport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-function uploadSessionReport(options: {
+function uploadSessionReport(options: ObservabilityEndpoint & {
     agentName: string;
-    cloudHostname: string;
     report: SessionReport;
     metadata?: Attributes;
 }): Promise<void>;
@@ -9652,7 +9657,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:320:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:282:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:76:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:702:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
@@ -9662,9 +9667,9 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:994:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1646:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1646:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1646:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1647:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1647:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1647:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"

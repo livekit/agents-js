@@ -60,6 +60,7 @@ describe('setupCloudTracer default provider resource', () => {
       exportedSpans.push(...spans);
       callback({ code: 0 });
     });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     await setupCloudTracer({
       roomId: 'room1',
@@ -82,6 +83,9 @@ describe('setupCloudTracer default provider resource', () => {
       room_id: 'room1',
       job_id: 'job1',
     });
+    // the framework-owned provider is built with the filtering processor attached, so the
+    // setTracerProvider call that follows must not report redaction as uninstallable
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('PII redaction');
   });
 });
 
