@@ -1160,12 +1160,6 @@ export class AudioRecognition {
     return trace.setSpan(base, span);
   }
 
-  private endEndpointingSpeech(endedAt: number): void {
-    if (this.speaking) {
-      this.endpointing.onEndOfSpeech(endedAt, this.interruptionDetected);
-    }
-  }
-
   private async onSTTEvent(ev: SpeechEvent) {
     // Collect provider-known STT ids for this user turn. The actual attribute is
     // written once when the user_turn span ends (see _endUserTurnSpan), to avoid
@@ -1410,7 +1404,9 @@ export class AudioRecognition {
           const speechEndTime = Date.now();
           const span = this.ensureUserTurnSpan();
           const ctx = this.userTurnContext(span);
-          this.endEndpointingSpeech(speechEndTime);
+          if (this.speaking) {
+            this.endpointing.onEndOfSpeech(speechEndTime, this.interruptionDetected);
+          }
           otelContext.with(ctx, () => {
             this.hooks.onEndOfSpeech({
               type: VADEventType.END_OF_SPEECH,
@@ -2082,7 +2078,9 @@ export class AudioRecognition {
               const endTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
               const span = this.ensureUserTurnSpan();
               const ctx = this.userTurnContext(span);
-              this.endEndpointingSpeech(endTime);
+              if (this.speaking) {
+                this.endpointing.onEndOfSpeech(endTime, this.interruptionDetected);
+              }
               otelContext.with(ctx, () => this.hooks.onEndOfSpeech(ev));
             }
 
