@@ -478,7 +478,6 @@ export class LLMStream extends llm.LLMStream {
       }
 
       const extraHeaders: Record<string, string> = {
-        ...buildMetadataHeaders(),
         ...((requestOptions.extra_headers as Record<string, string> | undefined) ?? {}),
       };
       const extraBody = requestOptions.extra_body as Record<string, unknown> | undefined;
@@ -489,6 +488,9 @@ export class LLMStream extends llm.LLMStream {
       if (this.inferenceClass !== undefined) {
         extraHeaders[INFERENCE_PRIORITY_HEADER] = this.inferenceClass;
       }
+      // Job metadata is merged last so a job's own assertions (e.g. a text
+      // simulation forcing low priority) outrank the model's configured class.
+      Object.assign(extraHeaders, buildMetadataHeaders());
       delete requestOptions.extra_headers;
       delete requestOptions.extra_body;
       delete requestOptions.extra_query;

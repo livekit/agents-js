@@ -242,6 +242,32 @@ describe('JobContext.simulationContext', () => {
   });
 });
 
+describe('JobContext.inferenceHeaders', () => {
+  const dispatch = (mode: string) =>
+    JSON.stringify({ simulationRunId: 'SR_1', scenario: { label: 's' }, mode });
+
+  it('forces low inference priority under a text simulation', () => {
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { attributes: { 'lk.simulator.dispatch': dispatch('SIMULATION_MODE_TEXT') } },
+    );
+    expect(ctx.inferenceHeaders).toEqual({ 'X-LiveKit-Inference-Priority': 'low' });
+  });
+
+  it('leaves audio simulations at their configured priority', () => {
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { attributes: { 'lk.simulator.dispatch': dispatch('SIMULATION_MODE_AUDIO') } },
+    );
+    expect(ctx.inferenceHeaders).toEqual({});
+  });
+
+  it('is empty for an ordinary job', () => {
+    const { ctx } = createJobContextWithRoom();
+    expect(ctx.inferenceHeaders).toEqual({});
+  });
+});
+
 describe('simulator participant lifecycle', () => {
   it('shuts the job down when a participant with lk.simulator disconnects', () => {
     const { handlers, onShutdown } = createJobContextWithRoom();

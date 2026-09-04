@@ -18,9 +18,10 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from 'pino';
+import { INFERENCE_PRIORITY_HEADER } from './inference/utils.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
-import { SimulationContext, parseSimulationDispatch } from './simulation.js';
+import { SimulationContext, SimulationMode, parseSimulationDispatch } from './simulation.js';
 import { setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import {
   ATTRIBUTE_REDACTION_ENABLED,
@@ -263,6 +264,27 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       this as JobContext<unknown> as JobContext,
     );
     return this.#simulationCtx;
+  }
+
+  /** Headers this job asserts about itself on every inference request.
+   *
+   * Merged last by `buildMetadataHeaders`, so what the job asserts about
+   * itself outranks what an individual model was configured with. Empty for
+   * an ordinary job. */
+  get inferenceHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+
+    // A text simulation is batch load: a run fans out many jobs at once and nobody
+    // is waiting on the answers, so it must not compete with live traffic for
+    // gateway capacity, and it must not be able to ask for priority either. Audio
+    // simulations are excluded: they run in real time against the audio pipeline,
+    // so their latency has to stay representative of production.
+    const sim = this.simulationContext();
+    if (sim !== undefined && sim.simulationMode === SimulationMode.TEXT) {
+      headers[INFERENCE_PRIORITY_HEADER] = 'low';
+    }
+
+    return headers;
   }
 
   get workerId(): string {
