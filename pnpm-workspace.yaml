@@ -6,8 +6,8 @@ packages:
 minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
   - '@livekit/*'
-  # choose_not_to_respond respond_after_sec built-in tool config
-  - phonic@0.32.15
+  # Responses API tool definition type
+  - phonic@0.32.21
   # Renovate security update: vite@7.3.2 || 7.3.5
   - vite@7.3.2 || 7.3.5
   # Renovate security update: ws@8.20.1
