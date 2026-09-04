@@ -55,7 +55,8 @@ function createFakeSession(rootSpanContext = ROOT_CONTEXT): AgentSession {
 
 function createRecognitionHooks(): RecognitionHooks {
   return {
-    onInterruption: vi.fn(),
+    interruptionByAudioActivityEnabled: false,
+    onOverlapSpeech: vi.fn(),
     onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
@@ -121,7 +122,8 @@ describe('AudioRecognition user_turn span', () => {
     const { exporter } = setupInMemoryTracing();
 
     const hooks: RecognitionHooks = {
-      onInterruption: vi.fn(),
+      interruptionByAudioActivityEnabled: false,
+      onOverlapSpeech: vi.fn(),
       onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
@@ -217,7 +219,8 @@ describe('AudioRecognition user_turn span', () => {
     bigCtx.addMessage({ role: 'user', content: [] });
 
     const hooks: RecognitionHooks = {
-      onInterruption: vi.fn(),
+      interruptionByAudioActivityEnabled: false,
+      onOverlapSpeech: vi.fn(),
       onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
@@ -291,7 +294,8 @@ describe('AudioRecognition user_turn span', () => {
     const { exporter } = setupInMemoryTracing();
 
     const hooks: RecognitionHooks = {
-      onInterruption: vi.fn(),
+      interruptionByAudioActivityEnabled: false,
+      onOverlapSpeech: vi.fn(),
       onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
@@ -393,7 +397,8 @@ describe('AudioRecognition user_turn span', () => {
     const { exporter } = setupInMemoryTracing();
 
     const hooks: RecognitionHooks = {
-      onInterruption: vi.fn(),
+      interruptionByAudioActivityEnabled: false,
+      onOverlapSpeech: vi.fn(),
       onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),

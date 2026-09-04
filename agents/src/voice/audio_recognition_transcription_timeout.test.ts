@@ -17,6 +17,7 @@ type RecognitionInternals = {
   vadSpeechStarted: boolean;
   isInterruptionEnabled: boolean;
   isAgentSpeaking: boolean;
+  transcriptGateActive: boolean;
   transcriptBuffer: SpeechEvent[];
   transcriptionTimeoutTimer?: ReturnType<typeof setTimeout>;
   turnSpeechDuration: number;
@@ -24,13 +25,15 @@ type RecognitionInternals = {
   userTurnStart?: number;
   vadTask?: Task<void>;
   onSTTEvent: (event: SpeechEvent) => Promise<void>;
+  flushHeldTranscripts: () => void;
   createVadTask: (vad: VAD, signal: AbortSignal) => Promise<void>;
   armTranscriptionTimeout: (speechDuration: number, elapsedDelay: number) => void;
 };
 
 function createHooks(): RecognitionHooks {
   return {
-    onInterruption: vi.fn(),
+    interruptionByAudioActivityEnabled: false,
+    onOverlapSpeech: vi.fn(),
     onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
@@ -107,12 +110,11 @@ describe('AudioRecognition transcription timeout', () => {
     vi.useRealTimers();
   });
 
-  it('held final transcript cancels the timeout', async () => {
-    const { hooks, internals } = createRecognition({ transcriptionTimeout: 2000 });
+  it('held final transcript cancels the timeout on arrival', async () => {
+    const { hooks, recognition, internals } = createRecognition({ transcriptionTimeout: 2000 });
     internals.userTurnStart = Date.now();
     internals.armTranscriptionTimeout(1000, 0);
-    internals.isInterruptionEnabled = true;
-    internals.isAgentSpeaking = true;
+    internals.transcriptGateActive = true;
     const event = transcriptEvent(SpeechEventType.FINAL_TRANSCRIPT, 'held transcript');
 
     await internals.onSTTEvent(event);
@@ -123,6 +125,11 @@ describe('AudioRecognition transcription timeout', () => {
     expect(internals.transcriptBuffer).toEqual([event]);
     expect(hooks.onFinalTranscript).not.toHaveBeenCalled();
     expect(hooks.onTranscriptionTimeout).not.toHaveBeenCalled();
+
+    internals.flushHeldTranscripts();
+
+    expect(hooks.onFinalTranscript).toHaveBeenCalledOnce();
+    expect(recognition.currentTranscript).toBe('held transcript');
   });
 
   it('preflight transcript does not cancel the timeout', async () => {
