@@ -32,8 +32,11 @@ export type DefaultLanguages = 'eng' | 'spa' | 'fra' | 'ger';
 // @public (undocumented)
 export class SynthesizeStream extends tts.SynthesizeStream {
     constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions);
+    flush(): void;
     // (undocumented)
     label: string;
+    // @deprecated
+    pushText(text: string): void;
     // (undocumented)
     protected run(): Promise<void>;
 }
@@ -43,6 +46,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 // @public (undocumented)
 export class TTS extends tts.TTS {
     constructor(opts?: Partial<TTSOptions>);
+    close(): Promise<void>;
     // (undocumented)
     label: string;
     // (undocumented)
@@ -60,7 +64,7 @@ export class TTS extends tts.TTS {
 // Warning: (ae-missing-release-tag) "TTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type TTSModels = 'arcana' | 'coda' | 'mistv2' | 'mistv3';
+export type TTSModels = 'coda' | 'mistv2' | 'mistv3';
 
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -71,6 +75,7 @@ export interface TTSOptions {
     apiKey?: string;
     // (undocumented)
     baseURL?: string;
+    flushSentences?: boolean;
     // (undocumented)
     inlineSpeedAlpha?: string;
     // (undocumented)
@@ -89,6 +94,7 @@ export interface TTSOptions {
     reduceLatency?: boolean;
     // (undocumented)
     repetition_penalty?: number;
+    reuseWebsocket?: boolean;
     // (undocumented)
     samplingRate?: number;
     // (undocumented)
