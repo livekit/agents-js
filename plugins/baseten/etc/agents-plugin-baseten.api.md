@@ -71,24 +71,14 @@ export interface BasetenSttOptions {
     // (undocumented)
     audioLanguage?: string;
     // (undocumented)
-    bufferSizeSeconds?: number;
-    // (undocumented)
     enablePartialTranscripts?: boolean;
     // (undocumented)
     encoding?: string;
     // (undocumented)
     environment?: string;
-    // (undocumented)
-    finalTranscriptMaxDurationS?: number;
-    // (undocumented)
-    languageDetectionOnly?: boolean;
     modelEndpoint?: string;
     // @deprecated (undocumented)
     modelId?: string;
-    // (undocumented)
-    partialTranscriptIntervalS?: number;
-    // (undocumented)
-    prompt?: string;
     // (undocumented)
     sampleRate?: number;
     // (undocumented)
