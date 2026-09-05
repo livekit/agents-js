@@ -130,6 +130,11 @@ export class AnamAPI {
     sessionOptions?: SessionOptions;
   }) {
     const pc = params.personaConfig;
+    const directorNotes = pc.directorNotes
+      ? Object.fromEntries(
+          Object.entries(pc.directorNotes).filter(([, value]) => value !== undefined),
+        )
+      : undefined;
     // Anam's personaConfig is a `oneOf`: reference a previously created
     // (stateful) persona by `personaId` — the "dev flow" — or configure an
     // ephemeral persona inline with name/avatarId/llmId. The two are mutually
@@ -145,6 +150,7 @@ export class AnamAPI {
           // Only forward the avatar model version when set; otherwise let Anam
           // fall back to the avatar's default model.
           ...(pc.avatarModel ? { avatarModel: pc.avatarModel } : {}),
+          ...(directorNotes && Object.keys(directorNotes).length > 0 ? { directorNotes } : {}),
         };
 
     const payload: Record<string, unknown> = {
