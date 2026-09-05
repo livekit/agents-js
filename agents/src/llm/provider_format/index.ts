@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext } from '../chat_context.js';
+import { toChatCtx as toChatCtxAws } from './aws.js';
 import { toChatCtx as toChatCtxGoogle } from './google.js';
 import { toChatCtx as toChatCtxMistralai } from './mistralai.js';
 import {
@@ -9,7 +10,7 @@ import {
   toResponsesChatCtx as toResponsesChatCtxOpenai,
 } from './openai.js';
 
-export type ProviderFormat = 'openai' | 'openai.responses' | 'google' | 'mistralai';
+export type ProviderFormat = 'openai' | 'openai.responses' | 'google' | 'mistralai' | 'aws';
 
 export async function toChatCtx(
   format: ProviderFormat,
@@ -25,6 +26,8 @@ export async function toChatCtx(
       return await toChatCtxGoogle(chatCtx, injectDummyUserMessage);
     case 'mistralai':
       return toChatCtxMistralai(chatCtx, injectDummyUserMessage);
+    case 'aws':
+      return await toChatCtxAws(chatCtx, injectDummyUserMessage);
     default:
       throw new Error(`Unsupported provider format: ${format}`);
   }
