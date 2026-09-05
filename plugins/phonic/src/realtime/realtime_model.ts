@@ -65,6 +65,7 @@ export interface RealtimeModelOptions {
   pronunciationDictionary?: Phonic.ConfigOptions['pronunciation_dictionary'];
   templateVariables?: Phonic.ConfigOptions['template_variables'];
   enableRedaction?: boolean;
+  enableWatermarking?: boolean;
   mcpServers?: string[];
   observabilityIntegrations?: Phonic.ConfigOptions['observability_integrations'];
   configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
@@ -278,6 +279,10 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       enableRedaction?: boolean;
       /**
+       * When true, embeds an inaudible provenance watermark in the agent's generated audio. Adds a very small amount of latency
+       */
+      enableWatermarking?: boolean;
+      /**
        * Names of pre-configured MCP servers to make available to the assistant. Names must be unique
        */
       mcpServers?: string[];
@@ -378,6 +383,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       pronunciationDictionary: options.pronunciationDictionary,
       templateVariables: options.templateVariables,
       enableRedaction: options.enableRedaction,
+      enableWatermarking: options.enableWatermarking,
       mcpServers: options.mcpServers,
       observabilityIntegrations: options.observabilityIntegrations,
       configurationEndpoint: options.configurationEndpoint,
@@ -1273,6 +1279,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       pronunciation_dictionary: this.options.pronunciationDictionary,
       template_variables: this.options.templateVariables,
       enable_redaction: this.options.enableRedaction,
+      enable_watermarking: this.options.enableWatermarking,
       mcp_servers: this.options.mcpServers,
       observability_integrations: this.options.observabilityIntegrations,
       configuration_endpoint: this.options.configurationEndpoint,
