@@ -12,6 +12,7 @@ export {
   type STTTranslateOptions,
   type STTV3Options,
 } from './stt.js';
+export { STTRealtime, RealtimeSpeechStream, type STTRealtimeOptions } from './stt_realtime.js';
 export {
   ChunkedStream,
   SynthesizeStream,
