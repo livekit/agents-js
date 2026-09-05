@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Duration, Timestamp } from '@bufbuild/protobuf';
+import { Mutex } from '@livekit/mutex';
 import { SimulationRun, AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -103,6 +104,32 @@ export abstract class SessionTransport {
   abstract [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage>;
 }
 
+const SHUTDOWN_DRAIN_TIMEOUT = 3000;
+
+async function drainTasks(tasks: Set<Task<void>>, deadline: number): Promise<Set<Task<void>>> {
+  const pending = new Set([...tasks].filter((task) => !task.done));
+  if (pending.size === 0) return pending;
+
+  const remaining = Math.max(0, deadline - Date.now());
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    Promise.allSettled([...pending].map((task) => task.result)),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, remaining);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+
+  for (const task of pending) {
+    if (task.done) {
+      pending.delete(task);
+    } else {
+      task.cancel();
+    }
+  }
+  return pending;
+}
+
 export class RoomSessionTransport extends SessionTransport {
   private readonly room: Room;
   private handlerRegistered = false;
@@ -110,6 +137,10 @@ export class RoomSessionTransport extends SessionTransport {
   private pendingMessages: pb.AgentSessionMessage[] = [];
   private waitingResolve: ((value: IteratorResult<pb.AgentSessionMessage>) => void) | null = null;
   private roomIO: RoomIO;
+  private readonly sendLock = new Mutex();
+  private readonly incomingReaders: ByteStreamReader[] = [];
+  private incomingResolve: (() => void) | null = null;
+  private readTask: Task<void> | undefined;
 
   constructor(room: Room, roomIO: RoomIO) {
     super();
@@ -123,6 +154,11 @@ export class RoomSessionTransport extends SessionTransport {
 
   override async start(): Promise<void> {
     if (this.handlerRegistered) return;
+    this.readTask = Task.from(
+      async () => this.readLoop(),
+      undefined,
+      'RoomSessionTransport.readLoop',
+    );
     this.room.registerByteStreamHandler(TOPIC_SESSION_MESSAGES, this.onByteStream);
     this.handlerRegistered = true;
   }
@@ -131,10 +167,24 @@ export class RoomSessionTransport extends SessionTransport {
     if (this.getRemoteIdentity() && participantInfo.identity !== this.getRemoteIdentity()) {
       return;
     }
-    this.readStream(reader).catch((e) => {
-      log().warn({ error: e }, 'failed to read binary stream message');
-    });
+    if (this.closed) return;
+    this.incomingReaders.push(reader);
+    this.incomingResolve?.();
+    this.incomingResolve = null;
   };
+
+  private async readLoop(): Promise<void> {
+    while (!this.closed) {
+      const reader = this.incomingReaders.shift();
+      if (reader) {
+        await this.readStream(reader);
+        continue;
+      }
+      await new Promise<void>((resolve) => {
+        this.incomingResolve = resolve;
+      });
+    }
+  }
 
   private async readStream(reader: ByteStreamReader): Promise<void> {
     try {
@@ -159,9 +209,15 @@ export class RoomSessionTransport extends SessionTransport {
   }
 
   override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
-    if (this.closed || !this.room.isConnected) return;
+    if (this.closed || !this.room.isConnected) {
+      throw new Error('room session transport is closed');
+    }
 
+    const unlock = await this.sendLock.lock();
     try {
+      if (this.closed || !this.room.isConnected) {
+        throw new Error('room session transport is closed');
+      }
       const data = msg.toBinary();
       const opts: Record<string, unknown> = {
         topic: TOPIC_SESSION_MESSAGES,
@@ -175,13 +231,20 @@ export class RoomSessionTransport extends SessionTransport {
       await writer.write(new Uint8Array(data));
       await writer.close();
     } catch (e) {
-      log().warn({ error: e }, 'failed to send binary stream message');
+      throw new Error(`failed to send binary stream message: ${asError(e).message}`, { cause: e });
+    } finally {
+      unlock();
     }
   }
 
   override async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.incomingReaders.length = 0;
+    this.incomingResolve?.();
+    this.incomingResolve = null;
+    this.readTask?.cancel();
+    this.readTask = undefined;
 
     if (this.handlerRegistered) {
       try {
@@ -276,6 +339,7 @@ export class TcpSessionTransport extends SessionTransport {
   private readonly port: number;
   private socket: net.Socket | null = null;
   private closed = false;
+  private readonly sendLock = new Mutex();
 
   constructor(host: string, port: number) {
     super();
@@ -300,18 +364,28 @@ export class TcpSessionTransport extends SessionTransport {
   }
 
   override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
-    const socket = this.socket;
-    if (this.closed || socket === null) return;
+    if (this.closed || this.socket === null) {
+      throw new Error('tcp session transport is closed');
+    }
 
-    const data = msg.toBinary();
-    const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
-    header.writeUInt32BE(data.length, 0);
-    const flushed = socket.write(Buffer.concat([header, data]));
+    const unlock = await this.sendLock.lock();
+    try {
+      const socket = this.socket;
+      if (this.closed || socket === null) {
+        throw new Error('tcp session transport is closed');
+      }
+      const data = msg.toBinary();
+      const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
+      header.writeUInt32BE(data.length, 0);
+      const flushed = socket.write(Buffer.concat([header, data]));
 
-    // Only block on backpressure once the write buffer is backed up. The wait
-    // also settles on close/error so a stalled reader can't hang teardown.
-    if (!flushed && socket.writableLength > TCP_DRAIN_THRESHOLD) {
-      await waitForDrain(socket);
+      // Only block on backpressure once the write buffer is backed up. The wait
+      // also settles on close/error so a stalled reader can't hang teardown.
+      if (!flushed && socket.writableLength > TCP_DRAIN_THRESHOLD) {
+        await waitForDrain(socket);
+      }
+    } finally {
+      unlock();
     }
   }
 
@@ -555,6 +629,10 @@ export class SessionHost {
   private eventsRegistered = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
+  private readonly eventMessages: pb.AgentSessionMessage[] = [];
+  private eventResolve: (() => void) | null = null;
+  private eventsClosed = false;
+  private writeTask: Task<void> | undefined;
 
   constructor(
     transport: SessionTransport,
@@ -588,6 +666,7 @@ export class SessionHost {
     if (this.started) return;
     this.started = true;
     await this.transport.start();
+    this.writeTask = Task.from(async () => this.writeLoop(), undefined, 'SessionHost.writeLoop');
     this.recvTask = Task.from(async () => this.recvLoop());
   }
 
@@ -615,10 +694,26 @@ export class SessionHost {
 
     if (this.recvTask) {
       this.recvTask.cancel();
+      this.recvTask = undefined;
     }
 
-    await ThrowsPromise.allSettled([...this.tasks].map((task) => task.cancelAndWait()));
+    const deadline = Date.now() + SHUTDOWN_DRAIN_TIMEOUT;
+    const cancelled = await drainTasks(this.tasks, deadline);
+    if (cancelled.size > 0) {
+      log().warn(
+        { requestTypes: [...new Set([...cancelled].map((task) => task.name ?? 'unknown'))].sort() },
+        'cancelled in-flight session requests while closing',
+      );
+    }
     this.tasks.clear();
+
+    this.eventsClosed = true;
+    this.eventResolve?.();
+    this.eventResolve = null;
+    if (this.writeTask) {
+      await drainTasks(new Set([this.writeTask]), deadline);
+      this.writeTask = undefined;
+    }
 
     await this.transport.close();
   }
@@ -630,8 +725,10 @@ export class SessionHost {
           case 'request':
             if (this.session) {
               this.trackTask(
-                Task.from(async () =>
-                  this.handleRequestSafe(msg.message.value as pb.SessionRequest),
+                Task.from(
+                  async () => this.handleRequestSafe(msg.message.value as pb.SessionRequest),
+                  undefined,
+                  (msg.message.value as pb.SessionRequest).request.case ?? 'unknown',
                 ),
               );
             }
@@ -655,7 +752,27 @@ export class SessionHost {
     const msg = new pb.AgentSessionMessage({
       message: { case: 'event', value: event },
     });
-    this.trackTask(Task.from(async () => this.transport.sendMessage(msg)));
+    if (this.eventsClosed) return;
+    this.eventMessages.push(msg);
+    this.eventResolve?.();
+    this.eventResolve = null;
+  }
+
+  private async writeLoop(): Promise<void> {
+    while (!this.eventsClosed || this.eventMessages.length > 0) {
+      const msg = this.eventMessages.shift();
+      if (!msg) {
+        await new Promise<void>((resolve) => {
+          this.eventResolve = resolve;
+        });
+        continue;
+      }
+      try {
+        await this.transport.sendMessage(msg);
+      } catch (error) {
+        log().warn({ error }, 'failed to send session event');
+      }
+    }
   }
 
   private emitEvent<Event extends pb.AgentSessionEvent['event']>(
@@ -1249,7 +1366,12 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     const msg = new pb.AgentSessionMessage({
       message: { case: 'request', value: req },
     });
-    await this.transport.sendMessage(msg);
+    try {
+      await this.transport.sendMessage(msg);
+    } catch (error) {
+      this.pendingRequests.delete(requestId);
+      throw error;
+    }
 
     const timer = setTimeout(() => {
       if (!future.done) {
@@ -1274,6 +1396,41 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
       throw new Error(response.error);
     }
     return response;
+  }
+
+  async waitForReady(timeout = 5000, retryInterval = 500): Promise<void> {
+    const deadline = Date.now() + timeout;
+    let sendError: unknown;
+
+    while (true) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        if (sendError) throw sendError;
+        throw new Error('waitForReady timed out');
+      }
+
+      try {
+        await this.sendRequest(
+          (id) =>
+            new pb.SessionRequest({
+              requestId: id,
+              request: { case: 'ping', value: new pb.SessionRequest_Ping() },
+            }),
+          Math.min(retryInterval, remaining),
+        );
+        return;
+      } catch (error) {
+        if (asError(error).message === 'RemoteSession request timed out') {
+          if (Date.now() >= deadline) throw new Error('waitForReady timed out');
+          continue;
+        }
+        sendError = error;
+        if (Date.now() >= deadline) throw error;
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(retryInterval, Math.max(0, deadline - Date.now()))),
+        );
+      }
+    }
   }
 
   async fetchSessionState(): Promise<pb.SessionResponse_GetSessionStateResponse> {
