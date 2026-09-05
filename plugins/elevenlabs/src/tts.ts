@@ -496,18 +496,25 @@ class Connection {
         }
 
         if (!ctx) {
-          if (data.type === 'flush_done') {
-            this.#logger.debug(
-              { context_id: contextId, 'lk.pii.data': data },
-              'ignoring elevenlabs flush_done message for inactive context',
+          if (!contextId) {
+            this.#logger.warn(
+              { 'lk.pii.data': data },
+              'unexpected message received from elevenlabs tts',
             );
             continue;
           }
 
-          this.#logger.warn(
-            { 'lk.pii.data': data },
-            'unexpected message received from elevenlabs tts',
+          this.#logger.debug(
+            { context_id: contextId, 'lk.pii.data': data },
+            'ignoring elevenlabs message for inactive context',
           );
+          if (data.isFinal) {
+            this.#activeContexts.delete(contextId);
+            if (!this.#isCurrent && this.#activeContexts.size === 0) {
+              this.#logger.debug('no active contexts, shutting down connection');
+              break;
+            }
+          }
           continue;
         }
 
@@ -624,8 +631,12 @@ class Connection {
     }
   }
 
-  #cleanupContext(contextId: string): void {
+  unregisterStream(contextId: string): void {
     this.#contextData.delete(contextId);
+  }
+
+  #cleanupContext(contextId: string): void {
+    this.unregisterStream(contextId);
     this.#activeContexts.delete(contextId);
   }
 
@@ -1150,6 +1161,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       throw new APIStatusError({ message: 'Could not synthesize' });
     } finally {
+      // Stop routing first so audio flushed after closeContext cannot reach an ended stream.
+      connection.unregisterStream(this.#contextId);
       closeContext(true);
       // Clean up abort listener
       this.abortController.signal.removeEventListener('abort', abortHandler);
