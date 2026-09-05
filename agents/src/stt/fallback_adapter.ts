@@ -467,6 +467,37 @@ class FallbackSpeechStream extends SpeechStream {
       forwarderFinished = true;
     });
 
+    const cleanup = async () => {
+      try {
+        this.input.close();
+      } catch {
+        /* already closed */
+      }
+
+      const liveTasks: Task<void>[] = [];
+      if (!forwarderTask.done) {
+        liveTasks.push(forwarderTask);
+      }
+      for (const status of this.fallbackAdapter.status) {
+        if (status.recoveringStreamTask && !status.recoveringStreamTask.done) {
+          liveTasks.push(status.recoveringStreamTask);
+        }
+      }
+
+      // Closing the probes unblocks their iterators so cancellation can finish
+      // without waiting for another provider event.
+      for (const probe of [...this.recoveringStreams]) {
+        try {
+          probe.close();
+        } catch {
+          /* already closed */
+        }
+      }
+      if (liveTasks.length > 0) {
+        await cancelAndWait(liveTasks, 1000);
+      }
+    };
+
     for (let i = 0; i < this.fallbackAdapter.sttInstances.length; i++) {
       const sttInstance = this.fallbackAdapter.sttInstances[i]!;
       const status = this.fallbackAdapter.status[i]!;
@@ -510,6 +541,12 @@ class FallbackSpeechStream extends SpeechStream {
 
         try {
           for await (const ev of child) {
+            // The parent can close while a child has a transcript in flight.
+            // Stop cleanly instead of treating the closed queue as a provider failure.
+            if (this.queue.closed) {
+              await cleanup();
+              return;
+            }
             this.fallbackAdapter._setActiveStt(sttInstance);
             this.queue.put(ev);
           }
@@ -519,6 +556,7 @@ class FallbackSpeechStream extends SpeechStream {
 
         if (!childErrored) {
           // Main stream ended cleanly (input EOF).
+          await cleanup();
           return;
         }
         if (status.available) {
@@ -555,31 +593,7 @@ class FallbackSpeechStream extends SpeechStream {
 
     // Terminal failure: drain + cancel the forwarder and every live probe
     // task before throwing.
-    try {
-      this.input.close();
-    } catch {
-      /* already closed */
-    }
-    if (!forwarderTask.done) {
-      await cancelAndWait([forwarderTask], 1000);
-    }
-    const liveProbeTasks: Task<void>[] = [];
-    for (let i = 0; i < this.fallbackAdapter.sttInstances.length; i++) {
-      const s = this.fallbackAdapter.status[i];
-      if (s?.recoveringStreamTask && !s.recoveringStreamTask.done) {
-        liveProbeTasks.push(s.recoveringStreamTask);
-      }
-    }
-    if (liveProbeTasks.length > 0) {
-      await cancelAndWait(liveProbeTasks, 1000);
-    }
-    for (const probe of [...this.recoveringStreams]) {
-      try {
-        probe.close();
-      } catch {
-        /* already closed */
-      }
-    }
+    await cleanup();
 
     const labels = this.fallbackAdapter.sttInstances.map((s) => s.label).join(', ');
     throw new APIConnectionError({
