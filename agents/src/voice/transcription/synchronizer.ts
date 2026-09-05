@@ -148,6 +148,12 @@ interface AudioData {
   annotatedRate: SpeakingRateData | null;
 }
 
+interface PendingRotatedSegment {
+  impl: SegmentSynchronizerImpl;
+  acceptedDownstream: boolean;
+  awaitingAudioFlush: boolean;
+}
+
 class SegmentSynchronizerImpl {
   private enabled: boolean;
   private textData: TextData;
@@ -328,6 +334,29 @@ class SegmentSynchronizerImpl {
     } else {
       this.textData.wordStream.endInput();
     }
+  }
+
+  /**
+   * Complete a text-only segment that cannot receive playback callbacks.
+   *
+   * @returns `true` only when this call completed the segment, so the caller can rotate it.
+   */
+  tryCompleteZeroDurationSegment(): boolean {
+    if (
+      this.playbackCompleted ||
+      !this.textData.done ||
+      !this.audioData.done ||
+      this.audioData.pushedDuration > 0
+    ) {
+      return false;
+    }
+
+    this.playbackCompleted = true;
+    this.startWallTime ??= Date.now();
+    if (!this.startFuture.done) {
+      this.startFuture.resolve();
+    }
+    return true;
   }
 
   pause(): void {
@@ -637,10 +666,12 @@ export class TranscriptionSynchronizer {
    * `acceptedDownstream` records whether the next-in-chain audio output counted the segment:
    * accepted segments owe a *real* finish from downstream, dropped segments owe a *synthetic*
    * drift finish from `waitForPlayout()` — pairing by kind keeps a synthetic finish from
-   * consuming an entry whose real finish is still in flight.
+   * consuming an entry whose real finish is still in flight. `awaitingAudioFlush` records
+   * whether the rotated segment also owns the next audio flush, so a segment that only awaits
+   * playback finish does not block the current segment's audio boundary.
    * @internal
    */
-  _pendingRotatedSegments: { impl: SegmentSynchronizerImpl; acceptedDownstream: boolean }[] = [];
+  _pendingRotatedSegments: PendingRotatedSegment[] = [];
 
   private logger = log();
 
@@ -847,11 +878,14 @@ class SyncedAudioOutput extends AudioOutput {
       return;
     }
 
-    // If a previous (interrupted) speech was rotated out early by an incoming capture_text,
-    // this flush belongs to that already-closed segment. Applying endAudioInput to the current
-    // `_impl` would mark the NEXT reply's audio as ended and trigger a spurious rotation that
-    // drops its transcript. Skip it; the pending stale playback_finished finalizes the old one.
-    if (this.synchronizer._pendingRotatedSegments.length > 0) {
+    // A segment rotated by incoming text can still own a late audio flush. Consume only that
+    // outstanding boundary; queued segments whose audio already ended merely await playback
+    // finish and must not block the current segment's flush.
+    const pendingAudioFlushOwner = this.synchronizer._pendingRotatedSegments.find(
+      (entry) => entry.awaitingAudioFlush,
+    );
+    if (pendingAudioFlushOwner) {
+      pendingAudioFlushOwner.awaitingAudioFlush = false;
       return;
     }
 
@@ -862,6 +896,9 @@ class SyncedAudioOutput extends AudioOutput {
       if (this.synchronizer._impl.hasPendingText) {
         // Text is pending - end audio input to allow text processing
         this.synchronizer._impl.endAudioInput();
+        if (this.synchronizer._impl.tryCompleteZeroDurationSegment()) {
+          this.synchronizer.rotateSegment();
+        }
         return;
       }
       // No text and no audio - rotate the segment
@@ -870,6 +907,9 @@ class SyncedAudioOutput extends AudioOutput {
     }
 
     this.synchronizer._impl.endAudioInput();
+    if (this.synchronizer._impl.tryCompleteZeroDurationSegment()) {
+      this.synchronizer.rotateSegment();
+    }
   }
 
   clearBuffer() {
@@ -1025,6 +1065,7 @@ class SyncedTextOutput extends TextOutput {
       this.synchronizer._pendingRotatedSegments.push({
         impl: this.synchronizer._impl,
         acceptedDownstream: this.synchronizer.audioOutput._rotationCandidateAccepted,
+        awaitingAudioFlush: !this.synchronizer._impl.audioInputEnded,
       });
       this.synchronizer.rotateSegment();
       await this.synchronizer.barrier();
@@ -1049,6 +1090,9 @@ class SyncedTextOutput extends TextOutput {
 
     this.capturing = false;
     this.synchronizer._impl.endTextInput();
+    if (this.synchronizer._impl.tryCompleteZeroDurationSegment()) {
+      this.synchronizer.rotateSegment();
+    }
   }
 
   onAttached(): void {

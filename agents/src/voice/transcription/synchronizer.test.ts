@@ -4,7 +4,7 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as logModule from '../../log.js';
-import { AudioOutput, TextOutput } from '../io.js';
+import { AudioOutput, TextOutput, type TimedString, isTimedString } from '../io.js';
 import {
   SpeakingRateData,
   TranscriptionSynchronizer,
@@ -227,8 +227,8 @@ class MockAudioOutput extends AudioOutput {
 class MockTextOutput extends TextOutput {
   captured: string[] = [];
 
-  async captureText(text: string): Promise<void> {
-    this.captured.push(text);
+  async captureText(text: string | TimedString): Promise<void> {
+    this.captured.push(isTimedString(text) ? text.text : text);
   }
 
   flush(): void {}
@@ -246,6 +246,123 @@ describe('TranscriptionSynchronizer enabled behavior', () => {
 
     expect(downstream.captured).toEqual(['hello']);
     await synchronizer.close();
+  });
+
+  it('flushes pending text when audio input ends without frames', async () => {
+    const downstream = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream);
+
+    try {
+      await synchronizer.textOutput.captureText('silent reply');
+      await synchronizer.textOutput.flush();
+      synchronizer.audioOutput.flush();
+
+      await synchronizer.barrier();
+      expect(downstream.captured.join('')).toBe('silent reply');
+    } finally {
+      await synchronizer.close();
+    }
+  });
+
+  it('preserves playback gating for an audible segment after a zero-duration segment', async () => {
+    const audioOutput = new MockAudioOutput();
+    const textOutput = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(audioOutput, textOutput);
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    try {
+      await synchronizer.textOutput.captureText('silent reply');
+      synchronizer.audioOutput.flush();
+      await synchronizer.textOutput.flush();
+
+      await synchronizer.barrier();
+      expect(textOutput.captured.join('')).toBe('silent reply');
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(0);
+
+      await synchronizer.textOutput.captureText('audible reply');
+      await synchronizer.textOutput.flush();
+      await synchronizer.audioOutput.captureFrame(frame);
+      synchronizer.audioOutput.flush();
+
+      expect(textOutput.captured.join('')).toBe('silent reply');
+
+      audioOutput.onPlaybackStarted(Date.now());
+      audioOutput.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
+      await synchronizer.barrier();
+      expect(textOutput.captured.join('')).toBe('silent replyaudible reply');
+    } finally {
+      await synchronizer.close();
+    }
+  });
+
+  it('flushes a zero-duration segment while an audible segment awaits playback finish', async () => {
+    const audioOutput = new MockAudioOutput();
+    const textOutput = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(audioOutput, textOutput);
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    try {
+      await synchronizer.textOutput.captureText('audible reply');
+      await synchronizer.textOutput.flush();
+      await synchronizer.audioOutput.captureFrame(frame);
+      synchronizer.audioOutput.flush();
+      audioOutput.onPlaybackStarted(Date.now());
+
+      await synchronizer.textOutput.captureText('silent reply');
+      await synchronizer.textOutput.flush();
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+      synchronizer.audioOutput.flush();
+      await synchronizer.barrier();
+
+      const transcript = textOutput.captured.join('');
+      expect(transcript).toContain('silent reply');
+      expect(transcript.split('silent reply')).toHaveLength(2);
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+      audioOutput.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(0);
+    } finally {
+      await synchronizer.close();
+    }
+  });
+
+  it('does not apply a rotated segment audio flush to the following silent segment', async () => {
+    const audioOutput = new MockAudioOutput();
+    const textOutput = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(audioOutput, textOutput);
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    try {
+      await synchronizer.textOutput.captureText('audible reply');
+      await synchronizer.textOutput.flush();
+      await synchronizer.audioOutput.captureFrame(frame);
+      audioOutput.onPlaybackStarted(Date.now());
+
+      await synchronizer.textOutput.captureText('silent reply');
+      await synchronizer.textOutput.flush();
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+      const silentSegment = synchronizer._impl;
+      synchronizer.audioOutput.flush();
+
+      expect(synchronizer._impl).toBe(silentSegment);
+      expect(silentSegment.audioInputEnded).toBe(false);
+      expect(textOutput.captured.join('')).not.toContain('silent reply');
+
+      synchronizer.audioOutput.flush();
+      await synchronizer.barrier();
+
+      const transcript = textOutput.captured.join('');
+      expect(transcript).toContain('silent reply');
+      expect(transcript.split('silent reply')).toHaveLength(2);
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+      audioOutput.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
+      expect(synchronizer._pendingRotatedSegments).toHaveLength(0);
+    } finally {
+      await synchronizer.close();
+    }
   });
 });
 
