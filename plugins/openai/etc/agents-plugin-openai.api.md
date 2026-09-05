@@ -676,6 +676,7 @@ export class LLM extends llm.LLM {
         client: OpenAI;
     }>): LLM;
     static withOVHcloud(opts?: Partial<LLMOptions>): LLM;
+    // @deprecated
     static withPerplexity(opts?: Partial<{
         model: string | PerplexityChatModels;
         apiKey?: string;
@@ -919,7 +920,7 @@ interface OutputTextContent {
 // Warning: (ae-missing-release-tag) "PerplexityChatModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type PerplexityChatModels = 'llama-3.1-sonar-small-128k-online' | 'llama-3.1-sonar-small-128k-chat' | 'llama-3.1-sonar-large-128k-online' | 'llama-3.1-sonar-large-128k-chat' | 'llama-3.1-8b-instruct' | 'llama-3.1-70b-instruct';
+export type PerplexityChatModels = 'sonar' | 'sonar-pro' | 'sonar-reasoning-pro' | 'sonar-deep-research';
 
 // @internal
 function processBaseURL(input: {
