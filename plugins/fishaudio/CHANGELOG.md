@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-fishaudio
 
+## 1.8.0
+
+### Patch Changes
+
+- Updated dependencies [[`38243d9`](https://github.com/livekit/agents-js/commit/38243d90464519808ce7ce021642d2837c69a923), [`ba4a502`](https://github.com/livekit/agents-js/commit/ba4a5027df32c413e45966f353ece17eeb3d8d0c), [`30dbde5`](https://github.com/livekit/agents-js/commit/30dbde5f67204af045c989ed3a6f03c73e854234), [`0d9e641`](https://github.com/livekit/agents-js/commit/0d9e6416674c38cbf7737f20312bd37c867fa54d), [`af46117`](https://github.com/livekit/agents-js/commit/af4611720949cb124dad0ee6bcba010120fd3083), [`080db3e`](https://github.com/livekit/agents-js/commit/080db3e5a0ac13de00d30e4dd11ff4b2ae5fbd90), [`a001e13`](https://github.com/livekit/agents-js/commit/a001e13fa679f93060e06552a4e349e638207231), [`66bffa7`](https://github.com/livekit/agents-js/commit/66bffa7ec0f0d1ae653138c3b0ce2c7f9642e69f), [`4e405c4`](https://github.com/livekit/agents-js/commit/4e405c4470965e808d69604aff29d425bcbf465d), [`41bde92`](https://github.com/livekit/agents-js/commit/41bde92f00216d4d906b814c8962cb5ec59d595a), [`c5a205b`](https://github.com/livekit/agents-js/commit/c5a205b854e8224f8ab71373cf51bf100bcfe2a1), [`128f3f6`](https://github.com/livekit/agents-js/commit/128f3f6a230616e960325b112067861ce1f1a17f), [`5d0304a`](https://github.com/livekit/agents-js/commit/5d0304aae8e159b4c6b015f5e8fb3a80e58bf56b), [`cf73c13`](https://github.com/livekit/agents-js/commit/cf73c13d6c6837bf9afa9537d050293f7739bc6b), [`3ddd35e`](https://github.com/livekit/agents-js/commit/3ddd35ee1f0c4f2a502bc2ab95d9e5800e8f852a), [`316610c`](https://github.com/livekit/agents-js/commit/316610cbeb25815cb54cee6aeb21ef24f3f08e1a), [`ac882c0`](https://github.com/livekit/agents-js/commit/ac882c0ca2dcc7cdb39994a5443a82bc01dd3732), [`bb16578`](https://github.com/livekit/agents-js/commit/bb16578a0ee17a16a508fe05d162aad4bbac750b), [`2895612`](https://github.com/livekit/agents-js/commit/28956128d8bcb8c8fac8d53dbd1afcf3e114fa6e)]:
+  - @livekit/agents@1.8.0
+
 ## 1.7.1
 
 ### Patch Changes
