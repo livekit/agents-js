@@ -61,21 +61,23 @@ export interface AMDOptions {
    * - `LLM` instance: used as-is (caller-owned; AMD will not close it).
    * - `string`: treated as a Cloud Inference model id (e.g. `'openai/gpt-4o-mini'`)
    *   and an inference LLM is constructed (AMD-owned).
+   * - `null`: always reuse the session's LLM.
    * - `undefined` (default): auto-select — if LiveKit Cloud inference credentials
    *   are available in the environment, uses `'google/gemini-3.1-flash-lite'` via
    *   the inference gateway; otherwise falls back to the session's own LLM.
    */
-  llm?: LLM | string;
+  llm?: LLM | string | null;
   /**
    * Dedicated STT used to transcribe call audio for AMD.
    * - `STT` instance: used as-is (caller-owned; AMD will not close it).
    * - `string`: treated as a Cloud Inference model id (e.g. `'cartesia/ink-whisper'`)
    *   and an inference STT is constructed (AMD-owned).
+   * - `null`: always reuse the session's existing STT transcripts.
    * - `undefined` (default): auto-select — if LiveKit Cloud inference credentials
    *   are available in the environment, uses `'cartesia/ink-whisper'` via the
    *   inference gateway; otherwise reuses the session's existing STT transcripts.
    */
-  stt?: STT | string;
+  stt?: STT | string | null;
   interruptOnMachine?: boolean;
   /** If no speech is heard within this window, settle as UNCERTAIN (not a machine, so no interrupt). */
   noSpeechTimeoutMs?: number;
@@ -784,8 +786,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   /**
    * Ref: python classifier.py `_try_emit_result` + `_can_emit` — releases a
    * verdict only when the silence gate is open AND, for everything except a
-   * confident human, the end-of-turn gate is open too. Humans release on
-   * silence alone so the agent can respond quickly.
+   * confident human, the end-of-turn gate is open too. When VAD misses speech
+   * end, EOT also opens the silence gate. Humans release on silence alone so
+   * the agent can respond quickly.
    */
   private tryEmitResult(): void {
     if (!this.verdictResult || this.settled) {
@@ -931,6 +934,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private onEotReached(): void {
     if (this.settled) return;
     this.clearTimer('eot');
+    if (this.speechActive || this.speechEndedAt === undefined) {
+      this.speechActive = false;
+      this.silenceReached = true;
+    }
     this.eotReached = true;
     this.tryEmitResult();
   }
@@ -1115,9 +1122,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
    * Mirrors python `_resolve_classifier`.
    * - `LLM` instance: caller-owned, used as-is.
    * - string: construct a Cloud Inference LLM (AMD-owned).
-   * - `undefined`: fall back to `session.llm`.
+   * - `null` or `undefined`: fall back to `session.llm`.
    */
-  private resolveLLM(option?: LLM | string): { llm: LLM; owned: boolean } {
+  private resolveLLM(option?: LLM | string | null): { llm: LLM; owned: boolean } {
     if (option instanceof LLM) {
       return { llm: option, owned: false };
     }
@@ -1138,9 +1145,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
    * Mirrors python `_InferenceSTT(stt) if isinstance(stt, str) else stt`.
    * - `STT` instance: caller-owned.
    * - string: AMD-owned Cloud Inference STT.
-   * - `undefined`: listen to session-level STT events.
+   * - `null` or `undefined`: listen to session-level STT events.
    */
-  private resolveSTT(option?: STT | string): {
+  private resolveSTT(option?: STT | string | null): {
     stt: STT | undefined;
     owned: boolean;
   } {
