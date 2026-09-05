@@ -7,6 +7,7 @@ import {
   APIError,
   APIStatusError,
   APITimeoutError,
+  AsyncIterableQueue,
   AudioByteStream,
   Future,
   type TimedString,
@@ -18,7 +19,7 @@ import {
   tokenize,
   tts,
 } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
 import type { DefaultLanguages, TTSModels } from './models.js';
 
@@ -57,6 +58,22 @@ export interface TTSOptions {
   apiKey?: string;
   useWebsocket?: boolean;
   segment?: string;
+  /**
+   * Reuse a successfully completed WebSocket for later speech streams.
+   * Requires `useWebsocket: true` and `segment: 'never'`. Concurrent streams
+   * have separate connections; at most one idle connection is kept for 30 seconds.
+   * Call {@link TTS.close} when the provider is no longer needed.
+   * @defaultValue false
+   */
+  reuseWebsocket?: boolean;
+  /**
+   * Flush each sentence emitted by the configured tokenizer to Rime without
+   * waiting for input to end. Requires `useWebsocket: true` and `segment: 'never'`.
+   * Synthesis batches run sequentially so Rime cannot coalesce overlapping flushes.
+   * Tokenizer buffering still determines when a sentence is available.
+   * @defaultValue false
+   */
+  flushSentences?: boolean;
   tokenizer?: tokenize.SentenceTokenizer;
   lang?: DefaultLanguages | string;
   repetition_penalty?: number;
@@ -139,6 +156,8 @@ function fetchPayload(opts: TTSOptions, text: string): Record<string, unknown> {
         'useWebsocket',
         'segment',
         'tokenizer',
+        'reuseWebsocket',
+        'flushSentences',
         'speaker',
         'modelId',
         'lang',
@@ -200,12 +219,28 @@ function resolveOptions(opts: Partial<TTSOptions>): TTSOptions {
     throw new Error('timeScaleFactor is not supported by the mistv2 model; use mistv3 or coda.');
   }
 
+  if (
+    (resolved.reuseWebsocket || resolved.flushSentences) &&
+    (!resolved.useWebsocket || resolved.segment !== 'never')
+  ) {
+    throw new Error('Rime sentence flushing and connection reuse require WebSocket segment=never');
+  }
+
   return resolved;
 }
+
+const connectionPools = new WeakMap<TTS, RimeConnectionPool>();
 
 export class TTS extends tts.TTS {
   private opts: TTSOptions;
   label = 'rime.TTS';
+  private connectionPool = new RimeConnectionPool();
+
+  /** Close active and idle WebSockets and cancel pending connections. */
+  async close(): Promise<void> {
+    this.connectionPool.close();
+    await super.close();
+  }
 
   /**
    * Create a new instance of Rime TTS.
@@ -229,6 +264,7 @@ export class TTS extends tts.TTS {
     if (this.opts.apiKey === undefined) {
       throw new Error('RIME API key is required, whether as an argument or as $RIME_API_KEY');
     }
+    connectionPools.set(this, this.connectionPool);
     warnIfArcana(opts.modelId);
   }
 
@@ -247,7 +283,11 @@ export class TTS extends tts.TTS {
    */
   updateOptions(opts: Partial<TTSOptions>) {
     warnIfArcana(opts.modelId);
-    this.opts = resolveOptions({ ...this.opts, ...opts });
+    const updated = resolveOptions({ ...this.opts, ...opts });
+    if (wsUrl(updated) !== wsUrl(this.opts) || updated.apiKey !== this.opts.apiKey) {
+      this.connectionPool.invalidate();
+    }
+    this.opts = updated;
   }
 
   /**
@@ -367,14 +407,49 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #logger = log();
   #tokenizer: tokenize.SentenceStream;
+  #provider: TTS;
+  #leadingWhitespace = '';
+  #segmentHasText = false;
+  private connectionPool: RimeConnectionPool;
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
+    this.#provider = tts;
+    const pool = connectionPools.get(tts);
+    if (!pool) throw new Error('Rime TTS connection pool is unavailable');
+    this.connectionPool = pool;
     this.#opts = opts;
     this.#tokenizer = (opts.tokenizer ?? new tokenize.basic.SentenceTokenizer()).stream();
   }
 
+  /**
+   * Buffer leading whitespace so empty SDK segments do not consume speech metrics.
+   * @deprecated Use `updateInputStream` instead.
+   */
+  override pushText(text: string): void {
+    if (this.#opts.flushSentences || this.#opts.reuseWebsocket) {
+      if (!this.#segmentHasText) {
+        this.#leadingWhitespace += text;
+        if (!this.#leadingWhitespace.trim()) return;
+        text = this.#leadingWhitespace;
+        this.#leadingWhitespace = '';
+        this.#segmentHasText = true;
+      }
+    }
+    super.pushText(text);
+  }
+
+  /** Finish the current SDK segment, discarding whitespace-only input. */
+  override flush(): void {
+    this.#leadingWhitespace = '';
+    this.#segmentHasText = false;
+    super.flush();
+  }
+
   protected async run() {
+    if (this.#opts.flushSentences || this.#opts.reuseWebsocket) {
+      return this.runSentences();
+    }
     const requestId = shortuuid();
     const contextId = shortuuid();
     const bstream = new AudioByteStream(getSampleRate(this.#opts), RIME_TTS_CHANNELS);
@@ -549,6 +624,255 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     }
   }
+  // /ws3 can coalesce overlapping flushes. Wait for each matching done before
+  // sending the next sentence, and rebase synthesis-local timestamps onto PCM time.
+  private async runSentences() {
+    const requestId = shortuuid();
+    let segmentId = '';
+    const sampleRate = getSampleRate(this.#opts);
+    const segments = new AsyncIterableQueue<tokenize.SentenceStream>();
+    const tokenizers = new Set<tokenize.SentenceStream>([this.#tokenizer]);
+    let inputTokenizer: tokenize.SentenceStream | undefined = this.#tokenizer;
+    segments.put(this.#tokenizer);
+    const messages = stream.createStreamChannel<Record<string, unknown>>();
+    const reader = messages.stream().getReader();
+    const failure = new Future<Error>();
+    const fail = (message: string) => {
+      if (!failure.done)
+        failure.resolve(new APIConnectionError({ message, options: { retryable: false } }));
+    };
+    let lease: Awaited<ReturnType<RimeConnectionPool['acquire']>> | undefined;
+    let complete = false;
+    let activeContext: string | undefined;
+    let totalSamples = 0;
+    let lastFrame: AudioFrame | undefined;
+    let pendingTranscripts: TimedString[] = [];
+    const emitFrame = (final: boolean) => {
+      if (!lastFrame || this.closed || this.abortSignal.aborted || this.queue.closed) return;
+      this.queue.put({
+        requestId,
+        segmentId,
+        frame: lastFrame,
+        final,
+        timedTranscripts: pendingTranscripts.length ? pendingTranscripts : undefined,
+      });
+      lastFrame = undefined;
+      pendingTranscripts = [];
+    };
+    const emitAvailable = (frame: AudioFrame) => {
+      emitFrame(false);
+      const samples = frame.samplesPerChannel;
+      if (samples > 1) {
+        lastFrame = new AudioFrame(
+          frame.data.slice(0, -1),
+          sampleRate,
+          RIME_TTS_CHANNELS,
+          samples - 1,
+        );
+        emitFrame(false);
+      }
+      // Keep one real sample for the SDK final frame, never a whole audio chunk.
+      lastFrame = new AudioFrame(frame.data.slice(-1), sampleRate, RIME_TTS_CHANNELS, 1);
+    };
+    const onMessage = (raw: RawData) => {
+      try {
+        const data = JSON.parse(raw.toString());
+        if (data.type === 'error') {
+          // Provider error text can echo input or credentials. Keep it out of logs.
+          fail('Rime WebSocket synthesis failed');
+        } else if (activeContext && data.contextId === activeContext) {
+          void messages.write(data).catch(() => {});
+        }
+      } catch {
+        fail('Rime WebSocket returned invalid JSON');
+      }
+    };
+    const onClose = () => fail('Rime WebSocket closed before synthesis completed');
+    const onError = () => fail('Rime WebSocket transport failed');
+    const onAbort = () => {
+      fail('Rime WebSocket synthesis cancelled');
+      lease?.socket.terminate();
+    };
+    const inputTask = async () => {
+      for await (const data of this.input) {
+        if (this.abortSignal.aborted) break;
+        if (data === SynthesizeStream.FLUSH_SENTINEL) {
+          inputTokenizer?.endInput();
+          inputTokenizer = undefined;
+        } else if (data) {
+          if (!inputTokenizer) {
+            inputTokenizer = (
+              this.#opts.tokenizer ?? new tokenize.basic.SentenceTokenizer()
+            ).stream();
+            tokenizers.add(inputTokenizer);
+            segments.put(inputTokenizer);
+          }
+          inputTokenizer.pushText(data);
+        }
+      }
+      inputTokenizer?.endInput();
+      segments.close();
+    };
+    const synthesize = async (text: string) => {
+      if (!text.trim()) return;
+      if (this.abortSignal.aborted || lease!.socket.readyState !== WebSocket.OPEN) {
+        throw new APIConnectionError({
+          message: 'Rime WebSocket connection is closed',
+          options: { retryable: false },
+        });
+      }
+      activeContext = shortuuid();
+      const contextId = activeContext;
+      segmentId ||= contextId;
+      this.noteProviderRequestId(contextId);
+      const offset = totalSamples / sampleRate;
+      const samplesBeforeSynthesis = totalSamples;
+      const bytes = new AudioByteStream(sampleRate, RIME_TTS_CHANNELS);
+      this.markStarted();
+      lease!.socket.send(JSON.stringify({ text, contextId }));
+      lease!.socket.send(JSON.stringify({ operation: 'flush', contextId }));
+      let timer: NodeJS.Timeout | undefined;
+      const armTimeout = () => {
+        if (timer) clearTimeout(timer);
+        if (this.connOptions.timeoutMs > 0)
+          timer = setTimeout(
+            () => fail('Rime WebSocket synthesis timed out'),
+            this.connOptions.timeoutMs,
+          );
+      };
+      armTimeout();
+      try {
+        while (true) {
+          const event = await reader.read();
+          if (event.done)
+            throw new APIConnectionError({
+              message: 'Rime WebSocket stream ended early',
+              options: { retryable: false },
+            });
+          const data = event.value;
+          if (data.contextId !== contextId) continue;
+          armTimeout();
+          if (data.type === 'chunk') {
+            const audio = Buffer.from(data.data as string, 'base64');
+            totalSamples += audio.byteLength / 2;
+            for (const frame of bytes.write(audio)) emitAvailable(frame);
+          } else if (data.type === 'timestamps') {
+            const timestamps = data.word_timestamps as
+              | { words?: string[]; start?: number[]; end?: number[] }
+              | undefined;
+            if (timestamps?.words && timestamps.start && timestamps.end) {
+              const count = Math.min(
+                timestamps.words.length,
+                timestamps.start.length,
+                timestamps.end.length,
+              );
+              for (let i = 0; i < count; i++)
+                pendingTranscripts.push(
+                  createTimedString({
+                    text: `${timestamps.words[i]} `,
+                    startTime: offset + timestamps.start[i]!,
+                    endTime: offset + timestamps.end[i]!,
+                  }),
+                );
+            }
+          } else if (data.type === 'done') {
+            if (totalSamples === samplesBeforeSynthesis) {
+              throw new APIConnectionError({
+                message: 'Rime WebSocket synthesis completed without audio',
+                options: { retryable: false },
+              });
+            }
+            for (const frame of bytes.flush()) {
+              if (frame.samplesPerChannel > 0) emitAvailable(frame);
+            }
+            activeContext = undefined;
+            return;
+          }
+        }
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+    const finishSegment = async () => {
+      if (!lastFrame) return;
+      const emitted = new Future<void>();
+      const onMetrics = (event: { requestId: string }) => {
+        if (event.requestId === requestId && !emitted.done) emitted.resolve();
+      };
+      this.#provider.on('metrics_collected', onMetrics);
+      try {
+        emitFrame(true);
+        // markStarted is reset by the SDK metrics consumer, not queue.put.
+        // Do not let a queued segment inherit the previous segment's timing.
+        await Promise.race([
+          emitted.await,
+          failure.await.then((error) => {
+            throw error;
+          }),
+        ]);
+      } finally {
+        this.#provider.off('metrics_collected', onMetrics);
+      }
+    };
+    const synthesisTask = async () => {
+      for await (const tokenizer of segments) {
+        segmentId = '';
+        totalSamples = 0;
+        let bufferedText = '';
+        for await (const event of tokenizer) {
+          if (this.#opts.flushSentences) await synthesize(`${event.token} `);
+          else bufferedText += `${event.token} `;
+        }
+        if (!this.#opts.flushSentences) await synthesize(bufferedText);
+        await finishSegment();
+        tokenizer.close();
+        tokenizers.delete(tokenizer);
+      }
+      complete = true;
+    };
+    this.abortSignal.addEventListener('abort', onAbort, { once: true });
+    try {
+      lease = await this.connectionPool.acquire(
+        this.#opts,
+        this.connOptions.timeoutMs,
+        this.abortSignal,
+      );
+      lease.socket.on('message', onMessage);
+      lease.socket.on('error', onError);
+      lease.socket.on('close', onClose);
+      await Promise.race([
+        Promise.all([inputTask(), synthesisTask()]),
+        failure.await.then((error) => {
+          throw error;
+        }),
+      ]);
+    } catch (error) {
+      if (!this.abortSignal.aborted) {
+        if (error instanceof APIConnectionError && !error.retryable) throw error;
+        // Do not replay partial audio through the SDK retry loop.
+        throw new APIConnectionError({
+          message: 'Rime WebSocket synthesis failed',
+          options: { retryable: false },
+        });
+      }
+    } finally {
+      this.abortSignal.removeEventListener('abort', onAbort);
+      for (const tokenizer of tokenizers) tokenizer.close();
+      segments.close();
+      if (!this.input.closed) this.input.close();
+      await reader.cancel();
+      reader.releaseLock();
+      if (lease) {
+        lease.socket.off('message', onMessage);
+        lease.socket.off('error', onError);
+        lease.socket.off('close', onClose);
+        this.connectionPool.release(
+          lease,
+          Boolean(this.#opts.reuseWebsocket && complete && !this.abortSignal.aborted),
+        );
+      }
+    }
+  }
 }
 
 async function connectRimeWebSocket({
@@ -614,5 +938,109 @@ function closeRimeWebSocket(ws: WebSocket) {
     }
   } catch {
     // best-effort close
+  }
+}
+
+// A socket is never shared by simultaneous contexts. Only fully drained leases return idle.
+class RimeConnectionPool {
+  private sockets = new Set<WebSocket>();
+  private pending = new Set<AbortController>();
+  private idle?: { socket: WebSocket; url: string; apiKey: string; timer: NodeJS.Timeout };
+  private generation = 0;
+  private closed = false;
+
+  async acquire(opts: TTSOptions, timeoutMs: number, signal: AbortSignal) {
+    if (this.closed || signal.aborted)
+      throw new APIConnectionError({
+        message: 'Rime connection closed',
+        options: { retryable: false },
+      });
+    const url = wsUrl(opts);
+    const generation = this.generation;
+    if (this.idle) {
+      const idle = this.idle;
+      this.idle = undefined;
+      clearTimeout(idle.timer);
+      if (
+        opts.reuseWebsocket &&
+        idle.url === url &&
+        idle.apiKey === opts.apiKey &&
+        idle.socket.readyState === WebSocket.OPEN
+      ) {
+        return { socket: idle.socket, generation, url, apiKey: opts.apiKey! };
+      }
+      idle.socket.terminate();
+    }
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    this.pending.add(controller);
+    try {
+      const socket = await connectRimeWebSocket({
+        url,
+        apiKey: opts.apiKey!,
+        timeoutMs,
+        abortSignal: controller.signal,
+      });
+      // Own error events while idle and while a lease changes listeners.
+      socket.on('error', () => {});
+      socket.once('close', () => {
+        this.sockets.delete(socket);
+        if (this.idle?.socket === socket) {
+          clearTimeout(this.idle.timer);
+          this.idle = undefined;
+        }
+      });
+      this.sockets.add(socket);
+      if (this.closed || signal.aborted) {
+        socket.terminate();
+        throw new APIConnectionError({
+          message: 'Rime connection closed',
+          options: { retryable: false },
+        });
+      }
+      return { socket, generation, url, apiKey: opts.apiKey! };
+    } finally {
+      this.pending.delete(controller);
+      signal.removeEventListener('abort', abort);
+    }
+  }
+
+  release(
+    lease: { socket: WebSocket; generation: number; url: string; apiKey: string },
+    reusable: boolean,
+  ) {
+    if (
+      !reusable ||
+      this.closed ||
+      lease.generation !== this.generation ||
+      this.idle ||
+      lease.socket.readyState !== WebSocket.OPEN
+    ) {
+      lease.socket.terminate();
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (this.idle?.socket === lease.socket) this.idle = undefined;
+      lease.socket.terminate();
+    }, 30_000);
+    timer.unref();
+    this.idle = { ...lease, timer };
+  }
+
+  invalidate() {
+    this.generation += 1;
+    if (this.idle) {
+      clearTimeout(this.idle.timer);
+      this.idle.socket.terminate();
+      this.idle = undefined;
+    }
+  }
+
+  close() {
+    this.closed = true;
+    this.invalidate();
+    for (const controller of this.pending) controller.abort();
+    for (const socket of this.sockets) socket.terminate();
   }
 }
