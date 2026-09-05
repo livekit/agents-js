@@ -9,7 +9,13 @@ import type {
   Room,
   TrackKind,
 } from '@livekit/rtc-node';
-import { AudioFrame, AudioResampler, RemoteParticipant, RoomEvent } from '@livekit/rtc-node';
+import {
+  AudioFrame,
+  AudioResampler,
+  ParticipantState,
+  RemoteParticipant,
+  RoomEvent,
+} from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
@@ -1096,8 +1102,18 @@ export async function waitUntilAborted<T>(
 
 /**
  * Returns a participant that matches the given identity. If identity is None, the first
- * participant that joins the room will be returned.
- * If the participant has already joined, the function will return immediately.
+ * participant that becomes active in the room will be returned.
+ * If the participant is already active, the function will return immediately.
+ *
+ * A remote participant is only considered a match once it reaches
+ * `ParticipantState.ACTIVE` — the point at which it can receive data messages.
+ * A participant that has connected but is still JOINING/JOINED is present in
+ * `room.remoteParticipants` yet not reachable, so waiting on connection alone would
+ * hand back a participant that silently drops anything sent to it.
+ *
+ * The local participant (via `includeLocal`) is exempt: it has no remote lifecycle to
+ * wait on.
+ *
  * @param room - The room to wait for a participant in.
  * @param identity - The identity of the participant to wait for.
  * @param kind - The kind of the participant to wait for.
@@ -1161,7 +1177,7 @@ export async function waitForParticipant({
     return participant.kind === kind;
   };
 
-  const onParticipantConnected = (p: RemoteParticipant) => {
+  const onParticipantActive = (p: RemoteParticipant) => {
     if ((identity === undefined || p.identity === identity) && kindMatch(p)) {
       if (!fut.done) {
         fut.resolve(p);
@@ -1179,7 +1195,7 @@ export async function waitForParticipant({
     }
   };
 
-  room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
+  room.on(RoomEvent.ParticipantActive, onParticipantActive);
   room.on(RoomEvent.Disconnected, onDisconnected);
   signal?.addEventListener('abort', onAbort, { once: true });
 
@@ -1195,7 +1211,9 @@ export async function waitForParticipant({
     }
 
     for (const p of room.remoteParticipants.values()) {
-      onParticipantConnected(p);
+      if (p.state === ParticipantState.ACTIVE) {
+        onParticipantActive(p);
+      }
       if (fut.done) {
         break;
       }
@@ -1203,7 +1221,7 @@ export async function waitForParticipant({
 
     return await fut.await;
   } finally {
-    room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+    room.off(RoomEvent.ParticipantActive, onParticipantActive);
     room.off(RoomEvent.Disconnected, onDisconnected);
     signal?.removeEventListener('abort', onAbort);
   }
