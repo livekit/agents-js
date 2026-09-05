@@ -1785,6 +1785,8 @@ export abstract class AudioOutput extends EventEmitter_2 {
     // (undocumented)
     static readonly EVENT_PLAYBACK_FINISHED = "playbackFinished";
     // (undocumented)
+    static readonly EVENT_PLAYBACK_PROGRESSED = "playbackProgressed";
+    // (undocumented)
     static readonly EVENT_PLAYBACK_STARTED = "playbackStarted";
     // (undocumented)
     flush(): void;
@@ -1797,6 +1799,7 @@ export abstract class AudioOutput extends EventEmitter_2 {
     // (undocumented)
     onDetached(): void;
     onPlaybackFinished(options: PlaybackFinishedEvent): void;
+    onPlaybackProgressed(ev: PlaybackProgressedEvent): void;
     onPlaybackStarted(createdAt: number): void;
     pause(): void;
     // @internal
@@ -5826,6 +5829,15 @@ export interface PlaybackFinishedEvent {
     synchronizedTranscript?: string;
 }
 
+// Warning: (ae-missing-release-tag) "PlaybackProgressedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface PlaybackProgressedEvent {
+    duration: number;
+    offset: number;
+    startedAt: number;
+}
+
 // Warning: (ae-missing-release-tag) "PlaybackStartedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -9255,6 +9267,7 @@ declare namespace voice {
         AudioOutput,
         AudioOutputCapabilities,
         PlaybackFinishedEvent,
+        PlaybackProgressedEvent,
         PlaybackStartedEvent,
         TimedString,
         createTimedString,
