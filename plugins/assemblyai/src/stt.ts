@@ -64,6 +64,12 @@ function speechDataMetadata(data: StreamEventMessage): stt.SpeechData['metadata'
     assemblyai.languageConfidence = data.language_confidence;
   }
 
+  // Universal-3 Pro models ramp this from 0 toward 1 while holding a turn open,
+  // allowing callers to trigger eager generation before the final transcript.
+  if (typeof data.end_of_turn_confidence === 'number') {
+    assemblyai.endOfTurnConfidence = data.end_of_turn_confidence;
+  }
+
   if (Object.keys(assemblyai).length === 0) return undefined;
 
   return { assemblyai };
