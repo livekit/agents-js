@@ -1283,6 +1283,14 @@ export function performToolExecutions({
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
+    const cancelReader = () => {
+      void reader.cancel().catch(() => undefined);
+    };
+    signal.addEventListener('abort', cancelReader, { once: true });
+    void reader.closed
+      .finally(() => signal.removeEventListener('abort', cancelReader))
+      .catch(() => undefined);
+    if (signal.aborted) cancelReader();
 
     // Production always has an activity (and thus a shared executor). Fall back to a standalone
     // executor when it's absent (edge cases / unit tests) instead of dropping every tool call,

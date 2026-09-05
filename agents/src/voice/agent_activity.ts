@@ -4090,6 +4090,60 @@ export class AgentActivity implements RecognitionHooks {
       : null;
     const toolCtx = realtimeSession.tools;
 
+    const tasks: Array<Task<void>> = [];
+    const [messageStream, messageStreamToDrain] = ev.messageStream.tee();
+    const [toolCallStream, toolCallStreamForTracing] = ev.functionStream.tee();
+    const toolCalls: FunctionCall[] = [];
+    let generationEnded = false;
+
+    const drainStream = async <T>(
+      controller: AbortController,
+      stream: ReadableStream<T>,
+      onValue?: (value: T) => void,
+    ): Promise<void> => {
+      const reader = stream.getReader();
+      const cancelReader = () => {
+        void reader.cancel().catch(() => undefined);
+      };
+      controller.signal.addEventListener('abort', cancelReader, { once: true });
+      try {
+        while (!controller.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          onValue?.(value);
+        }
+      } finally {
+        controller.signal.removeEventListener('abort', cancelReader);
+        reader.releaseLock();
+      }
+    };
+
+    tasks.push(
+      Task.from(
+        async (controller) => {
+          await Promise.all([
+            drainStream(controller, messageStreamToDrain),
+            drainStream(controller, toolCallStreamForTracing, (toolCall) => {
+              this.logger.debug(
+                { 'lk.pii.tool_call': toolCall },
+                'received tool call from the realtime API',
+              );
+              toolCalls.push(toolCall);
+            }),
+          ]);
+          if (!controller.signal.aborted) {
+            generationEnded = true;
+          }
+        },
+        replyAbortController,
+        'AgentActivity.realtime_generation.watch_end',
+      ),
+    );
+
+    const cancelGenerationStreams = async (): Promise<void> => {
+      await Promise.allSettled([messageStream.cancel(), toolCallStream.cancel()]);
+    };
+
     const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
     if (speechHandle.allowInterruptions) {
       authorizationTasks.push(this.userSilenceEvent.wait());
@@ -4098,6 +4152,12 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle._clearAuthorization();
 
     if (speechHandle.interrupted) {
+      // Nothing was played, but the response may still be generating server-side.
+      if (!generationEnded) {
+        void realtimeSession.interrupt();
+      }
+      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelGenerationStreams();
       return;
     }
 
@@ -4115,8 +4175,6 @@ export class AgentActivity implements RecognitionHooks {
       message: MessageGeneration;
       modalities?: ('text' | 'audio')[];
     }
-
-    const tasks: Array<Task<void>> = [];
 
     const processOneMessage = async (
       msg: MessageGeneration,
@@ -4281,7 +4339,7 @@ export class AgentActivity implements RecognitionHooks {
         once: true,
       });
       try {
-        for await (const msg of ev.messageStream) {
+        for await (const msg of messageStream) {
           if (speechHandle.interrupted) {
             break;
           }
@@ -4358,39 +4416,6 @@ export class AgentActivity implements RecognitionHooks {
       }
     };
 
-    const [toolCallStream, toolCallStreamForTracing] = ev.functionStream.tee();
-    // TODO(brian): append to tracing tees
-    const toolCalls: FunctionCall[] = [];
-
-    const readToolStreamTask = async (
-      controller: AbortController,
-      stream: ReadableStream<FunctionCall>,
-    ) => {
-      const reader = stream.getReader();
-      try {
-        while (!controller.signal.aborted) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          this.logger.debug(
-            { 'lk.pii.tool_call': value },
-            'received tool call from the realtime API',
-          );
-          toolCalls.push(value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    };
-
-    tasks.push(
-      Task.from(
-        (controller) => readToolStreamTask(controller, toolCallStreamForTracing),
-        replyAbortController,
-        'AgentActivity.realtime_generation.read_tool_stream',
-      ),
-    );
-
     // items are ordered by `createdAt`
     const onToolExecutionStarted = (f: FunctionCall) => {
       // function call is created during the model generation, might be before the speech is
@@ -4421,6 +4446,11 @@ export class AgentActivity implements RecognitionHooks {
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
+    // The cancel is session-wide, so send it only while this response is still generating.
+    if (speechHandle.interrupted && !generationEnded) {
+      void realtimeSession.interrupt();
+    }
+
     if (speechHandle.interrupted) {
       this.logger.debug(
         { speech_id: speechHandle.id },
@@ -4449,8 +4479,8 @@ export class AgentActivity implements RecognitionHooks {
       }
       speechHandle._markGenerationDone();
       await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
+      await cancelGenerationStreams();
 
-      // TODO(brian): close tees
       return;
     }
 
@@ -4477,8 +4507,6 @@ export class AgentActivity implements RecognitionHooks {
 
     // mark the playout done before waiting for the tool execution
     speechHandle._markGenerationDone();
-    // TODO(brian): close tees
-
     this._backgroundSpeeches.add(speechHandle);
     try {
       await executeToolsTask.result;
@@ -4859,21 +4887,32 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       const generateReplyAbortController = new AbortController();
-      const generationPromise = this.realtimeSession.generateReply(
-        instructions !== undefined
-          ? renderInstructions(instructions, speechHandle.inputDetails.modality)
-          : undefined,
-        { signal: generateReplyAbortController.signal },
-      );
+      let generationEvent: GenerationCreatedEvent | undefined;
+      const generationPromise = this.realtimeSession
+        .generateReply(
+          instructions !== undefined
+            ? renderInstructions(instructions, speechHandle.inputDetails.modality)
+            : undefined,
+          { signal: generateReplyAbortController.signal },
+        )
+        .then((event) => {
+          generationEvent = event;
+          return event;
+        });
       void generationPromise.catch(() => undefined);
 
       await speechHandle.waitIfNotInterrupted([generationPromise]);
       if (speechHandle.interrupted) {
-        generateReplyAbortController.abort();
+        if (generationEvent) {
+          // The response already landed, so aborting generateReply no longer reaches it.
+          void this.realtimeSession.interrupt();
+        } else {
+          generateReplyAbortController.abort();
+        }
         return;
       }
 
-      const generationEvent = await generationPromise;
+      generationEvent = await generationPromise;
       await this.realtimeGenerationTask(
         stateLease,
         generationEvent,
