@@ -99,7 +99,7 @@ describe('Speechify TTS (mocked /v1/audio/stream/with-timestamps SSE)', () => {
     expect(events.filter((e) => e.final)).toHaveLength(1);
 
     const timed = events.flatMap((e) => e.timedTranscripts ?? []);
-    expect(timed.map((t) => t.text)).toEqual(['hello', 'world']);
+    expect(timed.map((t) => t.text)).toEqual(['hello ', 'world ']);
     expect(timed[0]!.startTime).toBeCloseTo(0);
     expect(timed[1]!.startTime).toBeCloseTo(0.5);
 
@@ -127,6 +127,28 @@ describe('Speechify TTS (mocked /v1/audio/stream/with-timestamps SSE)', () => {
     expect(events.at(-1)!.final).toBe(true);
     expect(events.filter((e) => e.final)).toHaveLength(1);
     expect(started.requests.length).toBeGreaterThanOrEqual(1);
+
+    stream.close();
+    await speechify.close();
+  });
+
+  it('ends each flushed segment with its own final frame and segment id', async () => {
+    const started = await startStreamServer();
+    server = started.server;
+
+    const speechify = new TTS({ apiKey: 'test-key', baseUrl: started.baseUrl });
+    const stream = speechify.stream();
+    stream.pushText('Hello world.');
+    stream.flush();
+    stream.pushText('Goodbye world.');
+    stream.endInput();
+
+    const events = await collect(stream);
+    const finals = events.filter((e) => e.final);
+    // One final frame per flushed segment.
+    expect(finals).toHaveLength(2);
+    // Each segment carries a distinct segment id.
+    expect(new Set(finals.map((e) => e.segmentId)).size).toBe(2);
 
     stream.close();
     await speechify.close();
