@@ -142,6 +142,23 @@ export class TurnDetector extends BaseStreamingTurnDetector {
     return this._model;
   }
 
+  /** Configuration that is safe to include in an uploaded session report. */
+  describeOptions(): Readonly<Record<string, unknown>> {
+    const options: Record<string, unknown> = {
+      model: this.model,
+      provider: this.provider,
+      sampleRate: this._opts.sampleRate,
+      localFallback: true,
+    };
+    if (this._opts.thresholds.overrides !== undefined) {
+      options.thresholdOverrides = this._opts.thresholds.overrides;
+    }
+    if (this._opts.thresholds.backchannelOverrides !== undefined) {
+      options.backchannelThresholdOverrides = this._opts.thresholds.backchannelOverrides;
+    }
+    return options;
+  }
+
   /** @internal Written by the active stream on cloud→local fallback. */
   _setModel(model: TurnDetectorModel): void {
     this._model = model;

@@ -67,6 +67,15 @@ export interface StartSpanOptions {
   startTime?: number;
 }
 
+/**
+ * An object that can safely describe its configuration in an uploaded session report.
+ * @public
+ */
+export interface DescribesOptions {
+  /** Return only options that are safe to include in telemetry. */
+  describeOptions(): Readonly<Record<string, unknown>>;
+}
+
 /** @deprecated Use OpenTelemetry SDK 2.x's `SpanProcessor` type directly. */
 export type SpanProcessorLike = SpanProcessor;
 
@@ -587,22 +596,109 @@ const SESSION_OPTION_KEY_ALIASES: Record<string, string> = {
   keyterms: 'lk.pii.keyterms',
 };
 
-function serializeSessionOptions(options: SessionReport['options']): Record<string, unknown> {
-  const serialize = (value: Record<string, unknown>): Record<string, unknown> =>
-    Object.fromEntries(
-      Object.entries(value).map(([key, nestedValue]) => [
-        SESSION_OPTION_KEY_ALIASES[key] ?? key,
-        nestedValue !== null &&
-        typeof nestedValue === 'object' &&
-        !Array.isArray(nestedValue) &&
-        (Object.getPrototypeOf(nestedValue) === Object.prototype ||
-          Object.getPrototypeOf(nestedValue) === null)
-          ? serialize(nestedValue as Record<string, unknown>)
-          : nestedValue,
-      ]),
-    );
+const SESSION_OPTION_OMITTED_KEYS = new Set(['instructions']);
 
-  return serialize(options as unknown as Record<string, unknown>);
+function optionObjectName(value: object): string {
+  return value.constructor?.name || 'Object';
+}
+
+function stringifyOptionValue(value: unknown): string {
+  return JSON.stringify(value, (_key, nestedValue: unknown) => {
+    if (nestedValue !== null && typeof nestedValue === 'object' && !Array.isArray(nestedValue)) {
+      return Object.fromEntries(
+        Object.entries(nestedValue as Record<string, unknown>).sort(([a], [b]) =>
+          a.localeCompare(b),
+        ),
+      );
+    }
+    return nestedValue;
+  });
+}
+
+/** @internal */
+export function describeOptionObject(value: object): string {
+  const name = optionObjectName(value);
+  const describe = (value as Partial<DescribesOptions>).describeOptions;
+  if (typeof describe !== 'function') {
+    return name;
+  }
+
+  let options: Readonly<Record<string, unknown>>;
+  try {
+    options = describe.call(value);
+  } catch (error) {
+    log().debug({ error, className: name }, 'describeOptions() failed');
+    return name;
+  }
+
+  const parts: string[] = [];
+  for (const [key, optionValue] of Object.entries(options)) {
+    if (optionValue === null || optionValue === undefined) continue;
+    const serialized = serializeOptionValue(optionValue);
+    const rendered =
+      typeof serialized === 'string' ||
+      typeof serialized === 'boolean' ||
+      typeof serialized === 'number'
+        ? String(serialized)
+        : stringifyOptionValue(serialized);
+    parts.push(`${key}=${rendered}`);
+  }
+  return `${name}(${parts.join(', ')})`;
+}
+
+function isPlainObject(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** @internal */
+export function serializeOptionValue(value: unknown): unknown {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    typeof value === 'number'
+  ) {
+    return value;
+  }
+  if (value === undefined) return null;
+  if (value instanceof Map) {
+    return Object.fromEntries(
+      [...value.entries()]
+        .filter(([key]) => !SESSION_OPTION_OMITTED_KEYS.has(String(key)))
+        .map(([key, nestedValue]) => [
+          SESSION_OPTION_KEY_ALIASES[String(key)] ?? String(key),
+          serializeOptionValue(nestedValue),
+        ]),
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.map(serializeOptionValue);
+  }
+  if (value instanceof Set) {
+    return [...value].sort((a, b) => String(a).localeCompare(String(b))).map(serializeOptionValue);
+  }
+  if (typeof value === 'object' && isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !SESSION_OPTION_OMITTED_KEYS.has(key))
+        .map(([key, nestedValue]) => [
+          SESSION_OPTION_KEY_ALIASES[key] ?? key,
+          serializeOptionValue(nestedValue),
+        ]),
+    );
+  }
+  if (typeof value === 'object' && Symbol.iterator in value) {
+    return [...(value as Iterable<unknown>)].map(serializeOptionValue);
+  }
+  if (typeof value === 'object' || typeof value === 'function') {
+    return describeOptionObject(value);
+  }
+  return String(value);
+}
+
+function serializeSessionOptions(options: SessionReport['options']): Record<string, unknown> {
+  return serializeOptionValue(options) as Record<string, unknown>;
 }
 
 /**

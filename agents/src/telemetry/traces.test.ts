@@ -17,19 +17,200 @@ import fs from 'node:fs/promises';
 import type { ClientRequest } from 'node:http';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TurnDetector } from '../inference/eot/detector.js';
 import { ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { version } from '../version.js';
+import { AgentSession } from '../voice/agent_session.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { PIIFilteringSpanProcessor } from './pii.js';
 import {
   type CloudSpanProcessorOptions,
+  describeOptionObject,
+  serializeOptionValue,
   setTracerProvider,
   setupCloudTracer,
   tracer,
   uploadSessionReport,
 } from './traces.js';
+
+function assertReportSafe(value: unknown): void {
+  expect(() => JSON.stringify(value)).not.toThrow();
+  if (value === null) {
+    return;
+  } else if (Array.isArray(value)) {
+    value.forEach(assertReportSafe);
+  } else if (value !== null && typeof value === 'object') {
+    Object.values(value).forEach(assertReportSafe);
+  } else {
+    expect(['string', 'boolean', 'number']).toContain(typeof value);
+  }
+}
+
+describe('session options report', () => {
+  const turnDetection = (session: AgentSession): unknown => {
+    const serialized = serializeOptionValue(session.sessionOptions) as Record<string, unknown>;
+    return (serialized.turnHandling as Record<string, unknown>).turnDetection;
+  };
+
+  it('describes the default turn detector instead of serializing its object', () => {
+    const session = new AgentSession();
+    const serialized = serializeOptionValue(session.sessionOptions);
+    const detector = turnDetection(session);
+
+    expect(detector).toBeTypeOf('string');
+    expect(detector).toMatch(/^TurnDetector\(model=turn-detector-/);
+    expect(detector).toContain('provider=livekit');
+    expect(detector).toContain('sampleRate=16000');
+    expect(detector).toContain('localFallback=true');
+    expect(detector).not.toContain('thresholdOverrides');
+    expect(detector).not.toContain('[object Object]');
+    assertReportSafe(serialized);
+  });
+
+  it('includes turn detector threshold overrides', () => {
+    const detector = new TurnDetector({
+      version: 'v1-mini',
+      unlikelyThreshold: 0.2,
+      backchannelThreshold: { en: 0.7, fr: 0.6 },
+    });
+    const description = describeOptionObject(detector);
+
+    expect(description).toContain('thresholdOverrides=0.2');
+    expect(description).toContain('backchannelThresholdOverrides={"en":0.7,"fr":0.6}');
+  });
+
+  it('does not leak turn detector credentials or endpoints', () => {
+    const detector = new TurnDetector({
+      version: 'v1',
+      baseUrl: 'https://inference.example.com',
+      apiKey: 'APIsecretkey123',
+      apiSecret: 'verysecretvalue',
+    });
+    const description = describeOptionObject(detector);
+
+    expect(description).not.toContain('APIsecretkey123');
+    expect(description).not.toContain('verysecretvalue');
+    expect(description).not.toContain('inference.example.com');
+  });
+
+  it('passes turn detection mode strings through', () => {
+    expect(turnDetection(new AgentSession({ turnHandling: { turnDetection: 'vad' } }))).toBe('vad');
+    expect(turnDetection(new AgentSession({ turnHandling: { turnDetection: 'manual' } }))).toBe(
+      'manual',
+    );
+  });
+
+  it('renders objects that implement describeOptions with their options', () => {
+    class ThirdPartyDetector {
+      describeOptions(): Record<string, unknown> {
+        return { model: 'eou-v9', provider: 'acme', thresholds: { en: 0.7 } };
+      }
+    }
+
+    expect(describeOptionObject(new ThirdPartyDetector())).toBe(
+      'ThirdPartyDetector(model=eou-v9, provider=acme, thresholds={"en":0.7})',
+    );
+  });
+
+  it('renders objects without describeOptions as their class name', () => {
+    class Opaque {
+      model = 'm';
+      provider = 'acme';
+    }
+
+    expect(describeOptionObject(new Opaque())).toBe('Opaque');
+  });
+
+  it('skips null and undefined described options', () => {
+    class Sparse {
+      describeOptions(): Record<string, unknown> {
+        return { model: 'm', provider: null, label: undefined };
+      }
+    }
+
+    expect(describeOptionObject(new Sparse())).toBe('Sparse(model=m)');
+  });
+
+  it('falls back to the class name when describeOptions throws', () => {
+    class Broken {
+      describeOptions(): Record<string, unknown> {
+        throw new Error('not ready');
+      }
+    }
+
+    expect(describeOptionObject(new Broken())).toBe('Broken');
+  });
+
+  it('keeps elements from custom iterables and sets', () => {
+    class Transforms implements Iterable<string> {
+      constructor(private readonly items: string[]) {}
+
+      *[Symbol.iterator](): Iterator<string> {
+        yield* this.items;
+      }
+    }
+    class Detector {
+      describeOptions(): Record<string, unknown> {
+        return { model: 'm' };
+      }
+    }
+
+    const output = serializeOptionValue({
+      ttsTextTransforms: new Transforms(['filter_markdown', 'filter_emoji']),
+      set: new Set([2, 1]),
+    });
+    expect(output).toEqual({
+      ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
+      set: [1, 2],
+    });
+    expect(serializeOptionValue(new Transforms(['a']))).toEqual(['a']);
+    expect(serializeOptionValue([new Detector()])).toEqual(['Detector(model=m)']);
+    assertReportSafe(output);
+  });
+
+  it('omits customer-authored prompt text recursively', () => {
+    const session = new AgentSession({
+      keytermsOptions: {
+        keyterms: ['Acme'],
+        keytermDetection: {
+          enabled: true,
+          instructions: 'Extract product names for Acme customer Jane Doe',
+        },
+      },
+    });
+    const serialized = serializeOptionValue(session.sessionOptions) as Record<string, unknown>;
+    const keytermsOptions = serialized.keytermsOptions as Record<string, unknown>;
+    const detection = keytermsOptions.keytermDetection as Record<string, unknown>;
+
+    expect(detection).not.toHaveProperty('instructions');
+    expect(detection.enabled).toBe(true);
+    expect(keytermsOptions['lk.pii.keyterms']).toEqual(['Acme']);
+    expect(JSON.stringify(serialized)).not.toContain('Jane Doe');
+    expect(serializeOptionValue({ a: { instructions: 'x', keep: 1 } })).toEqual({
+      a: { keep: 1 },
+    });
+  });
+
+  it('serializes nested containers and key aliases', () => {
+    class Detector {
+      describeOptions(): Record<string, unknown> {
+        return { model: 'm' };
+      }
+    }
+    const output = serializeOptionValue({
+      keyterms: ['LiveKit', 'Acme'],
+      nested: { detector: new Detector(), flags: [true, 1, 2.5, null] },
+    });
+
+    expect(output).toEqual({
+      'lk.pii.keyterms': ['LiveKit', 'Acme'],
+      nested: { detector: 'Detector(model=m)', flags: [true, 1, 2.5, null] },
+    });
+    assertReportSafe(output);
+  });
+});
 
 describe('setupCloudTracer default provider resource', () => {
   let provider: NodeTracerProvider | undefined;

@@ -736,6 +736,8 @@ export class AgentSession<
       configuredTurnDetection === null
         ? undefined
         : configuredTurnDetection ?? new InferenceTurnDetector();
+    resolvedSessionOptions.turnHandling.turnDetection =
+      configuredTurnDetection === null ? null : this.turnDetection;
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
     this._toolCtx = toToolContext(tools) ?? ToolContext.empty<UserData>();
