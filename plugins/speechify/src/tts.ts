@@ -131,50 +131,72 @@ const timedStringsFromMarks = (
   return out;
 };
 
-// Emits audio frames to the TTS output queue with a buffer-one deferral, so
-// `final: true` lands on exactly the last frame of a segment. Word timestamps
-// are attached to the next frame flushed after they arrive; their absolute times
-// mean the carrying frame does not matter semantically. One emitter is reused
-// across segments — `endSegment()` flushes the buffered last frame as the
-// segment's final frame and clears state, so the next segment starts clean.
+// Buffers a segment's audio frames and commits them to the TTS output queue
+// atomically, only when the segment finishes successfully (`endSegment()`).
+//
+// Finding 1 (partial-retry double audio): the base retry loop re-invokes
+// `run()` without clearing `this.queue`, and the retry-replay re-synthesizes any
+// unfinalized segment from the start. If frames were pushed to the queue as they
+// arrived, a mid-segment failure would leave that segment's prefix already
+// spoken, and the retry would replay it. By holding every frame in `#buffer`
+// until the segment completes, a mid-segment throw commits nothing, so the
+// replay is clean. The tradeoff is latency: a segment's audio is withheld until
+// the whole segment is synthesized (so the base sees the first frame — and thus
+// TTFB — at segment-complete time rather than at first-byte time). In a
+// pipelined agent this is masked by playback of the previous segment, and
+// segments are sentence-sized.
+//
+// Word timestamps are attached to the frame flushed after they arrive; their
+// absolute times mean the carrying frame does not matter semantically. One
+// emitter is reused across a run's segments — each `endSegment()` marks the
+// buffered last frame as that segment's single `final: true` frame, commits the
+// buffer, and clears state, so the next segment starts clean.
 class FrameEmitter {
   #queue: tts.SynthesizeStream['queue'] | tts.ChunkedStream['queue'];
-  #lastFrame?: AudioFrame;
-  #requestId?: string;
-  #segmentId?: string;
+  #buffer: tts.SynthesizedAudio[] = [];
   #pending: TimedString[] = [];
 
   constructor(queue: tts.SynthesizeStream['queue'] | tts.ChunkedStream['queue']) {
     this.#queue = queue;
   }
 
-  #flush(final: boolean) {
-    if (!this.#lastFrame || !this.#requestId || !this.#segmentId) return;
-    this.#queue.put({
-      requestId: this.#requestId,
-      segmentId: this.#segmentId,
-      frame: this.#lastFrame,
-      final,
+  push(frame: AudioFrame, requestId: string, segmentId: string) {
+    this.#buffer.push({
+      requestId,
+      segmentId,
+      frame,
+      final: false,
       timedTranscripts: this.#pending.length > 0 ? this.#pending : undefined,
     });
-    this.#lastFrame = undefined;
     this.#pending = [];
-  }
-
-  push(frame: AudioFrame, requestId: string, segmentId: string) {
-    this.#flush(false);
-    this.#lastFrame = frame;
-    this.#requestId = requestId;
-    this.#segmentId = segmentId;
   }
 
   addTimed(timed: TimedString[]) {
     if (timed.length > 0) this.#pending.push(...timed);
   }
 
-  /** Flush the buffered frame as this segment's final frame. */
+  /**
+   * Commit this segment's buffered audio: mark the last frame `final`, attach any
+   * still-pending word timestamps to it, and flush the whole buffer to the queue
+   * at once. Called only after the segment synthesized successfully, so a
+   * mid-segment failure (which throws before this) emits nothing.
+   */
   endSegment() {
-    this.#flush(true);
+    const last = this.#buffer[this.#buffer.length - 1];
+    if (!last) {
+      // Segment produced no audio frames: nothing to commit, drop stray marks.
+      this.#pending = [];
+      return;
+    }
+    if (this.#pending.length > 0) {
+      last.timedTranscripts = [...(last.timedTranscripts ?? []), ...this.#pending];
+      this.#pending = [];
+    }
+    last.final = true;
+    for (const audio of this.#buffer) {
+      this.#queue.put(audio);
+    }
+    this.#buffer = [];
   }
 }
 
@@ -320,6 +342,9 @@ export class ChunkedStream extends tts.ChunkedStream {
       for (const frame of bstream.flush()) {
         emitter.push(frame, requestId, requestId);
       }
+      // Finding 1: commit the whole request's audio only after it completed. On a
+      // retryable failure the base re-runs `run()` with a fresh attempt queue; a
+      // partial request therefore commits nothing and the retry cannot double up.
       emitter.endSegment();
     } catch (e) {
       if (this.abortSignal.aborted) return;
@@ -354,6 +379,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   // word-timestamp offset resets to 0 at the segment start and advances by each
   // sentence's reported audio duration, so timestamps stay correct across
   // sentences within the segment while every segment is anchored to its own audio.
+  //
+  // The segment's audio is buffered in `emitter` and committed atomically once the
+  // whole segment has synthesized (Finding 1): if any sentence fails, this throws
+  // before `endSegment()`, so nothing was queued and the retry-replay is clean.
   async #synthesizeSegment(text: string, emitter: FrameEmitter): Promise<void> {
     const sentences = this.#tts.tokenizer
       .tokenize(text)
@@ -368,10 +397,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const segmentId = shortuuid();
     const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS);
     let offsetSeconds = 0;
-
-    this.markStarted();
+    // The instant text is first handed to the provider for this segment. The
+    // metrics anchor (markStarted) is deferred until the segment is fully
+    // buffered (see below), so we remember the true send time here to keep TTFB
+    // measured from when text was sent rather than from commit time.
+    let startedTime: { time: number; hrTime: bigint } | undefined;
 
     for (const chunk of chunks) {
+      if (!startedTime) {
+        startedTime = { time: performance.now() / 1000, hrTime: process.hrtime.bigint() };
+      }
       const stream = await this.#tts._openStream(chunk, this.#opts, {
         abortSignal: this.abortSignal,
         timeoutInSeconds: this.connOptions.timeoutMs / 1000,
@@ -401,8 +436,21 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     for (const frame of bstream.flush()) {
       emitter.push(frame, requestId, segmentId);
     }
-    // One final frame per segment: the base queues one metrics text per flush and
-    // expects exactly one final audio frame per segment.
+
+    // Finding 2: arm the per-segment metrics anchor now — after the whole segment
+    // has synthesized. `markStarted()` (base) takes effect only while the anchor
+    // is unset and the base clears it asynchronously when it consumes a segment's
+    // `final` frame. Calling it once at segment start (the old code) let a
+    // back-to-back segment's call be swallowed by the still-set prior anchor,
+    // which the prior segment's `final` then cleared — leaving this segment with
+    // no anchor and no TTFB/metrics. Deferring the call to here means a full
+    // provider round-trip has elapsed since the previous segment's frames were
+    // queued, so the base has already consumed that segment's `final` and reset
+    // the anchor; this segment's call is never swallowed. Passing the captured
+    // send time keeps TTFB honest (send -> audio-ready for this segment).
+    this.markStarted(startedTime);
+    // Finding 1: commit this segment's buffered audio atomically. Reached only on
+    // success, so a mid-segment failure emits nothing and the retry replays clean.
     emitter.endSegment();
   }
 

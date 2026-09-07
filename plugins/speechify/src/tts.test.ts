@@ -154,6 +154,34 @@ describe('Speechify TTS (mocked /v1/audio/stream/with-timestamps SSE)', () => {
     await speechify.close();
   });
 
+  it('reports metrics for each flushed segment (back-to-back)', async () => {
+    const started = await startStreamServer();
+    server = started.server;
+
+    const speechify = new TTS({ apiKey: 'test-key', baseUrl: started.baseUrl });
+    const metrics: Array<{ ttfbMs: number }> = [];
+    speechify.on('metrics_collected', (m) => metrics.push(m));
+
+    const stream = speechify.stream();
+    stream.pushText('Hello world.');
+    stream.flush();
+    stream.pushText('Goodbye world.');
+    stream.endInput();
+
+    await collect(stream);
+
+    // One metrics event per flushed segment — neither swallowed by a shared,
+    // async-reset started-time anchor.
+    expect(metrics).toHaveLength(2);
+    // A non-negative ttfb proves the per-segment anchor was set.
+    for (const m of metrics) {
+      expect(m.ttfbMs).toBeGreaterThanOrEqual(0);
+    }
+
+    stream.close();
+    await speechify.close();
+  });
+
   it('sends Speechify-Caller attribution headers', async () => {
     const started = await startStreamServer();
     server = started.server;
