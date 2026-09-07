@@ -34,6 +34,7 @@ export {
   tracer,
   uploadSessionReport,
   type CloudSpanProcessorOptions,
+  type DescribesOptions,
   type SetTracerProviderOptions,
   type SpanProcessorLike,
   type StartSpanOptions,

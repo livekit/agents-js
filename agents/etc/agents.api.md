@@ -3167,6 +3167,11 @@ type DelayOptions_2 = {
 };
 export { DelayOptions_2 as DelayOptions }
 
+// @public
+interface DescribesOptions {
+    describeOptions(): Readonly<Record<string, unknown>>;
+}
+
 // Warning: (ae-missing-release-tag) "dropBracketCues" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "convertMarkup"
 //
@@ -6845,6 +6850,8 @@ export type SessionUsageUpdatedEvent = {
 function setAgentAttributes(span: Span, params: {
     operation: string;
     agentName: string;
+    model?: string;
+    provider?: string;
 }): void;
 
 // Warning: (ae-missing-release-tag) "setCaptureContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -6897,6 +6904,7 @@ function setToolAttributes(span: Span, params: {
     toolType?: string;
     description?: string;
     args?: string;
+    agentName?: string;
 }): void;
 
 // Warning: (ae-missing-release-tag) "setToolResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -7950,6 +7958,7 @@ declare namespace telemetry {
         tracer,
         uploadSessionReport,
         CloudSpanProcessorOptions,
+        DescribesOptions,
         SetTracerProviderOptions,
         SpanProcessorLike,
         StartSpanOptions,
@@ -8832,6 +8841,7 @@ class TurnDetector extends BaseStreamingTurnDetector {
     constructor(opts?: TurnDetectorOptions);
     // (undocumented)
     protected _cloudOpts: CloudTransportOptions | undefined;
+    describeOptions(): Readonly<Record<string, unknown>>;
     // (undocumented)
     protected _executor: InferenceExecutor | undefined;
     get model(): TurnDetectorModel;
@@ -9687,10 +9697,10 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/stt/stt.ts:361:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:994:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1647:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1647:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1647:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:998:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1651:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1651:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1651:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
