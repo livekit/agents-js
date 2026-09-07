@@ -132,7 +132,7 @@ describe('Speechify TTS (mocked /v1/audio/stream/with-timestamps SSE)', () => {
     await speechify.close();
   });
 
-  it('ends each flushed segment with its own final frame and segment id', async () => {
+  it('treats the whole stream as one generation: a single final frame across flushes', async () => {
     const started = await startStreamServer();
     server = started.server;
 
@@ -144,17 +144,15 @@ describe('Speechify TTS (mocked /v1/audio/stream/with-timestamps SSE)', () => {
     stream.endInput();
 
     const events = await collect(stream);
-    const finals = events.filter((e) => e.final);
-    // One final frame per flushed segment.
-    expect(finals).toHaveLength(2);
-    // Each segment carries a distinct segment id.
-    expect(new Set(finals.map((e) => e.segmentId)).size).toBe(2);
+    expect(events.length).toBeGreaterThan(0);
+    // Incremental single-generation streaming: exactly one final frame for the run.
+    expect(events.filter((e) => e.final)).toHaveLength(1);
 
     stream.close();
     await speechify.close();
   });
 
-  it('reports metrics for each flushed segment (back-to-back)', async () => {
+  it('reports metrics for the run', async () => {
     const started = await startStreamServer();
     server = started.server;
 
@@ -164,16 +162,12 @@ describe('Speechify TTS (mocked /v1/audio/stream/with-timestamps SSE)', () => {
 
     const stream = speechify.stream();
     stream.pushText('Hello world.');
-    stream.flush();
-    stream.pushText('Goodbye world.');
     stream.endInput();
 
     await collect(stream);
 
-    // One metrics event per flushed segment — neither swallowed by a shared,
-    // async-reset started-time anchor.
-    expect(metrics).toHaveLength(2);
-    // A non-negative ttfb proves the per-segment anchor was set.
+    expect(metrics.length).toBeGreaterThanOrEqual(1);
+    // A non-negative ttfb proves the started-time anchor was set for the run.
     for (const m of metrics) {
       expect(m.ttfbMs).toBeGreaterThanOrEqual(0);
     }

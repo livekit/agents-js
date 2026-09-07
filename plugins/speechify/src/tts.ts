@@ -99,8 +99,8 @@ const toError = (e: unknown): Error => {
   return new APIConnectionError({ message: 'Speechify connection error' });
 };
 
-// A provider `speech.error` event, sanitized: a generic, retryable status error
-// that never carries the provider's raw error text.
+// A provider `speech.error` event, sanitized: a generic status error that never
+// carries the provider's raw error text.
 const speechStreamError = (): APIStatusError =>
   new APIStatusError({
     message: 'Speechify stream returned an error',
@@ -108,8 +108,8 @@ const speechStreamError = (): APIStatusError =>
   });
 
 // Speech marks carry absolute millisecond times from the start of synthesis;
-// TimedString wants seconds, offset by the audio already emitted this segment.
-// A trailing space is appended to every word (matching Cartesia) so the
+// TimedString wants seconds, offset by the audio already emitted this run. A
+// trailing space is appended to every word (matching Cartesia) so the
 // aligned-transcript synchronizer does not concatenate adjacent words into
 // "helloworld".
 const timedStringsFromMarks = (
@@ -131,74 +131,73 @@ const timedStringsFromMarks = (
   return out;
 };
 
-// Buffers a segment's audio frames and commits them to the TTS output queue
-// atomically, only when the segment finishes successfully (`endSegment()`).
-//
-// Finding 1 (partial-retry double audio): the base retry loop re-invokes
-// `run()` without clearing `this.queue`, and the retry-replay re-synthesizes any
-// unfinalized segment from the start. If frames were pushed to the queue as they
-// arrived, a mid-segment failure would leave that segment's prefix already
-// spoken, and the retry would replay it. By holding every frame in `#buffer`
-// until the segment completes, a mid-segment throw commits nothing, so the
-// replay is clean. The tradeoff is latency: a segment's audio is withheld until
-// the whole segment is synthesized (so the base sees the first frame — and thus
-// TTFB — at segment-complete time rather than at first-byte time). In a
-// pipelined agent this is masked by playback of the previous segment, and
-// segments are sentence-sized.
-//
-// Word timestamps are attached to the frame flushed after they arrive; their
-// absolute times mean the carrying frame does not matter semantically. One
-// emitter is reused across a run's segments — each `endSegment()` marks the
-// buffered last frame as that segment's single `final: true` frame, commits the
-// buffer, and clears state, so the next segment starts clean.
+// Streams audio frames to the TTS output queue incrementally, with a buffer-one
+// deferral so `final: true` lands on exactly the last frame. Frames are emitted
+// as they arrive (not withheld) so a long response starts playing immediately —
+// mirroring the incremental emission of the cartesia/elevenlabs plugins. Word
+// timestamps ride the next frame flushed after they arrive; their absolute times
+// mean the carrying frame does not matter semantically. `emitted` records whether
+// any frame has reached the consumer, which the streams use to decide that a
+// failure after playback has begun must end the turn rather than retry (a retried
+// request re-generates the audio, which would double what was already spoken).
 class FrameEmitter {
   #queue: tts.SynthesizeStream['queue'] | tts.ChunkedStream['queue'];
-  #buffer: tts.SynthesizedAudio[] = [];
+  #lastFrame?: AudioFrame;
+  #requestId?: string;
+  #segmentId?: string;
   #pending: TimedString[] = [];
+  #emitted = false;
 
   constructor(queue: tts.SynthesizeStream['queue'] | tts.ChunkedStream['queue']) {
     this.#queue = queue;
   }
 
-  push(frame: AudioFrame, requestId: string, segmentId: string) {
-    this.#buffer.push({
-      requestId,
-      segmentId,
-      frame,
-      final: false,
+  #flush(final: boolean) {
+    if (!this.#lastFrame || !this.#requestId || !this.#segmentId) return;
+    this.#queue.put({
+      requestId: this.#requestId,
+      segmentId: this.#segmentId,
+      frame: this.#lastFrame,
+      final,
       timedTranscripts: this.#pending.length > 0 ? this.#pending : undefined,
     });
+    this.#emitted = true;
+    this.#lastFrame = undefined;
     this.#pending = [];
+  }
+
+  push(frame: AudioFrame, requestId: string, segmentId: string) {
+    this.#flush(false);
+    this.#lastFrame = frame;
+    this.#requestId = requestId;
+    this.#segmentId = segmentId;
   }
 
   addTimed(timed: TimedString[]) {
     if (timed.length > 0) this.#pending.push(...timed);
   }
 
-  /**
-   * Commit this segment's buffered audio: mark the last frame `final`, attach any
-   * still-pending word timestamps to it, and flush the whole buffer to the queue
-   * at once. Called only after the segment synthesized successfully, so a
-   * mid-segment failure (which throws before this) emits nothing.
-   */
-  endSegment() {
-    const last = this.#buffer[this.#buffer.length - 1];
-    if (!last) {
-      // Segment produced no audio frames: nothing to commit, drop stray marks.
-      this.#pending = [];
-      return;
-    }
-    if (this.#pending.length > 0) {
-      last.timedTranscripts = [...(last.timedTranscripts ?? []), ...this.#pending];
-      this.#pending = [];
-    }
-    last.final = true;
-    for (const audio of this.#buffer) {
-      this.#queue.put(audio);
-    }
-    this.#buffer = [];
+  /** Flush the buffered frame as the run's final frame. */
+  end() {
+    this.#flush(true);
+  }
+
+  get emitted(): boolean {
+    return this.#emitted;
   }
 }
+
+// Once audio has reached the consumer, a retry would re-generate and double the
+// spoken audio, so a failure after playback has begun ends the turn instead of
+// retrying. Errors before the first frame stay retryable (a retried request that
+// never emitted is safe). The message is already sanitized by `toError`.
+const finalizeError = (e: unknown, emitted: boolean): Error => {
+  const err = toError(e);
+  if (emitted && err instanceof APIError) {
+    return new APIConnectionError({ message: err.message, options: { retryable: false } });
+  }
+  return err;
+};
 
 export class TTS extends tts.TTS {
   label = 'speechify.TTS';
@@ -215,10 +214,9 @@ export class TTS extends tts.TTS {
    *
    * Synthesis uses the Speechify `/v1/audio/stream/with-timestamps` endpoint
    * (SSE), which streams raw PCM (24 kHz mono) together with word-level speech
-   * marks as the audio is generated. `stream()` groups input into flush-delimited
-   * segments, chunks each segment into sentences, and streams one request per
-   * sentence; every segment ends with its own final audio frame carrying a
-   * distinct segment id, and aligned word timestamps are emitted as they arrive.
+   * marks as the audio is generated. `stream()` chunks input into sentences and
+   * streams one request per sentence, emitting audio and aligned word timestamps
+   * incrementally as they arrive.
    *
    * Defaults to the `dominic_32` voice and the `simba-3.2` model. The voice must
    * support the chosen model; see the `/v1/voices` endpoint.
@@ -342,13 +340,10 @@ export class ChunkedStream extends tts.ChunkedStream {
       for (const frame of bstream.flush()) {
         emitter.push(frame, requestId, requestId);
       }
-      // Finding 1: commit the whole request's audio only after it completed. On a
-      // retryable failure the base re-runs `run()` with a fresh attempt queue; a
-      // partial request therefore commits nothing and the retry cannot double up.
-      emitter.endSegment();
+      emitter.end();
     } catch (e) {
       if (this.abortSignal.aborted) return;
-      throw toError(e);
+      throw finalizeError(e, emitter.emitted);
     }
   }
 }
@@ -357,16 +352,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   label = 'speechify.SynthesizeStream';
   #tts: TTS;
   #opts: TTSOptions;
-  // Retry safety: completed flush-delimited segments, buffered on the instance
-  // so they survive a re-invocation of `run()`. The base retry loop re-calls
-  // `run()` after a retryable APIError but does not re-provide input, and
-  // `this.input` has already been drained on the first attempt; without this
-  // buffer the retry would synthesize nothing and report success with silence.
-  #segments: string[] = [];
-  // Number of segments already fully emitted (their audio and final frame reached
-  // the consumer). A retry resumes at this index so already-spoken segments are
-  // not re-synthesized, and the run picks up at the segment that actually failed.
-  #finalized = 0;
 
   constructor(ttsInstance: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
     super(ttsInstance, connOptions);
@@ -374,132 +359,80 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     this.#opts = opts;
   }
 
-  // Synthesize one flush-delimited segment: one request per sentence, a distinct
-  // segment id, and a single final frame at the segment boundary. The
-  // word-timestamp offset resets to 0 at the segment start and advances by each
-  // sentence's reported audio duration, so timestamps stay correct across
-  // sentences within the segment while every segment is anchored to its own audio.
-  //
-  // The segment's audio is buffered in `emitter` and committed atomically once the
-  // whole segment has synthesized (Finding 1): if any sentence fails, this throws
-  // before `endSegment()`, so nothing was queued and the retry-replay is clean.
-  async #synthesizeSegment(text: string, emitter: FrameEmitter): Promise<void> {
-    const sentences = this.#tts.tokenizer
-      .tokenize(text)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    // Fall back to the whole segment when the tokenizer yields nothing (e.g. text
-    // with no sentence-final punctuation) so short input still synthesizes.
-    const chunks = sentences.length > 0 ? sentences : [text.trim()].filter((s) => s.length > 0);
-    if (chunks.length === 0) return;
-
+  protected async run(): Promise<void> {
     const requestId = shortuuid();
-    const segmentId = shortuuid();
     const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS);
+    const emitter = new FrameEmitter(this.queue);
+    const sentenceStream = this.#tts.tokenizer.stream();
+    // Cumulative audio duration, used as the word-timestamp offset for the next
+    // sentence (each request reports marks from 0). Advanced by each sentence's
+    // reported audio duration.
     let offsetSeconds = 0;
-    // The instant text is first handed to the provider for this segment. The
-    // metrics anchor (markStarted) is deferred until the segment is fully
-    // buffered (see below), so we remember the true send time here to keep TTFB
-    // measured from when text was sent rather than from commit time.
-    let startedTime: { time: number; hrTime: bigint } | undefined;
 
-    for (const chunk of chunks) {
-      if (!startedTime) {
-        startedTime = { time: performance.now() / 1000, hrTime: process.hrtime.bigint() };
+    // Feed the sentence tokenizer from live input, flushing it on each caller
+    // flush so buffered text is synthesized promptly. Mirrors cartesia: input is
+    // pumped concurrently with synthesis so audio streams out as sentences land.
+    const inputTask = async () => {
+      for await (const data of this.input) {
+        if (data === SynthesizeStream.FLUSH_SENTINEL) {
+          sentenceStream.flush();
+        } else {
+          sentenceStream.pushText(data);
+        }
       }
-      const stream = await this.#tts._openStream(chunk, this.#opts, {
-        abortSignal: this.abortSignal,
-        timeoutInSeconds: this.connOptions.timeoutMs / 1000,
-      });
+      sentenceStream.endInput();
+    };
 
-      let durationMs = 0;
-      for await (const event of stream) {
+    // Synthesize each sentence as it emerges and stream its audio incrementally.
+    const synthesizeTask = async () => {
+      for await (const ev of sentenceStream) {
         if (this.abortSignal.aborted) return;
-        if (event.type === 'speech.error') {
-          throw speechStreamError();
-        }
-        if (event.type === 'speech.done') {
-          durationMs = event.audio_duration_ms ?? 0;
-          continue;
-        }
-        emitter.addTimed(timedStringsFromMarks(event.speech_marks, offsetSeconds));
-        if (event.audio) {
-          for (const frame of bstream.write(Buffer.from(event.audio, 'base64'))) {
-            emitter.push(frame, requestId, segmentId);
+        const text = ev.token.trim();
+        if (!text) continue;
+
+        // Anchor TTFB per sentence send; the base resets the anchor after it
+        // emits each sentence's metrics.
+        this.markStarted();
+        const stream = await this.#tts._openStream(text, this.#opts, {
+          abortSignal: this.abortSignal,
+          timeoutInSeconds: this.connOptions.timeoutMs / 1000,
+        });
+
+        let durationMs = 0;
+        for await (const event of stream) {
+          if (this.abortSignal.aborted) return;
+          if (event.type === 'speech.error') {
+            throw speechStreamError();
+          }
+          if (event.type === 'speech.done') {
+            durationMs = event.audio_duration_ms ?? 0;
+            continue;
+          }
+          emitter.addTimed(timedStringsFromMarks(event.speech_marks, offsetSeconds));
+          if (event.audio) {
+            for (const frame of bstream.write(Buffer.from(event.audio, 'base64'))) {
+              emitter.push(frame, requestId, requestId);
+            }
           }
         }
+
+        offsetSeconds += durationMs / 1000;
       }
 
-      offsetSeconds += durationMs / 1000;
-    }
-
-    for (const frame of bstream.flush()) {
-      emitter.push(frame, requestId, segmentId);
-    }
-
-    // Finding 2: arm the per-segment metrics anchor now — after the whole segment
-    // has synthesized. `markStarted()` (base) takes effect only while the anchor
-    // is unset and the base clears it asynchronously when it consumes a segment's
-    // `final` frame. Calling it once at segment start (the old code) let a
-    // back-to-back segment's call be swallowed by the still-set prior anchor,
-    // which the prior segment's `final` then cleared — leaving this segment with
-    // no anchor and no TTFB/metrics. Deferring the call to here means a full
-    // provider round-trip has elapsed since the previous segment's frames were
-    // queued, so the base has already consumed that segment's `final` and reset
-    // the anchor; this segment's call is never swallowed. Passing the captured
-    // send time keeps TTFB honest (send -> audio-ready for this segment).
-    this.markStarted(startedTime);
-    // Finding 1: commit this segment's buffered audio atomically. Reached only on
-    // success, so a mid-segment failure emits nothing and the retry replays clean.
-    emitter.endSegment();
-  }
-
-  protected async run(): Promise<void> {
-    const emitter = new FrameEmitter(this.queue);
+      for (const frame of bstream.flush()) {
+        emitter.push(frame, requestId, requestId);
+      }
+      emitter.end();
+    };
 
     try {
-      // 1) Retry replay. On the first attempt #finalized and #segments are empty,
-      //    so this is a no-op. On a retry, already-finalized segments are skipped
-      //    and we re-synthesize buffered-but-unfinalized segments (the one that
-      //    failed), rather than emitting silence.
-      let index = this.#finalized;
-      while (index < this.#segments.length) {
-        await this.#synthesizeSegment(this.#segments[index]!, emitter);
-        this.#finalized = ++index;
-      }
-
-      // 2) Drain the remaining live input. Each segment is buffered before it is
-      //    synthesized (so a retryable failure can replay it), and synthesis is
-      //    awaited inside the loop so the loop never reads ahead — any unread
-      //    input therefore stays queued on `this.input` and resumes on a retry.
-      let current = '';
-      let hasText = false;
-      for await (const input of this.input) {
-        if (input === SynthesizeStream.FLUSH_SENTINEL) {
-          if (hasText) {
-            this.#segments.push(current);
-            await this.#synthesizeSegment(current, emitter);
-            this.#finalized = this.#segments.length;
-          }
-          current = '';
-          hasText = false;
-        } else {
-          current += input;
-          hasText = true;
-        }
-      }
-      if (hasText) {
-        this.#segments.push(current);
-        await this.#synthesizeSegment(current, emitter);
-        this.#finalized = this.#segments.length;
-      }
-
+      await Promise.all([inputTask(), synthesizeTask()]);
       if (!this.queue.closed) {
         this.queue.put(SynthesizeStream.END_OF_STREAM);
       }
     } catch (e) {
       if (this.abortSignal.aborted) return;
-      throw toError(e);
+      throw finalizeError(e, emitter.emitted);
     }
   }
 }
