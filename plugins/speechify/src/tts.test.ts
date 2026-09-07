@@ -1,14 +1,25 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { tts } from '@livekit/agents';
+import { APIError, tts } from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts as testTts } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { TTS } from './tts.js';
+
+// The base SynthesizeStream/ChunkedStream surface provider failures via the
+// `error` event and also reject their internal task; the latter arrives as an
+// unhandled rejection. Swallow the expected APIError ones (tests assert on the
+// `error` event), rethrow anything unexpected.
+const swallowExpectedRejection = (reason: unknown) => {
+  if (reason instanceof APIError) return;
+  throw reason;
+};
+beforeAll(() => void process.on('unhandledRejection', swallowExpectedRejection));
+afterAll(() => void process.off('unhandledRejection', swallowExpectedRejection));
 
 const hasSpeechifyConfig = Boolean(process.env.SPEECHIFY_API_KEY && process.env.OPENAI_API_KEY);
 
@@ -173,6 +184,39 @@ describe('Speechify TTS (mocked /v1/audio/stream/with-timestamps SSE)', () => {
     }
 
     stream.close();
+    await speechify.close();
+  });
+
+  it('errors on a truncated stream (clean EOF before speech.done)', async () => {
+    server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        // Audio chunk, then EOF WITHOUT the terminal speech.done event.
+        writeSse(res, 'speech.chunk', { audio: AUDIO_BYTES.toString('base64') });
+        res.end();
+      });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+
+    const speechify = new TTS({ apiKey: 'test-key', baseUrl: `http://127.0.0.1:${port}` });
+    // A truncated response must surface as an error, not play as a complete turn.
+    const errorEvent = once(speechify, 'error') as Promise<[{ error: Error }]>;
+    const drain = (async () => {
+      try {
+        await collect(speechify.synthesize('hi'));
+      } catch {
+        /* expected */
+      }
+    })();
+
+    const [{ error }] = await errorEvent;
+    expect(error.message).toContain('ended before completion');
+
+    await drain;
     await speechify.close();
   });
 

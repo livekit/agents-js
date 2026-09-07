@@ -107,6 +107,16 @@ const speechStreamError = (): APIStatusError =>
     options: { statusCode: -1 },
   });
 
+// The SSE stream ended (clean EOF) without its terminal `speech.done` event —
+// the response is truncated. Raised (retryable) rather than treated as success
+// so a partial render never plays as a complete turn. `finalizeError` downgrades
+// it to terminal if audio has already been emitted (a retry would double it).
+const prematureEndError = (): APIConnectionError =>
+  new APIConnectionError({
+    message: 'Speechify stream ended before completion',
+    options: { retryable: true },
+  });
+
 // Speech marks carry absolute millisecond times from the start of synthesis;
 // TimedString wants seconds, offset by the audio already emitted this run. A
 // trailing space is appended to every word (matching Cartesia) so the
@@ -323,12 +333,16 @@ export class ChunkedStream extends tts.ChunkedStream {
         timeoutInSeconds: this.#timeoutInSeconds,
       });
 
+      let completed = false;
       for await (const event of stream) {
         if (this.abortSignal.aborted) return;
         if (event.type === 'speech.error') {
           throw speechStreamError();
         }
-        if (event.type === 'speech.done') continue;
+        if (event.type === 'speech.done') {
+          completed = true;
+          continue;
+        }
         emitter.addTimed(timedStringsFromMarks(event.speech_marks, 0));
         if (event.audio) {
           for (const frame of bstream.write(Buffer.from(event.audio, 'base64'))) {
@@ -336,6 +350,8 @@ export class ChunkedStream extends tts.ChunkedStream {
           }
         }
       }
+      // Clean EOF without the terminal event means a truncated response.
+      if (!completed) throw prematureEndError();
 
       for (const frame of bstream.flush()) {
         emitter.push(frame, requestId, requestId);
@@ -399,6 +415,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         });
 
         let durationMs = 0;
+        let completed = false;
         for await (const event of stream) {
           if (this.abortSignal.aborted) return;
           if (event.type === 'speech.error') {
@@ -406,6 +423,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
           if (event.type === 'speech.done') {
             durationMs = event.audio_duration_ms ?? 0;
+            completed = true;
             continue;
           }
           emitter.addTimed(timedStringsFromMarks(event.speech_marks, offsetSeconds));
@@ -415,6 +433,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             }
           }
         }
+        // Clean EOF without the terminal event means a truncated sentence.
+        if (!completed) throw prematureEndError();
 
         offsetSeconds += durationMs / 1000;
       }
