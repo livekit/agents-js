@@ -29,19 +29,28 @@ import {
   type CloudSpanProcessorOptions,
   describeOptionObject,
   serializeOptionValue,
+  serializeSessionOptions,
   setTracerProvider,
   setupCloudTracer,
   tracer,
   uploadSessionReport,
 } from './traces.js';
 
+/**
+ * The session report ships `session.options` as a log attribute. The OTel exporter walks the
+ * enumerable properties of anything that is not a primitive, so an object left in the options
+ * (the turn detector, for one) used to reach the cloud as a dump of its internals. These tests
+ * pin the descriptive form the serializer produces instead.
+ */
 function assertReportSafe(value: unknown): void {
+  // everything left after serialization must be JSON primitives, arrays, or plain objects
   expect(() => JSON.stringify(value)).not.toThrow();
   if (value === null) {
     return;
   } else if (Array.isArray(value)) {
     value.forEach(assertReportSafe);
-  } else if (value !== null && typeof value === 'object') {
+  } else if (typeof value === 'object') {
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
     Object.values(value).forEach(assertReportSafe);
   } else {
     expect(['string', 'boolean', 'number']).toContain(typeof value);
@@ -50,13 +59,13 @@ function assertReportSafe(value: unknown): void {
 
 describe('session options report', () => {
   const turnDetection = (session: AgentSession): unknown => {
-    const serialized = serializeOptionValue(session.sessionOptions) as Record<string, unknown>;
+    const serialized = serializeSessionOptions(session.sessionOptions);
     return (serialized.turnHandling as Record<string, unknown>).turnDetection;
   };
 
   it('describes the default turn detector instead of serializing its object', () => {
     const session = new AgentSession();
-    const serialized = serializeOptionValue(session.sessionOptions);
+    const serialized = serializeSessionOptions(session.sessionOptions);
     const detector = turnDetection(session);
 
     expect(detector).toBeTypeOf('string');
@@ -64,8 +73,9 @@ describe('session options report', () => {
     expect(detector).toContain('provider=livekit');
     expect(detector).toContain('sampleRate=16000');
     expect(detector).toContain('localFallback=true');
+    // server-calibrated defaults in use: the override fields must be absent
     expect(detector).not.toContain('thresholdOverrides');
-    expect(detector).not.toContain('[object Object]');
+    expect(detector).not.toContain('undefined');
     assertReportSafe(serialized);
   });
 
@@ -93,6 +103,15 @@ describe('session options report', () => {
     expect(description).not.toContain('APIsecretkey123');
     expect(description).not.toContain('verysecretvalue');
     expect(description).not.toContain('inference.example.com');
+
+    // the same holds for the whole report when the user supplies the detector: the old
+    // serializer left the instance in place and the exporter dumped its private fields
+    const session = new AgentSession({ turnHandling: { turnDetection: detector } });
+    const report = JSON.stringify(serializeSessionOptions(session.sessionOptions));
+    expect(report).not.toContain('APIsecretkey123');
+    expect(report).not.toContain('verysecretvalue');
+    expect(report).not.toContain('inference.example.com');
+    expect(report).toContain('TurnDetector(model=turn-detector-v1,');
   });
 
   it('passes turn detection mode strings through', () => {
@@ -143,6 +162,20 @@ describe('session options report', () => {
     expect(describeOptionObject(new Broken())).toBe('Broken');
   });
 
+  it('omits prompt text and nested internals from described options', () => {
+    class Chatty {
+      describeOptions(): Record<string, unknown> {
+        return {
+          model: 'm',
+          instructions: 'Extract product names for Acme customer Jane Doe',
+          nested: { instructions: 'more prompt text', depth: 2 },
+        };
+      }
+    }
+
+    expect(describeOptionObject(new Chatty())).toBe('Chatty(model=m, nested={"depth":2})');
+  });
+
   it('keeps elements from custom iterables and sets', () => {
     class Transforms implements Iterable<string> {
       constructor(private readonly items: string[]) {}
@@ -159,11 +192,21 @@ describe('session options report', () => {
 
     const output = serializeOptionValue({
       ttsTextTransforms: new Transforms(['filter_markdown', 'filter_emoji']),
-      set: new Set([2, 1]),
+      set: new Set([2, 1, 'b', 'a']),
     });
     expect(output).toEqual({
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
-      set: [1, 2],
+      set: [1, 2, 'a', 'b'],
+    });
+    expect(
+      serializeOptionValue(
+        new Map([
+          ['instructions', 'x'],
+          ['keyterms', ['k']],
+        ]),
+      ),
+    ).toEqual({
+      'lk.pii.keyterms': ['k'],
     });
     expect(serializeOptionValue(new Transforms(['a']))).toEqual(['a']);
     expect(serializeOptionValue([new Detector()])).toEqual(['Detector(model=m)']);
@@ -180,7 +223,7 @@ describe('session options report', () => {
         },
       },
     });
-    const serialized = serializeOptionValue(session.sessionOptions) as Record<string, unknown>;
+    const serialized = serializeSessionOptions(session.sessionOptions);
     const keytermsOptions = serialized.keytermsOptions as Record<string, unknown>;
     const detection = keytermsOptions.keytermDetection as Record<string, unknown>;
 
@@ -209,6 +252,17 @@ describe('session options report', () => {
       nested: { detector: 'Detector(model=m)', flags: [true, 1, 2.5, null] },
     });
     assertReportSafe(output);
+  });
+
+  it('reports custom text transforms by class, not by source', () => {
+    // a `ttsTextTransforms` entry can be a function; its body is customer code
+    const session = new AgentSession({
+      ttsTextTransforms: ['filter_markdown', (text) => text],
+    });
+    const serialized = serializeSessionOptions(session.sessionOptions);
+
+    expect(serialized.ttsTextTransforms).toEqual(['filter_markdown', 'Function']);
+    assertReportSafe(serialized);
   });
 });
 

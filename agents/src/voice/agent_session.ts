@@ -736,6 +736,8 @@ export class AgentSession<
       configuredTurnDetection === null
         ? undefined
         : configuredTurnDetection ?? new InferenceTurnDetector();
+    // The session report serializes `sessionOptions`, so record the effective detector there
+    // (Python keeps the eager default in `AgentSessionOptions.turn_handling` the same way).
     resolvedSessionOptions.turnHandling.turnDetection =
       configuredTurnDetection === null ? null : this.turnDetection;
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;

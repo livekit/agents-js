@@ -68,11 +68,17 @@ export interface StartSpanOptions {
 }
 
 /**
- * An object that can safely describe its configuration in an uploaded session report.
+ * An object that can appear in `AgentSession` options (a turn detector, a model) and wants the
+ * session report to show its configuration.
+ *
+ * Return the options worth reporting, keyed by name; values can be primitives, plain objects or
+ * arrays of them. Leave secrets and endpoints out: the report is uploaded. Objects without this
+ * method are reported by class name alone.
+ *
  * @public
  */
 export interface DescribesOptions {
-  /** Return only options that are safe to include in telemetry. */
+  /** The options worth reporting, keyed by name. Never credentials or endpoints. */
   describeOptions(): Readonly<Record<string, unknown>>;
 }
 
@@ -596,18 +602,32 @@ const SESSION_OPTION_KEY_ALIASES: Record<string, string> = {
   keyterms: 'lk.pii.keyterms',
 };
 
-const SESSION_OPTION_OMITTED_KEYS = new Set(['instructions']);
+// Option keys never written to the report: prompt text authored by the customer
+// (`keytermsOptions.keytermDetection.instructions`) can embed anything about their business
+// or users, and the report has no use for it. Dropped at every depth, including the options an
+// object returns from `describeOptions()`.
+const SESSION_OPTION_OMITTED_KEYS: ReadonlySet<string> = new Set(['instructions']);
 
+type OptionPrimitive = string | boolean | number;
+
+function isOptionPrimitive(value: unknown): value is OptionPrimitive {
+  return typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number';
+}
+
+/** The JS analogue of Python's `module.Class`: the constructor name is the only stable,
+ * safe identity an object carries. */
 function optionObjectName(value: object): string {
   return value.constructor?.name || 'Object';
 }
 
+/** Deterministic rendering (sorted keys at every level), the equivalent of
+ * `json.dumps(..., sort_keys=True)`. Only ever called on already-serialized, JSON-safe values. */
 function stringifyOptionValue(value: unknown): string {
   return JSON.stringify(value, (_key, nestedValue: unknown) => {
     if (nestedValue !== null && typeof nestedValue === 'object' && !Array.isArray(nestedValue)) {
       return Object.fromEntries(
         Object.entries(nestedValue as Record<string, unknown>).sort(([a], [b]) =>
-          a.localeCompare(b),
+          a < b ? -1 : a > b ? 1 : 0,
         ),
       );
     }
@@ -615,7 +635,17 @@ function stringifyOptionValue(value: unknown): string {
   });
 }
 
-/** @internal */
+/**
+ * Render an object from the session options as `Class` or, when it implements
+ * {@link DescribesOptions}, `Class(k=v, ...)`.
+ *
+ * The OTel log exporter walks the enumerable properties of anything that is not a primitive,
+ * which for these objects would dump their internals (a turn detector's cloud credentials
+ * among them). The class alone is stable and safe; the object itself decides what else is
+ * worth showing.
+ *
+ * @internal
+ */
 export function describeOptionObject(value: object): string {
   const name = optionObjectName(value);
   const describe = (value as Partial<DescribesOptions>).describeOptions;
@@ -634,13 +664,10 @@ export function describeOptionObject(value: object): string {
   const parts: string[] = [];
   for (const [key, optionValue] of Object.entries(options)) {
     if (optionValue === null || optionValue === undefined) continue;
-    const serialized = serializeOptionValue(optionValue);
-    const rendered =
-      typeof serialized === 'string' ||
-      typeof serialized === 'boolean' ||
-      typeof serialized === 'number'
-        ? String(serialized)
-        : stringifyOptionValue(serialized);
+    if (SESSION_OPTION_OMITTED_KEYS.has(key)) continue;
+    const rendered = isOptionPrimitive(optionValue)
+      ? String(optionValue)
+      : stringifyOptionValue(serializeOptionValue(optionValue));
     parts.push(`${key}=${rendered}`);
   }
   return `${name}(${parts.join(', ')})`;
@@ -651,53 +678,66 @@ function isPlainObject(value: object): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-/** @internal */
+function serializeOptionEntries(entries: Iterable<[unknown, unknown]>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [rawKey, nestedValue] of entries) {
+    const key = String(rawKey);
+    if (SESSION_OPTION_OMITTED_KEYS.has(key)) continue;
+    out[SESSION_OPTION_KEY_ALIASES[key] ?? key] = serializeOptionValue(nestedValue);
+  }
+  return out;
+}
+
+/**
+ * Serialize one session option value into JSON-safe primitives and containers.
+ *
+ * Primitives pass through (`undefined` becomes `null`); plain objects and `Map`s recurse with
+ * the key aliases and omissions applied; arrays, `Set`s (sorted, for a deterministic report) and
+ * other iterables are serialized element-wise, since any iterable is a valid option value;
+ * anything else is reported by class via {@link describeOptionObject}.
+ *
+ * @internal
+ */
 export function serializeOptionValue(value: unknown): unknown {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'boolean' ||
-    typeof value === 'number'
-  ) {
+  if (value === null || isOptionPrimitive(value)) {
     return value;
   }
-  if (value === undefined) return null;
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value === 'function') {
+    return describeOptionObject(value);
+  }
+  if (typeof value !== 'object') {
+    // bigint, symbol
+    return String(value);
+  }
   if (value instanceof Map) {
-    return Object.fromEntries(
-      [...value.entries()]
-        .filter(([key]) => !SESSION_OPTION_OMITTED_KEYS.has(String(key)))
-        .map(([key, nestedValue]) => [
-          SESSION_OPTION_KEY_ALIASES[String(key)] ?? String(key),
-          serializeOptionValue(nestedValue),
-        ]),
-    );
+    return serializeOptionEntries(value.entries());
+  }
+  if (isPlainObject(value)) {
+    return serializeOptionEntries(Object.entries(value));
   }
   if (Array.isArray(value)) {
     return value.map(serializeOptionValue);
   }
   if (value instanceof Set) {
-    return [...value].sort((a, b) => String(a).localeCompare(String(b))).map(serializeOptionValue);
+    // the same order every time, whatever the insertion order (Python: sorted(value, key=str))
+    return [...value]
+      .map((item) => [String(item), item] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([, item]) => serializeOptionValue(item));
   }
-  if (typeof value === 'object' && isPlainObject(value)) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([key]) => !SESSION_OPTION_OMITTED_KEYS.has(key))
-        .map(([key, nestedValue]) => [
-          SESSION_OPTION_KEY_ALIASES[key] ?? key,
-          serializeOptionValue(nestedValue),
-        ]),
-    );
-  }
-  if (typeof value === 'object' && Symbol.iterator in value) {
+  if (Symbol.iterator in value) {
     return [...(value as Iterable<unknown>)].map(serializeOptionValue);
   }
-  if (typeof value === 'object' || typeof value === 'function') {
-    return describeOptionObject(value);
-  }
-  return String(value);
+  return describeOptionObject(value);
 }
 
-function serializeSessionOptions(options: SessionReport['options']): Record<string, unknown> {
+/** @internal */
+export function serializeSessionOptions(
+  options: SessionReport['options'],
+): Record<string, unknown> {
   return serializeOptionValue(options) as Record<string, unknown>;
 }
 
