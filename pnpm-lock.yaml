@@ -1418,6 +1418,37 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  plugins/speechify:
+    dependencies:
+      '@speechify/api':
+        specifier: ^4.0.1
+        version: 4.0.1
+      zod:
+        specifier: ^3.25.76 || ^4.1.8
+        version: 4.3.6
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.34
+      '@microsoft/api-extractor':
+        specifier: ^7.58.12
+        version: 7.58.12(@types/node@25.6.0)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.58.12(@types/node@25.6.0))(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   plugins/tavus:
     dependencies:
       livekit-server-sdk:
@@ -2819,6 +2850,10 @@ packages:
 
   '@rushstack/ts-command-line@5.3.12':
     resolution: {integrity: sha512-Vg2n24arSf7JvUNga2DMHYTbxnVq9L5OtVCp4Gfr8YC/kmL/bmdR8FQhGcpMzMYNY9Vdw3+TaimG11Sf+z1Tpw==}
+
+  '@speechify/api@4.0.1':
+    resolution: {integrity: sha512-OsfZbx4o47kIZ29OmntUj/9J2LYrlntRHfAwZ8uRLCw2gsu5zgQf46yasDgGe9fNgC5XI1+JfJwCweYVs5w+4w==}
+    engines: {node: '>=18.0.0'}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -6707,6 +6742,8 @@ snapshots:
       string-argv: 0.3.2
     transitivePeerDependencies:
       - '@types/node'
+
+  '@speechify/api@4.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
 

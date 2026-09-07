@@ -69,6 +69,7 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS           |
 | [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS           |
 | [@livekit/agents-plugin-rime](https://www.npmjs.com/package/@livekit/agents-plugin-rime)             | TTS           |
+| [@livekit/agents-plugin-speechify](https://www.npmjs.com/package/@livekit/agents-plugin-speechify)   | TTS           |
 | [@livekit/agents-plugin-inworld](https://www.npmjs.com/package/@livekit/agents-plugin-inworld)       | STT, TTS      |
 | [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD           |
 | [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU           |
