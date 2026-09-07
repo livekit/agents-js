@@ -1039,12 +1039,11 @@ export function performTextForwarding(
 }
 
 export interface _AudioOut {
-  audio: Array<AudioFrame>;
   firstFrameFut: Future<number>;
   /**
    * Timestamp (ms, `Date.now()`) when the first audio frame was forwarded to the
    * `AudioOutput`. Set by `forwardAudio` as soon as the first TTS frame is
-   * appended; remains `undefined` until then. Used together with the playback-started
+   * received; remains `undefined` until then. Used together with the playback-started
    * timestamp from `firstFrameFut` to derive the assistant's `playbackLatency`
    * metric.
    */
@@ -1124,7 +1123,6 @@ async function forwardAudio(
         break;
       }
 
-      out.audio.push(frame);
       if (out.startedForwardingAt === undefined) {
         out.startedForwardingAt = Date.now();
       }
@@ -1195,7 +1193,6 @@ export function performAudioForwarding(
   idleTimeout: number = DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS,
 ): [Task<void>, _AudioOut] {
   const out: _AudioOut = {
-    audio: [],
     firstFrameFut: new Future<number>(),
     _hasCapturedOwnFrame: false,
     capturedSegmentsBefore: audioOutput.capturedPlayoutSegments,
