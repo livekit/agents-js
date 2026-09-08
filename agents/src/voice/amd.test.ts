@@ -90,6 +90,7 @@ class StaticLLM extends LLM {
 
 class MockSession extends EventEmitter {
   llm?: LLM;
+  readonly _closingSignal = new AbortController().signal;
   pauseReplyAuthorization = vi.fn();
   resumeReplyAuthorization = vi.fn();
   interrupt = vi.fn(() => ({ await: Promise.resolve() }));
@@ -143,6 +144,33 @@ describe('AMD', () => {
       type: 'amd_prediction',
       category: AMDCategory.MACHINE_VM,
     });
+  });
+
+  it.each(['sync', 'async'])('delivers a verdict after a %s interruption failure', async (mode) => {
+    const session = new MockSession();
+    session.interrupt.mockImplementation(() => {
+      const error = new Error('interruption failed');
+      if (mode === 'sync') throw error;
+      return { await: Promise.reject(error) };
+    });
+    const amd = new AMD(asAgentSession(session), {
+      llm: new StaticLLM(JSON.stringify({ category: AMDCategory.MACHINE_VM })),
+      machineSilenceThresholdMs: 0,
+      maxEndpointingDelayMs: 0,
+      suppressCompatibilityWarning: true,
+    });
+    const onPrediction = vi.fn();
+    amd.on('amd_prediction', onPrediction);
+    const prediction = amd.execute();
+    await waitForListening(amd);
+
+    speechStart(amd);
+    pushTranscript(amd, 'Please leave a message after the tone');
+    speechEnd(amd);
+
+    await expect(prediction).resolves.toMatchObject({ category: AMDCategory.MACHINE_VM });
+    expect(session.interrupt).toHaveBeenCalledWith({ force: true });
+    expect(onPrediction).toHaveBeenCalledTimes(1);
   });
 
   it('onEndOfTurn signals skip-reply after a machine verdict', async () => {

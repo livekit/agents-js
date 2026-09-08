@@ -27,7 +27,6 @@ import {
 } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import type { EndOfTurnInfo } from './audio_recognition.js';
-import { AgentSessionEventTypes } from './events.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export enum AMDCategory {
@@ -324,6 +323,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private resolveRun: ((value: AMDPredictionEvent) => void) | undefined;
   private rejectRun: ((reason?: unknown) => void) | undefined;
   private span: Span | undefined;
+  private sessionClosingSignal: AbortSignal | undefined;
 
   constructor(
     private readonly session: AgentSession,
@@ -400,7 +400,6 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         this.resetState();
         this.active = true;
         this.span = span;
-        this.session.pauseReplyAuthorization();
 
         span.setAttribute(traceTypes.ATTR_AMD_INTERRUPT_ON_MACHINE, this.interruptOnMachine);
         span.setAttribute(traceTypes.ATTR_GEN_AI_OPERATION_NAME, 'classification');
@@ -415,13 +414,19 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
             this.resolveRun = resolve;
             this.rejectRun = reject;
             this.subscribe();
+            if (this.settled) return;
+            this.session.pauseReplyAuthorization();
             this.gateListening();
             this.startSTTPump();
           });
           return result;
         } finally {
           this.cleanup();
-          this.session.resumeReplyAuthorization();
+          try {
+            this.session.resumeReplyAuthorization();
+          } catch (err) {
+            this._log.debug({ err }, 'AMD: could not resume reply authorization');
+          }
           this.active = false;
           this.span = undefined;
         }
@@ -495,12 +500,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private subscribe(): void {
-    // Speech boundaries and transcripts are delivered via the public hook
-    // methods ({@link onUserSpeechStarted}/{@link onUserSpeechEnded}/{@link onTranscript}),
-    // which `AgentActivity` invokes from its recognition hooks — mirroring how
-    // python `AudioRecognition` drives `_AMDClassifier`. Only the session-close
-    // lifecycle signal is consumed as an event here.
-    this.session.on(AgentSessionEventTypes.Close, this.handleClose);
+    this.sessionClosingSignal = this.session._closingSignal;
+    this.sessionClosingSignal.addEventListener('abort', this.handleSessionClosing, { once: true });
+    if (this.sessionClosingSignal.aborted) {
+      this.handleSessionClosing();
+    }
   }
 
   /**
@@ -727,7 +731,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.clearTimer('silence');
     this.clearTimer('eot');
     this.listening = false;
-    this.session.off(AgentSessionEventTypes.Close, this.handleClose);
+    this.sessionClosingSignal?.removeEventListener('abort', this.handleSessionClosing);
+    this.sessionClosingSignal = undefined;
 
     // Detach the track-publication listener — without this, a run that
     // settled via `detectionTimer` before the participant track was ever
@@ -824,8 +829,12 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       },
       'amd prediction',
     );
-    if (result.isMachine && this.interruptOnMachine) {
-      this.session.interrupt({ force: true }).await.catch(() => {});
+    if (result.isMachine && this.interruptOnMachine && !this.session._closing) {
+      try {
+        this.session.interrupt({ force: true }).await.catch(() => {});
+      } catch (err) {
+        this._log.debug({ err }, 'AMD: could not interrupt session');
+      }
     }
     this.resolveRun?.(result);
 
@@ -1063,7 +1072,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.scheduleLLMClassification();
   }
 
-  private readonly handleClose = (): void => {
+  private readonly handleSessionClosing = (): void => {
     if (this.settled) return;
     // The session is closing — force a settle regardless of the emission gates
     // (open the end-of-turn gate so a non-human fallback can release immediately).

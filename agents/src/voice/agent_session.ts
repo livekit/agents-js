@@ -531,6 +531,7 @@ export class AgentSession<
   private _output: AgentOutput;
 
   private closing = false;
+  private closingController = new AbortController();
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
   private idleHolds = 0;
@@ -649,6 +650,11 @@ export class AgentSession<
   /** @internal - Whether the session is closing/draining. */
   get _closing(): boolean {
     return this.closing;
+  }
+
+  /** @internal Aborted when shutdown starts, before the activity drains. */
+  get _closingSignal(): AbortSignal {
+    return this.closingController.signal;
   }
 
   /** @internal - Current run state for testing */
@@ -1002,6 +1008,9 @@ export class AgentSession<
     }
 
     this.closing = false;
+    if (this.closingController.signal.aborted) {
+      this.closingController = new AbortController();
+    }
     this._usageCollector = new ModelUsageCollector();
 
     const ctx = getJobContext(false);
@@ -1921,6 +1930,9 @@ export class AgentSession<
     }
 
     this.closing = true;
+    // Set closingTask before listeners can call close() again.
+    await Promise.resolve();
+    this.closingController.abort();
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
     this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
