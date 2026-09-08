@@ -477,7 +477,10 @@ describe('Cartesia /tts/bytes', () => {
       const error = errors[0]!.error;
       expect(error).toBeInstanceOf(APIStatusError);
       expect((error as APIStatusError).statusCode).toBe(400);
-      expect(error.message).toContain('max buffer delay is only supported for websocket requests');
+      expect(error.message).toBe('Cartesia /tts/bytes request failed with HTTP 400');
+      expect((error as APIStatusError).body).toEqual({
+        raw: expect.stringContaining('max buffer delay is only supported for websocket requests'),
+      });
       // A 4xx is not retried, so the default connect options made exactly one request.
       expect(requests).toHaveLength(1);
     } finally {

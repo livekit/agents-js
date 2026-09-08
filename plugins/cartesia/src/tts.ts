@@ -357,8 +357,8 @@ export class ChunkedStream extends tts.ChunkedStream {
             if (!doneFut.done) {
               doneFut.reject(
                 new APIStatusError({
-                  message: `Cartesia /tts/bytes request failed: ${body || `HTTP ${statusCode}`}`,
-                  options: { statusCode },
+                  message: `Cartesia /tts/bytes request failed with HTTP ${statusCode}`,
+                  options: { statusCode, body: body ? { raw: body } : null },
                 }),
               );
             }
