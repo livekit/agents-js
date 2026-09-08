@@ -3,14 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Regression test for #2435.
- *
- * AgentActivity.createSpeechTask() registers an abort listener that interrupts the owned
- * SpeechHandle. SpeechHandle is a thenable, and Node's EventTarget calls `.then()` on any
- * thenable a listener returns. When the abort fires from inside the function tool that owns
- * the handle (for example `session.interrupt({ force: true })` in a tool), that `.then()` calls
- * `waitForPlayout()`, hits the circular-wait guard, and Node rethrows the rejection as an
- * uncaught exception. The listener must not return the handle.
+ * Cancelling a speech task from inside its owning function tool, as a tool calling
+ * `session.interrupt` with force does, must not crash the process with SpeechHandleCircularWaitError.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FunctionCall } from '../llm/chat_context.js';
@@ -49,8 +43,7 @@ describe('AgentActivity.createSpeechTask - abort listener', () => {
       args: '{}',
     });
 
-    // If the listener returns the handle, EventTarget calls `.then()` on it. Stub it so a
-    // regression fails this assertion instead of crashing the whole vitest worker.
+    // Stub `.then()` so a regression fails the assertion instead of crashing the vitest worker.
     const then = vi.spyOn(speechHandle, 'then').mockImplementation(() => Promise.resolve());
 
     const started = new Future<void>();
@@ -69,7 +62,7 @@ describe('AgentActivity.createSpeechTask - abort listener', () => {
     });
     await started.await;
 
-    // Same context as a tool calling `session.interrupt({ force: true })`.
+    // Same async context as a tool calling `session.interrupt({ force: true })`.
     functionCallStorage.run({ functionCall, speechHandle }, () => task.cancel());
     await task.result;
 
