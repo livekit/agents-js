@@ -6,6 +6,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as jobModule from '../../job.js';
 import { RealtimeModel } from '../../llm/index.js';
+import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { AgentSessionEventTypes, CloseReason, createCloseEvent } from '../events.js';
@@ -100,6 +101,50 @@ function createFakeSession(llm?: RealtimeModel): FakeSession {
     _closeSoon: vi.fn(),
   };
 }
+
+describe('RoomIO agent state attributes', () => {
+  it('handles a failed update and publishes later state changes', async () => {
+    const error = new Error('attribute update failed');
+    const setAttributes = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined);
+    const room = {
+      ...createFakeRoom(),
+      localParticipant: { identity: 'agent', setAttributes },
+    };
+    const session = createFakeSession();
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false },
+      outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+    });
+    const errorSpy = vi.spyOn(log(), 'error');
+
+    try {
+      roomIO.start();
+      room.isConnected = true;
+      session.emit(AgentSessionEventTypes.AgentStateChanged, {
+        oldState: 'listening',
+        newState: 'speaking',
+      });
+      await vi.waitFor(() => {
+        expect(errorSpy).toHaveBeenCalledWith(error, 'Failed to update agent state attributes');
+      });
+
+      session.emit(AgentSessionEventTypes.AgentStateChanged, {
+        oldState: 'speaking',
+        newState: 'listening',
+      });
+      expect(setAttributes).toHaveBeenNthCalledWith(1, { 'lk.agent.state': 'speaking' });
+      expect(setAttributes).toHaveBeenNthCalledWith(2, { 'lk.agent.state': 'listening' });
+    } finally {
+      await roomIO.close();
+      errorSpy.mockRestore();
+    }
+
+    session.emit(AgentSessionEventTypes.AgentStateChanged, { newState: 'speaking' });
+    expect(setAttributes).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('RoomIO native audio output', () => {
   it('uses a 200ms source queue by default', async () => {

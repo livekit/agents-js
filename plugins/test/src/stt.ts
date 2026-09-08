@@ -38,18 +38,22 @@ export const stt = async (
 ) => {
   initializeLogger({ pretty: false });
   supports = { streaming: true, nonStreaming: true, ...supports };
-  describe('STT', async () => {
-    it.skipIf(!supports.nonStreaming)('should properly transcribe speech', async () => {
-      [24000, 44100].forEach(async (sampleRate) => {
+  describe('STT', () => {
+    it.skipIf(!supports.nonStreaming).each([24000, 44100])(
+      'should properly transcribe speech at %i Hz',
+      { timeout: 60_000 },
+      async (sampleRate) => {
         const frames = makeTestSpeech(sampleRate);
         const event = await stt.recognize(frames);
         const text = event.alternatives![0].text;
         await validate(text, TRANSCRIPT, 0.2);
         expect(event.type).toStrictEqual(sttlib.SpeechEventType.FINAL_TRANSCRIPT);
-      });
-    });
-    it('should properly stream transcribe speech', async () => {
-      [24000, 44100].forEach(async (sampleRate) => {
+      },
+    );
+    it.each([24000, 44100])(
+      'should properly stream transcribe speech at %i Hz',
+      { timeout: 60_000 },
+      async (sampleRate) => {
         const frames = makeTestSpeech(sampleRate, 10);
         let stream: sttlib.SpeechStream;
         if (supports.streaming) {
@@ -62,8 +66,8 @@ export const stt = async (
           for (const frame of frames) {
             stream.pushFrame(frame);
             await new Promise((resolve) => setTimeout(resolve, 5));
-            stream.endInput();
           }
+          stream.endInput();
         };
 
         const output = async () => {
@@ -91,9 +95,13 @@ export const stt = async (
           await validate(text, TRANSCRIPT, 0.2);
         };
 
-        Promise.all([input, output]);
-      });
-    });
+        try {
+          await Promise.all([input(), output()]);
+        } finally {
+          stream.close();
+        }
+      },
+    );
   });
 };
 
