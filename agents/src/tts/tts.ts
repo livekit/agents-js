@@ -373,6 +373,11 @@ export abstract class SynthesizeStream
     });
   }
 
+  /** Model used for metrics. Providers with fixed stream options can override this. */
+  protected get metricsModel(): string {
+    return this.#tts.model;
+  }
+
   private _mainTaskImpl = async (span: Span) => {
     this.#ttsRequestSpan = span;
     span.setAttributes({
@@ -572,7 +577,7 @@ export abstract class SynthesizeStream
           streamed: true,
           metadata: {
             modelProvider: this.#tts.provider,
-            modelName: this.#tts.model,
+            modelName: this.metricsModel,
           },
         };
         if (this.#ttsRequestSpan) {
@@ -758,7 +763,15 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    ThrowsPromise.resolve().then(() => this.mainTask().finally(() => this.#metricsQueue.close()));
+    ThrowsPromise.resolve().then(async () => {
+      try {
+        await this.mainTask();
+      } catch {
+        // mainTask reports failures through the TTS error event, as SynthesizeStream does.
+      } finally {
+        this.#metricsQueue.close();
+      }
+    });
   }
 
   private drainAttemptQueue(attemptQueue: AsyncIterableQueue<SynthesizedAudio>): Promise<void> {

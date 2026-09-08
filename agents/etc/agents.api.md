@@ -7756,6 +7756,7 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     // Warning: (ae-forgotten-export) The symbol "SynthesizeStreamStartedTime" needs to be exported by the entry point index.d.ts
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SynthesizeStream"
     protected markStarted(startedTime?: SynthesizeStreamStartedTime): void;
+    protected get metricsModel(): string;
     // (undocumented)
     protected monitorMetrics(): Promise<void>;
     // (undocumented)

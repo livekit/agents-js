@@ -35,6 +35,50 @@ function makeTts(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Inference TTS connection', () => {
+  it('reports the model sent after updating an existing stream', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const models: string[] = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString());
+        if (event.type === 'input_transcript') models.push(event.generation_config.model);
+        if (event.type === 'session.flush') {
+          socket.send(
+            JSON.stringify({
+              type: 'output_audio',
+              session_id: 'session-1',
+              audio: Buffer.alloc(3200).toString('base64'),
+            }),
+          );
+          socket.send(JSON.stringify({ type: 'done', session_id: 'session-1' }));
+        }
+      });
+    });
+    const tts = makeTts({
+      model: 'cartesia/sonic-3',
+      baseURL: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    });
+    const metrics: agents.TTSMetrics[] = [];
+    tts.on('metrics_collected', (event) => metrics.push(event));
+    try {
+      const stream = tts.stream();
+      tts.updateOptions({ model: 'cartesia/sonic-2' });
+      stream.pushText('Hello.');
+      stream.endInput();
+      for await (const _event of stream) {
+        /* Drain audio and metrics. */
+      }
+      expect(models).toEqual(['cartesia/sonic-2']);
+      expect(metrics).toHaveLength(1);
+      expect(metrics[0]!.metadata?.modelName).toBe(models[0]);
+    } finally {
+      await tts.close();
+      for (const socket of server.clients) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('includes the model in the dial URL', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');

@@ -15,7 +15,7 @@ import type { TypedEventEmitter } from '@livekit/typed-emitter';
 // @public (undocumented)
 export class ChunkedStream extends tts.ChunkedStream {
     // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
-    constructor(tts: TTS, text: string, opts: TTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
+    constructor(parent: TTS, text: string, opts: TTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
     // (undocumented)
     label: string;
     // (undocumented)
@@ -27,15 +27,29 @@ export class ChunkedStream extends tts.ChunkedStream {
 // @public
 export type DefaultLanguages = 'eng' | 'spa' | 'fra' | 'ger';
 
+// Warning: (ae-missing-release-tag) "RimeAudioFormat" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type RimeAudioFormat = 'audio/pcm' | 'audio/pcmu' | 'audio/wav' | 'audio/mpeg' | 'audio/ogg;codecs=opus' | 'audio/webm;codecs=opus';
+
 // Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export class SynthesizeStream extends tts.SynthesizeStream {
-    constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions);
+    constructor(parent: TTS, opts: TTSOptions, connOptions?: APIConnectOptions);
+    // (undocumented)
+    endInput(): void;
+    // (undocumented)
+    flush(): void;
     // (undocumented)
     label: string;
     // (undocumented)
+    protected get metricsModel(): string;
+    // (undocumented)
+    protected onStreamDone(): void;
+    // (undocumented)
     protected run(): Promise<void>;
+    waitClosed(): Promise<void>;
 }
 
 // Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -44,31 +58,42 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 export class TTS extends tts.TTS {
     constructor(opts?: Partial<TTSOptions>);
     // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
     label: string;
     // (undocumented)
     get model(): string;
     // (undocumented)
+    prewarm(): void;
+    // (undocumented)
     get provider(): string;
+    // (undocumented)
+    get sampleRate(): number;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
-    }): tts.SynthesizeStream;
+    }): SynthesizeStream;
+    // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
+    // (undocumented)
     updateOptions(opts: Partial<TTSOptions>): void;
 }
 
 // Warning: (ae-missing-release-tag) "TTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type TTSModels = 'arcana' | 'coda' | 'mistv2' | 'mistv3';
+export type TTSModels = 'coda' | 'mistv2' | 'mistv3';
 
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export interface TTSOptions {
     [key: string]: string | number | boolean | tokenize.SentenceTokenizer | undefined;
+    allowCustomEndpoint?: boolean;
     // (undocumented)
     apiKey?: string;
+    // (undocumented)
+    audioFormat?: RimeAudioFormat;
     // (undocumented)
     baseURL?: string;
     // (undocumented)
@@ -111,7 +136,15 @@ export interface TTSOptions {
     top_p?: number;
     // (undocumented)
     useWebsocket?: boolean;
+    // (undocumented)
+    websocketProtocol?: WebSocketProtocol;
+    websocketURL?: string;
 }
+
+// Warning: (ae-missing-release-tag) "WebSocketProtocol" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type WebSocketProtocol = 'binary' | 'json';
 
 // (No @packageDocumentation comment for this package)
 
