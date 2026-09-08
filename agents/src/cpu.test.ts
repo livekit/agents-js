@@ -17,6 +17,11 @@ const mockExistsSync = vi.mocked(existsSync);
 const mockReadFileSync = vi.mocked(readFileSync);
 
 const HOST_CPUS = 8;
+const HOST_CPU_INFO = Array.from({ length: HOST_CPUS }, () => ({
+  model: '',
+  speed: 0,
+  times: { idle: 0, irq: 0, nice: 0, sys: 0, user: 0 },
+}));
 const INTERVAL_MS = 500;
 const IDLE_USAGE_USEC = 21_600;
 const TORN_READS: [number, number][] = [
@@ -44,13 +49,7 @@ async function sample(
   });
 
   vi.useFakeTimers();
-  const hostCpus = vi.spyOn(os, 'cpus').mockReturnValue(
-    Array.from({ length: HOST_CPUS }, () => ({
-      model: '',
-      speed: 0,
-      times: { idle: 0, irq: 0, nice: 0, sys: 0, user: 0 },
-    })),
-  );
+  const hostCpus = vi.spyOn(os, 'cpus').mockReturnValue(HOST_CPU_INFO);
   const clock = vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValueOnce(elapsedMs);
   try {
     const result = monitor.cpuPercent(INTERVAL_MS);
@@ -156,19 +155,20 @@ describe('cpu', () => {
 
     it('cpuPercent computes correct value from usage_usec deltas', async () => {
       let callCount = 0;
+      vi.spyOn(os, 'cpus').mockReturnValue(HOST_CPU_INFO);
       mockReadFileSync.mockImplementation((p) => {
         if (String(p) === '/sys/fs/cgroup/cpu.stat') {
           callCount++;
-          // Two reads: 1,000,000 usec apart => 1s of CPU usage over the interval
+          // Two reads: 500,000 usec apart => 0.5s of CPU usage over the interval
           return callCount <= 1
             ? 'usage_usec 1000000\nuser_usec 800000\nsystem_usec 200000'
-            : 'usage_usec 2000000\nuser_usec 1600000\nsystem_usec 400000';
+            : 'usage_usec 1500000\nuser_usec 1200000\nsystem_usec 300000';
         }
         if (String(p) === '/sys/fs/cgroup/cpu.max') return '200000 100000';
         return '';
       });
       const monitor = new CGroupV2CpuMonitor();
-      // interval=100ms, 2 cpus, 1s of usage => 1/(0.1*2) = 5, clamped to 1
+      // interval=100ms, 2 cpus, 0.5s of usage => 0.5/(0.1*2) = 2.5, clamped to 1
       const result = await monitor.cpuPercent(100);
       expect(result).toBe(1);
     }, 10_000);
