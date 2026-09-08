@@ -19,6 +19,7 @@ class MockSynthesizeStream extends SynthesizeStream {
   constructor(
     private mockTts: MockTTS,
     private shouldFail: boolean,
+    private blocked: boolean,
     connOptions?: APIConnectOptions,
   ) {
     super(mockTts, connOptions);
@@ -36,6 +37,13 @@ class MockSynthesizeStream extends SynthesizeStream {
   }
 
   protected async run(): Promise<void> {
+    if (this.blocked) {
+      if (this.abortSignal.aborted) return;
+      await new Promise<void>((resolve) => {
+        this.abortSignal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return;
+    }
     if (this.shouldFail) {
       if (this.mockTts.failAfterInput) {
         // Simulate a provider that receives text but dies before emitting
@@ -78,11 +86,19 @@ class MockChunkedStream extends ChunkedStream {
     private mockTts: MockTTS,
     text: string,
     private shouldFail: boolean,
+    private blocked: boolean,
     connOptions?: APIConnectOptions,
   ) {
     super(text, mockTts, connOptions);
   }
   protected async run(): Promise<void> {
+    if (this.blocked) {
+      if (this.abortSignal.aborted) return;
+      await new Promise<void>((resolve) => {
+        this.abortSignal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return;
+    }
     if (this.shouldFail) {
       throw new APIError('mock TTS failed immediately');
     }
@@ -98,6 +114,7 @@ class MockChunkedStream extends ChunkedStream {
 class MockTTS extends TTS {
   label: string;
   shouldFail = false;
+  blocked = false;
   /** When failing, first consume a token (and mark started) before throwing. */
   failAfterInput = false;
   /** Simulated latency between receiving text and sending it to the provider. */
@@ -105,18 +122,42 @@ class MockTTS extends TTS {
   /** The started time the stream recorded when it "sent" text to the provider. */
   lastMarkedTime?: number;
 
-  constructor(label: string, sampleRate: number = SAMPLE_RATE) {
-    super(sampleRate, 1, { streaming: true });
+  closeCount = 0;
+
+  constructor(label: string, sampleRate: number = SAMPLE_RATE, streaming = true) {
+    super(sampleRate, 1, { streaming });
     this.label = label;
   }
 
   synthesize(text: string, connOptions?: APIConnectOptions): ChunkedStream {
-    return new MockChunkedStream(this, text, this.shouldFail, connOptions);
+    return new MockChunkedStream(this, text, this.shouldFail, this.blocked, connOptions);
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
-    return new MockSynthesizeStream(this, this.shouldFail, options?.connOptions);
+    return new MockSynthesizeStream(this, this.shouldFail, this.blocked, options?.connOptions);
   }
+
+  override async close(): Promise<void> {
+    this.closeCount++;
+  }
+}
+
+function textInput(text = 'hello test'): ReadableStream<string> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(text);
+      controller.close();
+    },
+  });
+}
+
+async function consume(stream: SynthesizeStream): Promise<number> {
+  stream.updateInputStream(textInput());
+  let frames = 0;
+  for await (const event of stream) {
+    if (event !== SynthesizeStream.END_OF_STREAM) frames++;
+  }
+  return frames;
 }
 
 describe('TTS FallbackAdapter', () => {
@@ -124,6 +165,74 @@ describe('TTS FallbackAdapter', () => {
     initializeLogger({ pretty: false });
     // Suppress unhandled rejections from background tasks inside SynthesizeStream
     process.on('unhandledRejection', () => {});
+  });
+
+  it('closes temporary stream adapters after each request', async () => {
+    const nonStreaming = new MockTTS('non-streaming', SAMPLE_RATE, false);
+    const adapter = new FallbackAdapter({ ttsInstances: [nonStreaming] });
+    const baseline = nonStreaming.listenerCount('metrics_collected');
+
+    try {
+      for (let i = 0; i < 3; i++) {
+        expect(await consume(adapter.stream())).toBeGreaterThan(0);
+        expect(nonStreaming.listenerCount('metrics_collected')).toBe(baseline);
+      }
+      expect(nonStreaming.closeCount).toBe(0);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it('closes a temporary stream adapter after failure and fallback', async () => {
+    const nonStreaming = new MockTTS('non-streaming', SAMPLE_RATE, false);
+    nonStreaming.shouldFail = true;
+    const adapter = new FallbackAdapter({
+      ttsInstances: [nonStreaming, new MockTTS('fallback')],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+    const baseline = nonStreaming.listenerCount('metrics_collected');
+
+    try {
+      expect(await consume(adapter.stream())).toBeGreaterThan(0);
+      expect(nonStreaming.listenerCount('metrics_collected')).toBe(baseline);
+      expect(nonStreaming.closeCount).toBe(0);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it('closes a temporary stream adapter after cancellation', async () => {
+    const nonStreaming = new MockTTS('non-streaming', SAMPLE_RATE, false);
+    nonStreaming.blocked = true;
+    const adapter = new FallbackAdapter({ ttsInstances: [nonStreaming] });
+    const baseline = nonStreaming.listenerCount('metrics_collected');
+    const stream = adapter.stream();
+    stream.updateInputStream(textInput());
+
+    try {
+      const deadline = Date.now() + 1_000;
+      while (
+        nonStreaming.listenerCount('metrics_collected') === baseline &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(nonStreaming.listenerCount('metrics_collected')).toBeGreaterThan(baseline);
+
+      stream.close();
+      const closeDeadline = Date.now() + 1_000;
+      while (
+        nonStreaming.listenerCount('metrics_collected') > baseline &&
+        Date.now() < closeDeadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(nonStreaming.listenerCount('metrics_collected')).toBe(baseline);
+    } finally {
+      stream.close();
+      await adapter.close();
+    }
   });
 
   it('should fall back to the next TTS when the primary stream fails before any pushText', async () => {
