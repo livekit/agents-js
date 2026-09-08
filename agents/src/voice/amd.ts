@@ -422,13 +422,13 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           return result;
         } finally {
           this.cleanup();
+          this.active = false;
+          this.span = undefined;
           try {
             this.session.resumeReplyAuthorization();
           } catch (err) {
             this._log.debug({ err }, 'AMD: could not resume reply authorization');
           }
-          this.active = false;
-          this.span = undefined;
         }
       },
       {
@@ -816,6 +816,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       return;
     }
     this.settled = true;
+    this.resolveRun?.(result);
     this.cleanup();
     this.setSpanAttributes(result);
     this._log.info(
@@ -836,8 +837,6 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         this._log.debug({ err }, 'AMD: could not interrupt session');
       }
     }
-    this.resolveRun?.(result);
-
     // Mirrors python detector.py: forward the prediction to the SessionHost
     // (so a connected `RemoteSession` peer receives an `amd_prediction`
     // event) and then emit on this `AMD` instance for direct listeners.
