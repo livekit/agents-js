@@ -5050,7 +5050,6 @@ declare namespace llm {
         createToolOptions,
         executeToolCall,
         formatChatHistory,
-        oaiBuildFunctionInfo,
         oaiParams,
         serializeImage,
         toJsonSchema,
@@ -5608,11 +5607,6 @@ function normalizeSTTFallback(fallback: STTFallbackModelType | STTFallbackModelT
 //
 // @public
 function normalizeTTSFallback(fallback: TTSFallbackModelType | TTSFallbackModelType[]): TTSFallbackModel[];
-
-// Warning: (ae-internal-missing-underscore) The name "oaiBuildFunctionInfo" should be prefixed with an underscore because the declaration is marked as @internal
-//
-// @internal (undocumented)
-export const oaiBuildFunctionInfo: (toolCtx: ToolContext, toolCallId: string, toolName: string, rawArgs: string) => FunctionCall;
 
 // Warning: (ae-internal-missing-underscore) The name "oaiParams" should be prefixed with an underscore because the declaration is marked as @internal
 //
