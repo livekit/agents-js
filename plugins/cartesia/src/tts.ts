@@ -316,6 +316,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     const baseUrl = new URL(this.#opts.baseUrl);
     const doneFut = new Future<void>();
+    let responseReceived = false;
 
     const isHttps = baseUrl.protocol === 'https:';
     const req = (isHttps ? httpsRequest : httpRequest)(
@@ -331,7 +332,16 @@ export class ChunkedStream extends tts.ChunkedStream {
         signal: this.abortSignal,
       },
       (res) => {
-        res.on('data', (chunk) => {
+        responseReceived = true;
+        const statusCode = res.statusCode ?? 0;
+        const rejected = statusCode < 200 || statusCode >= 300;
+        const errorBody: Buffer[] = [];
+
+        res.on('data', (chunk: Buffer) => {
+          if (rejected) {
+            errorBody.push(chunk);
+            return;
+          }
           for (const frame of bstream.write(chunk)) {
             this.queue.put({
               requestId,
@@ -342,6 +352,18 @@ export class ChunkedStream extends tts.ChunkedStream {
           }
         });
         res.on('close', () => {
+          if (rejected) {
+            const body = Buffer.concat(errorBody).toString().trim();
+            if (!doneFut.done) {
+              doneFut.reject(
+                new APIStatusError({
+                  message: `Cartesia /tts/bytes request failed: ${body || `HTTP ${statusCode}`}`,
+                  options: { statusCode },
+                }),
+              );
+            }
+            return;
+          }
           for (const frame of bstream.flush()) {
             this.queue.put({
               requestId,
@@ -367,7 +389,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       if (!doneFut.done) doneFut.reject(err);
     });
     req.on('close', () => {
-      if (!doneFut.done) doneFut.resolve();
+      if (!responseReceived && !doneFut.done) doneFut.resolve();
     });
     req.write(JSON.stringify(json));
     req.end();
@@ -377,6 +399,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     } catch (e) {
       if (this.abortSignal.aborted) return;
       if (!this.queue.closed) this.queue.close();
+      if (e instanceof APIError) throw e;
       throw toRetryableConnectionError(e);
     }
   }

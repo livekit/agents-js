@@ -13,7 +13,7 @@ import { tts as testTts } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
 import { type Server, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { TTS } from './tts.js';
 
@@ -430,6 +430,15 @@ describe('Cartesia streaming pool', () => {
 });
 
 describe('Cartesia /tts/bytes', () => {
+  // A failed ChunkedStream also rejects its background task; the error event is
+  // the surface under test here.
+  const swallowExpectedRejection = (reason: unknown) => {
+    if (reason instanceof APIStatusError) return;
+    throw reason;
+  };
+  beforeAll(() => process.on('unhandledRejection', swallowExpectedRejection));
+  afterAll(() => void process.off('unhandledRejection', swallowExpectedRejection));
+
   it('omits the websocket-only max_buffer_delay_ms field', async () => {
     const { server, baseURL, requests } = await startBytesServer((_body, res) => {
       res.writeHead(200, { 'content-type': 'audio/pcm' });
@@ -443,6 +452,60 @@ describe('Cartesia /tts/bytes', () => {
       expect(requests).toHaveLength(1);
       expect(requests[0]).toMatchObject({ transcript: 'hello.' });
       expect(requests[0]).not.toHaveProperty('max_buffer_delay_ms');
+    } finally {
+      await cartesia.close();
+      await closeBytesServer(server);
+    }
+  });
+
+  it('surfaces a rejected response as APIStatusError instead of silent empty audio', async () => {
+    const { server, baseURL, requests } = await startBytesServer((_body, res) => {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: 'Invalid request: max buffer delay is only supported for websocket requests',
+        }),
+      );
+    });
+
+    const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const errors: { error: Error }[] = [];
+    cartesia.on('error', (error) => errors.push(error));
+    try {
+      expect(await synthesizeBytes(cartesia, 'hello.')).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+      const error = errors[0]!.error;
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect((error as APIStatusError).statusCode).toBe(400);
+      expect(error.message).toContain('max buffer delay is only supported for websocket requests');
+      // A 4xx is not retried, so the default connect options made exactly one request.
+      expect(requests).toHaveLength(1);
+    } finally {
+      await cartesia.close();
+      await closeBytesServer(server);
+    }
+  });
+
+  it('retries a 5xx response', async () => {
+    const { server, baseURL, requests } = await startBytesServer((_body, res) => {
+      if (requests.length === 1) {
+        res.writeHead(503);
+        res.end('upstream unavailable');
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'audio/pcm' });
+      res.end(CURRENT_CHUNK);
+    });
+
+    const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const events = await synthesizeBytes(cartesia, 'hello.', {
+        ...DEFAULT_API_CONNECT_OPTIONS,
+        maxRetry: 1,
+        retryIntervalMs: 0,
+      });
+      expect(events).not.toHaveLength(0);
+      expect(requests).toHaveLength(2);
     } finally {
       await cartesia.close();
       await closeBytesServer(server);
