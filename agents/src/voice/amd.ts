@@ -1076,7 +1076,12 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     // The session is closing — force a settle regardless of the emission gates
     // (open the end-of-turn gate so a non-human fallback can release immediately).
     this.eotReached = true;
-    this.settle(AMDCategory.UNCERTAIN, 'session_closed');
+    // AbortSignal rethrows listener errors outside the close promise.
+    try {
+      this.settle(AMDCategory.UNCERTAIN, 'session_closed');
+    } catch (err) {
+      this._log.error({ err }, 'AMD: error while handling session shutdown');
+    }
   };
 
   // ─── LLM classification ─────────────────────────────────────────────────────

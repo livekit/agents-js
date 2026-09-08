@@ -1,12 +1,58 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import { AMD, AMDCategory, type AMDPredictionEvent } from './amd.js';
 import { AgentSessionEventTypes } from './events.js';
 import { FakeLLM } from './testing/fake_llm.js';
+
+it('the built SDK survives a prediction listener throwing during session shutdown', async () => {
+  const entrypoint = new URL('../../dist/index.js', import.meta.url).href;
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `
+        import assert from 'node:assert/strict';
+        import { Agent, AgentSession, initializeLogger, voice } from ${JSON.stringify(entrypoint)};
+
+        initializeLogger({ pretty: false, level: 'silent' });
+        const session = new AgentSession({ llm: new voice.testing.FakeLLM(), turnDetection: 'manual' });
+        await session.start({ agent: new Agent({ instructions: 'Help the caller.' }) });
+        const amd = new voice.AMD(session, {
+          llm: new voice.testing.FakeLLM(),
+          suppressCompatibilityWarning: true,
+        });
+        let predictions = 0;
+        let closed = false;
+        amd.on('amd_prediction', () => {
+          predictions += 1;
+          throw new Error('prediction listener failed');
+        });
+        session.on(voice.AgentSessionEventTypes.Close, () => { closed = true; });
+        const detection = amd.execute();
+        void detection.catch(() => {});
+
+        await session.close();
+        const result = await detection;
+        assert.equal(result.category, voice.AMDCategory.UNCERTAIN);
+        assert.equal(result.reason, 'session_closed');
+        assert.equal(predictions, 1);
+        assert.equal(closed, true);
+        await amd.aclose();
+        await new Promise(setImmediate);
+        console.log('shutdown completed');
+      `,
+    ],
+    { env: { ...process.env, LIVEKIT_URL: '' }, timeout: 10_000 },
+  );
+  expect(stdout).toBe('shutdown completed\n');
+}, 15_000);
 
 describe('AMD session shutdown', () => {
   let session: AgentSession;
