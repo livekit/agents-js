@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CGroupV1CpuMonitor, CGroupV2CpuMonitor, DefaultCpuMonitor, getCpuMonitor } from './cpu.js';
+import { initializeLogger, log } from './log.js';
 
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(() => false),
@@ -14,6 +16,53 @@ vi.mock('node:fs', () => ({
 const mockExistsSync = vi.mocked(existsSync);
 const mockReadFileSync = vi.mocked(readFileSync);
 
+const HOST_CPUS = 8;
+const INTERVAL_MS = 500;
+const IDLE_USAGE_USEC = 21_600;
+const TORN_READS: [number, number][] = [
+  [5260817467, 2548880500],
+  [5268770613, 5860175581],
+  [5889766280, 5270782758],
+  [1210759425, 5271033390],
+  [5271381786, 5798443673],
+  [5288672329, 1215868554],
+];
+
+initializeLogger({ pretty: false, level: 'silent' });
+
+async function sample(
+  monitor: CGroupV2CpuMonitor,
+  usageStart: number,
+  usageEnd: number,
+  { elapsedMs = INTERVAL_MS, quota = 'max' }: { elapsedMs?: number; quota?: string } = {},
+): Promise<number> {
+  const reads = [usageStart, usageEnd];
+  mockReadFileSync.mockImplementation((p) => {
+    if (String(p) === '/sys/fs/cgroup/cpu.stat') return `usage_usec ${reads.shift()}`;
+    if (String(p) === '/sys/fs/cgroup/cpu.max') return `${quota} 100000`;
+    return '';
+  });
+
+  vi.useFakeTimers();
+  const hostCpus = vi.spyOn(os, 'cpus').mockReturnValue(
+    Array.from({ length: HOST_CPUS }, () => ({
+      model: '',
+      speed: 0,
+      times: { idle: 0, irq: 0, nice: 0, sys: 0, user: 0 },
+    })),
+  );
+  const clock = vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValueOnce(elapsedMs);
+  try {
+    const result = monitor.cpuPercent(INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    return await result;
+  } finally {
+    hostCpus.mockRestore();
+    clock.mockRestore();
+    vi.useRealTimers();
+  }
+}
+
 describe('cpu', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -22,6 +71,8 @@ describe('cpu', () => {
 
   afterEach(() => {
     delete process.env.NUM_CPUS;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   describe('getCpuMonitor', () => {
@@ -145,6 +196,84 @@ describe('cpu', () => {
       });
       const monitor = new CGroupV2CpuMonitor();
       await expect(() => monitor.cpuPercent(50)).rejects.toThrow('Failed to read CPU usage');
+    });
+
+    it.each([500, 600])('uses the measured elapsed time (%dms)', async (elapsedMs) => {
+      const monitor = new CGroupV2CpuMonitor();
+      const result = await sample(monitor, 5_000_000_000, 5_001_000_000, { elapsedMs });
+      expect(result).toBeCloseTo(1 / ((elapsedMs / 1000) * HOST_CPUS));
+    });
+
+    it('holds the previous sample for a negative delta', async () => {
+      const monitor = new CGroupV2CpuMonitor();
+      const good = await sample(monitor, 5_000_000_000, 5_001_000_000);
+      const warning = vi.spyOn(log(), 'warn');
+
+      expect(await sample(monitor, ...TORN_READS[0]!)).toBe(good);
+      expect(warning).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.stringContaining('impossible'),
+      );
+    });
+
+    it('holds the previous sample for an over-ceiling delta', async () => {
+      const monitor = new CGroupV2CpuMonitor();
+      const good = await sample(monitor, 5_000_000_000, 5_001_000_000);
+      const warning = vi.spyOn(log(), 'warn');
+      const result = await sample(monitor, ...TORN_READS[1]!);
+
+      expect(result).toBe(good);
+      expect(result).not.toBe(1);
+      expect(warning).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.stringContaining('impossible'),
+      );
+    });
+
+    it('reads an idle load for the first discarded sample', async () => {
+      const monitor = new CGroupV2CpuMonitor();
+      expect(await sample(monitor, ...TORN_READS[0]!)).toBe(0);
+    });
+
+    it('keeps the reporter pattern below the load threshold', async () => {
+      const monitor = new CGroupV2CpuMonitor();
+      let idle = 5_270_000_000;
+      const samples: number[] = [];
+      const reads = [
+        null,
+        null,
+        ...TORN_READS.slice(0, 3),
+        null,
+        ...TORN_READS.slice(3),
+        null,
+        null,
+      ];
+      const idlePercent = IDLE_USAGE_USEC / 1_000_000 / (INTERVAL_MS / 1000) / HOST_CPUS;
+
+      for (const torn of reads) {
+        const [usageStart, usageEnd] = torn ?? [idle, idle + IDLE_USAGE_USEC];
+        idle += IDLE_USAGE_USEC;
+        samples.push(await sample(monitor, usageStart, usageEnd));
+        const average =
+          samples.slice(-5).reduce((sum, value) => sum + value, 0) / Math.min(5, samples.length);
+        expect(average).toBeCloseTo(idlePercent);
+      }
+    });
+
+    it('treats a delta at the host ceiling as full load', async () => {
+      const monitor = new CGroupV2CpuMonitor();
+      const full = (INTERVAL_MS / 1000) * HOST_CPUS * 1_000_000;
+      expect(await sample(monitor, 5_000_000_000, 5_000_000_000 + full)).toBe(1);
+    });
+
+    it('clamps a burst above quota instead of discarding it', async () => {
+      const monitor = new CGroupV2CpuMonitor();
+      const warning = vi.spyOn(log(), 'warn');
+      mockReadFileSync.mockReturnValue('200000 100000');
+
+      expect(monitor.cpuCount()).toBe(2);
+      expect(await sample(monitor, 5_000_000_000, 5_002_000_000, { quota: '200000' })).toBe(1);
+      expect(warning).not.toHaveBeenCalled();
     });
   });
 
