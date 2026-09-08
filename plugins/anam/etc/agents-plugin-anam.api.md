@@ -39,17 +39,11 @@ import { z } from 'zod';
 export class AnamAPI {
     constructor(apiKey: string, apiUrl?: string, conn?: APIConnectOptions);
     // (undocumented)
-    createSessionToken(params: {
+    startSession(params: {
         personaConfig: PersonaConfig;
         livekitUrl?: string;
         livekitToken?: string;
         sessionOptions?: SessionOptions;
-    }): Promise<{
-        sessionToken: string;
-    }>;
-    // (undocumented)
-    startEngineSession(params: {
-        sessionToken: string;
     }): Promise<{
         sessionId: string;
     }>;

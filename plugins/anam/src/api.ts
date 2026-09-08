@@ -19,10 +19,6 @@ export class AnamAPI {
     private conn: APIConnectOptions = { maxRetry: 3, retryInterval: 2, timeout: 10 },
   ) {}
 
-  private get tokenPath(): string {
-    return '/v1/auth/session-token';
-  }
-
   private get startPath(): string {
     return '/v1/engine/session';
   }
@@ -123,7 +119,7 @@ export class AnamAPI {
     return this.postWithHeaders<T>(path, body, { Authorization: `Bearer ${this.apiKey}` });
   }
 
-  createSessionToken(params: {
+  startSession(params: {
     personaConfig: PersonaConfig;
     livekitUrl?: string;
     livekitToken?: string;
@@ -174,14 +170,6 @@ export class AnamAPI {
       };
     }
 
-    return this.post<{ sessionToken: string }>(this.tokenPath, payload);
-  }
-
-  startEngineSession(params: { sessionToken: string }) {
-    return this.postWithHeaders<{ sessionId: string }>(
-      this.startPath,
-      {},
-      { Authorization: `Bearer ${params.sessionToken}` },
-    );
+    return this.post<{ sessionId: string }>(this.startPath, payload);
   }
 }
