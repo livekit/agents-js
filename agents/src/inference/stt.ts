@@ -20,11 +20,9 @@ import {
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import {
   type AudioBuffer,
-  Event,
   Task,
   cancelAndWait,
   shortuuid,
-  waitForAbort,
   waitUntilAborted,
 } from '../utils.js';
 import { type VAD, VADEventType, type VADStream } from '../vad.js';
@@ -787,7 +785,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   /** @internal */
   _pendingExtra?: Record<string, unknown>;
   private speechDuration = 0;
-  private reconnectEvent = new Event();
   private stt: STT<TModel>;
   private connOptions: APIConnectOptions;
   private activeWs?: WebSocket;
@@ -1157,28 +1154,19 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         const vadTask = activeVADStream
           ? Task.from(({ signal }) => processVAD(activeVADStream, ws!, signal), connController)
           : undefined;
-        const waitReconnectTask = Task.from(
-          ({ signal }) => ThrowsPromise.race([this.reconnectEvent.wait(), waitForAbort(signal)]),
-          connController,
-        );
 
         try {
           const taskResults = [sendTask.result, wsListenerTask.result, recvTask.result];
           if (vadTask) taskResults.push(vadTask.result);
 
-          await ThrowsPromise.race([ThrowsPromise.all(taskResults), waitReconnectTask.result]);
-
-          // If reconnect didn't trigger, tasks finished - exit loop
-          if (!waitReconnectTask.done) break;
-
-          // Reconnect triggered - clear event and continue loop
-          this.reconnectEvent.clear();
+          await ThrowsPromise.all(taskResults);
+          break;
         } finally {
           connController.abort();
           this.abortController.signal.removeEventListener('abort', onStreamAbort);
           this.activeWs = undefined;
           vadStream?.close();
-          const tasks = [sendTask, wsListenerTask, recvTask, waitReconnectTask];
+          const tasks = [sendTask, wsListenerTask, recvTask];
           if (vadTask) tasks.push(vadTask);
           await cancelAndWait(tasks, DEFAULT_CANCEL_TIMEOUT);
           resourceCleanup();
