@@ -1,4 +1,5 @@
 ---
+'@livekit/agents': patch
 '@livekit/agents-plugin-silero': patch
 ---
 
