@@ -289,7 +289,7 @@ export class VADStream extends baseStream {
           if (this.#extraInferenceTime > SLOW_INFERENCE_THRESHOLD) {
             this.#logger
               .child({ delay: this.#extraInferenceTime })
-              .warn('inference is slower than realtime');
+              .warn('VAD inference is slower than realtime');
           }
 
           if (pubSpeaking) {
