@@ -343,17 +343,6 @@ export abstract class SupervisedProc {
     }
   }
 
-  async launchJob(info: RunningJobInfo) {
-    if (this.#runningJob) {
-      throw new Error('executor already has a running job');
-    }
-    if (!this.proc?.connected) {
-      throw new Error('process not connected');
-    }
-    this.#runningJob = info;
-    this.proc.send({ case: 'startJobRequest', value: { runningJob: info } });
-  }
-
   private async getChildMemoryUsageMB(): Promise<number> {
     const pid = this.proc?.pid;
     if (!pid) {
