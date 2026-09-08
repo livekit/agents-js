@@ -72,10 +72,15 @@ export class ConnectionPool<T> {
   private readonly available: Set<T> = new Set();
   // Connections queued for closing
   private readonly toClose: Set<T> = new Set();
+  // Connections invalidated while checked out; close them once returned
+  private readonly retired: Set<T> = new Set();
+  // Track invalidations that occur while a connection handshake is in flight
+  private invalidations = 0;
   // Mutex for connection operations
   private readonly connectLock = new Mutex();
   // Prewarm task reference
   private prewarmController?: AbortController;
+  private prewarmTask?: Promise<void>;
 
   constructor(options: ConnectionPoolOptions<T>) {
     this.maxSessionDuration = options.maxSessionDuration;
@@ -92,8 +97,33 @@ export class ConnectionPool<T> {
    * @returns The new connection object
    * @throws If connectCb is not provided or connection fails
    */
-  private async _connect(timeout: number): Promise<T> {
-    const connection = await this.connectCb(timeout);
+  private async _connect(timeout: number, signal?: AbortSignal): Promise<T> {
+    let connection: T;
+    while (true) {
+      const invalidations = this.invalidations;
+      const attempt = this.connectCb(timeout);
+      if (signal) {
+        const result = await Promise.race([
+          attempt.then((conn) => ({ aborted: false as const, connection: conn })),
+          waitForAbort(signal).then(() => ({ aborted: true as const })),
+        ]);
+        if (result.aborted) {
+          // JavaScript promises cannot be cancelled. Close a connection that resolves late.
+          void attempt.then((conn) => this._maybeCloseConnection(conn)).catch(() => {});
+          throw this._abortError();
+        }
+        connection = result.connection;
+      } else {
+        connection = await attempt;
+      }
+      if (invalidations === this.invalidations) {
+        break;
+      }
+
+      // The options changed during the handshake, so this connection is stale.
+      this.toClose.add(connection);
+      await this._drainToClose();
+    }
     this.connections.set(connection, Date.now());
     return connection;
   }
@@ -102,11 +132,21 @@ export class ConnectionPool<T> {
    * Drain and close all connections queued for closing.
    */
   private async _drainToClose(): Promise<void> {
-    const connectionsToClose = Array.from(this.toClose);
-    this.toClose.clear();
-
-    for (const conn of connectionsToClose) {
-      await this._maybeCloseConnection(conn);
+    while (this.toClose.size > 0) {
+      const conn = this.toClose.values().next().value as T;
+      this.toClose.delete(conn);
+      try {
+        await this._maybeCloseConnection(conn);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          // Keep ownership of a connection whose close was cancelled so it can be retried.
+          this.toClose.add(conn);
+          throw error;
+        }
+        if (loggerOptions()) {
+          log().warn({ exceptionType: safeErrorType(error) }, 'error closing connection');
+        }
+      }
     }
   }
 
@@ -177,6 +217,11 @@ export class ConnectionPool<T> {
    * @param conn - The connection to make available
    */
   put(conn: T): void {
+    if (this.retired.has(conn)) {
+      this.remove(conn);
+      return;
+    }
+
     if (this.connections.has(conn)) {
       this.available.add(conn);
       return;
@@ -192,7 +237,7 @@ export class ConnectionPool<T> {
    */
   remove(conn: T): void {
     this.available.delete(conn);
-    if (this.connections.has(conn)) {
+    if (this.retired.delete(conn) || this.connections.has(conn)) {
       this.toClose.add(conn);
       this.connections.delete(conn);
       // Important for Node websockets: if we just "mark to close later" but remove listeners,
@@ -201,8 +246,17 @@ export class ConnectionPool<T> {
         const unlock = await this.connectLock.lock();
         try {
           if (!this.toClose.has(conn)) return;
-          await this._maybeCloseConnection(conn);
-          this.toClose.delete(conn);
+          try {
+            await this._maybeCloseConnection(conn);
+            this.toClose.delete(conn);
+          } catch (error) {
+            if (!(error instanceof Error && error.name === 'AbortError')) {
+              this.toClose.delete(conn);
+              if (loggerOptions()) {
+                log().warn({ exceptionType: safeErrorType(error) }, 'error closing connection');
+              }
+            }
+          }
         } finally {
           unlock();
         }
@@ -211,13 +265,20 @@ export class ConnectionPool<T> {
   }
 
   /**
-   * Clear all existing connections.
+   * Stop reusing all existing connections.
    *
-   * Marks all current connections to be closed during the next drain cycle.
+   * Idle connections are marked to be closed during the next drain cycle. Connections that are
+   * checked out remain usable by their current holder and are closed once returned. Connections
+   * whose handshake is in flight are discarded and retried by `_connect`.
    */
   invalidate(): void {
+    this.invalidations += 1;
     for (const conn of this.connections.keys()) {
-      this.toClose.add(conn);
+      if (this.available.has(conn)) {
+        this.toClose.add(conn);
+      } else {
+        this.retired.add(conn);
+      }
     }
     this.connections.clear();
     this.available.clear();
@@ -238,8 +299,11 @@ export class ConnectionPool<T> {
     this.prewarmController = controller;
 
     // Start prewarm in background
-    this._prewarmImpl(controller.signal)
+    const task = this._prewarmImpl(controller.signal)
       .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') {
+          return;
+        }
         if (loggerOptions()) {
           log().warn({ exceptionType: safeErrorType(error) }, 'failed to prewarm connection pool');
         }
@@ -248,7 +312,11 @@ export class ConnectionPool<T> {
         if (this.prewarmController === controller) {
           this.prewarmController = undefined;
         }
+        if (this.prewarmTask === task) {
+          this.prewarmTask = undefined;
+        }
       });
+    this.prewarmTask = task;
   }
 
   private async _prewarmImpl(signal: AbortSignal): Promise<void> {
@@ -259,7 +327,7 @@ export class ConnectionPool<T> {
       }
 
       if (this.connections.size === 0) {
-        const conn = await this._connect(this.connectTimeout);
+        const conn = await this._connect(this.connectTimeout, signal);
         this.available.add(conn);
       }
     } finally {
@@ -319,10 +387,14 @@ export class ConnectionPool<T> {
     // Cancel prewarm task if running
     if (this.prewarmController) {
       this.prewarmController.abort();
-      this.prewarmController = undefined;
+      await this.prewarmTask;
     }
 
     this.invalidate();
+    for (const conn of this.retired) {
+      this.toClose.add(conn);
+    }
+    this.retired.clear();
     await this._drainToClose();
   }
 }
