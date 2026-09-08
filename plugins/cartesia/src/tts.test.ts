@@ -13,7 +13,7 @@ import { tts as testTts } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
 import { type Server, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { TTS } from './tts.js';
 
@@ -430,15 +430,6 @@ describe('Cartesia streaming pool', () => {
 });
 
 describe('Cartesia /tts/bytes', () => {
-  // A failed ChunkedStream also rejects its background task; the error event is
-  // the surface under test here.
-  const swallowExpectedRejection = (reason: unknown) => {
-    if (reason instanceof APIStatusError) return;
-    throw reason;
-  };
-  beforeAll(() => process.on('unhandledRejection', swallowExpectedRejection));
-  afterAll(() => void process.off('unhandledRejection', swallowExpectedRejection));
-
   it('omits the websocket-only max_buffer_delay_ms field', async () => {
     const { server, baseURL, requests } = await startBytesServer((_body, res) => {
       res.writeHead(200, { 'content-type': 'audio/pcm' });
