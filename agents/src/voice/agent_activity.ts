@@ -2294,7 +2294,12 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     if (ownedSpeechHandle) {
-      const interruptOwnedSpeech = () => ownedSpeechHandle.interrupt(true);
+      // Return nothing: SpeechHandle is a thenable, and EventTarget calls `.then()` on a
+      // listener's return value. When the abort fires from inside the owning function tool,
+      // that `.then()` hits the circular-wait guard and crashes the process (#2435).
+      const interruptOwnedSpeech = () => {
+        ownedSpeechHandle.interrupt(true);
+      };
       taskController.signal.addEventListener('abort', interruptOwnedSpeech, { once: true });
       if (taskController.signal.aborted) {
         interruptOwnedSpeech();
