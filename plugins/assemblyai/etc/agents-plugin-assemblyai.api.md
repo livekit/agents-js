@@ -111,7 +111,6 @@ export interface STTOptions {
     // (undocumented)
     sampleRate: number;
     speakerLabels?: boolean;
-    // (undocumented)
     speechModel: STTModels;
     // (undocumented)
     vadThreshold?: number;
