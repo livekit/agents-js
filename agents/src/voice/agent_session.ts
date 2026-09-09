@@ -135,6 +135,7 @@ import { setParticipantSpanAttributes } from './utils.js';
 
 const SIP_RULE_ID_ATTR = 'sip.ruleID';
 const DEFAULT_AEC_WARMUP_DURATION = 3000;
+const LOOP_STALL_EVENT = 'event_loop_blocked';
 
 export interface AgentSessionUsage {
   /** List of usage summaries, one per model/provider combination. */
@@ -576,6 +577,9 @@ export class AgentSession<
 
   private sessionSpan?: Span;
   private agentSpeakingSpan?: Span;
+  private loopStallCount = 0;
+  private loopStallTotal = 0;
+  private loopStallMax = 0;
 
   private _interruptionDetection?: InterruptionOptions['mode'];
 
@@ -1003,6 +1007,9 @@ export class AgentSession<
 
     this.closing = false;
     this._usageCollector = new ModelUsageCollector();
+    this.loopStallCount = 0;
+    this.loopStallTotal = 0;
+    this.loopStallMax = 0;
 
     const ctx = getJobContext(false);
 
@@ -1884,6 +1891,28 @@ export class AgentSession<
       clearTimeout(this._aecWarmupTimer);
       this._aecWarmupTimer = null;
     }
+  }
+
+  /** @internal */
+  _recordLoopStall(durationInS: number, timestampMs: number): void {
+    const span = this.sessionSpan;
+    if (!span?.isRecording()) {
+      return;
+    }
+
+    this.loopStallCount += 1;
+    this.loopStallTotal += durationInS;
+    this.loopStallMax = Math.max(this.loopStallMax, durationInS);
+    span.addEvent(
+      LOOP_STALL_EVENT,
+      { [traceTypes.ATTR_BLOCKING_DURATION]: durationInS },
+      timestampMs,
+    );
+    span.setAttributes({
+      [traceTypes.ATTR_BLOCKING_COUNT]: this.loopStallCount,
+      [traceTypes.ATTR_BLOCKING_TOTAL_DURATION]: this.loopStallTotal,
+      [traceTypes.ATTR_BLOCKING_MAX_DURATION]: this.loopStallMax,
+    });
   }
 
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {

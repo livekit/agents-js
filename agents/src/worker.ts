@@ -30,6 +30,11 @@ import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { DEFAULT_SESSION_END_TIMEOUT, validateSessionEndTimeout } from './job_lifecycle.js';
 import { log } from './log.js';
+import {
+  type EventLoopMonitor,
+  startMonitoring,
+  stopMonitoring,
+} from './telemetry/loop_monitor.js';
 import { Future, rejectOnAbort } from './utils.js';
 import { version } from './version.js';
 
@@ -347,6 +352,7 @@ export class AgentServer {
   #httpServer?: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
+  #loopMonitor?: EventLoopMonitor;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: ServerOptions) {
@@ -461,6 +467,7 @@ export class AgentServer {
 
     this.#logger.info('starting worker');
     this.#closed = false;
+    this.#loopMonitor = startMonitoring({ name: 'worker', emitSpans: false });
     this.#procPool.start();
 
     const workerWS = async () => {
@@ -971,6 +978,8 @@ export class AgentServer {
     this.#logger.debug('shutting down worker');
 
     this.#closed = true;
+    if (this.#loopMonitor) stopMonitoring(this.#loopMonitor);
+    this.#loopMonitor = undefined;
 
     await this.#inferenceExecutor?.close();
     await this.#procPool.close();

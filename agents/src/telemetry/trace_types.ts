@@ -116,6 +116,23 @@ export const ATTR_REALTIME_MODEL_METRICS = 'lk.realtime_model_metrics';
 /** End-to-end latency in seconds. */
 export const ATTR_E2E_LATENCY = 'lk.e2e_latency';
 
+// Event loop blocking
+/** Heartbeat lag in seconds. */
+export const ATTR_BLOCKING_DURATION = 'lk.blocking.duration';
+export const ATTR_BLOCKING_THRESHOLD = 'lk.blocking.threshold';
+export const ATTR_BLOCKING_SEVERITY = 'lk.blocking.severity';
+export const ATTR_BLOCKING_TASK = 'lk.blocking.task';
+export const ATTR_BLOCKING_STACK = 'lk.blocking.stack';
+export const ATTR_BLOCKING_GC_TIME = 'lk.blocking.gc_time';
+/** Process CPU consumed during the heartbeat interval, in seconds. */
+export const ATTR_BLOCKING_CPU_TIME = 'lk.blocking.cpu_time';
+export const ATTR_BLOCKING_IMPORT = 'lk.blocking.import';
+export const ATTR_BLOCKING_SUPPRESSED = 'lk.blocking.suppressed';
+// Summary attributes on agent_session.
+export const ATTR_BLOCKING_COUNT = 'lk.blocking.count';
+export const ATTR_BLOCKING_TOTAL_DURATION = 'lk.blocking.total_duration';
+export const ATTR_BLOCKING_MAX_DURATION = 'lk.blocking.max_duration';
+
 // OpenTelemetry GenAI semantic conventions, mirroring the attribute registry of
 // https://github.com/open-telemetry/semantic-conventions-genai. Backends ingest these
 // directly, so the names must stay byte-for-byte identical to the registry. The ones the
