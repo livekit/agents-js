@@ -50,7 +50,7 @@ export default defineAgent({
       instructions: 'Greet the user, asking about their day.',
     });
 
-    setTimeout(async () => {
+    setTimeout(() => {
       if (session.agentState === 'initializing') return;
       const agent = session.currentAgent;
       const chatCtx = agent.chatCtx.copy();
@@ -59,7 +59,9 @@ export default defineAgent({
         content:
           "The user's name is Alex. He is from San Francisco and likes hiking. Use this information in your conversation.",
       });
-      await agent.updateChatCtx(chatCtx);
+      agent.updateChatCtx(chatCtx).catch((error) => {
+        log().error(error, 'Failed to update chat context');
+      });
     }, 10000);
   },
 });
