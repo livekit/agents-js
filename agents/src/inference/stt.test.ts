@@ -607,7 +607,7 @@ describe('STT VAD handling for Speechmatics models', () => {
 });
 
 describe('Inference STT connection lifecycle', () => {
-  it('includes the model in the dial and closes the session after input ends', async () => {
+  it('includes the model and waits for trailing transcripts before closing', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
@@ -628,7 +628,9 @@ describe('Inference STT connection lifecycle', () => {
         const event = JSON.parse(raw.toString()) as { type: string };
         messageTypes.push(event.type);
         if (event.type === 'session.finalize') {
+          socket.send(JSON.stringify({ type: 'session.finalized' }));
           setTimeout(() => {
+            if (socket.readyState !== 1) return;
             socket.send(
               JSON.stringify({
                 type: 'final_transcript',

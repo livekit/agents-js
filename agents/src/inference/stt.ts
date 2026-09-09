@@ -820,6 +820,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let inputEnded = false;
       let cleanedUp = false;
       let finalTranscriptReceived = false;
+      let finalTranscriptReceivedAfterInputEnd = false;
       let finalizationComplete = false;
       let sessionClosedReceived = false;
       let sessionCloseSent = false;
@@ -1040,7 +1041,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 break;
               case 'session.finalized':
                 pendingFinalizations = Math.max(0, pendingFinalizations - 1);
-                if (inputEnded && pendingFinalizations === 0) finishFinalization();
+                // xAI acknowledges finalize before endpointing emits its trailing transcript.
+                if (
+                  inputEnded &&
+                  pendingFinalizations === 0 &&
+                  finalTranscriptReceivedAfterInputEnd
+                ) {
+                  finishFinalization();
+                }
                 break;
               case 'session.closed':
                 finishFinalization();
@@ -1052,6 +1060,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 this.processTranscript(event, SpeechEventType.INTERIM_TRANSCRIPT);
                 break;
               case 'final_transcript':
+                if (inputEnded && event.transcript) {
+                  finalTranscriptReceivedAfterInputEnd = true;
+                }
                 this.processTranscript(event, SpeechEventType.FINAL_TRANSCRIPT);
                 break;
               case 'preflight_transcript':
