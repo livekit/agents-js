@@ -636,13 +636,15 @@ export function performLLMInference(
     span: Span,
     inference: genAI.InferenceMarker,
   ) => {
-    span.setAttribute(
-      traceTypes.ATTR_CHAT_CTX,
-      // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
-      // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
-      JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
-    );
-    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
+    if (span.isRecording()) {
+      span.setAttribute(
+        traceTypes.ATTR_CHAT_CTX,
+        // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
+        // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
+        JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
+      );
+      span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
+    }
 
     // the configured model and provider describe the inference only once it is known that
     // this LLM served it; that is decided below, when the nested span is (or is not) there
@@ -792,16 +794,18 @@ export function performLLMInference(
           finishReasons: [finishReason],
           timeToFirstChunk: data.ttft,
         });
-        genAI.setContentAttributes(span, {
-          systemInstructions: genAI.toSystemInstructions(chatCtx),
-          inputMessages: genAI.toInputMessages(chatCtx),
-          toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
-          outputMessages: genAI.toOutputMessages({
-            text: data.generatedText,
-            functionCalls: data.generatedToolCalls,
-            finishReason,
-          }),
-        });
+        if (span.isRecording() && genAI.captureContentEnabled()) {
+          genAI.setContentAttributes(span, {
+            systemInstructions: genAI.toSystemInstructions(chatCtx),
+            inputMessages: genAI.toInputMessages(chatCtx),
+            toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
+            outputMessages: genAI.toOutputMessages({
+              text: data.generatedText,
+              functionCalls: data.generatedToolCalls,
+              finishReason,
+            }),
+          });
+        }
       }
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();

@@ -2,26 +2,29 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  AlwaysOffSampler,
   InMemorySpanExporter,
   type ReadableSpan,
+  type Sampler,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ReadableStream } from 'node:stream/web';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext, FunctionCall } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { ToolContext } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
-import { setTracerProvider, traceTypes } from '../telemetry/index.js';
+import { genAI, setTracerProvider, traceTypes } from '../telemetry/index.js';
 import { isFlushSentinel } from '../types.js';
 import type { ModelSettings } from './agent.js';
 import { type _LLMGenerationData, performLLMInference } from './generation.js';
 import type { LLMNode } from './io.js';
 
-function setupInMemoryTracing() {
+function setupInMemoryTracing(sampler?: Sampler) {
   const exporter = new InMemorySpanExporter();
   const provider = new NodeTracerProvider({
+    sampler,
     spanProcessors: [new SimpleSpanProcessor(exporter)],
   });
   provider.register();
@@ -31,6 +34,16 @@ function setupInMemoryTracing() {
 
 function spanByName(spans: ReadableSpan[], name: string) {
   return spans.find((s) => s.name === name);
+}
+
+function forbidContentBuilders(): void {
+  const unexpectedBuilder = () => {
+    throw new Error('content payload builder was called');
+  };
+  vi.spyOn(genAI, 'toSystemInstructions').mockImplementation(unexpectedBuilder);
+  vi.spyOn(genAI, 'toInputMessages').mockImplementation(unexpectedBuilder);
+  vi.spyOn(genAI, 'toOutputMessages').mockImplementation(unexpectedBuilder);
+  vi.spyOn(genAI, 'toToolDefinitions').mockImplementation(unexpectedBuilder);
 }
 
 const modelSettings: ModelSettings = {};
@@ -102,6 +115,8 @@ describe('performLLMInference response telemetry', () => {
   let provider: NodeTracerProvider;
 
   afterEach(async () => {
+    genAI.setCaptureContent(true);
+    vi.restoreAllMocks();
     await provider?.shutdown();
   });
 
@@ -201,5 +216,61 @@ describe('performLLMInference response telemetry', () => {
     }
 
     expectFunctionCallTelemetry(span);
+  });
+
+  it('skips payload construction for a nonrecording span', async () => {
+    const { provider: testProvider } = setupInMemoryTracing(new AlwaysOffSampler());
+    provider = testProvider;
+    forbidContentBuilders();
+    vi.spyOn(ChatContext.prototype, 'toJSON').mockImplementation(() => {
+      throw new Error('chat context was serialized');
+    });
+    const llmNode: LLMNode = async () =>
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello');
+          controller.close();
+        },
+      });
+
+    const [task, data] = performLLMInference(
+      llmNode,
+      ChatContext.empty(),
+      ToolContext.empty(),
+      modelSettings,
+      new AbortController(),
+    );
+    const [, drained] = await Promise.all([task.result, drainGenerationStreams(data)]);
+
+    expect(drained.text).toBe('hello');
+  });
+
+  it('preserves noncontent attributes when capture is disabled', async () => {
+    const { exporter, provider: testProvider } = setupInMemoryTracing();
+    provider = testProvider;
+    forbidContentBuilders();
+    genAI.setCaptureContent(false);
+    const llmNode: LLMNode = async () =>
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello');
+          controller.close();
+        },
+      });
+
+    const [task, data] = performLLMInference(
+      llmNode,
+      ChatContext.empty(),
+      ToolContext.empty(),
+      modelSettings,
+      new AbortController(),
+    );
+    await Promise.all([task.result, drainGenerationStreams(data)]);
+
+    const span = spanByName(exporter.getFinishedSpans(), 'llm_node');
+    expect(span?.attributes[traceTypes.ATTR_CHAT_CTX]).toBeDefined();
+    expect(span?.attributes[traceTypes.ATTR_GEN_AI_OPERATION_NAME]).toBe('chat');
+    expect(span?.attributes[traceTypes.ATTR_GEN_AI_INPUT_MESSAGES]).toBeUndefined();
+    expect(span?.attributes[traceTypes.ATTR_GEN_AI_OUTPUT_MESSAGES]).toBeUndefined();
   });
 });
