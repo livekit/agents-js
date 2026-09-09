@@ -10,7 +10,7 @@ import {
   type RemoteParticipant,
   type Room,
 } from '@livekit/rtc-node';
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { context as otelContext, trace } from '@opentelemetry/api';
@@ -531,6 +531,7 @@ export class AgentSession<
   private _output: AgentOutput;
 
   private closing = false;
+  private closingController = new AbortController();
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
   private idleHolds = 0;
@@ -649,6 +650,17 @@ export class AgentSession<
   /** @internal - Whether the session is closing/draining. */
   get _closing(): boolean {
     return this.closing;
+  }
+
+  /**
+   * Aborted when shutdown starts, before the activity drains or Agent.onExit() runs.
+   * Use this signal to release work that activity teardown can await.
+   * The Close event fires after activity teardown and cannot release those waits.
+   * The signal stays aborted after close; read it again when starting a new run.
+   * @internal
+   */
+  get _closingSignal(): AbortSignal {
+    return this.closingController.signal;
   }
 
   /** @internal - Current run state for testing */
@@ -1002,6 +1014,9 @@ export class AgentSession<
     }
 
     this.closing = false;
+    if (this.closingController.signal.aborted) {
+      this.closingController = new AbortController();
+    }
     this._usageCollector = new ModelUsageCollector();
 
     const ctx = getJobContext(false);
@@ -1238,12 +1253,16 @@ export class AgentSession<
     this.activity.pauseReplyAuthorization();
   }
 
-  resumeReplyAuthorization(): void {
+  /**
+   * Resume automatic replies after pauseReplyAuthorization().
+   * @throws Error if the session is not running.
+   */
+  resumeReplyAuthorization(): Throws<void, Error> {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
 
-    this.activity.resumeReplyAuthorization();
+    return this.activity.resumeReplyAuthorization();
   }
 
   updateOptions(options: AgentSessionUpdateOptions = {}): void {
@@ -1921,6 +1940,9 @@ export class AgentSession<
     }
 
     this.closing = true;
+    // Set closingTask before listeners can call close() again.
+    await Promise.resolve();
+    this.closingController.abort();
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
     this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
