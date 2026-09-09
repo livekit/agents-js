@@ -421,6 +421,8 @@ const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_CANCEL_TIMEOUT = 5000;
 const INACTIVITY_TIMEOUT_ERROR_CODE = 2007;
+const FIRST_TRANSCRIPT_TIMEOUT_MS = 30_000;
+const TRANSCRIPT_INACTIVITY_TIMEOUT_MS = 3_000;
 
 export interface InferenceSTTOptions<TModel extends STTModels> {
   model?: TModel;
@@ -817,8 +819,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let ws: WebSocket | null = null;
       let inputEnded = false;
       let cleanedUp = false;
-      let finalReceived = false;
+      let finalTranscriptReceived = false;
+      let finalizationComplete = false;
+      let sessionClosedReceived = false;
       let sessionCloseSent = false;
+      // Acks have no IDs. Count them so a VAD-turn ack cannot close ended input early.
+      let pendingFinalizations = 0;
+      let finalizationTimeout: ReturnType<typeof setTimeout> | undefined;
       let vadStream: VADStream | null = null;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
@@ -829,9 +836,15 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         socket.send(JSON.stringify({ type: 'session.close' }));
       };
 
+      const sendSessionFinalize = (socket: WebSocket) => {
+        pendingFinalizations += 1;
+        socket.send(JSON.stringify({ type: 'session.finalize' }));
+      };
+
       const resourceCleanup = () => {
         if (cleanedUp) return;
         cleanedUp = true;
+        if (finalizationTimeout) clearTimeout(finalizationTimeout);
         void eventChannel.close().catch((error) => {
           this.#logger.debug({ error }, 'Failed to close STT event channel');
         });
@@ -845,6 +858,22 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         }
       };
 
+      const finishFinalization = () => {
+        if (finalizationComplete) return;
+        finalizationComplete = true;
+        resourceCleanup();
+      };
+
+      const scheduleFinalizationTimeout = () => {
+        if (!inputEnded || finalizationComplete || cleanedUp) return;
+        if (finalizationTimeout) clearTimeout(finalizationTimeout);
+        // Some providers omit the ack. End the session after transcript inactivity.
+        finalizationTimeout = setTimeout(
+          finishFinalization,
+          finalTranscriptReceived ? TRANSCRIPT_INACTIVITY_TIMEOUT_MS : FIRST_TRANSCRIPT_TIMEOUT_MS,
+        );
+      };
+
       const createWsListener = async (ws: WebSocket, signal: AbortSignal) => {
         return new ThrowsPromise<void, Error | APIStatusError>((resolve, reject) => {
           const onAbort = () => {
@@ -856,6 +885,17 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           ws.on('message', (data) => {
             const json = JSON.parse(data.toString()) as SttServerEvent;
+            if (json.type === 'final_transcript' && json.transcript) {
+              finalTranscriptReceived = true;
+            }
+            if (json.type === 'session.closed') sessionClosedReceived = true;
+            if (
+              json.type === 'interim_transcript' ||
+              json.type === 'final_transcript' ||
+              json.type === 'preflight_transcript'
+            ) {
+              scheduleFinalizationTimeout();
+            }
             void eventChannel.write(json).catch((error) => {
               this.#logger.debug({ error }, 'Failed to queue STT server event');
             });
@@ -868,7 +908,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           });
 
           ws.on('close', (code: number) => {
-            const expectedClose = finalReceived || signal.aborted;
+            const expectedClose = sessionClosedReceived || finalizationComplete || signal.aborted;
             resourceCleanup();
 
             if (expectedClose) return resolve();
@@ -929,8 +969,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           inputEnded = true;
           vadStream?.endInput();
-          socket.send(JSON.stringify({ type: 'session.finalize' }));
-          sendSessionClose(socket);
+          sendSessionFinalize(socket);
+          scheduleFinalizationTimeout();
         } catch (e) {
           if ((e as Error).message === 'Send aborted') {
             // Expected abort, don't log
@@ -956,7 +996,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (result.done) break;
             if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
             if (socket.readyState !== 1) return;
-            socket.send(JSON.stringify({ type: 'session.finalize' }));
+            sendSessionFinalize(socket);
           }
         } catch (e) {
           if ((e as Error).message === 'VAD aborted') return;
@@ -997,11 +1037,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
             switch (event.type) {
               case 'session.created':
+                break;
               case 'session.finalized':
+                pendingFinalizations = Math.max(0, pendingFinalizations - 1);
+                if (inputEnded && pendingFinalizations === 0) finishFinalization();
                 break;
               case 'session.closed':
-                finalReceived = true;
-                resourceCleanup();
+                finishFinalization();
                 break;
               case 'start_of_speech':
                 this.processStartOfSpeech();

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
@@ -613,6 +613,8 @@ describe('Inference STT connection lifecycle', () => {
     const address = server.address() as AddressInfo;
     const messageTypes: string[] = [];
     const transcripts: string[] = [];
+    let closeBeforeFinalized = false;
+    let finalized = false;
     let requestUrl: string | undefined;
     let resolveSocketClosed!: () => void;
     const socketClosed = new Promise<void>((resolve) => {
@@ -625,15 +627,25 @@ describe('Inference STT connection lifecycle', () => {
       socket.on('message', (raw) => {
         const event = JSON.parse(raw.toString()) as { type: string };
         messageTypes.push(event.type);
+        if (event.type === 'session.finalize') {
+          setTimeout(() => {
+            socket.send(
+              JSON.stringify({
+                type: 'final_transcript',
+                transcript: 'final words',
+                language: 'en',
+              }),
+            );
+            finalized = true;
+            socket.send(JSON.stringify({ type: 'session.finalized' }));
+            if (closeBeforeFinalized) {
+              socket.send(JSON.stringify({ type: 'session.closed' }));
+            }
+          }, 25);
+        }
         if (event.type === 'session.close') {
-          socket.send(
-            JSON.stringify({
-              type: 'final_transcript',
-              transcript: 'final words',
-              language: 'en',
-            }),
-          );
-          socket.send(JSON.stringify({ type: 'session.closed' }));
+          closeBeforeFinalized = !finalized;
+          if (finalized) socket.send(JSON.stringify({ type: 'session.closed' }));
         }
       });
     });
@@ -659,6 +671,7 @@ describe('Inference STT connection lifecycle', () => {
       );
       expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
       expect(transcripts).toEqual(['final words']);
+      expect(closeBeforeFinalized).toBe(false);
     } finally {
       stream.close();
       for (const client of server.clients) client.terminate();
@@ -666,7 +679,7 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
-  it('reports a disconnect before session.closed after input ends', async () => {
+  it('reports a disconnect before finalization completes after input ends', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
@@ -676,7 +689,7 @@ describe('Inference STT connection lifecycle', () => {
       connectionCount += 1;
       socket.on('message', (raw) => {
         const event = JSON.parse(raw.toString()) as { type: string };
-        if (event.type === 'session.close') socket.close(1011, 'missing session.closed');
+        if (event.type === 'session.finalize') socket.close(1011, 'finalization interrupted');
       });
     });
 
@@ -698,6 +711,65 @@ describe('Inference STT connection lifecycle', () => {
       expect(errors).toHaveLength(1);
       expect(errors[0]).toMatchObject({ retryable: false, statusCode: 1011 });
     } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('closes the session after transcript inactivity without a finalization ack', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'final_transcript',
+              transcript: 'final words',
+              language: 'en',
+            }),
+          );
+        }
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    let resolveTranscript!: () => void;
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) resolveTranscript();
+      }
+    })();
+
+    try {
+      await sessionCreated;
+      vi.useFakeTimers();
+      stream.endInput();
+      await transcriptReceived;
+      await vi.advanceTimersByTimeAsync(3_000);
+      await outputTask;
+
+      expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+    } finally {
+      vi.useRealTimers();
       stream.close();
       for (const client of server.clients) client.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -864,7 +936,11 @@ describeLiveKitInference('LiveKit Inference STT integration', agents, async (har
     'xai/stt-1',
   ] as const) {
     describe(model, async () => {
-      await harness.stt(new STT({ model }), new InferenceVAD(), {
+      const stt =
+        model === 'assemblyai/universal-streaming'
+          ? new STT({ model, modelOptions: { format_turns: true } })
+          : new STT({ model });
+      await harness.stt(stt, new InferenceVAD(), {
         nonStreaming: false,
       });
     });

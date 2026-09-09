@@ -25,6 +25,9 @@ const TRANSCRIPT =
   'With hands locked together, invisible among the press of bodies, ' +
   'they stared steadily in front of them, and instead of the eyes of the girl, the eyes of the aged prisoner gazed mournfully at Winston out of nests of hair.';
 
+const STREAM_CHUNK_DURATION_MS = 10;
+const TRAILING_SILENCE_DURATION_MS = 2_000;
+
 const validate = async (text: string, transcript: string, threshold: number) => {
   text = text.toLowerCase().replace(/\s/g, ' ').trim();
   transcript = transcript.toLowerCase().replace(/\s/g, ' ').trim();
@@ -52,9 +55,9 @@ export const stt = async (
     );
     it.each([24000, 44100])(
       'should properly stream transcribe speech at %i Hz',
-      { timeout: 60_000 },
+      { timeout: 120_000 },
       async (sampleRate) => {
-        const frames = makeTestSpeech(sampleRate, 10);
+        const frames = makeTestSpeech(sampleRate, STREAM_CHUNK_DURATION_MS);
         let stream: sttlib.SpeechStream;
         if (supports.streaming) {
           stream = stt.stream();
@@ -65,7 +68,22 @@ export const stt = async (
         const input = async () => {
           for (const frame of frames) {
             stream.pushFrame(frame);
-            await new Promise((resolve) => setTimeout(resolve, 5));
+            await new Promise((resolve) => setTimeout(resolve, STREAM_CHUNK_DURATION_MS));
+          }
+
+          const silence = new AudioFrame(
+            new Int16Array((sampleRate * STREAM_CHUNK_DURATION_MS) / 1_000),
+            sampleRate,
+            1,
+            (sampleRate * STREAM_CHUNK_DURATION_MS) / 1_000,
+          );
+          for (
+            let elapsed = 0;
+            elapsed < TRAILING_SILENCE_DURATION_MS;
+            elapsed += STREAM_CHUNK_DURATION_MS
+          ) {
+            stream.pushFrame(silence);
+            await new Promise((resolve) => setTimeout(resolve, STREAM_CHUNK_DURATION_MS));
           }
           stream.endInput();
         };
