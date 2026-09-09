@@ -774,7 +774,7 @@ export function performLLMInference(
       // a custom node may have generated this itself, with no nested `llm_request` span to
       // carry the convention's attributes; when there was one, they are already recorded
       if (inference.recorded) {
-        recordConfiguredModel();
+        if (!inference.hasAdapter) recordConfiguredModel();
       } else {
         // a third-party engine served this, so the configured model and provider are left
         // off rather than crediting it with a call it never made

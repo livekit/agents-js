@@ -194,6 +194,14 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   // attempt; reset before each retry and written to the `llm_request_run` span.
   #providerRequestIds: string[] = [];
 
+  /**
+   * Override for adapters that orchestrate instrumented child streams. The named span tracks
+   * orchestration only; child streams own inference attributes and metrics.
+   */
+  protected get adapterSpanName(): string | undefined {
+    return undefined;
+  }
+
   constructor(
     llm: LLM,
     {
@@ -220,7 +228,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     // tells an enclosing `llm_node` span that this call is instrumented, so it does not
     // record the convention's attributes a second time. Read here rather than in mainTask,
     // which startSoon defers out of the node's context.
-    genAI.markInferenceSpanRecorded();
+    genAI.markInferenceSpanRecorded({ adapter: this.adapterSpanName !== undefined });
 
     // this is a hack to immitate asyncio.create_task so that mainTask
     // is run **after** the constructor has finished. Otherwise we get
@@ -255,8 +263,10 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   private _mainTaskImpl = async (span: Span) => {
     this.#llmRequestSpan = span;
-    span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
-    this.recordGenAIRequest(span);
+    if (this.adapterSpanName === undefined) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
+      this.recordGenAIRequest(span);
+    }
 
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
@@ -316,7 +326,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   private mainTask = async () => {
     return tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
-      name: 'llm_request',
+      name: this.adapterSpanName ?? 'llm_request',
       endOnExit: false,
     });
   };
@@ -346,6 +356,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         break;
       }
       this.output.put(ev);
+      if (this.adapterSpanName !== undefined) continue;
       requestId = ev.id;
       if (requestId && !this.#providerRequestIds.includes(requestId)) {
         this.#providerRequestIds.push(requestId);
@@ -367,6 +378,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       }
     }
     this.output.close();
+
+    if (this.adapterSpanName !== undefined) {
+      this.#llmRequestSpan?.end();
+      return;
+    }
 
     const duration = process.hrtime.bigint() - startTime;
     const durationMs = Math.trunc(Number(duration / BigInt(1000000)));

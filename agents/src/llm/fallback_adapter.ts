@@ -148,6 +148,10 @@ export class FallbackAdapter extends LLM {
  * Handles fallback logic between multiple LLM providers.
  */
 class FallbackLLMStream extends LLMStream {
+  protected override get adapterSpanName(): string {
+    return 'llm_fallback_adapter';
+  }
+
   private adapter: FallbackAdapter;
   private parallelToolCalls?: boolean;
   private toolChoice?: ToolChoice;
