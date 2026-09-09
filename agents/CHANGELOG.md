@@ -1,5 +1,85 @@
 # @livekit/agents
 
+## 1.8.0
+
+### Minor Changes
+
+- Emit the full OpenTelemetry GenAI semantic conventions on agent spans. - [#2411](https://github.com/livekit/agents-js/pull/2411) ([@theomonnom](https://github.com/theomonnom))
+
+  Spans now carry the standard `gen_ai.*` attributes — operation, provider, request/response
+  model, per-modality token usage, cached tokens, finish reasons, time-to-first-chunk, tool
+  name/type/call id, and the `gen_ai.input.messages` / `gen_ai.output.messages` /
+  `gen_ai.system_instructions` / `gen_ai.tool.definitions` content payloads — so Datadog Agent
+  Observability, Langfuse and any other backend that reads the conventions (OTel v1.37+)
+  renders a LiveKit trace without a custom mapping. The session maps to `invoke_workflow`, an
+  agent turn to `invoke_agent`, inference to `chat` (realtime turns to `generate_content` on
+  their own nested span), and tool execution to `execute_tool`.
+
+  `gen_ai.provider.name` now reports the registry spelling the convention requires. Plugins
+  expose `provider` either as a display name (`MistralAI`, `AWS Bedrock`, `Vertex AI`) or as the
+  client's base-URL host (`api.openai.com`, `api.anthropic.com`); both are normalized, so
+  `openai`, `anthropic`, `mistral_ai`, `aws.bedrock`, `gcp.vertex_ai`, `gcp.gemini`, `x_ai`,
+  `groq` and `perplexity` are recognized by GenAI backends. A provider outside the registry
+  keeps its own id, which the convention allows.
+
+  Conversational content reaches every configured exporter, as before. To withhold it from a
+  third-party pipeline while LiveKit Cloud keeps receiving it, pass `allowPii: false`:
+
+  ```ts
+  telemetry.setTracerProvider(provider, { registerSpanProcessor, allowPii: false });
+  ```
+
+  or set `LIVEKIT_TELEMETRY_ALLOW_PII=0` when the framework adopts the ambient OpenTelemetry
+  provider and there is no call site. What LiveKit Cloud receives stays governed by the
+  project's PII setting in the dashboard; when that mandates redaction, PII is withheld from
+  every destination and `allowPii` does not weaken it. Content can be dropped entirely with
+  `telemetry.genAI.setCaptureContent(false)` or
+  `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`.
+
+### Patch Changes
+
+- Handle microphone track replacement for an existing RoomIO publication. - [#2363](https://github.com/livekit/agents-js/pull/2363) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Retry connection pool prewarming after a previous attempt fails or completes. - [#2378](https://github.com/livekit/agents-js/pull/2378) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): cancel a parked preemptive generation when pausing speech scheduling so agent handoffs cannot deadlock - [#2398](https://github.com/livekit/agents-js/pull/2398) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): cancel a speech that `scheduleSpeech` refuses while scheduling is paused, so its speech task does not stay parked and block the next `drain()`/`pause()` and `AgentSession.close()` - [#2372](https://github.com/livekit/agents-js/pull/2372) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add an `onSessionEnd` lifecycle callback and configurable timeout before internal session report cleanup. Flush final OTEL logs after shutdown callbacks with a bounded timeout. Apply Python's connection, total, and retry policy to session report uploads. - [#2387](https://github.com/livekit/agents-js/pull/2387) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+  Wait for session report cleanup before applying the process shutdown timeout, force-stop jobs that exceed memory limits, preserve logs queued during a final flush, and keep cleanup details and session metadata safe for logging.
+
+  Honour `LIVEKIT_OBSERVABILITY_URL` when resolving the observability endpoint, keeping the override's scheme, port, and base path so a plaintext or non-default-port collector is reachable.
+
+  The telemetry exporters now take `observabilityUrl` (a full base URL) in place of `cloudHostname` (a bare host that always implied https). `cloudHostname` is deprecated but still accepted on `setupCloudTracer`, `uploadSessionReport`, `SimpleOTLPHttpLogExporterConfig`, and `PinoCloudExporterConfig`, and resolves to the same endpoint as before.
+
+- Preserve wired VAD speech-end anchors when reporting transcription delay, expose absolute STT speech-end timing, and restore default-VAD speaking state for false-interruption recovery. - [#2382](https://github.com/livekit/agents-js/pull/2382) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve non-ASCII characters in pretty logs on Windows terminals. - [#2367](https://github.com/livekit/agents-js/pull/2367) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Ignore late adaptive interruption responses after the agent speech that requested them ends. - [#2417](https://github.com/livekit/agents-js/pull/2417) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Text-mode simulation jobs now send `X-LiveKit-Inference-Priority: low` on every inference request, overriding the model's configured `inferenceClass`, so simulation runs are paced into spare quota instead of competing with live voice traffic. Matches the Python SDK. - [#2423](https://github.com/livekit/agents-js/pull/2423) ([@u9g](https://github.com/u9g))
+
+- Redact API keys from rejected WebSocket handshake errors. - [#2379](https://github.com/livekit/agents-js/pull/2379) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix `WarmTransferTask` hanging after a failed participant move when the human agent disconnects. - [#2361](https://github.com/livekit/agents-js/pull/2361) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Remove retired ElevenLabs models from LiveKit Inference STT and TTS. - [#2415](https://github.com/livekit/agents-js/pull/2415) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Close LiveKit Inference STT sessions and sockets when input ends, include the model in WebSocket dials, and stop retrying gateway inactivity closures. - [#2413](https://github.com/livekit/agents-js/pull/2413) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Surface inference gateway status errors from WebSocket handshakes and active STT sessions. - [#2412](https://github.com/livekit/agents-js/pull/2412) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Exclude active agent speech from pauses learned by dynamic endpointing. - [#2422](https://github.com/livekit/agents-js/pull/2422) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Support Mistral Conversations requests when the chat context ends with an assistant message. - [#2376](https://github.com/livekit/agents-js/pull/2376) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Timestamp `say()` transcripts when speech starts so interrupted turns remain chronologically ordered. - [#2421](https://github.com/livekit/agents-js/pull/2421) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- RoomIO now preserves a pre-set `session.input.audio` and `session.output.transcription` instead of silently replacing them, matching the existing behavior for `session.output.audio` and the python implementation. - [#2296](https://github.com/livekit/agents-js/pull/2296) ([@1egoman](https://github.com/1egoman))
+
 ## 1.7.1
 
 ### Patch Changes

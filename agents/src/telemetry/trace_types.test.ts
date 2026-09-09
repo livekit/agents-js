@@ -6,6 +6,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { GEN_AI_PII_ATTRIBUTES, isPIIAttribute } from './redaction.js';
 import * as traceTypes from './trace_types.js';
 
 const PII_SEGMENT_RE = /(^|\.)pii(\.|$)/i;
@@ -197,6 +198,33 @@ const SAFE_KEYS = new Set([
   'lk.interruption.total_duration',
   'lk.interruption.prediction_duration',
   'lk.interruption.detection_delay',
+  // -- OTel GenAI semantic conventions --
+  // identifiers, enums, counts and sampling settings; nothing free-form. The
+  // content-bearing gen_ai attributes live in GEN_AI_PII_ATTRIBUTES instead, because their
+  // names are fixed by the convention and cannot carry the `lk.pii.` marker.
+  'error.type',
+  'gen_ai.agent.name',
+  'gen_ai.conversation.id',
+  'gen_ai.output.type',
+  'gen_ai.request.stream',
+  'gen_ai.response.finish_reasons',
+  'gen_ai.response.id',
+  'gen_ai.response.model',
+  'gen_ai.response.time_to_first_chunk',
+  'gen_ai.tool.call.id',
+  'gen_ai.tool.name',
+  'gen_ai.tool.type',
+  'gen_ai.usage.audio.input_tokens',
+  'gen_ai.usage.audio.output_tokens',
+  'gen_ai.usage.cache_read.input_tokens',
+  'gen_ai.usage.cache_write.input_tokens',
+  'gen_ai.usage.reasoning.output_tokens',
+  'gen_ai.usage.reasoning_tokens',
+  'gen_ai.usage.text.input_tokens',
+  'gen_ai.usage.text.output_tokens',
+  'gen_ai.workflow.name',
+  // GenAI event and metric names (not attribute keys)
+  'gen_ai.client.inference.operation.details',
 ]);
 
 function declaredKeys(): Record<string, string> {
@@ -211,7 +239,8 @@ describe('telemetry key PII classification', () => {
   it('classifies every declared key as safe or PII-bearing', () => {
     const unclassified = Object.fromEntries(
       Object.entries(declaredKeys()).filter(
-        ([, value]) => !SAFE_KEYS.has(value) && !PII_SEGMENT_RE.test(value),
+        ([, value]) =>
+          !SAFE_KEYS.has(value) && !PII_SEGMENT_RE.test(value) && !isPIIAttribute(value),
       ),
     );
 
@@ -219,16 +248,23 @@ describe('telemetry key PII classification', () => {
   });
 
   it('does not mark safe keys as PII-bearing', () => {
-    const conflicting = [...SAFE_KEYS].filter((key) => PII_SEGMENT_RE.test(key)).sort();
+    const conflicting = [...SAFE_KEYS]
+      .filter((key) => PII_SEGMENT_RE.test(key) || isPIIAttribute(key))
+      .sort();
 
     expect(conflicting).toEqual([]);
   });
 
-  it('does not retain stale safe-list entries', () => {
-    const declared = new Set(Object.values(declaredKeys()));
-    const stale = [...SAFE_KEYS].filter((key) => !declared.has(key)).sort();
+  it('agrees with the in-process stripper', () => {
+    // an integrator's own exporter never reaches the LiveKit Cloud collector, so every
+    // pii-marked key must be stripped in-process too
+    const marked = Object.values(declaredKeys()).filter((value) => PII_SEGMENT_RE.test(value));
+    expect(marked.length).toBeGreaterThan(0);
+    expect(marked.filter((key) => !isPIIAttribute(key))).toEqual([]);
 
-    expect(stale).toEqual([]);
+    // a rename must not silently drop an attribute out of the stripped set
+    const declared = new Set(Object.values(declaredKeys()));
+    expect([...GEN_AI_PII_ATTRIBUTES].filter((key) => !declared.has(key)).sort()).toEqual([]);
   });
 
   it('tags sensitive literal structured-log fields as PII', () => {

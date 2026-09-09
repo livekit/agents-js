@@ -204,11 +204,13 @@ export const sttSessionClosedEventSchema = z.object({
 });
 
 // Error event
-export const sttErrorEventSchema = z.object({
-  type: z.literal('error'),
-  message: z.string().optional(),
-  code: z.number().optional(),
-});
+export const sttErrorEventSchema = z
+  .object({
+    type: z.literal('error'),
+    message: z.string().optional(),
+    code: z.number().optional(),
+  })
+  .passthrough();
 
 // Discriminated union for well-known STT server events
 export const sttKnownServerEventSchema = z.discriminatedUnion('type', [

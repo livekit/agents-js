@@ -31,6 +31,7 @@ if (hasCartesiaConfig) {
 // A single 24 kHz mono s16le frame's worth of silence, base64-encoded the way
 // Cartesia sends audio chunks.
 const CHUNK_BASE64 = Buffer.alloc(4800).toString('base64');
+const CURRENT_CHUNK = Buffer.alloc(4800, 1);
 
 async function startWebSocketServer() {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -180,6 +181,62 @@ describe('Cartesia streaming pool', () => {
       expect(await synthesizeTurn(cartesia, 'first turn.')).not.toHaveLength(0);
       expect(await synthesizeTurn(cartesia, 'second turn.')).not.toHaveLength(0);
       expect(server.connectionCount()).toBe(1);
+    } finally {
+      await cartesia.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('ignores stale frames from a previous context on a pooled websocket', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    serveCartesia(wss, (ws, contextId) => {
+      ws.send(
+        JSON.stringify({
+          type: 'chunk',
+          data: CHUNK_BASE64,
+          done: false,
+          status_code: 200,
+          step_time: 0,
+          context_id: 'stale-context-id',
+        }),
+      );
+      ws.send(
+        JSON.stringify({
+          type: 'done',
+          done: true,
+          status_code: 200,
+          context_id: 'stale-context-id',
+        }),
+      );
+      ws.send(
+        JSON.stringify({
+          type: 'chunk',
+          data: CURRENT_CHUNK.toString('base64'),
+          done: false,
+          status_code: 200,
+          step_time: 0,
+          context_id: contextId,
+        }),
+      );
+      ws.send(
+        JSON.stringify({ type: 'done', done: true, status_code: 200, context_id: contextId }),
+      );
+      return false;
+    });
+
+    const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const events = await synthesizeTurn(cartesia, 'current turn.');
+      expect(events).not.toHaveLength(0);
+      expect(
+        events.every((event) =>
+          Buffer.from(
+            event.frame.data.buffer,
+            event.frame.data.byteOffset,
+            event.frame.data.byteLength,
+          ).equals(CURRENT_CHUNK),
+        ),
+      ).toBe(true);
     } finally {
       await cartesia.close();
       await closeWebSocketServer(wss);

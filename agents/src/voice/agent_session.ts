@@ -10,7 +10,7 @@ import {
   type RemoteParticipant,
   type Room,
 } from '@livekit/rtc-node';
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { context as otelContext, trace } from '@opentelemetry/api';
@@ -55,7 +55,7 @@ import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metri
 import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
-import { traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, traceTypes, tracer } from '../telemetry/index.js';
 import {
   DEFAULT_SPEECH_STEERING_OPTIONS,
   type SpeechSteeringOptions,
@@ -531,6 +531,7 @@ export class AgentSession<
   private _output: AgentOutput;
 
   private closing = false;
+  private closingController = new AbortController();
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
   private idleHolds = 0;
@@ -651,6 +652,17 @@ export class AgentSession<
     return this.closing;
   }
 
+  /**
+   * Aborted when shutdown starts, before the activity drains or Agent.onExit() runs.
+   * Use this signal to release work that activity teardown can await.
+   * The Close event fires after activity teardown and cannot release those waits.
+   * The signal stays aborted after close; read it again when starting a new run.
+   * @internal
+   */
+  get _closingSignal(): AbortSignal {
+    return this.closingController.signal;
+  }
+
   /** @internal - Current run state for testing */
   _globalRunState?: RunResult;
 
@@ -736,6 +748,10 @@ export class AgentSession<
       configuredTurnDetection === null
         ? undefined
         : configuredTurnDetection ?? new InferenceTurnDetector();
+    // The session report serializes `sessionOptions`, so record the effective detector there
+    // (Python keeps the eager default in `AgentSessionOptions.turn_handling` the same way).
+    resolvedSessionOptions.turnHandling.turnDetection =
+      configuredTurnDetection === null ? null : this.turnDetection;
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
     this._toolCtx = toToolContext(tools) ?? ToolContext.empty<UserData>();
@@ -998,6 +1014,9 @@ export class AgentSession<
     }
 
     this.closing = false;
+    if (this.closingController.signal.aborted) {
+      this.closingController = new AbortController();
+    }
     this._usageCollector = new ModelUsageCollector();
 
     const ctx = getJobContext(false);
@@ -1041,6 +1060,9 @@ export class AgentSession<
     this.sessionSpan = tracer.startSpan({
       name: 'agent_session',
     });
+    // the session is the convention's workflow: agent turns (`invoke_agent`), inference
+    // (`chat`) and tool spans (`execute_tool`) nest underneath it
+    genAI.setWorkflowAttributes(this.sessionSpan, { name: 'agent_session' });
 
     this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 
@@ -1231,12 +1253,16 @@ export class AgentSession<
     this.activity.pauseReplyAuthorization();
   }
 
-  resumeReplyAuthorization(): void {
+  /**
+   * Resume automatic replies after pauseReplyAuthorization().
+   * @throws Error if the session is not running.
+   */
+  resumeReplyAuthorization(): Throws<void, Error> {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
 
-    this.activity.resumeReplyAuthorization();
+    return this.activity.resumeReplyAuthorization();
   }
 
   updateOptions(options: AgentSessionUpdateOptions = {}): void {
@@ -1620,7 +1646,8 @@ export class AgentSession<
   }
 
   async close(): Promise<void> {
-    await this.closeImpl(CloseReason.USER_INITIATED);
+    this._closeSoon({ reason: CloseReason.USER_INITIATED });
+    await this.closingTask;
   }
 
   shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): void {
@@ -1913,6 +1940,9 @@ export class AgentSession<
     }
 
     this.closing = true;
+    // Set closingTask before listeners can call close() again.
+    await Promise.resolve();
+    this.closingController.abort();
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
     this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);

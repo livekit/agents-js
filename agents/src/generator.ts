@@ -6,10 +6,27 @@ import type { SimulationContext } from './simulation.js';
 
 export const AGENT_DEFINITION_SYMBOL = Symbol.for('livekit.agents.AgentDefinition');
 
-/** @see {@link defineAgent} */
+/**
+ * Defines the entrypoint and lifecycle callbacks for an agent.
+ *
+ * @see {@link defineAgent}
+ */
 export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
   entry: (ctx: JobContext<ProcessUserData>) => Promise<void>;
   prewarm?: (proc: JobProcess<ProcessUserData>) => unknown;
+  /**
+   * Called after the primary agent session closes and before its report is generated.
+   * Errors are logged and do not stop session cleanup.
+   *
+   * The worker stops waiting after `ServerOptions.sessionEndTimeout`. JavaScript cannot cancel the
+   * returned promise, so timed-out work can continue until the job process exits.
+   * The callback is not called if the primary agent session fails to close or exceeds its close
+   * timeout.
+   *
+   * @param ctx - The job context for the completed session.
+   * @public
+   */
+  onSessionEnd?: (ctx: JobContext<ProcessUserData>) => Promise<void> | void;
   /** Called when a simulation run driving this agent ends. Read the
    * simulator's verdict via `ctx.simulatorVerdict` and veto a pass from your
    * own checks with `ctx.fail(reason)`. Never called for normal sessions. */

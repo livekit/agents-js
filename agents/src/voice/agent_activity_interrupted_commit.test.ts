@@ -43,6 +43,38 @@ class InterruptibleOutput extends AudioOutput {
   }
 }
 
+class SayTimestampOutput extends AudioOutput {
+  onFirstFrame?: () => void;
+  private firstSegment = true;
+
+  constructor() {
+    super(24000);
+  }
+
+  async captureFrame(f: AudioFrame): Promise<void> {
+    const previousSegments = this.capturedPlayoutSegments;
+    await super.captureFrame(f);
+    if (this.capturedPlayoutSegments === previousSegments) return;
+
+    this.onPlaybackStarted(Date.now());
+    if (this.firstSegment) {
+      this.onFirstFrame?.();
+    }
+  }
+
+  flush(): void {
+    super.flush();
+    if (!this.firstSegment) {
+      this.onPlaybackFinished({ playbackPosition: 0.2, interrupted: false });
+    }
+  }
+
+  clearBuffer(): void {
+    this.firstSegment = false;
+    this.onPlaybackFinished({ playbackPosition: 0.02, interrupted: true });
+  }
+}
+
 // Audio sink that mimics a DataStream avatar output (waitPlaybackStart: true):
 // frames are accepted faster than real time and playback-started is only
 // reported LATER, via an out-of-band notification (the `lk.playback_started`
@@ -172,6 +204,18 @@ class FrameAgent extends Agent {
   }
 }
 
+class SayOnEnterAgent extends FrameAgent {
+  async onEnter(): Promise<void> {
+    const audio = new ReadableStream<AudioFrame>({
+      start(controller) {
+        for (let i = 0; i < 10; i++) controller.enqueue(frame());
+        controller.close();
+      },
+    });
+    this.session.say('I saw your application for a Honda', { audio });
+  }
+}
+
 // Agent whose TTS produces no frames and stays open long enough that an
 // interruption (anchored to ttsNode being invoked, fired well before the
 // close) always lands mid-forwarding with zero audio captured for the segment.
@@ -192,6 +236,44 @@ class NoFrameAgent extends Agent {
 
 describe('AgentActivity interrupted-speech commit', () => {
   initializeLogger({ pretty: false, level: 'silent' });
+
+  it('timestamps an interrupted say transcript at speech start', async () => {
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'Who is this?', content: 'This is John.' }]),
+    });
+    const audioOut = new SayTimestampOutput();
+    session.output.audio = audioOut;
+    let reply: ReturnType<AgentSession['generateReply']> | undefined;
+    audioOut.onFirstFrame = () => {
+      setTimeout(() => {
+        session.interrupt();
+        reply = session.generateReply({ userInput: 'Who is this?' });
+      }, 10);
+    };
+
+    const agent = new SayOnEnterAgent();
+    await session.start({ agent });
+    try {
+      await vi.waitFor(() => expect(reply).toBeDefined());
+      await reply!.waitForPlayout();
+
+      const messages = agent.chatCtx.items.filter((item) => item.type === 'message');
+      expect(messages.map((message) => message.role)).toEqual([
+        'system',
+        'assistant',
+        'user',
+        'assistant',
+      ]);
+      expect(messages[1]!.interrupted).toBe(true);
+      const startedSpeakingAt = messages[1]!.metrics?.startedSpeakingAt;
+      expect(startedSpeakingAt).toBeDefined();
+      expect(messages[1]!.createdAt).toBe(startedSpeakingAt! * 1_000);
+      expect(messages[2]!.textContent).toBe('Who is this?');
+      expect(messages[3]!.textContent).toBe('This is John.');
+    } finally {
+      await session.close();
+    }
+  });
 
   it('commits an interrupted reply to chat ctx when no synchronized transcript is available', async () => {
     const session = new AgentSession({

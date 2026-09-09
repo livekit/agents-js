@@ -84,7 +84,7 @@ describe('OTEL logging', () => {
     const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
 
     initPinoCloudExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'RM_test',
       jobId: 'AJ_test',
     });
@@ -105,7 +105,7 @@ describe('OTEL logging', () => {
     const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
 
     initPinoCloudExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'RM_test',
       jobId: 'AJ_test',
     });
@@ -132,7 +132,7 @@ describe('OTEL logging', () => {
     const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
 
     initPinoCloudExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'RM_test',
       jobId: 'AJ_test',
     });
@@ -193,7 +193,7 @@ describe('OTEL logging', () => {
       initializeLogger({ pretty: false, level: 'info' });
 
       initPinoCloudExporter({
-        cloudHostname: 'example.livekit.cloud',
+        observabilityUrl: 'https://example.livekit.cloud',
         roomId: 'RM_test',
         jobId: 'AJ_test',
         metadata: { 'lk.redaction.enabled': redactionEnabled },

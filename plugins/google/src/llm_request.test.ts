@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as types from '@google/genai';
-import { FinishReason, FunctionCallingConfigMode, GenerateContentResponse } from '@google/genai';
+import {
+  FinishReason,
+  FunctionCallingConfigMode,
+  GenerateContentResponse,
+  ThinkingLevel,
+} from '@google/genai';
 import { llm } from '@livekit/agents';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LLM } from './llm.js';
@@ -329,5 +334,118 @@ describe('Google mixed tools request construction', () => {
     expect(serverSideEnabled(retryConfig)).toBe(true);
     expect(hasFunctionDeclarations(retryConfig)).toBe(true);
     expect(hasGoogleSearch(retryConfig)).toBe(true);
+  });
+});
+
+describe('Google thinking config request construction', () => {
+  beforeEach(() => {
+    generateContentStreamMock.mockReset();
+  });
+
+  it.each([
+    ['gemma-4-31b-it', ThinkingLevel.MINIMAL],
+    ['gemma-4-31b-it', ThinkingLevel.HIGH],
+    ['models/gemma-4-31b-it', ThinkingLevel.MINIMAL],
+    ['models/gemma-4-31b-it', ThinkingLevel.HIGH],
+  ])('sends documented Gemma 4 level for %s', async (model, thinkingLevel) => {
+    const config = await captureConfig(
+      new LLM({ model, apiKey: 'test', thinkingConfig: { thinkingLevel } }),
+    );
+
+    expect(config.thinkingConfig?.thinkingLevel).toBe(thinkingLevel);
+  });
+
+  it.each([ThinkingLevel.LOW, ThinkingLevel.MEDIUM])(
+    'rejects undocumented Gemma 4 level %s',
+    (thinkingLevel) => {
+      expect(
+        () =>
+          new LLM({
+            model: 'gemma-4-31b-it',
+            apiKey: 'test',
+            thinkingConfig: { thinkingLevel },
+          }),
+      ).toThrow(/only supports thinkingLevel/);
+    },
+  );
+
+  it.each(['gemini-3-pro-preview', 'gemma-4-31b-it'])(
+    'preserves includeThoughts for %s',
+    async (model) => {
+      const config = await captureConfig(
+        new LLM({
+          model,
+          apiKey: 'test',
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH, includeThoughts: true },
+        }),
+      );
+
+      expect(config.thinkingConfig).toEqual({
+        thinkingLevel: ThinkingLevel.HIGH,
+        includeThoughts: true,
+      });
+    },
+  );
+
+  it.each([
+    ['gemini-3-flash-preview', ThinkingLevel.MINIMAL],
+    ['models/gemini-3-flash-preview', ThinkingLevel.MINIMAL],
+    ['gemini-3-pro-preview', ThinkingLevel.LOW],
+    ['gemma-4-31b-it', undefined],
+  ])('defaults the thinking level for %s', async (model, expectedLevel) => {
+    const config = await captureConfig(
+      new LLM({ model, apiKey: 'test', thinkingConfig: { includeThoughts: false } }),
+    );
+
+    expect(config.thinkingConfig?.thinkingLevel).toBe(expectedLevel);
+    expect(config.thinkingConfig?.includeThoughts).toBe(false);
+  });
+
+  it.each(['gemini-3-pro-preview', 'gemma-4-31b-it'])(
+    'drops thinkingBudget for level model %s',
+    async (model) => {
+      const config = await captureConfig(
+        new LLM({ model, apiKey: 'test', thinkingConfig: { thinkingBudget: 0 } }),
+      );
+
+      expect(config.thinkingConfig?.thinkingBudget).toBeUndefined();
+    },
+  );
+
+  it('preserves thinkingBudget for Gemini 2.5', async () => {
+    const config = await captureConfig(
+      new LLM({
+        model: 'gemini-2.5-flash',
+        apiKey: 'test',
+        thinkingConfig: { thinkingBudget: 1024 },
+      }),
+    );
+
+    expect(config.thinkingConfig?.thinkingBudget).toBe(1024);
+    expect(config.thinkingConfig?.thinkingLevel).toBeUndefined();
+  });
+
+  it.each(['GEMMA-4-31B-IT', 'publishers/google/models/gemma-4-26b-a4b-it'])(
+    'recognizes Gemma 4 level model %s',
+    async (model) => {
+      const config = await captureConfig(
+        new LLM({
+          model,
+          apiKey: 'test',
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+        }),
+      );
+
+      expect(config.thinkingConfig?.thinkingLevel).toBe(ThinkingLevel.HIGH);
+    },
+  );
+
+  it('does not treat Gemma 4 as Gemini 3 for mixed tools', async () => {
+    const config = await captureConfig(new LLM({ model: 'gemma-4-31b-it', apiKey: 'test' }), {
+      toolCtx: [weatherTool(), new GoogleSearch()],
+    });
+
+    expect(hasFunctionDeclarations(config)).toBe(true);
+    expect(hasGoogleSearch(config)).toBe(false);
   });
 });

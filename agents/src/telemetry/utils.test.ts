@@ -5,17 +5,16 @@ import type { Span } from '@opentelemetry/api';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type JobContext, runWithJobContext } from '../job.js';
+import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 import * as traceTypes from './trace_types.js';
-import {
-  REDACTED_EXCEPTION_MESSAGE,
-  type RecordExceptionOptions,
-  recordException,
-} from './utils.js';
+import { type RecordExceptionOptions, recordException } from './utils.js';
 
 function fakeSpan() {
   return {
     addEvent: vi.fn(),
+    isRecording: vi.fn(() => true),
     recordException: vi.fn(),
+    setAttribute: vi.fn(),
     setAttributes: vi.fn(),
     setStatus: vi.fn(),
   };
@@ -40,6 +39,8 @@ describe('recordException', () => {
     captureException(span, { redacted: false });
 
     expect(span.recordException).toHaveBeenCalledOnce();
+    // `error.type` is the GenAI/HTTP conventions' low-cardinality error identifier
+    expect(span.setAttribute).toHaveBeenCalledWith(traceTypes.ATTR_ERROR_TYPE, 'Error');
     expect(span.setStatus).toHaveBeenCalledWith({
       code: SpanStatusCode.ERROR,
       message: 'secret transcript',
@@ -67,10 +68,13 @@ describe('recordException', () => {
       message: REDACTED_EXCEPTION_MESSAGE,
     });
     expect(span.setAttributes).toHaveBeenCalledWith(attrs);
+    // `error.type` names the error class, never its message, so it survives redaction
+    expect(span.setAttribute).toHaveBeenCalledWith(traceTypes.ATTR_ERROR_TYPE, 'Error');
     expect(
       JSON.stringify([
         span.addEvent.mock.calls,
         span.setStatus.mock.calls,
+        span.setAttribute.mock.calls,
         span.setAttributes.mock.calls,
       ]),
     ).not.toContain('secret transcript');

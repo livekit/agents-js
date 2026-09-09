@@ -339,7 +339,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(async () => {
+    const runMainTask = async () => {
       try {
         await this.mainTask();
       } catch {
@@ -347,6 +347,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       } finally {
         this.queue.close();
       }
+    };
+    startSoon(() => {
+      void runMainTask();
     });
   }
 
