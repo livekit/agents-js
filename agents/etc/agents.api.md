@@ -562,6 +562,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     //
     // @internal (undocumented)
     _recorderIO?: RecorderIO;
+    // @internal (undocumented)
+    _recordLoopStall(durationInS: number, timestampMs: number): void;
     // @internal
     _redactionEnabled: boolean;
     // (undocumented)
@@ -1141,6 +1143,66 @@ const ATTR_AMD_SPEECH_DURATION = "lk.amd.speech_duration";
 //
 // @public (undocumented)
 const ATTR_AMD_TRANSCRIPT = "lk.pii.amd.transcript";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_COUNT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_BLOCKING_COUNT = "lk.blocking.count";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_CPU_TIME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_BLOCKING_CPU_TIME = "lk.blocking.cpu_time";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_BLOCKING_DURATION = "lk.blocking.duration";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_GC_TIME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_BLOCKING_GC_TIME = "lk.blocking.gc_time";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_IMPORT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_BLOCKING_IMPORT = "lk.blocking.import";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_MAX_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_BLOCKING_MAX_DURATION = "lk.blocking.max_duration";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_SEVERITY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_BLOCKING_SEVERITY = "lk.blocking.severity";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_STACK" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_BLOCKING_STACK = "lk.blocking.stack";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_SUPPRESSED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_BLOCKING_SUPPRESSED = "lk.blocking.suppressed";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_TASK" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_BLOCKING_TASK = "lk.blocking.task";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_THRESHOLD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_BLOCKING_THRESHOLD = "lk.blocking.threshold";
+
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_TOTAL_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_BLOCKING_TOTAL_DURATION = "lk.blocking.total_duration";
 
 // Warning: (ae-missing-release-tag) "ATTR_CHAT_CTX" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -2071,6 +2133,19 @@ declare namespace beta {
         EndCallToolCompletedEvent,
         EndCallToolOptions
     }
+}
+
+// Warning: (ae-missing-release-tag) "BlockedReport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface BlockedReport {
+    cpuTime: number;
+    duration: number;
+    // (undocumented)
+    severity: LoopMonitorSeverity;
+    startedAt: number;
+    // (undocumented)
+    warnThreshold: number;
 }
 
 // Warning: (ae-missing-release-tag) "BufferedSentenceStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -3080,6 +3155,11 @@ type DeepSeekModels = 'deepseek-ai/deepseek-v3' | 'deepseek-ai/deepseek-v3.2';
 // @public (undocumented)
 export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions;
 
+// Warning: (ae-missing-release-tag) "DEFAULT_ERROR_THRESHOLD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const DEFAULT_ERROR_THRESHOLD = 500;
+
 // Warning: (ae-missing-release-tag) "DEFAULT_EXPRESSIVE_OPTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -3110,6 +3190,16 @@ const DEFAULT_SPEECH_STEERING_OPTIONS: SpeechSteeringOptions;
 //
 // @public (undocumented)
 export const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback;
+
+// Warning: (ae-missing-release-tag) "DEFAULT_TICK_INTERVAL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const DEFAULT_TICK_INTERVAL = 20;
+
+// Warning: (ae-missing-release-tag) "DEFAULT_WARN_THRESHOLD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const DEFAULT_WARN_THRESHOLD = 100;
 
 // Warning: (ae-missing-release-tag) "defaultEndpointingOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -3288,6 +3378,16 @@ export interface EndpointingOptions {
     mode: 'fixed' | 'dynamic';
 }
 
+// Warning: (ae-missing-release-tag) "ENV_ERROR_THRESHOLD_MS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ENV_ERROR_THRESHOLD_MS = "LIVEKIT_AGENTS_LOOP_BLOCK_ERROR_MS";
+
+// Warning: (ae-missing-release-tag) "ENV_WARN_THRESHOLD_MS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ENV_WARN_THRESHOLD_MS = "LIVEKIT_AGENTS_LOOP_BLOCK_WARN_MS";
+
 declare namespace eot {
     export {
         TurnDetector,
@@ -3426,6 +3526,44 @@ class EventAssert {
     protected _parent: RunAssert;
     // (undocumented)
     protected _raise(message: string): never;
+}
+
+// Warning: (ae-missing-release-tag) "EventLoopMonitor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+class EventLoopMonitor {
+    constructor(options?: EventLoopMonitorOptions);
+    // @internal (undocumented)
+    _buildReport(duration: number, cpuTime: number): BlockedReport;
+    // (undocumented)
+    readonly errorThreshold: number;
+    // @internal
+    _onReport?: (report: BlockedReport) => void;
+    // @internal (undocumented)
+    _report(report: BlockedReport): void;
+    setReportContext(context: Context | undefined, runner?: ReportContextRunner): void;
+    start(): void;
+    stop(): void;
+    // (undocumented)
+    readonly tickInterval: number;
+    // (undocumented)
+    readonly warnThreshold: number;
+}
+
+// Warning: (ae-missing-release-tag) "EventLoopMonitorOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface EventLoopMonitorOptions {
+    // (undocumented)
+    emitSpans?: boolean;
+    // (undocumented)
+    errorThreshold?: number;
+    // (undocumented)
+    name?: string;
+    // (undocumented)
+    tickInterval?: number;
+    // (undocumented)
+    warnThreshold?: number;
 }
 
 // Warning: (ae-missing-release-tag) "EventRangeAssert" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -4236,6 +4374,11 @@ export function getJobContext<ProcessUserData = Record<string, unknown>>(require
 //
 // @public (undocumented)
 export function getLanguageRegion(language: string): string | undefined;
+
+// Warning: (ae-missing-release-tag) "getMonitor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+function getMonitor(): EventLoopMonitor | undefined;
 
 // Warning: (ae-missing-release-tag) "GoogleModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -5326,6 +5469,49 @@ export const logMetrics: (metrics: AgentMetrics) => void;
 // @public
 export function loopAudioFramesFromFile(filePath: string, options?: AudioDecodeOptions): AsyncGenerator<AudioFrame, void, unknown>;
 
+declare namespace loopMonitor {
+    export {
+        _tickIntervalFor,
+        startMonitoring,
+        stopMonitoring,
+        getMonitor,
+        DEFAULT_WARN_THRESHOLD,
+        DEFAULT_ERROR_THRESHOLD,
+        DEFAULT_TICK_INTERVAL,
+        ENV_WARN_THRESHOLD_MS,
+        ENV_ERROR_THRESHOLD_MS,
+        MAX_SPANS_PER_MINUTE,
+        MAX_LOGS_PER_MINUTE,
+        SPAN_NAME,
+        LoopMonitorSeverity,
+        BlockedReport,
+        LoopMonitorThresholds,
+        _RateLimiter,
+        EventLoopMonitorOptions,
+        ReportContextRunner,
+        EventLoopMonitor,
+        StartMonitoringOptions
+    }
+}
+
+// Warning: (ae-missing-release-tag) "LoopMonitorSeverity" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+type LoopMonitorSeverity = 'warning' | 'error';
+
+// Warning: (ae-missing-release-tag) "LoopMonitorThresholds" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+class LoopMonitorThresholds {
+    constructor(warn: number, error: number);
+    // (undocumented)
+    readonly error: number;
+    // (undocumented)
+    static fromEnv(env?: NodeJS.ProcessEnv): LoopMonitorThresholds | undefined;
+    // (undocumented)
+    readonly warn: number;
+}
+
 // Warning: (ae-missing-release-tag) "markInferenceSpanRecorded" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -5344,6 +5530,16 @@ interface MarkupInfo {
 //
 // @public
 function matchMood(label: string, fallback?: AgentMood | null): AgentMood | null;
+
+// Warning: (ae-missing-release-tag) "MAX_LOGS_PER_MINUTE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const MAX_LOGS_PER_MINUTE = 5;
+
+// Warning: (ae-missing-release-tag) "MAX_SPANS_PER_MINUTE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const MAX_SPANS_PER_MINUTE = 30;
 
 // Warning: (ae-missing-release-tag) "maxInputLen" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -5973,6 +6169,15 @@ export interface QueueAudioOutputClearEvent {
 // @public
 export type QueueAudioOutputItem = AudioFrame | AudioSegmentEnd;
 
+// @internal (undocumented)
+class _RateLimiter {
+    constructor(limit: number);
+    // (undocumented)
+    allow(now: number): boolean;
+    // (undocumented)
+    takeSuppressed(): number;
+}
+
 // Warning: (ae-missing-release-tag) "readStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -6257,6 +6462,11 @@ export interface ReplyPromptArgs {
     // (undocumented)
     callIds: string[];
 }
+
+// Warning: (ae-missing-release-tag) "ReportContextRunner" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+type ReportContextRunner = <T>(fn: () => T) => T;
 
 // Warning: (ae-missing-release-tag) "resampleStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -7071,6 +7281,11 @@ export function sortedToolEntries<UserData = UnknownUserData>(toolCtx: ToolConte
 // @internal
 export function sortedToolNames(toolCtx: ToolContext | undefined): string[];
 
+// Warning: (ae-missing-release-tag) "SPAN_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const SPAN_NAME = "event_loop_blocked";
+
 // Warning: (ae-missing-release-tag) "SpanProcessorLike" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public @deprecated (undocumented)
@@ -7357,6 +7572,23 @@ function splitAllMarkup(text: string): [string, ExpressiveTag[]];
 // @public
 const splitWords: (text: string, ignorePunctuation?: boolean) => [string, number, number][];
 
+// Warning: (ae-missing-release-tag) "startMonitoring" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+function startMonitoring(options?: StartMonitoringOptions): EventLoopMonitor | undefined;
+
+// Warning: (ae-missing-release-tag) "StartMonitoringOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface StartMonitoringOptions {
+    // (undocumented)
+    emitSpans?: boolean;
+    // (undocumented)
+    name?: string;
+    // (undocumented)
+    thresholds?: LoopMonitorThresholds;
+}
+
 // Warning: (ae-missing-release-tag) "startSoon" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -7378,6 +7610,11 @@ interface StartSpanOptions {
 //
 // @public
 function steeringInstructions(provider: string, steering: SpeechSteeringOptions): string;
+
+// Warning: (ae-missing-release-tag) "stopMonitoring" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+function stopMonitoring(monitor?: EventLoopMonitor): void;
 
 // Warning: (ae-missing-release-tag) "StopResponse" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -7950,6 +8187,7 @@ declare namespace telemetry {
         PinoLogObject,
         genAI,
         REDACTED_EXCEPTION_MESSAGE,
+        loopMonitor,
         traceTypes,
         FanoutSpanProcessor,
         flushOtelLogs,
@@ -8120,6 +8358,9 @@ class ThresholdOptions {
 //
 // @public
 type ThresholdOverride = number | Record<string, number> | undefined;
+
+// @internal (undocumented)
+function _tickIntervalFor(warnThreshold: number): number;
 
 // Warning: (ae-missing-release-tag) "TimedString" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -8507,6 +8748,18 @@ declare namespace traceTypes {
         ATTR_TTS_METRICS,
         ATTR_REALTIME_MODEL_METRICS,
         ATTR_E2E_LATENCY,
+        ATTR_BLOCKING_DURATION,
+        ATTR_BLOCKING_THRESHOLD,
+        ATTR_BLOCKING_SEVERITY,
+        ATTR_BLOCKING_TASK,
+        ATTR_BLOCKING_STACK,
+        ATTR_BLOCKING_GC_TIME,
+        ATTR_BLOCKING_CPU_TIME,
+        ATTR_BLOCKING_IMPORT,
+        ATTR_BLOCKING_SUPPRESSED,
+        ATTR_BLOCKING_COUNT,
+        ATTR_BLOCKING_TOTAL_DURATION,
+        ATTR_BLOCKING_MAX_DURATION,
         ATTR_GEN_AI_OPERATION_NAME,
         ATTR_GEN_AI_PROVIDER_NAME,
         ATTR_GEN_AI_REQUEST_MODEL,
@@ -9696,11 +9949,11 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:361:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:998:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1651:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1651:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1651:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:381:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1002:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1658:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1658:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1658:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"

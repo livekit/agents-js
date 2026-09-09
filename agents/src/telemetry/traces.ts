@@ -11,6 +11,7 @@ import {
   type SpanOptions,
   type Tracer,
   type TracerProvider,
+  metrics,
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
@@ -22,6 +23,11 @@ import {
   envDetector,
   resourceFromAttributes,
 } from '@opentelemetry/resources';
+import {
+  AggregationTemporality,
+  MeterProvider,
+  PeriodicExportingMetricReader,
+} from '@opentelemetry/sdk-metrics';
 import type {
   ReadableSpan,
   Span as SdkSpan,
@@ -52,7 +58,7 @@ import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { uploadRecording } from './recording_upload.js';
 import { allowPiiFromEnv } from './redaction.js';
 import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
-import { UploadGateTraceExporter, uploadGate } from './upload_gate.js';
+import { UploadGateMetricExporter, UploadGateTraceExporter, uploadGate } from './upload_gate.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -287,6 +293,72 @@ const customProviderConfigs = new WeakMap<TracerProvider, CustomProviderConfig>(
 /** Providers that already carry the in-process PII stripper — installed at most once. */
 const piiRedactionInstalled = new WeakSet<TracerProvider>();
 
+let cloudMeterProvider: MeterProvider | undefined;
+let cloudMetricsUnavailable = false;
+let cloudMeterShutdownRegistered = false;
+
+function isNoopMeterProvider(provider: ReturnType<typeof metrics.getMeterProvider>): boolean {
+  // The API does not publicly export its singleton NoopMeterProvider. The constructor is the
+  // stable distinction available in OTel API 1.x, equivalent to checking the private proxy/no-op
+  // provider in the Python SDK.
+  return provider.constructor.name === 'NoopMeterProvider';
+}
+
+function setupCloudMetrics(
+  observabilityUrl: string,
+  headers: Record<string, string>,
+  resource: ReturnType<typeof resourceFromAttributes>,
+): MeterProvider | undefined {
+  if (cloudMeterProvider || cloudMetricsUnavailable) return cloudMeterProvider;
+
+  const currentProvider = metrics.getMeterProvider();
+  if (!isNoopMeterProvider(currentProvider)) {
+    // Metric readers are fixed when an SDK 2.x MeterProvider is constructed. Preserve an
+    // application-installed global provider rather than replacing it and breaking its exporter.
+    cloudMetricsUnavailable = true;
+    return undefined;
+  }
+
+  const exporter = new UploadGateMetricExporter({
+    url: `${observabilityUrl}/observability/metrics/otlp/v0`,
+    headers,
+    compression: CompressionAlgorithm.GZIP,
+    temporalityPreference: AggregationTemporality.DELTA,
+  });
+  const provider = new MeterProvider({
+    resource,
+    readers: [
+      new PeriodicExportingMetricReader({
+        exporter,
+        exportIntervalMillis: 30_000,
+      }),
+    ],
+  });
+
+  if (!metrics.setGlobalMeterProvider(provider)) {
+    // Another provider won the set-once global between the check and registration. Do not leave
+    // the orphaned periodic reader running.
+    void provider.shutdown().catch(() => undefined);
+    cloudMetricsUnavailable = true;
+    return undefined;
+  }
+
+  cloudMeterProvider = provider;
+  if (!cloudMeterShutdownRegistered) {
+    cloudMeterShutdownRegistered = true;
+    process.once('beforeExit', async () => {
+      const ownedProvider = cloudMeterProvider;
+      cloudMeterProvider = undefined;
+      try {
+        await ownedProvider?.shutdown({ timeoutMillis: 10_000 });
+      } catch (error) {
+        console.error('Failed to shut down cloud metrics:', error);
+      }
+    });
+  }
+  return provider;
+}
+
 /**
  * Installs {@link PIIFilteringSpanProcessor} on a provider LiveKit does not own.
  *
@@ -500,6 +572,26 @@ export async function setupCloudTracer(
           ...baseMetadata,
         }),
       );
+
+    // A meter provider has process lifetime and cannot carry room/job identity safely. Those
+    // fields are attached to each measurement by otel_metrics instead.
+    const meterResource = defaultResource()
+      .merge(detectResources({ detectors: [envDetector] }))
+      .merge(
+        resourceFromAttributes({
+          [ATTR_SERVICE_NAME]: 'livekit-agents',
+          ...(agentName ? { [ATTR_AGENT_NAME]: agentName } : {}),
+          ...(cloudAgentId ? { [ATTR_CLOUD_AGENT_ID]: cloudAgentId } : {}),
+          ...(deploymentId ? { [ATTR_DEPLOYMENT_ID]: deploymentId } : {}),
+        }),
+      );
+    const meterProvider = setupCloudMetrics(observabilityUrl, headers, meterResource);
+    if (meterProvider) {
+      const { getJobContext } = await import('../job.js');
+      getJobContext(false)?.addShutdownCallback(() =>
+        meterProvider.forceFlush({ timeoutMillis: 10_000 }),
+      );
+    }
 
     if (enableTraces) {
       const url = `${observabilityUrl}/observability/traces/otlp/v0`;
