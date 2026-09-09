@@ -187,8 +187,8 @@ export class InputDeltaScope {
     const records = site.chatCtx ? [...chatCtx.items] : full.conversation;
     const current: InputBaseline = {
       keys: records.map((item) => [item.id, chatItemFingerprint(item)]),
-      layout: messageLayout(records),
-      instructions: JSON.stringify(full.systemInstructions()),
+      layout: site.chatCtx ? [] : messageLayout(records),
+      instructions: site.chatCtx ? '' : JSON.stringify(full.systemInstructions()),
       spanContext: span.spanContext(),
     };
     const parent = this.tracker._baselines.get(site);
