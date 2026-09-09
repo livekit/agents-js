@@ -717,9 +717,7 @@ export class AgentConfigUpdate {
     };
 
     if (this.instructions !== undefined) {
-      result.instructions = isInstructions(this.instructions)
-        ? (this.instructions.toJSON() as JSONValue)
-        : this.instructions;
+      result.instructions = renderInstructions(this.instructions);
     }
     if (this.toolsAdded !== undefined) {
       result.toolsAdded = this.toolsAdded;
