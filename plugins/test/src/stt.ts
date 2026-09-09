@@ -64,6 +64,14 @@ export const stt = async (
         } else {
           stream = new sttlib.StreamAdapter(stt, vad).stream();
         }
+        let rejectStreamError!: (error: Error) => void;
+        const streamError = new Promise<never>((_, reject) => {
+          rejectStreamError = reject;
+        });
+        const onStreamError: sttlib.STTCallbacks['error'] = ({ error }) => {
+          rejectStreamError(error);
+        };
+        stt.on('error', onStreamError);
 
         const input = async () => {
           for (const frame of frames) {
@@ -114,8 +122,9 @@ export const stt = async (
         };
 
         try {
-          await Promise.all([input(), output()]);
+          await Promise.race([Promise.all([input(), output()]), streamError]);
         } finally {
+          stt.off('error', onStreamError);
           stream.close();
         }
       },

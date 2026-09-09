@@ -719,6 +719,69 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
+  it('reconnects when the session closes before input ends', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+    let resolveFirstSocketClosed!: () => void;
+    const firstSocketClosed = new Promise<void>((resolve) => {
+      resolveFirstSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      const connection = connectionCount;
+      if (connection === 1) socket.once('close', resolveFirstSocketClosed);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (connection === 1 && event.type === 'session.create') {
+          socket.send(JSON.stringify({ type: 'session.closed' }), () => socket.close());
+        }
+        if (connection === 2 && event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'final_transcript',
+              transcript: 'final words',
+              language: 'en',
+            }),
+          );
+          socket.send(JSON.stringify({ type: 'session.finalized' }));
+        }
+        if (connection === 2 && event.type === 'session.close') {
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    const transcripts: string[] = [];
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+        }
+      }
+    })();
+
+    try {
+      await firstSocketClosed;
+      stream.endInput();
+      await outputTask;
+
+      expect(connectionCount).toBe(2);
+      expect(transcripts).toEqual(['final words']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('closes the session after transcript inactivity without a finalization ack', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');

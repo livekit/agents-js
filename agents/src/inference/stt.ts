@@ -909,7 +909,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           });
 
           ws.on('close', (code: number) => {
-            const expectedClose = sessionClosedReceived || finalizationComplete || signal.aborted;
+            const expectedClose =
+              signal.aborted ||
+              finalizationComplete ||
+              sessionCloseSent ||
+              (sessionClosedReceived && inputEnded);
             resourceCleanup();
 
             if (expectedClose) return resolve();
@@ -1051,6 +1055,12 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 }
                 break;
               case 'session.closed':
+                if (!inputEnded && !sessionCloseSent) {
+                  throw new APIStatusError({
+                    message: 'LiveKit STT session closed before input ended',
+                    options: { statusCode: -1, retryable: true },
+                  });
+                }
                 finishFinalization();
                 break;
               case 'start_of_speech':
