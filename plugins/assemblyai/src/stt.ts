@@ -12,6 +12,7 @@ import {
   Task,
   createTimedString,
   delay,
+  getBaseLanguage,
   log,
   normalizeLanguage,
   stt,
@@ -49,12 +50,21 @@ function isU3ProModel(model: STTModels): boolean {
   return U3_PRO_MODELS.includes(model as (typeof U3_PRO_MODELS)[number]);
 }
 
+function validateModelOptions(opts: Partial<STTOptions>, speechModel: STTModels): void {
+  if (isU3ProModel(speechModel)) return;
+  for (const param of U3_PRO_ONLY_PARAMS) {
+    if (opts[param] !== undefined) {
+      throw new Error(
+        `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
+      );
+    }
+  }
+}
+
 function normalizeLanguageCodes(languageCodes: string | string[]): string[] {
   const codes =
     typeof languageCodes === 'string' ? (languageCodes ? [languageCodes] : []) : languageCodes;
-  const normalized = [
-    ...new Set(codes.map((code) => normalizeLanguage(code).split('-')[0] as string)),
-  ];
+  const normalized = [...new Set(codes.map(getBaseLanguage))];
   if (normalized.length > MAX_LANGUAGE_CODES) {
     throw new Error(
       `languageCodes accepts at most ${MAX_LANGUAGE_CODES} codes (got ${normalized.length} after normalization)`,
@@ -69,11 +79,31 @@ function normalizeLanguageCodes(languageCodes: string | string[]): string[] {
 }
 
 function validateAgentContext(agentContext: string | undefined): void {
-  if (agentContext !== undefined && agentContext.length > MAX_AGENT_CONTEXT_CHARS) {
+  const length = agentContext === undefined ? 0 : Array.from(agentContext).length;
+  if (length > MAX_AGENT_CONTEXT_CHARS) {
     throw new Error(
-      `agentContext exceeds maximum length of ${MAX_AGENT_CONTEXT_CHARS} characters (got ${agentContext.length})`,
+      `agentContext exceeds maximum length of ${MAX_AGENT_CONTEXT_CHARS} characters (got ${length})`,
     );
   }
+}
+
+function normalizeUpdateOptions(
+  opts: Partial<STTOptions>,
+  speechModel: STTModels,
+): Partial<STTOptions> {
+  const nextOpts = { ...opts };
+  if (nextOpts.speechModel === 'u3-pro') nextOpts.speechModel = 'universal-3-5-pro';
+  // UpdateConfiguration cannot change the model of an existing provider session.
+  if (nextOpts.speechModel !== undefined && nextOpts.speechModel !== speechModel) {
+    throw new Error('speechModel cannot be changed via updateOptions; create a new STT instead.');
+  }
+  delete nextOpts.speechModel;
+  validateModelOptions(nextOpts, speechModel);
+  validateAgentContext(nextOpts.agentContext);
+  if (nextOpts.languageCodes !== undefined) {
+    nextOpts.languageCodes = normalizeLanguageCodes(nextOpts.languageCodes);
+  }
+  return nextOpts;
 }
 
 // AssemblyAI Universal-Streaming (v3) message envelope. All fields are optional
@@ -126,6 +156,7 @@ export interface STTOptions {
    */
   bufferSizeMs: number;
   encoding: STTEncoding;
+  /** Model selected at construction. Create a new STT to switch models. */
   speechModel: STTModels;
   languageDetection?: boolean;
   /**
@@ -237,15 +268,7 @@ export class STT extends stt.STT {
     }
 
     const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;
-    if (!isU3ProModel(speechModel)) {
-      for (const param of U3_PRO_ONLY_PARAMS) {
-        if (opts[param] !== undefined) {
-          throw new Error(
-            `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
-          );
-        }
-      }
-    }
+    validateModelOptions(opts, speechModel);
 
     const apiKey = opts.apiKey ?? defaultSTTOptions.apiKey;
     if (!apiKey) {
@@ -272,19 +295,7 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    validateAgentContext(opts.agentContext);
-
-    // session keyterms so a user update doesn't drop them)
-    const nextOpts = { ...opts };
-    if (nextOpts.languageCodes !== undefined) {
-      const speechModel = nextOpts.speechModel ?? this.#opts.speechModel;
-      if (!isU3ProModel(speechModel)) {
-        throw new Error(
-          `The 'languageCodes' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
-        );
-      }
-      nextOpts.languageCodes = normalizeLanguageCodes(nextOpts.languageCodes);
-    }
+    const nextOpts = normalizeUpdateOptions(opts, this.#opts.speechModel);
     if (nextOpts.keytermsPrompt !== undefined) {
       this.#userKeyterms = [...nextOpts.keytermsPrompt];
       nextOpts.keytermsPrompt = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
@@ -324,7 +335,9 @@ export class STT extends stt.STT {
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
     const chatItem = ev.item;
     if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
-      this.updateOptions({ agentContext: chatItem.textContent.slice(-MAX_AGENT_CONTEXT_CHARS) });
+      this.updateOptions({
+        agentContext: Array.from(chatItem.textContent).slice(-MAX_AGENT_CONTEXT_CHARS).join(''),
+      });
     }
   }
 
@@ -372,16 +385,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    validateAgentContext(opts.agentContext);
-    if (opts.languageCodes !== undefined) {
-      if (!isU3ProModel(this.#opts.speechModel)) {
-        throw new Error(
-          `The 'languageCodes' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
-        );
-      }
-      opts.languageCodes = normalizeLanguageCodes(opts.languageCodes);
-    }
-
+    opts = normalizeUpdateOptions(opts, this.#opts.speechModel);
     this.#opts = { ...this.#opts, ...opts };
 
     const configMsg: Record<string, unknown> = { type: 'UpdateConfiguration' };
