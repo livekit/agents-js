@@ -1000,7 +1000,7 @@ describeLiveKitInference('LiveKit Inference STT integration', agents, async (har
     'assemblyai/universal-streaming',
     'xai/stt-1',
   ] as const) {
-    describe(model, async () => {
+    describe(model, { retry: model === 'xai/stt-1' ? 1 : 0 }, async () => {
       const stt =
         model === 'assemblyai/universal-streaming'
           ? new STT({ model, modelOptions: { format_turns: true } })
