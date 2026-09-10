@@ -904,7 +904,7 @@ describe('Inference STT connection lifecycle', () => {
       vi.useFakeTimers();
       stream.endInput();
       await transcriptReceived;
-      await vi.advanceTimersByTimeAsync(20_000);
+      await vi.advanceTimersByTimeAsync(30_000);
       await outputTask;
 
       expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);

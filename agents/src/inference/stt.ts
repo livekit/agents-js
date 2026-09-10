@@ -421,8 +421,7 @@ const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_CANCEL_TIMEOUT = 5000;
 const INACTIVITY_TIMEOUT_ERROR_CODE = 2007;
-const FIRST_TRANSCRIPT_TIMEOUT_MS = 30_000;
-const INTERIM_TRANSCRIPT_INACTIVITY_TIMEOUT_MS = 20_000;
+const FINALIZATION_TIMEOUT_MS = 30_000;
 const FINAL_TRANSCRIPT_INACTIVITY_TIMEOUT_MS = 3_000;
 
 export interface InferenceSTTOptions<TModel extends STTModels> {
@@ -820,7 +819,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let ws: WebSocket | null = null;
       let inputEnded = false;
       let cleanedUp = false;
-      let transcriptReceived = false;
       let finalTranscriptReceived = false;
       let finalizationComplete = false;
       let sessionClosedReceived = false;
@@ -879,9 +877,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         }
         if (finalizationTimeout) clearTimeout(finalizationTimeout);
         // Lifecycle acknowledgments are optional and may precede trailing transcripts.
-        let timeout = FIRST_TRANSCRIPT_TIMEOUT_MS;
-        if (transcriptReceived) timeout = INTERIM_TRANSCRIPT_INACTIVITY_TIMEOUT_MS;
-        if (finalTranscriptReceived) timeout = FINAL_TRANSCRIPT_INACTIVITY_TIMEOUT_MS;
+        // ponytail: Add an interim-specific deadline only if shutdown latency requires it.
+        const timeout = finalTranscriptReceived
+          ? FINAL_TRANSCRIPT_INACTIVITY_TIMEOUT_MS
+          : FINALIZATION_TIMEOUT_MS;
         finalizationTimeout = setTimeout(finishFinalization, timeout);
       };
 
@@ -904,7 +903,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               json.type === 'final_transcript' ||
               json.type === 'preflight_transcript'
             ) {
-              transcriptReceived = true;
               scheduleFinalizationTimeout();
             }
             void eventChannel.write(json).catch((error) => {
