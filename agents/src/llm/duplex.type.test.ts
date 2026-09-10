@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expectTypeOf, it } from 'vitest';
+import type { LLMMetrics, RealtimeModelMetrics } from '../metrics/base.js';
 import type { DuplexOutputTranscriptDelta } from './duplex.js';
 import { DuplexSession, type DuplexSessionCallbacks } from './index.js';
 import type { InputTranscriptionCompleted } from './realtime.js';
@@ -23,6 +24,9 @@ abstract class ProviderSession extends DuplexSession<ProviderCallbacks> {
     this.on('provider_state', (state) => {
       expectTypeOf(state).toEqualTypeOf<'listening' | 'speaking'>();
     });
+    this.on('metrics_collected', (event) => {
+      expectTypeOf(event).toEqualTypeOf<RealtimeModelMetrics | LLMMetrics>();
+    });
 
     // @ts-expect-error Event names must match the callback map.
     this.emit('transcript_dleta', { text: 'hello' });
@@ -32,7 +36,7 @@ abstract class ProviderSession extends DuplexSession<ProviderCallbacks> {
     this.on('input_audio_transcription_completed', (event: number) => event.toFixed());
     // @ts-expect-error Provider-specific payloads are also checked.
     this.emit('provider_state', 42);
-    // @ts-expect-error Metrics require the RealtimeModelMetrics payload.
+    // @ts-expect-error Metrics require a voice or backend LLM payload.
     this.emit('metrics_collected', { wrong: true });
   }
 }
