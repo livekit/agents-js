@@ -93,7 +93,9 @@ export abstract class DuplexSession<
   Omit<Events, keyof DuplexSessionCallbacks>
 > &
   TypedEmitter<DuplexSessionCallbacks>)<Events> {
-  /** Wait for complete startup configuration before connecting an immutable model. */
+  protected _closing = false;
+
+  /** Wait for startup configuration, then check `_closing` before connecting. */
   protected readonly _configured: {
     readonly isSet: boolean;
     wait(): Promise<boolean>;
@@ -115,6 +117,7 @@ export abstract class DuplexSession<
   pushVideo(_frame: VideoFrame): void {}
 
   async close(): Promise<void> {
+    this._closing = true;
     this._configured.set();
     await this.closeConnection();
   }

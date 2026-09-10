@@ -311,10 +311,7 @@ export class DuplexRealtimeSession extends RealtimeSession {
         this.onAudioFrame(value);
         if (this.burst) {
           idleTimeout = setTimeout(
-            () => {
-              this.gate.deactivate();
-              this.closeBurst();
-            },
+            () => this.closeBurst(),
             this.audioTimeout + calculateAudioDurationSeconds(value.frame) * 1000,
           );
         }
@@ -400,6 +397,7 @@ export class DuplexRealtimeSession extends RealtimeSession {
   private closeBurst(): void {
     const burst = this.burst;
     this.burst = undefined;
+    this.gate.deactivate();
     if (burst) {
       burst.close();
       if (burst.transcript) {
@@ -458,7 +456,12 @@ export class DuplexRealtimeSession extends RealtimeSession {
       chatCtx = chatCtx.copy({ excludeHandoff: true, excludeConfigUpdate: true });
       this._chatCtx = chatCtx.copy();
     }
-    await this.duplexSession._updateSession(instructions, chatCtx, tools);
+    try {
+      await this.duplexSession._updateSession(instructions, chatCtx, tools);
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
   }
 
   async updateInstructions(instructions: string): Promise<void> {

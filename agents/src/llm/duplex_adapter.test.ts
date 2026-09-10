@@ -49,7 +49,9 @@ class FakeDuplexModel extends DuplexModel {
 }
 
 class FakeDuplexSession extends DuplexSession {
-  private readonly connectionTask = this._configured.wait();
+  private readonly connectionTask = this._configured.wait().then(() => {
+    if (!this._closing) this.connected = true;
+  });
   controller!: ReadableStreamDefaultController<DuplexAudioFrame>;
   readonly audioStream = new ReadableStream<DuplexAudioFrame>({
     start: (controller) => {
@@ -60,7 +62,7 @@ class FakeDuplexSession extends DuplexSession {
   appended: ChatItem[] = [];
   configBatches: unknown[][] = [];
   repliesRequested: Array<string | undefined> = [];
-  failInstructions = false;
+  connected = false;
   closed = false;
   constructor(readonly fakeModel: FakeDuplexModel) {
     super(fakeModel);
@@ -68,9 +70,7 @@ class FakeDuplexSession extends DuplexSession {
   get configured(): boolean {
     return this._configured.isSet;
   }
-  async _updateInstructions(_instructions: string): Promise<void> {
-    if (this.failInstructions) throw new RealtimeError('configuration failed');
-  }
+  async _updateInstructions(_instructions: string): Promise<void> {}
   async _appendItems(items: ChatItem[]): Promise<void> {
     this.appended.push(...items);
   }
@@ -480,7 +480,7 @@ describe('duplex events and context', () => {
   );
 
   it('reconnects without carrying abandoned fragments into new speech', async () => {
-    const { fake, session, generations } = setup();
+    const { model, fake, session, generations } = setup();
     const reconnected = vi.fn();
     session.on('session_reconnected', reconnected);
     fake.push(0.001, 20);
@@ -489,9 +489,18 @@ describe('duplex events and context', () => {
     fake.say('lost words');
     fake.emit('session_reconnected', {});
     expect((await readGeneration(generations[0]!)).text).toBe('');
+    model.askable = true;
+    const reply = session.generateReply();
+    const replied = vi.fn();
+    void reply.then(replied, replied);
+    fake.push(0.001, 3);
+    await setImmediate();
+    expect(generations).toHaveLength(1);
+    expect(replied).not.toHaveBeenCalled();
     fake.push(0.3, 3);
     fake.push(0.001, 8);
     await setImmediate();
+    await expect(reply).resolves.toBe(generations[1]);
     expect((await readGeneration(generations[1]!)).text).toBe('');
     expect(reconnected).toHaveBeenCalledOnce();
   });
@@ -592,18 +601,34 @@ describe('duplex events and context', () => {
     const tools = ToolContext.empty();
     await session._updateSession('be brief', context, tools);
     expect(fake.configured).toBe(true);
+    expect(fake.connected).toBe(true);
     expect(fake.configBatches).toEqual([['be brief', expect.any(ChatContext), tools]]);
     expect(fake.appended.map((item) => item.id)).toEqual(['m1']);
     expect(session.chatCtx.items.map((item) => item.id)).toEqual(['m1']);
   });
 
-  it('does not release configuration when an update fails', async () => {
+  it.each([
+    new RealtimeError('configuration failed'),
+    new Error('configuration failed'),
+    new DOMException('configuration aborted', 'AbortError'),
+  ])('closes a session whose startup configuration fails with %s', async (error) => {
     const { fake, session } = setup();
-    fake.failInstructions = true;
-    await expect(
-      session._updateSession('be brief', undefined, ToolContext.empty()),
-    ).rejects.toThrow(RealtimeError);
-    expect(fake.configured).toBe(false);
+    vi.spyOn(fake, '_updateInstructions').mockRejectedValueOnce(error);
+    const updateTools = vi.spyOn(fake, '_updateTools');
+    const context = ChatContext.empty();
+    context.addMessage({ id: 'm1', role: 'user', content: 'a prior turn' });
+
+    await expect(session._updateSession('be brief', context, ToolContext.empty())).rejects.toBe(
+      error,
+    );
+
+    expect(fake.appended).toEqual([]);
+    expect(updateTools).not.toHaveBeenCalled();
+    expect(fake.closed).toBe(true);
+    expect(fake.connected).toBe(false);
+    expect(fake.configured).toBe(true);
+    expect(fake.audioStream.locked).toBe(false);
+    expect(fake.eventNames()).toEqual([]);
   });
 
   it('forwards input, configuration, metrics, and provider errors', async () => {
@@ -671,6 +696,7 @@ describe('duplex events and context', () => {
       await vi.waitFor(() => expect(fake.closed).toBe(true));
       expect(close).toHaveBeenCalledOnce();
       expect(fake.configured).toBe(true);
+      expect(fake.connected).toBe(false);
       expect(fake.audioStream.locked).toBe(false);
       expect(fake.eventNames()).toEqual([]);
     } finally {
@@ -751,28 +777,27 @@ describe('duplex requested replies', () => {
 });
 
 describe('duplex model integration', () => {
-  it('closes the provider after startup configuration fails', async () => {
+  it('closes the provider immediately when startup configuration fails', async () => {
     vi.spyOn(FakeDuplexSession.prototype, '_updateInstructions').mockRejectedValueOnce(
       new RealtimeError('configuration failed'),
     );
     const model = new FakeDuplexModel();
     const agent = new Agent({ instructions: 'be brief' });
     const session = new AgentSession({ llm: model, vad: null, aecWarmupDuration: null });
+    const closeProvider = vi.spyOn(FakeDuplexSession.prototype, 'close');
     await session.start({ agent });
     const provider = model.activeSession;
-    expect(provider.configured).toBe(false);
-
-    const closing = session.close();
     try {
-      await vi.waitFor(() => expect(provider.closed).toBe(true));
-      await closing;
+      expect(provider.closed).toBe(true);
+      expect(provider.configured).toBe(true);
+      expect(provider.connected).toBe(false);
       expect(provider.audioStream.locked).toBe(false);
       expect(provider.eventNames()).toEqual([]);
-      expect(() => agent.getActivityOrThrow()).toThrow('Agent activity not found');
     } finally {
-      await provider._updateSession();
-      await closing;
+      await session.close();
     }
+    expect(closeProvider).toHaveBeenCalledOnce();
+    expect(() => agent.getActivityOrThrow()).toThrow('Agent activity not found');
   });
 
   it.each(['none', 'listening', 'throwing'] as const)(

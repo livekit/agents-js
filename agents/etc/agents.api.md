@@ -3322,6 +3322,8 @@ export abstract class DuplexSession<Events extends EventMap = Record<never, neve
     close(): Promise<void>;
     // (undocumented)
     protected abstract closeConnection(): Promise<void>;
+    // (undocumented)
+    protected _closing: boolean;
     protected readonly _configured: {
         readonly isSet: boolean;
         wait(): Promise<boolean>;
