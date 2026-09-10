@@ -2,4 +2,4 @@
 '@livekit/agents': patch
 ---
 
-Preserve trailing inference STT transcripts before closing sessions, and close sessions when providers omit finalization acknowledgments.
+Preserve trailing inference STT transcripts until transcript inactivity or socket closure, independent of provider lifecycle acknowledgments.

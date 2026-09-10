@@ -613,9 +613,17 @@ describe('Inference STT connection lifecycle', () => {
     const address = server.address() as AddressInfo;
     const messageTypes: string[] = [];
     const transcripts: string[] = [];
-    let closeBeforeFinalized = false;
-    let finalized = false;
+    let closeBeforeTranscript = false;
+    let transcriptSent = false;
     let requestUrl: string | undefined;
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+    let resolveFinalizeReceived!: () => void;
+    const finalizeReceived = new Promise<void>((resolve) => {
+      resolveFinalizeReceived = resolve;
+    });
     let resolveSocketClosed!: () => void;
     const socketClosed = new Promise<void>((resolve) => {
       resolveSocketClosed = resolve;
@@ -627,7 +635,9 @@ describe('Inference STT connection lifecycle', () => {
       socket.on('message', (raw) => {
         const event = JSON.parse(raw.toString()) as { type: string };
         messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
         if (event.type === 'session.finalize') {
+          resolveFinalizeReceived();
           socket.send(JSON.stringify({ type: 'session.finalized' }));
           setTimeout(() => {
             if (socket.readyState !== 1) return;
@@ -638,16 +648,15 @@ describe('Inference STT connection lifecycle', () => {
                 language: 'en',
               }),
             );
-            finalized = true;
-            socket.send(JSON.stringify({ type: 'session.finalized' }));
-            if (closeBeforeFinalized) {
+            transcriptSent = true;
+            if (closeBeforeTranscript) {
               socket.send(JSON.stringify({ type: 'session.closed' }));
             }
           }, 25);
         }
         if (event.type === 'session.close') {
-          closeBeforeFinalized = !finalized;
-          if (finalized) socket.send(JSON.stringify({ type: 'session.closed' }));
+          closeBeforeTranscript = !transcriptSent;
+          if (transcriptSent) socket.send(JSON.stringify({ type: 'session.closed' }));
         }
       });
     });
@@ -658,14 +667,28 @@ describe('Inference STT connection lifecycle', () => {
       connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
     });
     const stream = stt.stream();
-
-    try {
-      stream.endInput();
+    let resolveTranscript!: () => void;
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    const outputTask = (async () => {
       for await (const event of stream) {
         if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
           transcripts.push(event.alternatives![0].text);
+          resolveTranscript();
         }
       }
+    })();
+
+    try {
+      await sessionCreated;
+      vi.useFakeTimers();
+      stream.endInput();
+      await finalizeReceived;
+      await vi.advanceTimersByTimeAsync(25);
+      await transcriptReceived;
+      await vi.advanceTimersByTimeAsync(3_000);
+      await outputTask;
       await socketClosed;
 
       expect(new URL(requestUrl!, 'ws://127.0.0.1').searchParams.get('model')).toBe(
@@ -673,15 +696,16 @@ describe('Inference STT connection lifecycle', () => {
       );
       expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
       expect(transcripts).toEqual(['final words']);
-      expect(closeBeforeFinalized).toBe(false);
+      expect(closeBeforeTranscript).toBe(false);
     } finally {
+      vi.useRealTimers();
       stream.close();
       for (const client of server.clients) client.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
-  it('reports a disconnect before finalization completes after input ends', async () => {
+  it('accepts a socket close after input ends', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
@@ -710,8 +734,7 @@ describe('Inference STT connection lifecycle', () => {
       }
 
       expect(connectionCount).toBe(1);
-      expect(errors).toHaveLength(1);
-      expect(errors[0]).toMatchObject({ retryable: false, statusCode: 1011 });
+      expect(errors).toHaveLength(0);
     } finally {
       stream.close();
       for (const client of server.clients) client.terminate();
@@ -719,20 +742,92 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
-  it('reconnects when the session closes before input ends', async () => {
+  it('ignores session.closed while the socket remains open', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
     let connectionCount = 0;
-    let resolveFirstSocketClosed!: () => void;
-    const firstSocketClosed = new Promise<void>((resolve) => {
-      resolveFirstSocketClosed = resolve;
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type === 'session.create') {
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+          socket.send(
+            JSON.stringify({
+              type: 'final_transcript',
+              transcript: 'final words',
+              language: 'en',
+            }),
+          );
+        }
+        if (event.type === 'session.finalize') socket.close();
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const errors: Error[] = [];
+    let resolveError!: () => void;
+    const errorReceived = new Promise<void>((resolve) => {
+      resolveError = resolve;
+    });
+    stt.on('error', ({ error }) => {
+      errors.push(error);
+      resolveError();
+    });
+    const stream = stt.stream();
+    const transcripts: string[] = [];
+    let resolveTranscript!: () => void;
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+          resolveTranscript();
+        }
+      }
+    })();
+
+    try {
+      const outcome = await Promise.race([
+        transcriptReceived.then(() => 'transcript'),
+        errorReceived.then(() => 'error'),
+      ]);
+      expect(outcome).toBe('transcript');
+
+      stream.endInput();
+      await outputTask;
+
+      expect(connectionCount).toBe(1);
+      expect(errors).toHaveLength(0);
+      expect(transcripts).toEqual(['final words']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('reconnects when the socket closes before input ends', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+    let resolveSecondConnection!: () => void;
+    const secondConnection = new Promise<void>((resolve) => {
+      resolveSecondConnection = resolve;
     });
 
     server.on('connection', (socket) => {
       connectionCount += 1;
       const connection = connectionCount;
-      if (connection === 1) socket.once('close', resolveFirstSocketClosed);
+      if (connection === 2) resolveSecondConnection();
       socket.on('message', (raw) => {
         const event = JSON.parse(raw.toString()) as { type: string };
         if (connection === 1 && event.type === 'session.create') {
@@ -746,10 +841,7 @@ describe('Inference STT connection lifecycle', () => {
               language: 'en',
             }),
           );
-          socket.send(JSON.stringify({ type: 'session.finalized' }));
-        }
-        if (connection === 2 && event.type === 'session.close') {
-          socket.send(JSON.stringify({ type: 'session.closed' }));
+          socket.send(JSON.stringify({ type: 'session.finalized' }), () => socket.close());
         }
       });
     });
@@ -769,7 +861,7 @@ describe('Inference STT connection lifecycle', () => {
     })();
 
     try {
-      await firstSocketClosed;
+      await secondConnection;
       stream.endInput();
       await outputTask;
 
@@ -1000,7 +1092,7 @@ describeLiveKitInference('LiveKit Inference STT integration', agents, async (har
     'assemblyai/universal-streaming',
     'xai/stt-1',
   ] as const) {
-    describe(model, { retry: model === 'xai/stt-1' ? 1 : 0 }, async () => {
+    describe(model, { retry: 1 }, async () => {
       const stt =
         model === 'assemblyai/universal-streaming'
           ? new STT({ model, modelOptions: { format_turns: true } })

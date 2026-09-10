@@ -820,12 +820,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let inputEnded = false;
       let cleanedUp = false;
       let finalTranscriptReceived = false;
-      let finalTranscriptReceivedAfterInputEnd = false;
       let finalizationComplete = false;
-      let sessionClosedReceived = false;
       let sessionCloseSent = false;
-      // Acks have no IDs. Count them so a VAD-turn ack cannot close ended input early.
-      let pendingFinalizations = 0;
       let finalizationTimeout: ReturnType<typeof setTimeout> | undefined;
       let vadStream: VADStream | null = null;
 
@@ -838,7 +834,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       const sendSessionFinalize = (socket: WebSocket) => {
-        pendingFinalizations += 1;
         socket.send(JSON.stringify({ type: 'session.finalize' }));
       };
 
@@ -868,7 +863,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       const scheduleFinalizationTimeout = () => {
         if (!inputEnded || finalizationComplete || cleanedUp) return;
         if (finalizationTimeout) clearTimeout(finalizationTimeout);
-        // Some providers omit the ack. End the session after transcript inactivity.
+        // Lifecycle acknowledgements are not transcript barriers. End after transcript inactivity.
         finalizationTimeout = setTimeout(
           finishFinalization,
           finalTranscriptReceived ? TRANSCRIPT_INACTIVITY_TIMEOUT_MS : FIRST_TRANSCRIPT_TIMEOUT_MS,
@@ -889,7 +884,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (json.type === 'final_transcript' && json.transcript) {
               finalTranscriptReceived = true;
             }
-            if (json.type === 'session.closed') sessionClosedReceived = true;
             if (
               json.type === 'interim_transcript' ||
               json.type === 'final_transcript' ||
@@ -910,10 +904,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           ws.on('close', (code: number) => {
             const expectedClose =
-              signal.aborted ||
-              finalizationComplete ||
-              sessionCloseSent ||
-              (sessionClosedReceived && inputEnded);
+              signal.aborted || inputEnded || finalizationComplete || sessionCloseSent;
             resourceCleanup();
 
             if (expectedClose) return resolve();
@@ -1044,24 +1035,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               case 'session.created':
                 break;
               case 'session.finalized':
-                pendingFinalizations = Math.max(0, pendingFinalizations - 1);
-                // xAI acknowledges finalize before endpointing emits its trailing transcript.
-                if (
-                  inputEnded &&
-                  pendingFinalizations === 0 &&
-                  finalTranscriptReceivedAfterInputEnd
-                ) {
-                  finishFinalization();
-                }
                 break;
               case 'session.closed':
-                if (!inputEnded && !sessionCloseSent) {
-                  throw new APIStatusError({
-                    message: 'LiveKit STT session closed before input ended',
-                    options: { statusCode: -1, retryable: true },
-                  });
-                }
-                finishFinalization();
                 break;
               case 'start_of_speech':
                 this.processStartOfSpeech();
@@ -1070,9 +1045,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 this.processTranscript(event, SpeechEventType.INTERIM_TRANSCRIPT);
                 break;
               case 'final_transcript':
-                if (inputEnded && event.transcript) {
-                  finalTranscriptReceivedAfterInputEnd = true;
-                }
                 this.processTranscript(event, SpeechEventType.FINAL_TRANSCRIPT);
                 break;
               case 'preflight_transcript':
