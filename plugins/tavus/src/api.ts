@@ -16,6 +16,8 @@ export const DEFAULT_API_URL = 'https://tavusapi.com/v2';
 
 // Stock Tavus PAL. Use createPal() to create a PAL with the appearance you'd like.
 const DEFAULT_PAL_ID = 'pb87e71797da';
+// Stock Tavus face ("Lucy - Home", phoenix-4.5) used with DEFAULT_PAL_ID when no face is given.
+const DEFAULT_FACE_ID = 'r4067604db72';
 
 /**
  * Exception thrown when the Tavus plugin or Tavus service errors.
@@ -119,7 +121,7 @@ export class TavusAPI {
   }
 
   async createConversation(options: CreateConversationOptions = {}): Promise<string> {
-    const faceId =
+    let faceId =
       coalesceWithDeprecated(options.faceId, options.replicaId, 'replicaId', 'faceId') ||
       process.env.TAVUS_FACE_ID ||
       deprecatedEnv('TAVUS_REPLICA_ID', 'TAVUS_FACE_ID');
@@ -129,23 +131,25 @@ export class TavusAPI {
       process.env.TAVUS_PAL_ID ||
       deprecatedEnv('TAVUS_PERSONA_ID', 'TAVUS_PAL_ID');
 
-    if (!palId) {
-      // no pal supplied — use the default stock pal (carries its own face)
+    // extraPayload overrides the payload wholesale, so a pal named there counts as user-supplied
+    // when deciding whether to fill in the stock face.
+    const extra = options.extraPayload ?? {};
+    if (!palId && !extra.pal_id) {
+      // no pal supplied — use the default stock pal and, unless overridden, its stock face
       palId = DEFAULT_PAL_ID;
+      faceId ||= DEFAULT_FACE_ID;
     }
 
     const payload: Record<string, unknown> = {
       pal_id: palId,
       properties: options.properties ?? {},
     };
-    // send face_id only when given; otherwise the pal's default_face_id is used
+    // a user-supplied pal carries its own default face, so only send face_id when we have one
     if (faceId) {
       payload.face_id = faceId;
     }
 
-    if (options.extraPayload) {
-      Object.assign(payload, options.extraPayload);
-    }
+    Object.assign(payload, extra);
 
     if (!('conversation_name' in payload)) {
       payload.conversation_name = shortuuid('lk_conversation_');
