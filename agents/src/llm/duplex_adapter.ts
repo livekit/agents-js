@@ -344,8 +344,8 @@ export class DuplexRealtimeSession extends RealtimeSession {
   private onAudioFrame(output: DuplexAudioFrame): void {
     if (output.startMs !== undefined) this.audioMs = output.startMs;
     if (this.gate.update(output.frame)) {
-      const burst = this.burst ?? this.openBurst();
-      if (!burst.audio.closed) burst.audio.put(output.frame);
+      const burst = !this.burst || this.burst.audio.closed ? this.openBurst() : this.burst;
+      burst.audio.put(output.frame);
       this.audioMs += Math.round(calculateAudioDurationSeconds(output.frame) * 1000);
       while (this.fragments.length) {
         const fragment = this.fragments[0]!;
