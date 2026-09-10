@@ -12,7 +12,13 @@ import { blingfire } from '../tokenize/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Task, cancelAndWait } from '../utils.js';
 import { StreamAdapter } from './stream_adapter.js';
-import { ChunkedStream, SynthesizeStream, TTS, type TTSCapabilities } from './tts.js';
+import {
+  ChunkedStream,
+  type FallbackActivatedEvent,
+  SynthesizeStream,
+  TTS,
+  type TTSCapabilities,
+} from './tts.js';
 
 /**
  * Internal status tracking for each TTS instance.
@@ -167,10 +173,15 @@ export class FallbackAdapter extends TTS {
    */
   private readonly absorbChildError = () => {};
 
+  private readonly forwardFallbackActivated = (event: FallbackActivatedEvent) => {
+    this.emit('fallback_activated', event);
+  };
+
   private setupEventForwarding(): void {
     for (const tts of this.ttsInstances) {
       tts.on('metrics_collected', this.forwardMetrics);
       tts.on('error', this.absorbChildError);
+      tts.on('fallback_activated', this.forwardFallbackActivated);
     }
   }
 
@@ -329,6 +340,7 @@ export class FallbackAdapter extends TTS {
     for (const tts of this.ttsInstances) {
       tts.off('metrics_collected', this.forwardMetrics);
       tts.off('error', this.absorbChildError);
+      tts.off('fallback_activated', this.forwardFallbackActivated);
     }
 
     // Close all TTS instances
