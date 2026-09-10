@@ -11,6 +11,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import type { Context } from '@opentelemetry/api';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
@@ -553,7 +554,11 @@ interface GPTLiveModelOptions {
 }
 
 // @public
-class GPTLiveSession extends llm.DuplexSession {
+class GPTLiveSession extends llm.DuplexSession<{
+    openai_server_event_received: (event: ServerEvent) => void;
+    openai_client_event_queued: (event: ClientEvent | Record<string, unknown>) => void;
+    delegation_created: (event: GPTLiveDelegation) => void;
+}> {
     constructor(model: GPTLiveModel);
     appendCommentary(text: string, options?: {
         delegationId?: string | null;
@@ -569,7 +574,7 @@ class GPTLiveSession extends llm.DuplexSession {
     // (undocumented)
     get audioStream(): ReadableStream_2<llm.DuplexAudioFrame>;
     // (undocumented)
-    close(): Promise<void>;
+    protected closeConnection(): Promise<void>;
     // (undocumented)
     _generateReply(instructions?: string): void;
     muteInput(): void;

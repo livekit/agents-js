@@ -5,7 +5,7 @@ import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import type { EventMap, TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
-import type { RealtimeModelMetrics } from '../metrics/base.js';
+import type { LLMMetrics, RealtimeModelMetrics } from '../metrics/base.js';
 import { Event } from '../utils.js';
 import type { ChatContext, ChatItem, FunctionCall } from './chat_context.js';
 import type { AudioGate } from './duplex_adapter.js';
@@ -106,7 +106,7 @@ export type DuplexSessionCallbacks = {
   /** The provider reconnected; output from its previous connection is abandoned. */
   session_reconnected: (event: RealtimeSessionReconnectedEvent) => void;
   /** The provider reported connection timing or model usage. */
-  metrics_collected: (event: RealtimeModelMetrics) => void;
+  metrics_collected: (event: RealtimeModelMetrics | LLMMetrics) => void;
   /** The provider reported an error and whether the session can recover. */
   error: (event: RealtimeModelError) => void;
 };

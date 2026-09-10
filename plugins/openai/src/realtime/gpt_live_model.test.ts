@@ -711,13 +711,13 @@ describe('GPTLiveModel', () => {
 
   it('ends a caller turn after 800 ms of input audio without new fragments', async () => {
     const session = create();
-    const events: { name: string; data: llm.InputTranscriptionCompleted }[] = [];
+    const events: { name: string; data: object }[] = [];
     for (const name of [
       'input_speech_started',
       'input_audio_transcription_completed',
       'input_speech_stopped',
-    ])
-      session.on(name, (data) => events.push({ name, data }));
+    ] as const)
+      session.on(name, (data: object) => events.push({ name, data }));
     await ready(session);
     for (let i = 0; i < 20; i++) session.pushAudio(pcm());
     await server.send(session, transcript('user', ' What', 1800));
@@ -735,7 +735,7 @@ describe('GPTLiveModel', () => {
       'input_speech_stopped',
     ]);
     expect(events[3]?.data).toEqual({ ...events[2]?.data, isFinal: true });
-    expect(events[3]?.data.transcript).toBe(' What is the');
+    expect(events[3]?.data).toMatchObject({ transcript: ' What is the' });
   });
 
   it('splits bursty transcript delivery on gaps in the model timeline', async () => {
@@ -810,7 +810,8 @@ describe('GPTLiveModel', () => {
     const durations: number[] = [];
     session.on('error', (event) => errors.push(event));
     session.on('metrics_collected', (metric) => {
-      if (metric.sessionDurationMs !== undefined) durations.push(metric.sessionDurationMs);
+      if (metric.type === 'realtime_model_metrics' && metric.sessionDurationMs !== undefined)
+        durations.push(metric.sessionDurationMs);
     });
     await ready(session);
     await server.response(session, { type: 'response.created' });

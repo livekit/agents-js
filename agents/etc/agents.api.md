@@ -3334,7 +3334,7 @@ export type DuplexSessionCallbacks = {
     input_speech_stopped: (event: InputSpeechStoppedEvent) => void;
     input_audio_transcription_completed: (event: InputTranscriptionCompleted) => void;
     session_reconnected: (event: RealtimeSessionReconnectedEvent) => void;
-    metrics_collected: (event: RealtimeModelMetrics) => void;
+    metrics_collected: (event: RealtimeModelMetrics | LLMMetrics) => void;
     error: (event: RealtimeModelError) => void;
 };
 

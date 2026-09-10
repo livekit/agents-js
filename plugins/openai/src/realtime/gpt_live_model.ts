@@ -164,7 +164,11 @@ interface DelegatedResponse {
  * at the estimated context-injection end and do not indicate speech completion.
  * @public
  */
-export class GPTLiveSession extends llm.DuplexSession {
+export class GPTLiveSession extends llm.DuplexSession<{
+  openai_server_event_received: (event: ServerEvent) => void;
+  openai_client_event_queued: (event: ClientEvent | Record<string, unknown>) => void;
+  delegation_created: (event: GPTLiveDelegation) => void;
+}> {
   private readonly opts: LiveOptions;
   private readonly logger = log();
   private readonly debug = Number(process.env.LK_OPENAI_DEBUG ?? 0) !== 0;
@@ -785,11 +789,10 @@ export class GPTLiveSession extends llm.DuplexSession {
     } satisfies ClientEvent);
   }
 
-  async close(): Promise<void> {
+  protected async closeConnection(): Promise<void> {
     if (!this.closing) {
       this.closing = true;
       this.shutdown.abort();
-      this._configured.set();
       if (this.sessionStarted && this.ws?.readyState === WebSocket.OPEN) {
         this.closeTimer = setTimeout(
           () => this.connectionDone?.resolve(undefined),
