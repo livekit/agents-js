@@ -28,6 +28,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
+import { DuplexRealtimeSession } from '../llm/duplex_adapter.js';
 import { AsyncToolset, type Toolset } from '../llm/index.js';
 import {
   type ChatItem,
@@ -329,6 +330,7 @@ export class AgentActivity implements RecognitionHooks {
   private realtimeSession?: RealtimeSession;
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
   private turnDetectionMode?: TurnDetectionMode;
+  private rtOverlappingSpeechEnabled = false;
   private logger = log();
   private _schedulingPaused = true;
   private newTurnsBlocked = false;
@@ -464,6 +466,10 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this._resolvedTurnDetection = this._resolveTurnDetection(this.turnDetection);
+    this.rtOverlappingSpeechEnabled =
+      this.llm instanceof RealtimeModel &&
+      this.llm.capabilities.turnDetection &&
+      this.llm.capabilities.supportsOverlappingSpeech === true;
     this.turnDetectionMode =
       typeof this._resolvedTurnDetection === 'string' ? this._resolvedTurnDetection : undefined;
 
@@ -652,6 +658,20 @@ export class AgentActivity implements RecognitionHooks {
           !rtReused || capabilities.midSessionToolsUpdate ? this.tools : undefined,
         );
       } catch (error) {
+        if (this.realtimeSession instanceof DuplexRealtimeSession) {
+          startSpan.end();
+          if (this.agentSession._started) {
+            this.onError({
+              type: 'realtime_model_error',
+              timestamp: Date.now(),
+              label: this.llm.label(),
+              error:
+                error instanceof Error ? error : new RealtimeError('duplex configuration failed'),
+              recoverable: false,
+            });
+          }
+          throw error;
+        }
         this.logger.error(error, 'failed to update realtime session');
       }
 
@@ -1039,7 +1059,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.realtimeSession) {
       removeInstructions(chatCtx);
-      this.realtimeSession.updateChatCtx(chatCtx);
+      await this.realtimeSession.updateChatCtx(chatCtx);
     } else {
       updateInstructions({
         chatCtx,
@@ -1637,21 +1657,23 @@ export class AgentActivity implements RecognitionHooks {
   };
 
   private onError(ev: RealtimeModelError | STTError | TTSError | LLMError): void {
-    if (ev.type === 'realtime_model_error') {
-      const errorEvent = createErrorEvent(ev, this.llm);
-      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
-    } else if (ev.type === 'stt_error') {
-      const errorEvent = createErrorEvent(ev, this.stt);
-      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
-    } else if (ev.type === 'tts_error') {
-      const errorEvent = createErrorEvent(ev, this.tts);
-      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
-    } else if (ev.type === 'llm_error') {
-      const errorEvent = createErrorEvent(ev, this.llm);
-      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+    try {
+      if (ev.type === 'realtime_model_error') {
+        const errorEvent = createErrorEvent(ev, this.llm);
+        this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+      } else if (ev.type === 'stt_error') {
+        const errorEvent = createErrorEvent(ev, this.stt);
+        this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+      } else if (ev.type === 'tts_error') {
+        const errorEvent = createErrorEvent(ev, this.tts);
+        this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+      } else if (ev.type === 'llm_error') {
+        const errorEvent = createErrorEvent(ev, this.llm);
+        this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+      }
+    } finally {
+      this.agentSession._onError(ev);
     }
-
-    this.agentSession._onError(ev);
   }
 
   // -- Realtime Session events --
@@ -1673,6 +1695,8 @@ export class AgentActivity implements RecognitionHooks {
         );
       }
     }
+
+    if (this.rtOverlappingSpeechEnabled) return;
 
     // this.interrupt() is going to raise when allow_interruptions is False,
     // llm.InputSpeechStartedEvent is only fired by the server when the turn_detection is enabled.
@@ -1734,6 +1758,7 @@ export class AgentActivity implements RecognitionHooks {
         content: ev.transcript,
         id: ev.itemId,
         createdAt: turnStartedAt,
+        transcriptConfidence: ev.confidence ?? 1,
         metrics: userMetrics,
       });
       // insert rather than append: this transcript can arrive after the reply that
@@ -4095,7 +4120,7 @@ export class AgentActivity implements RecognitionHooks {
     const toolCtx = realtimeSession.tools;
 
     const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
-    if (speechHandle.allowInterruptions) {
+    if (speechHandle.allowInterruptions && !this.rtOverlappingSpeechEnabled) {
       authorizationTasks.push(this.userSilenceEvent.wait());
     }
     await speechHandle.waitIfNotInterrupted(authorizationTasks);
@@ -4811,7 +4836,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
-    if (speechHandle.allowInterruptions) {
+    if (speechHandle.allowInterruptions && !this.rtOverlappingSpeechEnabled) {
       authorizationTasks.push(this.userSilenceEvent.wait());
     }
     await speechHandle.waitIfNotInterrupted(authorizationTasks);
@@ -5289,6 +5314,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private pauseEnabled(): boolean {
+    if (this.rtOverlappingSpeechEnabled) return false;
     const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
     return !!(
       interruptionOptions.resumeFalseInterruption &&
@@ -5546,8 +5572,6 @@ export class AgentActivity implements RecognitionHooks {
         'input_audio_transcription_completed',
         this.onRealtimeInputAudioTranscriptionCompleted,
       );
-      this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
-      this.realtimeSession.off('error', this.onModelError);
     }
 
     if (this.stt instanceof STT) {
@@ -5577,8 +5601,14 @@ export class AgentActivity implements RecognitionHooks {
     await this.agentSession._keytermDetector.aclose();
 
     this.detachAudioInput();
-    this.realtimeSpans?.clear();
-    await this.realtimeSession?.close();
+    try {
+      await this.realtimeSession?.close();
+    } finally {
+      // Providers can report final usage while closing the connection.
+      this.realtimeSession?.off('metrics_collected', this.onMetricsCollected);
+      this.realtimeSession?.off('error', this.onModelError);
+      this.realtimeSpans?.clear();
+    }
     await this.audioRecognition?.close();
     await this.closeToolsets();
     this.realtimeSession = undefined;

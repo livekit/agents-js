@@ -13,6 +13,8 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import { type Instructions, ReadonlyChatContext } from '../llm/chat_context.js';
+import { DuplexModel, type DuplexSession } from '../llm/duplex.js';
+import { DuplexRealtimeAdapter, DuplexRealtimeSession } from '../llm/duplex_adapter.js';
 import type { ChatMessage, FunctionCall } from '../llm/index.js';
 import {
   type ChatChunk,
@@ -149,11 +151,11 @@ export interface AgentUpdateOptions {
   /**
    * New LLM model. Pass `null` to disable the agent LLM and override any session LLM.
    *
-   * A {@link RealtimeModel} can only be set while the agent is not running: swapping to or
-   * from one on a running agent throws, because it replaces the whole pipeline rather than
-   * one model. Use `AgentSession.updateAgent()` for that.
+   * A {@link RealtimeModel} or {@link DuplexModel} can only be set while the agent is stopped.
+   * Swapping to or from one while running throws because it replaces the whole pipeline.
+   * Use `AgentSession.updateAgent()` for that.
    */
-  llm?: LLM | RealtimeModel | LLMModels | null;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
   /** New TTS model. Pass `null` to disable the agent TTS and override any session TTS. */
   tts?: TTS | TTSModelString | null;
   /** Expressive TTS delivery. Pass `false` to override and disable the session setting. */
@@ -167,7 +169,7 @@ export interface AgentOptions<UserData> {
   tools?: ToolContextLike<UserData>;
   stt?: STT | STTModelString | null;
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels | null;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
   tts?: TTS | TTSModelString | null;
   /** Expressive TTS delivery. When set, overrides the session value for this agent. */
   expressive?: boolean | ExpressiveOptions;
@@ -275,6 +277,8 @@ export class Agent<UserData = any> {
 
     if (typeof llm === 'string') {
       this._llm = InferenceLLM.fromModelString(llm);
+    } else if (llm instanceof DuplexModel) {
+      this._llm = new DuplexRealtimeAdapter(llm);
     } else {
       this._llm = llm;
     }
@@ -302,6 +306,15 @@ export class Agent<UserData = any> {
 
   get llm(): LLM | RealtimeModel | undefined {
     return this._llm ?? undefined;
+  }
+
+  /** The running duplex provider session, for provider-specific APIs. */
+  get duplexSession(): DuplexSession {
+    const session = this.getActivityOrThrow().realtimeLLMSession;
+    if (!(session instanceof DuplexRealtimeSession)) {
+      throw new Error('no duplex session, this agent is not running a DuplexModel');
+    }
+    return session.duplexSession;
   }
 
   get tts(): TTS | undefined {
@@ -414,7 +427,7 @@ export class Agent<UserData = any> {
       return;
     }
 
-    this._agentActivity.updateChatCtx(chatCtx);
+    await this._agentActivity.updateChatCtx(chatCtx);
   }
 
   async updateInstructions(instructions: string | Instructions): Promise<void> {
@@ -433,6 +446,8 @@ export class Agent<UserData = any> {
     }
     if (typeof resolved.llm === 'string') {
       resolved.llm = InferenceLLM.fromModelString(resolved.llm);
+    } else if (resolved.llm instanceof DuplexModel) {
+      resolved.llm = new DuplexRealtimeAdapter(resolved.llm);
     }
     if (typeof resolved.tts === 'string') {
       resolved.tts = InferenceTTS.fromModelString(resolved.tts);

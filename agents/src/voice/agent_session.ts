@@ -47,7 +47,13 @@ import type {
   ToolContextEntry,
   ToolContextLike,
 } from '../llm/index.js';
-import { ToolContext, ToolError, toToolContext } from '../llm/index.js';
+import {
+  DuplexModel,
+  DuplexRealtimeAdapter,
+  ToolContext,
+  ToolError,
+  toToolContext,
+} from '../llm/index.js';
 import { LLM as BaseLLM } from '../llm/llm.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -284,7 +290,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * one as absent). Pass `null` to opt out entirely.
    */
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
@@ -723,6 +729,8 @@ export class AgentSession<
 
     if (typeof llm === 'string') {
       this.llm = InferenceLLM.fromModelString(llm);
+    } else if (llm instanceof DuplexModel) {
+      this.llm = new DuplexRealtimeAdapter(llm);
     } else {
       this.llm = llm;
     }
@@ -963,7 +971,10 @@ export class AgentSession<
     // Initial start does not wait on onEnter
     tasks.push(this._updateActivity(this.agent, { waitOnEnter: false }));
 
-    await ThrowsPromise.allSettled(tasks);
+    const startupResults = await ThrowsPromise.allSettled(tasks);
+    for (const result of startupResults) {
+      if (result.status === 'rejected') throw result.reason;
+    }
 
     if (this.sessionHost) {
       await this.sessionHost.start();
@@ -1066,13 +1077,19 @@ export class AgentSession<
 
     this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 
-    await this._startImpl({
-      agent,
-      room,
-      inputOptions,
-      outputOptions,
-      span: this.sessionSpan,
-    });
+    try {
+      await this._startImpl({
+        agent,
+        room,
+        inputOptions,
+        outputOptions,
+        span: this.sessionSpan,
+      });
+    } catch (error) {
+      this._closeSoon({ reason: CloseReason.ERROR });
+      await this.closingTask;
+      throw error;
+    }
   }
 
   updateAgent(agent: Agent): void {
@@ -1907,6 +1924,7 @@ export class AgentSession<
   }
 
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
+    if (this.closing) return;
     if (ev.isFinal && this._userState !== 'speaking') {
       if (this._userState === 'away') {
         this.logger.debug('User returned from away state due to speech input');
@@ -1936,7 +1954,8 @@ export class AgentSession<
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
-    if (!this.started) {
+    const wasStarted = this.started;
+    if (!wasStarted && !this.activity && !this.sessionSpan) {
       return;
     }
 
@@ -1946,11 +1965,10 @@ export class AgentSession<
     this.closingController.abort();
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
-    this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
     let activity = this.activity;
     // Let inline tasks finish their handoffs before closing the resumed parent.
-    while (activity?.agent instanceof AgentTask) {
+    while (wasStarted && activity?.agent instanceof AgentTask) {
       const task = activity.agent;
       activity.interrupt({ force: true });
       if (!task.done) {
@@ -1967,7 +1985,7 @@ export class AgentSession<
       activity = task._oldAgent._agentActivity;
     }
 
-    if (activity) {
+    if (wasStarted && activity) {
       if (!drain) {
         try {
           await activity.interrupt({ force: true }).await;
@@ -2006,6 +2024,7 @@ export class AgentSession<
 
     const sessionToolsets = this._toolCtx.toolsets;
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
+    this._sessionToolsetsSetup = false;
 
     if (this.sessionSpan) {
       this.sessionSpan.end();
@@ -2024,7 +2043,7 @@ export class AgentSession<
 
     this.started = false;
 
-    this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
+    if (wasStarted) this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
 
     this._userState = 'listening';
     this._agentState = 'initializing';

@@ -4,7 +4,13 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as logModule from '../../log.js';
-import { AudioOutput, TextOutput } from '../io.js';
+import {
+  AudioOutput,
+  TextOutput,
+  type TimedString,
+  createTimedString,
+  isTimedString,
+} from '../io.js';
 import {
   SpeakingRateData,
   TranscriptionSynchronizer,
@@ -227,14 +233,40 @@ class MockAudioOutput extends AudioOutput {
 class MockTextOutput extends TextOutput {
   captured: string[] = [];
 
-  async captureText(text: string): Promise<void> {
-    this.captured.push(text);
+  async captureText(text: string | TimedString): Promise<void> {
+    this.captured.push(isTimedString(text) ? text.text : text);
   }
 
   flush(): void {}
 }
 
 describe('TranscriptionSynchronizer enabled behavior', () => {
+  it.each([
+    ['It is', ' sunny'],
+    ['It is curren', 'tly sunny'],
+  ])(
+    'releases trailing words of timed spans before text input ends: %s + %s',
+    async (first, second) => {
+      const downstream = new MockTextOutput();
+      const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream);
+      await synchronizer.barrier();
+      const impl = synchronizer._impl;
+      try {
+        impl.pushAudio(new AudioFrame(new Int16Array(6400), 16_000, 1, 6400));
+        impl.endAudioInput();
+        impl.onPlaybackStarted(Date.now());
+        impl.pushText(createTimedString({ text: first, startTime: 0, endTime: 0.2 }));
+        impl.pushText(createTimedString({ text: second, startTime: 0.2, endTime: 0.4 }));
+        await vi.waitFor(() => expect(downstream.captured.join('')).toBe(first + second), {
+          timeout: 2000,
+        });
+        expect(impl.textInputEnded).toBe(false);
+      } finally {
+        await synchronizer.close();
+      }
+    },
+  );
+
   it('directly forwards text when synchronization is disabled', async () => {
     const downstream = new MockTextOutput();
     const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream, {
