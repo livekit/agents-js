@@ -3915,7 +3915,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._toolItemsAdded(toolCallOutputs);
     }
 
-    if (shouldGenerateToolReply) {
+    if (shouldGenerateToolReply && !this.agentSession._closing) {
       _stripRunningToolCalls(chatCtx);
       chatCtx.insert(toolMessages);
 

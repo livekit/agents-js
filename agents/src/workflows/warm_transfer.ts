@@ -283,7 +283,11 @@ export function createWarmTransferTask({
       logger.warn({ reason }, 'human agent room disconnected before transfer completed');
     }
     humanAgentFailedFut.resolve();
-    setResult(new ToolError(`room closed: ${reason}`));
+    setResult(
+      new ToolError(
+        `Transfer failed: the human agent room disconnected before the transfer completed (reason: ${reason}). The caller has not been connected to a human agent.`,
+      ),
+    );
   };
 
   const hasCallerParticipant = (): boolean => {

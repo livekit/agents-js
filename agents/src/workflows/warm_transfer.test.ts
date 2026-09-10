@@ -545,7 +545,7 @@ describe('createWarmTransferTask', () => {
       );
       expect(complete).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: `room closed: ${expectedReason}`,
+          message: `Transfer failed: the human agent room disconnected before the transfer completed (reason: ${expectedReason}). The caller has not been connected to a human agent.`,
         }),
       );
     },
