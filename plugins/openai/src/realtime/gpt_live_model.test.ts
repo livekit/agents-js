@@ -362,6 +362,78 @@ describe('GPTLiveModel', () => {
     expect(server.events()[2]?.type).toBe('session.input_audio.append');
   });
 
+  it('times out missing startup acknowledgments and exhausts the retry budget', async () => {
+    server.autoStart = false;
+    const session = create({
+      connOptions: { timeoutMs: 100, maxRetry: 1, retryIntervalMs: 10 },
+    });
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+    await session._updateSession();
+    await vi.waitFor(() => expect(errors).toHaveLength(2));
+    expect(errors.map((error) => error.recoverable)).toEqual([true, false]);
+    expect(errors.map((error) => error.error.name)).toEqual(['APITimeoutError', 'APITimeoutError']);
+    expect(server.sockets).toHaveLength(2);
+    expect(await session.audioStream.getReader().read()).toMatchObject({ done: true });
+  });
+
+  it('preserves retries across sockets that disconnect before session.started', async () => {
+    server.autoStart = false;
+    const session = create({
+      connOptions: { timeoutMs: 1000, maxRetry: 2, retryIntervalMs: 10 },
+    });
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+    await session._updateSession();
+    for (let index = 0; index < 3; index++) {
+      await waitCount(1, index);
+      server.sockets[index]!.terminate();
+    }
+    await vi.waitFor(() => expect(errors).toHaveLength(3));
+    expect(errors.map((error) => error.recoverable)).toEqual([true, true, false]);
+    expect(await session.audioStream.getReader().read()).toMatchObject({ done: true });
+    expect(server.sockets).toHaveLength(3);
+  });
+
+  it('starts the acknowledgment deadline after configuration and clears it on startup', async () => {
+    const session = create({
+      connOptions: { timeoutMs: 100, maxRetry: 0, retryIntervalMs: 10 },
+    });
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    await delay(150);
+    expect(server.events()).toEqual([]);
+    await ready(session);
+    await delay(150);
+    session.appendThinking('Still connected.');
+    await waitCount(2);
+    expect(errors).toEqual([]);
+  });
+
+  it('resets the retry budget once a reconnected session starts', async () => {
+    server.autoStart = false;
+    const session = create({
+      connOptions: { timeoutMs: 1000, maxRetry: 1, retryIntervalMs: 10 },
+    });
+    const errors: llm.RealtimeModelError[] = [];
+    const reconnected = vi.fn();
+    session.on('error', (error) => errors.push(error));
+    session.on('session_reconnected', reconnected);
+    await session._updateSession();
+    await waitCount(1);
+    server.sockets[0]!.terminate();
+    await waitCount(1, 1);
+    expect(reconnected).not.toHaveBeenCalled();
+    server.autoStart = true;
+    await server.send(session, { type: 'session.started', session: { id: 'live_1' } });
+    expect(reconnected).toHaveBeenCalledOnce();
+    server.sockets[1]!.terminate();
+    await vi.waitFor(() => expect(session.sessionId).toBe('live_2'));
+    expect(errors.map((error) => error.recoverable)).toEqual([true, true]);
+    expect(reconnected).toHaveBeenCalledTimes(2);
+  });
+
   it('delivers client delegations with the pending transcript and answers by id', async () => {
     const session = create({ delegation: 'client' });
     const delegations: GPTLiveDelegation[] = [];
