@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-meta",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Meta Muse Voice Transcribe plugin for LiveKit Agents for Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
