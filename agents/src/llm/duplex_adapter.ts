@@ -4,7 +4,7 @@
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import type { ReadableStreamDefaultReader } from 'node:stream/web';
 import { calculateAudioDurationSeconds } from '../audio.js';
-import { AsyncIterableQueue, Future, shortuuid, toError, toStream } from '../utils.js';
+import { AsyncIterableQueue, Future, shortuuid, toStream } from '../utils.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import { ChatContext, ChatMessage, type FunctionCall } from './chat_context.js';
 import type {
@@ -336,12 +336,14 @@ export class DuplexRealtimeSession extends RealtimeSession {
       }
     } catch (error) {
       if (!this.closed) {
-        this.logger.error({ error }, 'duplex audio stream failed');
+        const streamError =
+          error instanceof Error ? error : new RealtimeError('duplex audio stream failed');
+        this.logger.error({ error: streamError }, 'duplex audio stream failed');
         const ev: RealtimeModelError = {
           type: 'realtime_model_error',
           timestamp: Date.now(),
           label: this.duplexSession.duplexModel.label(),
-          error: toError(error),
+          error: streamError,
           recoverable: false,
         };
         this.emit('error', ev);

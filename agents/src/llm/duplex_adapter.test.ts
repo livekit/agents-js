@@ -673,20 +673,27 @@ describe('duplex events and context', () => {
     ]);
   });
 
-  it('reports a failed audio consumer as unrecoverable and closes the open generation', async () => {
-    const { fake, session, generations } = setup({ gate: () => new FixedGate(0.002) });
-    const errors: RealtimeModelError[] = [];
-    session.on('error', (error) => errors.push(error));
-    fake.push(0.3);
-    await setImmediate();
-    fake.controller.error(new Error('stream failed'));
-    fake.closed = true;
-    await setImmediate();
-    expect(errors).toMatchObject([
-      { recoverable: false, label: fake.duplexModel.label(), error: new Error('stream failed') },
-    ]);
-    expect((await readGeneration(generations[0]!)).frames).toHaveLength(1);
-  });
+  it.each([new Error('stream failed'), 'secret provider payload', { payload: 'secret' }])(
+    'reports an unrecoverable audio failure and closes the generation (reason: %s)',
+    async (reason) => {
+      const { fake, session, generations } = setup({ gate: () => new FixedGate(0.002) });
+      const errors: RealtimeModelError[] = [];
+      const logged = vi.spyOn(log(), 'error');
+      session.on('error', (error) => errors.push(error));
+      fake.push(0.3);
+      await setImmediate();
+      fake.controller.error(reason);
+      fake.closed = true;
+      await setImmediate();
+      const expectedError =
+        reason instanceof Error ? reason : new RealtimeError('duplex audio stream failed');
+      expect(errors).toMatchObject([
+        { recoverable: false, label: fake.duplexModel.label(), error: expectedError },
+      ]);
+      expect(logged).toHaveBeenCalledWith({ error: expectedError }, 'duplex audio stream failed');
+      expect((await readGeneration(generations[0]!)).frames).toHaveLength(1);
+    },
+  );
 
   it('releases the blocked reader and event listeners when closing before configuration', async () => {
     const { fake, session } = setup();
