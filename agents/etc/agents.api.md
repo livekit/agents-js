@@ -13,6 +13,7 @@ import { Context } from '@opentelemetry/api';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JobType } from '@livekit/protocol';
 import { JsonObject } from '@bufbuild/protobuf';
@@ -3305,10 +3306,11 @@ export interface DuplexRealtimeAdapterOptions {
     gate?: () => AudioGate;
 }
 
+// Warning: (ae-forgotten-export) The symbol "DuplexSession_base" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "DuplexSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export abstract class DuplexSession extends EventEmitter_2 {
+export abstract class DuplexSession<Events extends EventMap = Record<never, never>> extends DuplexSession_base<Events> {
     constructor(duplexModel: DuplexModel);
     // (undocumented)
     abstract _appendItems(items: ChatItem[]): Promise<void>;
@@ -3316,7 +3318,10 @@ export abstract class DuplexSession extends EventEmitter_2 {
     abstract get audioStream(): ReadableStream_2<DuplexAudioFrame>;
     // (undocumented)
     get capabilities(): DuplexCapabilities;
-    abstract close(): Promise<void>;
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    protected abstract closeConnection(): Promise<void>;
     protected readonly _configured: {
         readonly isSet: boolean;
         wait(): Promise<boolean>;
@@ -3346,6 +3351,20 @@ export abstract class DuplexSession extends EventEmitter_2 {
     // (undocumented)
     abstract _updateTools(tools: ToolContext): Promise<void>;
 }
+
+// Warning: (ae-missing-release-tag) "DuplexSessionCallbacks" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type DuplexSessionCallbacks = {
+    transcript_delta: (event: DuplexOutputTranscriptDelta) => void;
+    function_call: (event: FunctionCall) => void;
+    input_speech_started: (event: InputSpeechStartedEvent) => void;
+    input_speech_stopped: (event: InputSpeechStoppedEvent) => void;
+    input_audio_transcription_completed: (event: InputTranscriptionCompleted) => void;
+    session_reconnected: (event: RealtimeSessionReconnectedEvent) => void;
+    metrics_collected: (event: RealtimeModelMetrics) => void;
+    error: (event: RealtimeModelError) => void;
+};
 
 // Warning: (ae-missing-release-tag) "DuplicateMode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -5183,6 +5202,7 @@ declare namespace llm {
         DuplexAudioFrame,
         DuplexCapabilities,
         DuplexOutputTranscriptDelta,
+        DuplexSessionCallbacks,
         AdaptiveNoiseGate,
         DuplexRealtimeAdapter,
         FixedGate,

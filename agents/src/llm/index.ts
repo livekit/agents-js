@@ -41,6 +41,7 @@ export {
   type DuplexAudioFrame,
   type DuplexCapabilities,
   type DuplexOutputTranscriptDelta,
+  type DuplexSessionCallbacks,
 } from './duplex.js';
 export {
   AdaptiveNoiseGate,

@@ -12,6 +12,7 @@ import type {
   DuplexModel,
   DuplexOutputTranscriptDelta,
   DuplexSession,
+  DuplexSessionCallbacks,
 } from './duplex.js';
 import {
   type GenerationCreatedEvent,
@@ -270,34 +271,31 @@ export class DuplexRealtimeSession extends RealtimeSession {
     private readonly audioTimeout: number,
   ) {
     super(adapter);
-    this.listen('transcript_delta', (ev: DuplexOutputTranscriptDelta) => {
+    this.listen('transcript_delta', (ev) => {
       if (!this.fragments.length) this.waitingSinceMs = this.audioMs;
       this.fragments.push(ev);
     });
-    this.listen('function_call', (ev: FunctionCall) => this.onFunctionCall(ev));
-    this.listen('input_audio_transcription_completed', (ev: InputTranscriptionCompleted) =>
-      this.onInputTranscription(ev),
-    );
-    this.listen('session_reconnected', (ev: object) => {
+    this.listen('function_call', (ev) => this.onFunctionCall(ev));
+    this.listen('input_audio_transcription_completed', (ev) => this.onInputTranscription(ev));
+    this.listen('session_reconnected', (ev) => {
       this.fragments = [];
       this.closeBurst();
       this.failPendingReply('the session reconnected before the model replied');
       this.emit('session_reconnected', ev);
     });
-    for (const event of [
-      'input_speech_started',
-      'input_speech_stopped',
-      'metrics_collected',
-      'error',
-    ]) {
-      this.listen(event, (ev: unknown) => this.emit(event, ev));
-    }
+    this.listen('input_speech_started', (ev) => this.emit('input_speech_started', ev));
+    this.listen('input_speech_stopped', (ev) => this.emit('input_speech_stopped', ev));
+    this.listen('metrics_collected', (ev) => this.emit('metrics_collected', ev));
+    this.listen('error', (ev) => this.emit('error', ev));
     this.segmentTask = this.segment().catch((error: unknown) => {
       this.logger.error({ error }, 'duplex audio consumer failed');
     });
   }
 
-  private listen<T>(event: string, handler: (ev: T) => void): void {
+  private listen<E extends keyof DuplexSessionCallbacks>(
+    event: E,
+    handler: DuplexSessionCallbacks[E],
+  ): void {
     this.duplexSession.on(event, handler);
     this.unsubscribe.push(() => this.duplexSession.off(event, handler));
   }

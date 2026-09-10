@@ -2,13 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
+import type { EventMap, TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { RealtimeModelMetrics } from '../metrics/base.js';
 import { Event } from '../utils.js';
-import type { ChatContext, ChatItem } from './chat_context.js';
+import type { ChatContext, ChatItem, FunctionCall } from './chat_context.js';
 import type { AudioGate } from './duplex_adapter.js';
-import { RealtimeError } from './realtime.js';
+import {
+  type InputSpeechStartedEvent,
+  type InputSpeechStoppedEvent,
+  type InputTranscriptionCompleted,
+  RealtimeError,
+  type RealtimeModelError,
+  type RealtimeSessionReconnectedEvent,
+} from './realtime.js';
 import type { ToolChoice, ToolContext } from './tool_context.js';
 
 /** One frame of the model's continuous output, including its silence. */
@@ -62,14 +70,29 @@ export abstract class DuplexModel {
   abstract close(): Promise<void>;
 }
 
+export type DuplexSessionCallbacks = {
+  transcript_delta: (event: DuplexOutputTranscriptDelta) => void;
+  function_call: (event: FunctionCall) => void;
+  input_speech_started: (event: InputSpeechStartedEvent) => void;
+  input_speech_stopped: (event: InputSpeechStoppedEvent) => void;
+  input_audio_transcription_completed: (event: InputTranscriptionCompleted) => void;
+  session_reconnected: (event: RealtimeSessionReconnectedEvent) => void;
+  metrics_collected: (event: RealtimeModelMetrics) => void;
+  error: (event: RealtimeModelError) => void;
+};
+
 /**
  * A provider session with continuous audio output.
  *
- * Emits `transcript_delta`, `function_call`, `input_speech_started`, `input_speech_stopped`,
- * `input_audio_transcription_completed`, `session_reconnected`, `metrics_collected`, and `error`.
+ * `Events` adds provider-specific callbacks to {@link DuplexSessionCallbacks}.
  * Provider-specific APIs are accessible through `Agent.duplexSession`.
  */
-export abstract class DuplexSession extends EventEmitter {
+export abstract class DuplexSession<
+  Events extends EventMap = Record<never, never>,
+> extends (EventEmitter as new <Events extends EventMap>() => TypedEmitter<
+  Omit<Events, keyof DuplexSessionCallbacks>
+> &
+  TypedEmitter<DuplexSessionCallbacks>)<Events> {
   /** Wait for complete startup configuration before connecting an immutable model. */
   protected readonly _configured: {
     readonly isSet: boolean;
@@ -91,8 +114,12 @@ export abstract class DuplexSession extends EventEmitter {
 
   pushVideo(_frame: VideoFrame): void {}
 
-  /** Release `_configured` before waiting for a connection task during close. */
-  abstract close(): Promise<void>;
+  async close(): Promise<void> {
+    this._configured.set();
+    await this.closeConnection();
+  }
+
+  protected abstract closeConnection(): Promise<void>;
 
   abstract _updateInstructions(instructions: string): Promise<void>;
   abstract _appendItems(items: ChatItem[]): Promise<void>;

@@ -49,6 +49,7 @@ class FakeDuplexModel extends DuplexModel {
 }
 
 class FakeDuplexSession extends DuplexSession {
+  private readonly connectionTask = this._configured.wait();
   controller!: ReadableStreamDefaultController<DuplexAudioFrame>;
   readonly audioStream = new ReadableStream<DuplexAudioFrame>({
     start: (controller) => {
@@ -78,8 +79,8 @@ class FakeDuplexSession extends DuplexSession {
   }
   _updateOptions(_options: { toolChoice?: ToolChoice | null }): void {}
   pushAudio(_frame: AudioFrame): void {}
-  async close(): Promise<void> {
-    this._configured.set();
+  protected async closeConnection(): Promise<void> {
+    await this.connectionTask;
     if (!this.closed) this.controller.close();
     this.closed = true;
   }
@@ -665,11 +666,17 @@ describe('duplex events and context', () => {
   it('releases the blocked reader and event listeners when closing before configuration', async () => {
     const { fake, session } = setup();
     const close = vi.spyOn(fake, 'close');
-    await Promise.all([session.close(), session.close()]);
-    expect(close).toHaveBeenCalledOnce();
-    expect(fake.configured).toBe(true);
-    expect(fake.audioStream.locked).toBe(false);
-    expect(fake.eventNames()).toEqual([]);
+    const closing = Promise.all([session.close(), session.close()]);
+    try {
+      await vi.waitFor(() => expect(fake.closed).toBe(true));
+      expect(close).toHaveBeenCalledOnce();
+      expect(fake.configured).toBe(true);
+      expect(fake.audioStream.locked).toBe(false);
+      expect(fake.eventNames()).toEqual([]);
+    } finally {
+      await fake._updateSession();
+      await closing;
+    }
   });
 });
 
@@ -744,6 +751,30 @@ describe('duplex requested replies', () => {
 });
 
 describe('duplex model integration', () => {
+  it('closes the provider after startup configuration fails', async () => {
+    vi.spyOn(FakeDuplexSession.prototype, '_updateInstructions').mockRejectedValueOnce(
+      new RealtimeError('configuration failed'),
+    );
+    const model = new FakeDuplexModel();
+    const agent = new Agent({ instructions: 'be brief' });
+    const session = new AgentSession({ llm: model, vad: null, aecWarmupDuration: null });
+    await session.start({ agent });
+    const provider = model.activeSession;
+    expect(provider.configured).toBe(false);
+
+    const closing = session.close();
+    try {
+      await vi.waitFor(() => expect(provider.closed).toBe(true));
+      await closing;
+      expect(provider.audioStream.locked).toBe(false);
+      expect(provider.eventNames()).toEqual([]);
+      expect(() => agent.getActivityOrThrow()).toThrow('Agent activity not found');
+    } finally {
+      await provider._updateSession();
+      await closing;
+    }
+  });
+
   it.each(['none', 'listening', 'throwing'] as const)(
     'closes on an unrecoverable audio error with a %s application error listener',
     async (listener) => {
