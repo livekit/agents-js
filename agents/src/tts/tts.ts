@@ -136,9 +136,20 @@ export interface TTSError {
   recoverable: boolean;
 }
 
+/** An inference fallback produced content-bearing synthesis output. @public */
+export interface FallbackActivatedEvent {
+  sessionId: string;
+  fallbackType: 'unknown' | 'fallback' | 'system_default';
+  provider: string;
+  model: string;
+  voice: string;
+  cause: 'unknown' | 'timeout' | 'canceled' | 'provider_error' | 'quota_exceeded';
+}
+
 export type TTSCallbacks = {
   ['metrics_collected']: (metrics: TTSMetrics) => void;
   ['error']: (error: TTSError) => void;
+  ['fallback_activated']: (event: FallbackActivatedEvent) => void;
 };
 
 /**

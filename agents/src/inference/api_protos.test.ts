@@ -45,6 +45,84 @@ describe('sttServerEventSchema', () => {
 });
 
 describe('ttsServerEventSchema', () => {
+  it.each(['fallback', 'system_default'] as const)(
+    'accepts %s fallback activation notices',
+    (fallbackType) => {
+      const notice = {
+        type: 'fallback_activated',
+        session_id: 's1',
+        fallback_type: fallbackType,
+        provider: 'deepgram',
+        model: 'deepgram/aura-2',
+        voice: 'asteria',
+        cause: 'timeout',
+      };
+
+      expect(ttsServerEventSchema.parse(notice)).toEqual(notice);
+    },
+  );
+
+  it.each(['unknown', 'timeout', 'canceled', 'provider_error', 'quota_exceeded'])(
+    'accepts the %s fallback cause',
+    (cause) => {
+      expect(
+        ttsServerEventSchema.safeParse({
+          type: 'fallback_activated',
+          session_id: 's1',
+          fallback_type: 'fallback',
+          provider: 'deepgram',
+          model: 'deepgram/aura-2',
+          voice: 'asteria',
+          cause,
+        }).success,
+      ).toBe(true);
+    },
+  );
+
+  it('normalizes unsupported fallback types', () => {
+    expect(
+      ttsServerEventSchema.parse({
+        type: 'fallback_activated',
+        session_id: 's1',
+        fallback_type: 'future_type',
+        provider: 'deepgram',
+        model: 'deepgram/aura-2',
+        voice: 'asteria',
+        cause: 'timeout',
+      }),
+    ).toEqual({
+      type: 'fallback_activated',
+      session_id: 's1',
+      fallback_type: 'unknown',
+      provider: 'deepgram',
+      model: 'deepgram/aura-2',
+      voice: 'asteria',
+      cause: 'timeout',
+    });
+  });
+
+  it('normalizes unsupported fallback causes', () => {
+    expect(
+      ttsServerEventSchema.parse({
+        type: 'fallback_activated',
+        session_id: 's1',
+        fallback_type: 'system_default',
+        provider: 'deepgram',
+        model: 'deepgram/aura-2',
+        voice: 'asteria',
+        cause: 'future_cause',
+      }),
+    ).toEqual({
+      type: 'fallback_activated',
+      session_id: 's1',
+      fallback_type: 'system_default',
+      provider: 'deepgram',
+      model: 'deepgram/aura-2',
+      voice: 'asteria',
+      cause: 'unknown',
+    });
+  });
+
   it('extracts output_alignment words payload', () => {
     const result = ttsServerEventSchema.safeParse({
       type: 'output_alignment',

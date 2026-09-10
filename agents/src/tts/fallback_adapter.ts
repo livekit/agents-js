@@ -128,6 +128,9 @@ export class FallbackAdapter extends TTS {
       tts.on('error', (error) => {
         this.emit('error', error);
       });
+      tts.on('fallback_activated', (event) => {
+        this.emit('fallback_activated', event);
+      });
     });
   }
 
@@ -282,6 +285,7 @@ export class FallbackAdapter extends TTS {
     for (const tts of this.ttsInstances) {
       tts.removeAllListeners('metrics_collected');
       tts.removeAllListeners('error');
+      tts.removeAllListeners('fallback_activated');
     }
 
     // Close all TTS instances
