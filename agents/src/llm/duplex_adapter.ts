@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import type { ReadableStreamDefaultReader } from 'node:stream/web';
+import { calculateAudioDurationSeconds } from '../audio.js';
 import { AsyncIterableQueue, Future, shortuuid, toError, toStream } from '../utils.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import { ChatContext, ChatMessage, type FunctionCall } from './chat_context.js';
@@ -44,10 +45,6 @@ export interface AudioGateOptions {
   minSilenceDuration?: number;
 }
 
-function durationMs(frame: AudioFrame): number {
-  return (frame.samplesPerChannel / frame.sampleRate) * 1000;
-}
-
 function rms(frame: AudioFrame): number {
   let sum = 0;
   for (const sample of frame.data) sum += sample * sample;
@@ -83,7 +80,7 @@ export class FixedGate implements AudioGate {
         this.quiet = 0;
       }
     } else if (level < this.floor * this.deactivationRatio) {
-      this.quiet += durationMs(frame);
+      this.quiet += calculateAudioDurationSeconds(frame) * 1000;
       if (this.quiet >= this.minSilenceDuration) this.open = false;
     } else {
       this.quiet = 0;
@@ -124,7 +121,7 @@ export class AdaptiveNoiseGate implements AudioGate {
 
   update(frame: AudioFrame): boolean {
     const level = rms(frame);
-    const duration = durationMs(frame);
+    const duration = calculateAudioDurationSeconds(frame) * 1000;
     if (!this.open) {
       this.stretchSum += level * duration;
       this.stretchDuration += duration;
@@ -320,7 +317,7 @@ export class DuplexRealtimeSession extends RealtimeSession {
               this.gate.deactivate();
               this.closeBurst();
             },
-            this.audioTimeout + durationMs(value.frame),
+            this.audioTimeout + calculateAudioDurationSeconds(value.frame) * 1000,
           );
         }
       }
@@ -349,7 +346,7 @@ export class DuplexRealtimeSession extends RealtimeSession {
     if (this.gate.update(output.frame)) {
       const burst = this.burst ?? this.openBurst();
       if (!burst.audio.closed) burst.audio.put(output.frame);
-      this.audioMs += Math.round(durationMs(output.frame));
+      this.audioMs += Math.round(calculateAudioDurationSeconds(output.frame) * 1000);
       while (this.fragments.length) {
         const fragment = this.fragments[0]!;
         if (fragment.startMs !== undefined) {
@@ -361,7 +358,7 @@ export class DuplexRealtimeSession extends RealtimeSession {
       return;
     }
 
-    this.audioMs += Math.round(durationMs(output.frame));
+    this.audioMs += Math.round(calculateAudioDurationSeconds(output.frame) * 1000);
     if (this.burst) {
       this.closeBurst();
     } else if (
