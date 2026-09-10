@@ -421,6 +421,8 @@ const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_CANCEL_TIMEOUT = 5000;
 const INACTIVITY_TIMEOUT_ERROR_CODE = 2007;
+const FINALIZATION_TIMEOUT_MS = 30_000;
+const FINAL_TRANSCRIPT_INACTIVITY_TIMEOUT_MS = 3_000;
 
 export interface InferenceSTTOptions<TModel extends STTModels> {
   model?: TModel;
@@ -817,21 +819,33 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let ws: WebSocket | null = null;
       let inputEnded = false;
       let cleanedUp = false;
-      let finalReceived = false;
+      let finalTranscriptReceived = false;
+      let finalizationComplete = false;
+      let sessionClosedReceived = false;
       let sessionCloseSent = false;
+      let finalizationTimeout: ReturnType<typeof setTimeout> | undefined;
       let vadStream: VADStream | null = null;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
 
       const sendSessionClose = (socket: WebSocket) => {
-        if (sessionCloseSent || socket.readyState !== 1) return;
+        if (sessionCloseSent || sessionClosedReceived || socket.readyState !== 1) return;
         sessionCloseSent = true;
+        if (finalizationTimeout) {
+          clearTimeout(finalizationTimeout);
+          finalizationTimeout = undefined;
+        }
         socket.send(JSON.stringify({ type: 'session.close' }));
+      };
+
+      const sendSessionFinalize = (socket: WebSocket) => {
+        socket.send(JSON.stringify({ type: 'session.finalize' }));
       };
 
       const resourceCleanup = () => {
         if (cleanedUp) return;
         cleanedUp = true;
+        if (finalizationTimeout) clearTimeout(finalizationTimeout);
         void eventChannel.close().catch((error) => {
           this.#logger.debug({ error }, 'Failed to close STT event channel');
         });
@@ -845,6 +859,31 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         }
       };
 
+      const finishFinalization = () => {
+        if (finalizationComplete) return;
+        finalizationComplete = true;
+        resourceCleanup();
+      };
+
+      const scheduleFinalizationTimeout = () => {
+        if (
+          !inputEnded ||
+          finalizationComplete ||
+          sessionCloseSent ||
+          sessionClosedReceived ||
+          cleanedUp
+        ) {
+          return;
+        }
+        if (finalizationTimeout) clearTimeout(finalizationTimeout);
+        // Lifecycle acknowledgments are optional and may precede trailing transcripts.
+        // ponytail: Add an interim-specific deadline only if shutdown latency requires it.
+        const timeout = finalTranscriptReceived
+          ? FINAL_TRANSCRIPT_INACTIVITY_TIMEOUT_MS
+          : FINALIZATION_TIMEOUT_MS;
+        finalizationTimeout = setTimeout(finishFinalization, timeout);
+      };
+
       const createWsListener = async (ws: WebSocket, signal: AbortSignal) => {
         return new ThrowsPromise<void, Error | APIStatusError>((resolve, reject) => {
           const onAbort = () => {
@@ -856,6 +895,16 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           ws.on('message', (data) => {
             const json = JSON.parse(data.toString()) as SttServerEvent;
+            if (json.type === 'final_transcript') {
+              finalTranscriptReceived = true;
+            }
+            if (
+              json.type === 'interim_transcript' ||
+              json.type === 'final_transcript' ||
+              json.type === 'preflight_transcript'
+            ) {
+              scheduleFinalizationTimeout();
+            }
             void eventChannel.write(json).catch((error) => {
               this.#logger.debug({ error }, 'Failed to queue STT server event');
             });
@@ -868,7 +917,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           });
 
           ws.on('close', (code: number) => {
-            const expectedClose = finalReceived || signal.aborted;
+            const expectedClose =
+              signal.aborted || inputEnded || finalizationComplete || sessionCloseSent;
             resourceCleanup();
 
             if (expectedClose) return resolve();
@@ -929,8 +979,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           inputEnded = true;
           vadStream?.endInput();
-          socket.send(JSON.stringify({ type: 'session.finalize' }));
-          sendSessionClose(socket);
+          sendSessionFinalize(socket);
+          scheduleFinalizationTimeout();
         } catch (e) {
           if ((e as Error).message === 'Send aborted') {
             // Expected abort, don't log
@@ -956,7 +1006,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (result.done) break;
             if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
             if (socket.readyState !== 1) return;
-            socket.send(JSON.stringify({ type: 'session.finalize' }));
+            sendSessionFinalize(socket);
           }
         } catch (e) {
           if ((e as Error).message === 'VAD aborted') return;
@@ -997,11 +1047,18 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
             switch (event.type) {
               case 'session.created':
+                break;
               case 'session.finalized':
                 break;
               case 'session.closed':
-                finalReceived = true;
-                resourceCleanup();
+                if (!inputEnded && !sessionCloseSent) {
+                  throw new APIStatusError({
+                    message: 'LiveKit STT session closed before input ended',
+                    options: { statusCode: -1, retryable: true },
+                  });
+                }
+                sessionClosedReceived = true;
+                finishFinalization();
                 break;
               case 'start_of_speech':
                 this.processStartOfSpeech();
