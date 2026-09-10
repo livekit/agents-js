@@ -66,6 +66,7 @@ export {
   normalizeTTSFallback,
   parseTTSModelString,
   TTS,
+  type FallbackActivatedEvent,
   type TTSFallbackModel,
   type TTSFallbackModelType,
   type TTSModels,

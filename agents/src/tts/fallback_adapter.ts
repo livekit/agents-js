@@ -128,6 +128,9 @@ export class FallbackAdapter extends TTS {
       tts.on('error', (error) => {
         this.emit('error', error);
       });
+      tts.on('fallback_activated', (event) => {
+        this.emit('fallback_activated', event);
+      });
     });
   }
 
@@ -282,6 +285,7 @@ export class FallbackAdapter extends TTS {
     for (const tts of this.ttsInstances) {
       tts.removeAllListeners('metrics_collected');
       tts.removeAllListeners('error');
+      tts.removeAllListeners('fallback_activated');
     }
 
     // Close all TTS instances
@@ -440,7 +444,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     })();
 
     for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
-      const tts = this.adapter.getStreamingInstance(i);
       const originalTts = this.adapter.ttsInstances[i]!;
       const status = this.adapter.status[i]!;
       let lastRequestId: string = '';
@@ -450,6 +453,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         this.adapter.markUnAvailable(i);
         continue;
       }
+      const tts = this.adapter.getStreamingInstance(i);
       const resampler = this.adapter.createResamplerForTTS(i);
 
       // ttfb measures the fallback adapter as a whole: anchor on the first
@@ -611,6 +615,9 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         // its started time must still anchor the fallback's ttfb
         captureStartedTime();
         resampler?.close();
+        if (tts !== originalTts) {
+          await tts.close();
+        }
       }
     }
     await readInputLLMStream.catch(() => {});
