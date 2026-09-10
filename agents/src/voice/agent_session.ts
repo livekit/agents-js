@@ -1924,6 +1924,7 @@ export class AgentSession<
   }
 
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
+    if (this.closing) return;
     if (ev.isFinal && this._userState !== 'speaking') {
       if (this._userState === 'away') {
         this.logger.debug('User returned from away state due to speech input');

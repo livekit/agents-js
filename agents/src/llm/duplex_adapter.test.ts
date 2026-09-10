@@ -817,6 +817,37 @@ describe('duplex requested replies', () => {
 });
 
 describe('duplex model integration', () => {
+  it('does not arm an away timer from a shutdown transcript and still handles restarts', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    const model = new FakeDuplexModel();
+    const agent = new Agent({ instructions: '' });
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      aecWarmupDuration: null,
+      userAwayTimeout: 1,
+    });
+    await session.start({ agent });
+    vi.spyOn(agent, 'onExit').mockImplementationOnce(async () => {
+      session.emit(
+        AgentSessionEventTypes.UserInputTranscribed,
+        createUserInputTranscribedEvent({ transcript: 'goodbye', isFinal: true }),
+      );
+    });
+    await session.close();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(session.userState).toBe('listening');
+    await session.start({ agent });
+    try {
+      await vi.advanceTimersByTimeAsync(500);
+      expect(session.userState).toBe('listening');
+      await vi.advanceTimersByTimeAsync(500);
+      expect(session.userState).toBe('away');
+    } finally {
+      await session.close();
+    }
+  });
+
   it.each([false, true])(
     'awaits provider chat updates through Agent.updateChatCtx (failure: %s)',
     async (fail) => {
