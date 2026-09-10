@@ -607,19 +607,23 @@ describe('STT VAD handling for Speechmatics models', () => {
 });
 
 describe('Inference STT connection lifecycle', () => {
-  it('waits for session.finalized and session.closed before closing the socket', async () => {
+  it('keeps receiving transcripts after session.finalized', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
     const messageTypes: string[] = [];
     const transcripts: string[] = [];
-    let closeBeforeFinalized = false;
     let closeBeforeTranscript = false;
-    let sessionFinalizedSent = false;
     let transcriptSent = false;
-    let socketClosedBeforeSessionClosed = false;
-    let sessionClosedSent = false;
     let requestUrl: string | undefined;
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+    let resolveFinalizeReceived!: () => void;
+    const finalizeReceived = new Promise<void>((resolve) => {
+      resolveFinalizeReceived = resolve;
+    });
     let resolveSocketClosed!: () => void;
     const socketClosed = new Promise<void>((resolve) => {
       resolveSocketClosed = resolve;
@@ -627,6 +631,90 @@ describe('Inference STT connection lifecycle', () => {
 
     server.on('connection', (socket, request) => {
       requestUrl = request.url;
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.finalize') {
+          resolveFinalizeReceived();
+          socket.send(JSON.stringify({ type: 'session.finalized' }));
+          setTimeout(() => {
+            if (socket.readyState !== 1) return;
+            socket.send(
+              JSON.stringify({
+                type: 'final_transcript',
+                transcript: 'final words',
+                language: 'en',
+              }),
+            );
+            transcriptSent = true;
+          }, 25);
+        }
+        if (event.type === 'session.close') {
+          closeBeforeTranscript = !transcriptSent;
+        }
+      });
+    });
+
+    const stt = makeStt({
+      model: 'deepgram/nova-3',
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    let resolveTranscript!: () => void;
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+          resolveTranscript();
+        }
+      }
+    })();
+
+    try {
+      await sessionCreated;
+      vi.useFakeTimers();
+      stream.endInput();
+      await finalizeReceived;
+      await vi.advanceTimersByTimeAsync(25);
+      await transcriptReceived;
+      await vi.advanceTimersByTimeAsync(3_000);
+      await outputTask;
+      await socketClosed;
+
+      expect(new URL(requestUrl!, 'ws://127.0.0.1').searchParams.get('model')).toBe(
+        'deepgram/nova-3',
+      );
+      expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+      expect(transcripts).toEqual(['final words']);
+      expect(closeBeforeTranscript).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('finishes when session.closed follows input end', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    const transcripts: string[] = [];
+    let sessionClosedSent = false;
+    let socketClosedBeforeSessionClosed = false;
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket) => {
       socket.on('close', () => {
         socketClosedBeforeSessionClosed = !sessionClosedSent;
         resolveSocketClosed();
@@ -634,35 +722,20 @@ describe('Inference STT connection lifecycle', () => {
       socket.on('message', (raw) => {
         const event = JSON.parse(raw.toString()) as { type: string };
         messageTypes.push(event.type);
-        if (event.type === 'session.finalize') {
-          socket.send(
-            JSON.stringify({
-              type: 'final_transcript',
-              transcript: 'final words',
-              language: 'en',
-            }),
-          );
-          transcriptSent = true;
-          setTimeout(() => {
-            if (socket.readyState !== 1) return;
-            sessionFinalizedSent = true;
-            socket.send(JSON.stringify({ type: 'session.finalized' }));
-          }, 25);
-        }
-        if (event.type === 'session.close') {
-          closeBeforeFinalized = !sessionFinalizedSent;
-          closeBeforeTranscript = !transcriptSent;
-          setTimeout(() => {
-            if (socket.readyState !== 1) return;
-            sessionClosedSent = true;
-            socket.send(JSON.stringify({ type: 'session.closed' }));
-          }, 25);
-        }
+        if (event.type !== 'session.finalize') return;
+        socket.send(
+          JSON.stringify({
+            type: 'final_transcript',
+            transcript: 'final words',
+            language: 'en',
+          }),
+        );
+        sessionClosedSent = true;
+        socket.send(JSON.stringify({ type: 'session.closed' }));
       });
     });
 
     const stt = makeStt({
-      model: 'deepgram/nova-3',
       baseURL: `http://127.0.0.1:${address.port}`,
       connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
     });
@@ -677,13 +750,8 @@ describe('Inference STT connection lifecycle', () => {
       }
       await socketClosed;
 
-      expect(new URL(requestUrl!, 'ws://127.0.0.1').searchParams.get('model')).toBe(
-        'deepgram/nova-3',
-      );
-      expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+      expect(messageTypes).toEqual(['session.create', 'session.finalize']);
       expect(transcripts).toEqual(['final words']);
-      expect(closeBeforeFinalized).toBe(false);
-      expect(closeBeforeTranscript).toBe(false);
       expect(socketClosedBeforeSessionClosed).toBe(false);
     } finally {
       stream.close();
@@ -756,9 +824,6 @@ describe('Inference STT connection lifecycle', () => {
               language: 'en',
             }),
           );
-          socket.send(JSON.stringify({ type: 'session.finalized' }));
-        }
-        if (connection === 2 && event.type === 'session.close') {
           socket.send(JSON.stringify({ type: 'session.closed' }));
         }
       });
@@ -815,9 +880,6 @@ describe('Inference STT connection lifecycle', () => {
               language: 'en',
             }),
           );
-        }
-        if (event.type === 'session.close') {
-          socket.send(JSON.stringify({ type: 'session.closed' }));
         }
       });
     });

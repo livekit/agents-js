@@ -823,7 +823,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let finalizationComplete = false;
       let sessionClosedReceived = false;
       let sessionCloseSent = false;
-      let pendingFinalizations = 0;
       let finalizationTimeout: ReturnType<typeof setTimeout> | undefined;
       let vadStream: VADStream | null = null;
 
@@ -840,7 +839,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       const sendSessionFinalize = (socket: WebSocket) => {
-        pendingFinalizations += 1;
         socket.send(JSON.stringify({ type: 'session.finalize' }));
       };
 
@@ -878,11 +876,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           return;
         }
         if (finalizationTimeout) clearTimeout(finalizationTimeout);
-        // Some providers omit session.finalized. Request closure after transcript inactivity.
+        // Lifecycle acknowledgments are optional and may precede trailing transcripts.
         finalizationTimeout = setTimeout(
-          () => {
-            if (ws) sendSessionClose(ws);
-          },
+          finishFinalization,
           finalTranscriptReceived ? TRANSCRIPT_INACTIVITY_TIMEOUT_MS : FIRST_TRANSCRIPT_TIMEOUT_MS,
         );
       };
@@ -1052,8 +1048,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               case 'session.created':
                 break;
               case 'session.finalized':
-                pendingFinalizations = Math.max(0, pendingFinalizations - 1);
-                if (inputEnded && pendingFinalizations === 0 && ws) sendSessionClose(ws);
                 break;
               case 'session.closed':
                 if (!inputEnded && !sessionCloseSent) {
