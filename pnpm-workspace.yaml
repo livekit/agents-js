@@ -22,6 +22,8 @@ minimumReleaseAgeExclude:
   - brace-expansion@5.0.8
   # Renovate security update: js-yaml@4.3.1
   - js-yaml@4.3.1
+  # Renovate security update: sharp@0.35.4
+  - sharp@0.35.4
 
 catalog:
   '@livekit/rtc-node': ^0.13.34
