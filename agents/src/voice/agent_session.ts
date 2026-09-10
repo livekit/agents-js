@@ -47,7 +47,13 @@ import type {
   ToolContextEntry,
   ToolContextLike,
 } from '../llm/index.js';
-import { ToolContext, ToolError, toToolContext } from '../llm/index.js';
+import {
+  DuplexModel,
+  DuplexRealtimeAdapter,
+  ToolContext,
+  ToolError,
+  toToolContext,
+} from '../llm/index.js';
 import { LLM as BaseLLM } from '../llm/llm.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -284,7 +290,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * one as absent). Pass `null` to opt out entirely.
    */
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
@@ -723,6 +729,8 @@ export class AgentSession<
 
     if (typeof llm === 'string') {
       this.llm = InferenceLLM.fromModelString(llm);
+    } else if (llm instanceof DuplexModel) {
+      this.llm = new DuplexRealtimeAdapter(llm);
     } else {
       this.llm = llm;
     }

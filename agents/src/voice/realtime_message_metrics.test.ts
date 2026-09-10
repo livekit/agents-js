@@ -15,6 +15,7 @@ import {
 } from '../llm/realtime.js';
 import { type ToolChoice, ToolContext } from '../llm/tool_context.js';
 import { initializeLogger, log } from '../log.js';
+import type { RealtimeModelMetrics } from '../metrics/base.js';
 import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
@@ -40,6 +41,7 @@ function oneItemStream<T>(item: T): ReadableStream<T> {
 }
 
 class FakeRealtimeSession extends RealtimeSession {
+  closingMetrics?: RealtimeModelMetrics;
   private _chatCtx = ChatContext.empty();
   private _tools = ToolContext.empty();
 
@@ -88,6 +90,11 @@ class FakeRealtimeSession extends RealtimeSession {
   async interrupt(): Promise<void> {}
 
   async truncate(): Promise<void> {}
+
+  async close(): Promise<void> {
+    if (this.closingMetrics) this.emit('metrics_collected', this.closingMetrics);
+    await super.close();
+  }
 }
 
 class FakeRealtimeModel extends RealtimeModel {
@@ -162,6 +169,45 @@ async function runRealtimeSession({
 }
 
 describe('Realtime message metrics', () => {
+  it('collects usage reported while the provider session closes', async () => {
+    const model = new FakeRealtimeModel();
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    await session.start({ agent: new Agent({ instructions: 'test' }) });
+    model.activeSession.closingMetrics = {
+      type: 'realtime_model_metrics',
+      label: 'fake',
+      requestId: 'sess_1',
+      timestamp: Date.now(),
+      durationMs: 0,
+      ttftMs: -1,
+      cancelled: false,
+      tokensPerSecond: 0,
+      sessionDurationMs: 12_500,
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      inputTokenDetails: { audioTokens: 90, textTokens: 10, imageTokens: 0, cachedTokens: 0 },
+      outputTokenDetails: { audioTokens: 40, textTokens: 10, imageTokens: 0 },
+      metadata: { modelName: 'fake-live', modelProvider: 'fake.provider' },
+    };
+    await session.close();
+    expect(session.usage.modelUsage).toContainEqual(
+      expect.objectContaining({
+        provider: 'fake.provider',
+        inputTokens: 100,
+        inputAudioTokens: 90,
+        outputTokens: 50,
+        outputAudioTokens: 40,
+        sessionDurationMs: 12_500,
+      }),
+    );
+    expect(model.activeSession.listenerCount('metrics_collected')).toBe(0);
+  });
+
   it('makes realtime response IDs available on assistant messages', async () => {
     const llm = new FakeRealtimeModel();
     const session = new AgentSession({ llm, vad: null, turnHandling: { turnDetection: null } });
