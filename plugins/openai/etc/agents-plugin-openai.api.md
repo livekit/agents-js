@@ -135,7 +135,7 @@ export class ChunkedStream extends tts_2.ChunkedStream {
     protected run(): Promise<void>;
 }
 
-// @public (undocumented)
+// @public
 type ClientEvent = {
     event_id?: string;
 } & ({
@@ -377,7 +377,7 @@ export type DeepSeekChatModels = 'deepseek-coder' | 'deepseek-chat';
 // @public (undocumented)
 export function defaultReasoningEffort(model: ChatModels | string): ReasoningEffort | undefined;
 
-// @public (undocumented)
+// @public
 type Delegation = {
     type: 'client';
 } | {
@@ -399,7 +399,7 @@ class DiscardedGeneration {
 // @public (undocumented)
 export type EmbeddingModels = 'text-embedding-ada-002' | 'text-embedding-3-small' | 'text-embedding-3-large';
 
-// @public (undocumented)
+// @public
 interface ErrorBody {
     // (undocumented)
     client_event_id?: string | null;
@@ -524,17 +524,12 @@ interface GPTLiveDelegation {
 // @public
 class GPTLiveModel extends llm.DuplexModel {
     constructor(options?: GPTLiveModelOptions);
-    // (undocumented)
     audioGate(): llm.AudioGate;
-    // (undocumented)
     close(): Promise<void>;
-    // (undocumented)
     get model(): string;
     // @internal (undocumented)
     readonly _opts: Required<GPTLiveModelOptions>;
-    // (undocumented)
     get provider(): string;
-    // (undocumented)
     session(): GPTLiveSession;
 }
 
@@ -542,13 +537,10 @@ class GPTLiveModel extends llm.DuplexModel {
 interface GPTLiveModelOptions {
     apiKey?: string;
     baseURL?: string;
-    // (undocumented)
     connOptions?: APIConnectOptions;
     delegation?: DelegationTarget;
     maxSessionDuration?: number | null;
-    // (undocumented)
     model?: string;
-    // (undocumented)
     responsesOptions?: ResponsesDelegationOptions;
     voice?: GPTLiveVoices | (string & NonNullable<unknown>) | Record<string, unknown>;
 }
@@ -566,33 +558,23 @@ class GPTLiveSession extends llm.DuplexSession<{
     appendInstructions(text: string, options?: {
         delegationId?: string | null;
     }): void;
-    // (undocumented)
     _appendItems(items: llm.ChatItem[]): Promise<void>;
     appendThinking(text: string, options?: {
         delegationId?: string | null;
     }): void;
-    // (undocumented)
     get audioStream(): ReadableStream_2<llm.DuplexAudioFrame>;
-    // (undocumented)
     protected closeConnection(): Promise<void>;
-    // (undocumented)
     _generateReply(instructions?: string): void;
     muteInput(): void;
-    // (undocumented)
     pushAudio(frame: AudioFrame): void;
     sendEvent(event: ClientEvent | Record<string, unknown>): void;
-    // (undocumented)
     get sessionId(): string | undefined;
-    // (undocumented)
     get tools(): llm.ToolContext;
     unmuteInput(): void;
-    // (undocumented)
     _updateInstructions(instructions: string): Promise<void>;
-    // (undocumented)
     _updateOptions(options: {
         toolChoice?: llm.ToolChoice | null;
     }): void;
-    // (undocumented)
     _updateTools(tools: llm.ToolContext): Promise<void>;
 }
 
@@ -713,7 +695,7 @@ interface InputImageContent {
     type: 'input_image';
 }
 
-// @public (undocumented)
+// @public
 interface InputItem {
     // (undocumented)
     content: {
@@ -726,7 +708,7 @@ interface InputItem {
     type: 'message';
 }
 
-// @public (undocumented)
+// @public
 type InputRole = 'developer' | 'user' | 'assistant';
 
 // Warning: (ae-missing-release-tag) "InputTextContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1680,7 +1662,7 @@ declare namespace responses {
     }
 }
 
-// @public (undocumented)
+// @public
 interface ResponsesConfig {
     // (undocumented)
     instructions?: string;
@@ -1710,19 +1692,14 @@ interface ResponsesDelegationOptions {
     instructions?: string;
     maxOutputTokens?: number;
     model?: string;
-    // (undocumented)
     parallelToolCalls?: boolean;
-    // (undocumented)
     reasoning?: ResponsesConfig['reasoning'];
-    // (undocumented)
     serviceTier?: ResponsesConfig['service_tier'];
-    // (undocumented)
     text?: ResponsesConfig['text'];
-    // (undocumented)
     toolChoice?: llm.ToolChoice | null;
 }
 
-// @public (undocumented)
+// @public
 interface ResponsesEvent {
     // (undocumented)
     item?: {
@@ -1812,7 +1789,7 @@ interface ResponseTextDoneEvent extends BaseServerEvent {
     type: 'response.text.done';
 }
 
-// @public (undocumented)
+// @public
 interface ResponseUsage {
     // (undocumented)
     input_tokens?: number;
@@ -1903,7 +1880,7 @@ type ServerEvent_2 = ErrorEvent_3 | SessionCreatedEvent | SessionUpdatedEvent | 
 // @public (undocumented)
 type ServerEventType = 'error' | 'session.created' | 'session.updated' | 'conversation.created' | 'input_audio_buffer.committed' | 'input_audio_buffer.cleared' | 'input_audio_buffer.speech_started' | 'input_audio_buffer.speech_stopped' | 'conversation.item.added' | 'conversation.item.created' | 'conversation.item.input_audio_transcription.delta' | 'conversation.item.input_audio_transcription.completed' | 'conversation.item.input_audio_transcription.failed' | 'conversation.item.truncated' | 'conversation.item.deleted' | 'response.created' | 'response.done' | 'response.output_item.added' | 'response.output_item.done' | 'response.content_part.added' | 'response.content_part.done' | 'response.output_text.delta' | 'response.output_text.done' | 'response.text.delta' | 'response.text.done' | 'response.output_audio_transcript.delta' | 'response.output_audio_transcript.done' | 'response.audio_transcript.delta' | 'response.audio_transcript.done' | 'response.output_audio.delta' | 'response.output_audio.done' | 'response.audio.delta' | 'response.audio.done' | 'response.function_call_arguments.delta' | 'response.function_call_arguments.done' | 'rate_limits.updated';
 
-// @public (undocumented)
+// @public
 interface SessionConfig {
     // (undocumented)
     audio?: {

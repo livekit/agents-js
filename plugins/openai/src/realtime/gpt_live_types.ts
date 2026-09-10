@@ -6,15 +6,15 @@ import type { Reasoning } from 'openai/resources/shared.js';
 
 /** GPT-Live wire types. Field names follow the service protocol. @public */
 export type DelegationTarget = 'responses' | 'client';
-/** @public */
+/** Roles accepted in initial session history. @public */
 export type InputRole = 'developer' | 'user' | 'assistant';
-/** @public */
+/** A text message used to seed session history. @public */
 export interface InputItem {
   type: 'message';
   role: InputRole;
   content: { type: 'input_text' | 'output_text'; text: string }[];
 }
-/** @public */
+/** Backend Responses API options, using wire field names. @public */
 export interface ResponsesConfig {
   model?: string;
   instructions?: string;
@@ -26,9 +26,9 @@ export interface ResponsesConfig {
   service_tier?: 'auto' | 'default' | 'flex' | 'priority';
   max_output_tokens?: number;
 }
-/** @public */
+/** Choose the backend Responses model or application callbacks. @public */
 export type Delegation = { type: 'client' } | { type: 'responses'; responses: ResponsesConfig };
-/** @public */
+/** Initial voice, audio, context, and delegation configuration. @public */
 export interface SessionConfig {
   model: string;
   instructions?: string;
@@ -39,7 +39,7 @@ export interface SessionConfig {
   };
   delegation?: Delegation;
 }
-/** @public */
+/** Commands sent to the GPT-Live WebSocket. @public */
 export type ClientEvent = { event_id?: string } & (
   | { type: 'session.start'; session: SessionConfig }
   | { type: 'session.update'; session: { delegation: Delegation } }
@@ -59,7 +59,7 @@ export type ClientEvent = { event_id?: string } & (
     }
   | { type: 'response.item.create'; item: OpenAI.Responses.ResponseInputItem }
 );
-/** @public */
+/** Backend response token usage, separate from voice session duration. @public */
 export interface ResponseUsage {
   input_tokens?: number;
   input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
@@ -67,7 +67,7 @@ export interface ResponseUsage {
   output_tokens_details?: { reasoning_tokens?: number };
   total_tokens?: number;
 }
-/** @public */
+/** Responses API events nested inside a GPT-Live response.event. @public */
 export interface ResponsesEvent {
   type: string;
   response?: {
@@ -85,7 +85,7 @@ export interface ResponsesEvent {
     arguments?: string | null;
   } | null;
 }
-/** @public */
+/** Provider error details. Messages can contain customer content. @public */
 export interface ErrorBody {
   type?: string | null;
   code?: string | null;

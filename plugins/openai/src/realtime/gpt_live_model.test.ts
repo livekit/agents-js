@@ -907,6 +907,84 @@ describe('GPTLiveModel', () => {
     expect(server.events(1)[1]?.type).toBe('session.thinking.append');
   });
 
+  it('does not replay history appends from a failed startup', async () => {
+    server.autoStart = false;
+    const session = create({
+      connOptions: { maxRetry: 1, retryIntervalMs: 10, timeoutMs: 1000 },
+    });
+    await session._updateSession();
+    await waitCount(1);
+    await session._appendItems([
+      new llm.ChatMessage({ role: 'user', content: 'Pending question' }),
+      new llm.ChatMessage({ role: 'developer', content: 'Pending rule' }),
+    ]);
+    session.appendThinking('Manual context');
+    server.sockets[0]!.terminate();
+    await waitCount(1, 1);
+    await session._appendItems([
+      new llm.ChatMessage({ role: 'user', content: 'After retry snapshot' }),
+    ]);
+    await server.send(session, { type: 'session.started', session: { id: 'live_1' } });
+    await waitCount(3, 1);
+    expect(startConfig(1).input).toMatchObject([
+      { content: [{ text: 'Pending question' }] },
+      { content: [{ text: 'Pending rule' }] },
+    ]);
+    expect(server.events(1).slice(1)).toMatchObject([
+      { type: 'session.thinking.append', content: 'Manual context' },
+      { type: 'session.thinking.append', content: 'user: After retry snapshot' },
+    ]);
+  });
+
+  it('discards queued tool responses and continuation from a drained connection', async () => {
+    server.autoClose = false;
+    const session = create({ maxSessionDuration: 300 });
+    await ready(session);
+    await server.response(session, { type: 'response.created' });
+    await server.response(session, callDone('old'));
+    await server.response(session, completed());
+    await vi.waitFor(() => expect(server.events().at(-1)?.type).toBe('session.close'));
+    await session._appendItems([output('old')]);
+    await server.send(session, { type: 'session.closed', reason: 'expired' });
+    await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+    expect(startConfig(1).input).toMatchObject([
+      { content: [{ text: 'Called tool getWeather with {"location":"Paris"}' }] },
+      { content: [{ text: 'Tool getWeather returned rainy' }] },
+    ]);
+    expect(server.events(1)).toHaveLength(1);
+    server.autoClose = true;
+  });
+
+  it('keeps the cumulative usage baseline across missing or decreasing updates', async () => {
+    const session = create();
+    const durations: number[] = [];
+    session.on('metrics_collected', (metric) => {
+      if (metric.type === 'realtime_model_metrics' && metric.sessionDurationMs !== undefined)
+        durations.push(metric.sessionDurationMs);
+    });
+    await ready(session);
+    for (const usage of [{ seconds: 10 }, undefined, {}, { seconds: 4 }, { seconds: 12 }])
+      await server.send(session, { type: 'session.usage.updated', usage });
+    server.closeUsage = 15;
+    await session.close();
+    expect(durations).toEqual([10000, 2000, 3000]);
+  });
+
+  it.each([1, 3, 5])('decodes %s audio bytes without reading past the buffer', async (length) => {
+    const session = create();
+    const errors = vi.spyOn(log(), 'error');
+    await ready(session);
+    const reader = session.audioStream.getReader();
+    await server.send(session, {
+      type: 'session.output_audio.delta',
+      delta: Buffer.alloc(length, 1).toString('base64'),
+    });
+    const { value } = await reader.read();
+    expect(value?.frame.samplesPerChannel).toBe(Math.floor(length / 2));
+    expect(errors).not.toHaveBeenCalled();
+    reader.releaseLock();
+  });
+
   it('recycles a connection at maxSessionDuration in milliseconds', async () => {
     const session = create({ maxSessionDuration: 200 });
     await ready(session);

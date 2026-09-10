@@ -55,10 +55,15 @@ export interface ResponsesDelegationOptions {
   model?: string;
   /** Backend instructions, separate from the voice persona. */
   instructions?: string;
+  /** Restrict backend tool selection. Null restores automatic selection. */
   toolChoice?: llm.ToolChoice | null;
+  /** Allow the backend to request multiple tools in one response. */
   parallelToolCalls?: boolean;
+  /** Reasoning effort for the backend model. */
   reasoning?: ResponsesConfig['reasoning'];
+  /** Text format and verbosity for backend responses. */
   text?: ResponsesConfig['text'];
+  /** Processing tier for backend responses. */
   serviceTier?: ResponsesConfig['service_tier'];
   /** Maximum tokens per backend response; the service requires at least 16. */
   maxOutputTokens?: number;
@@ -81,6 +86,7 @@ export type GPTLiveVoices = 'aster' | 'beacon' | 'cinder' | 'marin' | 'stone' | 
  * @public
  */
 export interface GPTLiveModelOptions {
+  /** Voice model identifier. Defaults to gpt-live-1. */
   model?: string;
   /**
    * A named voice (marin by default), or an authorized custom voice object. Fixed at startup.
@@ -89,13 +95,15 @@ export interface GPTLiveModelOptions {
   voice?: GPTLiveVoices | (string & NonNullable<unknown>) | Record<string, unknown>;
   /** Fixed at startup. Client delegation requires an agent with no tools. */
   delegation?: DelegationTarget;
+  /** Backend configuration when delegation is responses (the default). */
   responsesOptions?: ResponsesDelegationOptions;
   /** Falls back to OPENAI_API_KEY. */
   apiKey?: string;
   /** Falls back to OPENAI_BASE_URL, then https://api.openai.com/v1. */
   baseURL?: string;
-  /** Recycle the connection after this many milliseconds. */
+  /** Recycle the connection after this many milliseconds. Null (the default) disables the timer. */
   maxSessionDuration?: number | null;
+  /** Connection/startup timeout and retry limits. Defaults to DEFAULT_API_CONNECT_OPTIONS. */
   connOptions?: APIConnectOptions;
 }
 
@@ -108,6 +116,7 @@ export class GPTLiveModel extends llm.DuplexModel {
   /** @internal */
   readonly _opts: Required<GPTLiveModelOptions>;
 
+  /** Configure a voice model. Throws when no OpenAI API key is available. */
   constructor(options: GPTLiveModelOptions = {}) {
     super({
       userTranscription: true,
@@ -132,20 +141,25 @@ export class GPTLiveModel extends llm.DuplexModel {
     };
   }
 
+  /** Voice model identifier used for sessions and metrics. */
   get model(): string {
     return this._opts.model;
   }
+  /** Host of the configured API endpoint. */
   get provider(): string {
     return new URL(this._opts.baseURL).host;
   }
 
+  /** Keep output active through short pauses in speech. */
   audioGate(): llm.AudioGate {
     return new llm.FixedGate(0.0006, { minSilenceDuration: MIN_SILENCE_DURATION });
   }
 
+  /** Create a connection that starts after the framework configures the session. */
   session(): GPTLiveSession {
     return new GPTLiveSession(this);
   }
+  /** The model owns no shared resources. Close each session to release its connection. */
   async close(): Promise<void> {}
 }
 
@@ -194,7 +208,10 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private sessionStarted = false;
   private closing = false;
   private audioClosed = false;
-  private readonly queued: (ClientEvent | Record<string, unknown>)[] = [];
+  private queued: {
+    event: ClientEvent | Record<string, unknown>;
+    replayOnReconnect: boolean;
+  }[] = [];
   private ws?: WebSocket;
   private connectionDone?: Future<Error | undefined>;
   private connectionDraining = false;
@@ -211,6 +228,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     },
   });
 
+  /** Create a session using a copy of the model configuration. */
   constructor(model: GPTLiveModel) {
     super(model);
     this.opts = { ...model._opts, responsesOptions: { ...model._opts.responsesOptions } };
@@ -222,27 +240,37 @@ export class GPTLiveSession extends llm.DuplexSession<{
       });
   }
 
+  /** Provider session identifier. Changes when a replacement connection starts. */
   get sessionId(): string | undefined {
     return this._sessionId;
   }
+  /** Mono 24 kHz PCM output, retained across reconnects and closed on shutdown. */
   get audioStream(): ReadableStream<llm.DuplexAudioFrame> {
     return this.output;
   }
+  /** Copy of the tools available to the backend Responses model. */
   get tools(): llm.ToolContext {
     return this._tools.copy();
   }
 
   /** Queue a wire event. Commands wait for session.started before being sent. */
   sendEvent(event: ClientEvent | Record<string, unknown>): void {
+    this.queueEvent(event, true);
+  }
+
+  private queueEvent(
+    event: ClientEvent | Record<string, unknown>,
+    replayOnReconnect: boolean,
+  ): void {
     if (this.closing) return;
-    this.queued.push(event);
+    this.queued.push({ event, replayOnReconnect });
     this.flushQueued();
   }
 
   private flushQueued(): void {
     if (this.connectionDraining || !this.sessionStarted || this.ws?.readyState !== WebSocket.OPEN)
       return;
-    while (this.queued.length) this.wsSend(this.ws, this.queued.shift()!);
+    while (this.queued.length) this.wsSend(this.ws, this.queued.shift()!.event);
   }
 
   private wsSend(ws: WebSocket, event: ClientEvent | Record<string, unknown>): void {
@@ -325,11 +353,14 @@ export class GPTLiveSession extends llm.DuplexSession<{
 
   private sendDelegationUpdate(responses: ResponsesConfig): void {
     if (this.opts.delegation !== 'responses' || !this.sessionStartSent) return;
-    this.sendEvent({
-      type: 'session.update',
-      event_id: shortuuid('delegation_update_'),
-      session: { delegation: { type: 'responses', responses } },
-    } satisfies ClientEvent);
+    this.queueEvent(
+      {
+        type: 'session.update',
+        event_id: shortuuid('delegation_update_'),
+        session: { delegation: { type: 'responses', responses } },
+      } satisfies ClientEvent,
+      false,
+    );
   }
 
   private async main(): Promise<void> {
@@ -341,6 +372,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
           await this.runConnection(
             () => {
               if (reconnecting) {
+                // History and delegation settings are rebuilt in session.start.
+                this.queued = this.queued.filter((command) => command.replayOnReconnect);
                 this.resetInputAudio();
                 this.endSpeech('user');
                 this.speech.clear();
@@ -543,7 +576,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
             { usageRatio: event.context_window.usage_ratio },
             'GPT-Live context window utilization',
           );
-        this.handleUsage(event.usage?.seconds ?? 0);
+        this.handleUsage(event.usage?.seconds);
         if (event.type === 'session.closed') this.connectionDone?.resolve(undefined);
         break;
       case 'error': {
@@ -724,13 +757,17 @@ export class GPTLiveSession extends llm.DuplexSession<{
     this.delegatedResponses.delete(delegationId);
     if (!pending.callIds.size) return;
     for (const callId of pending.callIds) this.callToDelegation.delete(callId);
-    this.sendEvent({
-      type: 'response.create',
-      event_id: shortuuid('response_create_'),
-    } satisfies ClientEvent);
+    this.queueEvent(
+      {
+        type: 'response.create',
+        event_id: shortuuid('response_create_'),
+      } satisfies ClientEvent,
+      false,
+    );
   }
 
-  private handleUsage(seconds: number): void {
+  private handleUsage(seconds: number | undefined): void {
+    if (seconds === undefined || !Number.isFinite(seconds) || seconds < this.usageSeconds) return;
     const previous = this.usageSeconds;
     this.usageSeconds = seconds;
     this.emit('metrics_collected', {
@@ -762,6 +799,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     } satisfies llm.RealtimeModelError);
   }
 
+  /** Buffer microphone audio, mixing to mono and resampling to 24 kHz as needed. */
   pushAudio(frame: AudioFrame): void {
     if (this.closing) return;
     const speech = this.speech.get('user');
@@ -825,13 +863,17 @@ export class GPTLiveSession extends llm.DuplexSession<{
     type: 'session.instructions.append' | 'session.thinking.append' | 'session.commentary.append',
     content: string,
     delegationId: string | null,
+    replayOnReconnect = true,
   ): void {
-    this.sendEvent({
-      type,
-      event_id: shortuuid('append_'),
-      delegation_id: delegationId,
-      content,
-    } satisfies ClientEvent);
+    this.queueEvent(
+      {
+        type,
+        event_id: shortuuid('append_'),
+        delegation_id: delegationId,
+        content,
+      } satisfies ClientEvent,
+      replayOnReconnect,
+    );
   }
   /** Replace microphone input with silence while the model continues speaking. */
   muteInput(): void {
@@ -848,6 +890,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     } satisfies ClientEvent);
   }
 
+  /** Drain final provider usage, then close the transport and output stream. */
   protected async closeConnection(): Promise<void> {
     if (!this.closing) {
       this.closing = true;
@@ -857,6 +900,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     await this.mainTask;
   }
 
+  /** Set the initial voice instructions. Changes after session.start are rejected. */
   async _updateInstructions(instructions: string): Promise<void> {
     if (this.sessionStartSent && instructions !== this.instructions) {
       throw new llm.RealtimeError(
@@ -865,6 +909,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     }
     this.instructions = instructions;
   }
+  /** Update backend tools. Client delegation requires an empty tool context. */
   async _updateTools(tools: llm.ToolContext): Promise<void> {
     if (this.opts.delegation === 'client' && tools.flatten().length) {
       throw new llm.RealtimeError(
@@ -880,6 +925,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     this._tools = tools.copy();
     this.sendDelegationUpdate({ tools: this.buildTools() });
   }
+  /** Retain framework chat items for reconnects and send their context or tool results. */
   async _appendItems(items: llm.ChatItem[]): Promise<void> {
     this.history.insert(items);
     if (!this.sessionStartSent) return;
@@ -887,7 +933,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
     const lines: string[] = [];
     for (const item of items) {
       if (item.type === 'message' && (item.role === 'system' || item.role === 'developer')) {
-        if (item.textContent) this.appendInstructions(item.textContent);
+        if (item.textContent)
+          this.append('session.instructions.append', item.textContent, null, false);
       } else if (item.type === 'function_call_output' && this.callToDelegation.has(item.callId)) {
         outputs.push({ output: item, delegationId: this.callToDelegation.get(item.callId)! });
       } else {
@@ -895,17 +942,21 @@ export class GPTLiveSession extends llm.DuplexSession<{
         if (rendered) lines.push(`${rendered[0]}: ${rendered[1]}`);
       }
     }
-    if (lines.length) this.appendThinking(lines.join('\n'));
+    if (lines.length) this.append('session.thinking.append', lines.join('\n'), null, false);
     for (const { output, delegationId } of outputs) {
-      this.sendEvent({
-        type: 'response.item.create',
-        event_id: shortuuid('tool_output_'),
-        item: { type: 'function_call_output', call_id: output.callId, output: output.output },
-      } satisfies ClientEvent);
+      this.queueEvent(
+        {
+          type: 'response.item.create',
+          event_id: shortuuid('tool_output_'),
+          item: { type: 'function_call_output', call_id: output.callId, output: output.output },
+        } satisfies ClientEvent,
+        false,
+      );
       this.delegatedResponses.get(delegationId)?.returned.add(output.callId);
       this.maybeContinueResponse(delegationId);
     }
   }
+  /** Prompt an immediate spoken reply to instructions or the newest typed user message. */
   _generateReply(instructions?: string): void {
     if (instructions !== undefined) {
       this.appendCommentary(`${ASK_INSTRUCTED}\n\n${instructions}`);
@@ -922,6 +973,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     this.askedItemId = newest?.id;
     this.appendCommentary(typed ? `${ASK_TYPED}\n\n${typed}` : ASK_BARE);
   }
+  /** Update backend tool selection for this session and future reconnects. */
   _updateOptions(options: { toolChoice?: llm.ToolChoice | null }): void {
     if (options.toolChoice !== undefined) {
       this.opts.responsesOptions.toolChoice = options.toolChoice;
