@@ -21,6 +21,7 @@ import { Participant } from '@livekit/rtc-node';
 import { ParticipantKind } from '@livekit/rtc-node';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Reasoning as Reasoning_2 } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
@@ -133,10 +134,35 @@ export class ChunkedStream extends tts_2.ChunkedStream {
     protected run(): Promise<void>;
 }
 
+// @public (undocumented)
+type ClientEvent = {
+    event_id?: string;
+} & ({
+    type: 'session.start';
+    session: SessionConfig;
+} | {
+    type: 'session.update';
+    session: {
+        delegation: Delegation;
+    };
+} | {
+    type: 'session.input_audio.append';
+    audio: string;
+} | {
+    type: 'session.input_audio.mute' | 'session.input_audio.unmute' | 'session.close' | 'response.create';
+} | {
+    type: 'session.instructions.append' | 'session.thinking.append' | 'session.commentary.append';
+    delegation_id: string | null;
+    content: string;
+} | {
+    type: 'response.item.create';
+    item: OpenAI.Responses.ResponseInputItem;
+});
+
 // Warning: (ae-missing-release-tag) "ClientEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type ClientEvent = SessionUpdateEvent | InputAudioBufferAppendEvent | InputAudioBufferCommitEvent | InputAudioBufferClearEvent | ConversationItemCreateEvent | ConversationItemTruncateEvent | ConversationItemDeleteEvent | ResponseCreateEvent | ResponseCancelEvent;
+type ClientEvent_2 = SessionUpdateEvent | InputAudioBufferAppendEvent | InputAudioBufferCommitEvent | InputAudioBufferClearEvent | ConversationItemCreateEvent | ConversationItemTruncateEvent | ConversationItemDeleteEvent | ResponseCreateEvent | ResponseCancelEvent;
 
 // Warning: (ae-missing-release-tag) "ClientEventType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -350,6 +376,17 @@ export type DeepSeekChatModels = 'deepseek-coder' | 'deepseek-chat';
 // @public (undocumented)
 export function defaultReasoningEffort(model: ChatModels | string): ReasoningEffort | undefined;
 
+// @public (undocumented)
+type Delegation = {
+    type: 'client';
+} | {
+    type: 'responses';
+    responses: ResponsesConfig;
+};
+
+// @public
+type DelegationTarget = 'responses' | 'client';
+
 // @internal (undocumented)
 class DiscardedGeneration {
     // (undocumented)
@@ -360,6 +397,20 @@ class DiscardedGeneration {
 //
 // @public (undocumented)
 export type EmbeddingModels = 'text-embedding-ada-002' | 'text-embedding-3-small' | 'text-embedding-3-large';
+
+// @public (undocumented)
+interface ErrorBody {
+    // (undocumented)
+    client_event_id?: string | null;
+    // (undocumented)
+    code?: string | null;
+    // (undocumented)
+    message?: string;
+    // (undocumented)
+    param?: string | null;
+    // (undocumented)
+    type?: string | null;
+}
 
 // Warning: (ae-missing-release-tag) "ErrorEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -444,6 +495,101 @@ interface FunctionCallOutputItemCreate {
 //
 // @public (undocumented)
 type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
+
+declare namespace GPTLive {
+    export {
+        DelegationTarget,
+        InputRole,
+        InputItem,
+        ResponsesConfig,
+        Delegation,
+        SessionConfig,
+        ClientEvent,
+        ResponseUsage,
+        ResponsesEvent,
+        ErrorBody,
+        ServerEvent
+    }
+}
+
+// @public
+interface GPTLiveDelegation {
+    id: string;
+    pendingTranscript: string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
+//
+// @public
+class GPTLiveModel extends llm.DuplexModel {
+    constructor(options?: GPTLiveModelOptions);
+    // (undocumented)
+    audioGate(): llm.AudioGate;
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    get model(): string;
+    // @internal (undocumented)
+    readonly _opts: Required<GPTLiveModelOptions>;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(): GPTLiveSession;
+}
+
+// @public
+interface GPTLiveModelOptions {
+    apiKey?: string;
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    delegation?: DelegationTarget;
+    maxSessionDuration?: number | null;
+    // (undocumented)
+    model?: string;
+    // (undocumented)
+    responsesOptions?: ResponsesDelegationOptions;
+    voice?: string | Record<string, unknown>;
+}
+
+// @public
+class GPTLiveSession extends llm.DuplexSession {
+    constructor(model: GPTLiveModel);
+    appendCommentary(text: string, options?: {
+        delegationId?: string | null;
+    }): void;
+    appendInstructions(text: string, options?: {
+        delegationId?: string | null;
+    }): void;
+    // (undocumented)
+    _appendItems(items: llm.ChatItem[]): Promise<void>;
+    appendThinking(text: string, options?: {
+        delegationId?: string | null;
+    }): void;
+    // (undocumented)
+    get audioStream(): ReadableStream_2<llm.DuplexAudioFrame>;
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    _generateReply(instructions?: string): void;
+    muteInput(): void;
+    // (undocumented)
+    pushAudio(frame: AudioFrame): void;
+    sendEvent(event: ClientEvent | Record<string, unknown>): void;
+    // (undocumented)
+    get sessionId(): string | undefined;
+    // (undocumented)
+    get tools(): llm.ToolContext;
+    unmuteInput(): void;
+    // (undocumented)
+    _updateInstructions(instructions: string): Promise<void>;
+    // (undocumented)
+    _updateOptions(options: {
+        toolChoice?: llm.ToolChoice | null;
+    }): void;
+    // (undocumented)
+    _updateTools(tools: llm.ToolContext): Promise<void>;
+}
 
 // Warning: (ae-missing-release-tag) "GroqAudioModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -559,6 +705,22 @@ interface InputImageContent {
     type: 'input_image';
 }
 
+// @public (undocumented)
+interface InputItem {
+    // (undocumented)
+    content: {
+        type: 'input_text' | 'output_text';
+        text: string;
+    }[];
+    // (undocumented)
+    role: InputRole;
+    // (undocumented)
+    type: 'message';
+}
+
+// @public (undocumented)
+type InputRole = 'developer' | 'user' | 'assistant';
+
 // Warning: (ae-missing-release-tag) "InputTextContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -587,7 +749,6 @@ type ItemResource = SystemItem | UserItem | AssistantItem | FunctionCallItem | F
 // @public @deprecated (undocumented)
 type LegacyAudioFormat = 'pcm16';
 
-// Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
 // Warning: (ae-forgotten-export) The symbol "api_proto" needs to be exported by the entry point index.d.ts
 //
 // @internal
@@ -948,6 +1109,7 @@ interface RateLimitsUpdatedEvent extends BaseServerEvent {
 
 declare namespace realtime {
     export {
+        GPTLive,
         SAMPLE_RATE,
         NUM_CHANNELS,
         IN_FRAME_SIZE,
@@ -955,7 +1117,7 @@ declare namespace realtime {
         BASE_URL,
         Model,
         ReasoningEffort_2 as ReasoningEffort,
-        Reasoning_2 as Reasoning,
+        Reasoning_3 as Reasoning,
         Voice,
         LegacyAudioFormat,
         Role,
@@ -1012,7 +1174,7 @@ declare namespace realtime {
         ConversationItemDeleteEvent,
         ResponseCreateEvent,
         ResponseCancelEvent,
-        ClientEvent,
+        ClientEvent_2 as ClientEvent,
         ErrorEvent_3 as ErrorEvent,
         SessionCreatedEvent,
         SessionUpdatedEvent,
@@ -1043,7 +1205,7 @@ declare namespace realtime {
         ResponseFunctionCallArgumentsDeltaEvent,
         ResponseFunctionCallArgumentsDoneEvent,
         RateLimitsUpdatedEvent,
-        ServerEvent,
+        ServerEvent_2 as ServerEvent,
         isFatalError,
         processBaseURL,
         livekitItemToOpenAIItem,
@@ -1051,7 +1213,12 @@ declare namespace realtime {
         ResponseGeneration,
         DiscardedGeneration,
         RealtimeModel_2 as RealtimeModel,
-        RealtimeSession_2 as RealtimeSession
+        RealtimeSession_2 as RealtimeSession,
+        ResponsesDelegationOptions,
+        GPTLiveDelegation,
+        GPTLiveModelOptions,
+        GPTLiveModel,
+        GPTLiveSession
     }
 }
 
@@ -1236,7 +1403,7 @@ export type Reasoning = {
 // Warning: (ae-missing-release-tag) "Reasoning" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-interface Reasoning_2 {
+interface Reasoning_3 {
     // (undocumented)
     effort?: ReasoningEffort_2;
 }
@@ -1504,6 +1671,70 @@ declare namespace responses {
     }
 }
 
+// @public (undocumented)
+interface ResponsesConfig {
+    // (undocumented)
+    instructions?: string;
+    // (undocumented)
+    max_output_tokens?: number;
+    // (undocumented)
+    model?: string;
+    // (undocumented)
+    parallel_tool_calls?: boolean;
+    // (undocumented)
+    reasoning?: Reasoning_2;
+    // (undocumented)
+    service_tier?: 'auto' | 'default' | 'flex' | 'priority';
+    // (undocumented)
+    text?: OpenAI.Responses.ResponseTextConfig;
+    // (undocumented)
+    tool_choice?: string | {
+        type: 'function';
+        name: string;
+    };
+    // (undocumented)
+    tools?: Record<string, unknown>[];
+}
+
+// @public
+interface ResponsesDelegationOptions {
+    instructions?: string;
+    maxOutputTokens?: number;
+    model?: string;
+    // (undocumented)
+    parallelToolCalls?: boolean;
+    // (undocumented)
+    reasoning?: ResponsesConfig['reasoning'];
+    // (undocumented)
+    serviceTier?: ResponsesConfig['service_tier'];
+    // (undocumented)
+    text?: ResponsesConfig['text'];
+    // (undocumented)
+    toolChoice?: llm.ToolChoice | null;
+}
+
+// @public (undocumented)
+interface ResponsesEvent {
+    // (undocumented)
+    item?: {
+        id?: string | null;
+        type?: string | null;
+        call_id?: string | null;
+        name?: string | null;
+        arguments?: string | null;
+    } | null;
+    // (undocumented)
+    response?: {
+        id?: string | null;
+        model?: string | null;
+        usage?: ResponseUsage | null;
+        error?: Record<string, unknown> | null;
+        incomplete_details?: Record<string, unknown> | null;
+    } | null;
+    // (undocumented)
+    type: string;
+}
+
 // Warning: (ae-missing-release-tag) "ResponseStatus" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1572,6 +1803,25 @@ interface ResponseTextDoneEvent extends BaseServerEvent {
     type: 'response.text.done';
 }
 
+// @public (undocumented)
+interface ResponseUsage {
+    // (undocumented)
+    input_tokens?: number;
+    // (undocumented)
+    input_tokens_details?: {
+        cached_tokens?: number;
+        cache_write_tokens?: number;
+    };
+    // (undocumented)
+    output_tokens?: number;
+    // (undocumented)
+    output_tokens_details?: {
+        reasoning_tokens?: number;
+    };
+    // (undocumented)
+    total_tokens?: number;
+}
+
 // Warning: (ae-missing-release-tag) "Role" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1582,15 +1832,77 @@ type Role = 'system' | 'assistant' | 'user' | 'tool';
 // @public (undocumented)
 const SAMPLE_RATE = 24000;
 
+// @public
+type ServerEvent = {
+    type: 'session.started';
+    session?: {
+        id?: string | null;
+    };
+} | {
+    type: 'session.output_audio.delta';
+    delta?: string;
+} | {
+    type: 'session.output_transcript.delta' | 'session.input_transcript.delta';
+    delta?: string;
+    start_ms?: number | null;
+    end_ms?: number | null;
+} | {
+    type: 'session.delegation.created';
+    delegation?: {
+        id?: string | null;
+        target?: DelegationTarget | null;
+    };
+} | {
+    type: 'response.event';
+    delegation_id?: string | null;
+    event?: ResponsesEvent;
+} | {
+    type: 'session.usage.updated' | 'session.closed';
+    usage?: {
+        seconds?: number;
+    };
+    context_window?: {
+        usage_ratio?: number | null;
+    } | null;
+} | {
+    type: 'error';
+    error?: ErrorBody;
+} | {
+    type: 'session.updated' | 'session.input_audio.muted' | 'session.input_audio.unmuted' | 'session.instructions.appended' | 'session.thinking.appended' | 'session.commentary.appended';
+    client_event_id?: string;
+};
+
 // Warning: (ae-missing-release-tag) "ServerEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type ServerEvent = ErrorEvent_3 | SessionCreatedEvent | SessionUpdatedEvent | ConversationCreatedEvent | InputAudioBufferCommittedEvent | InputAudioBufferClearedEvent | InputAudioBufferSpeechStartedEvent | InputAudioBufferSpeechStoppedEvent | ConversationItemCreatedEvent | ConversationItemAddedEvent_2 | ConversationItemInputAudioTranscriptionDeltaEvent | ConversationItemInputAudioTranscriptionCompletedEvent | ConversationItemInputAudioTranscriptionFailedEvent | ConversationItemTruncatedEvent | ConversationItemDeletedEvent | ResponseCreatedEvent | ResponseDoneEvent | ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent | ResponseContentPartAddedEvent | ResponseContentPartDoneEvent | ResponseTextDeltaEvent | ResponseTextDoneEvent | ResponseAudioTranscriptDeltaEvent | ResponseAudioTranscriptDoneEvent | ResponseAudioDeltaEvent | ResponseAudioDoneEvent | ResponseFunctionCallArgumentsDeltaEvent | ResponseFunctionCallArgumentsDoneEvent | RateLimitsUpdatedEvent;
+type ServerEvent_2 = ErrorEvent_3 | SessionCreatedEvent | SessionUpdatedEvent | ConversationCreatedEvent | InputAudioBufferCommittedEvent | InputAudioBufferClearedEvent | InputAudioBufferSpeechStartedEvent | InputAudioBufferSpeechStoppedEvent | ConversationItemCreatedEvent | ConversationItemAddedEvent_2 | ConversationItemInputAudioTranscriptionDeltaEvent | ConversationItemInputAudioTranscriptionCompletedEvent | ConversationItemInputAudioTranscriptionFailedEvent | ConversationItemTruncatedEvent | ConversationItemDeletedEvent | ResponseCreatedEvent | ResponseDoneEvent | ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent | ResponseContentPartAddedEvent | ResponseContentPartDoneEvent | ResponseTextDeltaEvent | ResponseTextDoneEvent | ResponseAudioTranscriptDeltaEvent | ResponseAudioTranscriptDoneEvent | ResponseAudioDeltaEvent | ResponseAudioDoneEvent | ResponseFunctionCallArgumentsDeltaEvent | ResponseFunctionCallArgumentsDoneEvent | RateLimitsUpdatedEvent;
 
 // Warning: (ae-missing-release-tag) "ServerEventType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 type ServerEventType = 'error' | 'session.created' | 'session.updated' | 'conversation.created' | 'input_audio_buffer.committed' | 'input_audio_buffer.cleared' | 'input_audio_buffer.speech_started' | 'input_audio_buffer.speech_stopped' | 'conversation.item.added' | 'conversation.item.created' | 'conversation.item.input_audio_transcription.delta' | 'conversation.item.input_audio_transcription.completed' | 'conversation.item.input_audio_transcription.failed' | 'conversation.item.truncated' | 'conversation.item.deleted' | 'response.created' | 'response.done' | 'response.output_item.added' | 'response.output_item.done' | 'response.content_part.added' | 'response.content_part.done' | 'response.output_text.delta' | 'response.output_text.done' | 'response.text.delta' | 'response.text.done' | 'response.output_audio_transcript.delta' | 'response.output_audio_transcript.done' | 'response.audio_transcript.delta' | 'response.audio_transcript.done' | 'response.output_audio.delta' | 'response.output_audio.done' | 'response.audio.delta' | 'response.audio.done' | 'response.function_call_arguments.delta' | 'response.function_call_arguments.done' | 'rate_limits.updated';
+
+// @public (undocumented)
+interface SessionConfig {
+    // (undocumented)
+    audio?: {
+        format?: {
+            type: 'audio/pcm' | 'audio/pcmu' | 'audio/pcma';
+            rate: number;
+        };
+        output?: {
+            voice?: string | Record<string, unknown>;
+        };
+    };
+    // (undocumented)
+    delegation?: Delegation;
+    // (undocumented)
+    input?: InputItem[];
+    // (undocumented)
+    instructions?: string;
+    // (undocumented)
+    model: string;
+}
 
 // Warning: (ae-missing-release-tag) "SessionCreatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1659,7 +1971,7 @@ interface SessionUpdateEvent extends BaseClientEvent {
         audio?: RealtimeAudioConfig;
         max_output_tokens?: number | 'inf';
         tracing?: TracingConfig | null;
-        reasoning?: Reasoning_2 | null;
+        reasoning?: Reasoning_3 | null;
         model: Model;
         instructions: string;
         tools: Tool_2[];
