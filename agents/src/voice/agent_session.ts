@@ -47,7 +47,7 @@ import type {
   ToolContextEntry,
   ToolContextLike,
 } from '../llm/index.js';
-import { ToolContext, toToolContext } from '../llm/index.js';
+import { ToolContext, ToolError, toToolContext } from '../llm/index.js';
 import { LLM as BaseLLM } from '../llm/llm.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -71,7 +71,7 @@ import {
 } from '../types.js';
 import { Event, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
-import type { Agent } from './agent.js';
+import { type Agent, AgentTask } from './agent.js';
 import {
   AgentActivity,
   type ReusableResources,
@@ -1530,17 +1530,18 @@ export class AgentSession<
           'Agent handoff inserted into chat context',
         );
 
+        const activity = this.activity!;
         if (newActivity === 'start') {
-          await this.activity!.start({ reuseResources: reusableResources });
+          await activity.start({ reuseResources: reusableResources });
         } else {
-          await this.activity!.resume({ reuseResources: reusableResources });
+          await activity.resume({ reuseResources: reusableResources });
         }
         reusableResources = undefined;
 
-        onEnterTask = this.activity!._onEnterTask;
+        onEnterTask = activity._onEnterTask;
 
         if (this._input.audio) {
-          this.activity!.attachAudioInput(this._input.audio.stream);
+          activity.attachAudioInput(this._input.audio.stream);
         }
       } catch (error) {
         // JS safeguard: session cleanup owns the detached resources until the next activity
@@ -1947,25 +1948,44 @@ export class AgentSession<
     this._onAecWarmupExpired();
     this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
-    if (this.activity) {
+    let activity = this.activity;
+    // Let inline tasks finish their handoffs before closing the resumed parent.
+    while (activity?.agent instanceof AgentTask) {
+      const task = activity.agent;
+      activity.interrupt({ force: true });
+      if (!task.done) {
+        task.complete(new ToolError(`AgentTask ${task.id} is cancelled`));
+      }
+      await task._waitForInactive();
+      // A concurrent updateAgent can prevent the task from resuming its parent.
+      // In that case its activity still needs the normal exit and close sequence.
+      if (task._agentActivity === activity) {
+        await activity.drain();
+        await activity.close();
+      }
+      if (!task._oldAgent) break;
+      activity = task._oldAgent._agentActivity;
+    }
+
+    if (activity) {
       if (!drain) {
         try {
-          await this.activity.interrupt({ force: true }).await;
+          await activity.interrupt({ force: true }).await;
         } catch (error) {
           this.logger.warn({ error }, 'Error interrupting activity');
         }
       }
 
-      await this.activity.drain();
+      await activity.drain();
       // wait any uninterruptible speech to finish
-      await this.activity.currentSpeech?.waitForPlayout();
+      await activity.currentSpeech?.waitForPlayout();
 
       if (reason !== CloseReason.ERROR) {
-        this.activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
+        activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
       }
 
       try {
-        this.activity.detachAudioInput();
+        activity.detachAudioInput();
       } catch (error) {
         // Ignore detach errors during cleanup - source may not have been set
       }
@@ -1981,7 +2001,7 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await this.activity?.close();
+    await activity?.close();
     this.activity = undefined;
 
     const sessionToolsets = this._toolCtx.toolsets;

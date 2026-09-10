@@ -32,7 +32,7 @@ import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/i
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
-import { Future, Task, toStream } from '../utils.js';
+import { Event, Future, Task, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, ExpressiveOptions, TurnDetectionMode } from './agent_session.js';
@@ -676,7 +676,11 @@ export interface AgentTaskOptions<UserData = any> extends AgentOptions<UserData>
 export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData> {
   private started = false;
   private future = new Future<ResultT>();
+  private readonly inactive = new Event();
   private _preserveFunctionCallHistory: boolean;
+
+  /** @internal */
+  _oldAgent?: Agent;
 
   #logger = log();
 
@@ -690,10 +694,16 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     const { preserveFunctionCallHistory = false, ...rest } = options;
     super(rest);
     this._preserveFunctionCallHistory = preserveFunctionCallHistory;
+    this.inactive.set();
   }
 
   get done(): boolean {
     return this.future.done;
+  }
+
+  /** @internal */
+  async _waitForInactive(): Promise<void> {
+    await this.inactive.wait();
   }
 
   complete(result: ResultT | Error): void {
@@ -747,6 +757,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     const ownerIsNonBlocking =
       taskInfo.functionCall?.extra.__livekit_agents_tool_non_blocking === true;
     const oldAgent = oldActivity.agent;
+    this._oldAgent = oldAgent;
     const session = oldActivity.agentSession;
 
     const blockedTasks: Task<any>[] = [currentTask];
@@ -756,6 +767,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       blockedTasks.push(onEnterTask);
     }
 
+    this.inactive.clear();
     try {
       return await oldActivity._withInlineTaskSlot({
         speechHandle,
@@ -858,7 +870,9 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
                 `${this.constructor.name} completed, but the agent has changed in the meantime. ` +
                   `Ignoring handoff to the previous agent, likely due to AgentSession.updateAgent being invoked.`,
               );
-              await oldActivity.close();
+              // Shutdown closes the parent after this task returns. Closing it here
+              // would wait for the tool that is currently awaiting this task.
+              if (!session._closing) await oldActivity.close();
             } else {
               const mergedChatCtx = oldAgent._chatCtx.merge(this._chatCtx, {
                 excludeFunctionCall: !this._preserveFunctionCallHistory,
@@ -875,8 +889,8 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
           }
         },
       });
-    } catch (error) {
-      throw error;
+    } finally {
+      this.inactive.set();
     }
   }
 }
