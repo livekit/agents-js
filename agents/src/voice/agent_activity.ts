@@ -28,6 +28,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
+import { DuplexRealtimeSession } from '../llm/duplex_adapter.js';
 import { AsyncToolset, type Toolset } from '../llm/index.js';
 import {
   type ChatItem,
@@ -657,6 +658,20 @@ export class AgentActivity implements RecognitionHooks {
           !rtReused || capabilities.midSessionToolsUpdate ? this.tools : undefined,
         );
       } catch (error) {
+        if (this.realtimeSession instanceof DuplexRealtimeSession) {
+          startSpan.end();
+          if (this.agentSession._started) {
+            this.onError({
+              type: 'realtime_model_error',
+              timestamp: Date.now(),
+              label: this.llm.label(),
+              error:
+                error instanceof Error ? error : new RealtimeError('duplex configuration failed'),
+              recoverable: false,
+            });
+          }
+          throw error;
+        }
         this.logger.error(error, 'failed to update realtime session');
       }
 

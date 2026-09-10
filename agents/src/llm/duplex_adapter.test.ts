@@ -21,7 +21,7 @@ import {
 } from './duplex_adapter.js';
 import type { DuplexRealtimeAdapterOptions } from './duplex_adapter.js';
 import { type GenerationCreatedEvent, RealtimeError, type RealtimeModelError } from './realtime.js';
-import { type ToolChoice, ToolContext } from './tool_context.js';
+import { type ToolChoice, ToolContext, Toolset } from './tool_context.js';
 
 function frame(level: number, duration = 100): AudioFrame {
   const samples = new Int16Array((24_000 * duration) / 1000);
@@ -756,36 +756,50 @@ describe('duplex requested replies', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('cancels pending requests with AbortSignal without claiming later spontaneous speech', async () => {
-    const { model, fake, session, generations } = setup({ gate: () => new FixedGate(0.002) });
-    model.askable = true;
-    const controller = new AbortController();
-    const reply = expect(
-      session.generateReply(undefined, { signal: controller.signal }),
-    ).rejects.toThrow('aborted');
-    controller.abort();
-    await reply;
-    fake.push(0.3);
-    await setImmediate();
-    expect(generations[0]!.userInitiated).toBe(false);
-    const count = fake.repliesRequested.length;
-    await expect(session.generateReply(undefined, { signal: controller.signal })).rejects.toThrow(
-      'aborted',
-    );
-    expect(fake.repliesRequested).toHaveLength(count);
-  });
+  it.each([undefined, 'user disconnected', { source: 'client' }, new Error('aborted')])(
+    'cancels pending requests without claiming later speech (abort reason: %s)',
+    async (reason) => {
+      const { model, fake, session, generations } = setup({ gate: () => new FixedGate(0.002) });
+      model.askable = true;
+      const controller = new AbortController();
+      const reply = expect(
+        session.generateReply(undefined, { signal: controller.signal }),
+      ).rejects.toThrow('aborted');
+      controller.abort(reason);
+      await reply;
+      fake.push(0.3);
+      await setImmediate();
+      expect(generations[0]!.userInitiated).toBe(false);
+      const count = fake.repliesRequested.length;
+      await expect(session.generateReply(undefined, { signal: controller.signal })).rejects.toThrow(
+        'aborted',
+      );
+      expect(fake.repliesRequested).toHaveLength(count);
+    },
+  );
 });
 
 describe('duplex model integration', () => {
-  it('closes the provider immediately when startup configuration fails', async () => {
-    vi.spyOn(FakeDuplexSession.prototype, '_updateInstructions').mockRejectedValueOnce(
-      new RealtimeError('configuration failed'),
-    );
+  it('rejects failed startup, cleans up, and allows a fresh start', async () => {
+    const error = new RealtimeError('configuration failed');
+    vi.spyOn(FakeDuplexSession.prototype, '_updateInstructions').mockRejectedValueOnce(error);
     const model = new FakeDuplexModel();
-    const agent = new Agent({ instructions: 'be brief' });
-    const session = new AgentSession({ llm: model, vad: null, aecWarmupDuration: null });
+    const agentTools = Toolset.create({ id: 'agent', tools: [] });
+    const sessionTools = Toolset.create({ id: 'session', tools: [] });
+    const setupAgentTools = vi.spyOn(agentTools, 'setup');
+    const setupSessionTools = vi.spyOn(sessionTools, 'setup');
+    const closeAgentTools = vi.spyOn(agentTools, 'aclose');
+    const closeSessionTools = vi.spyOn(sessionTools, 'aclose');
+    const agent = new Agent({ instructions: 'be brief', tools: [agentTools] });
+    const session = new AgentSession({
+      llm: model,
+      tools: [sessionTools],
+      vad: null,
+      aecWarmupDuration: null,
+    });
     const closeProvider = vi.spyOn(FakeDuplexSession.prototype, 'close');
-    await session.start({ agent });
+    const onEnter = vi.spyOn(agent, 'onEnter');
+    await expect(session.start({ agent })).rejects.toBe(error);
     const provider = model.activeSession;
     try {
       expect(provider.closed).toBe(true);
@@ -793,12 +807,72 @@ describe('duplex model integration', () => {
       expect(provider.connected).toBe(false);
       expect(provider.audioStream.locked).toBe(false);
       expect(provider.eventNames()).toEqual([]);
+      expect(session._started).toBe(false);
+      expect(session.rootSpanContext).toBeUndefined();
+      expect(onEnter).not.toHaveBeenCalled();
+      expect(() => agent.getActivityOrThrow()).toThrow('Agent activity not found');
+      expect(setupAgentTools).toHaveBeenCalledOnce();
+      expect(setupSessionTools).toHaveBeenCalledOnce();
+      expect(closeAgentTools).toHaveBeenCalledOnce();
+      expect(closeSessionTools).toHaveBeenCalledOnce();
     } finally {
       await session.close();
     }
     expect(closeProvider).toHaveBeenCalledOnce();
     expect(() => agent.getActivityOrThrow()).toThrow('Agent activity not found');
+
+    await session.start({ agent });
+    try {
+      expect(session._started).toBe(true);
+      expect(model.activeSession.connected).toBe(true);
+      expect(model.activeSession.closed).toBe(false);
+      expect(setupAgentTools).toHaveBeenCalledTimes(2);
+      expect(setupSessionTools).toHaveBeenCalledTimes(2);
+    } finally {
+      await session.close();
+    }
   });
+
+  it.each(['none', 'listening', 'throwing'] as const)(
+    'closes after failed handoff configuration with a %s application error listener',
+    async (listener) => {
+      const model = new FakeDuplexModel();
+      const agent = new Agent({ instructions: 'first' });
+      const nextAgent = new Agent({ instructions: 'second' });
+      const session = new AgentSession({ llm: model, vad: null, aecWarmupDuration: null });
+      const closed = vi.fn();
+      session.on(AgentSessionEventTypes.Close, closed);
+      const errors = vi.fn(() => {
+        if (listener === 'throwing') throw new Error('application error listener failed');
+      });
+      if (listener !== 'none') session.on(AgentSessionEventTypes.Error, errors);
+      await session.start({ agent });
+      const firstProvider = model.activeSession;
+      const onEnter = vi.spyOn(nextAgent, 'onEnter');
+      vi.spyOn(FakeDuplexSession.prototype, '_updateInstructions').mockRejectedValueOnce(
+        new RealtimeError('configuration failed'),
+      );
+      session.updateAgent(nextAgent);
+
+      try {
+        await vi.waitFor(() => {
+          expect(closed).toHaveBeenCalledWith(
+            expect.objectContaining({ reason: CloseReason.ERROR }),
+          );
+        });
+        expect(firstProvider.closed).toBe(true);
+        expect(model.activeSession.closed).toBe(true);
+        expect(model.activeSession.audioStream.locked).toBe(false);
+        expect(model.activeSession.eventNames()).toEqual([]);
+        expect(onEnter).not.toHaveBeenCalled();
+        expect(errors).toHaveBeenCalledTimes(listener === 'none' ? 0 : 1);
+        expect(() => agent.getActivityOrThrow()).toThrow('Agent activity not found');
+        expect(() => nextAgent.getActivityOrThrow()).toThrow('Agent activity not found');
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   it.each(['none', 'listening', 'throwing'] as const)(
     'closes on an unrecoverable audio error with a %s application error listener',

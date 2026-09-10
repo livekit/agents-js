@@ -34,13 +34,17 @@ const ATTACH_LEAD_MS = 300;
 
 /** Decides which output frames carry speech worth playing. */
 export interface AudioGate {
+  /** Return whether this frame belongs to an active speech burst. */
   update(frame: AudioFrame): boolean;
   /** End the current burst while retaining the learned noise floor. */
   deactivate(): void;
 }
 
+/** Thresholds and timing used to distinguish speech from silence. */
 export interface AudioGateOptions {
+  /** RMS level relative to the silence floor that opens the gate. Defaults to 3. */
   activationRatio?: number;
+  /** RMS level relative to the silence floor that starts the quiet timer. Defaults to 1.8. */
   deactivationRatio?: number;
   /** Duration of quiet audio that ends a burst, in milliseconds. Defaults to 500. */
   minSilenceDuration?: number;
@@ -61,6 +65,7 @@ export class FixedGate implements AudioGate {
   private open = false;
   private quiet = 0;
 
+  /** Create a gate with a normalized PCM RMS silence level and optional thresholds. */
   constructor(silence: number, options: AudioGateOptions = {}) {
     this.floor = Math.max(silence, SILENCE_FLOOR);
     this.activationRatio = options.activationRatio ?? 3;
@@ -68,11 +73,13 @@ export class FixedGate implements AudioGate {
     this.minSilenceDuration = options.minSilenceDuration ?? 500;
   }
 
+  /** End the active burst while preserving the configured silence floor. */
   deactivate(): void {
     this.open = false;
     this.quiet = 0;
   }
 
+  /** Update the gate from this frame's RMS level and audio duration. */
   update(frame: AudioFrame): boolean {
     const level = rms(frame);
     if (!this.open) {
@@ -90,6 +97,7 @@ export class FixedGate implements AudioGate {
   }
 }
 
+/** Options for learning a silence floor from the provider's continuous audio. */
 export interface AdaptiveNoiseGateOptions extends AudioGateOptions {
   /** Duration of quiet history used to learn the floor, in milliseconds. Defaults to 10000. */
   window?: number;
@@ -108,6 +116,7 @@ export class AdaptiveNoiseGate implements AudioGate {
   private open = false;
   private quiet = 0;
 
+  /** Create a gate that learns its silence floor from quiet audio. */
   constructor(options: AdaptiveNoiseGateOptions = {}) {
     this.activationRatio = options.activationRatio ?? 3;
     this.deactivationRatio = options.deactivationRatio ?? 1.8;
@@ -115,11 +124,13 @@ export class AdaptiveNoiseGate implements AudioGate {
     this.window = options.window ?? 10_000;
   }
 
+  /** End the active burst while preserving the learned silence floor. */
   deactivate(): void {
     this.open = false;
     this.quiet = 0;
   }
 
+  /** Update the learned floor and determine whether this frame belongs to a speech burst. */
   update(frame: AudioFrame): boolean {
     const level = rms(frame);
     const duration = calculateAudioDurationSeconds(frame) * 1000;
@@ -198,6 +209,7 @@ class Burst {
   }
 }
 
+/** Options for converting continuous duplex audio into realtime generations. */
 export interface DuplexRealtimeAdapterOptions {
   /** Creates a separate gate for each session. Defaults to the model's gate or an adaptive gate. */
   gate?: () => AudioGate;
@@ -207,7 +219,9 @@ export interface DuplexRealtimeAdapterOptions {
 
 /** Segments a duplex model's continuous output into ordinary realtime generations. */
 export class DuplexRealtimeAdapter extends RealtimeModel {
+  /** Adapt a duplex model for the framework's realtime generation interface. */
   constructor(
+    /** Continuous audio model wrapped by this adapter. */
     readonly duplexModel: DuplexModel,
     private readonly options: DuplexRealtimeAdapterOptions = {},
   ) {
@@ -227,14 +241,17 @@ export class DuplexRealtimeAdapter extends RealtimeModel {
     });
   }
 
+  /** Model identifier reported by the wrapped provider. */
   get model(): string {
     return this.duplexModel.model;
   }
 
+  /** Provider identifier reported by the wrapped model. */
   get provider(): string {
     return this.duplexModel.provider;
   }
 
+  /** Create a provider session with its own audio gate and burst state. */
   session(): RealtimeSession {
     const gate = this.options.gate?.() ?? this.duplexModel.audioGate() ?? new AdaptiveNoiseGate();
     return new DuplexRealtimeSession(
@@ -245,6 +262,7 @@ export class DuplexRealtimeAdapter extends RealtimeModel {
     );
   }
 
+  /** Release the wrapped model's shared resources. */
   async close(): Promise<void> {
     await this.duplexModel.close();
   }
@@ -510,7 +528,9 @@ export class DuplexRealtimeSession extends RealtimeSession {
   ): Promise<GenerationCreatedEvent> {
     if (this.closed) throw new RealtimeError('the session is closed');
     const signal = options?.signal;
-    signal?.throwIfAborted();
+    const abortError = () =>
+      signal?.reason instanceof Error ? signal.reason : new RealtimeError('the reply was aborted');
+    if (signal?.aborted) throw abortError();
     this.duplexSession._generateReply(instructions);
     this.failPendingReply('a newer ask superseded this one');
     const reply = (this.pendingReply = new Future<GenerationCreatedEvent>());
@@ -519,7 +539,7 @@ export class DuplexRealtimeSession extends RealtimeSession {
         reply.reject(new RealtimeError('the model did not start speaking when asked'));
     }, REPLY_TIMEOUT);
     const onAbort = () => {
-      if (!reply.done) reply.reject(toError(signal!.reason));
+      if (!reply.done) reply.reject(abortError());
     };
     signal?.addEventListener('abort', onAbort, { once: true });
     try {
