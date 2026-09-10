@@ -944,6 +944,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.clearTimer('eot');
     if (this.speechActive || this.speechEndedAt === undefined) {
       this.speechActive = false;
+      // TODO: Revisit early human verdicts when VAD misses resumed speech after EOT.
+      // New transcripts may reuse this silence; avoid resetting it for delayed finals.
       this.silenceReached = true;
     }
     this.eotReached = true;
