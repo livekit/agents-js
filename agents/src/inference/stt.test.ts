@@ -857,7 +857,7 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
-  it('closes the session after transcript inactivity without a finalization ack', async () => {
+  it('does not require a final transcript after an interim', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
@@ -875,8 +875,8 @@ describe('Inference STT connection lifecycle', () => {
         if (event.type === 'session.finalize') {
           socket.send(
             JSON.stringify({
-              type: 'final_transcript',
-              transcript: 'final words',
+              type: 'interim_transcript',
+              transcript: 'interim words',
               language: 'en',
             }),
           );
@@ -895,7 +895,7 @@ describe('Inference STT connection lifecycle', () => {
     });
     const outputTask = (async () => {
       for await (const event of stream) {
-        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) resolveTranscript();
+        if (event.type === SpeechEventType.INTERIM_TRANSCRIPT) resolveTranscript();
       }
     })();
 
@@ -904,7 +904,7 @@ describe('Inference STT connection lifecycle', () => {
       vi.useFakeTimers();
       stream.endInput();
       await transcriptReceived;
-      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(20_000);
       await outputTask;
 
       expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
