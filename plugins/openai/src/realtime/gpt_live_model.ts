@@ -211,6 +211,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private queued: {
     event: ClientEvent | Record<string, unknown>;
     replayOnReconnect: boolean;
+    context?: string;
   }[] = [];
   private ws?: WebSocket;
   private connectionDone?: Future<Error | undefined>;
@@ -261,16 +262,22 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private queueEvent(
     event: ClientEvent | Record<string, unknown>,
     replayOnReconnect: boolean,
+    context?: string,
   ): void {
     if (this.closing) return;
-    this.queued.push({ event, replayOnReconnect });
+    this.queued.push({ event, replayOnReconnect, context });
     this.flushQueued();
   }
 
   private flushQueued(): void {
     if (this.connectionDraining || !this.sessionStarted || this.ws?.readyState !== WebSocket.OPEN)
       return;
-    while (this.queued.length) this.wsSend(this.ws, this.queued.shift()!.event);
+    while (this.queued.length) {
+      const { event, context } = this.queued.shift()!;
+      if (context !== undefined)
+        this.history.insert(new llm.ChatMessage({ role: 'developer', content: [context] }));
+      this.wsSend(this.ws, event);
+    }
   }
 
   private wsSend(ws: WebSocket, event: ClientEvent | Record<string, unknown>): void {
@@ -412,6 +419,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
         reconnecting = true;
       }
     } finally {
+      this.endSpeech('user');
       this.resetInputAudio();
       if (!this.audioClosed) {
         this.audioClosed = true;
@@ -699,32 +707,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
         break;
       }
       case 'response.completed': {
-        const response = event.response;
-        const usage = response?.usage;
-        if (usage) {
-          const metric: metrics.LLMMetrics & { reasoningTokens: number } = {
-            type: 'llm_metrics',
-            label: this.duplexModel.label(),
-            requestId: response?.id ?? '',
-            timestamp: Date.now(),
-            durationMs: 0,
-            ttftMs: -1,
-            cancelled: false,
-            tokensPerSecond: 0,
-            promptTokens: usage.input_tokens ?? 0,
-            promptCachedTokens: usage.input_tokens_details?.cached_tokens ?? 0,
-            cacheCreationTokens: usage.input_tokens_details?.cache_write_tokens ?? 0,
-            completionTokens: usage.output_tokens ?? 0,
-            reasoningTokens: usage.output_tokens_details?.reasoning_tokens ?? 0,
-            totalTokens: usage.total_tokens ?? 0,
-            metadata: {
-              modelName:
-                response?.model || this.opts.responsesOptions.model || DEFAULT_BACKEND_MODEL,
-              modelProvider: this.duplexModel.provider,
-            },
-          };
-          this.emit('metrics_collected', metric);
-        }
+        this.handleResponseUsage(event.response);
         const pending = this.delegatedResponses.get(delegationId);
         if (pending) {
           pending.completed = true;
@@ -734,6 +717,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
       }
       case 'response.failed':
       case 'response.incomplete': {
+        this.handleResponseUsage(event.response);
         this.logger.warn(
           {
             type: event.type,
@@ -748,6 +732,33 @@ export class GPTLiveSession extends llm.DuplexSession<{
         this.delegatedResponses.delete(delegationId);
         break;
       }
+    }
+  }
+
+  private handleResponseUsage(response: ResponsesEvent['response']): void {
+    const usage = response?.usage;
+    if (usage) {
+      const metric: metrics.LLMMetrics & { reasoningTokens: number } = {
+        type: 'llm_metrics',
+        label: this.duplexModel.label(),
+        requestId: response?.id ?? '',
+        timestamp: Date.now(),
+        durationMs: 0,
+        ttftMs: -1,
+        cancelled: false,
+        tokensPerSecond: 0,
+        promptTokens: usage.input_tokens ?? 0,
+        promptCachedTokens: usage.input_tokens_details?.cached_tokens ?? 0,
+        cacheCreationTokens: usage.input_tokens_details?.cache_write_tokens ?? 0,
+        completionTokens: usage.output_tokens ?? 0,
+        reasoningTokens: usage.output_tokens_details?.reasoning_tokens ?? 0,
+        totalTokens: usage.total_tokens ?? 0,
+        metadata: {
+          modelName: response?.model || this.opts.responsesOptions.model || DEFAULT_BACKEND_MODEL,
+          modelProvider: this.duplexModel.provider,
+        },
+      };
+      this.emit('metrics_collected', metric);
     }
   }
 
@@ -847,13 +858,15 @@ export class GPTLiveSession extends llm.DuplexSession<{
     this.inputRate = undefined;
   }
 
-  /** Add a standing rule. The service enforces a 500-token cap on each append. */
+  /** Add a standing rule retained in reconnect history. The service caps each append at 500 tokens. */
   appendInstructions(text: string, options: { delegationId?: string | null } = {}): void {
-    this.append('session.instructions.append', text, options.delegationId ?? null);
+    this.append('session.instructions.append', text, options.delegationId ?? null, {
+      persist: true,
+    });
   }
-  /** Add silent context for later replies. The service enforces a 500-token cap. */
+  /** Add silent context retained in reconnect history. The service caps each append at 500 tokens. */
   appendThinking(text: string, options: { delegationId?: string | null } = {}): void {
-    this.append('session.thinking.append', text, options.delegationId ?? null);
+    this.append('session.thinking.append', text, options.delegationId ?? null, { persist: true });
   }
   /** Give the model text to paraphrase aloud, or answer a client delegation. Capped at 500 tokens by the service. */
   appendCommentary(text: string, options: { delegationId?: string | null } = {}): void {
@@ -863,7 +876,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     type: 'session.instructions.append' | 'session.thinking.append' | 'session.commentary.append',
     content: string,
     delegationId: string | null,
-    replayOnReconnect = true,
+    options: { replayOnReconnect?: boolean; persist?: boolean } = {},
   ): void {
     this.queueEvent(
       {
@@ -872,7 +885,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
         delegation_id: delegationId,
         content,
       } satisfies ClientEvent,
-      replayOnReconnect,
+      options.replayOnReconnect ?? true,
+      options.persist ? content : undefined,
     );
   }
   /** Replace microphone input with silence while the model continues speaking. */
@@ -934,7 +948,9 @@ export class GPTLiveSession extends llm.DuplexSession<{
     for (const item of items) {
       if (item.type === 'message' && (item.role === 'system' || item.role === 'developer')) {
         if (item.textContent)
-          this.append('session.instructions.append', item.textContent, null, false);
+          this.append('session.instructions.append', item.textContent, null, {
+            replayOnReconnect: false,
+          });
       } else if (item.type === 'function_call_output' && this.callToDelegation.has(item.callId)) {
         outputs.push({ output: item, delegationId: this.callToDelegation.get(item.callId)! });
       } else {
@@ -942,7 +958,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
         if (rendered) lines.push(`${rendered[0]}: ${rendered[1]}`);
       }
     }
-    if (lines.length) this.append('session.thinking.append', lines.join('\n'), null, false);
+    if (lines.length)
+      this.append('session.thinking.append', lines.join('\n'), null, { replayOnReconnect: false });
     for (const { output, delegationId } of outputs) {
       this.queueEvent(
         {

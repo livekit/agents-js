@@ -907,6 +907,72 @@ describe('GPTLiveModel', () => {
     expect(server.events(1)[1]?.type).toBe('session.thinking.append');
   });
 
+  it('retains sent standing rules and silent context across reconnects', async () => {
+    const session = create();
+    await ready(session);
+    session.appendInstructions('Include tax in prices.');
+    session.appendThinking('The caller has a discount.');
+    session.appendCommentary('Say hello once.', { delegationId: 'd1' });
+    await waitCount(4);
+    server.sockets[0]!.terminate();
+    await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+    expect(startConfig(1).input).toMatchObject([
+      { role: 'developer', content: [{ text: 'Include tax in prices.' }] },
+      { role: 'developer', content: [{ text: 'The caller has a discount.' }] },
+    ]);
+    expect(server.events(1)).toHaveLength(1);
+  });
+
+  it.each([false, true])(
+    'finalizes the caller transcript when shutdown is fatal=%s',
+    async (fatal) => {
+      const session = create();
+      const transcripts: llm.InputTranscriptionCompleted[] = [];
+      session.on('input_audio_transcription_completed', (event) => transcripts.push(event));
+      await ready(session);
+      await server.send(session, transcript('user', 'My order is A1042', 0));
+      if (fatal) {
+        await server.send(session, { type: 'error', error: { code: 'invalid_api_key' } });
+        await vi.waitFor(() => expect(transcripts.some((event) => event.isFinal)).toBe(true));
+      }
+      await session.close();
+      await session.close();
+      expect(transcripts.map(({ transcript, isFinal }) => ({ transcript, isFinal }))).toEqual([
+        { transcript: 'My order is A1042', isFinal: false },
+        { transcript: 'My order is A1042', isFinal: true },
+      ]);
+    },
+  );
+
+  it.each(['response.failed', 'response.incomplete'])(
+    'accounts for backend tokens on %s without continuing the response',
+    async (type) => {
+      const session = create();
+      const collected: metrics.LLMMetrics[] = [];
+      session.on('metrics_collected', (metric) => {
+        if (metric.type === 'llm_metrics') collected.push(metric);
+      });
+      await ready(session);
+      await server.response(session, { type: 'response.created' });
+      await server.response(session, callDone('a'));
+      await server.response(session, { ...completed(), type });
+      expect(collected).toMatchObject([
+        {
+          promptTokens: 376,
+          completionTokens: 18,
+          totalTokens: 394,
+          promptCachedTokens: 100,
+          cacheCreationTokens: 20,
+          requestId: 'resp_1',
+          cancelled: false,
+        },
+      ]);
+      await session._appendItems([output('a')]);
+      await waitCount(2);
+      expect(server.events()[1]?.type).toBe('session.thinking.append');
+    },
+  );
+
   it('does not replay history appends from a failed startup', async () => {
     server.autoStart = false;
     const session = create({
