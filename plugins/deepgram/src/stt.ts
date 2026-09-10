@@ -21,7 +21,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { PeriodicCollector } from './_utils.js';
+import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
 export interface STTOptions {
@@ -395,6 +395,13 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }, 5000);
 
+    // the KeepAlive above is an application-level message: it keeps Deepgram from
+    // timing the session out, but it cannot tell us whether the socket is still
+    // there. Only a ping that goes unanswered can.
+    const stopHeartbeat = startWebSocketHeartbeat(ws, () =>
+      this.#logger.warn('Deepgram did not answer a ping in time, terminating the socket'),
+    );
+
     // gets cancelled also when sendTask is complete
     const wsMonitor = Task.from(async (controller) => {
       const closed = new Promise<void>((_, reject) => {
@@ -588,13 +595,20 @@ export class SpeechStream extends stt.SpeechStream {
       await Promise.race([listenMessage, waitForAbort(controller.signal)]);
     }, this.abortController);
 
-    await Promise.race([
-      this.#resetWS.await,
-      Promise.all([sendTask(), listenTask.result, wsMonitor]),
-    ]);
-    closing = true;
-    ws.close();
-    clearInterval(keepalive);
+    try {
+      await Promise.race([
+        this.#resetWS.await,
+        // wsMonitor.result, not wsMonitor: Task is not thenable, so passing the
+        // object made Promise.all resolve it instantly and the monitor's rejection
+        // was never observed. A dropped socket could not reach the retry below.
+        Promise.all([sendTask(), listenTask.result, wsMonitor.result]),
+      ]);
+    } finally {
+      closing = true;
+      ws.close();
+      clearInterval(keepalive);
+      stopHeartbeat();
+    }
   }
 
   private onAudioDurationReport(duration: number) {

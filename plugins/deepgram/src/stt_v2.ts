@@ -17,7 +17,7 @@ import {
 import type { AudioFrame } from '@livekit/rtc-node';
 import * as queryString from 'node:querystring';
 import { WebSocket } from 'ws';
-import { PeriodicCollector } from './_utils.js';
+import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
 import type { V2Models } from './models.js';
 
 const _CLOSE_MSG = JSON.stringify({ type: 'CloseStream' });
@@ -274,6 +274,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
 
   // Parity: _reconnect_event - using existing Event class from @livekit/agents
   #reconnectEvent = new Event();
+  // set once we have sent CloseStream, so the close that follows is expected
+  #closingWs = false;
 
   // keyterms set while the user is speaking; applied at END_OF_SPEECH (latest wins)
   /** @internal */
@@ -330,8 +332,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
   protected async run() {
     // Outer Loop: Handles reconnections (Configuration updates)
     while (!this.closed) {
+      let stopHeartbeat: (() => void) | undefined;
       try {
         this.#reconnectEvent.clear();
+        this.#closingWs = false;
 
         const baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
         const url = `${baseUrl}?${queryString.stringify(this._liveConfig())}`;
@@ -349,15 +353,43 @@ class SpeechStreamv2 extends stt.SpeechStream {
           });
         }
 
+        stopHeartbeat = startWebSocketHeartbeat(this.#ws, () =>
+          this.#logger.warn('Deepgram did not answer a ping in time, terminating the socket'),
+        );
+
+        // #recvTask resolves on close while #sendTask runs until its input ends, so
+        // Promise.all cannot settle when the socket goes away mid-session: the stream
+        // would sit there dropping audio. Surface the close as a rejection instead and
+        // let the base class retry, the way the v1 stream's wsMonitor does.
+        const socketFailed = new Promise<never>((_, reject) => {
+          this.#ws!.once('close', (code) => {
+            if (this.closed || this.#closingWs || this.#reconnectEvent.isSet) return;
+            reject(
+              new APIConnectionError({
+                message: `Deepgram WebSocket closed unexpectedly (${code})`,
+              }),
+            );
+          });
+          this.#ws!.once('error', (error) => {
+            if (this.closed || this.#closingWs || this.#reconnectEvent.isSet) return;
+            reject(
+              new APIConnectionError({
+                message: `Deepgram WebSocket failed (${errorName(error)})`,
+              }),
+            );
+          });
+        });
+
         // 2. Run Concurrent Tasks (Send & Receive)
         const sendPromise = this.#sendTask();
         const recvPromise = this.#recvTask();
         const reconnectWait = this.#reconnectEvent.wait();
 
-        // 3. Race: Normal Completion vs Reconnect Signal
+        // 3. Race: Normal Completion vs Reconnect Signal vs the socket dying
         const result = await Promise.race([
           Promise.all([sendPromise, recvPromise]),
           reconnectWait.then(() => 'RECONNECT'),
+          socketFailed,
         ]);
 
         if (result === 'RECONNECT') {
@@ -372,6 +404,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         this.#logger.error({ errorType: errorName(error) }, 'Deepgram stream error');
         throw error; // Let Base Class handle retry logic
       } finally {
+        stopHeartbeat?.();
         if (this.#ws?.readyState === WebSocket.OPEN) {
           this.#ws.close();
         }
@@ -446,6 +479,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
     // Only send CloseStream if we are exiting normally (not reconnecting)
     if (!this.#reconnectEvent.isSet && this.#ws!.readyState === WebSocket.OPEN) {
       this.#logger.debug('Sending CloseStream message to Deepgram');
+      this.#closingWs = true;
       this.#ws!.send(_CLOSE_MSG);
     }
   }
