@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ChatMessage } from '@livekit/agents';
+import { ChatMessage, stt } from '@livekit/agents';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT, type STTOptions, type SpeechStream } from './stt.js';
 
@@ -99,6 +99,56 @@ describe('AssemblyAI streaming configuration', () => {
     expect(new STT({ apiKey: 'test', agentContextCarryover: false }).capabilities.chatContext).toBe(
       false,
     );
+  });
+
+  it.each(['direct', 'fallback'] as const)(
+    'honors carryover opt-out via %s while allowing explicit context updates',
+    async (path) => {
+      await withProvider({ agentContextCarryover: false }, async (provider, _query, messages) => {
+        const enabled = new STT({ apiKey: 'test' });
+        const enabledUpdate = vi.spyOn(enabled, 'updateOptions');
+        const optedOutUpdate = vi.spyOn(provider, 'updateOptions');
+        const target =
+          path === 'fallback'
+            ? new stt.FallbackAdapter({ sttInstances: [provider, enabled] })
+            : provider;
+        expect(target.capabilities.chatContext).toBe(path === 'fallback');
+        target._pushConversationItem({
+          type: 'conversation_item_added',
+          createdAt: Date.now(),
+          item: new ChatMessage({ role: 'assistant', content: 'automatic reply' }),
+        });
+        expect(optedOutUpdate).not.toHaveBeenCalled();
+        if (path === 'fallback') {
+          expect(enabledUpdate).toHaveBeenCalledExactlyOnceWith({
+            agentContext: 'automatic reply',
+          });
+        }
+
+        provider.updateOptions({ agentContext: 'explicit context' });
+        await waitUntil(() => messages.length > 0);
+        expect(messages).toEqual([
+          { type: 'UpdateConfiguration', agent_context: 'explicit context' },
+        ]);
+      });
+    },
+  );
+
+  it('does not forward fallback context to a model without carryover support', () => {
+    const unsupported = new STT({ apiKey: 'test', speechModel: 'universal-streaming-english' });
+    const enabled = new STT({ apiKey: 'test' });
+    const unsupportedUpdate = vi.spyOn(unsupported, 'updateOptions');
+    const enabledUpdate = vi.spyOn(enabled, 'updateOptions');
+    const fallback = new stt.FallbackAdapter({ sttInstances: [unsupported, enabled] });
+    expect(unsupported.capabilities.chatContext).toBe(false);
+    expect(fallback.capabilities.chatContext).toBe(true);
+    fallback._pushConversationItem({
+      type: 'conversation_item_added',
+      createdAt: Date.now(),
+      item: new ChatMessage({ role: 'assistant', content: 'automatic reply' }),
+    });
+    expect(unsupportedUpdate).not.toHaveBeenCalled();
+    expect(enabledUpdate).toHaveBeenCalledExactlyOnceWith({ agentContext: 'automatic reply' });
   });
 });
 

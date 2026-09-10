@@ -333,6 +333,7 @@ export class STT extends stt.STT {
   }
 
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    if (!this.capabilities.chatContext) return;
     const chatItem = ev.item;
     if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
       this.updateOptions({
