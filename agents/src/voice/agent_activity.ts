@@ -28,7 +28,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
-import { AsyncToolset, type Toolset } from '../llm/index.js';
+import { AsyncToolset, FallbackAdapter, type Toolset } from '../llm/index.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -599,11 +599,13 @@ export class AgentActivity implements RecognitionHooks {
       attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
       context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
     });
+    let configuredLLM = this.llm;
+    while (configuredLLM instanceof FallbackAdapter) configuredLLM = configuredLLM.llms[0];
     genAI.setAgentAttributes(startSpan, {
       operation: traceTypes.GenAIOperationName.CREATE_AGENT,
       agentName: this.agent.id,
-      model: this.llm?.model,
-      provider: this.llm?.provider,
+      model: configuredLLM?.model,
+      provider: configuredLLM?.provider,
     });
 
     this.agent._agentActivity = this;

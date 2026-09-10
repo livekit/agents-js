@@ -4420,6 +4420,7 @@ interface InferenceLLMOptions {
 //
 // @public (undocumented)
 interface InferenceMarker {
+    hasAdapter?: boolean;
     // (undocumented)
     recorded: boolean;
 }
@@ -5202,6 +5203,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     });
     // (undocumented)
     protected abortController: AbortController;
+    protected get adapterSpanName(): string | undefined;
     get chatCtx(): ChatContext;
     // (undocumented)
     close(): void;
@@ -5329,7 +5331,9 @@ export function loopAudioFramesFromFile(filePath: string, options?: AudioDecodeO
 // Warning: (ae-missing-release-tag) "markInferenceSpanRecorded" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-function markInferenceSpanRecorded(): void;
+function markInferenceSpanRecorded(options?: {
+    adapter?: boolean;
+}): void;
 
 // Warning: (ae-missing-release-tag) "MarkupInfo" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //

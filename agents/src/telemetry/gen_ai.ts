@@ -76,6 +76,8 @@ const INFERENCE_RECORDED = Symbol('lkInferenceRecorded');
 
 export interface InferenceMarker {
   recorded: boolean;
+  /** A wrapper served this node; configured model identity is not an inference model. */
+  hasAdapter?: boolean;
 }
 
 /** Runs `fn` with a marker that fills in if an `llm_request` span is created inside it. */
@@ -87,9 +89,12 @@ export function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T): T 
 }
 
 /** Called where an `llm_request` span is created, so the enclosing node stands down. */
-export function markInferenceSpanRecorded(): void {
+export function markInferenceSpanRecorded(options?: { adapter?: boolean }): void {
   const marker = otelContext.active().getValue(INFERENCE_RECORDED) as InferenceMarker | undefined;
-  if (marker) marker.recorded = true;
+  if (marker) {
+    marker.recorded = true;
+    if (options?.adapter) marker.hasAdapter = true;
+  }
 }
 
 function textPart(content: string): MessagePart {
