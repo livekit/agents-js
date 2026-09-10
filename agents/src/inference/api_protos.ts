@@ -56,6 +56,18 @@ export const ttsSessionClosedEventSchema = z.object({
   session_id: z.string(),
 });
 
+export const ttsFallbackActivatedEventSchema = z.object({
+  type: z.literal('fallback_activated'),
+  session_id: z.string(),
+  fallback_type: z.enum(['unknown', 'fallback', 'system_default']).catch('unknown'),
+  provider: z.string(),
+  model: z.string(),
+  voice: z.string(),
+  cause: z
+    .enum(['unknown', 'timeout', 'canceled', 'provider_error', 'quota_exceeded'])
+    .catch('unknown'),
+});
+
 export const ttsErrorEventSchema = z.object({
   type: z.literal('error'),
   message: z.string().optional(),
@@ -94,6 +106,7 @@ export const ttsKnownServerEventSchema = z.discriminatedUnion('type', [
   ttsOutputAlignmentEventSchema,
   ttsDoneEventSchema,
   ttsSessionClosedEventSchema,
+  ttsFallbackActivatedEventSchema,
   ttsErrorEventSchema,
 ]);
 
@@ -103,6 +116,7 @@ const knownTtsServerEventTypes = new Set([
   'output_alignment',
   'done',
   'session.closed',
+  'fallback_activated',
   'error',
 ]);
 
@@ -129,6 +143,7 @@ export type TtsCharTimestamp = z.infer<typeof ttsCharTimestampSchema>;
 export type TtsOutputAlignmentEvent = z.infer<typeof ttsOutputAlignmentEventSchema>;
 export type TtsDoneEvent = z.infer<typeof ttsDoneEventSchema>;
 export type TtsSessionClosedEvent = z.infer<typeof ttsSessionClosedEventSchema>;
+export type TtsFallbackActivatedEvent = z.infer<typeof ttsFallbackActivatedEventSchema>;
 export type TtsErrorEvent = z.infer<typeof ttsErrorEventSchema>;
 export type TtsClientEvent = z.infer<typeof ttsClientEventSchema>;
 export type TtsServerEvent = z.infer<typeof ttsServerEventSchema>;
