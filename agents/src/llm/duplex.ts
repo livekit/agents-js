@@ -51,7 +51,12 @@ export interface DuplexCapabilities {
   midSessionToolsUpdate?: boolean;
 }
 
-/** A speech model that listens and speaks at once and handles its own interruptions. */
+/**
+ * A speech model that listens and speaks at once and handles its own interruptions.
+ *
+ * Chat context updates append new items. Edits and removals change the framework's local
+ * history; the provider retains the content it has already received.
+ */
 export abstract class DuplexModel {
   /** Declare the provider features available to the framework. */
   constructor(

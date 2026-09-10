@@ -1964,7 +1964,6 @@ export class AgentSession<
     this.closingController.abort();
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
-    this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
     let activity = this.activity;
     // Let inline tasks finish their handoffs before closing the resumed parent.

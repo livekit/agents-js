@@ -427,7 +427,7 @@ export class Agent<UserData = any> {
       return;
     }
 
-    this._agentActivity.updateChatCtx(chatCtx);
+    await this._agentActivity.updateChatCtx(chatCtx);
   }
 
   async updateInstructions(instructions: string | Instructions): Promise<void> {

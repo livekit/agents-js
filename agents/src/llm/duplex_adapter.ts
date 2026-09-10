@@ -305,8 +305,8 @@ export class DuplexRealtimeSession extends RealtimeSession {
     this.listen('input_speech_stopped', (ev) => this.emit('input_speech_stopped', ev));
     this.listen('metrics_collected', (ev) => this.emit('metrics_collected', ev));
     this.listen('error', (ev) => this.emit('error', ev));
-    this.segmentTask = this.segment().catch((error: unknown) => {
-      this.logger.error({ error }, 'duplex audio consumer failed');
+    this.segmentTask = this.segment().catch(() => {
+      this.logger.error('duplex audio consumer failed');
     });
   }
 
@@ -338,7 +338,7 @@ export class DuplexRealtimeSession extends RealtimeSession {
       if (!this.closed) {
         const streamError =
           error instanceof Error ? error : new RealtimeError('duplex audio stream failed');
-        this.logger.error({ error: streamError }, 'duplex audio stream failed');
+        this.logger.error('duplex audio stream failed');
         const ev: RealtimeModelError = {
           type: 'realtime_model_error',
           timestamp: Date.now(),
@@ -577,8 +577,8 @@ export class DuplexRealtimeSession extends RealtimeSession {
     this.failPendingReply('the session closed before the model replied');
     try {
       await this.duplexSession.close();
-    } catch (error) {
-      this.logger.debug({ error }, 'duplex session close failed');
+    } catch {
+      this.logger.debug('duplex session close failed');
     } finally {
       for (const unsubscribe of this.unsubscribe) unsubscribe();
       await super.close();

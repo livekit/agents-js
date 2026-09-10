@@ -7,9 +7,14 @@ import { setImmediate } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { log } from '../log.js';
 import type { RealtimeModelMetrics } from '../metrics/base.js';
+import { Future } from '../utils.js';
 import { Agent } from '../voice/agent.js';
 import { AgentSession } from '../voice/agent_session.js';
-import { AgentSessionEventTypes, CloseReason } from '../voice/events.js';
+import {
+  AgentSessionEventTypes,
+  CloseReason,
+  createUserInputTranscribedEvent,
+} from '../voice/events.js';
 import { type TimedString, isTimedString } from '../voice/io.js';
 import { ChatContext, type ChatItem, FunctionCall, FunctionCallOutput } from './chat_context.js';
 import { type DuplexAudioFrame, DuplexModel, DuplexSession } from './duplex.js';
@@ -673,7 +678,11 @@ describe('duplex events and context', () => {
     ]);
   });
 
-  it.each([new Error('stream failed'), 'secret provider payload', { payload: 'secret' }])(
+  it.each([
+    new Error('secret provider payload', { cause: new Error('secret nested cause') }),
+    'secret provider payload',
+    { payload: 'secret' },
+  ])(
     'reports an unrecoverable audio failure and closes the generation (reason: %s)',
     async (reason) => {
       const { fake, session, generations } = setup({ gate: () => new FixedGate(0.002) });
@@ -690,7 +699,8 @@ describe('duplex events and context', () => {
       expect(errors).toMatchObject([
         { recoverable: false, label: fake.duplexModel.label(), error: expectedError },
       ]);
-      expect(logged).toHaveBeenCalledWith({ error: expectedError }, 'duplex audio stream failed');
+      if (reason instanceof Error) expect(errors[0]!.error).toBe(reason);
+      expect(logged).toHaveBeenCalledWith('duplex audio stream failed');
       expect((await readGeneration(generations[0]!)).frames).toHaveLength(1);
     },
   );
@@ -714,6 +724,26 @@ describe('duplex events and context', () => {
 });
 
 describe('duplex requested replies', () => {
+  it.each([false, true])(
+    'claims audio enqueued inside the provider reply hook (previous request: %s)',
+    async (previousRequest) => {
+      const { model, fake, session, generations } = setup({ gate: () => new FixedGate(0.002) });
+      model.askable = true;
+      const previous = previousRequest
+        ? expect(session.generateReply()).rejects.toThrow('superseded')
+        : undefined;
+      vi.spyOn(fake, '_generateReply').mockImplementationOnce(() => fake.push(0.3));
+
+      const reply = session.generateReply();
+      await setImmediate();
+
+      expect(generations).toHaveLength(1);
+      expect(generations[0]!.userInitiated).toBe(true);
+      await expect(reply).resolves.toBe(generations[0]);
+      await previous;
+    },
+  );
+
   it('rejects requests if the model decides when to speak', async () => {
     const { session } = setup();
     await expect(session.generateReply()).rejects.toThrow('decides for itself');
@@ -787,6 +817,53 @@ describe('duplex requested replies', () => {
 });
 
 describe('duplex model integration', () => {
+  it.each([false, true])(
+    'awaits provider chat updates through Agent.updateChatCtx (failure: %s)',
+    async (fail) => {
+      const model = new FakeDuplexModel();
+      const agent = new Agent({ instructions: '' });
+      const session = new AgentSession({ llm: model, vad: null, aecWarmupDuration: null });
+      await session.start({ agent });
+      const provider = model.activeSession;
+      const appended = new Future<void>();
+      const entered = new Future<void>();
+      const appendItems = provider._appendItems.bind(provider);
+      vi.spyOn(provider, '_appendItems').mockImplementationOnce(async (items) => {
+        entered.resolve();
+        await appended.await;
+        await appendItems(items);
+      });
+      const error = new RealtimeError('append failed');
+      const context = agent.chatCtx.copy();
+      context.addMessage({ id: 'new-item', role: 'user', content: 'hello' });
+      let settled = false;
+      const result = agent.updateChatCtx(context).then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+
+      try {
+        await entered.await;
+        await setImmediate();
+        expect(settled).toBe(false);
+        if (fail) appended.reject(error);
+        else appended.resolve();
+        expect(await result).toBe(fail ? error : undefined);
+        expect(provider.appended.some((item) => item.id === 'new-item')).toBe(!fail);
+      } finally {
+        if (!appended.done) appended.resolve();
+        await result;
+        await session.close();
+      }
+    },
+  );
+
   it('rejects failed startup, cleans up, and allows a fresh start', async () => {
     const error = new RealtimeError('configuration failed');
     vi.spyOn(FakeDuplexSession.prototype, '_updateInstructions').mockRejectedValueOnce(error);
@@ -835,6 +912,12 @@ describe('duplex model integration', () => {
       expect(model.activeSession.closed).toBe(false);
       expect(setupAgentTools).toHaveBeenCalledTimes(2);
       expect(setupSessionTools).toHaveBeenCalledTimes(2);
+      session._updateUserState('away');
+      session.emit(
+        AgentSessionEventTypes.UserInputTranscribed,
+        createUserInputTranscribedEvent({ transcript: 'hello', isFinal: true }),
+      );
+      expect(session.userState).toBe('listening');
     } finally {
       await session.close();
     }
