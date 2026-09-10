@@ -13,6 +13,7 @@ An OpenAI key with GPT-Live access is required. Set `OPENAI_API_KEY`, `LIVEKIT_U
 From the repository root:
 
 ```bash
+pnpm install --frozen-lockfile
 pnpm build
 pnpm --filter livekit-agents-examples exec tsx --env-file=.env src/gpt_live/gpt_live_agent.ts dev
 pnpm --filter livekit-agents-examples exec tsx --env-file=.env src/gpt_live/client_delegation.ts dev
@@ -44,8 +45,7 @@ The voice agent has no tools. Registering tools in this mode raises `RealtimeErr
 The `delegation_created` event supplies an id and `pendingTranscript`, which contains the
 caller's words that may not yet be in the agent's chat context.
 
-The handler starts an independent task. An ordinary inference LLM uses the tools in
-`tools.ts` and returns its answer through `appendCommentary(answer, { delegationId })`.
+The handler starts an independent task. An ordinary inference LLM uses the tools defined in the example and returns its answer through `appendCommentary(answer, { delegationId })`.
 The voice model says that answer in its own words. Tasks are canceled when the agent exits.
 
 Each delegation has its own history snapshot. A later request cannot supersede an earlier
