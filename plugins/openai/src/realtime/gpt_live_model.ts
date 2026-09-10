@@ -40,7 +40,12 @@ const ASK_INSTRUCTED = `Immediately follow the instruction below. ${SPEAK_NOW}`;
 const ASK_TYPED = `Reply to the caller now, don't repeat what they said. ${SPEAK_NOW}`;
 const ASK_BARE = `Reply to the caller now. ${SPEAK_NOW}`;
 const SESSION_CLOSE_TIMEOUT = 5000;
-const FATAL_ERROR_CODES = new Set(['insufficient_quota', 'invalid_api_key']);
+const FATAL_ERROR_CODES = new Set([
+  'insufficient_quota',
+  'invalid_api_key',
+  'account_deactivated',
+  'billing_hard_limit_reached',
+]);
 
 /** Settings for the backend Responses model. Unset fields use the service defaults.
  * @public
@@ -192,7 +197,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private readonly queued: (ClientEvent | Record<string, unknown>)[] = [];
   private ws?: WebSocket;
   private connectionDone?: Future<Error | undefined>;
-  private closeTimer?: ReturnType<typeof setTimeout>;
+  private connectionDraining = false;
+  private requestConnectionClose?: () => void;
   private readonly shutdown = new AbortController();
   private readonly mainTask: Promise<void>;
   private audioController!: ReadableStreamDefaultController<llm.DuplexAudioFrame>;
@@ -234,7 +240,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
   }
 
   private flushQueued(): void {
-    if (!this.sessionStarted || this.ws?.readyState !== WebSocket.OPEN) return;
+    if (this.connectionDraining || !this.sessionStarted || this.ws?.readyState !== WebSocket.OPEN)
+      return;
     while (this.queued.length) this.wsSend(this.ws, this.queued.shift()!);
   }
 
@@ -243,9 +250,13 @@ export class GPTLiveSession extends llm.DuplexSession<{
     if (this.debug && event.type !== 'session.input_audio.append')
       this.logger.debug({ 'lk.pii.event': event }, 'GPT-Live client event');
     const done = this.connectionDone;
-    ws.send(JSON.stringify(event), (error) => {
-      if (error) done?.resolve(new APIConnectionError({ message: error.message }));
-    });
+    try {
+      ws.send(JSON.stringify(event), (error) => {
+        if (error) done?.resolve(new APIConnectionError({ message: 'GPT-Live send failed' }));
+      });
+    } catch {
+      done?.resolve(new APIConnectionError({ message: 'GPT-Live send failed' }));
+    }
   }
 
   private buildDelegation(): Delegation {
@@ -330,6 +341,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
           await this.runConnection(
             () => {
               if (reconnecting) {
+                this.resetInputAudio();
                 this.endSpeech('user');
                 this.speech.clear();
                 this.delegatedResponses.clear();
@@ -345,9 +357,14 @@ export class GPTLiveSession extends llm.DuplexSession<{
           );
         } catch (error) {
           if (this.closing) break;
-          const err = error instanceof Error ? error : new Error(String(error));
-          const recoverable =
-            err instanceof APIError && err.retryable && retries < this.opts.connOptions.maxRetry;
+          const err =
+            error instanceof APIError
+              ? error
+              : new APIConnectionError({
+                  message: 'GPT-Live session failed',
+                  options: { retryable: false },
+                });
+          const recoverable = err.retryable && retries < this.opts.connOptions.maxRetry;
           this.emitError(err, recoverable);
           if (!recoverable) throw err;
           await delay(intervalForRetry(this.opts.connOptions, retries++), undefined, {
@@ -362,6 +379,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
         reconnecting = true;
       }
     } finally {
+      this.resetInputAudio();
       if (!this.audioClosed) {
         this.audioClosed = true;
         this.audioController.close();
@@ -390,6 +408,18 @@ export class GPTLiveSession extends llm.DuplexSession<{
     this.ws = ws;
     let recycleTimer: ReturnType<typeof setTimeout> | undefined;
     let startupTimer: ReturnType<typeof setTimeout> | undefined;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    const requestClose = () => {
+      if (this.connectionDraining || done.done) return;
+      this.connectionDraining = true;
+      if (this.sessionStarted && ws.readyState === WebSocket.OPEN) {
+        closeTimer = setTimeout(() => done.resolve(undefined), SESSION_CLOSE_TIMEOUT);
+        this.wsSend(ws, { type: 'session.close' } satisfies ClientEvent);
+      } else {
+        done.resolve(undefined);
+      }
+    };
+    this.requestConnectionClose = requestClose;
     const closed = new Future();
     ws.once('close', () => closed.resolve());
     ws.on('open', () => {
@@ -408,10 +438,12 @@ export class GPTLiveSession extends llm.DuplexSession<{
         })
         .catch((error: Error) => done.resolve(error));
     });
-    ws.on('error', (error) => done.resolve(new APIConnectionError({ message: error.message })));
+    ws.on('error', () =>
+      done.resolve(new APIConnectionError({ message: 'GPT-Live connection failed' })),
+    );
     ws.on('close', () =>
       done.resolve(
-        this.closing
+        this.closing || this.connectionDraining
           ? undefined
           : new APIConnectionError({ message: 'OpenAI Live API connection closed unexpectedly' }),
       ),
@@ -435,7 +467,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
           clearTimeout(startupTimer);
           onStarted();
           if (this.opts.maxSessionDuration !== null) {
-            recycleTimer = setTimeout(() => done.resolve(undefined), this.opts.maxSessionDuration);
+            recycleTimer = setTimeout(requestClose, this.opts.maxSessionDuration);
           }
         }
       } catch (error) {
@@ -451,7 +483,9 @@ export class GPTLiveSession extends llm.DuplexSession<{
       this.sessionStarted = false;
       clearTimeout(recycleTimer);
       clearTimeout(startupTimer);
-      clearTimeout(this.closeTimer);
+      clearTimeout(closeTimer);
+      this.connectionDraining = false;
+      this.requestConnectionClose = undefined;
       this.ws = undefined;
       this.connectionDone = undefined;
       ws.terminate();
@@ -510,14 +544,13 @@ export class GPTLiveSession extends llm.DuplexSession<{
             'GPT-Live context window utilization',
           );
         this.handleUsage(event.usage?.seconds ?? 0);
-        if (event.type === 'session.closed' && this.closing)
-          this.connectionDone?.resolve(undefined);
+        if (event.type === 'session.closed') this.connectionDone?.resolve(undefined);
         break;
       case 'error': {
         const error = event.error ?? {};
         const recoverable = !FATAL_ERROR_CODES.has(error.code || error.type || '');
-        const apiError = new APIError(error.message || 'OpenAI Live API returned an error', {
-          body: error,
+        this.logger.error({ 'lk.pii.error': error }, 'GPT-Live returned an error');
+        const apiError = new APIError('GPT-Live returned an error', {
           retryable: recoverable,
         });
         if (!recoverable) throw apiError;
@@ -525,7 +558,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
         break;
       }
       default:
-        this.logger.debug({ type: event.type }, 'GPT-Live acknowledged a command');
+        this.logger.debug({ 'lk.pii.type': event.type }, 'GPT-Live acknowledged a command');
     }
   }
 
@@ -747,6 +780,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
       frame = new AudioFrame(mono, frame.sampleRate, 1, mono.length);
     }
     if (this.inputRate !== frame.sampleRate) {
+      this.inputResampler?.close();
       this.inputResampler =
         frame.sampleRate === SAMPLE_RATE
           ? undefined
@@ -765,6 +799,14 @@ export class GPTLiveSession extends llm.DuplexSession<{
         } satisfies ClientEvent);
       }
     }
+  }
+
+  private resetInputAudio(): void {
+    // Discard partial samples from the old session, including the resampler's filter history.
+    this.bstream.flush();
+    this.inputResampler?.close();
+    this.inputResampler = undefined;
+    this.inputRate = undefined;
   }
 
   /** Add a standing rule. The service enforces a 500-token cap on each append. */
@@ -810,15 +852,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     if (!this.closing) {
       this.closing = true;
       this.shutdown.abort();
-      if (this.sessionStarted && this.ws?.readyState === WebSocket.OPEN) {
-        this.closeTimer = setTimeout(
-          () => this.connectionDone?.resolve(undefined),
-          SESSION_CLOSE_TIMEOUT,
-        );
-        this.wsSend(this.ws, { type: 'session.close' } satisfies ClientEvent);
-      } else {
-        this.connectionDone?.resolve(undefined);
-      }
+      this.requestConnectionClose?.();
     }
     await this.mainTask;
   }

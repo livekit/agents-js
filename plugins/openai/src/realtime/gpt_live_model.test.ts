@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { initializeLogger, llm, log, type metrics, voice } from '@livekit/agents';
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { setTimeout as delay, setImmediate } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type WebSocket, WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { z } from 'zod';
 import { CodeInterpreter, FileSearch, WebSearch } from '../tools.js';
 import {
@@ -163,6 +163,7 @@ afterEach(async () => {
   await Promise.all(sessions.map((session) => session.close()));
   await server.stop();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe('GPTLiveModel', () => {
@@ -913,20 +914,240 @@ describe('GPTLiveModel', () => {
     expect(server.sockets).toHaveLength(2);
   });
 
-  it.each(['invalid_api_key', 'insufficient_quota'])(
-    'does not reconnect after fatal %s errors',
+  it.each([
+    [true, 'expired'],
+    [true, 'connection_lost'],
+    [false, 'expired'],
+    [false, 'connection_lost'],
+  ] as const)(
+    'drains timed=%s reconnects with reason=%s and waits for each close',
+    async (timed, reason) => {
+      server.autoClose = false;
+      const session = create({
+        maxSessionDuration: timed ? 300 : null,
+        connOptions: { maxRetry: 0, retryIntervalMs: 10, timeoutMs: 1000 },
+      });
+      const errors: llm.RealtimeModelError[] = [];
+      const durations: number[] = [];
+      session.on('error', (error) => errors.push(error));
+      session.on('metrics_collected', (metric) => {
+        if (metric.type === 'realtime_model_metrics' && metric.sessionDurationMs !== undefined)
+          durations.push(metric.sessionDurationMs);
+      });
+      try {
+        await ready(session);
+        await session._updateTools(tools);
+        session._updateOptions({ toolChoice: 'none' });
+        await session._appendItems([output('old')]);
+        if (timed) {
+          await vi.waitFor(() => expect(server.events().at(-1)?.type).toBe('session.close'));
+          expect(server.sockets[0]!.readyState).toBe(WebSocket.OPEN);
+          const reader = session.audioStream.getReader();
+          await server.send(session, {
+            type: 'session.output_audio.delta',
+            delta: Buffer.from(pcm(100, 0.2).data.buffer).toString('base64'),
+          });
+          expect((await reader.read()).value?.frame.samplesPerChannel).toBe(2400);
+          reader.releaseLock();
+          session.appendThinking('During drain.');
+          await delay(10);
+          expect(server.events().at(-1)?.type).toBe('session.close');
+        }
+        await server.send(session, { type: 'session.closed', reason, usage: { seconds: 5 } });
+        if (!timed) server.sockets[0]!.close();
+        await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+        expect(errors).toEqual([]);
+        expect(durations).toEqual([5000]);
+        expect(startConfig(1)).toMatchObject({
+          delegation: { responses: { tool_choice: 'none', tools: [{ name: 'getWeather' }] } },
+          input: [{ content: [{ text: 'Tool getWeather returned rainy' }] }],
+        });
+        if (timed) {
+          await vi.waitFor(() =>
+            expect(server.events(1).some((event) => event.type === 'session.thinking.append')).toBe(
+              true,
+            ),
+          );
+        }
+        let closed = false;
+        const closing = session.close().then(() => {
+          closed = true;
+        });
+        await vi.waitFor(() => expect(server.events(1).at(-1)?.type).toBe('session.close'));
+        await delay(10);
+        expect(closed).toBe(false);
+        await server.send(session, {
+          type: 'session.closed',
+          reason: 'close_requested',
+          usage: { seconds: 7 },
+        });
+        await closing;
+        expect(durations).toEqual([5000, 7000]);
+      } finally {
+        server.autoClose = true;
+        const closing = session.close();
+        for (const socket of server.sockets) {
+          if (socket.readyState === WebSocket.OPEN)
+            socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+        await closing;
+      }
+    },
+  );
+
+  it.each([24000, 48000])(
+    'discards partial %s Hz input and resampler state on reconnect',
+    async (rate) => {
+      const closeResampler = vi.spyOn(AudioResampler.prototype, 'close');
+      const session = create();
+      await ready(session);
+      session.pushAudio(pcm(60, 0.5, rate));
+      server.sockets[0]!.terminate();
+      await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+      if (rate !== 24000) expect(closeResampler).toHaveBeenCalledOnce();
+      session.pushAudio(pcm(40, 0, rate));
+      await delay(20);
+      expect(server.events(1).map((event) => event.type)).toEqual(['session.start']);
+      session.pushAudio(pcm(200, 0, rate));
+      await vi.waitFor(() => expect(server.events(1).length).toBeGreaterThan(1));
+      for (const event of server.events(1)) {
+        if (event.type !== 'session.input_audio.append') continue;
+        const audio = Buffer.from(event.audio, 'base64');
+        expect(audio.length).toBe(4800);
+        for (let offset = 0; offset < audio.length; offset += 2)
+          expect(Math.abs(audio.readInt16LE(offset))).toBeLessThanOrEqual(1);
+      }
+      await session.close();
+      if (rate !== 24000) expect(closeResampler).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(['invalid_request', 'invalid_api_key'])(
+    'sanitizes emitted %s provider errors',
     async (code) => {
       const session = create();
       const errors: llm.RealtimeModelError[] = [];
       session.on('error', (error) => errors.push(error));
       await ready(session);
-      await server.send(session, { type: 'error', error: { code, message: 'Rejected' } });
+      await server.send(session, {
+        type: 'error',
+        error: { code, message: 'private-provider-payload' },
+      });
       await vi.waitFor(() => expect(errors).toHaveLength(1));
-      expect(errors[0]?.recoverable).toBe(false);
-      await session.close();
-      expect(server.sockets).toHaveLength(1);
+      expect(String(errors[0]!.error)).not.toContain('private-provider-payload');
+      expect(JSON.stringify(errors[0]!.error)).not.toContain('private-provider-payload');
+      expect(errors[0]!.error.cause).toBeUndefined();
+      expect(errors[0]!.recoverable).toBe(code === 'invalid_request');
     },
   );
+
+  it.each(['send', 'send callback', 'receive'] as const)(
+    'sanitizes %s transport failures',
+    async (operation) => {
+      const session = create({
+        connOptions: { maxRetry: 0, retryIntervalMs: 10, timeoutMs: 1000 },
+      });
+      const errors: llm.RealtimeModelError[] = [];
+      session.on('error', (error) => errors.push(error));
+      await ready(session);
+      if (operation === 'send') {
+        vi.spyOn(WebSocket.prototype, 'send').mockImplementationOnce(() => {
+          throw new Error('private-transport-payload');
+        });
+        session.appendThinking('Trigger send.');
+      } else if (operation === 'send callback') {
+        vi.spyOn(WebSocket.prototype, 'send').mockImplementationOnce(function (
+          this: WebSocket,
+          ...args
+        ) {
+          const callback = args.at(-1);
+          if (typeof callback === 'function') callback(new Error('private-transport-payload'));
+        });
+        session.appendThinking('Trigger send callback.');
+      } else {
+        const send = WebSocket.prototype.send;
+        vi.spyOn(WebSocket.prototype, 'send').mockImplementationOnce(function (
+          this: WebSocket,
+          ...args
+        ) {
+          this.emit('error', new Error('private-transport-payload'));
+          return send.apply(this, args);
+        });
+        session.appendThinking('Trigger socket error.');
+      }
+      await vi.waitFor(() => expect(errors).toHaveLength(1));
+      expect(String(errors[0]!.error)).not.toContain('private-transport-payload');
+      expect(errors[0]!.error.cause).toBeUndefined();
+      expect(errors[0]!.recoverable).toBe(false);
+    },
+  );
+
+  it('sanitizes unexpected connection setup errors', async () => {
+    const session = create({ baseURL: 'private-invalid-url' });
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+    await session._updateSession();
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(errors[0]!.error.message).toBe('GPT-Live session failed');
+    expect(JSON.stringify(errors[0]!.error)).not.toContain('private-invalid-url');
+    expect(errors[0]!.error.cause).toBeUndefined();
+    expect(errors[0]!.recoverable).toBe(false);
+  });
+
+  it('keeps provider content only in PII log fields', async () => {
+    vi.stubEnv('LK_OPENAI_DEBUG', '1');
+    const logger = log();
+    const logs = [vi.spyOn(logger, 'debug'), vi.spyOn(logger, 'warn'), vi.spyOn(logger, 'error')];
+    const privateText = 'private-customer-payload';
+    const session = create();
+    await session._updateInstructions(privateText);
+    await ready(session);
+    session.appendThinking(privateText);
+    await server.send(session, transcript('user', privateText, 0));
+    await server.response(session, {
+      type: 'response.failed',
+      response: { error: { message: privateText }, incomplete_details: { reason: privateText } },
+    });
+    await server.send(session, { type: 'error', error: { message: privateText } });
+    const received = once(session, 'openai_server_event_received');
+    server.sockets[0]!.send(JSON.stringify({ type: privateText }));
+    await received;
+    await session.close();
+    let piiFields = 0;
+    for (const spy of logs) {
+      for (const args of spy.mock.calls) {
+        for (const arg of args) {
+          if (typeof arg === 'string') expect(arg).not.toContain(privateText);
+          else if (arg && typeof arg === 'object') {
+            for (const [key, value] of Object.entries(arg)) {
+              if (JSON.stringify(value)?.includes(privateText)) {
+                expect(key).toContain('.pii.');
+                piiFields++;
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(piiFields).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'invalid_api_key',
+    'insufficient_quota',
+    'account_deactivated',
+    'billing_hard_limit_reached',
+  ])('does not reconnect after fatal %s errors', async (code) => {
+    const session = create();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+    await ready(session);
+    await server.send(session, { type: 'error', error: { code, message: 'Rejected' } });
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(errors[0]?.recoverable).toBe(false);
+    await session.close();
+    expect(server.sockets).toHaveLength(1);
+  });
 
   it('reports recoverable protocol errors without disconnecting', async () => {
     const session = create();

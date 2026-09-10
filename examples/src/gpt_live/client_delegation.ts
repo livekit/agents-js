@@ -110,7 +110,10 @@ class Assistant extends voice.Agent {
     const task = this.answer(delegation, controller.signal)
       .catch((error) => {
         if (!controller.signal.aborted)
-          log().error({ error, delegationId: delegation.id }, 'Client delegation failed');
+          log().error(
+            { 'lk.pii.error': error, delegationId: delegation.id },
+            'Client delegation failed',
+          );
       })
       .finally(() => {
         this.tasks.delete(task);
