@@ -150,3 +150,72 @@ it.each([1, 2])('cancels and unwinds %i pending tasks before closing the parent'
     chat.mockRestore();
   }
 });
+
+it.each([
+  { owner: 'onEnter', timing: 'queued' },
+  { owner: 'tool', timing: 'queued' },
+  { owner: 'onEnter', timing: 'draining' },
+  { owner: 'tool', timing: 'draining' },
+])(
+  'closes the task and parent when updateAgent is $timing and the task owner is $owner',
+  async ({ owner, timing }) => {
+    const entered = new Future<void>();
+    const exiting = new Future<void>();
+    const finishExit = new Future<void>();
+    const transfer = AgentTask.create<void>({
+      instructions: 'transfer',
+      onEnter: async () => {
+        entered.resolve();
+      },
+      onExit: async () => {
+        exiting.resolve();
+        await finishExit.await;
+      },
+    });
+    const result = new Future<unknown>();
+    const runTransfer = async () => {
+      try {
+        await transfer.run();
+      } catch (error) {
+        result.resolve(error);
+      }
+    };
+    class SupportAgent extends Agent {
+      constructor() {
+        super({
+          instructions: 'support',
+          tools: [
+            tool({ name: 'transfer', description: 'Transfer the caller.', execute: runTransfer }),
+          ],
+        });
+      }
+      async onEnter() {
+        if (owner === 'onEnter') await runTransfer();
+      }
+    }
+    const agent = new SupportAgent();
+    const fallback = new Agent({ instructions: 'fallback' });
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'transfer', toolCalls: [{ name: 'transfer', args: {} }] }]),
+    });
+    await session.start({ agent });
+    if (owner === 'tool') session.generateReply({ userInput: 'transfer' });
+    await entered.await;
+    const taskActivity = transfer._agentActivity!;
+    const closeTask = vi.spyOn(taskActivity, 'close');
+    session.updateAgent(fallback);
+    if (timing === 'draining') await exiting.await;
+    const closing = session.close();
+    finishExit.resolve();
+    await closing;
+    await (session as unknown as { updateActivityTask: { result: Promise<void> } })
+      .updateActivityTask.result;
+
+    expect(await result.await).toBeInstanceOf(ToolError);
+    expect(closeTask).toHaveBeenCalled();
+    expect(transfer._agentActivity).toBeUndefined();
+    expect(agent._agentActivity).toBeUndefined();
+    expect(fallback._agentActivity).toBeUndefined();
+  },
+  5_000,
+);

@@ -870,7 +870,9 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
                 `${this.constructor.name} completed, but the agent has changed in the meantime. ` +
                   `Ignoring handoff to the previous agent, likely due to AgentSession.updateAgent being invoked.`,
               );
-              await oldActivity.close();
+              // Shutdown closes the parent after this task returns. Closing it here
+              // would wait for the tool that is currently awaiting this task.
+              if (!session._closing) await oldActivity.close();
             } else {
               const mergedChatCtx = oldAgent._chatCtx.merge(this._chatCtx, {
                 excludeFunctionCall: !this._preserveFunctionCallHistory,

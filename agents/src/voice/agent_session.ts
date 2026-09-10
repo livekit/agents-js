@@ -1957,6 +1957,12 @@ export class AgentSession<
         task.complete(new ToolError(`AgentTask ${task.id} is cancelled`));
       }
       await task._waitForInactive();
+      // A concurrent updateAgent can prevent the task from resuming its parent.
+      // In that case its activity still needs the normal exit and close sequence.
+      if (task._agentActivity === activity) {
+        await activity.drain();
+        await activity.close();
+      }
       if (!task._oldAgent) break;
       activity = task._oldAgent._agentActivity;
     }
