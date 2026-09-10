@@ -1,9 +1,17 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  AlwaysOffSampler,
+  InMemorySpanExporter,
+  type Sampler,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
+import { genAI, setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Future, Task, delay } from '../utils.js';
 import { ChatContext, FunctionCall } from './chat_context.js';
@@ -70,7 +78,55 @@ class PrewarmLLM extends MockLLM {
   }
 }
 
+class CaptureToggleLLMStream extends LLMStream {
+  constructor(
+    llm: LLM,
+    opts: {
+      chatCtx: ChatContext;
+      connOptions: APIConnectOptions;
+    },
+    private captureContentDuringRun: boolean,
+  ) {
+    super(llm, opts);
+  }
+
+  protected async run(): Promise<void> {
+    genAI.setCaptureContent(this.captureContentDuringRun);
+    this.queue.put({ id: 'request-id', delta: { role: 'assistant', content: 'hello' } });
+  }
+}
+
 const waitForTasks = () => new Promise<void>((resolve) => setImmediate(resolve));
+const originalTracerProvider = tracer.getProvider();
+let testTracerProvider: NodeTracerProvider | undefined;
+
+function setupTracing(sampler?: Sampler): InMemorySpanExporter {
+  const exporter = new InMemorySpanExporter();
+  testTracerProvider = new NodeTracerProvider({
+    sampler,
+    spanProcessors: [new SimpleSpanProcessor(exporter)],
+  });
+  setTracerProvider(testTracerProvider);
+  return exporter;
+}
+
+function forbidContentBuilders(): void {
+  const unexpectedBuilder = () => {
+    throw new Error('content payload builder was called');
+  };
+  vi.spyOn(genAI, 'toSystemInstructions').mockImplementation(unexpectedBuilder);
+  vi.spyOn(genAI, 'toInputMessages').mockImplementation(unexpectedBuilder);
+  vi.spyOn(genAI, 'toOutputMessages').mockImplementation(unexpectedBuilder);
+  vi.spyOn(genAI, 'toToolDefinitions').mockImplementation(unexpectedBuilder);
+}
+
+afterEach(async () => {
+  genAI.setCaptureContent(true);
+  vi.restoreAllMocks();
+  setTracerProvider(originalTracerProvider);
+  await testTracerProvider?.shutdown();
+  testTracerProvider = undefined;
+});
 
 async function collectMetrics(llm: MockLLM): Promise<LLMMetrics> {
   const metrics = new Promise<LLMMetrics>((resolve) => llm.once('metrics_collected', resolve));
@@ -102,6 +158,135 @@ describe('LLMStream metrics', () => {
     );
 
     expect(metrics.cacheCreationTokens).toBe(42);
+  });
+
+  it('reports cached input tokens and content on the inference span', async () => {
+    const exporter = setupTracing();
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hello' });
+    const llm = new MockLLM([
+      { id: 'request-id', delta: { role: 'assistant', content: 'hello' } },
+      {
+        id: 'request-id',
+        usage: {
+          completionTokens: 20,
+          promptTokens: 100,
+          promptCachedTokens: 80,
+          totalTokens: 120,
+        },
+      },
+    ]);
+
+    await llm.chat({ chatCtx }).collect();
+
+    const span = exporter.getFinishedSpans().find(({ name }) => name === 'llm_request');
+    expect(span?.attributes[traceTypes.ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS]).toBe(80);
+    expect(span?.attributes[traceTypes.ATTR_GEN_AI_USAGE_INPUT_CACHED_TOKENS]).toBe(80);
+    expect(JSON.parse(span?.attributes[traceTypes.ATTR_GEN_AI_INPUT_MESSAGES] as string)).toEqual([
+      { role: 'user', parts: [{ type: 'text', content: 'hello' }] },
+    ]);
+    expect(JSON.parse(span?.attributes[traceTypes.ATTR_GEN_AI_OUTPUT_MESSAGES] as string)).toEqual([
+      {
+        role: 'assistant',
+        parts: [{ type: 'text', content: 'hello' }],
+        finish_reason: 'stop',
+      },
+    ]);
+  });
+
+  it.each([
+    { captureAtStart: false, captureDuringRun: true },
+    { captureAtStart: true, captureDuringRun: false },
+  ])(
+    'requires capture at stream start and completion ($captureAtStart, $captureDuringRun)',
+    async ({ captureAtStart, captureDuringRun }) => {
+      const exporter = setupTracing();
+      const chatCtx = ChatContext.empty();
+      chatCtx.addMessage({ role: 'user', content: 'hello' });
+      genAI.setCaptureContent(captureAtStart);
+
+      const stream = new CaptureToggleLLMStream(
+        new MockLLM([]),
+        { chatCtx, connOptions: DEFAULT_API_CONNECT_OPTIONS },
+        captureDuringRun,
+      );
+      const response = await stream.collect();
+
+      expect(response.text).toBe('hello');
+      const span = exporter.getFinishedSpans().find(({ name }) => name === 'llm_request');
+      expect(traceTypes.ATTR_GEN_AI_INPUT_MESSAGES in (span?.attributes ?? {})).toBe(
+        captureAtStart,
+      );
+      expect(traceTypes.ATTR_GEN_AI_OUTPUT_MESSAGES in (span?.attributes ?? {})).toBe(
+        captureAtStart && captureDuringRun,
+      );
+    },
+  );
+
+  it('skips content builders and telemetry response accumulation when capture is disabled', async () => {
+    const exporter = setupTracing();
+    forbidContentBuilders();
+    genAI.setCaptureContent(false);
+    let conversions = 0;
+    const content = {
+      [Symbol.toPrimitive]() {
+        conversions++;
+        return 'hello';
+      },
+    } as unknown as string;
+    const llm = new MockLLM([
+      { id: 'request-id', delta: { role: 'assistant', content } },
+      {
+        id: 'request-id',
+        usage: {
+          completionTokens: 20,
+          promptTokens: 100,
+          promptCachedTokens: 80,
+          totalTokens: 120,
+        },
+      },
+    ]);
+
+    const response = await llm.chat({ chatCtx: ChatContext.empty() }).collect();
+
+    expect(conversions).toBe(1);
+    expect(response.text).toBe('hello');
+    expect(response.usage?.promptTokens).toBe(100);
+    const span = exporter.getFinishedSpans().find(({ name }) => name === 'llm_request');
+    expect(span?.attributes[traceTypes.ATTR_GEN_AI_REQUEST_MODEL]).toBe('unknown');
+    expect(span?.attributes[traceTypes.ATTR_GEN_AI_USAGE_INPUT_TOKENS]).toBe(100);
+    expect(span?.attributes[traceTypes.ATTR_GEN_AI_INPUT_MESSAGES]).toBeUndefined();
+    expect(span?.attributes[traceTypes.ATTR_GEN_AI_OUTPUT_MESSAGES]).toBeUndefined();
+  });
+
+  it('skips content builders and telemetry response accumulation for a nonrecording span', async () => {
+    setupTracing(new AlwaysOffSampler());
+    forbidContentBuilders();
+    let conversions = 0;
+    const content = {
+      [Symbol.toPrimitive]() {
+        conversions++;
+        return 'hello';
+      },
+    } as unknown as string;
+    const llm = new MockLLM([
+      { id: 'request-id', delta: { role: 'assistant', content } },
+      {
+        id: 'request-id',
+        usage: {
+          completionTokens: 20,
+          promptTokens: 100,
+          promptCachedTokens: 80,
+          totalTokens: 120,
+        },
+      },
+    ]);
+
+    const response = await llm.chat({ chatCtx: ChatContext.empty() }).collect();
+
+    expect(conversions).toBe(1);
+    expect(response.text).toBe('hello');
+    expect(response.usage?.promptTokens).toBe(100);
   });
 });
 

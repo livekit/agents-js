@@ -51,6 +51,14 @@ export function setCaptureContent(enabled: boolean): void {
   captureContent = enabled;
 }
 
+/**
+ * Whether GenAI message content capture is currently enabled.
+ * @public
+ */
+export function captureContentEnabled(): boolean {
+  return captureContent;
+}
+
 // ---------------------------------------------------------------------------
 // message models
 // ---------------------------------------------------------------------------

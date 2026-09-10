@@ -190,6 +190,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
   #llmRequestSpan?: Span;
+  #recordContent = false;
   // Provider-known response ids collected from ChatChunks during the current
   // attempt; reset before each retry and written to the `llm_request_run` span.
   #providerRequestIds: string[] = [];
@@ -249,11 +250,13 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       stream: true,
       outputType: traceTypes.GenAIOutputType.TEXT,
     });
-    genAI.setContentAttributes(span, {
-      systemInstructions: genAI.toSystemInstructions(this.#chatCtx),
-      inputMessages: genAI.toInputMessages(this.#chatCtx),
-      toolDefinitions: this.#toolCtx ? genAI.toToolDefinitions(this.#toolCtx.functionTools) : [],
-    });
+    if (this.#recordContent) {
+      genAI.setContentAttributes(span, {
+        systemInstructions: genAI.toSystemInstructions(this.#chatCtx),
+        inputMessages: genAI.toInputMessages(this.#chatCtx),
+        toolDefinitions: this.#toolCtx ? genAI.toToolDefinitions(this.#toolCtx.functionTools) : [],
+      });
+    }
   }
 
   private _mainTaskImpl = async (span: Span) => {
@@ -318,10 +321,17 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   };
 
   private mainTask = async () => {
-    return tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
-      name: 'llm_request',
-      endOnExit: false,
-    });
+    return tracer.startActiveSpan(
+      async (span) => {
+        // Enabling capture later must not emit a partial response.
+        this.#recordContent = span.isRecording() && genAI.captureContentEnabled();
+        return this._mainTaskImpl(span);
+      },
+      {
+        name: 'llm_request',
+        endOnExit: false,
+      },
+    );
   };
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
@@ -359,7 +369,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         ttft = process.hrtime.bigint() - startTime;
         completionStartTime = new Date().toISOString();
       }
-      if (ev.delta?.content) {
+      if (ev.delta?.content && this.#recordContent) {
         responseContent += ev.delta.content;
       }
       if (ev.delta?.toolCalls?.length) {
@@ -414,13 +424,15 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         finishReasons: [finishReason],
         timeToFirstChunk: metrics.ttftMs >= 0 ? metrics.ttftMs / 1000 : undefined,
       });
-      genAI.setContentAttributes(this.#llmRequestSpan, {
-        outputMessages: genAI.toOutputMessages({
-          text: responseContent,
-          functionCalls: toolCalls,
-          finishReason,
-        }),
-      });
+      if (this.#recordContent) {
+        genAI.setContentAttributes(this.#llmRequestSpan, {
+          outputMessages: genAI.toOutputMessages({
+            text: responseContent,
+            functionCalls: toolCalls,
+            finishReason,
+          }),
+        });
+      }
 
       if (completionStartTime) {
         this.#llmRequestSpan.setAttribute(
