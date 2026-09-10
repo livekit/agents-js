@@ -461,6 +461,45 @@ describe('GPTLiveModel', () => {
     ]);
   });
 
+  it('drops old delegation answers during drain, startup, and after reconnect', async () => {
+    server.autoClose = false;
+    const session = create({ delegation: 'client', maxSessionDuration: 300 });
+    try {
+      await ready(session);
+      await server.send(session, {
+        type: 'session.delegation.created',
+        delegation: { id: 'old', target: 'client' },
+      });
+      server.autoStart = false;
+      await vi.waitFor(() => expect(server.events().at(-1)?.type).toBe('session.close'));
+      session.appendCommentary('Old answer during drain', { delegationId: 'old' });
+      session.appendThinking('Old context during drain', { delegationId: 'old' });
+      await server.send(session, { type: 'session.closed', reason: 'close_requested' });
+      await waitCount(1, 1);
+      session.appendCommentary('Old answer during startup', { delegationId: 'old' });
+      session.appendThinking('Keep this context');
+      await server.send(session, { type: 'session.started', session: { id: 'live_1' } });
+      await waitCount(2, 1);
+      session.appendCommentary('Old answer after startup', { delegationId: 'old' });
+      session.on('openai_server_event_received', (event) => {
+        if (event.type === 'session.delegation.created' && event.delegation?.id === 'new')
+          session.appendCommentary('New answer', { delegationId: 'new' });
+      });
+      await server.send(session, {
+        type: 'session.delegation.created',
+        delegation: { id: 'new', target: 'client' },
+      });
+      await waitCount(3, 1);
+      expect(startConfig(1).input).toBeUndefined();
+      expect(server.events(1).slice(1)).toMatchObject([
+        { type: 'session.thinking.append', content: 'Keep this context', delegation_id: null },
+        { type: 'session.commentary.append', content: 'New answer', delegation_id: 'new' },
+      ]);
+    } finally {
+      server.autoClose = true;
+    }
+  });
+
   it('does not block commands or finish speech on delayed context acknowledgments', async () => {
     const model = new GPTLiveModel({ apiKey: 'sk-test', baseURL: server.url });
     const session = model.session();
@@ -912,6 +951,10 @@ describe('GPTLiveModel', () => {
     await ready(session);
     session.appendInstructions('Include tax in prices.');
     session.appendThinking('The caller has a discount.');
+    await server.send(session, {
+      type: 'session.delegation.created',
+      delegation: { id: 'd1', target: 'client' },
+    });
     session.appendCommentary('Say hello once.', { delegationId: 'd1' });
     await waitCount(4);
     server.sockets[0]!.terminate();
@@ -1244,8 +1287,22 @@ describe('GPTLiveModel', () => {
     const logs = [vi.spyOn(logger, 'debug'), vi.spyOn(logger, 'warn'), vi.spyOn(logger, 'error')];
     const privateText = 'private-customer-payload';
     const session = create();
+    class OtherProviderTool extends llm.ProviderTool {}
+    await session._updateTools(new llm.ToolContext([new OtherProviderTool({ id: privateText })]));
     await session._updateInstructions(privateText);
     await ready(session);
+    await server.response(session, {
+      type: 'response.output_item.done',
+      item: { type: 'function_call', call_id: privateText, name: privateText },
+    });
+    await server.response(
+      session,
+      {
+        type: 'response.output_item.done',
+        item: { type: 'function_call', call_id: privateText, name: privateText, arguments: '{}' },
+      },
+      privateText,
+    );
     session.appendThinking(privateText);
     await server.send(session, transcript('user', privateText, 0));
     await server.response(session, {

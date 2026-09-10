@@ -73,7 +73,7 @@ export interface ResponsesDelegationOptions {
  * @public
  */
 export interface GPTLiveDelegation {
-  /** Answer this id with GPTLiveSession.appendCommentary. */
+  /** Answer with GPTLiveSession.appendCommentary. Valid only on the connection that created it. */
   id: string;
   /** The caller's current turn, which may not yet be in the agent's chat context. */
   pendingTranscript: string;
@@ -196,6 +196,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private readonly speech = new Map<Role, Speech>();
   private readonly delegatedResponses = new Map<string | null, DelegatedResponse>();
   private readonly callToDelegation = new Map<string, string | null>();
+  private readonly delegationIds = new Set<string>();
   private readonly bstream = new AudioByteStream(SAMPLE_RATE, 1, SAMPLE_RATE / 10);
   private inputResampler?: AudioResampler;
   private inputRate?: number;
@@ -318,7 +319,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     return this._tools.flatten().flatMap((tool) => {
       const converted = toResponsesTool(tool, false);
       if (converted) return [converted];
-      this.logger.debug({ tool: tool.id }, 'GPT-Live delegation ignores unsupported tool');
+      this.logger.debug({ 'lk.pii.tool': tool.id }, 'GPT-Live delegation ignores unsupported tool');
       return [];
     });
   }
@@ -386,6 +387,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
                 this.speech.clear();
                 this.delegatedResponses.clear();
                 this.callToDelegation.clear();
+                this.delegationIds.clear();
                 this.usageSeconds = 0;
                 this._sessionId = undefined;
               }
@@ -420,6 +422,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
       }
     } finally {
       this.endSpeech('user');
+      this.delegationIds.clear();
       this.resetInputAudio();
       if (!this.audioClosed) {
         this.audioClosed = true;
@@ -493,6 +496,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
       if (isBinary || done.done) return;
       try {
         const event = JSON.parse(data.toString()) as ServerEvent;
+        if (event.type === 'session.delegation.created' && event.delegation?.id)
+          this.delegationIds.add(event.delegation.id);
         this.emit('openai_server_event_received', event);
         if (this.debug && event.type !== 'session.output_audio.delta')
           this.logger.debug({ 'lk.pii.event': event }, 'GPT-Live server event');
@@ -680,7 +685,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
         if (!item || item.type !== 'function_call') return;
         if (!item.call_id || !item.name || item.arguments == null) {
           this.logger.warn(
-            { callId: item.call_id, name: item.name },
+            { 'lk.pii.call_id': item.call_id, 'lk.pii.name': item.name },
             'GPT-Live dropping function call with missing fields',
           );
           return;
@@ -688,7 +693,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
         let pending = this.delegatedResponses.get(delegationId);
         if (!pending) {
           this.logger.warn(
-            { callId: item.call_id, delegationId },
+            { 'lk.pii.call_id': item.call_id, 'lk.pii.delegation_id': delegationId },
             'GPT-Live function call outside a known response',
           );
           pending = { callIds: new Set(), returned: new Set(), completed: true };
@@ -721,7 +726,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
         this.logger.warn(
           {
             type: event.type,
-            delegationId,
+            'lk.pii.delegation_id': delegationId,
             'lk.pii.error': event.response?.error,
             'lk.pii.incomplete_details': event.response?.incomplete_details,
           },
@@ -878,6 +883,10 @@ export class GPTLiveSession extends llm.DuplexSession<{
     delegationId: string | null,
     options: { replayOnReconnect?: boolean; persist?: boolean } = {},
   ): void {
+    if (delegationId !== null && !this.delegationIds.has(delegationId)) {
+      this.logger.debug('GPT-Live ignoring append for an inactive delegation');
+      return;
+    }
     this.queueEvent(
       {
         type,
@@ -885,7 +894,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
         delegation_id: delegationId,
         content,
       } satisfies ClientEvent,
-      options.replayOnReconnect ?? true,
+      delegationId === null && (options.replayOnReconnect ?? true),
       options.persist ? content : undefined,
     );
   }

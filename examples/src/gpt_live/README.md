@@ -64,7 +64,9 @@ The `delegation_created` event supplies an id and `pendingTranscript`, which con
 caller's words that may not yet be in the agent's chat context.
 
 The handler starts an independent task. An ordinary inference LLM uses the tools defined in the example and returns its answer through `appendCommentary(answer, { delegationId })`.
-The voice model says that answer in its own words. Tasks are canceled when the agent exits.
+The voice model says that answer in its own words. Tasks are canceled when the agent exits or the voice connection is replaced.
+Delegation IDs belong to one connection. The plugin drops stale answers after reconnect;
+applications can use `session_reconnected` to cancel their outstanding delegation work.
 
 Each delegation has its own history snapshot. A later request cannot supersede an earlier
 one: a correction from Monday to Tuesday can cause both tasks to answer. Applications that

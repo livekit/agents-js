@@ -94,6 +94,7 @@ class Assistant extends voice.Agent {
       throw new Error('Expected GPTLiveSession');
     this.live = live;
     live.on('delegation_created', this.onDelegation);
+    live.on('session_reconnected', this.cancelDelegations);
     this.session.generateReply({
       instructions: 'Greet the caller and ask what you can help them with.',
     });
@@ -101,9 +102,14 @@ class Assistant extends voice.Agent {
 
   async onExit(): Promise<void> {
     this.live?.off('delegation_created', this.onDelegation);
-    for (const controller of this.tasks.values()) controller.abort();
+    this.live?.off('session_reconnected', this.cancelDelegations);
+    this.cancelDelegations();
     await Promise.all(this.tasks.keys());
   }
+
+  private readonly cancelDelegations = (): void => {
+    for (const controller of this.tasks.values()) controller.abort();
+  };
 
   private readonly onDelegation = (delegation: openai.realtime.GPTLiveDelegation): void => {
     const controller = new AbortController();
@@ -111,7 +117,7 @@ class Assistant extends voice.Agent {
       .catch((error) => {
         if (!controller.signal.aborted)
           log().error(
-            { 'lk.pii.error': error, delegationId: delegation.id },
+            { 'lk.pii.error': error, 'lk.pii.delegation_id': delegation.id },
             'Client delegation failed',
           );
       })
