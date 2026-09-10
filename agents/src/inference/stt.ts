@@ -821,19 +821,26 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let cleanedUp = false;
       let finalTranscriptReceived = false;
       let finalizationComplete = false;
+      let sessionClosedReceived = false;
       let sessionCloseSent = false;
+      let pendingFinalizations = 0;
       let finalizationTimeout: ReturnType<typeof setTimeout> | undefined;
       let vadStream: VADStream | null = null;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
 
       const sendSessionClose = (socket: WebSocket) => {
-        if (sessionCloseSent || socket.readyState !== 1) return;
+        if (sessionCloseSent || sessionClosedReceived || socket.readyState !== 1) return;
         sessionCloseSent = true;
+        if (finalizationTimeout) {
+          clearTimeout(finalizationTimeout);
+          finalizationTimeout = undefined;
+        }
         socket.send(JSON.stringify({ type: 'session.close' }));
       };
 
       const sendSessionFinalize = (socket: WebSocket) => {
+        pendingFinalizations += 1;
         socket.send(JSON.stringify({ type: 'session.finalize' }));
       };
 
@@ -861,11 +868,21 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       const scheduleFinalizationTimeout = () => {
-        if (!inputEnded || finalizationComplete || cleanedUp) return;
+        if (
+          !inputEnded ||
+          finalizationComplete ||
+          sessionCloseSent ||
+          sessionClosedReceived ||
+          cleanedUp
+        ) {
+          return;
+        }
         if (finalizationTimeout) clearTimeout(finalizationTimeout);
-        // Lifecycle acknowledgements are not transcript barriers. End after transcript inactivity.
+        // Some providers omit session.finalized. Request closure after transcript inactivity.
         finalizationTimeout = setTimeout(
-          finishFinalization,
+          () => {
+            if (ws) sendSessionClose(ws);
+          },
           finalTranscriptReceived ? TRANSCRIPT_INACTIVITY_TIMEOUT_MS : FIRST_TRANSCRIPT_TIMEOUT_MS,
         );
       };
@@ -1035,8 +1052,18 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               case 'session.created':
                 break;
               case 'session.finalized':
+                pendingFinalizations = Math.max(0, pendingFinalizations - 1);
+                if (inputEnded && pendingFinalizations === 0 && ws) sendSessionClose(ws);
                 break;
               case 'session.closed':
+                if (!inputEnded && !sessionCloseSent) {
+                  throw new APIStatusError({
+                    message: 'LiveKit STT session closed before input ended',
+                    options: { statusCode: -1, retryable: true },
+                  });
+                }
+                sessionClosedReceived = true;
+                finishFinalization();
                 break;
               case 'start_of_speech':
                 this.processStartOfSpeech();
