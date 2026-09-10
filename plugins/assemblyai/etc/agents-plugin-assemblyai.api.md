@@ -72,7 +72,7 @@ export type STTEncoding = 'pcm_s16le' | 'pcm_mulaw';
 // Warning: (ae-missing-release-tag) "STTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type STTModels = 'universal-streaming-english' | 'universal-streaming-multilingual' | 'u3-rt-pro' | 'u3-rt-pro-beta-1' | 'universal-3-5-pro' | 'u3-pro';
+export type STTModels = 'universal-streaming-english' | 'universal-streaming-multilingual' | 'u3-rt-pro' | 'u3-rt-pro-beta-1' | 'universal-3-5-pro' | 'universal-3-6-pro' | 'u3-pro';
 
 // Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -85,6 +85,7 @@ export interface STTOptions {
     // (undocumented)
     baseUrl: string;
     bufferSizeMs: number;
+    continuousPartials?: boolean;
     // (undocumented)
     domain?: string;
     // (undocumented)
@@ -94,8 +95,10 @@ export interface STTOptions {
     // (undocumented)
     formatTurns?: boolean;
     inactivityTimeout?: number;
+    interruptionDelay?: number;
     // (undocumented)
     keytermsPrompt?: string[];
+    languageCodes?: string | string[];
     // (undocumented)
     languageDetection?: boolean;
     // (undocumented)
