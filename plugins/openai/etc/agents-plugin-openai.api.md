@@ -549,7 +549,7 @@ interface GPTLiveModelOptions {
     model?: string;
     // (undocumented)
     responsesOptions?: ResponsesDelegationOptions;
-    voice?: string | Record<string, unknown>;
+    voice?: GPTLiveVoices | (string & NonNullable<unknown>) | Record<string, unknown>;
 }
 
 // @public
@@ -590,6 +590,9 @@ class GPTLiveSession extends llm.DuplexSession {
     // (undocumented)
     _updateTools(tools: llm.ToolContext): Promise<void>;
 }
+
+// @public
+type GPTLiveVoices = 'aster' | 'beacon' | 'cinder' | 'marin' | 'stone' | 'vesper';
 
 // Warning: (ae-missing-release-tag) "GroqAudioModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1216,6 +1219,7 @@ declare namespace realtime {
         RealtimeSession_2 as RealtimeSession,
         ResponsesDelegationOptions,
         GPTLiveDelegation,
+        GPTLiveVoices,
         GPTLiveModelOptions,
         GPTLiveModel,
         GPTLiveSession
@@ -1693,7 +1697,7 @@ interface ResponsesConfig {
         name: string;
     };
     // (undocumented)
-    tools?: Record<string, unknown>[];
+    tools?: OpenAI.Responses.Tool[];
 }
 
 // @public
@@ -1857,7 +1861,16 @@ type ServerEvent = {
     delegation_id?: string | null;
     event?: ResponsesEvent;
 } | {
-    type: 'session.usage.updated' | 'session.closed';
+    type: 'session.usage.updated';
+    usage?: {
+        seconds?: number;
+    };
+    context_window?: {
+        usage_ratio?: number | null;
+    } | null;
+} | {
+    type: 'session.closed';
+    reason?: 'close_requested' | 'expired' | 'content' | 'remote_hangup' | 'connection_lost' | null;
     usage?: {
         seconds?: number;
     };
@@ -1868,7 +1881,10 @@ type ServerEvent = {
     type: 'error';
     error?: ErrorBody;
 } | {
-    type: 'session.updated' | 'session.input_audio.muted' | 'session.input_audio.unmuted' | 'session.instructions.appended' | 'session.thinking.appended' | 'session.commentary.appended';
+    type: 'session.updated' | 'session.input_audio.muted' | 'session.input_audio.unmuted';
+    client_event_id?: string;
+} | {
+    type: 'session.instructions.appended' | 'session.thinking.appended' | 'session.commentary.appended';
     client_event_id?: string;
 };
 

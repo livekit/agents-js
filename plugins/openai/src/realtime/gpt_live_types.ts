@@ -4,7 +4,7 @@
 import type OpenAI from 'openai';
 import type { Reasoning } from 'openai/resources/shared.js';
 
-/** GPT-Live v3 alpha wire types. Field names follow the service protocol. @public */
+/** GPT-Live wire types. Field names follow the service protocol. @public */
 export type DelegationTarget = 'responses' | 'client';
 /** @public */
 export type InputRole = 'developer' | 'user' | 'assistant';
@@ -18,7 +18,7 @@ export interface InputItem {
 export interface ResponsesConfig {
   model?: string;
   instructions?: string;
-  tools?: Record<string, unknown>[];
+  tools?: OpenAI.Responses.Tool[];
   tool_choice?: string | { type: 'function'; name: string };
   parallel_tool_calls?: boolean;
   reasoning?: Reasoning;
@@ -93,7 +93,7 @@ export interface ErrorBody {
   param?: string | null;
   client_event_id?: string | null;
 }
-/** Server fields are optional so missing alpha fields do not end a session. @public */
+/** Server fields are optional so missing fields do not end a session. @public */
 export type ServerEvent =
   | { type: 'session.started'; session?: { id?: string | null } }
   | { type: 'session.output_audio.delta'; delta?: string }
@@ -109,16 +109,30 @@ export type ServerEvent =
     }
   | { type: 'response.event'; delegation_id?: string | null; event?: ResponsesEvent }
   | {
-      type: 'session.usage.updated' | 'session.closed';
+      type: 'session.usage.updated';
+      usage?: { seconds?: number };
+      context_window?: { usage_ratio?: number | null } | null;
+    }
+  | {
+      type: 'session.closed';
+      reason?:
+        | 'close_requested'
+        | 'expired'
+        | 'content'
+        | 'remote_hangup'
+        | 'connection_lost'
+        | null;
       usage?: { seconds?: number };
       context_window?: { usage_ratio?: number | null } | null;
     }
   | { type: 'error'; error?: ErrorBody }
   | {
+      type: 'session.updated' | 'session.input_audio.muted' | 'session.input_audio.unmuted';
+      client_event_id?: string;
+    }
+  | {
+      /** Sent at the estimated context-injection end; does not indicate speech completion. */
       type:
-        | 'session.updated'
-        | 'session.input_audio.muted'
-        | 'session.input_audio.unmuted'
         | 'session.instructions.appended'
         | 'session.thinking.appended'
         | 'session.commentary.appended';

@@ -18,7 +18,7 @@ import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { ReadableStream, type ReadableStreamDefaultController } from 'node:stream/web';
 import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket from 'ws';
-import { OpenAITool } from '../tools.js';
+import { toResponsesTool } from '../tool_utils.js';
 import type {
   ClientEvent,
   Delegation,
@@ -32,8 +32,8 @@ import type {
 
 const SAMPLE_RATE = 24000;
 const MIN_SILENCE_DURATION = 800;
-const DEFAULT_MODEL = 'gpt-live-1-diamond-alpha';
-const DEFAULT_BACKEND_MODEL = 'gpt-5.6-sol';
+const DEFAULT_MODEL = 'gpt-live-1';
+const DEFAULT_BACKEND_MODEL = 'gpt-5.6-luna';
 const SPEAK_NOW = 'Do not wait for the caller to speak first. After that, pause and listen.';
 const ASK_INSTRUCTED = `Immediately follow the instruction below. ${SPEAK_NOW}`;
 const ASK_TYPED = `Reply to the caller now, don't repeat what they said. ${SPEAK_NOW}`;
@@ -45,7 +45,7 @@ const FATAL_ERROR_CODES = new Set(['insufficient_quota', 'invalid_api_key']);
  * @public
  */
 export interface ResponsesDelegationOptions {
-  /** Defaults to gpt-5.6-sol. */
+  /** Defaults to gpt-5.6-luna. */
   model?: string;
   /** Backend instructions, separate from the voice persona. */
   instructions?: string;
@@ -68,13 +68,19 @@ export interface GPTLiveDelegation {
   pendingTranscript: string;
 }
 
-/** Options for the OpenAI GPT-Live full-duplex voice model (v3 alpha).
+/** Suggested GPT-Live voice names. Other supported names also pass through to the API. @public */
+export type GPTLiveVoices = 'aster' | 'beacon' | 'cinder' | 'marin' | 'stone' | 'vesper';
+
+/** Options for the OpenAI GPT-Live full-duplex voice model.
  * @public
  */
 export interface GPTLiveModelOptions {
   model?: string;
-  /** A named voice (marin by default), or an authorized custom voice object. */
-  voice?: string | Record<string, unknown>;
+  /**
+   * A named voice (marin by default), or an authorized custom voice object. Fixed at startup.
+   * Names pass through unchanged.
+   */
+  voice?: GPTLiveVoices | (string & NonNullable<unknown>) | Record<string, unknown>;
   /** Fixed at startup. Client delegation requires an agent with no tools. */
   delegation?: DelegationTarget;
   responsesOptions?: ResponsesDelegationOptions;
@@ -154,6 +160,8 @@ interface DelegatedResponse {
 /**
  * GPT-Live WebSocket session, accessible through Agent.duplexSession.
  * Also emits openai_server_event_received, openai_client_event_queued and delegation_created.
+ * Append methods queue context without waiting for acknowledgment. The appended events arrive
+ * at the estimated context-injection end and do not indicate speech completion.
  * @public
  */
 export class GPTLiveSession extends llm.DuplexSession {
@@ -255,19 +263,10 @@ export class GPTLiveSession extends llm.DuplexSession {
     };
   }
 
-  private buildTools(): Record<string, unknown>[] {
+  private buildTools(): NonNullable<ResponsesConfig['tools']> {
     return this._tools.flatten().flatMap((tool) => {
-      if (llm.isFunctionTool(tool)) {
-        return [
-          {
-            type: 'function',
-            name: tool.name,
-            description: tool.description,
-            parameters: llm.toJsonSchema(tool.parameters),
-          },
-        ];
-      }
-      if (tool instanceof OpenAITool) return [tool.toToolConfig()];
+      const converted = toResponsesTool(tool, false);
+      if (converted) return [converted];
       this.logger.debug({ tool: tool.id }, 'GPT-Live delegation ignores unsupported tool');
       return [];
     });
@@ -314,7 +313,7 @@ export class GPTLiveSession extends llm.DuplexSession {
       type: 'session.update',
       event_id: shortuuid('delegation_update_'),
       session: { delegation: { type: 'responses', responses } },
-    });
+    } satisfies ClientEvent);
   }
 
   private async main(): Promise<void> {
@@ -376,7 +375,6 @@ export class GPTLiveSession extends llm.DuplexSession {
       headers: {
         'User-Agent': 'LiveKit Agents',
         Authorization: `Bearer ${this.opts.apiKey}`,
-        'OpenAI-Alpha': 'quicksilver=v3',
       },
       handshakeTimeout: this.opts.connOptions.timeoutMs,
     });
@@ -480,6 +478,11 @@ export class GPTLiveSession extends llm.DuplexSession {
         break;
       case 'session.usage.updated':
       case 'session.closed':
+        if (event.type === 'session.closed')
+          this.logger.debug(
+            { reason: event.reason ?? null, sessionId: this._sessionId },
+            'GPT-Live session closed',
+          );
         if (event.context_window?.usage_ratio != null)
           this.logger.debug(
             { usageRatio: event.context_window.usage_ratio },
@@ -667,7 +670,10 @@ export class GPTLiveSession extends llm.DuplexSession {
     this.delegatedResponses.delete(delegationId);
     if (!pending.callIds.size) return;
     for (const callId of pending.callIds) this.callToDelegation.delete(callId);
-    this.sendEvent({ type: 'response.create', event_id: shortuuid('response_create_') });
+    this.sendEvent({
+      type: 'response.create',
+      event_id: shortuuid('response_create_'),
+    } satisfies ClientEvent);
   }
 
   private handleUsage(seconds: number): void {
@@ -735,7 +741,7 @@ export class GPTLiveSession extends llm.DuplexSession {
             chunk.data.byteOffset,
             chunk.data.byteLength,
           ).toString('base64'),
-        });
+        } satisfies ClientEvent);
       }
     }
   }
@@ -757,15 +763,26 @@ export class GPTLiveSession extends llm.DuplexSession {
     content: string,
     delegationId: string | null,
   ): void {
-    this.sendEvent({ type, event_id: shortuuid('append_'), delegation_id: delegationId, content });
+    this.sendEvent({
+      type,
+      event_id: shortuuid('append_'),
+      delegation_id: delegationId,
+      content,
+    } satisfies ClientEvent);
   }
   /** Replace microphone input with silence while the model continues speaking. */
   muteInput(): void {
-    this.sendEvent({ type: 'session.input_audio.mute', event_id: shortuuid('mute_') });
+    this.sendEvent({
+      type: 'session.input_audio.mute',
+      event_id: shortuuid('mute_'),
+    } satisfies ClientEvent);
   }
   /** Restore microphone input. */
   unmuteInput(): void {
-    this.sendEvent({ type: 'session.input_audio.unmute', event_id: shortuuid('unmute_') });
+    this.sendEvent({
+      type: 'session.input_audio.unmute',
+      event_id: shortuuid('unmute_'),
+    } satisfies ClientEvent);
   }
 
   async close(): Promise<void> {
@@ -778,7 +795,7 @@ export class GPTLiveSession extends llm.DuplexSession {
           () => this.connectionDone?.resolve(undefined),
           SESSION_CLOSE_TIMEOUT,
         );
-        this.wsSend(this.ws, { type: 'session.close' });
+        this.wsSend(this.ws, { type: 'session.close' } satisfies ClientEvent);
       } else {
         this.connectionDone?.resolve(undefined);
       }
@@ -830,7 +847,7 @@ export class GPTLiveSession extends llm.DuplexSession {
         type: 'response.item.create',
         event_id: shortuuid('tool_output_'),
         item: { type: 'function_call_output', call_id: output.callId, output: output.output },
-      });
+      } satisfies ClientEvent);
       this.delegatedResponses.get(delegationId)?.returned.add(output.callId);
       this.maybeContinueResponse(delegationId);
     }

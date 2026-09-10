@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger, llm, type metrics, voice } from '@livekit/agents';
+import { initializeLogger, llm, log, type metrics, voice } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { setTimeout as delay } from 'node:timers/promises';
+import { setTimeout as delay, setImmediate } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { z } from 'zod';
@@ -76,6 +76,8 @@ class Server {
   autoStart = true;
   autoClose = true;
   closeUsage = 0;
+  closeReason: Extract<GPTLive.ServerEvent, { type: 'session.closed' }>['reason'] =
+    'close_requested';
   requests: { url: string | undefined; headers: Record<string, unknown> }[] = [];
   constructor() {
     this.server.on('connection', (ws, req) => {
@@ -90,7 +92,13 @@ class Server {
         if (event.type === 'session.start' && this.autoStart)
           ws.send(JSON.stringify({ type: 'session.started', session: { id: `live_${index}` } }));
         if (event.type === 'session.close' && this.autoClose)
-          ws.send(JSON.stringify({ type: 'session.closed', usage: { seconds: this.closeUsage } }));
+          ws.send(
+            JSON.stringify({
+              type: 'session.closed',
+              reason: this.closeReason,
+              usage: { seconds: this.closeUsage },
+            } satisfies GPTLive.ServerEvent),
+          );
       });
     });
   }
@@ -154,6 +162,7 @@ afterEach(async () => {
   vi.useRealTimers();
   await Promise.all(sessions.map((session) => session.close()));
   await server.stop();
+  vi.restoreAllMocks();
 });
 
 describe('GPTLiveModel', () => {
@@ -169,8 +178,17 @@ describe('GPTLiveModel', () => {
     expect(gate.update(pcm())).toBe(false);
   });
 
-  it('waits for complete configuration before sending the first event', async () => {
-    const session = create();
+  it.each([
+    'aster',
+    'beacon',
+    'cinder',
+    'marin',
+    'stone',
+    'vesper',
+    'future-voice',
+    { id: 'voice_test' },
+  ])('sends the complete startup configuration with voice %j unchanged', async (selectedVoice) => {
+    const session = create({ voice: selectedVoice });
     await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
     await server.send(session, { type: 'session.updated' });
     expect(server.events()).toEqual([]);
@@ -179,16 +197,16 @@ describe('GPTLiveModel', () => {
     await session._updateSession('Be concise.', ctx, tools);
     await waitCount(1);
     expect(startConfig()).toMatchObject({
-      model: 'gpt-live-1-diamond-alpha',
+      model: 'gpt-live-1',
       instructions: 'Be concise.',
-      audio: { format: { type: 'audio/pcm', rate: 24000 }, output: { voice: 'marin' } },
+      audio: { format: { type: 'audio/pcm', rate: 24000 }, output: { voice: selectedVoice } },
       input: [
         { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'a prior turn' }] },
       ],
       delegation: {
         type: 'responses',
         responses: {
-          model: 'gpt-5.6-sol',
+          model: 'gpt-5.6-luna',
           tools: [{ name: 'getWeather', parameters: { required: ['location'] } }],
         },
       },
@@ -197,10 +215,10 @@ describe('GPTLiveModel', () => {
       url: '/v1/live/sessions',
       headers: {
         authorization: 'Bearer sk-test',
-        'openai-alpha': 'quicksilver=v3',
         'user-agent': 'LiveKit Agents',
       },
     });
+    expect(server.requests[0]?.headers).not.toHaveProperty('openai-alpha');
   });
 
   it.each(['config', 'ack', 'immediate'] as const)(
@@ -253,8 +271,9 @@ describe('GPTLiveModel', () => {
     });
   });
 
-  it('preserves function schemas and hosted tools', async () => {
+  it('preserves function schemas and tool context order with hosted tools', async () => {
     const session = create();
+    class OtherProviderTool extends llm.ProviderTool {}
     const raw = llm.tool({
       name: 'raw',
       description: 'Raw schema',
@@ -269,9 +288,10 @@ describe('GPTLiveModel', () => {
       '',
       undefined,
       new llm.ToolContext([
-        weather,
         raw,
         new WebSearch({ searchContextSize: 'low' }),
+        new OtherProviderTool({ id: 'other' }),
+        weather,
         new FileSearch({ vectorStoreIds: ['vs_1'] }),
         new CodeInterpreter({ container: 'c1' }),
       ]),
@@ -280,8 +300,8 @@ describe('GPTLiveModel', () => {
     expect(startConfig().delegation).toMatchObject({
       responses: {
         tools: [
-          { name: 'getWeather' },
           { name: 'raw', parameters: { required: ['value'] } },
+          { name: 'getWeather' },
           { type: 'web_search', search_context_size: 'low' },
           { type: 'file_search', vector_store_ids: ['vs_1'] },
           { type: 'code_interpreter', container: 'c1' },
@@ -298,7 +318,7 @@ describe('GPTLiveModel', () => {
     await expect(session._updateInstructions('Be verbose.')).rejects.toThrow('immutable');
     expect(startConfig().delegation).toEqual({
       type: 'responses',
-      responses: { model: 'gpt-5.6-sol' },
+      responses: { model: 'gpt-5.6-luna' },
     });
     await session._updateTools(tools);
     session._updateOptions({ toolChoice: 'required' });
@@ -366,6 +386,92 @@ describe('GPTLiveModel', () => {
       { type: 'session.commentary.append', delegation_id: 'd1', content: '62 and raining.' },
       { type: 'session.thinking.append', delegation_id: 'd1', content: 'Still checking.' },
     ]);
+  });
+
+  it('does not block commands or finish speech on delayed context acknowledgments', async () => {
+    const model = new GPTLiveModel({ apiKey: 'sk-test', baseURL: server.url });
+    const session = model.session();
+    sessions.push(session);
+    vi.spyOn(model, 'session').mockReturnValue(session);
+    const adapted = new llm.DuplexRealtimeAdapter(model).session();
+    const generations: llm.GenerationCreatedEvent[] = [];
+    const errors: llm.RealtimeModelError[] = [];
+    adapted.on('generation_created', (event) => generations.push(event));
+    adapted.on('error', (event) => errors.push(event));
+    try {
+      await adapted._updateSession();
+      await vi.waitFor(() => expect(session.sessionId).toBeDefined());
+      session.appendInstructions('Be concise.');
+      session.appendThinking('The caller is returning a chair.');
+      session.appendCommentary('Ask for the order number.');
+      session.pushAudio(pcm());
+      await waitCount(5);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      await vi.advanceTimersByTimeAsync(model._opts.connOptions.timeoutMs * 2);
+      vi.useRealTimers();
+      expect(server.events().map((event) => event.type)).toEqual([
+        'session.start',
+        'session.instructions.append',
+        'session.thinking.append',
+        'session.commentary.append',
+        'session.input_audio.append',
+      ]);
+      expect(errors).toEqual([]);
+      expect(generations).toEqual([]);
+
+      const speech = {
+        type: 'session.output_audio.delta',
+        delta: Buffer.from(pcm(100, 0.2).data.buffer).toString('base64'),
+      } satisfies GPTLive.ServerEvent;
+      await server.send(session, transcript('assistant', 'What is', 0));
+      await server.send(session, speech);
+      await vi.waitFor(() => expect(generations).toHaveLength(1));
+      const messages = generations[0]!.messageStream.getReader();
+      const message = (await messages.read()).value!;
+      const audio = message.audioStream.getReader();
+      expect((await audio.read()).value?.samplesPerChannel).toBe(2400);
+      let nextArrived = false;
+      const nextAudio = audio.read().then((value) => {
+        nextArrived = true;
+        return value;
+      });
+      const acknowledgmentTypes = [
+        'session.instructions.appended',
+        'session.thinking.appended',
+        'session.commentary.appended',
+      ] as const;
+      for (const [index, type] of acknowledgmentTypes.entries()) {
+        await server.send(session, { type, client_event_id: server.events()[index + 1]!.event_id });
+        await setImmediate();
+        expect(nextArrived).toBe(false);
+        expect(generations).toHaveLength(1);
+        expect(adapted.chatCtx.items).toEqual([]);
+      }
+      await server.send(session, transcript('assistant', ' your order number?', 100));
+      await server.send(session, speech);
+      expect((await nextAudio).value?.samplesPerChannel).toBe(2400);
+      for (let i = 0; i < 8; i++)
+        await server.send(session, {
+          type: 'session.output_audio.delta',
+          delta: Buffer.from(pcm().data.buffer).toString('base64'),
+        });
+      while (!(await audio.read()).done) {
+        /* Drain the trailing silence. */
+      }
+      const chunks: string[] = [];
+      for await (const chunk of message.textStream)
+        chunks.push(typeof chunk === 'string' ? chunk : chunk.text);
+      expect(chunks.join('')).toBe('What is your order number?');
+      expect((await messages.read()).done).toBe(true);
+      expect(generations).toHaveLength(1);
+      expect(errors).toEqual([]);
+      audio.releaseLock();
+      messages.releaseLock();
+    } finally {
+      vi.useRealTimers();
+      await adapted.close();
+      await model.close();
+    }
   });
 
   it('rejects tools under client delegation and accepts an empty tool list', async () => {
@@ -514,39 +620,56 @@ describe('GPTLiveModel', () => {
     expect(server.events().at(-1)?.type).toBe('response.create');
   });
 
-  it('reports backend tokens separately and drains final voice usage during close', async () => {
-    const session = create();
-    const collected: (metrics.AgentMetrics & { reasoningTokens?: number })[] = [];
-    session.on('metrics_collected', (metric) => collected.push(metric));
-    await ready(session);
-    await server.send(session, {
-      type: 'session.usage.updated',
-      usage: { seconds: 14 },
-      context_window: { usage_ratio: 0.2 },
-    });
-    await server.response(session, completed());
-    server.closeUsage = 27;
-    await session.close();
-    expect(collected.filter((metric) => metric.type === 'llm_metrics')).toMatchObject([
-      {
-        requestId: 'resp_1',
-        promptTokens: 376,
-        promptCachedTokens: 100,
-        cacheCreationTokens: 20,
-        completionTokens: 18,
-        reasoningTokens: 5,
-        metadata: { modelName: 'gpt-5.6-sol' },
-      },
-    ]);
-    const frontend = collected.filter(
-      (metric): metric is metrics.RealtimeModelMetrics =>
-        metric.type === 'realtime_model_metrics' && metric.sessionDurationMs !== undefined,
-    );
-    expect(frontend.map((metric) => metric.sessionDurationMs)).toEqual([14000, 13000]);
-    expect(frontend.every((metric) => metric.inputTokens === 0 && metric.outputTokens === 0)).toBe(
-      true,
-    );
-  });
+  it.each([
+    'close_requested',
+    'expired',
+    'content',
+    'remote_hangup',
+    'connection_lost',
+    null,
+    undefined,
+  ] as const)(
+    'logs close reason %s and drains final usage separately from backend tokens',
+    async (reason) => {
+      const debug = vi.spyOn(log(), 'debug');
+      const session = create();
+      const collected: (metrics.AgentMetrics & { reasoningTokens?: number })[] = [];
+      session.on('metrics_collected', (metric) => collected.push(metric));
+      await ready(session);
+      await server.send(session, {
+        type: 'session.usage.updated',
+        usage: { seconds: 14 },
+        context_window: { usage_ratio: 0.2 },
+      });
+      await server.response(session, completed());
+      server.closeUsage = 27;
+      server.closeReason = reason;
+      await session.close();
+      expect(debug).toHaveBeenCalledWith(
+        { reason: reason ?? null, sessionId: 'live_0' },
+        'GPT-Live session closed',
+      );
+      expect(collected.filter((metric) => metric.type === 'llm_metrics')).toMatchObject([
+        {
+          requestId: 'resp_1',
+          promptTokens: 376,
+          promptCachedTokens: 100,
+          cacheCreationTokens: 20,
+          completionTokens: 18,
+          reasoningTokens: 5,
+          metadata: { modelName: 'gpt-5.6-sol' },
+        },
+      ]);
+      const frontend = collected.filter(
+        (metric): metric is metrics.RealtimeModelMetrics =>
+          metric.type === 'realtime_model_metrics' && metric.sessionDurationMs !== undefined,
+      );
+      expect(frontend.map((metric) => metric.sessionDurationMs)).toEqual([14000, 13000]);
+      expect(
+        frontend.every((metric) => metric.inputTokens === 0 && metric.outputTokens === 0),
+      ).toBe(true);
+    },
+  );
 
   it('bounds the close drain when the service never sends session.closed', async () => {
     const session = create();

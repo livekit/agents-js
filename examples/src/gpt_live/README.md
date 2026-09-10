@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # GPT-Live
 
-Two examples for the OpenAI GPT-Live full-duplex voice model (v3 alpha).
+Two examples for the OpenAI GPT-Live full-duplex voice model.
 An OpenAI key with GPT-Live access is required. Set `OPENAI_API_KEY`, `LIVEKIT_URL`,
 `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` in `examples/.env`.
 
@@ -27,6 +27,14 @@ The delegation mode is fixed when the session starts.
 | `gpt_live_agent.ts`    | `responses` (default) | A backend Responses model      |
 | `client_delegation.ts` | `client`              | An LLM running in your process |
 
+## Voices
+
+Both examples use `voice: 'marin'`. `openai.realtime.GPTLiveVoices` also offers `aster`,
+`beacon`, `cinder`, `stone`, and `vesper`. Other supported names and custom voice objects
+still pass through to the API.
+
+A voice is fixed at session start.
+
 ## Responses delegation
 
 The backend calls the agent's function tools through the framework. `responsesOptions`
@@ -38,6 +46,16 @@ Startup history keeps the newest 128 rendered messages. The service enforces its
 startup limit and 500-token append limit. The plugin has no tokenizer for these limits.
 Instructions and history cannot be replaced after startup. Use `appendInstructions` for
 standing rules, `appendThinking` for silent context, and `appendCommentary` for text to say.
+
+Append methods queue commands without waiting for acknowledgment. The corresponding
+`session.instructions.appended`, `session.thinking.appended`, and
+`session.commentary.appended` events arrive at the estimated context-injection end.
+They do not indicate that speech has finished. The plugin does not gate later commands on
+these events or apply an acknowledgment timeout. The adapter uses output audio to determine
+when speech ends.
+
+`session.closed.reason` accepts `close_requested`, `expired`, `content`, `remote_hangup`, and
+`connection_lost`. The plugin logs the reason and collects final usage for each close event.
 
 ## Client delegation
 

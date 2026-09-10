@@ -73,7 +73,7 @@ export default defineAgent({
       llm: new openai.realtime.GPTLiveModel({
         voice: 'marin',
         responsesOptions: {
-          model: 'gpt-5.6-sol',
+          model: 'gpt-5.6-luna',
           instructions: 'Use tools when current information is required.',
         },
       }),
