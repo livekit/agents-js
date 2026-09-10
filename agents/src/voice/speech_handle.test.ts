@@ -212,10 +212,7 @@ describe('SpeechHandle interruption watchdog (#2065)', () => {
       const handle = SpeechHandle.create();
       // A reply task that never observes its interruption — the shape of the #2065 hang,
       // where the only escape from the post-interrupt playout wait is this abort signal.
-      const task = Task.from(
-        (controller) =>
-          new Promise<void>((resolve) => waitForAbort(controller.signal).then(resolve)),
-      );
+      const task = Task.from((controller) => waitForAbort(controller.signal));
       handle._tasks.push(task);
       handle._authorizeGeneration();
       const generationWait = handle._waitForGeneration();

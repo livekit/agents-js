@@ -139,7 +139,8 @@ export class VADStream extends baseStream {
     this.#speechBufferMaxReached = false;
     this.#prefixPaddingSamples = 0;
 
-    this.#task = new Promise(async () => {
+    let resampler: AudioResampler | null = null;
+    const runInference = async () => {
       let inferenceData = new Float32Array(this.#model.windowSizeSamples);
 
       // a copy is exposed to the user in END_OF_SPEECH
@@ -156,7 +157,6 @@ export class VADStream extends baseStream {
 
       let inputFrames: AudioFrame[] = [];
       let inferenceFrames: AudioFrame[] = [];
-      let resampler: AudioResampler | null = null;
 
       // used to avoid drift when the sampleRate ratio is not an integer
       let inputCopyRemainingFrac = 0.0;
@@ -426,8 +426,13 @@ export class VADStream extends baseStream {
           }
         }
       }
-      resampler?.close();
-    });
+    };
+    this.#task = runInference()
+      .catch((error) => {
+        this.#logger.error(error, 'Error in VAD inference task');
+        if (!this.closed) this.close();
+      })
+      .finally(() => resampler?.close());
   }
 
   /**
