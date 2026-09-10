@@ -534,6 +534,28 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
+  override flush() {
+    if (this.input.closed) throw new Error('Input is closed');
+    if (this.closed) throw new Error('Stream is closed');
+    this.#flushInputResampler();
+    this.input.put(SpeechStream.FLUSH_SENTINEL);
+  }
+
+  override endInput() {
+    if (this.input.closed) throw new Error('Input is closed');
+    if (this.closed) throw new Error('Stream is closed');
+    this.#flushInputResampler();
+    this.input.close();
+  }
+
+  #flushInputResampler() {
+    if (!this.resampler) return;
+    const resampler = this.resampler;
+    this.resampler = undefined;
+    for (const frame of resampler.flush()) this.input.put(frame);
+    resampler.close();
+  }
+
   async #connect(signal: AbortSignal): Promise<{ ws: WebSocket; inbox: WebSocketInbox }> {
     const startedAt = performance.now();
     let ws: WebSocket;

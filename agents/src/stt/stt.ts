@@ -545,14 +545,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    if (this.resampler) {
-      const resampler = this.resampler;
-      this.resampler = undefined;
-      for (const frame of resampler.flush()) {
-        this.input.put(frame);
-      }
-      resampler.close();
-    }
     this.input.put(SpeechStream.FLUSH_SENTINEL);
   }
 
@@ -563,14 +555,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     }
     if (this.closed) {
       throw new Error('Stream is closed');
-    }
-    if (this.resampler) {
-      const resampler = this.resampler;
-      this.resampler = undefined;
-      for (const frame of resampler.flush()) {
-        this.input.put(frame);
-      }
-      resampler.close();
     }
     this.input.close();
   }

@@ -27,6 +27,10 @@ export class SpeechStream extends stt.SpeechStream {
     // (undocumented)
     close(): void;
     // (undocumented)
+    endInput(): void;
+    // (undocumented)
+    flush(): void;
+    // (undocumented)
     label: string;
     // (undocumented)
     protected run(): Promise<void>;
