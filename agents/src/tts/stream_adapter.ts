@@ -8,7 +8,7 @@ import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Task } from '../utils.js';
 import { createTimedString } from '../voice/io.js';
-import type { ChunkedStream, TTSError } from './tts.js';
+import type { ChunkedStream, FallbackActivatedEvent, TTSError } from './tts.js';
 import { SynthesizeStream, TTS } from './tts.js';
 
 export class StreamAdapter extends TTS {
@@ -26,6 +26,10 @@ export class StreamAdapter extends TTS {
     this.emit('error', error);
   };
 
+  #forwardFallbackActivated = (event: FallbackActivatedEvent) => {
+    this.emit('fallback_activated', event);
+  };
+
   constructor(tts: TTS, sentenceTokenizer?: SentenceTokenizer) {
     super(tts.sampleRate, tts.numChannels, { streaming: true, alignedTranscript: true });
     this.#tts = tts;
@@ -37,6 +41,7 @@ export class StreamAdapter extends TTS {
 
     this.#tts.on('metrics_collected', this.#forwardMetrics);
     this.#tts.on('error', this.#forwardError);
+    this.#tts.on('fallback_activated', this.#forwardFallbackActivated);
   }
 
   // a pass-through speaks whatever dialect it wraps
@@ -81,6 +86,7 @@ export class StreamAdapter extends TTS {
   async close(): Promise<void> {
     this.#tts.off('metrics_collected', this.#forwardMetrics);
     this.#tts.off('error', this.#forwardError);
+    this.#tts.off('fallback_activated', this.#forwardFallbackActivated);
     await super.close();
   }
 
