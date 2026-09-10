@@ -276,6 +276,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
   #reconnectEvent = new Event();
   // set once we have sent CloseStream, so the close that follows is expected
   #closingWs = false;
+  // Scoped to the current connection. An abandoned `input.next()` stays parked inside
+  // the queue and shifts the next frame off it for a promise nobody awaits, so a
+  // sender left over from a previous attempt steals audio from the current one.
+  #attempt = new AbortController();
 
   // keyterms set while the user is speaking; applied at END_OF_SPEECH (latest wins)
   /** @internal */
@@ -333,9 +337,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
     // Outer Loop: Handles reconnections (Configuration updates)
     while (!this.closed) {
       let stopHeartbeat: (() => void) | undefined;
+      let sendPromise: Promise<void> | undefined;
       try {
         this.#reconnectEvent.clear();
         this.#closingWs = false;
+        this.#attempt = new AbortController();
 
         const baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
         const url = `${baseUrl}?${queryString.stringify(this._liveConfig())}`;
@@ -381,7 +387,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         });
 
         // 2. Run Concurrent Tasks (Send & Receive)
-        const sendPromise = this.#sendTask();
+        sendPromise = this.#sendTask();
         const recvPromise = this.#recvTask();
         const reconnectWait = this.#reconnectEvent.wait();
 
@@ -405,6 +411,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
         throw error; // Let Base Class handle retry logic
       } finally {
         stopHeartbeat?.();
+        // settle this attempt's sender before the loop opens the next socket, or its
+        // abandoned queue read will steal a frame from the next one
+        this.#attempt.abort();
+        await sendPromise?.catch(() => {});
         if (this.#ws?.readyState === WebSocket.OPEN) {
           this.#ws.close();
         }
@@ -420,14 +430,35 @@ class SpeechStreamv2 extends stt.SpeechStream {
     const samples50ms = Math.floor(this.#opts.sampleRate / 20);
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
 
+    // Manual Iterator to allow racing against Reconnect Signal
+    const iterator = this.input[Symbol.asyncIterator]();
+    const attempt = this.#attempt;
+
+    try {
+      await this.#pumpAudio(iterator, attempt, audioBstream);
+    } catch (e) {
+      if (attempt.signal.aborted) return; // teardown cancelled the queue read
+      throw e;
+    }
+
+    // Only send CloseStream if we are exiting normally (not reconnecting)
+    if (!this.#reconnectEvent.isSet && this.#ws!.readyState === WebSocket.OPEN) {
+      this.#logger.debug('Sending CloseStream message to Deepgram');
+      this.#closingWs = true;
+      this.#ws!.send(_CLOSE_MSG);
+    }
+  }
+
+  async #pumpAudio(
+    iterator: AsyncIterator<AudioFrame | typeof stt.SpeechStream.FLUSH_SENTINEL>,
+    attempt: AbortController,
+    audioBstream: AudioByteStream,
+  ) {
     let hasEnded = false;
     let inputEnded = false;
 
-    // Manual Iterator to allow racing against Reconnect Signal
-    const iterator = this.input[Symbol.asyncIterator]();
-
     while (true) {
-      const nextPromise = iterator.next();
+      const nextPromise = iterator.next({ signal: attempt.signal });
       // If reconnect signal fires, abort the wait
       const abortPromise = this.#reconnectEvent.wait().then(() => ({ abort: true }) as const);
 
@@ -474,13 +505,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
       }
 
       if (inputEnded) break;
-    }
-
-    // Only send CloseStream if we are exiting normally (not reconnecting)
-    if (!this.#reconnectEvent.isSet && this.#ws!.readyState === WebSocket.OPEN) {
-      this.#logger.debug('Sending CloseStream message to Deepgram');
-      this.#closingWs = true;
-      this.#ws!.send(_CLOSE_MSG);
     }
   }
 
