@@ -6,12 +6,22 @@ import { ReadableStream } from 'node:stream/web';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { APIError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
+import { basic } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TTS_STARTED_TIME } from '../types.js';
 import { FallbackAdapter } from './fallback_adapter.js';
-import { ChunkedStream, SynthesizeStream, TTS } from './tts.js';
+import { StreamAdapter } from './stream_adapter.js';
+import { ChunkedStream, type FallbackActivatedEvent, SynthesizeStream, TTS } from './tts.js';
 
 const SAMPLE_RATE = 24000;
+const FALLBACK_ACTIVATED_EVENT: FallbackActivatedEvent = {
+  sessionId: 'session-1',
+  fallbackType: 'fallback',
+  provider: 'deepgram',
+  model: 'deepgram/aura-2',
+  voice: 'asteria',
+  cause: 'provider_error',
+};
 
 class MockSynthesizeStream extends SynthesizeStream {
   label = 'mock.SynthesizeStream';
@@ -124,6 +134,30 @@ describe('TTS FallbackAdapter', () => {
     initializeLogger({ pretty: false });
     // Suppress unhandled rejections from background tasks inside SynthesizeStream
     process.on('unhandledRejection', () => {});
+  });
+
+  it('forwards fallback activation events', async () => {
+    const source = new MockTTS('source');
+    const adapter = new FallbackAdapter({ ttsInstances: [source] });
+    const events: FallbackActivatedEvent[] = [];
+    adapter.on('fallback_activated', (event) => events.push(event));
+
+    source.emit('fallback_activated', FALLBACK_ACTIVATED_EVENT);
+
+    expect(events).toEqual([FALLBACK_ACTIVATED_EVENT]);
+    await adapter.close();
+  });
+
+  it('forwards fallback activation events through StreamAdapter', async () => {
+    const source = new MockTTS('source');
+    const adapter = new StreamAdapter(source, new basic.SentenceTokenizer());
+    const events: FallbackActivatedEvent[] = [];
+    adapter.on('fallback_activated', (event) => events.push(event));
+
+    source.emit('fallback_activated', FALLBACK_ACTIVATED_EVENT);
+
+    expect(events).toEqual([FALLBACK_ACTIVATED_EVENT]);
+    await adapter.close();
   });
 
   it('should fall back to the next TTS when the primary stream fails before any pushText', async () => {
