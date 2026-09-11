@@ -29,6 +29,12 @@ type RealtimeSessionInternals = {
 
 type ChatCtxUpdateInternals = {
   chatCtxEventFutures: Record<string, Future<void>>;
+  createChatCtxUpdateEvents: (
+    chatCtx: llm.ChatContext,
+  ) => Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]>;
+  handleConversationItemCreated: (
+    event: api_proto.ConversationItemCreatedEvent | api_proto.ConversationItemAddedEvent,
+  ) => void;
   handleConversationItemDeleted: (event: api_proto.ConversationItemDeletedEvent) => void;
   handleError: (event: api_proto.ErrorEvent) => void;
   itemCreateFutures: Record<string, Future<void>>;
@@ -537,6 +543,16 @@ describe('RealtimeSession chat context event rejection handling', () => {
     expect(session.itemCreateFutures.item_1).toBe(sibling);
   });
 
+  it('settles a duplicate item ID waiter as a no-op', () => {
+    const session = createInFlightUpdate();
+    const waiter = session.itemCreateFutures.item_1!;
+
+    session.handleError(rejection('chat_ctx_create_abc', 'item_create_duplicate_item_id'));
+
+    expect(waiter.done).toBe(true);
+    expect(waiter.rejected).toBe(false);
+  });
+
   it('still throws a fatal error tied to a chat context event', () => {
     const session = createInFlightUpdate();
     const waiter = session.itemCreateFutures.item_1!;
@@ -545,6 +561,40 @@ describe('RealtimeSession chat context event rejection handling', () => {
       session.handleError(rejection('chat_ctx_create_abc', 'insufficient_quota')),
     ).toThrow(APIError);
     expect(waiter.rejected).toBe(true);
+  });
+});
+
+describe('RealtimeSession conversation item handling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('appends an item anchored to a deleted item', async () => {
+    stubTaskRuntime();
+    const session = new RealtimeModel({
+      apiKey: 'test-key',
+    }).session() as unknown as ChatCtxUpdateInternals;
+    session.remoteChatCtx.insert(
+      undefined,
+      new llm.ChatMessage({ id: 'item_1', role: 'user', content: 'hi' }),
+    );
+
+    session.handleConversationItemCreated({
+      type: 'conversation.item.added',
+      event_id: 'evt',
+      previous_item_id: 'deleted_item',
+      item: {
+        id: 'item_2',
+        object: 'realtime.item',
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'hello' }],
+      },
+    });
+    const remoteCtx = session.remoteChatCtx.toChatCtx();
+
+    expect(remoteCtx.items.map((item) => item.id)).toEqual(['item_1', 'item_2']);
+    await expect(session.createChatCtxUpdateEvents(remoteCtx)).resolves.toEqual([]);
   });
 });
 
