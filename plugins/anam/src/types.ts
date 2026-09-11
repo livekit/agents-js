@@ -2,6 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 /** @public */
+export type DirectorNotes = {
+  /** Normalized expressivity in [0, 1] controlling how strongly the avatar responds to style/cues. */
+  expressivity?: number;
+  /** Built-in expressive style, mutually exclusive with customStylePrompt. */
+  presetStyle?: string;
+  /** Free-form expressive style prompt, mutually exclusive with presetStyle. */
+  customStylePrompt?: string;
+};
+
+/** @public */
 export type PersonaConfig = {
   /** Optional display name (prod flow) */
   name?: string;
@@ -9,6 +19,8 @@ export type PersonaConfig = {
   avatarId?: string;
   /** Optional avatar model version, e.g. "cara-3" or "cara-4-latest" (prod flow) */
   avatarModel?: string;
+  /** Optional per-session director-notes overrides (prod flow) */
+  directorNotes?: DirectorNotes;
   /** Optional persona id (dev flow) */
   personaId?: string;
 };
