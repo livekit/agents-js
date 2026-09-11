@@ -309,6 +309,33 @@ class CloseRaceChunkedStream extends ChunkedStream {
 }
 
 describe('ChunkedStream', () => {
+  it.each([true, false])(
+    'reports a terminal failure and closes output, retryable=%s',
+    async (retryable) => {
+      const parent = new HookTTS();
+      const errors: Error[] = [];
+      parent.on('error', (event) => errors.push(event.error));
+      class FailingStream extends ChunkedStream {
+        label = 'test.FailingStream';
+        attempts = 0;
+        protected async run() {
+          this.attempts++;
+          throw new APIConnectionError({ message: 'expected failure', options: { retryable } });
+        }
+      }
+      const stream = new FailingStream('Hello.', parent, {
+        maxRetry: 1,
+        timeoutMs: 100,
+        retryIntervalMs: 0,
+      });
+      await consume(stream);
+      // Allow unhandled background rejections to surface in the test runner.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.message).toBe('expected failure');
+      expect(stream.attempts).toBe(retryable ? 2 : 1);
+    },
+  );
   beforeAll(() => {
     initializeLogger({ pretty: false });
   });

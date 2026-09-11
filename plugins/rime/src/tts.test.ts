@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger, log } from '@livekit/agents';
+import { type APIError, initializeLogger, log } from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts } from '@livekit/agents-plugins-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -34,6 +34,39 @@ describe('Rime TTS streaming', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  it.each(['body failure', 'timeout'])(
+    'does not retry HTTP %s after audio delivery',
+    async (mode) => {
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      const body = new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+      });
+      const fetch = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(body))
+        .mockImplementation(async () => new Response(Buffer.from(pcmChunk(9600))));
+      const value = new TTS({ apiKey: 'test-key' });
+      const errors: APIError[] = [];
+      value.on('error', (event) => errors.push(event.error as APIError));
+      const stream = value.synthesize('Hello.', {
+        maxRetry: 2,
+        retryIntervalMs: 0,
+        timeoutMs: 100,
+      });
+      controller.enqueue(pcmChunk(9600));
+      expect((await stream.next()).done).toBe(false);
+      if (mode === 'body failure') controller.error(new Error('private provider error'));
+      for await (const frame of stream) void frame;
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.retryable).toBe(false);
+      expect(String(errors[0])).not.toContain('private provider error');
+      await value.close();
+    },
+  );
 
   it('preserves model-specific default speakers', () => {
     const defaultTTS = new TTS({ apiKey: 'test-rime-key' });
@@ -79,6 +112,7 @@ describe('Rime TTS streaming', () => {
     const rimeTTS = new TTS({
       apiKey: 'test-rime-key',
       baseURL: 'https://rime.test/v1/rime-tts',
+      allowCustomEndpoint: true,
       modelId: 'coda',
       samplingRate: 16000,
       repetition_penalty: 1.1,
