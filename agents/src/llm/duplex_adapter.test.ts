@@ -817,6 +817,17 @@ describe('duplex requested replies', () => {
 });
 
 describe('duplex model integration', () => {
+  // a duplex model has no text modality: it hears and speaks only audio, and the adapter resolves
+  // a reply from the sound the model produces. under a text simulation there is no audio, so the
+  // session refuses to start rather than time out on the first turn
+  it('refuses to start under a text simulation', async () => {
+    vi.spyOn(AgentSession.prototype, '_textOnly', 'get').mockReturnValue(true);
+    const session = new AgentSession({ llm: new FakeDuplexModel(), vad: null });
+    await expect(session.start({ agent: new Agent({ instructions: '' }) })).rejects.toThrow(
+      /text simulation/,
+    );
+  });
+
   it('does not arm an away timer from a shutdown transcript and still handles restarts', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     const model = new FakeDuplexModel();
