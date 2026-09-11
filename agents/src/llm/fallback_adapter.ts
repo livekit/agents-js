@@ -7,7 +7,7 @@ import { log } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import type { ChatContext } from './chat_context.js';
 import type { ChatChunk } from './llm.js';
-import { LLM, LLMStream } from './llm.js';
+import { LLM, LLMStream, hasResponse } from './llm.js';
 import type { ToolChoice, ToolContextLike } from './tool_context.js';
 
 /**
@@ -193,6 +193,9 @@ class FallbackLLMStream extends LLMStream {
     llm: LLM,
     checkRecovery: boolean = false,
   ): AsyncGenerator<Throws<ChatChunk, APIError>, void, unknown> {
+    const signal = this.abortController.signal;
+    if (!checkRecovery && signal.aborted) return;
+
     const connOptions: APIConnectOptions = {
       ...this.connOptions,
       maxRetry: this.adapter.maxRetryPerLLM,
@@ -209,16 +212,19 @@ class FallbackLLMStream extends LLMStream {
       extraKwargs: this.extraKwargs,
     });
 
-    // Listen for error events - child LLMs emit errors via their LLM instance, not the stream
-    let streamError: Error | undefined;
-    const errorHandler = (ev: { error: Error }) => {
-      streamError = ev.error;
-    };
+    // Keep EventEmitter's unhandled 'error' behavior from interrupting child retries.
+    const errorHandler = () => {};
     llm.on('error', errorHandler);
+    const closeStream = () => stream.close();
+    if (!checkRecovery) {
+      signal.addEventListener('abort', closeStream, { once: true });
+      if (signal.aborted) closeStream();
+    }
 
     try {
       let shouldSetCurrent = !checkRecovery;
       for await (const chunk of stream) {
+        if (!checkRecovery && signal.aborted) return;
         if (shouldSetCurrent) {
           shouldSetCurrent = false;
           this._currentStream = stream;
@@ -226,11 +232,12 @@ class FallbackLLMStream extends LLMStream {
         yield chunk;
       }
 
-      // If an error was emitted but not thrown through iteration, throw it now
-      if (streamError) {
-        throw streamError;
+      if (!checkRecovery && signal.aborted) return;
+      if (stream._error) {
+        throw stream._error;
       }
     } catch (error) {
+      if (!checkRecovery && signal.aborted) return;
       if (error instanceof APIError) {
         if (checkRecovery) {
           this._log.warn({ llm: llm.label(), error }, 'recovery failed');
@@ -258,6 +265,8 @@ class FallbackLLMStream extends LLMStream {
       }
       throw error;
     } finally {
+      signal.removeEventListener('abort', closeStream);
+      stream.close();
       llm.off('error', errorHandler);
     }
   }
@@ -298,9 +307,9 @@ class FallbackLLMStream extends LLMStream {
 
   /**
    * Main run method - iterates through LLMs with fallback logic.
-   * @throws {APIConnectionError} When all LLM providers have been exhausted
+   * @throws {APIError} When generation fails or all LLM providers have been exhausted
    */
-  protected async run(): Promise<Throws<void, APIConnectionError>> {
+  protected async run(): Promise<Throws<void, APIError>> {
     const startTime = Date.now();
 
     // Check if all LLMs are unavailable
@@ -310,6 +319,7 @@ class FallbackLLMStream extends LLMStream {
     }
 
     for (let i = 0; i < this.adapter.llms.length; i++) {
+      if (this.abortController.signal.aborted) return;
       const llm = this.adapter.llms[i]!;
       const status = this.adapter._status[i]!;
 
@@ -319,6 +329,7 @@ class FallbackLLMStream extends LLMStream {
       );
 
       if (status.available || allFailed) {
+        let responseSent = false;
         let textSent = '';
         const toolCallsSent: string[] = [];
 
@@ -328,6 +339,7 @@ class FallbackLLMStream extends LLMStream {
           let chunkCount = 0;
           for await (const chunk of this.tryGenerate(llm, false)) {
             chunkCount++;
+            responseSent ||= hasResponse(chunk);
             // Track what's been sent
             if (chunk.delta) {
               if (chunk.delta.content) {
@@ -354,6 +366,7 @@ class FallbackLLMStream extends LLMStream {
           );
           return;
         } catch (error) {
+          if (this.abortController.signal.aborted) return;
           // Mark as unavailable if it was available before
           if (status.available) {
             status.available = false;
@@ -363,7 +376,7 @@ class FallbackLLMStream extends LLMStream {
           this.tryRecovery(llm, i);
 
           // Check if we sent data before failing
-          if (textSent || toolCallsSent.length > 0) {
+          if (responseSent) {
             const extra = {
               'lk.pii.response.text': textSent,
               'lk.pii.response.function_calls': toolCallsSent,
@@ -374,6 +387,7 @@ class FallbackLLMStream extends LLMStream {
                 { llm: llm.label(), ...extra },
                 'failed after sending chunk, skip retrying. Set `retryOnChunkSent` to `true` to enable.',
               );
+              if (error instanceof APIError) error.retryable = false;
               throw error;
             }
 

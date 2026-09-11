@@ -45,7 +45,7 @@ const API_ERROR_SYMBOL = Symbol('APIError');
  */
 export class APIError extends Error {
   readonly body: object | null;
-  readonly retryable: boolean;
+  retryable: boolean;
 
   constructor(message: string, { body = null, retryable = true }: APIErrorOptions = {}) {
     super(message);
