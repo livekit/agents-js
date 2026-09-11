@@ -73,16 +73,6 @@ export class SimpleOTLPHttpLogExporter {
   private readonly config: SimpleOTLPHttpLogExporterConfig | SimpleOTLPHttpLogExporterUrlConfig;
   private jwt: string | null = null;
 
-  private static readonly FORCE_DOUBLE_KEYS = new Set([
-    'transcriptConfidence',
-    'transcriptionDelay',
-    'endOfTurnDelay',
-    'onUserTurnCompletedDelay',
-    'llmNodeTtft',
-    'ttsNodeTtfb',
-    'e2eLatency',
-  ]);
-
   constructor(config: SimpleOTLPHttpLogExporterConfig | SimpleOTLPHttpLogExporterUrlConfig) {
     this.config = config;
   }
@@ -136,7 +126,7 @@ export class SimpleOTLPHttpLogExporter {
   private buildPayload(records: SimpleLogRecord[]): object {
     const resourceAttrs = Object.entries(this.config.resourceAttributes).map(([key, value]) => ({
       key,
-      value: this.convertValue(value, key),
+      value: this.convertValue(value),
     }));
 
     if (!this.config.resourceAttributes['service.name']) {
@@ -146,7 +136,7 @@ export class SimpleOTLPHttpLogExporter {
     const scopeAttrs = this.config.scopeAttributes
       ? Object.entries(this.config.scopeAttributes).map(([key, value]) => ({
           key,
-          value: this.convertValue(value, key),
+          value: this.convertValue(value),
         }))
       : [];
 
@@ -188,11 +178,11 @@ export class SimpleOTLPHttpLogExporter {
   ): Array<{ key: string; value: unknown }> {
     return Object.entries(attrs).map(([key, value]) => ({
       key,
-      value: this.convertValue(value, key),
+      value: this.convertValue(value),
     }));
   }
 
-  private convertValue(value: unknown, path: string = ''): unknown {
+  private convertValue(value: unknown): unknown {
     if (value === null || value === undefined) {
       return { stringValue: '' };
     }
@@ -200,14 +190,6 @@ export class SimpleOTLPHttpLogExporter {
       return { stringValue: value };
     }
     if (typeof value === 'number') {
-      const leafKey =
-        path
-          .split('.')
-          .pop()
-          ?.replace(/\[\d+\]$/, '') ?? path;
-      if (SimpleOTLPHttpLogExporter.FORCE_DOUBLE_KEYS.has(leafKey)) {
-        return { doubleValue: value };
-      }
       return Number.isInteger(value) ? { intValue: String(value) } : { doubleValue: value };
     }
     if (typeof value === 'boolean') {
@@ -216,7 +198,7 @@ export class SimpleOTLPHttpLogExporter {
     if (Array.isArray(value)) {
       return {
         arrayValue: {
-          values: value.map((v, i) => this.convertValue(v, `${path}[${i}]`)),
+          values: value.map((v) => this.convertValue(v)),
         },
       };
     }
@@ -224,13 +206,13 @@ export class SimpleOTLPHttpLogExporter {
       // Honor `toJSON()` like `JSON.stringify` does.
       const toJSON = (value as { toJSON?: unknown }).toJSON;
       if (typeof toJSON === 'function') {
-        return this.convertValue((value as { toJSON(): unknown }).toJSON(), path);
+        return this.convertValue((value as { toJSON(): unknown }).toJSON());
       }
       return {
         kvlistValue: {
           values: Object.entries(value as Record<string, unknown>).map(([k, v]) => ({
             key: k,
-            value: this.convertValue(v, path ? `${path}.${k}` : k),
+            value: this.convertValue(v),
           })),
         },
       };
