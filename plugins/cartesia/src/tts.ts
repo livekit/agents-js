@@ -22,7 +22,8 @@ import {
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { request } from 'node:https';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { type RawData, WebSocket } from 'ws';
 import {
   TTSDefaultVoiceId,
@@ -315,11 +316,13 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     const baseUrl = new URL(this.#opts.baseUrl);
     const doneFut = new Future<void>();
+    let responseReceived = false;
 
-    const req = request(
+    const isHttps = baseUrl.protocol === 'https:';
+    const req = (isHttps ? httpsRequest : httpRequest)(
       {
         hostname: baseUrl.hostname,
-        port: parseInt(baseUrl.port) || (baseUrl.protocol === 'https:' ? 443 : 80),
+        port: parseInt(baseUrl.port) || (isHttps ? 443 : 80),
         path: '/tts/bytes',
         method: 'POST',
         headers: {
@@ -329,7 +332,16 @@ export class ChunkedStream extends tts.ChunkedStream {
         signal: this.abortSignal,
       },
       (res) => {
-        res.on('data', (chunk) => {
+        responseReceived = true;
+        const statusCode = res.statusCode ?? 0;
+        const rejected = statusCode < 200 || statusCode >= 300;
+        const errorBody: Buffer[] = [];
+
+        res.on('data', (chunk: Buffer) => {
+          if (rejected) {
+            errorBody.push(chunk);
+            return;
+          }
           for (const frame of bstream.write(chunk)) {
             this.queue.put({
               requestId,
@@ -340,6 +352,18 @@ export class ChunkedStream extends tts.ChunkedStream {
           }
         });
         res.on('close', () => {
+          if (rejected) {
+            const body = Buffer.concat(errorBody).toString().trim();
+            if (!doneFut.done) {
+              doneFut.reject(
+                new APIStatusError({
+                  message: `Cartesia /tts/bytes request failed with HTTP ${statusCode}`,
+                  options: { statusCode, body: body ? { raw: body } : null },
+                }),
+              );
+            }
+            return;
+          }
           for (const frame of bstream.flush()) {
             this.queue.put({
               requestId,
@@ -365,7 +389,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       if (!doneFut.done) doneFut.reject(err);
     });
     req.on('close', () => {
-      if (!doneFut.done) doneFut.resolve();
+      if (!responseReceived && !doneFut.done) doneFut.resolve();
     });
     req.write(JSON.stringify(json));
     req.end();
@@ -375,6 +399,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     } catch (e) {
       if (this.abortSignal.aborted) return;
       if (!this.queue.closed) this.queue.close();
+      if (e instanceof APIError) throw e;
       throw toRetryableConnectionError(e);
     }
   }
@@ -955,7 +980,6 @@ const toCartesiaOptions = (
       sample_rate: opts.sampleRate,
     },
     language: getBaseLanguage(opts.language),
-    max_buffer_delay_ms: 0,
   };
 
   if (opts.pronunciationDictId) {
@@ -978,8 +1002,12 @@ const toCartesiaOptions = (
     }
   }
 
-  if (streaming && opts.wordTimestamps !== false) {
-    result.add_timestamps = true;
+  if (streaming) {
+    // Websocket-only: /tts/bytes rejects requests that carry it.
+    result.max_buffer_delay_ms = 0;
+    if (opts.wordTimestamps !== false) {
+      result.add_timestamps = true;
+    }
   }
 
   return result;
