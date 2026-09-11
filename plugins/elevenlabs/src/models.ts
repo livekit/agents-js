@@ -10,7 +10,15 @@ export type TTSModels =
   | 'eleven_flash_v2_5'
   | 'eleven_turbo_v2'
   | 'eleven_turbo_v2_5'
-  | 'eleven_v3';
+  | 'eleven_v3'
+  | 'eleven_v3_conversational';
+
+const DIALOGUE_TTS_MODEL_PREFIX = 'eleven_v3';
+
+/** Whether the model must be synthesized via the text-to-dialogue API. */
+export function isDialogueModel(model: string): boolean {
+  return model.startsWith(DIALOGUE_TTS_MODEL_PREFIX);
+}
 
 export type TTSEncoding =
   | 'mp3_22050_32'
