@@ -69,6 +69,9 @@ const completed = (): GPTLive.ResponsesEvent => ({
 const output = (callId: string) =>
   new llm.FunctionCallOutput({ callId, name: 'getWeather', output: 'rainy', isError: false });
 
+const isSilence = (event: GPTLive.ClientEvent) =>
+  event.type === 'session.input_audio.append' &&
+  Buffer.from(event.audio, 'base64').every((byte) => byte === 0);
 class Server {
   readonly server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   readonly sockets: WebSocket[] = [];
@@ -105,8 +108,9 @@ class Server {
   get url(): string {
     return `http://127.0.0.1:${(this.server.address() as AddressInfo).port}/v1`;
   }
-  events(index = 0): GPTLive.ClientEvent[] {
-    return this.sent[index] ?? [];
+  /** The session pads an idle microphone with silence; sequence assertions ignore that padding. */
+  events(index = 0, silence = false): GPTLive.ClientEvent[] {
+    return (this.sent[index] ?? []).filter((event) => silence || !isSilence(event));
   }
   async send(
     session: GPTLiveSession,
@@ -348,7 +352,7 @@ describe('GPTLiveModel', () => {
     await session._updateSession();
     await waitCount(1);
     session._generateReply('Greet the caller.');
-    session.pushAudio(pcm());
+    session.pushAudio(pcm(100, 0.2));
     await server.send(session, { type: 'session.updated' });
     expect(server.events().map((event) => event.type)).toEqual(['session.start']);
     expect(session.sessionId).toBeUndefined();
@@ -516,7 +520,7 @@ describe('GPTLiveModel', () => {
       session.appendInstructions('Be concise.');
       session.appendThinking('The caller is returning a chair.');
       session.appendCommentary('Ask for the order number.');
-      session.pushAudio(pcm());
+      session.pushAudio(pcm(100, 0.2));
       await waitCount(5);
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       await vi.advanceTimersByTimeAsync(model._opts.connOptions.timeoutMs * 2);
@@ -644,10 +648,10 @@ describe('GPTLiveModel', () => {
     const session = create();
     await ready(session);
     session.pushAudio(pcm(200, 0, 48000, 2));
-    await vi.waitFor(() => expect(server.events().length).toBeGreaterThan(1));
+    await vi.waitFor(() => expect(server.events(0, true).length).toBeGreaterThan(1));
     session.pushAudio(pcm(200));
-    await vi.waitFor(() => expect(server.events().length).toBeGreaterThan(2));
-    for (const event of server.events().slice(1)) {
+    await vi.waitFor(() => expect(server.events(0, true).length).toBeGreaterThan(2));
+    for (const event of server.events(0, true).slice(1)) {
       expect(event.type).toBe('session.input_audio.append');
       if (event.type === 'session.input_audio.append') {
         const bytes = Buffer.from(event.audio, 'base64');
@@ -1194,10 +1198,10 @@ describe('GPTLiveModel', () => {
       if (rate !== 24000) expect(closeResampler).toHaveBeenCalledOnce();
       session.pushAudio(pcm(40, 0, rate));
       await delay(20);
-      expect(server.events(1).map((event) => event.type)).toEqual(['session.start']);
+      expect(server.events(1, true).map((event) => event.type)).toEqual(['session.start']);
       session.pushAudio(pcm(200, 0, rate));
-      await vi.waitFor(() => expect(server.events(1).length).toBeGreaterThan(1));
-      for (const event of server.events(1)) {
+      await vi.waitFor(() => expect(server.events(1, true).length).toBeGreaterThan(1));
+      for (const event of server.events(1, true)) {
         if (event.type !== 'session.input_audio.append') continue;
         const audio = Buffer.from(event.audio, 'base64');
         expect(audio.length).toBe(4800);
@@ -1454,5 +1458,40 @@ describe('GPT-Live AgentSession integration', () => {
     } finally {
       await session.close();
     }
+  });
+});
+
+// GPT-Live speaks only while its input clock is running, and that clock is the audio the client
+// appends. A session with no microphone (text simulation, muted input, text console) would
+// otherwise never hear a reply to anything it asks.
+describe('GPTLiveSession input clock', () => {
+  it('appends silence while no microphone audio is pushed', async () => {
+    const session = create();
+    await ready(session);
+    await vi.waitFor(
+      () =>
+        expect(
+          server.events(0, true).filter((event) => event.type === 'session.input_audio.append')
+            .length,
+        ).toBeGreaterThanOrEqual(3),
+      { timeout: 2000 },
+    );
+    for (const event of server.events(0, true).slice(1)) {
+      expect(event.type).toBe('session.input_audio.append');
+      if (event.type === 'session.input_audio.append')
+        expect(Buffer.from(event.audio, 'base64')).toHaveLength(4800);
+    }
+  });
+
+  it('does not pad a live microphone', async () => {
+    const session = create();
+    await ready(session);
+    for (let i = 0; i < 6; i++) {
+      session.pushAudio(pcm(100, 0.2));
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(
+      server.events(0, true).filter((event) => event.type === 'session.input_audio.append'),
+    ).toHaveLength(6);
   });
 });
