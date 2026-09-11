@@ -1057,6 +1057,11 @@ export class RealtimeSession extends llm.RealtimeSession {
                 const errorMsg = event.reason || `WebSocket closed with code ${event.code}`;
                 this.#logger.error(`Gemini Live session error: ${errorMsg}${truncationNote}`);
 
+                // An abnormal close is the same failure as `onerror`'s
+                // network-level errors: restart so the main task reconnects and
+                // re-seeds the chat context, instead of leaving the session
+                // parked forever on a dead socket.
+                const willRestart = !this.sessionShouldClose.isSet;
                 this.emitError(
                   new APIStatusError({
                     message: `${errorMsg}${truncationNote}`,
@@ -1068,8 +1073,11 @@ export class RealtimeSession extends llm.RealtimeSession {
                         : null,
                     },
                   }),
-                  false,
+                  willRestart,
                 );
+                if (willRestart) {
+                  this.markRestartNeeded();
+                }
               } else {
                 this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
               }
