@@ -159,7 +159,12 @@ export class RoomSessionTransport extends SessionTransport {
   }
 
   override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
-    if (this.closed || !this.room.isConnected) return;
+    // a dropped message is a request the caller waits out in full, so failures
+    // are thrown rather than logged: only the caller knows whether anyone is
+    // waiting on this one
+    if (this.closed || !this.room.isConnected) {
+      throw new Error('room session transport is closed');
+    }
 
     try {
       const data = msg.toBinary();
@@ -175,7 +180,7 @@ export class RoomSessionTransport extends SessionTransport {
       await writer.write(new Uint8Array(data));
       await writer.close();
     } catch (e) {
-      log().warn({ error: e }, 'failed to send binary stream message');
+      throw new Error(`failed to send binary stream message: ${e}`, { cause: e });
     }
   }
 
@@ -301,7 +306,9 @@ export class TcpSessionTransport extends SessionTransport {
 
   override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
     const socket = this.socket;
-    if (this.closed || socket === null) return;
+    if (this.closed || socket === null) {
+      throw new Error('tcp session transport is closed');
+    }
 
     const data = msg.toBinary();
     const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
@@ -655,7 +662,16 @@ export class SessionHost {
     const msg = new pb.AgentSessionMessage({
       message: { case: 'event', value: event },
     });
-    this.trackTask(Task.from(async () => this.transport.sendMessage(msg)));
+    // nobody awaits an event, so a failed one is logged rather than thrown
+    this.trackTask(
+      Task.from(async () => {
+        try {
+          await this.transport.sendMessage(msg);
+        } catch (e) {
+          log().warn({ error: e }, 'failed to send session event');
+        }
+      }),
+    );
   }
 
   private emitEvent<Event extends pb.AgentSessionEvent['event']>(
