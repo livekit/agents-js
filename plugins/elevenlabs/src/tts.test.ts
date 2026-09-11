@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { TTS } from './tts.js';
 
@@ -120,6 +120,64 @@ async function synthesizeWithMessages(
   } finally {
     stream.close();
     await elevenlabs.close();
+    await closeWebSocketServer(wss);
+  }
+}
+
+async function interruptStream(
+  onCloseContext?: (ws: WebSocket, contextId: string) => void,
+  markConnectionNonCurrent = false,
+  onConnection?: (connection: Awaited<ReturnType<TTS['currentConnection']>>) => void,
+): Promise<{ messages: Record<string, unknown>[]; events: unknown[]; socketClosed: boolean }> {
+  const { wss, baseURL } = await startWebSocketServer();
+  const messages: Record<string, unknown>[] = [];
+  let ws: WebSocket | undefined;
+  let socketClosed = false;
+
+  wss.on('connection', (socket) => {
+    ws = socket;
+    socket.on('close', () => {
+      socketClosed = true;
+    });
+    socket.on('message', (raw) => {
+      const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+      messages.push(message);
+      if (message.close_context === true) {
+        onCloseContext?.(socket, message.context_id as string);
+      }
+    });
+  });
+
+  const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+  const connection = await elevenlabs.currentConnection();
+  onConnection?.(connection);
+  const synthesizeStream = elevenlabs.stream();
+  const events: unknown[] = [];
+  const outputTask = (async () => {
+    for await (const event of synthesizeStream) {
+      events.push(event);
+    }
+  })();
+
+  try {
+    synthesizeStream.pushText('hello world. ');
+    synthesizeStream.flush();
+    await waitUntil(() => messages.some((message) => 'text' in message));
+    if (markConnectionNonCurrent) {
+      elevenlabs.updateOptions({ voiceId: 'different-voice' });
+    }
+    synthesizeStream.close();
+    await waitUntil(() => messages.some((message) => message.close_context === true));
+    await waitFor(outputTask);
+    if (markConnectionNonCurrent) {
+      await waitUntil(() => socketClosed);
+    }
+
+    return { messages, events, socketClosed };
+  } finally {
+    synthesizeStream.close();
+    await elevenlabs.close();
+    ws?.close();
     await closeWebSocketServer(wss);
   }
 }
@@ -257,5 +315,40 @@ describe('ElevenLabs TTS websocket', () => {
     });
 
     expect(events.length).toBeGreaterThan(0);
+  });
+
+  it('drops audio for an unregistered context', async () => {
+    const { events, socketClosed } = await interruptStream((ws, contextId) => {
+      ws.send(JSON.stringify({ context_id: contextId, audio, isFinal: true }));
+    }, true);
+
+    expect(events).toEqual([]);
+    expect(socketClosed).toBe(true);
+  });
+
+  it('keeps an unregistered context closable', async () => {
+    const { messages } = await interruptStream();
+
+    expect(messages).toContainEqual(
+      expect.objectContaining({ close_context: true, context_id: expect.any(String) }),
+    );
+  });
+
+  it('unregisters an interrupted stream before closing its context', async () => {
+    const calls: string[] = [];
+    await interruptStream(undefined, false, (connection) => {
+      const unregisterStream = connection.unregisterStream.bind(connection);
+      const closeContext = connection.closeContext.bind(connection);
+      vi.spyOn(connection, 'unregisterStream').mockImplementation((contextId) => {
+        calls.push('unregisterStream');
+        unregisterStream(contextId);
+      });
+      vi.spyOn(connection, 'closeContext').mockImplementation((contextId) => {
+        calls.push('closeContext');
+        closeContext(contextId);
+      });
+    });
+
+    expect(calls.indexOf('unregisterStream')).toBeLessThan(calls.indexOf('closeContext'));
   });
 });
