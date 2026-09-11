@@ -11,7 +11,7 @@ import type { ChatContext } from './chat_context.js';
 import {
   type ChatContent,
   type ChatItem,
-  FunctionCall,
+  type FunctionCall,
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
@@ -289,25 +289,6 @@ export const oaiParams = (schema: any, isOpenai: boolean = true): OpenAIFunction
     required,
     additionalProperties,
   };
-};
-
-/** @internal */
-export const oaiBuildFunctionInfo = (
-  toolCtx: ToolContext,
-  toolCallId: string,
-  toolName: string,
-  rawArgs: string,
-): FunctionCall => {
-  const tool = toolCtx.getFunctionTool(toolName);
-  if (!tool) {
-    throw new Error(`AI tool ${toolName} not found`);
-  }
-
-  return FunctionCall.create({
-    callId: toolCallId,
-    name: toolName,
-    args: rawArgs,
-  });
 };
 
 const templateTokenPatterns = [
