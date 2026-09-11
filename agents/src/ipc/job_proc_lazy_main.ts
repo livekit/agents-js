@@ -15,6 +15,7 @@ import {
   validateSessionEndTimeout,
   waitForEntrypointShutdown,
 } from '../job_lifecycle.js';
+import { loggerOptions, setLoggerState } from '../log_core.js';
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import { Future, shortuuid } from '../utils.js';
@@ -285,7 +286,11 @@ const startJob = (
             throw new Error('job task already running');
           }
 
-          logger = logger.child({ jobID: msg.value.runningJob.job.id });
+          logger = logger.child({
+            jobID: msg.value.runningJob.job.id,
+            room_id: msg.value.runningJob.job.room?.sid,
+          });
+          setLoggerState(logger, loggerOptions()!);
 
           job = startJob(
             proc,
