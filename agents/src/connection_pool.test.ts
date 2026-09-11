@@ -16,6 +16,27 @@ describe('ConnectionPool', () => {
     return vi.fn(async (_timeout: number): Promise<string> => `conn_${++n}`);
   };
 
+  const deferred = () => {
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, reject, resolve };
+  };
+
+  const closingPool = () => {
+    const closed: string[] = [];
+    const pool = new ConnectionPool<string>({
+      connectCb: makeConnectCb(),
+      closeCb: async (conn) => {
+        closed.push(conn);
+      },
+    });
+    return { closed, pool };
+  };
+
   describe('basic operations', () => {
     it('should create and return a connection', async () => {
       const connections: string[] = [];
@@ -141,6 +162,170 @@ describe('ConnectionPool', () => {
       const conn3 = await pool.get();
       expect(conn3).toBe(conn1); // Should still reuse
       expect(connectCb).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('invalidate', () => {
+    it('does not close a connection still in use', async () => {
+      const { closed, pool } = closingPool();
+
+      const inUse = await pool.get();
+      pool.invalidate();
+
+      const other = await pool.get();
+      expect(other).not.toBe(inUse);
+      expect(closed).not.toContain(inUse);
+    });
+
+    it('closes idle connections immediately', async () => {
+      const { closed, pool } = closingPool();
+
+      const idle = await pool.get();
+      pool.put(idle);
+      pool.invalidate();
+
+      await pool.get();
+      expect(closed).toContain(idle);
+    });
+
+    it('closes a retired connection once returned', async () => {
+      const { closed, pool } = closingPool();
+
+      const inUse = await pool.get();
+      pool.invalidate();
+      pool.put(inUse);
+
+      const fresh = await pool.get();
+      expect(fresh).not.toBe(inUse);
+      expect(closed).toContain(inUse);
+    });
+
+    it('closes a retired connection when removed after an error', async () => {
+      const { closed, pool } = closingPool();
+
+      const inUse = await pool.get();
+      pool.invalidate();
+      pool.remove(inUse);
+
+      await pool.get();
+      expect(closed).toContain(inUse);
+    });
+
+    it('closes retired connections that were never returned when closed', async () => {
+      const { closed, pool } = closingPool();
+
+      const leaked = await pool.get();
+      pool.invalidate();
+      await pool.close();
+
+      expect(closed).toContain(leaked);
+    });
+
+    it('lets an in-flight stream finish before reconnecting', async () => {
+      const { closed, pool } = closingPool();
+
+      const speaking = await pool.get();
+      pool.invalidate();
+
+      const fresh = await pool.get();
+      expect(fresh).not.toBe(speaking);
+      expect(closed).not.toContain(speaking);
+
+      pool.put(speaking);
+      pool.put(fresh);
+      const reused = await pool.get();
+      expect(reused).toBe(fresh);
+      expect(closed).toContain(speaking);
+    });
+
+    it('discards a stale connection when invalidated during its handshake', async () => {
+      const started = deferred();
+      const release = deferred();
+      const closed: string[] = [];
+      let counter = 0;
+      const pool = new ConnectionPool<string>({
+        connectCb: async () => {
+          counter += 1;
+          started.resolve();
+          await release.promise;
+          return `conn_${counter}`;
+        },
+        closeCb: async (conn) => {
+          closed.push(conn);
+        },
+      });
+
+      const acquiring = pool.get();
+      await started.promise;
+      pool.invalidate();
+      release.resolve();
+      const conn = await acquiring;
+
+      expect(conn).toBe('conn_2');
+      expect(closed).toEqual(['conn_1']);
+      pool.put(conn);
+      expect(await pool.get()).toBe(conn);
+    });
+
+    it('prewarm discards a connection invalidated during its handshake', async () => {
+      const started = deferred();
+      const release = deferred();
+      const closed: string[] = [];
+      let counter = 0;
+      const pool = new ConnectionPool<string>({
+        connectCb: async () => {
+          counter += 1;
+          started.resolve();
+          await release.promise;
+          return `conn_${counter}`;
+        },
+        closeCb: async (conn) => {
+          closed.push(conn);
+        },
+      });
+
+      pool.prewarm();
+      await started.promise;
+      pool.invalidate();
+      release.resolve();
+      await vi.waitFor(() => expect(counter).toBe(2));
+
+      expect(await pool.get()).toBe('conn_2');
+      await pool.close();
+      expect(closed.sort()).toEqual(['conn_1', 'conn_2']);
+    });
+
+    it('keeps a connection queued when closing it is cancelled', async () => {
+      const closing = deferred();
+      const finish = deferred();
+      const closed: string[] = [];
+      let attempts = 0;
+      const pool = new ConnectionPool<string>({
+        connectCb: makeConnectCb(),
+        closeCb: async (conn) => {
+          attempts += 1;
+          if (attempts === 1) {
+            closing.resolve();
+            await finish.promise;
+          }
+          closed.push(conn);
+        },
+      });
+
+      const doomed = await pool.get();
+      pool.put(doomed);
+      pool.invalidate();
+
+      const acquiring = pool.get();
+      await closing.promise;
+      const abortError = new Error('The operation was aborted.');
+      abortError.name = 'AbortError';
+      finish.reject(abortError);
+      await expect(acquiring).rejects.toThrow(abortError);
+      expect(closed).not.toContain(doomed);
+
+      await pool.close();
+      expect(closed).toContain(doomed);
     });
   });
 
