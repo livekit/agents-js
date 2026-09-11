@@ -387,13 +387,7 @@ class FallbackLLMStream extends LLMStream {
                 { llm: llm.label(), ...extra },
                 'failed after sending chunk, skip retrying. Set `retryOnChunkSent` to `true` to enable.',
               );
-              if (error instanceof APIError && error.retryable) {
-                throw new APIError(error.message, {
-                  body: error.body,
-                  retryable: false,
-                  cause: error,
-                });
-              }
+              if (error instanceof APIError) error.retryable = false;
               throw error;
             }
 

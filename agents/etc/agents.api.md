@@ -954,7 +954,7 @@ export class APIError extends Error {
     // (undocumented)
     readonly body: object | null;
     // (undocumented)
-    readonly retryable: boolean;
+    retryable: boolean;
     // (undocumented)
     toString(): string;
 }

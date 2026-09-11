@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { APIError, APIStatusError, APITimeoutError } from '../_exceptions.js';
+import { APIConnectionError, APIError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Future } from '../utils.js';
 import { ChatContext, FunctionCall } from './chat_context.js';
@@ -203,14 +203,9 @@ describe('FallbackAdapter retries after output', () => {
     await waitForRecovery(adapter);
 
     expect(chunks).toEqual([chunk]);
-    expect(errors).toEqual([
-      expect.objectContaining({
-        error: expect.objectContaining({ cause: error, retryable: false, message: error.message }),
-        recoverable: false,
-      }),
-    ]);
-    expect(errors[0]!.error).toBeInstanceOf(APIError);
-    expect(error.retryable).toBe(true);
+    expect(errors).toEqual([expect.objectContaining({ error, recoverable: false })]);
+    expect(errors[0]!.error).toBe(error);
+    expect(error.retryable).toBe(false);
     expect(provider.streams).toHaveLength(2); // Foreground and background recovery.
     expect(connOptions).toEqual(DEFAULT_API_CONNECT_OPTIONS);
     expect(stream.connOptions).toBe(connOptions);
@@ -239,19 +234,41 @@ describe('FallbackAdapter retries after output', () => {
     expect(errors[0]!.recoverable).toBe(true);
     expect(errors[1]).toEqual(
       expect.objectContaining({
-        error: expect.objectContaining({
-          cause: error,
-          body: error.body,
-          message: error.message,
-          retryable: false,
-        }),
+        error,
         recoverable: false,
       }),
     );
-    expect(error.retryable).toBe(true);
+    expect(errors[1]!.error).toBe(error);
+    expect(error.retryable).toBe(false);
     expect(provider.streams).toHaveLength(4);
     expect(stream.connOptions).toBe(connOptions);
     expect(connOptions.maxRetry).toBe(1);
+  });
+
+  it.each([
+    ['APIError', () => new APIError('Failed after output')],
+    ['APIConnectionError', () => new APIConnectionError({})],
+    ['APITimeoutError', () => new APITimeoutError({})],
+    ['APIStatusError', () => new APIStatusError({ options: { statusCode: 503 } })],
+  ] as const)('preserves the original %s after output', async (_, createError) => {
+    const error = createError();
+    const provider = new ControlledLLM(async (stream, request) => {
+      stream.send();
+      if (request === 1) throw error;
+    });
+    const adapter = new FallbackAdapter({ llms: [provider] });
+    const errors = observeErrors(adapter);
+    const chunks = await collect(
+      adapter.chat({ chatCtx: new ChatContext(), connOptions: DEFAULT_API_CONNECT_OPTIONS }),
+    );
+    await waitForRecovery(adapter);
+
+    expect(chunks).toEqual([textChunk]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error).toBe(error);
+    expect(errors[0]!.recoverable).toBe(false);
+    expect(error.retryable).toBe(false);
+    expect(provider.streams).toHaveLength(2);
   });
 
   it.each([
