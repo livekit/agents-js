@@ -817,6 +817,10 @@ export class GPTLiveSession extends llm.DuplexSession<{
 
   /** Buffer microphone audio, mixing to mono and resampling to 24 kHz as needed. */
   pushAudio(frame: AudioFrame): void {
+    this.appendAudio(frame);
+  }
+
+  private appendAudio(frame: AudioFrame): void {
     if (this.closing) return;
     const speech = this.speech.get('user');
     if (speech) {
