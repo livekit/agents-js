@@ -6,7 +6,15 @@ import { Plugin } from '@livekit/agents';
 export { LLM } from './llm.js';
 export { STT } from './stt.js';
 export { TTS, ChunkedStream } from './tts.js';
-export type { BasetenLLMOptions, BasetenSttOptions, BasetenTTSOptions } from './types.js';
+export { listVoices, registerVoice } from './qwen3_tts.js';
+export type { ListVoicesOptions, RegisterVoiceOptions } from './qwen3_tts.js';
+export type {
+  BasetenLLMOptions,
+  BasetenSttOptions,
+  BasetenTTSOptions,
+  STTModel,
+  TTSModel,
+} from './types.js';
 class BasetenPlugin extends Plugin {
   constructor() {
     super({
