@@ -32,7 +32,7 @@ export class AssignmentTimeoutError extends Error {
 /**
  * Interface for API error options
  */
-interface APIErrorOptions {
+interface APIErrorOptions extends ErrorOptions {
   body?: object | null;
   retryable?: boolean;
 }
@@ -47,8 +47,8 @@ export class APIError extends Error {
   readonly body: object | null;
   readonly retryable: boolean;
 
-  constructor(message: string, { body = null, retryable = true }: APIErrorOptions = {}) {
-    super(message);
+  constructor(message: string, { body = null, retryable = true, cause }: APIErrorOptions = {}) {
+    super(message, { cause });
     this.name = 'APIError';
 
     this.body = body;
@@ -97,7 +97,7 @@ export class APIStatusError extends APIError {
       isRetryable = false;
     }
 
-    super(message, { body: options.body, retryable: isRetryable });
+    super(message, { body: options.body, retryable: isRetryable, cause: options.cause });
     this.name = 'APIStatusError';
 
     this.statusCode = statusCode;
@@ -127,7 +127,7 @@ export class APIConnectionError extends APIError {
     message?: string;
     options?: APIErrorOptions;
   }) {
-    super(message, { body: null, retryable: options.retryable ?? true });
+    super(message, { body: null, retryable: options.retryable ?? true, cause: options.cause });
     this.name = 'APIConnectionError';
     Error.captureStackTrace(this, APIConnectionError);
   }
@@ -146,7 +146,7 @@ export class APITimeoutError extends APIConnectionError {
   }) {
     const retryable = options?.retryable ?? true;
 
-    super({ message, options: { retryable } });
+    super({ message, options: { retryable, cause: options.cause } });
     this.name = 'APITimeoutError';
     Error.captureStackTrace(this, APITimeoutError);
   }

@@ -307,9 +307,9 @@ class FallbackLLMStream extends LLMStream {
 
   /**
    * Main run method - iterates through LLMs with fallback logic.
-   * @throws {APIConnectionError} When all LLM providers have been exhausted
+   * @throws {APIError} When generation fails or all LLM providers have been exhausted
    */
-  protected async run(): Promise<Throws<void, APIConnectionError>> {
+  protected async run(): Promise<Throws<void, APIError>> {
     const startTime = Date.now();
 
     // Check if all LLMs are unavailable
@@ -387,8 +387,13 @@ class FallbackLLMStream extends LLMStream {
                 { llm: llm.label(), ...extra },
                 'failed after sending chunk, skip retrying. Set `retryOnChunkSent` to `true` to enable.',
               );
-              // The outer LLMStream must not replay output already forwarded to the caller.
-              this._connOptions = { ...this._connOptions, maxRetry: 0 };
+              if (error instanceof APIError && error.retryable) {
+                throw new APIError(error.message, {
+                  body: error.body,
+                  retryable: false,
+                  cause: error,
+                });
+              }
               throw error;
             }
 

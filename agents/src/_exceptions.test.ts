@@ -2,7 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { APIStatusError } from './_exceptions.js';
+import { APIConnectionError, APIError, APIStatusError, APITimeoutError } from './_exceptions.js';
+
+describe('API error causes', () => {
+  it.each([
+    ['APIError', (cause: Error) => new APIError('Failed', { cause })],
+    ['APIStatusError', (cause: Error) => new APIStatusError({ options: { cause } })],
+    ['APIConnectionError', (cause: Error) => new APIConnectionError({ options: { cause } })],
+    ['APITimeoutError', (cause: Error) => new APITimeoutError({ options: { cause } })],
+  ] as const)('preserves the cause through %s', (_, createError) => {
+    const cause = new Error('Original failure');
+    expect(createError(cause).cause).toBe(cause);
+  });
+});
 
 describe('APIStatusError retryability defaults', () => {
   it('treats 408 as retryable by default', () => {

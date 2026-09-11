@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { APITimeoutError } from '../_exceptions.js';
+import { APIError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Future } from '../utils.js';
 import { ChatContext, FunctionCall } from './chat_context.js';
@@ -198,13 +198,80 @@ describe('FallbackAdapter retries after output', () => {
     const adapter = new FallbackAdapter({ llms: [provider], retryOnChunkSent: false });
     const errors = observeErrors(adapter);
     const connOptions = { ...DEFAULT_API_CONNECT_OPTIONS };
-    const chunks = await collect(adapter.chat({ chatCtx: new ChatContext(), connOptions }));
+    const stream = adapter.chat({ chatCtx: new ChatContext(), connOptions });
+    const chunks = await collect(stream);
     await waitForRecovery(adapter);
 
     expect(chunks).toEqual([chunk]);
-    expect(errors).toEqual([expect.objectContaining({ error, recoverable: false })]);
+    expect(errors).toEqual([
+      expect.objectContaining({
+        error: expect.objectContaining({ cause: error, retryable: false, message: error.message }),
+        recoverable: false,
+      }),
+    ]);
+    expect(errors[0]!.error).toBeInstanceOf(APIError);
+    expect(error.retryable).toBe(true);
     expect(provider.streams).toHaveLength(2); // Foreground and background recovery.
     expect(connOptions).toEqual(DEFAULT_API_CONNECT_OPTIONS);
+    expect(stream.connOptions).toBe(connOptions);
+  });
+
+  it('preserves provider error details when output fails on a later outer attempt', async () => {
+    const error = new APIStatusError({
+      message: 'Provider unavailable',
+      options: { statusCode: 503, requestId: 'request-1', body: { detail: 'overloaded' } },
+    });
+    const provider = new ControlledLLM(async (stream, request) => {
+      if (request === 1) throw new APITimeoutError({});
+      if (request === 2) return; // Recovery after the first failure.
+      stream.send();
+      if (request === 3) throw error;
+    });
+    const adapter = new FallbackAdapter({ llms: [provider] });
+    const errors = observeErrors(adapter);
+    const connOptions = { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 1, retryIntervalMs: 0 };
+    const stream = adapter.chat({ chatCtx: new ChatContext(), connOptions });
+    const chunks = await collect(stream);
+    await waitForRecovery(adapter);
+
+    expect(chunks).toEqual([textChunk]);
+    expect(errors).toHaveLength(2);
+    expect(errors[0]!.recoverable).toBe(true);
+    expect(errors[1]).toEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({
+          cause: error,
+          body: error.body,
+          message: error.message,
+          retryable: false,
+        }),
+        recoverable: false,
+      }),
+    );
+    expect(error.retryable).toBe(true);
+    expect(provider.streams).toHaveLength(4);
+    expect(stream.connOptions).toBe(connOptions);
+    expect(connOptions.maxRetry).toBe(1);
+  });
+
+  it.each([
+    new APITimeoutError({ options: { retryable: false } }),
+    new Error('Unexpected provider failure'),
+  ])('preserves an already terminal error: %s', async (error) => {
+    const provider = new ControlledLLM(async (stream, request) => {
+      stream.send();
+      if (request === 1) throw error;
+    });
+    const adapter = new FallbackAdapter({ llms: [provider] });
+    const errors = observeErrors(adapter);
+    const chunks = await collect(
+      adapter.chat({ chatCtx: new ChatContext(), connOptions: DEFAULT_API_CONNECT_OPTIONS }),
+    );
+    await waitForRecovery(adapter);
+
+    expect(chunks).toEqual([textChunk]);
+    expect(errors).toEqual([expect.objectContaining({ error, recoverable: false })]);
+    expect(provider.streams).toHaveLength(2);
   });
 
   it('still falls back after a metadata-only chunk', async () => {
