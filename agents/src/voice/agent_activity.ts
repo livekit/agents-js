@@ -28,7 +28,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
-import { DuplexRealtimeAdapter, DuplexRealtimeSession } from '../llm/duplex_adapter.js';
+import { DuplexRealtimeSession } from '../llm/duplex_adapter.js';
 import { AsyncToolset, type Toolset } from '../llm/index.js';
 import {
   type ChatItem,
@@ -452,14 +452,6 @@ export class AgentActivity implements RecognitionHooks {
       owningActivity: this,
       asyncToolOptions: this.agent._asyncToolOptions ?? this.agentSession._asyncToolOptions,
     });
-
-    // a duplex model has no text modality, and the adapter resolves each reply from the audio
-    // the model produces; without audio a text simulation would only time out on turn one
-    if (this.agentSession._textOnly && this.llm instanceof DuplexRealtimeAdapter) {
-      throw new Error(
-        'a DuplexModel speaks only through audio, so it cannot run under a text simulation; run `lk agent simulate audio` instead',
-      );
-    }
 
     if (
       this.llm instanceof RealtimeModel &&

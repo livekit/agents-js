@@ -33,6 +33,15 @@ import type {
 
 const SAMPLE_RATE = 24000;
 const MIN_SILENCE_DURATION = 800;
+// the model speaks only while its input clock runs, and that clock is the audio the client
+// appends: a session with no microphone keeps it running with silence
+const INPUT_IDLE_MS = 200;
+const SILENCE_100MS = new AudioFrame(
+  new Int16Array(SAMPLE_RATE / 10),
+  SAMPLE_RATE,
+  1,
+  SAMPLE_RATE / 10,
+);
 const DEFAULT_MODEL = 'gpt-live-1';
 const DEFAULT_BACKEND_MODEL = 'gpt-5.6-luna';
 const SPEAK_NOW = 'Do not wait for the caller to speak first. After that, pause and listen.';
@@ -220,6 +229,12 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private requestConnectionClose?: () => void;
   private readonly shutdown = new AbortController();
   private readonly mainTask: Promise<void>;
+  private lastAudioAt = -Infinity;
+  private readonly silenceTimer = setInterval(() => {
+    if (!this.sessionStarted || this.closing) return;
+    if (Date.now() - this.lastAudioAt < INPUT_IDLE_MS) return;
+    this.appendAudio(SILENCE_100MS);
+  }, INPUT_IDLE_MS / 2);
   private audioController!: ReadableStreamDefaultController<llm.DuplexAudioFrame>;
   private readonly output = new ReadableStream<llm.DuplexAudioFrame>({
     start: (controller) => {
@@ -817,6 +832,11 @@ export class GPTLiveSession extends llm.DuplexSession<{
 
   /** Buffer microphone audio, mixing to mono and resampling to 24 kHz as needed. */
   pushAudio(frame: AudioFrame): void {
+    this.lastAudioAt = Date.now();
+    this.appendAudio(frame);
+  }
+
+  private appendAudio(frame: AudioFrame): void {
     if (this.closing) return;
     const speech = this.speech.get('user');
     if (speech) {
@@ -915,6 +935,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
 
   /** Drain final provider usage, then close the transport and output stream. */
   protected async closeConnection(): Promise<void> {
+    clearInterval(this.silenceTimer);
     if (!this.closing) {
       this.closing = true;
       this.shutdown.abort();
