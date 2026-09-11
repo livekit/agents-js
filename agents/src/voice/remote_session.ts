@@ -1265,19 +1265,18 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     const msg = new pb.AgentSessionMessage({
       message: { case: 'request', value: req },
     });
-    await this.transport.sendMessage(msg);
-
-    const timer = setTimeout(() => {
-      if (!future.done) {
-        this.pendingRequests.delete(requestId);
-        future.reject(new Error('RemoteSession request timed out'));
-      }
-    }, timeout);
-
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      await this.transport.sendMessage(msg);
+      timer = setTimeout(() => {
+        if (!future.done) {
+          future.reject(new Error('RemoteSession request timed out'));
+        }
+      }, timeout);
       return await future.await;
     } finally {
       clearTimeout(timer);
+      this.pendingRequests.delete(requestId);
     }
   }
 

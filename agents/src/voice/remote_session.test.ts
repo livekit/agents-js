@@ -324,6 +324,32 @@ describe('SessionTransport failures surface to the caller', () => {
   });
 });
 
+describe('RemoteSession request over a dead transport', () => {
+  it('rejects at once and leaves nothing pending', async () => {
+    const transport = new (class extends SessionTransport {
+      async sendMessage(): Promise<void> {
+        throw new Error('tcp session transport is closed');
+      }
+      async close(): Promise<void> {}
+      [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage> {
+        return { next: () => new Promise(() => {}) };
+      }
+    })();
+    const session = new RemoteSession(transport);
+    await session.start();
+    try {
+      await expect(
+        session.finalizeSimulation({ provisionalSuccess: true, timeout: 60_000 }),
+      ).rejects.toThrow(/transport is closed/);
+      const pending = (session as unknown as { pendingRequests: Map<string, unknown> })
+        .pendingRequests;
+      expect(pending.size).toBe(0);
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe('SessionHost event forwarding', () => {
   it('registers every forwarded event', () => {
     const on = vi.fn();
