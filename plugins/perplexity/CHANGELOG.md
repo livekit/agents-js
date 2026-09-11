@@ -1,5 +1,13 @@
 # @livekit/agents-plugin-perplexity
 
+## 1.8.2
+
+### Patch Changes
+
+- Updated dependencies [[`3b068a5`](https://github.com/livekit/agents-js/commit/3b068a5679eae29ed114dfc7caa114dd9145accc)]:
+  - @livekit/agents@1.8.2
+  - @livekit/agents-plugin-openai@1.8.2
+
 ## 1.8.1
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.8.2
+
+### Patch Changes
+
+- Fail fast with a clear error when a DuplexModel such as GPT-Live is started under a text simulation, which has no audio, instead of timing out on the first reply. - [#2481](https://github.com/livekit/agents-js/pull/2481) ([@u9g](https://github.com/u9g))
+
 ## 1.8.1
 
 ### Patch Changes

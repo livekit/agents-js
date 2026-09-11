@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-anam
 
+## 1.8.2
+
+### Patch Changes
+
+- Start Anam engine sessions directly with the API key, removing the session-token round trip. - [#2452](https://github.com/livekit/agents-js/pull/2452) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`3b068a5`](https://github.com/livekit/agents-js/commit/3b068a5679eae29ed114dfc7caa114dd9145accc)]:
+  - @livekit/agents@1.8.2
+
 ## 1.8.1
 
 ### Patch Changes
