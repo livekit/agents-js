@@ -1022,11 +1022,10 @@ export class SessionHost {
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
       }
+      // An empty list is a turn the agent chose to stay silent on, not a failure.
+      // A tool may have told it to say nothing after already delivering a goodbye.
+      // Report the silence and let the caller decide what it means.
       items = chatItemsToProto(result.events.map((ev) => ev.item));
-
-      if (items.length === 0 && !error) {
-        error = 'agent produced no response items';
-      }
     }
 
     return this.sendResponse(

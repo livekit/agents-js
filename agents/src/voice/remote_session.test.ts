@@ -13,7 +13,8 @@ import {
 } from '../job.js';
 import { initializeLogger } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
-import type { AgentSession } from './agent_session.js';
+import { Agent } from './agent.js';
+import { AgentSession } from './agent_session.js';
 import { FinalizeSimulationError } from './index.js';
 import {
   RemoteSession,
@@ -21,6 +22,7 @@ import {
   SessionTransport,
   TcpSessionTransport,
 } from './remote_session.js';
+import { FakeLLM } from './testing/fake_llm.js';
 
 beforeAll(() => {
   initializeLogger({ pretty: true, level: 'info' });
@@ -322,6 +324,30 @@ describe('RemoteSession RPCs', () => {
       sdkVersion: '1.5.5',
     });
     await remote.close();
+  });
+
+  it('reports a silent agent turn without an error', async () => {
+    const [clientTransport, hostTransport] = createConnectedTransportPair();
+    const session = new AgentSession();
+    // FakeLLM yields an empty completion for any input outside its response map.
+    const agent = new Agent({ instructions: 'test agent', llm: new FakeLLM() });
+    const host = new SessionHost(hostTransport);
+    host.registerSession(session);
+
+    await session.start({ agent });
+    await host.start();
+
+    const client = new RemoteSession(clientTransport);
+    await client.start();
+
+    try {
+      const response = await client.sendMessage('okay, thank you', 10_000);
+      expect(response.items).toEqual([]);
+    } finally {
+      await client.close();
+      await host.close();
+      await session.close();
+    }
   });
 });
 
