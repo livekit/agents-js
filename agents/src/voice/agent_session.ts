@@ -31,7 +31,7 @@ import {
 } from '../inference/index.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
-import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import type { FunctionCall, FunctionCallOutput, MetricsReport } from '../llm/chat_context.js';
 import {
   AgentHandoffItem,
   ChatContext,
@@ -674,6 +674,9 @@ export class AgentSession<
 
   /** @internal */
   _userSpeakingSpan?: Span;
+
+  /** @internal The latest user turn no agent speech has reported e2e latency for yet. */
+  _unansweredUserMetrics?: MetricsReport;
 
   private logger = log();
 
