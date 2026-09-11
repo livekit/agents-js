@@ -5386,6 +5386,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     get connOptions(): APIConnectOptions;
     // (undocumented)
     protected _connOptions: APIConnectOptions;
+    // @internal
+    get _error(): Error | undefined;
     // (undocumented)
     protected logger: Logger;
     // (undocumented)

@@ -190,6 +190,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
   #llmRequestSpan?: Span;
+  #error?: Error;
   // Provider-known response ids collected from ChatChunks during the current
   // attempt; reset before each retry and written to the `llm_request_run` span.
   #providerRequestIds: string[] = [];
@@ -262,6 +263,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.recordGenAIRequest(span);
 
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+      if (this.abortController.signal.aborted) return;
       try {
         return await tracer.startActiveSpan(
           async (attemptSpan) => {
@@ -286,6 +288,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
           { name: 'llm_request_run' },
         );
       } catch (error) {
+        if (this.abortController.signal.aborted) return;
         if (error instanceof APIError) {
           const retryInterval = intervalForRetry(this._connOptions, i);
 
@@ -307,7 +310,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
           }
 
           if (retryInterval > 0) {
-            await delay(retryInterval);
+            await delay(retryInterval, { signal: this.abortController.signal });
           }
         } else {
           this.emitError({ error: toError(error), recoverable: false });
@@ -325,6 +328,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   };
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    if (!recoverable) this.#error = error;
     this.#llm.emit('error', {
       type: 'llm_error',
       timestamp: Date.now(),
@@ -451,6 +455,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   /** The connection options for this stream. */
   get connOptions(): APIConnectOptions {
     return this._connOptions;
+  }
+
+  /** The terminal error of this stream, if it failed. @internal */
+  get _error(): Error | undefined {
+    return this.#error;
   }
 
   next(): Promise<IteratorResult<ChatChunk>> {
