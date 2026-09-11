@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { SentenceTokenizer, WordTokenizer, hyphenateWord } from './basic/index.js';
+import { SentenceTokenizer, WordTokenizer, hyphenateWord, splitWords } from './basic/index.js';
 import { splitParagraphs } from './basic/paragraph.js';
 
 const TEXT =
@@ -254,6 +254,19 @@ describe('tokenizer', () => {
       PARAGRAPH_TEST_CASES.forEach(([a, b]) => {
         expect(splitParagraphs(a)).toStrictEqual(b);
       });
+    });
+  });
+  describe('splitWords', () => {
+    it('strips backslash, a declared punctuation the joined-list regex escaped away', () => {
+      // Regression: PUNCTUATIONS includes both '\\' and ']', but building a regex
+      // from the joined list produced the fragment `[\]` inside the character
+      // class, where `\]` is an escaped literal ']' — consuming the backslash so
+      // it was never a class member and never stripped.
+      expect(splitWords('c\\d', true)).toStrictEqual([['cd', 0, 3]]);
+    });
+
+    it('keeps punctuation when ignorePunctuation is false', () => {
+      expect(splitWords('c\\d', false)).toStrictEqual([['c\\d', 0, 3]]);
     });
   });
 });
