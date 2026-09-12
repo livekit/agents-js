@@ -1138,12 +1138,19 @@ export class AgentSession<
     }
   }
 
+  /**
+   * Commit the current user turn and generate a reply.
+   *
+   * With input audio disabled (`input.setAudioEnabled(false)`, the documented
+   * push-to-talk release), the recognizer pushes silence to flush the STT so the
+   * trailing words reach the final transcript instead of being clipped.
+   */
   commitUserTurn() {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
 
-    this.activity.commitUserTurn();
+    this.activity.commitUserTurn({ audioDetached: !this.input.audioEnabled });
   }
 
   clearUserTurn() {
