@@ -760,7 +760,7 @@ class SyncedAudioOutput extends AudioOutput {
 
   constructor(
     public synchronizer: TranscriptionSynchronizer,
-    private nextInChainAudio: AudioOutput,
+    nextInChainAudio: AudioOutput,
   ) {
     super(nextInChainAudio.sampleRate, nextInChainAudio, { pause: true });
   }
@@ -799,10 +799,10 @@ class SyncedAudioOutput extends AudioOutput {
       this.segmentOpen = true;
       this.segmentAccepted = false;
     }
-    const downstreamCapturedBefore = this.nextInChainAudio.capturedPlayoutSegments;
+    const downstreamCapturedBefore = this.nextInChain!.capturedPlayoutSegments;
     await super.captureFrame(frame);
-    await this.nextInChainAudio.captureFrame(frame); // passthrough audio
-    if (this.nextInChainAudio.capturedPlayoutSegments > downstreamCapturedBefore) {
+    await this.nextInChain!.captureFrame(frame); // passthrough audio
+    if (this.nextInChain!.capturedPlayoutSegments > downstreamCapturedBefore) {
       this.segmentAccepted = true;
     }
 
@@ -841,7 +841,7 @@ class SyncedAudioOutput extends AudioOutput {
 
   flush() {
     super.flush();
-    this.nextInChainAudio.flush();
+    this.nextInChain!.flush();
     if (this.segmentOpen) {
       this.segmentOpen = false;
       this.lastSegmentAccepted = this.segmentAccepted;
@@ -877,11 +877,11 @@ class SyncedAudioOutput extends AudioOutput {
   }
 
   clearBuffer() {
-    this.nextInChainAudio.clearBuffer();
+    this.nextInChain!.clearBuffer();
   }
 
   async waitForPlayout(): Promise<PlaybackFinishedEvent> {
-    const drift = this.pendingPlayoutSegments - this.nextInChainAudio.pendingPlayoutSegments;
+    const drift = this.pendingPlayoutSegments - this.nextInChain!.pendingPlayoutSegments;
     for (let i = 0; i < drift; i++) {
       this.settleDriftFinish();
     }

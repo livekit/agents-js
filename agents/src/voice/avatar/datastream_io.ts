@@ -60,6 +60,9 @@ export class DataStreamAudioOutput extends AudioOutput {
   private lock = new Mutex();
   private startTask?: Task<void>;
   private firstFrameEmitted: boolean = false;
+  private closed: boolean = false;
+  private playbackFinishedHandler = (data: RpcInvocationData) => this.handlePlaybackFinished(data);
+  private playbackStartedHandler = (data: RpcInvocationData) => this.handlePlaybackStarted(data);
 
   #logger = log();
 
@@ -73,23 +76,20 @@ export class DataStreamAudioOutput extends AudioOutput {
     this.waitRemoteTrack = waitRemoteTrack;
     this.waitPlaybackStart = waitPlaybackStart ?? false;
 
-    const onRoomConnected = async () => {
-      if (this.startTask) return;
-
-      await this.roomConnectedFuture.await;
-
+    const onRoomConnected = () => {
+      if (this.startTask || !this.room.isConnected || this.closed) return;
       // register the rpc method right after the room is connected
       DataStreamAudioOutput.registerPlaybackFinishedRpc({
         room,
         callerIdentity: this.destinationIdentity,
-        handler: (data) => this.handlePlaybackFinished(data),
+        handler: this.playbackFinishedHandler,
       });
 
       if (this.waitPlaybackStart) {
         DataStreamAudioOutput.registerPlaybackStartedRpc({
           room,
           callerIdentity: this.destinationIdentity,
-          handler: (data) => this.handlePlaybackStarted(data),
+          handler: this.playbackStartedHandler,
         });
       }
 
@@ -98,11 +98,13 @@ export class DataStreamAudioOutput extends AudioOutput {
 
     this.roomConnectedFuture = new Future<void>();
 
-    this.room.on(RoomEvent.ConnectionStateChanged, (_) => {
+    this.onRoomConnectionStateChanged = () => {
       if (room.isConnected && !this.roomConnectedFuture.done) {
         this.roomConnectedFuture.resolve(undefined);
       }
-    });
+      onRoomConnected();
+    };
+    this.room.on(RoomEvent.ConnectionStateChanged, this.onRoomConnectionStateChanged);
 
     if (this.room.isConnected) {
       this.roomConnectedFuture.resolve(undefined);
@@ -111,7 +113,9 @@ export class DataStreamAudioOutput extends AudioOutput {
     onRoomConnected();
   }
 
-  private async _start(_abortSignal: AbortSignal) {
+  private onRoomConnectionStateChanged: () => void;
+
+  private async _start(abortSignal: AbortSignal) {
     const unlock = await this.lock.lock();
 
     try {
@@ -129,6 +133,7 @@ export class DataStreamAudioOutput extends AudioOutput {
       await waitForParticipant({
         room: this.room,
         identity: this.destinationIdentity,
+        signal: abortSignal,
       });
 
       if (this.waitRemoteTrack) {
@@ -144,6 +149,7 @@ export class DataStreamAudioOutput extends AudioOutput {
           room: this.room,
           identity: this.destinationIdentity,
           kind: this.waitRemoteTrack,
+          signal: abortSignal,
         });
       }
 
@@ -161,6 +167,7 @@ export class DataStreamAudioOutput extends AudioOutput {
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
+    if (this.closed) throw new Error('DataStreamAudioOutput is closed');
     if (!this.startTask) {
       this.startTask = Task.from(({ signal }) => this._start(signal));
     }
@@ -217,6 +224,30 @@ export class DataStreamAudioOutput extends AudioOutput {
       method: RPC_CLEAR_BUFFER,
       payload: '',
     });
+  }
+
+  /** Release resources owned by this data-stream output. */
+  async aclose(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.room.off(RoomEvent.ConnectionStateChanged, this.onRoomConnectionStateChanged);
+    this.startTask?.cancel();
+    if (this.streamWriter) {
+      await this.streamWriter.close();
+      this.streamWriter = undefined;
+    }
+    if (
+      DataStreamAudioOutput._playbackFinishedHandlers[this.destinationIdentity] ===
+      this.playbackFinishedHandler
+    ) {
+      delete DataStreamAudioOutput._playbackFinishedHandlers[this.destinationIdentity];
+    }
+    if (
+      DataStreamAudioOutput._playbackStartedHandlers[this.destinationIdentity] ===
+      this.playbackStartedHandler
+    ) {
+      delete DataStreamAudioOutput._playbackStartedHandlers[this.destinationIdentity];
+    }
   }
 
   private handlePlaybackFinished(data: RpcInvocationData): string {
