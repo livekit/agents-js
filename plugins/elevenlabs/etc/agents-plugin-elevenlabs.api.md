@@ -124,6 +124,7 @@ export interface STTOptions {
     enableLogging?: boolean;
     // (undocumented)
     httpSession?: STTHTTPSession;
+    includeLanguageDetection?: boolean;
     // (undocumented)
     includeTimestamps?: boolean;
     keyterms?: string[];

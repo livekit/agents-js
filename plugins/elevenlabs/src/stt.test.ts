@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { mergeFrames, stt as sttLib } from '@livekit/agents';
+import { log, mergeFrames, stt as sttLib } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { type RequestListener, type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
-import { STT } from './stt.js';
+import { STT, type STTOptions } from './stt.js';
 
 function makeFrame(samplesPerChannel = 800, sampleRate = 16000): AudioFrame {
   const data = new Int16Array(samplesPerChannel);
@@ -79,6 +79,7 @@ async function processStreamEvents(
   messages: Record<string, unknown>[],
   expectedEventCount: number,
   serverVad: { vadSilenceThresholdSecs: number } | null,
+  options: STTOptions = {},
 ): Promise<sttLib.SpeechEvent[]> {
   const { wss, baseURL } = await startWebSocketServer();
   wss.on('connection', (ws) => {
@@ -92,6 +93,7 @@ async function processStreamEvents(
     baseURL,
     model: 'scribe_v2_realtime',
     serverVad,
+    ...options,
   }).stream();
   const events: sttLib.SpeechEvent[] = [];
   try {
@@ -111,8 +113,45 @@ function partialTranscript(text: string): Record<string, unknown> {
   return { message_type: 'partial_transcript', text, words: [] };
 }
 
-function committedTranscript(text: string): Record<string, unknown> {
-  return { message_type: 'committed_transcript', text, words: [] };
+function committedTranscript(
+  text: string,
+  options: {
+    withTimestamps?: boolean;
+    languageCode?: string;
+    words?: Record<string, unknown>[];
+  } = {},
+): Record<string, unknown> {
+  return {
+    message_type: options.withTimestamps
+      ? 'committed_transcript_with_timestamps'
+      : 'committed_transcript',
+    text,
+    words: options.words ?? [],
+    ...(options.languageCode !== undefined && { language_code: options.languageCode }),
+  };
+}
+
+async function realtimeConnectionUrl(options: STTOptions = {}): Promise<URL> {
+  const { wss, baseURL } = await startWebSocketServer();
+  let requestUrl = '';
+  wss.on('connection', (_ws, req) => {
+    requestUrl = req.url ?? '';
+  });
+
+  const stream = new STT({
+    apiKey: 'test-key',
+    baseURL,
+    model: 'scribe_v2_realtime',
+    ...options,
+  }).stream();
+  try {
+    await waitUntil(() => requestUrl !== '');
+    return new URL(`ws://127.0.0.1${requestUrl}`);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stream.close();
+    await closeWebSocketServer(wss);
+  }
 }
 
 function interimTexts(events: sttLib.SpeechEvent[]): string[] {
@@ -198,6 +237,138 @@ describe('ElevenLabs STT integration', () => {
 });
 
 describe('ElevenLabs STT', () => {
+  it('normalizes the primary language in the realtime connection URL', async () => {
+    const url = await realtimeConnectionUrl({
+      languageCode: 'en_US',
+      secondaryLanguages: ['ru-RU'],
+    });
+
+    expect(url.searchParams.getAll('language_code')).toEqual(['en']);
+    expect(url.searchParams.getAll('secondary_languages')).toEqual(['ru']);
+  });
+
+  it('includes secondary languages as repeated realtime query parameters', async () => {
+    const url = await realtimeConnectionUrl({
+      languageCode: 'en',
+      secondaryLanguages: ['ru', 'es'],
+    });
+
+    expect(url.searchParams.get('language_code')).toBe('en');
+    expect(url.searchParams.getAll('secondary_languages')).toEqual(['ru', 'es']);
+  });
+
+  it('normalizes secondary languages in the realtime connection URL', async () => {
+    const url = await realtimeConnectionUrl({
+      languageCode: 'en',
+      secondaryLanguages: ['ru_RU', 'french', 'spa'],
+    });
+
+    expect(url.searchParams.getAll('secondary_languages')).toEqual(['ru', 'fr', 'es']);
+  });
+
+  it('omits secondary languages when not given', async () => {
+    const url = await realtimeConnectionUrl({ languageCode: 'en' });
+
+    expect(url.searchParams.has('secondary_languages')).toBe(false);
+  });
+
+  it('normalizes language options before serializing them', async () => {
+    const url = await realtimeConnectionUrl({
+      languageCode: 'en_US',
+      secondaryLanguages: ['ru_RU', 'french', 'spa'],
+    });
+
+    expect(url.searchParams.get('language_code')).toBe('en');
+    expect(url.searchParams.getAll('secondary_languages')).toEqual(['ru', 'fr', 'es']);
+  });
+
+  it('ignores secondary languages for batch models', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new STT({ apiKey: 'test-key', model: 'scribe_v2', secondaryLanguages: ['ru'] });
+
+    expect(warn).toHaveBeenCalledWith(
+      '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
+    );
+    warn.mockRestore();
+  });
+
+  it('requests language detection when no language is pinned', async () => {
+    const url = await realtimeConnectionUrl();
+
+    expect(url.searchParams.get('include_language_detection')).toBe('true');
+  });
+
+  it('omits language detection when a language is pinned', async () => {
+    const url = await realtimeConnectionUrl({ languageCode: 'en' });
+
+    expect(url.searchParams.has('include_language_detection')).toBe(false);
+  });
+
+  it('requests language detection when explicitly enabled', async () => {
+    const url = await realtimeConnectionUrl({
+      languageCode: 'en',
+      includeLanguageDetection: true,
+    });
+
+    expect(url.searchParams.get('include_language_detection')).toBe('true');
+  });
+
+  it('omits language detection when explicitly disabled', async () => {
+    const url = await realtimeConnectionUrl({ includeLanguageDetection: false });
+
+    expect(url.searchParams.has('include_language_detection')).toBe(false);
+  });
+
+  it('reports the detected language on final transcripts', async () => {
+    const events = await processStreamEvents(
+      [
+        committedTranscript('привет'),
+        committedTranscript('привет', { withTimestamps: true, languageCode: 'ru' }),
+      ],
+      3,
+      { vadSilenceThresholdSecs: 0.5 },
+      { languageCode: 'en', secondaryLanguages: ['ru'], includeLanguageDetection: true },
+    );
+
+    const finals = events.filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT);
+    expect(finals).toHaveLength(1);
+    expect(finals[0]?.alternatives?.[0]?.language).toBe('ru');
+  });
+
+  it('reports autodetected languages without adding unrequested word timings', async () => {
+    const events = await processStreamEvents(
+      [
+        committedTranscript('привет', {
+          withTimestamps: true,
+          languageCode: 'ru',
+          words: [{ text: 'привет', start: 0.1, end: 0.4 }],
+        }),
+        committedTranscript('привет'),
+      ],
+      2,
+      null,
+    );
+
+    const finals = events.filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT);
+    expect(finals).toHaveLength(1);
+    expect(finals[0]?.alternatives?.[0]?.language).toBe('ru');
+    expect(finals[0]?.alternatives?.[0]?.words).toBeUndefined();
+  });
+
+  it('keeps the plain final transcript when detection is disabled', async () => {
+    const events = await processStreamEvents(
+      [committedTranscript('hola'), committedTranscript('hola', { withTimestamps: true })],
+      2,
+      null,
+      { languageCode: 'es' },
+    );
+
+    const finals = events.filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT);
+    expect(finals).toHaveLength(1);
+    expect(finals[0]?.alternatives?.[0]?.language).toBe('es');
+  });
+
   it('forwards advancing partial transcripts', async () => {
     const events = await processStreamEvents(
       [partialTranscript('yeah'), partialTranscript('yeah please')],
@@ -227,6 +398,7 @@ describe('ElevenLabs STT', () => {
       [partialTranscript('right'), committedTranscript('right'), partialTranscript('right')],
       6,
       { vadSilenceThresholdSecs: 0.5 },
+      { includeLanguageDetection: false },
     );
 
     expect(interimTexts(events)).toEqual(['right', 'right']);
@@ -237,6 +409,7 @@ describe('ElevenLabs STT', () => {
       [partialTranscript('right'), committedTranscript(''), partialTranscript('right')],
       5,
       null,
+      { includeLanguageDetection: false },
     );
 
     expect(interimTexts(events)).toEqual(['right', 'right']);
@@ -294,6 +467,7 @@ describe('ElevenLabs STT', () => {
         baseURL,
         model: 'scribe_v2_realtime',
         serverVad: { vadSilenceThresholdSecs: 0.5 },
+        includeLanguageDetection: false,
       }).stream();
       await waitUntil(() => connected);
       stream.pushFrame(makeFrame());
@@ -424,13 +598,13 @@ describe('ElevenLabs STT', () => {
         );
         ws.send(
           JSON.stringify({
-            message_type: 'committed_transcript',
+            message_type: 'committed_transcript_with_timestamps',
             text: 'hello',
             language_code: 'en',
             words: [{ text: 'hello', start: 0.1, end: 0.4 }],
           }),
         );
-        ws.send(JSON.stringify({ message_type: 'committed_transcript', text: '' }));
+        ws.send(JSON.stringify({ message_type: 'committed_transcript_with_timestamps', text: '' }));
         setTimeout(() => ws.close(), 20);
       });
     });
@@ -481,12 +655,7 @@ describe('ElevenLabs STT', () => {
         startTime: 1.1,
         endTime: 1.4,
       });
-      expect(speechEvents[2]?.alternatives?.[0]?.words?.[0]).toMatchObject({
-        text: 'hello',
-        startTime: 1.1,
-        endTime: 1.4,
-        startTimeOffset: 1,
-      });
+      expect(speechEvents[2]?.alternatives?.[0]?.words).toBeUndefined();
     } finally {
       await closeWebSocketServer(wss);
     }
