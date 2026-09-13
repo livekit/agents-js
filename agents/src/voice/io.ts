@@ -136,15 +136,16 @@ export abstract class AudioOutput extends EventEmitter {
   ) {
     super();
     this.capabilities = capabilities;
+    this.attachNextInChainListeners();
+  }
 
-    if (this.nextInChain) {
-      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_STARTED, (ev: PlaybackStartedEvent) =>
-        this.onPlaybackStarted(ev.createdAt),
-      );
-      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (ev: PlaybackFinishedEvent) =>
-        this.onPlaybackFinished(ev),
-      );
-    }
+  private onNextPlaybackStarted = (ev: PlaybackStartedEvent) =>
+    this.onPlaybackStarted(ev.createdAt);
+  private onNextPlaybackFinished = (ev: PlaybackFinishedEvent) => this.onPlaybackFinished(ev);
+
+  private attachNextInChainListeners(): void {
+    this.nextInChain?.on(AudioOutput.EVENT_PLAYBACK_STARTED, this.onNextPlaybackStarted);
+    this.nextInChain?.on(AudioOutput.EVENT_PLAYBACK_FINISHED, this.onNextPlaybackFinished);
   }
 
   /**
@@ -449,6 +450,42 @@ export class AgentOutput {
     if (this._audioSink) {
       this._audioSink.onAttached();
     }
+  }
+
+  /**
+   * Replace the leaf audio sink while retaining recorder and transcription wrappers.
+   * Falls back to replacing the whole output when no wrapper chain is installed.
+   */
+  replaceAudioTail(sink: AudioOutput): void {
+    let current = this._audioSink;
+    while (current) {
+      const internals = current as unknown as {
+        nextInChain?: AudioOutput;
+        onNextPlaybackStarted: (event: PlaybackStartedEvent) => void;
+        onNextPlaybackFinished: (event: PlaybackFinishedEvent) => void;
+        attachNextInChainListeners: () => void;
+        _capturing: boolean;
+      };
+      const next = internals.nextInChain;
+      if (next && !(next as unknown as { nextInChain?: AudioOutput }).nextInChain) {
+        next.off(AudioOutput.EVENT_PLAYBACK_STARTED, internals.onNextPlaybackStarted);
+        next.off(AudioOutput.EVENT_PLAYBACK_FINISHED, internals.onNextPlaybackFinished);
+        if (current.pendingPlayoutSegments > 0) {
+          if (internals._capturing) next.flush();
+          next.clearBuffer();
+        }
+        if (this._audioEnabled) next.onDetached();
+        internals.nextInChain = sink;
+        internals.attachNextInChainListeners();
+        if (this._audioEnabled) sink.onAttached();
+        if (current.pendingPlayoutSegments > 0) {
+          current.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+        }
+        return;
+      }
+      current = next ?? null;
+    }
+    this.audio = sink;
   }
 
   get transcription(): TextOutput | null {
