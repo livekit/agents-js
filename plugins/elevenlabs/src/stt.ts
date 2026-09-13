@@ -328,7 +328,7 @@ export class STT extends stt.STT {
   ): Promise<stt.SpeechEvent> {
     const options = isAbortSignal(optionsOrAbortSignal)
       ? { abortSignal: optionsOrAbortSignal }
-      : (optionsOrAbortSignal ?? {});
+      : optionsOrAbortSignal ?? {};
     const connOptions = options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS;
 
     for (let i = 0; i < connOptions.maxRetry + 1; i++) {
@@ -444,7 +444,7 @@ export class STT extends stt.STT {
       }
 
       const words = responseJson.words ?? [];
-      const speakerId = words.length > 0 ? (words[0]?.speaker_id ?? null) : null;
+      const speakerId = words.length > 0 ? words[0]?.speaker_id ?? null : null;
       const startTime = words.length > 0 ? Math.min(...words.map((word) => word.start ?? 0)) : 0;
       const endTime = words.length > 0 ? Math.max(...words.map((word) => word.end ?? 0)) : 0;
       const normalizedLanguage = normalizeLanguage(
@@ -910,8 +910,8 @@ export class SpeechStream extends stt.SpeechStream {
     const messageType = data.message_type;
     const text = data.text ?? '';
     const words = data.words ?? [];
-    const startTime = words.length > 0 ? (words[0]?.start ?? 0) : 0;
-    const endTime = words.length > 0 ? (words[words.length - 1]?.end ?? 0) : 0;
+    const startTime = words.length > 0 ? words[0]?.start ?? 0 : 0;
+    const endTime = words.length > 0 ? words[words.length - 1]?.end ?? 0 : 0;
     const languageCode = data.language_code ?? this.#language;
     const normalizedLanguage = languageCode
       ? normalizeLanguage(languageCode)
