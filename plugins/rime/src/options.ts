@@ -153,7 +153,9 @@ export function resolveOptions(opts: Partial<TTSOptions>, previous?: TTSOptions)
     resolved.speaker = v1
       ? model.includes('mist')
         ? 'cove'
-        : 'astra'
+        : model === 'coda'
+          ? 'lyra'
+          : 'astra'
       : opts.modelId === 'coda'
         ? 'lyra'
         : 'luna';

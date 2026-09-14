@@ -24,13 +24,13 @@ import { TTS } from '@livekit/agents-plugin-rime';
 
 const rime = new TTS({
   websocketURL: 'wss://api.rime.ai/coda/ws',
-  speaker: 'astra',
+  speaker: 'lyra',
 });
 ```
 
 The endpoint selects the model. Do not pass `modelId` for a route such as
 `/coda/ws` or `/mist/ws`. For a dedicated endpoint ending in `/ws`, pass `modelId`.
-The default speaker is `astra` for Coda and `cove` for Mist. The public v1 endpoint
+The default speaker is `lyra` for Coda and `cove` for Mist. The public v1 endpoint
 currently supports Coda. The Mist route is `/mist/ws`.
 
 `websocketProtocol` defaults to `binary`, with the `rime.v1.binary` subprotocol.

@@ -11,11 +11,21 @@ it('derives v1 models and uses model-specific defaults', () => {
   const coda = resolveOptions({ apiKey: 'key', websocketURL: 'wss://api.rime.ai/coda/ws' });
   expect(coda).toMatchObject({
     modelId: 'coda',
-    speaker: 'astra',
+    speaker: 'lyra',
     lang: 'eng',
     websocketProtocol: 'binary',
     audioFormat: 'audio/pcm',
   });
+  expect(
+    resolveOptions({ apiKey: 'key', websocketURL: 'wss://api.rime.ai/ws', modelId: 'coda' }),
+  ).toMatchObject({ modelId: 'coda', speaker: 'lyra' });
+  expect(
+    resolveOptions({
+      apiKey: 'key',
+      websocketURL: 'wss://api.rime.ai/coda/ws',
+      speaker: 'astra',
+    }),
+  ).toMatchObject({ modelId: 'coda', speaker: 'astra' });
   const mist = resolveOptions({
     apiKey: 'key',
     websocketURL: 'wss://api.rime.ai/mist/ws',

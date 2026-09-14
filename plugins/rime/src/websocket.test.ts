@@ -481,7 +481,7 @@ describe.each(['binary', 'json'] as const)('Rime v1 %s', (protocol) => {
       start.case === 'start' && toJson(WebSocketRequestSchema, peer.requests[0]!),
     ).toMatchObject({
       start: {
-        speaker: 'astra',
+        speaker: 'lyra',
         language: 'eng',
         audioParameters: { audioFormat: 'audio/pcm', samplingRate: 24000, timeScaleFactor: 1.25 },
       },
