@@ -913,12 +913,22 @@ export class AgentServer {
 
     const req = new JobRequest(msg.job!, onReject, onAccept);
     this.#logger
-      .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+      .child({
+        jobId: msg.job?.id,
+        room_id: msg.job?.room?.sid,
+        resuming: msg.resuming,
+        agentName: this.#opts.agentName,
+      })
       .info('received job request');
 
     if (this.#draining) {
       this.#logger
-        .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+        .child({
+          jobId: msg.job?.id,
+          room_id: msg.job?.room?.sid,
+          resuming: msg.resuming,
+          agentName: this.#opts.agentName,
+        })
         .info('Worker is draining and no longer available, rejecting job');
       await req.reject();
       return;
