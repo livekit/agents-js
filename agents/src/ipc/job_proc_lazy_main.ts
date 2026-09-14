@@ -15,8 +15,8 @@ import {
   validateSessionEndTimeout,
   waitForEntrypointShutdown,
 } from '../job_lifecycle.js';
-import { loggerOptions, setLoggerState } from '../log_core.js';
 import { initializeLogger, log } from '../log.js';
+import { loggerOptions, setLoggerState } from '../log_core.js';
 import type { SimulationContext } from '../simulation.js';
 import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
