@@ -315,7 +315,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   abstract label: string;
   protected closed = false;
   #stt: STT;
-  #failed = false;
+  #terminalError?: Error;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   private _connOptions: APIConnectOptions;
@@ -343,8 +343,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     const runMainTask = async () => {
       try {
         await this.mainTask();
-      } catch {
+      } catch (error) {
         // already surfaced via emitError; swallow to avoid unhandled rejection.
+        this.#terminalError = toError(error);
       } finally {
         this.queue.close();
       }
@@ -423,7 +424,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
-    if (!recoverable) this.#failed = true;
     this.#stt.emit('error', {
       type: 'stt_error',
       timestamp: Date.now(),
@@ -500,7 +500,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   /** Whether this stream ended with an unrecoverable error. @internal */
   get _failed(): boolean {
-    return this.#failed;
+    return this.#terminalError !== undefined;
   }
 
   get startTimeOffset(): number {
@@ -576,6 +576,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   next(): Promise<IteratorResult<SpeechEvent>> {
     return this.output.next();
+  }
+
+  /** The error that ended the retry loop; set once the stream has stopped recognizing for good. */
+  get terminalError(): Error | undefined {
+    return this.#terminalError;
   }
 
   /** Close both the input and output of the STT stream */
