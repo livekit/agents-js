@@ -100,6 +100,58 @@ class AlwaysFailingStream extends SpeechStream {
   }
 }
 
+/**
+ * Connects, stays up past the connect timeout without ever hearing speech, then drops — the
+ * shape of Cartesia's `1001 Idle timeout` on a muted or silent caller.
+ */
+class IdleDropSTT extends STT {
+  label = 'idle-drop-stt';
+
+  constructor(
+    private readonly drops: number,
+    private readonly uptimeMs: number,
+  ) {
+    super({ streaming: true, interimResults: false });
+  }
+
+  protected async _recognize(_buffer: AudioBuffer): Promise<SpeechEvent> {
+    throw new APIConnectionError({ message: 'not used' });
+  }
+
+  override stream(options?: { connOptions?: APIConnectOptions }): IdleDropStream {
+    return new IdleDropStream(this, this.drops, this.uptimeMs, options?.connOptions);
+  }
+}
+
+class IdleDropStream extends SpeechStream {
+  label = 'idle-drop-stream';
+  runCount = 0;
+
+  constructor(
+    stt: STT,
+    private readonly drops: number,
+    private readonly uptimeMs: number,
+    connOptions?: APIConnectOptions,
+  ) {
+    super(stt, undefined, connOptions);
+  }
+
+  protected async run(): Promise<void> {
+    this.runCount += 1;
+    await delay(this.uptimeMs);
+    if (this.runCount > this.drops) {
+      for await (const _ of this.input) {
+        /* drain */
+      }
+      return;
+    }
+    throw new APIConnectionError({
+      message: 'connection closed unexpectedly (code=1001)',
+      options: { retryable: true },
+    });
+  }
+}
+
 const connOptions: APIConnectOptions = { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 10_000 };
 
 describe('SpeechStream retry budget', () => {
@@ -132,6 +184,21 @@ describe('SpeechStream retry budget', () => {
     ]);
     expect(stream.runCount).toBe(8);
 
+    await stream.close();
+  });
+
+  it('resets after an attempt that outlived the connect timeout, without any transcript', async () => {
+    const stt = new IdleDropSTT(8, 30);
+    const stream = stt.stream({ connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 10 } });
+
+    const errors: { error: Error; recoverable: boolean }[] = [];
+    stt.on('error', (ev) => errors.push({ error: ev.error, recoverable: ev.recoverable }));
+
+    while (stream.runCount < 9) {
+      await delay(5);
+    }
+
+    expect(errors).toEqual([]);
     await stream.close();
   });
 
