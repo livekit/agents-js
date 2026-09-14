@@ -683,9 +683,16 @@ export class GPTLiveSession extends llm.DuplexSession<{
       case 'response.output_item.done': {
         const item = event.item;
         if (!item || item.type !== 'function_call') return;
+        if (item.status !== 'completed') {
+          this.logger.debug(
+            { 'lk.pii.function_name': item.name, 'lk.pii.status': item.status },
+            'GPT-Live ignoring incomplete function call',
+          );
+          return;
+        }
         if (!item.call_id || !item.name || item.arguments == null) {
           this.logger.warn(
-            { 'lk.pii.call_id': item.call_id, 'lk.pii.name': item.name },
+            { 'lk.pii.call_id': item.call_id, 'lk.pii.function_name': item.name },
             'GPT-Live dropping function call with missing fields',
           );
           return;
@@ -699,6 +706,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
           pending = { callIds: new Set(), returned: new Set(), completed: true };
           this.delegatedResponses.set(delegationId, pending);
         }
+        if (pending.callIds.has(item.call_id)) return;
         pending.callIds.add(item.call_id);
         this.callToDelegation.set(item.call_id, delegationId);
         const call = new llm.FunctionCall({

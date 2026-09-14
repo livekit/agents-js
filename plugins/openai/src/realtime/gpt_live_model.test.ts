@@ -47,6 +47,7 @@ const callDone = (callId: string): GPTLive.ResponsesEvent => ({
   item: {
     id: `fc_${callId}`,
     type: 'function_call',
+    status: 'completed',
     call_id: callId,
     name: 'getWeather',
     arguments: '{"location":"Paris"}',
@@ -702,6 +703,99 @@ describe('GPTLiveModel', () => {
     ).toEqual(['response.item.create', 'response.item.create', 'response.create']);
   });
 
+  it.each(['missing', null, 'incomplete', 'in_progress', 'failed'] as const)(
+    'does not dispatch backend calls with status %s',
+    async (status) => {
+      const session = create();
+      const calls: llm.FunctionCall[] = [];
+      session.on('function_call', (call) => calls.push(call));
+      await ready(session);
+      await server.response(session, { type: 'response.created' });
+      const event = callDone('call_1');
+      const item = event.item as { status?: string | null };
+      if (status === 'missing') delete item.status;
+      else item.status = status;
+      await server.response(session, event);
+      expect(calls).toEqual([]);
+      expect(
+        (
+          session as unknown as {
+            history: llm.ChatContext;
+            delegatedResponses: Map<string, { callIds: Set<string> }>;
+          }
+        ).delegatedResponses.get('d1')?.callIds,
+      ).toEqual(new Set());
+      expect(
+        (
+          session as unknown as {
+            history: llm.ChatContext;
+          }
+        ).history.items.filter((item) => item.type === 'function_call'),
+      ).toEqual([]);
+
+      await server.response(session, callDone('call_1'));
+      expect(calls.map((call) => call.callId)).toEqual(['call_1']);
+    },
+  );
+
+  it.each(['call_id', 'name', 'arguments'] as const)(
+    'does not dispatch backend calls missing %s',
+    async (missingField) => {
+      const session = create();
+      const calls: llm.FunctionCall[] = [];
+      session.on('function_call', (call) => calls.push(call));
+      await ready(session);
+      await server.response(session, { type: 'response.created' });
+      const event = callDone('call_1');
+      delete event.item![missingField];
+      await server.response(session, event);
+      expect(calls).toEqual([]);
+      expect(
+        (
+          session as unknown as {
+            delegatedResponses: Map<string, { callIds: Set<string> }>;
+          }
+        ).delegatedResponses.get('d1')?.callIds,
+      ).toEqual(new Set());
+      expect(
+        (session as unknown as { history: llm.ChatContext }).history.items.filter(
+          (item) => item.type === 'function_call',
+        ),
+      ).toEqual([]);
+
+      await server.response(session, callDone('call_1'));
+      expect(calls.map((call) => call.callId)).toEqual(['call_1']);
+    },
+  );
+
+  it('does not dispatch duplicate backend calls or block continuation', async () => {
+    const session = create();
+    const calls: llm.FunctionCall[] = [];
+    session.on('function_call', (call) => calls.push(call));
+    await ready(session);
+    await server.response(session, { type: 'response.created' });
+    for (const callId of ['call_a', 'call_a', 'call_b', 'call_b'])
+      await server.response(session, callDone(callId));
+    expect(calls.map((call) => call.callId)).toEqual(['call_a', 'call_b']);
+    expect(
+      (session as unknown as { history: llm.ChatContext }).history.items.filter(
+        (item) => item.type === 'function_call',
+      ),
+    ).toHaveLength(2);
+
+    await session._appendItems([output('call_a')]);
+    await server.response(session, completed());
+    await waitCount(2);
+    expect(server.events().filter((event) => event.type === 'response.create')).toEqual([]);
+    await session._appendItems([output('call_b')]);
+    await waitCount(4);
+    expect(server.events().filter((event) => event.type === 'response.create')).toHaveLength(1);
+
+    await server.response(session, { type: 'response.created' });
+    await server.response(session, callDone('call_c'));
+    expect(calls.map((call) => call.callId)).toEqual(['call_a', 'call_b', 'call_c']);
+  });
+
   it.each(['response.failed', 'response.incomplete'])(
     'clears tool routing after %s',
     async (type) => {
@@ -723,7 +817,7 @@ describe('GPTLiveModel', () => {
     await ready(session);
     await server.response(session, {
       type: 'response.output_item.done',
-      item: { type: 'function_call', call_id: 'bad' },
+      item: { type: 'function_call', status: 'completed', call_id: 'bad' },
     });
     expect(calls).not.toHaveBeenCalled();
     await server.response(session, callDone('a'));
@@ -1293,16 +1387,32 @@ describe('GPTLiveModel', () => {
     await ready(session);
     await server.response(session, {
       type: 'response.output_item.done',
-      item: { type: 'function_call', call_id: privateText, name: privateText },
+      item: {
+        type: 'function_call',
+        status: 'incomplete',
+        call_id: privateText,
+        name: privateText,
+        arguments: '{}',
+      },
     });
     await server.response(
       session,
       {
         type: 'response.output_item.done',
-        item: { type: 'function_call', call_id: privateText, name: privateText, arguments: '{}' },
-      },
+        item: {
+          type: 'function_call',
+          status: privateText,
+          call_id: privateText,
+          name: privateText,
+          arguments: '{}',
+        },
+      } as unknown as GPTLive.ResponsesEvent,
       privateText,
     );
+    await server.response(session, {
+      type: 'response.output_item.done',
+      item: { type: 'function_call', status: 'completed', call_id: privateText, name: privateText },
+    });
     session.appendThinking(privateText);
     await server.send(session, transcript('user', privateText, 0));
     await server.response(session, {

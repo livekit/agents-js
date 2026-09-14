@@ -80,6 +80,7 @@ export interface ResponsesEvent {
   item?: {
     id?: string | null;
     type?: string | null;
+    status?: 'in_progress' | 'completed' | 'incomplete' | null;
     call_id?: string | null;
     name?: string | null;
     arguments?: string | null;
