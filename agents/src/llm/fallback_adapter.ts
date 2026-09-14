@@ -172,6 +172,7 @@ class FallbackLLMStream extends LLMStream {
       connOptions: opts.connOptions,
     });
     this.adapter = adapter;
+    this._retryOnChunkSent = adapter.retryOnChunkSent;
     this.parallelToolCalls = opts.parallelToolCalls;
     this.toolChoice = opts.toolChoice;
     this.extraKwargs = opts.extraKwargs;
@@ -217,6 +218,7 @@ class FallbackLLMStream extends LLMStream {
     llm.on('error', errorHandler);
     const closeStream = () => stream.close();
     if (!checkRecovery) {
+      stream._retryOnChunkSent = this.adapter.retryOnChunkSent;
       signal.addEventListener('abort', closeStream, { once: true });
       if (signal.aborted) closeStream();
     }
@@ -387,7 +389,6 @@ class FallbackLLMStream extends LLMStream {
                 { llm: llm.label(), ...extra },
                 'failed after sending chunk, skip retrying. Set `retryOnChunkSent` to `true` to enable.',
               );
-              if (error instanceof APIError) error.retryable = false;
               throw error;
             }
 

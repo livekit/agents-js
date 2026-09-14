@@ -176,26 +176,36 @@ describe('FallbackAdapter stream isolation', () => {
 });
 
 describe('FallbackAdapter retries after output', () => {
-  it.each<[string, ChatChunk]>([
-    ['text', textChunk],
-    ['tool calls', toolChunk],
-    [
-      'tool arguments without a name',
-      {
-        id: 'response',
-        delta: {
-          role: 'assistant',
-          toolCalls: [new FunctionCall({ callId: 'transfer', name: '', args: '{}' })],
-        },
-      },
-    ],
-  ])('does not replay %s through the outer retry loop', async (_, chunk) => {
+  it.each(
+    (
+      [
+        ['text', textChunk],
+        ['tool calls', toolChunk],
+        [
+          'tool arguments without a name',
+          {
+            id: 'response',
+            delta: {
+              role: 'assistant',
+              toolCalls: [new FunctionCall({ callId: 'transfer', name: '', args: '{}' })],
+            },
+          },
+        ],
+      ] satisfies [string, ChatChunk][]
+    ).flatMap(([name, chunk]) => [0, 1].map((childRetries) => ({ name, chunk, childRetries }))),
+  )('does not replay $name (child retries=$childRetries)', async ({ chunk, childRetries }) => {
     const error = new APITimeoutError({ message: 'Failed after output' });
+    let foregroundAttempts = 0;
     const provider = new ControlledLLM(async (stream, request) => {
       stream.send(chunk);
-      if (request === 1) throw error;
+      if (request === 1 && ++foregroundAttempts === 1) throw error;
     });
-    const adapter = new FallbackAdapter({ llms: [provider], retryOnChunkSent: false });
+    const adapter = new FallbackAdapter({
+      llms: [provider],
+      retryOnChunkSent: false,
+      maxRetryPerLLM: childRetries,
+      retryInterval: 0,
+    });
     const errors = observeErrors(adapter);
     const connOptions = { ...DEFAULT_API_CONNECT_OPTIONS };
     const stream = adapter.chat({ chatCtx: new ChatContext(), connOptions });
@@ -206,6 +216,7 @@ describe('FallbackAdapter retries after output', () => {
     expect(errors).toEqual([expect.objectContaining({ error, recoverable: false })]);
     expect(errors[0]!.error).toBe(error);
     expect(error.retryable).toBe(false);
+    expect(foregroundAttempts).toBe(1);
     expect(provider.streams).toHaveLength(2); // Foreground and background recovery.
     expect(connOptions).toEqual(DEFAULT_API_CONNECT_OPTIONS);
     expect(stream.connOptions).toBe(connOptions);
@@ -327,6 +338,89 @@ describe('FallbackAdapter retries after output', () => {
     await waitForRecovery(adapter);
 
     expect(chunks).toEqual([textChunk, textChunk]);
+  });
+
+  it.each<ChatChunk>([
+    { id: 'role', delta: { role: 'assistant' } },
+    { id: 'empty', delta: { role: 'assistant', content: '', toolCalls: [] } },
+    {
+      id: 'usage',
+      usage: { promptTokens: 1, completionTokens: 0, totalTokens: 1, promptCachedTokens: 0 },
+    },
+  ])('allows child retries after a $id chunk', async (metadata) => {
+    let attempts = 0;
+    const error = new APITimeoutError({});
+    const provider = new ControlledLLM(async (stream) => {
+      if (++attempts === 1) {
+        stream.send(metadata);
+        throw error;
+      }
+      stream.send();
+    });
+    const adapter = new FallbackAdapter({ llms: [provider], maxRetryPerLLM: 1, retryInterval: 0 });
+    const errors = observeErrors(adapter);
+    const chunks = await collect(adapter.chat({ chatCtx: new ChatContext() }));
+    await waitForRecovery(adapter);
+
+    expect(chunks).toEqual([metadata, textChunk]);
+    expect(attempts).toBe(2);
+    expect(provider.streams).toHaveLength(1);
+    expect(error.retryable).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  it.each(
+    [textChunk, toolChunk].flatMap((chunk) =>
+      [false, true].map((useAdapter) => ({ chunk, useAdapter })),
+    ),
+  )(
+    'preserves opt-in and direct provider retries (adapter=$useAdapter)',
+    async ({ chunk, useAdapter }) => {
+      let attempts = 0;
+      const error = new APITimeoutError({});
+      const provider = new ControlledLLM(async (stream) => {
+        stream.send(chunk);
+        if (++attempts === 1) throw error;
+      });
+      const adapter = new FallbackAdapter({
+        llms: [provider],
+        retryOnChunkSent: true,
+        maxRetryPerLLM: 1,
+        retryInterval: 0,
+      });
+      const errors = observeErrors(adapter);
+      const chunks = await collect(
+        (useAdapter ? adapter : provider).chat({
+          chatCtx: new ChatContext(),
+          connOptions: { ...noRetries, maxRetry: 1, retryIntervalMs: 0 },
+        }),
+      );
+      await waitForRecovery(adapter);
+
+      expect(chunks).toEqual([chunk, chunk]);
+      expect(attempts).toBe(2);
+      expect(provider.streams).toHaveLength(1);
+      expect(error.retryable).toBe(true);
+      expect(errors).toEqual([]);
+    },
+  );
+
+  it('preserves retries after output in background recovery', async () => {
+    let recoveryAttempts = 0;
+    const provider = new ControlledLLM(async (stream, request) => {
+      stream.send();
+      if (request === 1 || ++recoveryAttempts === 1) throw new APITimeoutError({});
+    });
+    const adapter = new FallbackAdapter({ llms: [provider], maxRetryPerLLM: 1, retryInterval: 0 });
+    const errors = observeErrors(adapter);
+    const chunks = await collect(adapter.chat({ chatCtx: new ChatContext() }));
+    await waitForRecovery(adapter);
+
+    expect(chunks).toEqual([textChunk]);
+    expect(errors).toEqual([expect.objectContaining({ recoverable: false })]);
+    expect(provider.streams).toHaveLength(2);
+    expect(recoveryAttempts).toBe(2);
+    expect(adapter._status[0]!.available).toBe(true);
   });
 });
 

@@ -178,19 +178,37 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
   }
 }
 
+/** Records output before a provider can fail, even if the consumer has not read it. */
+class LLMEventQueue extends AsyncIterableQueue<ChatChunk> {
+  constructor(private readonly onOutput: () => void) {
+    super();
+  }
+
+  override put(chunk: ChatChunk): void {
+    super.put(chunk);
+    if (hasResponse(chunk)) this.onOutput();
+  }
+}
+
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected output = new AsyncIterableQueue<ChatChunk>();
-  protected queue = new AsyncIterableQueue<ChatChunk>();
+  protected queue: AsyncIterableQueue<ChatChunk> = new LLMEventQueue(() => {
+    this.#outputSent = true;
+  });
   protected closed = false;
   protected abortController = new AbortController();
   protected _connOptions: APIConnectOptions;
   protected logger = log();
+
+  /** @internal */
+  _retryOnChunkSent = true;
 
   #llm: LLM;
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
   #llmRequestSpan?: Span;
   #error?: Error;
+  #outputSent = false;
   // Provider-known response ids collected from ChatChunks during the current
   // attempt; reset before each retry and written to the `llm_request_run` span.
   #providerRequestIds: string[] = [];
@@ -290,6 +308,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       } catch (error) {
         if (this.abortController.signal.aborted) return;
         if (error instanceof APIError) {
+          if (!this._retryOnChunkSent && this.#outputSent) error.retryable = false;
           const retryInterval = intervalForRetry(this._connOptions, i);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {

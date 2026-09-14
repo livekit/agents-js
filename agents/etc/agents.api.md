@@ -5404,6 +5404,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     //
     // (undocumented)
     protected queue: AsyncIterableQueue<ChatChunk>;
+    // @internal (undocumented)
+    _retryOnChunkSent: boolean;
     // (undocumented)
     protected abstract run(): Promise<void>;
     get toolCtx(): ToolContext | undefined;
