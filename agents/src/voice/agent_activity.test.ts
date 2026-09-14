@@ -916,6 +916,7 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
     _preemptiveGenerationCount: 0,
     _preemptiveGeneration: undefined,
     _currentSpeech: undefined as SpeechHandle | undefined,
+    _backgroundSpeeches: new Set<SpeechHandle>(),
     schedulingPaused: false,
     llm: new FakePreemptiveLLM(),
     tools: emptyToolCtx,
@@ -1016,6 +1017,26 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(fakeActivity._preemptiveGenerationCount).toBe(0);
     expect(generateReply).not.toHaveBeenCalled();
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
+  });
+
+  it('skips preemption while a tool execution is still running in the background', () => {
+    const { fakeActivity, generateReply, cancelPreemptiveGeneration, call } =
+      buildPreemptiveRunner();
+
+    fakeActivity._backgroundSpeeches.add(SpeechHandle.create());
+
+    call();
+
+    expect(fakeActivity._preemptiveGenerationCount).toBe(0);
+    expect(generateReply).not.toHaveBeenCalled();
+    expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
+
+    fakeActivity._backgroundSpeeches.clear();
+
+    call();
+
+    expect(fakeActivity._preemptiveGenerationCount).toBe(1);
+    expect(generateReply).toHaveBeenCalledTimes(1);
   });
 });
 
