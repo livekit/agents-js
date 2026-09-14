@@ -531,6 +531,9 @@ export class Agent<UserData = any> {
             for await (const event of stream) {
               controller.enqueue(event);
             }
+            // the retry loop swallows its own failure; surface it so the STT pipeline can
+            // tell an exhausted stream from a closed audio input
+            if (stream.terminalError) throw stream.terminalError;
             controller.close();
           } finally {
             // Always clean up the STT stream, whether it ends naturally or is cancelled

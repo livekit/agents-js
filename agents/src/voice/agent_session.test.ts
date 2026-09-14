@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
+import type { STTError } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
 import { AgentSessionEventTypes, CloseReason, createUserInputTranscribedEvent } from './events.js';
@@ -252,5 +253,58 @@ describe('AgentSession user input transcription', () => {
     session.emit(AgentSessionEventTypes.UserInputTranscribed, finalTranscript);
     expect(setTimerWhileSpeaking).not.toHaveBeenCalled();
     setTimerWhileSpeaking.mockRestore();
+  });
+});
+
+describe('AgentSession STT error tolerance', () => {
+  function sttError(): STTError {
+    return {
+      type: 'stt_error',
+      timestamp: Date.now(),
+      label: 'test',
+      error: new Error('stt unavailable'),
+      recoverable: false,
+    };
+  }
+
+  type Internals = AgentSessionCloseInternals & { sttErrorCounts: number };
+
+  it('tolerates unrecoverable STT errors up to maxUnrecoverableErrors, like LLM and TTS', async () => {
+    const session = new AgentSession({ vad: null, connOptions: { maxUnrecoverableErrors: 1 } });
+    const internals = session as unknown as Internals;
+
+    session._onError(sttError());
+    expect(internals.closingTask).toBeNull();
+    expect(internals.sttErrorCounts).toBe(1);
+
+    session._onError(sttError());
+    expect(internals.closingTask).not.toBeNull();
+    await internals.closingTask;
+  });
+
+  it('resets the STT error count on a real user transcript', async () => {
+    const session = new AgentSession({ vad: null, connOptions: { maxUnrecoverableErrors: 1 } });
+    const internals = session as unknown as Internals;
+
+    session._onError(sttError());
+    expect(internals.sttErrorCounts).toBe(1);
+
+    session.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({ transcript: 'hello', isFinal: true }),
+    );
+    expect(internals.sttErrorCounts).toBe(0);
+
+    // an empty placeholder transcript is not a recovery
+    session._onError(sttError());
+    session.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({ transcript: '', isFinal: false }),
+    );
+    expect(internals.sttErrorCounts).toBe(1);
+
+    session._onError(sttError());
+    expect(internals.closingTask).not.toBeNull();
+    await internals.closingTask;
   });
 });

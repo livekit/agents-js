@@ -216,6 +216,7 @@ describe('SpeechStream retry budget', () => {
     expect(stream.runCount).toBe(connOptions.maxRetry + 1);
     expect(errors.at(-1)!.error).toBeInstanceOf(APIStatusError);
     expect(errors.at(-1)!.recoverable).toBe(false);
+    expect(stream.terminalError).toBeInstanceOf(APIConnectionError);
 
     await stream.close();
   });

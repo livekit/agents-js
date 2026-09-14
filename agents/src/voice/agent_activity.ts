@@ -769,6 +769,7 @@ export class AgentActivity implements RecognitionHooks {
       recognitionHooks: this,
       // Disable stt node if stt is not provided
       stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
+      isClosing: () => this.agentSession._closing,
       vad: recognitionVad,
       turnDetector:
         typeof this._resolvedTurnDetection === 'string' ? undefined : this._resolvedTurnDetection,

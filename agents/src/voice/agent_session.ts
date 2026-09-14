@@ -577,7 +577,8 @@ export class AgentSession<
   // Connection options for STT, LLM, and TTS
   private _connOptions: ResolvedSessionConnectOptions;
 
-  // Unrecoverable error counts, reset after agent speaking
+  // Unrecoverable error counts; stt resets on a user transcript, llm/tts on agent speaking
+  private sttErrorCounts = 0;
   private llmErrorCounts = 0;
   private ttsErrorCounts = 0;
 
@@ -1702,7 +1703,12 @@ export class AgentSession<
     }
 
     // Track error counts per type to implement max_unrecoverable_errors logic
-    if (error.type === 'llm_error') {
+    if (error.type === 'stt_error') {
+      this.sttErrorCounts += 1;
+      if (this.sttErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
+        return;
+      }
+    } else if (error.type === 'llm_error') {
       this.llmErrorCounts += 1;
       if (this.llmErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
         return;
@@ -1924,6 +1930,10 @@ export class AgentSession<
   }
 
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
+    if (ev.transcript) {
+      // a transcript means stt recovered; reset its error tolerance
+      this.sttErrorCounts = 0;
+    }
     if (this.closing) return;
     if (ev.isFinal && this._userState !== 'speaking') {
       if (this._userState === 'away') {
@@ -2048,6 +2058,7 @@ export class AgentSession<
     this._userState = 'listening';
     this._agentState = 'initializing';
     this.rootSpanContext = undefined;
+    this.sttErrorCounts = 0;
     this.llmErrorCounts = 0;
     this.ttsErrorCounts = 0;
 
