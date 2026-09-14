@@ -35,6 +35,59 @@ describe('Rime TTS streaming', () => {
     vi.restoreAllMocks();
   });
 
+  it('retries after a body timeout even when HTTP cancellation does not settle', async () => {
+    let finishCancellation!: () => void;
+    const cancellation = new Promise<void>((resolve) => {
+      finishCancellation = resolve;
+    });
+    let requestSignal: AbortSignal | undefined;
+    const cancel = vi.fn(() => {
+      expect(requestSignal?.aborted).toBe(true);
+      return cancellation;
+    });
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(async (_url, init) => {
+        requestSignal = init?.signal ?? undefined;
+        return new Response(body);
+      })
+      .mockImplementationOnce(async () => {
+        expect(requestSignal?.aborted).toBe(true);
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(body.locked).toBe(false);
+        return new Response(Buffer.from(pcmChunk(9600)));
+      });
+    const value = new TTS({ apiKey: 'test-key' });
+    const errors: APIError[] = [];
+    value.on('error', (event) => errors.push(event.error as APIError));
+    const stream = value.synthesize('Hello.', {
+      maxRetry: 1,
+      retryIntervalMs: 0,
+      timeoutMs: 30,
+    });
+    const completed = (async () => {
+      let frames = 0;
+      for await (const frame of stream) {
+        void frame;
+        frames++;
+      }
+      return frames;
+    })();
+    try {
+      const result = await withTimeout(completed, 1000);
+      expect(result).not.toBe('timeout');
+      expect(result).toBeGreaterThan(0);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(errors).toHaveLength(0);
+      expect(body.locked).toBe(false);
+    } finally {
+      finishCancellation();
+      await completed;
+      await value.close();
+    }
+  });
+
   it.each(['body failure', 'timeout'])(
     'does not retry HTTP %s after audio delivery',
     async (mode) => {

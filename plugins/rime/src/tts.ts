@@ -203,7 +203,12 @@ export class ChunkedStream extends tts.ChunkedStream {
     } finally {
       controller.abort();
       if (reader) {
-        await reader.cancel().catch(() => {});
+        // The request is already aborted. Give cancellation its own bounded cleanup window.
+        await bounded(
+          reader.cancel(),
+          new AbortController().signal,
+          Math.min(1000, this.requestOptions.timeoutMs),
+        ).catch(() => {});
         reader.releaseLock();
       }
     }
