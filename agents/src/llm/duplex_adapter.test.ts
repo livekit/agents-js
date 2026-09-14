@@ -437,6 +437,68 @@ describe('duplex segmentation', () => {
     messageReader.releaseLock();
   });
 
+  it('keeps words that arrive after the last frame on their burst', async () => {
+    const { fake, session, generations } = setup();
+    fake.push(0.001, 20);
+    fake.push(0.3, 3);
+    await setImmediate();
+    fake.say('Hello there.', 5000, 5400);
+    await fake.close();
+    await setImmediate();
+
+    expect(generations).toHaveLength(1);
+    expect(session['fragments']).toEqual([]);
+    expect((await readGeneration(generations[0]!)).text).toBe('Hello there.');
+  });
+
+  it('emits words for sound already played as text on their own', async () => {
+    const { fake, session, generations } = setup();
+    fake.push(0.001, 20);
+    fake.push(0.3, 3);
+    await setImmediate();
+    fake.say('Hello', 2000, 2200);
+    fake.push(0.001, 8);
+    await setImmediate();
+    expect(generations).toHaveLength(1);
+    fake.say(' there.', 2200, 2300);
+    await setImmediate();
+
+    expect(generations).toHaveLength(2);
+    expect(session['fragments']).toEqual([]);
+    expect((await readGeneration(generations[0]!)).text).toBe('Hello');
+    expect(await readGeneration(generations[1]!)).toMatchObject({ frames: [], text: ' there.' });
+
+    fake.say('Next.', 5000, 5200);
+    fake.push(0.3, 3);
+    fake.push(0.001, 8);
+    await setImmediate();
+    expect(generations).toHaveLength(3);
+    const { chunks } = await readGeneration(generations[2]!);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toMatchObject({ text: 'Next.', startTime: 0 });
+  });
+
+  it('does not join late words to the burst that is already sounding', async () => {
+    const { fake, generations } = setup();
+    fake.push(0.001, 20);
+    fake.push(0.3, 3);
+    await setImmediate();
+    fake.say('Hello', 2000, 2200);
+    fake.push(0.001, 5);
+    fake.push(0.3, 2);
+    await setImmediate();
+    expect(generations).toHaveLength(2);
+    fake.say(' there.', 2200, 2300);
+    fake.say('Next.', 5000, 5200);
+    fake.push(0.3, 2);
+    fake.push(0.001, 8);
+    await setImmediate();
+
+    expect(generations).toHaveLength(3);
+    expect(await readGeneration(generations[2]!)).toMatchObject({ frames: [], text: ' there.' });
+    expect((await readGeneration(generations[1]!)).text).toBe('Next.');
+  });
+
   it('emits an unclaimed transcript after three seconds of silent audio', async () => {
     const { fake, generations } = setup();
     const error = vi.spyOn(log(), 'error');
@@ -767,6 +829,35 @@ describe('duplex requested replies', () => {
     await setImmediate();
     expect(await reply).toBe(generations[1]);
     expect(generations[1]!.userInitiated).toBe(true);
+  });
+
+  it('does not claim late words as the reply instead of the speech after them', async () => {
+    const { fake, model, session } = setup();
+    model.askable = true;
+    fake.push(0.001, 20);
+    fake.push(0.5, 3);
+    await setImmediate();
+    fake.say('Hello', 2000, 2200);
+    fake.push(0.001, 8);
+    await setImmediate();
+
+    const reply = session.generateReply();
+    let replied = false;
+    void reply.then(() => {
+      replied = true;
+    });
+    fake.say(' there.', 2200, 2300);
+    await setImmediate();
+    expect(replied).toBe(false);
+
+    fake.push(0.5, 3);
+    fake.push(0.001, 8);
+    await setImmediate();
+    const generation = await reply;
+    expect(generation.userInitiated).toBe(true);
+    const result = await readGeneration(generation);
+    expect(result.frames.length).toBeGreaterThan(0);
+    expect(result.text).toBe('');
   });
 
   it('rejects superseded, reconnected, and closed requests', async () => {
