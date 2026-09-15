@@ -315,6 +315,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   abstract label: string;
   protected closed = false;
   #stt: STT;
+  #terminalError?: Error;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   private _connOptions: APIConnectOptions;
@@ -342,8 +343,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     const runMainTask = async () => {
       try {
         await this.mainTask();
-      } catch {
+      } catch (error) {
         // already surfaced via emitError; swallow to avoid unhandled rejection.
+        this.#terminalError = toError(error);
       } finally {
         this.queue.close();
       }
@@ -363,10 +365,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
    */
   private async mainTask(): Promise<void> {
     let lastStartTime = Date.now();
-    // `_numRetries` is reset by monitorMetrics() on every FINAL_TRANSCRIPT, so the budget
-    // applies to consecutive failures rather than to the lifetime of the stream. Providers
-    // that recycle their socket on a fixed interval (e.g. Gemini Live's 10-minute session
-    // cap) would otherwise exhaust it and permanently stop recognizing on long sessions.
+    // `_numRetries` counts consecutive failures, not failures over the lifetime of the stream:
+    // it is reset below once an attempt outlived the connect timeout (it had connected), and by
+    // monitorMetrics() on every FINAL_TRANSCRIPT. Providers that recycle their socket on a fixed
+    // interval (Gemini Live's 10-minute cap, Cartesia's 3-minute idle timeout) would otherwise
+    // exhaust it and permanently stop recognizing on long sessions.
     while (this._numRetries <= this._connOptions.maxRetry) {
       try {
         // Keep provider-relative transcript timestamps linear across reconnect attempts.
@@ -380,6 +383,10 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         // in Node's EventEmitter.
         if (this.abortController.signal.aborted) {
           return;
+        }
+
+        if (Date.now() - lastStartTime > this._connOptions.timeoutMs) {
+          this._numRetries = 0;
         }
 
         if (error instanceof APIError) {
@@ -564,6 +571,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   next(): Promise<IteratorResult<SpeechEvent>> {
     return this.output.next();
+  }
+
+  /** The error that ended the retry loop; set once the stream has stopped recognizing for good. */
+  get terminalError(): Error | undefined {
+    return this.#terminalError;
   }
 
   /** Close both the input and output of the STT stream */
