@@ -163,6 +163,14 @@ const SAFE_KEYS = new Set([
   'lk.tts_metrics',
   'lk.realtime_model_metrics',
   'lk.e2e_latency',
+  // eou_wait / speech scheduling (timings and enums)
+  'lk.eou.outcome',
+  'lk.eou.wait_duration',
+  'lk.eou.rearm_count',
+  'lk.eou.not_committed_count',
+  'lk.eou.resume_count',
+  'lk.on_user_turn_completed_delay',
+  'lk.speech.queue_wait',
   // Event loop blocking
   'lk.blocking.duration',
   'lk.blocking.threshold',
