@@ -7,6 +7,7 @@ import { APIConnectionError, APIError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
 import { type AudioBuffer, delay } from '../utils.js';
+import { VAD, VADStream } from '../vad.js';
 import { FallbackAdapter } from './fallback_adapter.js';
 import { STT, type SpeechEvent, SpeechEventType, SpeechStream } from './stt.js';
 import { FakeSTT, RecognizeSentinel, emptyAudioFrame } from './testing/fake_stt.js';
@@ -79,6 +80,30 @@ class RetryTimelineStream extends SpeechStream {
     for await (const _ of this.input) {
       /* drain */
     }
+  }
+}
+
+class FakeVAD extends VAD {
+  label = 'fake-vad';
+
+  constructor() {
+    super({ updateInterval: 100 });
+  }
+
+  stream(): VADStream {
+    return new (class extends VADStream {})(this);
+  }
+}
+
+class NonStreamingSTT extends FakeSTT {
+  closeCount = 0;
+
+  constructor() {
+    super({ capabilities: { streaming: false, interimResults: false } });
+  }
+
+  override async close(): Promise<void> {
+    this.closeCount++;
   }
 }
 
@@ -280,6 +305,19 @@ describe('FallbackAdapter', () => {
     } as never);
 
     expect(received).toHaveLength(0);
+  });
+
+  it('close closes automatically created stream adapters', async () => {
+    const stt = new NonStreamingSTT();
+    const baseline = stt.listenerCount('metrics_collected');
+    const adapter = new FallbackAdapter({ sttInstances: [stt], vad: new FakeVAD() });
+
+    expect(stt.listenerCount('metrics_collected')).toBe(baseline + 1);
+
+    await adapter.close();
+
+    expect(stt.listenerCount('metrics_collected')).toBe(baseline);
+    expect(stt.closeCount).toBe(0);
   });
 });
 

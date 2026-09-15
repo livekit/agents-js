@@ -98,6 +98,7 @@ export class FallbackAdapter extends STT {
   private _status: STTStatus[] = [];
   private _logger = log();
   private _metricsForwarders = new Map<STT, (m: STTMetrics) => void>();
+  private _ownedStreamAdapters: StreamAdapter[] = [];
   // Last child that produced output or returned a recognize result. Surfaced
   // via the dynamic label/model/provider getters so OTel attributes like
   // `gen_ai.request.model` on `user_turn` (refreshed on every STT event by
@@ -124,9 +125,13 @@ export class FallbackAdapter extends STT {
       );
     }
 
-    const wrapped = opts.sttInstances.map((s) =>
-      s.capabilities.streaming ? s : new StreamAdapter(s, opts.vad!),
-    );
+    const ownedStreamAdapters: StreamAdapter[] = [];
+    const wrapped = opts.sttInstances.map((s) => {
+      if (s.capabilities.streaming) return s;
+      const adapter = new StreamAdapter(s, opts.vad!);
+      ownedStreamAdapters.push(adapter);
+      return adapter;
+    });
 
     // Pick the primary's granularity only if every instance supports aligned
     // transcripts — otherwise consumers can't rely on a consistent format.
@@ -145,6 +150,7 @@ export class FallbackAdapter extends STT {
     });
 
     this.sttInstances = wrapped;
+    this._ownedStreamAdapters = ownedStreamAdapters;
     this.attemptTimeoutMs = opts.attemptTimeoutMs ?? 10_000;
     this.maxRetryPerSTT = opts.maxRetryPerSTT ?? 1;
     this.retryIntervalMs = opts.retryIntervalMs ?? 5_000;
@@ -327,6 +333,7 @@ export class FallbackAdapter extends STT {
       if (m) s.off('metrics_collected' as keyof STTCallbacks, m);
     }
     this._metricsForwarders.clear();
+    await Promise.all(this._ownedStreamAdapters.map((adapter) => adapter.close()));
   }
 }
 

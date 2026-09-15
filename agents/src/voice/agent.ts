@@ -492,6 +492,7 @@ export class Agent<UserData = any> {
       }
 
       let wrappedStt = activity.stt;
+      let temporaryAdapter: STTStreamAdapter | undefined;
 
       if (!wrappedStt.capabilities.streaming) {
         const vad = agent.vad || activity.vad;
@@ -500,30 +501,40 @@ export class Agent<UserData = any> {
             'STT does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming',
           );
         }
-        wrappedStt = new STTStreamAdapter(wrappedStt, vad);
+        temporaryAdapter = new STTStreamAdapter(wrappedStt, vad);
+        wrappedStt = temporaryAdapter;
       }
 
       const connOptions = activity.agentSession.connOptions.sttConnOptions;
-      const stream = wrappedStt.stream({ connOptions });
-
-      // Set startTimeOffset to provide linear timestamps across reconnections
-      const audioInputStartedAt =
-        activity.inputStartedAt ?? // Use input started at proxied from AudioRecognition if available
-        activity.agentSession._recorderIO?.recordingStartedAt ?? // Fallback to recording start time if available
-        activity.agentSession._startedAt ?? // Fallback to session start time
-        Date.now(); // Fallback to current time
-
-      stream.startTimeOffset = (Date.now() - audioInputStartedAt) / 1000;
-
-      stream.updateInputStream(input);
-
+      let stream!: ReturnType<STT['stream']>;
       let cleaned = false;
-      const cleanup = () => {
+      const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
-        stream.detachInputStream();
-        stream.close();
+        try {
+          stream?.detachInputStream();
+          stream?.close();
+        } finally {
+          await temporaryAdapter?.close();
+        }
       };
+      try {
+        stream = wrappedStt.stream({ connOptions });
+
+        // Set startTimeOffset to provide linear timestamps across reconnections
+        const audioInputStartedAt =
+          activity.inputStartedAt ?? // Use input started at proxied from AudioRecognition if available
+          activity.agentSession._recorderIO?.recordingStartedAt ?? // Fallback to recording start time if available
+          activity.agentSession._startedAt ?? // Fallback to session start time
+          Date.now(); // Fallback to current time
+
+        stream.startTimeOffset = (Date.now() - audioInputStartedAt) / 1000;
+
+        stream.updateInputStream(input);
+      } catch (error) {
+        await cleanup();
+        throw error;
+      }
 
       return new ReadableStream({
         async start(controller) {
@@ -531,14 +542,14 @@ export class Agent<UserData = any> {
             for await (const event of stream) {
               controller.enqueue(event);
             }
-            controller.close();
           } finally {
             // Always clean up the STT stream, whether it ends naturally or is cancelled
-            cleanup();
+            await cleanup();
           }
+          controller.close();
         },
         cancel() {
-          cleanup();
+          return cleanup();
         },
       });
     },
@@ -628,19 +639,30 @@ export class Agent<UserData = any> {
       activity.tts._setExpressive(expressiveActive);
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
-      const stream = wrappedTts.stream({ connOptions });
-      stream.updateInputStream(input);
-
+      let stream!: SynthesizeStream;
       let cleaned = false;
       const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
-        stream.close();
-        await input.cancel('tts node cleanup').catch(() => {});
-        if (wrappedTts !== activity.tts) {
-          await wrappedTts.close();
+        try {
+          stream?.close();
+        } finally {
+          try {
+            if (wrappedTts !== activity.tts) {
+              await wrappedTts.close();
+            }
+          } finally {
+            await input.cancel('tts node cleanup').catch(() => {});
+          }
         }
       };
+      try {
+        stream = wrappedTts.stream({ connOptions });
+        stream.updateInputStream(input);
+      } catch (error) {
+        await cleanup();
+        throw error;
+      }
 
       return new ReadableStream({
         async start(controller) {
@@ -655,10 +677,10 @@ export class Agent<UserData = any> {
               }
               controller.enqueue(chunk.frame);
             }
-            controller.close();
           } finally {
             await cleanup();
           }
+          controller.close();
         },
         cancel() {
           return cleanup();
