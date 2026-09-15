@@ -389,6 +389,7 @@ class RealtimeModel_2 extends llm.RealtimeModel {
         thinkingConfig?: types.ThinkingConfig;
         toolBehavior?: types.Behavior;
         toolResponseScheduling?: types.FunctionResponseScheduling;
+        sessionResumption?: types.SessionResumptionConfig;
     });
     close(): Promise<void>;
     // (undocumented)
@@ -568,7 +569,7 @@ type Voice = 'Achernar' | 'Achird' | 'Algenib' | 'Algieba' | 'Alnilam' | 'Aoede'
 // Warnings were encountered during analysis:
 //
 // src/aiplatform_llm.ts:176:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
-// src/realtime/realtime_api.ts:268:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_api.ts:273:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

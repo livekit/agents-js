@@ -110,7 +110,12 @@ interface RealtimeOptions {
   thinkingConfig?: types.ThinkingConfig;
   toolBehavior?: types.Behavior;
   toolResponseScheduling?: types.FunctionResponseScheduling;
+  sessionResumption?: types.SessionResumptionConfig;
 }
+
+type QueuedClientEvent = api_proto.ClientEvents & {
+  chatCtxItemIds?: Set<string>;
+};
 
 /**
  * Response generation tracking
@@ -332,6 +337,11 @@ export class RealtimeModel extends llm.RealtimeModel {
        * responsible for avoiding this parameter when using Vertex AI.
        */
       toolResponseScheduling?: types.FunctionResponseScheduling;
+
+      /**
+       * Configuration used to resume a previous Gemini Live session.
+       */
+      sessionResumption?: types.SessionResumptionConfig;
     } = {},
   ) {
     const inputAudioTranscription =
@@ -408,6 +418,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       thinkingConfig: options.thinkingConfig,
       toolBehavior: options.toolBehavior,
       toolResponseScheduling: options.toolResponseScheduling,
+      sessionResumption: options.sessionResumption,
     };
   }
 
@@ -462,7 +473,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private _chatCtx = llm.ChatContext.empty();
 
   private options: RealtimeOptions;
-  private messageChannel = new Queue<api_proto.ClientEvents>();
+  private messageChannel = new Queue<QueuedClientEvent>();
   private inputResampler?: AudioResampler;
   private inputResamplerInputRate?: number;
   private instructions?: string;
@@ -476,6 +487,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingGenerationFut?: Future<llm.GenerationCreatedEvent>;
 
   private sessionResumptionHandle?: string;
+  private resumptionChatCtx?: llm.ChatContext;
+  private pendingChatCtx?: llm.ChatContext;
+  private unsentItemIds = new Set<string>();
   private inUserActivity = false;
   private sessionLock = new Mutex();
   private numRetries = 0;
@@ -503,6 +517,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     super(realtimeModel);
 
     this.options = realtimeModel._options;
+    this.sessionResumptionHandle = this.options.sessionResumption?.handle;
     this.bstream = new AudioByteStream(
       INPUT_AUDIO_SAMPLE_RATE,
       INPUT_AUDIO_CHANNELS,
@@ -717,14 +732,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     const unlock = await this.sessionLock.lock();
     try {
       if (!this.activeSession) {
-        this._chatCtx = chatCtx.copy();
+        this.pendingChatCtx = chatCtx.copy();
         return;
       }
     } finally {
       unlock();
     }
 
-    const diffOps = llm.computeChatCtxDiff(this._chatCtx, chatCtx);
+    await this.syncChatCtx(chatCtx);
+  }
+
+  private async syncChatCtx(chatCtx: llm.ChatContext, known?: llm.ChatContext): Promise<void> {
+    const diffOps = llm.computeChatCtxDiff(known ?? this._chatCtx, chatCtx);
 
     if (diffOps.toRemove.length > 0) {
       this.#logger.warn('Gemini Live does not support removing messages');
@@ -770,21 +789,39 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
 
         if (this.realtimeModel.capabilities.midSessionChatCtxUpdate) {
-          this.sendClientEvent({
-            type: 'content',
-            value: {
-              turns: turns as types.Content[],
-              turnComplete: false,
+          const itemIds = new Set(
+            appendCtx.items
+              .filter((item) => item.type !== 'function_call_output')
+              .map((item) => item.id),
+          );
+          for (const itemId of itemIds) this.unsentItemIds.add(itemId);
+          this.sendClientEvent(
+            {
+              type: 'content',
+              value: {
+                turns: turns as types.Content[],
+                turnComplete: false,
+              },
             },
-          });
+            itemIds,
+          );
         }
       }
 
       if (toolResults) {
-        this.sendClientEvent({
-          type: 'tool_response',
-          value: toolResults,
-        });
+        const itemIds = new Set(
+          appendCtx.items
+            .filter((item) => item.type === 'function_call_output')
+            .map((item) => item.id),
+        );
+        for (const itemId of itemIds) this.unsentItemIds.add(itemId);
+        this.sendClientEvent(
+          {
+            type: 'tool_response',
+            value: toolResults,
+          },
+          itemIds,
+        );
       }
     }
 
@@ -803,7 +840,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get chatCtx(): llm.ChatContext {
-    return this._chatCtx.copy();
+    return (this.pendingChatCtx ?? this._chatCtx).copy();
   }
 
   get tools(): llm.ToolContext {
@@ -842,8 +879,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     // TODO(brian): implement push video frames
   }
 
-  private sendClientEvent(event: api_proto.ClientEvents) {
-    this.messageChannel.put(event);
+  private sendClientEvent(event: api_proto.ClientEvents, chatCtxItemIds?: Set<string>) {
+    this.messageChannel.put({ ...event, chatCtxItemIds } as QueuedClientEvent);
   }
 
   async generateReply(
@@ -1086,15 +1123,26 @@ export class RealtimeSession extends llm.RealtimeSession {
         try {
           this.activeSession = session;
 
-          // Send existing chat context
-          const [turns] = await this._chatCtx
-            .copy({
-              excludeFunctionCall: true,
-            })
-            .toProviderFormat('google', false);
+          const pendingCtx = this.pendingChatCtx;
+          this.pendingChatCtx = undefined;
+          if (this.sessionResumptionHandle) {
+            const target = pendingCtx ?? this._chatCtx;
+            if (!this.resumptionChatCtx) {
+              this._chatCtx = target.copy();
+            } else {
+              await this.syncChatCtx(target, this.resumptionChatCtx);
+            }
+          } else {
+            if (pendingCtx) this._chatCtx = pendingCtx;
 
-          if (turns.length > 0) {
-            if (this.#prefillReadAsHistory) {
+            // Send existing chat context
+            const [turns] = await this._chatCtx
+              .copy({
+                excludeFunctionCall: true,
+              })
+              .toProviderFormat('google', false);
+
+            if (turns.length > 0 && this.#prefillReadAsHistory) {
               // https://ai.google.dev/api/live#HistoryConfig: the server reads
               // clientContent as history until it sees turnComplete, that history
               // never triggers a model call, and the conversation then starts via
@@ -1116,9 +1164,10 @@ export class RealtimeSession extends llm.RealtimeSession {
               if (question) {
                 session.sendRealtimeInput({ text: question });
               }
-            } else {
+            } else if (turns.length > 0) {
               await session.sendClientContent({ turns, turnComplete: false });
             }
+            this.unsentItemIds.clear();
           }
         } finally {
           unlock();
@@ -1254,6 +1303,9 @@ export class RealtimeSession extends llm.RealtimeSession {
             this.#logger.warn(`Warning: Received unhandled message type: ${msg.type}`);
             break;
         }
+        if (msg.chatCtxItemIds) {
+          for (const itemId of msg.chatCtxItemIds) this.unsentItemIds.delete(itemId);
+        }
       }
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
@@ -1347,6 +1399,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         response.sessionResumptionUpdate.newHandle
       ) {
         this.sessionResumptionHandle = response.sessionResumptionUpdate.newHandle;
+        this.resumptionChatCtx = new llm.ChatContext(
+          this._chatCtx.items.filter((item) => !this.unsentItemIds.has(item.id)),
+        );
       }
     }
 
