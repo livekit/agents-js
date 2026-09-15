@@ -83,8 +83,15 @@ describe('AgentSession reusable resources handoff', () => {
       waitOnEnter: false,
     });
 
-    expect(previousActivity.drain).toHaveBeenCalledWith({ newActivity: nextActivity });
-    expect(nextActivity.resume).toHaveBeenCalledWith({ reuseResources: resources });
+    // the handoff runs under an update_agent span: drain and resume are parented to it
+    expect(previousActivity.drain).toHaveBeenCalledWith({
+      newActivity: nextActivity,
+      traceContext: expect.anything(),
+    });
+    expect(nextActivity.resume).toHaveBeenCalledWith({
+      reuseResources: resources,
+      traceContext: expect.anything(),
+    });
   });
 
   it('cleans up reusable resources if the next activity fails to start', async () => {
@@ -161,7 +168,10 @@ describe('AgentSession reusable resources handoff', () => {
       }),
     ).rejects.toThrow('attach failed');
 
-    expect(nextActivity.resume).toHaveBeenCalledWith({ reuseResources: resources });
+    expect(nextActivity.resume).toHaveBeenCalledWith({
+      reuseResources: resources,
+      traceContext: expect.anything(),
+    });
     // pipeline was already transferred, so cleanup should NOT have been called
     expect(closeFn).not.toHaveBeenCalled();
   });
@@ -190,7 +200,10 @@ describe('AgentSession reusable resources handoff', () => {
 
     expect(activity.drain).not.toHaveBeenCalled();
     expect(activity.pause).not.toHaveBeenCalled();
-    expect(activity.resume).toHaveBeenCalledWith({ reuseResources: undefined });
+    expect(activity.resume).toHaveBeenCalledWith({
+      reuseResources: undefined,
+      traceContext: expect.anything(),
+    });
   });
 
   it('emits ConversationItemAdded with an AgentHandoffItem on handoff', async () => {

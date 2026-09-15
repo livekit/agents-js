@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioResampler } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { type Attributes, type Span, trace } from '@opentelemetry/api';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
+import * as traceTypes from '../telemetry/trace_types.js';
 import { basic } from '../tokenize/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Task, cancelAndWait } from '../utils.js';
@@ -92,6 +94,31 @@ export class FallbackAdapter extends TTS {
   private _recoveryTimeouts: Map<number, NodeJS.Timeout> = new Map();
 
   label: string = `tts.FallbackAdapter`;
+
+  /**
+   * The instance the next request goes to first: the first one marked available, or the primary
+   * once all are down (they are then all retried, primary first). A failed instance's recovery
+   * task flips it back to available, so a recovered primary is reported again before it has
+   * served.
+   */
+  private nextInstance(): TTS {
+    const index = this._status.findIndex((status) => status.available);
+    return this.ttsInstances[index === -1 ? 0 : index]!;
+  }
+
+  /**
+   * The model of the instance that serves next (see `nextInstance`). Spans and metrics read
+   * this, so a failover shows the model expected to answer rather than the adapter; the instance
+   * that actually served is stamped per request by the stream.
+   */
+  override get model(): string {
+    return this.nextInstance().model;
+  }
+
+  /** The provider of the instance that serves next (see {@link model}). */
+  override get provider(): string {
+    return this.nextInstance().provider;
+  }
 
   constructor(opts: FallbackAdapterOptions) {
     if (!opts.ttsInstances || opts.ttsInstances.length < 1) {
@@ -289,10 +316,44 @@ export class FallbackAdapter extends TTS {
   }
 }
 
+/** The instance that served: its label, position, model and provider. */
+function fallbackAttrs(tts: TTS, index: number): Attributes {
+  const attrs: Attributes = {
+    [traceTypes.ATTR_FALLBACK_LABEL]: tts.label,
+    [traceTypes.ATTR_FALLBACK_INDEX]: index,
+    [traceTypes.ATTR_GEN_AI_REQUEST_MODEL]: tts.model,
+  };
+  const normalized = traceTypes.genAIProviderName(tts.provider);
+  if (normalized !== undefined) {
+    attrs[traceTypes.ATTR_GEN_AI_PROVIDER_NAME] = normalized;
+  }
+  return attrs;
+}
+
+/**
+ * The instance that served: on the current (attempt) span, and as the response side of `spans`
+ * (the adapter's request span and the caller's, tts_node). From `tts`, not the adapter:
+ * concurrent requests may be served by different instances.
+ */
+function recordFallbackServed(tts: TTS, index: number, ...spans: (Span | undefined)[]): void {
+  const attrs = fallbackAttrs(tts, index);
+  trace.getActiveSpan()?.setAttributes(attrs);
+  const responseAttrs: Attributes = { [traceTypes.ATTR_GEN_AI_RESPONSE_MODEL]: tts.model };
+  const provider = attrs[traceTypes.ATTR_GEN_AI_PROVIDER_NAME];
+  if (provider !== undefined) {
+    responseAttrs[traceTypes.ATTR_GEN_AI_PROVIDER_NAME] = provider;
+  }
+  for (const span of spans) {
+    span?.setAttributes(responseAttrs);
+  }
+}
+
 class FallbackChunkedStream extends ChunkedStream {
   private adapter: FallbackAdapter;
   private connOptions: APIConnectOptions;
   private _logger = log();
+  // the span this request was made under (tts_node); see recordFallbackServed
+  private callerSpan: Span | undefined = trace.getActiveSpan();
 
   label: string = 'tts.FallbackChunkedStream';
 
@@ -381,6 +442,7 @@ class FallbackChunkedStream extends ChunkedStream {
         }
 
         this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
+        recordFallbackServed(tts, i, this.ttsRequestSpan, this.callerSpan);
         return;
       } catch (error) {
         if (error instanceof APIError || error instanceof APIConnectionError) {
@@ -409,6 +471,8 @@ class FallbackSynthesizeStream extends SynthesizeStream {
   )[] = [];
   private audioPushed = false;
   private _logger = log();
+  // the span this request was made under (tts_node); see recordFallbackServed
+  private callerSpan: Span | undefined = trace.getActiveSpan();
 
   label: string = 'tts.FallbackSynthesizeStream';
 
@@ -586,6 +650,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
 
         this.queue.put(SynthesizeStream.END_OF_STREAM);
         this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
+        recordFallbackServed(originalTts, i, this.ttsRequestSpan, this.callerSpan);
         await readInputLLMStream.catch(() => {});
         return;
       } catch (error) {
@@ -594,6 +659,8 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             { tts: originalTts.label },
             'TTS failed after audio pushed, cannot fallback mid-utterance',
           );
+          // the caller heard this instance's audio: it served, partially
+          recordFallbackServed(originalTts, i, this.ttsRequestSpan, this.callerSpan);
           throw error;
         }
 

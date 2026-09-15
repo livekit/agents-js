@@ -70,6 +70,13 @@ export const ATTR_JOB_ENTRYPOINT_LATENCY = 'lk.job.entrypoint_latency';
 /** Seconds from the availability request to the entrypoint running: the whole chain. */
 export const ATTR_JOB_DISPATCH_LATENCY = 'lk.job.dispatch_latency';
 
+// keyterm detection (keyterm_detection span): counts only, the terms themselves are the
+// customer's vocabulary and travel as lk.pii.keyterms in the session report
+/** Keyterms in effect after the pass (static + confirmed). */
+export const ATTR_KEYTERMS_COUNT = 'lk.keyterms.count';
+export const ATTR_KEYTERMS_ADDED = 'lk.keyterms.added';
+export const ATTR_KEYTERMS_REMOVED = 'lk.keyterms.removed';
+
 // room connect / room io
 export const ATTR_ROOM_AUTO_SUBSCRIBE = 'lk.room.auto_subscribe';
 export const ATTR_ROOM_E2EE = 'lk.room.e2ee';
@@ -190,6 +197,23 @@ export const ATTR_AMD_SPEECH_DURATION = 'lk.amd.speech_duration';
 /** Time between speech end and the AMD verdict emission, in seconds. */
 export const ATTR_AMD_DELAY = 'lk.amd.delay';
 export const ATTR_AMD_TRANSCRIPT = 'lk.pii.amd.transcript';
+
+// Interruptions (agent_turn)
+/**
+ * What interrupted the speech: `audio_activity` (barge-in), `user_turn` (a committed turn
+ * preempting the reply), or `programmatic` (session.interrupt(), a tool, teardown).
+ */
+export const ATTR_INTERRUPTION_SOURCE = 'lk.interruption.source';
+/** Seconds of audio that had actually played when the speech was interrupted. */
+export const ATTR_PLAYOUT_POSITION = 'lk.playout.position';
+
+// Agent handoff (update_agent span)
+export const ATTR_PREVIOUS_AGENT_LABEL = 'lk.previous_agent_label';
+
+// Fallback adapters (the attempt span)
+/** Label of the provider that served the request. */
+export const ATTR_FALLBACK_LABEL = 'lk.fallback.label';
+export const ATTR_FALLBACK_INDEX = 'lk.fallback.index';
 
 // Adaptive Interruption attributes
 export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';
