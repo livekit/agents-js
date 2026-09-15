@@ -47,7 +47,7 @@ function mockRoom(overrides: Record<string, unknown> = {}): Room {
     connect: vi.fn(async () => undefined),
     isConnected: false,
     remoteParticipants: new Map(),
-    localParticipant: { sid: 'PA_agent', identity: 'agent-1' },
+    localParticipant: { sid: 'PA_agent', identity: 'agent-1', addRpcInterceptor: vi.fn() },
     ...overrides,
   } as unknown as Room;
 }

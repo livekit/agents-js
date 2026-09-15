@@ -86,6 +86,24 @@ export const ATTR_DISCONNECT_REASON = 'lk.disconnect_reason';
 export const ATTR_OLD_STATE = 'lk.old_state';
 export const ATTR_NEW_STATE = 'lk.new_state';
 
+// rpc (`rpc.method` from the OpenTelemetry RPC semantic conventions, plus lk.rpc.* details)
+export const ATTR_RPC_METHOD = 'rpc.method';
+export const ATTR_RPC_REQUEST_ID = 'lk.rpc.request_id';
+export const ATTR_RPC_CALLER_IDENTITY = 'lk.rpc.caller_identity';
+export const ATTR_RPC_DESTINATION_IDENTITY = 'lk.rpc.destination_identity';
+/** Request payload, truncated to `telemetry.rpc.MAX_PAYLOAD_ATTR_LEN` characters. */
+export const ATTR_RPC_PAYLOAD = 'lk.pii.rpc.payload';
+/** Request payload size in bytes, before truncation. */
+export const ATTR_RPC_PAYLOAD_SIZE = 'lk.rpc.payload_size';
+/** Response payload, truncated like the request. */
+export const ATTR_RPC_RESPONSE = 'lk.pii.rpc.response';
+/** Response payload size in bytes, before truncation. */
+export const ATTR_RPC_RESPONSE_SIZE = 'lk.rpc.response_size';
+/** Seconds the caller waits for a response. */
+export const ATTR_RPC_RESPONSE_TIMEOUT = 'lk.rpc.response_timeout';
+/** The `RpcError` code the call failed with. */
+export const ATTR_RPC_ERROR_CODE = 'lk.rpc.error_code';
+
 // session close / job shutdown
 export const ATTR_CLOSE_REASON = 'lk.close_reason';
 export const ATTR_CLOSE_DRAIN = 'lk.close.drain';

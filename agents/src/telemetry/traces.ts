@@ -8,6 +8,7 @@ import {
   type Context,
   ProxyTracerProvider,
   type Span,
+  type SpanKind,
   type SpanOptions,
   type Tracer,
   type TracerProvider,
@@ -73,6 +74,8 @@ export interface StartSpanOptions {
   endOnExit?: boolean;
   /** Optional start time for the span in milliseconds (Date.now() format) */
   startTime?: number;
+  /** The span's kind (client, server, ...); defaults to INTERNAL */
+  kind?: SpanKind;
 }
 
 /**
@@ -147,6 +150,7 @@ class DynamicTracer {
       {
         attributes: options.attributes,
         startTime: options.startTime,
+        kind: options.kind,
       },
       ctx,
     );
@@ -165,7 +169,11 @@ class DynamicTracer {
   async startActiveSpan<T>(fn: (span: Span) => Promise<T>, options: StartSpanOptions): Promise<T> {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
-    const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };
+    const opts: SpanOptions = {
+      attributes: options.attributes,
+      startTime: options.startTime,
+      kind: options.kind,
+    };
 
     // Directly return the tracer's startActiveSpan result - it handles async correctly
     return await this.tracer.startActiveSpan(options.name, opts, ctx, async (span) => {
@@ -210,7 +218,11 @@ class DynamicTracer {
   startActiveSpanSync<T>(fn: (span: Span) => T, options: StartSpanOptions): T {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
-    const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };
+    const opts: SpanOptions = {
+      attributes: options.attributes,
+      startTime: options.startTime,
+      kind: options.kind,
+    };
 
     return this.tracer.startActiveSpan(options.name, opts, ctx, (span) => {
       try {
