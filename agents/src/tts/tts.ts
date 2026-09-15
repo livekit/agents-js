@@ -761,7 +761,15 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    ThrowsPromise.resolve().then(() => this.mainTask().finally(() => this.#metricsQueue.close()));
+    startSoon(async () => {
+      try {
+        await this.mainTask();
+      } catch {
+        // already surfaced via emitError; swallow to avoid unhandled rejection.
+      } finally {
+        this.#metricsQueue.close();
+      }
+    });
   }
 
   private drainAttemptQueue(attemptQueue: AsyncIterableQueue<SynthesizedAudio>): Promise<void> {
