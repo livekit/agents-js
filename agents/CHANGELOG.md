@@ -1,5 +1,35 @@
 # @livekit/agents
 
+## 1.8.1
+
+### Patch Changes
+
+- Stop `session.interrupt({ force: true })` from crashing the process with `SpeechHandleCircularWaitError` when called inside a function tool. - [#2444](https://github.com/livekit/agents-js/pull/2444) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Wait for agent task handoffs during session shutdown, including concurrent agent updates, without leaking activities or waiting on the task's own tool. Preserve transfer errors, suppress tool replies during shutdown, and make warm-transfer room-disconnect failures explicit. - [#2472](https://github.com/livekit/agents-js/pull/2472) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Settle pending AMD detection when session shutdown starts, release waiting callbacks, and preserve results if interruption or reply authorization fails. - [#2451](https://github.com/livekit/agents-js/pull/2451) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add DuplexModel and DuplexSession for full-duplex speech providers. Agent and AgentSession accept duplex models through an adapter that segments continuous audio and aligns transcripts. Preserve overlapping speech and collect usage reported during realtime session shutdown. - [#2471](https://github.com/livekit/agents-js/pull/2471) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Preserve trailing inference STT transcripts until transcript inactivity, session closure, or socket closure after input ends. - [#2465](https://github.com/livekit/agents-js/pull/2465) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Resolve transcript-only AMD greetings at the endpointing backstop, preserve timeout transcripts, and allow `null` to force session LLM or STT reuse. - [#2400](https://github.com/livekit/agents-js/pull/2400) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Safely describe option objects in uploaded session reports. - [#2431](https://github.com/livekit/agents-js/pull/2431) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Handle rejected promises in agent shutdown and room state updates. Close Silero VAD output and release its resampler when inference fails. - [#2446](https://github.com/livekit/agents-js/pull/2446) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Stop retaining consumed audio frames in the forwarding result. - [#2433](https://github.com/livekit/agents-js/pull/2433) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Serialize `AgentConfigUpdate.instructions` as the rendered string in `toJSON`, matching the Python SDK and the proto encoder. - [#2467](https://github.com/livekit/agents-js/pull/2467) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add the GPT-Live full-duplex voice plugin with Responses and client delegation. - [#2474](https://github.com/livekit/agents-js/pull/2474) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Respect empty synchronized transcripts when committing interrupted replies to chat history. - [#2464](https://github.com/livekit/agents-js/pull/2464) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Clarify the slow-inference warning message to name VAD as the source. - [#2453](https://github.com/livekit/agents-js/pull/2453) ([@claude](https://github.com/apps/claude))
+
 ## 1.8.0
 
 ### Minor Changes

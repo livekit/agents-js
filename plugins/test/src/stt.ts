@@ -25,6 +25,9 @@ const TRANSCRIPT =
   'With hands locked together, invisible among the press of bodies, ' +
   'they stared steadily in front of them, and instead of the eyes of the girl, the eyes of the aged prisoner gazed mournfully at Winston out of nests of hair.';
 
+const STREAM_CHUNK_DURATION_MS = 10;
+const TRAILING_SILENCE_DURATION_MS = 2_000;
+
 const validate = async (text: string, transcript: string, threshold: number) => {
   text = text.toLowerCase().replace(/\s/g, ' ').trim();
   transcript = transcript.toLowerCase().replace(/\s/g, ' ').trim();
@@ -38,32 +41,59 @@ export const stt = async (
 ) => {
   initializeLogger({ pretty: false });
   supports = { streaming: true, nonStreaming: true, ...supports };
-  describe('STT', async () => {
-    it.skipIf(!supports.nonStreaming)('should properly transcribe speech', async () => {
-      [24000, 44100].forEach(async (sampleRate) => {
+  describe('STT', () => {
+    it.skipIf(!supports.nonStreaming).each([24000, 44100])(
+      'should properly transcribe speech at %i Hz',
+      { timeout: 60_000 },
+      async (sampleRate) => {
         const frames = makeTestSpeech(sampleRate);
         const event = await stt.recognize(frames);
         const text = event.alternatives![0].text;
         await validate(text, TRANSCRIPT, 0.2);
         expect(event.type).toStrictEqual(sttlib.SpeechEventType.FINAL_TRANSCRIPT);
-      });
-    });
-    it('should properly stream transcribe speech', async () => {
-      [24000, 44100].forEach(async (sampleRate) => {
-        const frames = makeTestSpeech(sampleRate, 10);
+      },
+    );
+    it.each([24000, 44100])(
+      'should properly stream transcribe speech at %i Hz',
+      { timeout: 120_000 },
+      async (sampleRate) => {
+        const frames = makeTestSpeech(sampleRate, STREAM_CHUNK_DURATION_MS);
         let stream: sttlib.SpeechStream;
         if (supports.streaming) {
           stream = stt.stream();
         } else {
           stream = new sttlib.StreamAdapter(stt, vad).stream();
         }
+        let rejectStreamError!: (error: Error) => void;
+        const streamError = new Promise<never>((_, reject) => {
+          rejectStreamError = reject;
+        });
+        const onStreamError: sttlib.STTCallbacks['error'] = ({ error }) => {
+          rejectStreamError(error);
+        };
+        stt.on('error', onStreamError);
 
         const input = async () => {
           for (const frame of frames) {
             stream.pushFrame(frame);
-            await new Promise((resolve) => setTimeout(resolve, 5));
-            stream.endInput();
+            await new Promise((resolve) => setTimeout(resolve, STREAM_CHUNK_DURATION_MS));
           }
+
+          const silence = new AudioFrame(
+            new Int16Array((sampleRate * STREAM_CHUNK_DURATION_MS) / 1_000),
+            sampleRate,
+            1,
+            (sampleRate * STREAM_CHUNK_DURATION_MS) / 1_000,
+          );
+          for (
+            let elapsed = 0;
+            elapsed < TRAILING_SILENCE_DURATION_MS;
+            elapsed += STREAM_CHUNK_DURATION_MS
+          ) {
+            stream.pushFrame(silence);
+            await new Promise((resolve) => setTimeout(resolve, STREAM_CHUNK_DURATION_MS));
+          }
+          stream.endInput();
         };
 
         const output = async () => {
@@ -91,9 +121,14 @@ export const stt = async (
           await validate(text, TRANSCRIPT, 0.2);
         };
 
-        Promise.all([input, output]);
-      });
-    });
+        try {
+          await Promise.race([Promise.all([input(), output()]), streamError]);
+        } finally {
+          stt.off('error', onStreamError);
+          stream.close();
+        }
+      },
+    );
   });
 };
 

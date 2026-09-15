@@ -164,6 +164,10 @@ export type RealtimeModelMetrics = {
    * The duration of the session connection in milliseconds (for session-based billing like xAI).
    */
   sessionDurationMs?: number;
+  /** Time to acquire the realtime connection, in milliseconds. */
+  acquireTimeMs?: number;
+  /** Whether an existing realtime connection was reused. */
+  connectionReused?: boolean;
   /**
    * Time to first audio token in milliseconds. -1 if no audio token was sent.
    */

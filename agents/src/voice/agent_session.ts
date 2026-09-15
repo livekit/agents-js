@@ -10,7 +10,7 @@ import {
   type RemoteParticipant,
   type Room,
 } from '@livekit/rtc-node';
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { context as otelContext, trace } from '@opentelemetry/api';
@@ -47,7 +47,13 @@ import type {
   ToolContextEntry,
   ToolContextLike,
 } from '../llm/index.js';
-import { ToolContext, toToolContext } from '../llm/index.js';
+import {
+  DuplexModel,
+  DuplexRealtimeAdapter,
+  ToolContext,
+  ToolError,
+  toToolContext,
+} from '../llm/index.js';
 import { LLM as BaseLLM } from '../llm/llm.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -71,7 +77,7 @@ import {
 } from '../types.js';
 import { Event, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
-import type { Agent } from './agent.js';
+import { type Agent, AgentTask } from './agent.js';
 import {
   AgentActivity,
   type ReusableResources,
@@ -285,7 +291,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * one as absent). Pass `null` to opt out entirely.
    */
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
@@ -532,6 +538,7 @@ export class AgentSession<
   private _output: AgentOutput;
 
   private closing = false;
+  private closingController = new AbortController();
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
   private idleHolds = 0;
@@ -655,6 +662,17 @@ export class AgentSession<
     return this.closing;
   }
 
+  /**
+   * Aborted when shutdown starts, before the activity drains or Agent.onExit() runs.
+   * Use this signal to release work that activity teardown can await.
+   * The Close event fires after activity teardown and cannot release those waits.
+   * The signal stays aborted after close; read it again when starting a new run.
+   * @internal
+   */
+  get _closingSignal(): AbortSignal {
+    return this.closingController.signal;
+  }
+
   /** @internal - Current run state for testing */
   _globalRunState?: RunResult;
 
@@ -715,6 +733,8 @@ export class AgentSession<
 
     if (typeof llm === 'string') {
       this.llm = InferenceLLM.fromModelString(llm);
+    } else if (llm instanceof DuplexModel) {
+      this.llm = new DuplexRealtimeAdapter(llm);
     } else {
       this.llm = llm;
     }
@@ -955,7 +975,10 @@ export class AgentSession<
     // Initial start does not wait on onEnter
     tasks.push(this._updateActivity(this.agent, { waitOnEnter: false }));
 
-    await ThrowsPromise.allSettled(tasks);
+    const startupResults = await ThrowsPromise.allSettled(tasks);
+    for (const result of startupResults) {
+      if (result.status === 'rejected') throw result.reason;
+    }
 
     if (this.sessionHost) {
       await this.sessionHost.start();
@@ -1006,6 +1029,9 @@ export class AgentSession<
     }
 
     this.closing = false;
+    if (this.closingController.signal.aborted) {
+      this.closingController = new AbortController();
+    }
     this._usageCollector = new ModelUsageCollector();
     this.loopStallCount = 0;
     this.loopStallTotal = 0;
@@ -1058,13 +1084,19 @@ export class AgentSession<
 
     this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 
-    await this._startImpl({
-      agent,
-      room,
-      inputOptions,
-      outputOptions,
-      span: this.sessionSpan,
-    });
+    try {
+      await this._startImpl({
+        agent,
+        room,
+        inputOptions,
+        outputOptions,
+        span: this.sessionSpan,
+      });
+    } catch (error) {
+      this._closeSoon({ reason: CloseReason.ERROR });
+      await this.closingTask;
+      throw error;
+    }
   }
 
   updateAgent(agent: Agent): void {
@@ -1245,12 +1277,16 @@ export class AgentSession<
     this.activity.pauseReplyAuthorization();
   }
 
-  resumeReplyAuthorization(): void {
+  /**
+   * Resume automatic replies after pauseReplyAuthorization().
+   * @throws Error if the session is not running.
+   */
+  resumeReplyAuthorization(): Throws<void, Error> {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
 
-    this.activity.resumeReplyAuthorization();
+    return this.activity.resumeReplyAuthorization();
   }
 
   updateOptions(options: AgentSessionUpdateOptions = {}): void {
@@ -1518,17 +1554,18 @@ export class AgentSession<
           'Agent handoff inserted into chat context',
         );
 
+        const activity = this.activity!;
         if (newActivity === 'start') {
-          await this.activity!.start({ reuseResources: reusableResources });
+          await activity.start({ reuseResources: reusableResources });
         } else {
-          await this.activity!.resume({ reuseResources: reusableResources });
+          await activity.resume({ reuseResources: reusableResources });
         }
         reusableResources = undefined;
 
-        onEnterTask = this.activity!._onEnterTask;
+        onEnterTask = activity._onEnterTask;
 
         if (this._input.audio) {
-          this.activity!.attachAudioInput(this._input.audio.stream);
+          activity.attachAudioInput(this._input.audio.stream);
         }
       } catch (error) {
         // JS safeguard: session cleanup owns the detached resources until the next activity
@@ -1919,6 +1956,7 @@ export class AgentSession<
   }
 
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
+    if (this.closing) return;
     if (ev.isFinal && this._userState !== 'speaking') {
       if (this._userState === 'away') {
         this.logger.debug('User returned from away state due to speech input');
@@ -1948,34 +1986,56 @@ export class AgentSession<
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
-    if (!this.started) {
+    const wasStarted = this.started;
+    if (!wasStarted && !this.activity && !this.sessionSpan) {
       return;
     }
 
     this.closing = true;
+    // Set closingTask before listeners can call close() again.
+    await Promise.resolve();
+    this.closingController.abort();
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
-    this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
-    if (this.activity) {
+    let activity = this.activity;
+    // Let inline tasks finish their handoffs before closing the resumed parent.
+    while (wasStarted && activity?.agent instanceof AgentTask) {
+      const task = activity.agent;
+      activity.interrupt({ force: true });
+      if (!task.done) {
+        task.complete(new ToolError(`AgentTask ${task.id} is cancelled`));
+      }
+      await task._waitForInactive();
+      // A concurrent updateAgent can prevent the task from resuming its parent.
+      // In that case its activity still needs the normal exit and close sequence.
+      if (task._agentActivity === activity) {
+        await activity.drain();
+        await activity.close();
+      }
+      if (!task._oldAgent) break;
+      activity = task._oldAgent._agentActivity;
+    }
+
+    if (wasStarted && activity) {
       if (!drain) {
         try {
-          await this.activity.interrupt({ force: true }).await;
+          await activity.interrupt({ force: true }).await;
         } catch (error) {
           this.logger.warn({ error }, 'Error interrupting activity');
         }
       }
 
-      await this.activity.drain();
+      await activity.drain();
       // wait any uninterruptible speech to finish
-      await this.activity.currentSpeech?.waitForPlayout();
+      await activity.currentSpeech?.waitForPlayout();
 
       if (reason !== CloseReason.ERROR) {
-        this.activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
+        activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
       }
 
       try {
-        this.activity.detachAudioInput();
+        activity.detachAudioInput();
       } catch (error) {
         // Ignore detach errors during cleanup - source may not have been set
       }
@@ -1991,11 +2051,12 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await this.activity?.close();
+    await activity?.close();
     this.activity = undefined;
 
     const sessionToolsets = this._toolCtx.toolsets;
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
+    this._sessionToolsetsSetup = false;
 
     if (this.sessionSpan) {
       this.sessionSpan.end();
@@ -2014,7 +2075,7 @@ export class AgentSession<
 
     this.started = false;
 
-    this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
+    if (wasStarted) this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
 
     this._userState = 'listening';
     this._agentState = 'initializing';

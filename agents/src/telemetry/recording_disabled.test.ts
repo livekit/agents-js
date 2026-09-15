@@ -67,11 +67,17 @@ async function createTraceHarness(
   ) => { status: number; body: string } | Promise<{ status: number; body: string }>,
 ) {
   let requestCount = 0;
-  const server = http.createServer(async (_request, response) => {
+  const server = http.createServer((_request, response) => {
     requestCount += 1;
-    const { status, body } = await responseForRequest(requestCount);
-    response.statusCode = status;
-    response.end(body);
+    Promise.resolve(responseForRequest(requestCount))
+      .then(({ status, body }) => {
+        response.statusCode = status;
+        response.end(body);
+      })
+      .catch(() => {
+        response.statusCode = 500;
+        response.end();
+      });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();

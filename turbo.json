@@ -115,6 +115,8 @@
     "MINIMAX_API_KEY",
     "MINIMAX_BASE_URL",
     "MISTRAL_API_KEY",
+    "META_API_KEY",
+    "MODEL_API_KEY",
     "VITEST"
   ],
   "tasks": {

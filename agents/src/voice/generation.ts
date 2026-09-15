@@ -1079,7 +1079,7 @@ export interface _AudioOut {
  */
 export function forwardedTextFor(output: ForwardOutput): string {
   if (output.played === 'skipped') return '';
-  if (output.played === 'partial' && output.synchronizedTranscript) {
+  if (output.played === 'partial' && output.synchronizedTranscript !== undefined) {
     return output.synchronizedTranscript;
   }
   return output.textOut?.text ?? '';

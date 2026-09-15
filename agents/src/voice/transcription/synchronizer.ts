@@ -314,6 +314,10 @@ class SegmentSynchronizerImpl {
 
     this.textData.wordStream.pushText(textStr);
     this.textData.pushedText += textStr;
+    if (endTime !== undefined) {
+      // A closed span releases its trailing word while the turn is still open.
+      this.textData.wordStream.flush();
+    }
   }
 
   endTextInput() {

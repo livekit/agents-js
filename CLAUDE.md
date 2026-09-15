@@ -143,6 +143,8 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 
 ## Code Conventions
 
+- **Lifecycle changes**: Follow the [lifecycle review checklist](CONTRIBUTING.md#review-lifecycle-changes)
+  for session helpers, shutdown, and cleanup. Apply it to Python ports too.
 - **License header** required on every new file:
   ```
   // SPDX-FileCopyrightText: 2026 LiveKit, Inc.

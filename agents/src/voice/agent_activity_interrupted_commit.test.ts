@@ -17,12 +17,10 @@ function frame(durationMs = 20, sampleRate = 24000): AudioFrame {
   return new AudioFrame(new Int16Array(samples), sampleRate, 1, samples);
 }
 
-// Audio sink that reports the first frame as played, then (on the interruption's
-// clearBuffer) reports a partial playout WITHOUT a synchronized transcript —
-// the case an avatar / non-aligned output produces. Calls `onFirstFrame` once
-// the first frame is captured so the test can interrupt mid-playout.
+// Reports the first frame as played, then waits for interruption to finish playout.
 class InterruptibleOutput extends AudioOutput {
   onFirstFrame?: () => void;
+  synchronizedTranscript?: string;
   private started = false;
   constructor() {
     super(24000);
@@ -39,7 +37,11 @@ class InterruptibleOutput extends AudioOutput {
     super.flush();
   }
   clearBuffer(): void {
-    this.onPlaybackFinished({ playbackPosition: 0.02, interrupted: true });
+    this.onPlaybackFinished({
+      playbackPosition: 0.02,
+      interrupted: true,
+      synchronizedTranscript: this.synchronizedTranscript,
+    });
   }
 }
 
@@ -307,6 +309,35 @@ describe('AgentActivity interrupted-speech commit', () => {
       expect(msg.interrupted).toBe(true);
       expect(msg.content.length).toBeGreaterThan(0);
       expect('A fairly long spoken reply.'.startsWith(msg.content)).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it.each([
+    { name: 'empty', transcript: '', expected: [] },
+    { name: 'partial', transcript: 'A fairly', expected: ['A fairly'] },
+  ])('uses the $name synchronized transcript on interruption', async ({ transcript, expected }) => {
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'hello', content: 'A fairly long spoken reply.' }]),
+    });
+    const audioOut = new InterruptibleOutput();
+    audioOut.synchronizedTranscript = transcript;
+    audioOut.onFirstFrame = () => session.interrupt({ force: true });
+    session.output.audio = audioOut;
+    const agent = new FrameAgent();
+
+    await session.start({ agent });
+    try {
+      await session.generateReply({ userInput: 'hello' }).waitForPlayout();
+      await session.close();
+
+      for (const chatCtx of [agent.chatCtx, session.history]) {
+        const assistantMessages = chatCtx.items
+          .filter((item) => item.type === 'message' && item.role === 'assistant')
+          .map((item) => item.textContent);
+        expect(assistantMessages).toEqual(expected);
+      }
     } finally {
       await session.close();
     }

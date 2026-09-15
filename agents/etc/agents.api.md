@@ -13,6 +13,7 @@ import { Context } from '@opentelemetry/api';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JobType } from '@livekit/protocol';
 import { JsonObject } from '@bufbuild/protobuf';
@@ -74,6 +75,22 @@ export type Aborted<T> = {
     isAborted: true;
 };
 
+// Warning: (ae-missing-release-tag) "AdaptiveNoiseGate" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class AdaptiveNoiseGate implements AudioGate {
+    constructor(options?: AdaptiveNoiseGateOptions);
+    deactivate(): void;
+    update(frame: AudioFrame): boolean;
+}
+
+// Warning: (ae-missing-release-tag) "AdaptiveNoiseGateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface AdaptiveNoiseGateOptions extends AudioGateOptions {
+    window?: number;
+}
+
 // Warning: (ae-missing-release-tag) "Agent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -101,6 +118,7 @@ export class Agent<UserData = any> {
         transcriptionNode(agent: Agent, text: ReadableStream_2<string | TimedString> | AsyncIterable<string | TimedString>, _modelSettings: ModelSettings): Promise<ReadableStream_2<string | TimedString> | null>;
         realtimeAudioOutputNode(_agent: Agent, audio: ReadableStream_2<AudioFrame> | AsyncIterable<AudioFrame>, _modelSettings: ModelSettings): Promise<ReadableStream_2<AudioFrame> | null>;
     };
+    get duplexSession(): DuplexSession;
     get expressive(): boolean | ExpressiveOptions | undefined;
     // @internal (undocumented)
     _expressive?: boolean | ExpressiveOptions;
@@ -387,7 +405,7 @@ export interface AgentOptions<UserData> {
     // (undocumented)
     instructions: string | Instructions;
     // (undocumented)
-    llm?: LLM | RealtimeModel | LLMModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
     // (undocumented)
     minConsecutiveSpeechDelay?: number;
     // (undocumented)
@@ -488,6 +506,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     }): void;
     // @internal
     get _closing(): boolean;
+    // @internal
+    get _closingSignal(): AbortSignal;
     // (undocumented)
     commitUserTurn(): void;
     // Warning: (ae-incompatible-release-tags) The symbol "connOptions" is marked as @public, but its signature references "ResolvedSessionConnectOptions" which is marked as @internal
@@ -566,8 +586,7 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     _recordLoopStall(durationInS: number, timestampMs: number, cause: string): void;
     // @internal
     _redactionEnabled: boolean;
-    // (undocumented)
-    resumeReplyAuthorization(): void;
+    resumeReplyAuthorization(): Throws<void, Error>;
     // @internal (undocumented)
     _roomIO?: RoomIO;
     // @internal (undocumented)
@@ -679,7 +698,6 @@ export enum AgentSessionEventTypes {
     AgentFalseInterruption = "agent_false_interruption",
     // (undocumented)
     AgentStateChanged = "agent_state_changed",
-    // (undocumented)
     Close = "close",
     // (undocumented)
     ConversationItemAdded = "conversation_item_added",
@@ -712,7 +730,7 @@ export enum AgentSessionEventTypes {
 export type AgentSessionOptions<UserData = UnknownUserData> = {
     stt?: STT | ModelWithLanguage;
     vad?: VAD | null;
-    llm?: LLM | RealtimeModel | LLMModels;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
     tts?: TTS | ModelWithVoice;
     userData?: UserData;
     connOptions?: SessionConnectOptions;
@@ -781,8 +799,12 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     static create<ResultT = unknown, UserData = unknown>(options: AgentTaskCreateOptions<ResultT, UserData>): AgentTask<ResultT, UserData>;
     // (undocumented)
     get done(): boolean;
+    // @internal (undocumented)
+    _oldAgent?: Agent;
     // (undocumented)
     run(): Promise<ResultT>;
+    // @internal (undocumented)
+    _waitForInactive(): Promise<void>;
 }
 
 // Warning: (ae-missing-release-tag) "AgentTaskContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -804,7 +826,7 @@ export interface AgentTaskCreateOptions<ResultT = unknown, UserData = any> exten
 // @public
 export interface AgentUpdateOptions {
     expressive?: boolean | ExpressiveOptions;
-    llm?: LLM | RealtimeModel | LLMModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
     stt?: STT | ModelWithLanguage | null;
     tts?: TTS | ModelWithVoice | null;
     vad?: VAD | null;
@@ -865,14 +887,14 @@ export interface AMDOptions {
     humanSpeechThresholdMs?: number;
     // (undocumented)
     interruptOnMachine?: boolean;
-    llm?: LLM | string;
+    llm?: LLM | string | null;
     machineSilenceThresholdMs?: number;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "DEFAULT_MAX_ENDPOINTING_DELAY_MS"
     maxEndpointingDelayMs?: number;
     noSpeechTimeoutMs?: number;
     participantIdentity?: string;
     prompt?: string;
-    stt?: STT | string;
+    stt?: STT | string | null;
     suppressCompatibilityWarning?: boolean;
     waitUntilFinished?: boolean;
 }
@@ -1813,6 +1835,23 @@ export class AudioEnergyFilter {
 // @public
 export function audioFramesFromFile(filePath: string, options?: AudioDecodeOptions): ReadableStream_2<AudioFrame>;
 
+// Warning: (ae-missing-release-tag) "AudioGate" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface AudioGate {
+    deactivate(): void;
+    update(frame: AudioFrame): boolean;
+}
+
+// Warning: (ae-missing-release-tag) "AudioGateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface AudioGateOptions {
+    activationRatio?: number;
+    deactivationRatio?: number;
+    minSilenceDuration?: number;
+}
+
 // Warning: (ae-missing-release-tag) "AudioInput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1852,6 +1891,8 @@ export abstract class AudioOutput extends EventEmitter_2 {
     // (undocumented)
     static readonly EVENT_PLAYBACK_FINISHED = "playbackFinished";
     // (undocumented)
+    static readonly EVENT_PLAYBACK_PROGRESSED = "playbackProgressed";
+    // (undocumented)
     static readonly EVENT_PLAYBACK_STARTED = "playbackStarted";
     // (undocumented)
     flush(): void;
@@ -1864,6 +1905,7 @@ export abstract class AudioOutput extends EventEmitter_2 {
     // (undocumented)
     onDetached(): void;
     onPlaybackFinished(options: PlaybackFinishedEvent): void;
+    onPlaybackProgressed(ev: PlaybackProgressedEvent): void;
     onPlaybackStarted(createdAt: number): void;
     pause(): void;
     // @internal
@@ -3284,6 +3326,119 @@ function dropBracketCues(tokens: TimedString[], held: TimedString[], options?: {
 // @public (undocumented)
 type DtmfEvent = (typeof DTMF_EVENTS)[number];
 
+// Warning: (ae-missing-release-tag) "DuplexAudioFrame" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface DuplexAudioFrame {
+    frame: AudioFrame;
+    startMs?: number;
+}
+
+// Warning: (ae-missing-release-tag) "DuplexCapabilities" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface DuplexCapabilities {
+    autoToolReplyGeneration: boolean;
+    midSessionChatCtxUpdate?: boolean;
+    midSessionInstructionsUpdate?: boolean;
+    midSessionToolsUpdate?: boolean;
+    userTranscription: boolean;
+}
+
+// Warning: (ae-missing-release-tag) "DuplexModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export abstract class DuplexModel {
+    constructor(
+    capabilities: DuplexCapabilities);
+    audioGate(): AudioGate | undefined;
+    readonly capabilities: DuplexCapabilities;
+    abstract close(): Promise<void>;
+    label(): string;
+    get model(): string;
+    get provider(): string;
+    abstract session(): DuplexSession;
+}
+
+// Warning: (ae-missing-release-tag) "DuplexOutputTranscriptDelta" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface DuplexOutputTranscriptDelta {
+    endMs?: number;
+    startMs?: number;
+    text: string;
+}
+
+// Warning: (ae-missing-release-tag) "DuplexRealtimeAdapter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class DuplexRealtimeAdapter extends RealtimeModel {
+    constructor(
+    duplexModel: DuplexModel, options?: DuplexRealtimeAdapterOptions);
+    close(): Promise<void>;
+    readonly duplexModel: DuplexModel;
+    get model(): string;
+    get provider(): string;
+    session(): RealtimeSession;
+}
+
+// Warning: (ae-missing-release-tag) "DuplexRealtimeAdapterOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface DuplexRealtimeAdapterOptions {
+    audioTimeout?: number;
+    gate?: () => AudioGate;
+}
+
+// Warning: (ae-forgotten-export) The symbol "DuplexSession_base" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "DuplexSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export abstract class DuplexSession<Events extends EventMap = Record<never, never>> extends DuplexSession_base<Events> {
+    constructor(
+    duplexModel: DuplexModel);
+    abstract _appendItems(items: ChatItem[]): Promise<void>;
+    abstract get audioStream(): ReadableStream_2<DuplexAudioFrame>;
+    get capabilities(): DuplexCapabilities;
+    close(): Promise<void>;
+    protected abstract closeConnection(): Promise<void>;
+    protected _closing: boolean;
+    protected readonly _configured: {
+        readonly isSet: boolean;
+        wait(): Promise<boolean>;
+        set(): void;
+    };
+    readonly duplexModel: DuplexModel;
+    _generateReply(_instructions?: string, _options?: {
+        toolChoice?: ToolChoice;
+        tools?: ToolContext;
+    }): void;
+    abstract pushAudio(frame: AudioFrame): void;
+    pushVideo(_frame: VideoFrame_2): void;
+    protected _reportConnectionAcquired(acquireTimeMs: number): void;
+    abstract get tools(): ToolContext;
+    abstract _updateInstructions(instructions: string): Promise<void>;
+    abstract _updateOptions(options: {
+        toolChoice?: ToolChoice | null;
+    }): void;
+    _updateSession(instructions?: string, chatCtx?: ChatContext, tools?: ToolContext): Promise<void>;
+    abstract _updateTools(tools: ToolContext): Promise<void>;
+}
+
+// Warning: (ae-missing-release-tag) "DuplexSessionCallbacks" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type DuplexSessionCallbacks = {
+    transcript_delta: (event: DuplexOutputTranscriptDelta) => void;
+    function_call: (event: FunctionCall) => void;
+    input_speech_started: (event: InputSpeechStartedEvent) => void;
+    input_speech_stopped: (event: InputSpeechStoppedEvent) => void;
+    input_audio_transcription_completed: (event: InputTranscriptionCompleted) => void;
+    session_reconnected: (event: RealtimeSessionReconnectedEvent) => void;
+    metrics_collected: (event: RealtimeModelMetrics | LLMMetrics) => void;
+    error: (event: RealtimeModelError) => void;
+};
+
 // Warning: (ae-missing-release-tag) "DuplicateMode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -4006,6 +4161,15 @@ interface FishAudioOptions {
     volume?: number;
 }
 
+// Warning: (ae-missing-release-tag) "FixedGate" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class FixedGate implements AudioGate {
+    constructor(silence: number, options?: AudioGateOptions);
+    deactivate(): void;
+    update(frame: AudioFrame): boolean;
+}
+
 // @internal
 function flushOtelLogs(): Promise<void>;
 
@@ -4676,6 +4840,7 @@ export interface InputSpeechStoppedEvent {
 //
 // @public (undocumented)
 export interface InputTranscriptionCompleted {
+    confidence?: number;
     // (undocumented)
     isFinal: boolean;
     // (undocumented)
@@ -5153,6 +5318,19 @@ declare namespace llm {
         ToolType,
         AsyncToolset,
         AsyncToolsetCreateOptions,
+        DuplexModel,
+        DuplexSession,
+        DuplexAudioFrame,
+        DuplexCapabilities,
+        DuplexOutputTranscriptDelta,
+        DuplexSessionCallbacks,
+        AdaptiveNoiseGate,
+        DuplexRealtimeAdapter,
+        FixedGate,
+        AdaptiveNoiseGateOptions,
+        AudioGate,
+        AudioGateOptions,
+        DuplexRealtimeAdapterOptions,
         AsyncToolOptions,
         DuplicatePromptArgs,
         ReplyPromptArgs,
@@ -5516,6 +5694,8 @@ class LoopMonitorThresholds {
     readonly warn: number;
 }
 
+// Warning: (ae-missing-release-tag) "LoopStallCause" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
 // @public
 type LoopStallCause = 'code' | 'host';
 
@@ -5546,7 +5726,7 @@ const MAX_LOGS_PER_MINUTE = 5;
 // Warning: (ae-missing-release-tag) "MAX_SPANS_PER_MINUTE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-const MAX_SPANS_PER_MINUTE = 30;
+const MAX_SPANS_PER_MINUTE = 6;
 
 // Warning: (ae-missing-release-tag) "maxInputLen" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -6034,6 +6214,15 @@ export interface PlaybackFinishedEvent {
     synchronizedTranscript?: string;
 }
 
+// Warning: (ae-missing-release-tag) "PlaybackProgressedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface PlaybackProgressedEvent {
+    duration: number;
+    offset: number;
+    startedAt: number;
+}
+
 // Warning: (ae-missing-release-tag) "PlaybackStartedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -6195,6 +6384,7 @@ export interface RealtimeCapabilities {
     // @deprecated
     nativeTranscriptSync?: boolean;
     perResponseToolChoice?: boolean;
+    supportsOverlappingSpeech?: boolean;
     turnDetection: boolean;
     userTranscription: boolean;
 }
@@ -6250,6 +6440,8 @@ export type RealtimeModelMetrics = {
     timestamp: number;
     durationMs: number;
     sessionDurationMs?: number;
+    acquireTimeMs?: number;
+    connectionReused?: boolean;
     ttftMs: number;
     cancelled: boolean;
     inputTokens: number;
@@ -9516,6 +9708,7 @@ declare namespace voice {
         AudioOutput,
         AudioOutputCapabilities,
         PlaybackFinishedEvent,
+        PlaybackProgressedEvent,
         PlaybackStartedEvent,
         TimedString,
         createTimedString,
@@ -9943,20 +10136,20 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/chat_context.ts:76:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:702:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
-// src/metrics/base.ts:194:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:361:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
+// src/metrics/base.ts:202:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
+// src/stt/stt.ts:364:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:381:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1002:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1658:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1658:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1658:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
-// src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
-// src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
-// src/voice/amd.ts:511:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/events.ts:423:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:387:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1025:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1695:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1695:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1695:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
+// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
+// src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
+// src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
+// src/voice/events.ts:424:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:178:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 

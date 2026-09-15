@@ -23,6 +23,7 @@ import {
   waitForEntrypointShutdown,
 } from '../job_lifecycle.js';
 import { initializeLogger, log } from '../log.js';
+import { loggerOptions, setLoggerState } from '../log_core.js';
 import type { SimulationContext } from '../simulation.js';
 import { getMonitor, startMonitoring, stopMonitoring } from '../telemetry/loop_monitor.js';
 import { Future, shortuuid } from '../utils.js';
@@ -297,7 +298,11 @@ const startJob = (
             throw new Error('job task already running');
           }
 
-          logger = logger.child({ jobID: msg.value.runningJob.job.id });
+          logger = logger.child({
+            jobID: msg.value.runningJob.job.id,
+            room_id: msg.value.runningJob.job.room?.sid,
+          });
+          setLoggerState(logger, loggerOptions()!);
 
           job = startJob(
             proc,
