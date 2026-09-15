@@ -6,6 +6,13 @@ import { extname } from 'node:path';
 import { INFERENCE_METHOD_EN } from './english.js';
 import { INFERENCE_METHOD_MULTILINGUAL } from './multilingual.js';
 
+console.warn(
+  'The text-based turn detector from @livekit/agents-plugin-livekit is deprecated. ' +
+    'The audio EOT detector in `@livekit/agents` inference (TurnDetector) replaces ' +
+    'it and runs natively on-device via @livekit/local-inference. ' +
+    'This text-based path will be removed in a future release.',
+);
+
 export { EOUModel } from './base.js';
 export { EnglishModel } from './english.js';
 export { MultilingualModel } from './multilingual.js';

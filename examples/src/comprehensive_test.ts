@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   dedent,
@@ -21,7 +20,6 @@ import * as livekit from '@livekit/agents-plugin-livekit';
 import * as neuphonic from '@livekit/agents-plugin-neuphonic';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as resemble from '@livekit/agents-plugin-resemble';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -76,8 +74,9 @@ class MainAgent extends voice.Agent<UserData> {
       tts: ttsOptions['elevenlabs'](),
       llm: llmOptions['openai'](),
       turnDetection: eouOptions['multilingual'](),
-      tools: {
-        testAgent: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'testAgent',
           description:
             'Called when user want to test an agent with STT, TTS, EOU, LLM, and optionally realtime LLM configuration',
           parameters: z.object({
@@ -102,7 +101,7 @@ class MainAgent extends voice.Agent<UserData> {
             });
           },
         }),
-      },
+      ],
     });
   }
 
@@ -159,8 +158,9 @@ class TestAgent extends voice.Agent<UserData> {
       tts: tts,
       llm: realtimeModel ?? model,
       turnDetection: eou,
-      tools: {
-        testTool: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'testTool',
           description: "Testing agent's tool calling ability",
           parameters: z
             .object({
@@ -173,7 +173,8 @@ class TestAgent extends voice.Agent<UserData> {
             };
           },
         }),
-        nextAgent: llm.tool({
+        llm.tool({
+          name: 'nextAgent',
           description:
             'Called when user confirm current agent is working and want to proceed to next agent',
           parameters: z.object({
@@ -204,7 +205,7 @@ class TestAgent extends voice.Agent<UserData> {
             });
           },
         }),
-      },
+      ],
     });
 
     this.sttChoice = sttChoice;
@@ -238,14 +239,9 @@ class TestAgent extends voice.Agent<UserData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const logger = log();
-    const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
-      vad,
       userData: {
         testedSttChoices: new Set(),
         testedTtsChoices: new Set(),

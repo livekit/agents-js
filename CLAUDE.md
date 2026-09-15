@@ -19,7 +19,7 @@ LiveKit Agents for Node.js — a TypeScript framework for building realtime, mul
 - **`examples/`** — Example agents (private, not published). Run with `pnpm build && node ./examples/src/<file>.ts dev`.
 - **`tests/e2e/`** — End-to-end tests via Docker (separate from unit tests co-located in each package).
 
-**Tooling:** pnpm 9.7.0 workspaces, Turborepo for builds, tsup for bundling (CJS + ESM), TypeScript 5.4+, Vitest for tests, Changesets for versioning.
+**Tooling:** pnpm 11 workspaces, Turborepo for builds, tsup for bundling (CJS + ESM), TypeScript 5.4+, Vitest for tests, Changesets for versioning.
 
 ## Common Commands
 
@@ -29,8 +29,8 @@ pnpm build:agents           # Build only @livekit/agents and its deps
 pnpm build:plugins          # Build only plugins and their deps
 pnpm clean:build            # Clean dist/ dirs then rebuild
 pnpm test                   # Run all tests (vitest)
-pnpm test -- --testPathPattern=agents/src/llm  # Run tests by path
-pnpm test -- --testNamePattern="chat context"  # Run tests by name
+pnpm test agents/src/llm            # Run tests by path
+pnpm test -t "chat context"         # Run tests by name
 pnpm test:watch             # Watch mode
 pnpm lint                   # ESLint all packages
 pnpm lint:fix               # ESLint with auto-fix
@@ -129,8 +129,8 @@ Plugin capabilities by type:
 - **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3), mistralai, fishaudio, hume
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
-- **Realtime**: openai (+ responses/, ws/ modules), google (beta), xai, phonic
-- **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar
+- **Realtime**: openai (+ responses/, ws/ modules), google, xai, phonic
+- **Avatar**: trugen, lemonslice, bey, anam, liveavatar, did, protoface
 - **Test mocks**: test (private, for unit tests)
 
 ### AsyncLocalStorage Patterns
@@ -143,6 +143,8 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 
 ## Code Conventions
 
+- **Lifecycle changes**: Follow the [lifecycle review checklist](CONTRIBUTING.md#review-lifecycle-changes)
+  for session helpers, shutdown, and cleanup. Apply it to Python ports too.
 - **License header** required on every new file:
   ```
   // SPDX-FileCopyrightText: 2026 LiveKit, Inc.

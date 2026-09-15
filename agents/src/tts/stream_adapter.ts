@@ -108,6 +108,7 @@ export class StreamAdapterWrapper extends SynthesizeStream {
       prevTask: Task<void> | undefined,
       controller: AbortController,
     ) => {
+      this.markStarted();
       const audioStream = this.#tts.synthesize(token, this.connOptions, this.abortSignal);
 
       // wait for previous audio transcription to complete before starting

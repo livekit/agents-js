@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   AudioByteStream,
   Event,
   calculateAudioDurationSeconds,
@@ -10,6 +12,7 @@ import {
   log,
   normalizeLanguage,
   stt,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import * as queryString from 'node:querystring';
@@ -20,6 +23,9 @@ import type { V2Models } from './models.js';
 const _CLOSE_MSG = JSON.stringify({ type: 'CloseStream' });
 
 // --- Configuration ---
+
+/** Redaction modes supported by the Deepgram Flux API. */
+export type FluxRedaction = 'numbers' | 'aggressive_numbers';
 
 /**
  * Configuration options for STTv2 (Deepgram Flux model).
@@ -35,6 +41,12 @@ export interface STTv2Options {
   eotThreshold?: number;
   eotTimeoutMs?: number;
   mipOptOut?: boolean;
+  /** Whether to convert spoken numbers into numerical formats. */
+  numerals: boolean;
+  /** Whether to filter profanity from the transcription. Applied at connection time. */
+  profanityFilter: boolean;
+  /** Redact numbers at connection time. Flux does not support entity redaction. */
+  redact?: FluxRedaction;
   tags?: string[];
   /**
    * List of language hints to bias the model for improved accuracy.
@@ -51,6 +63,8 @@ const defaultSTTv2Options: Omit<STTv2Options, 'apiKey'> = {
   endpointUrl: 'wss://api.deepgram.com/v2/listen',
   language: 'en',
   mipOptOut: false,
+  numerals: false,
+  profanityFilter: false,
 };
 
 function validateTags(tags: string[]): string[] {
@@ -98,20 +112,15 @@ export class STTv2 extends stt.STT {
   #opts: STTv2Options;
   #apiKey: string;
   #logger = log();
+  // session keyterm propagation)
+  #streams = new Set<WeakRef<SpeechStreamv2>>();
+  #userKeyterms: string[];
+  #sessionKeyterms: string[] = [];
 
   /**
    * Create a new Deepgram STTv2 instance.
    *
-   * @param opts - Configuration options
-   * @param opts.apiKey - Deepgram API key (defaults to `DEEPGRAM_API_KEY` env var)
-   * @param opts.model - Model to use (default: `flux-general-en`)
-   * @param opts.eagerEotThreshold - Threshold (0.3-0.9) for preemptive generation
-   * @param opts.eotThreshold - End-of-turn detection threshold (default: 0.7)
-   * @param opts.eotTimeoutMs - End-of-turn timeout in ms (default: 3000)
-   * @param opts.keyterms - List of key terms to improve recognition
-   * @param opts.tags - Tags for usage reporting (max 128 chars each)
-   * @param opts.languageHint - List of language hints to bias the model for improved accuracy.
-   *   Only usable with `flux-general-multi`.
+   * @param opts - Configuration options. See {@link STTv2Options}.
    *
    * @throws Error if no API key is provided
    */
@@ -120,6 +129,7 @@ export class STTv2 extends stt.STT {
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
+      keyterms: true,
     });
 
     this.#opts = {
@@ -127,6 +137,7 @@ export class STTv2 extends stt.STT {
       ...opts,
       language: opts.language ? normalizeLanguage(opts.language) : defaultSTTv2Options.language,
     };
+    this.#userKeyterms = [...this.#opts.keyterms];
 
     const apiKey = opts.apiKey || process.env.DEEPGRAM_API_KEY;
     if (!apiKey) {
@@ -176,22 +187,39 @@ export class STTv2 extends stt.STT {
    */
   stream(options?: { connOptions?: APIConnectOptions }): stt.SpeechStream {
     const streamOpts = { ...this.#opts, apiKey: this.#apiKey };
-    return new SpeechStreamv2(this, streamOpts, options?.connOptions);
+    const stream = new SpeechStreamv2(this, streamOpts, options?.connOptions);
+    this.#streams.add(new WeakRef(stream));
+    return stream;
   }
 
   /**
-   * Update STT options. Changes will take effect on the next stream.
+   * Update STT options.
    *
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<STTv2Options>) {
+    const nextOpts = { ...opts };
+    if (nextOpts.keyterms !== undefined) {
+      this.#userKeyterms = [...nextOpts.keyterms];
+      nextOpts.keyterms = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
+    }
     this.#opts = {
       ...this.#opts,
-      ...opts,
+      ...nextOpts,
       language:
         opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
     };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
+
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (stream) {
+        stream.updateOptions(nextOpts);
+      } else {
+        this.#streams.delete(ref);
+      }
+    }
+
     // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 244-249 lines
     if (
       this.#opts.languageHint &&
@@ -204,6 +232,31 @@ export class STTv2 extends stt.STT {
       );
     }
     this.#logger.debug('Updated STTv2 options');
+  }
+
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    if (
+      keyterms.length === this.#sessionKeyterms.length &&
+      keyterms.every((t, i) => t === this.#sessionKeyterms[i])
+    ) {
+      return;
+    }
+    this.#sessionKeyterms = [...keyterms];
+    const merged = [...new Set([...this.#userKeyterms, ...keyterms])];
+    this.#opts.keyterms = merged;
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (!stream) {
+        this.#streams.delete(ref);
+        continue;
+      }
+      if (stream._speaking) {
+        // defer the reconnect to the end of the utterance so we don't cut it off
+        stream._pendingKeyterm = merged;
+      } else {
+        stream.updateOptions({ keyterms: merged });
+      }
+    }
   }
 }
 
@@ -222,6 +275,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
   // Parity: _reconnect_event - using existing Event class from @livekit/agents
   #reconnectEvent = new Event();
 
+  // keyterms set while the user is speaking; applied at END_OF_SPEECH (latest wins)
+  /** @internal */
+  _pendingKeyterm: string[] | null = null;
+
   constructor(
     sttInstance: STTv2,
     opts: STTv2Options & { apiKey: string },
@@ -236,6 +293,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
     );
   }
 
+  /** @internal */
+  get _speaking(): boolean {
+    return this.#speaking;
+  }
+
   updateOptions(opts: Partial<STTv2Options>) {
     this.#logger.debug('Stream received option update', opts);
     this.#opts = {
@@ -245,9 +307,24 @@ class SpeechStreamv2 extends stt.SpeechStream {
         opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
     };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
+    if (opts.keyterms !== undefined) {
+      this._pendingKeyterm = null;
+    }
 
     // Trigger reconnection loop
     this.#reconnectEvent.set();
+  }
+
+  /** @internal */
+  get _reconnectPending(): boolean {
+    return this.#reconnectEvent.isSet;
+  }
+
+  #onEndOfSpeech() {
+    if (this._pendingKeyterm !== null) {
+      this.updateOptions({ keyterms: this._pendingKeyterm });
+      this._pendingKeyterm = null;
+    }
   }
 
   protected async run() {
@@ -256,29 +333,21 @@ class SpeechStreamv2 extends stt.SpeechStream {
       try {
         this.#reconnectEvent.clear();
 
-        const url = this.#getDeepgramUrl();
-        this.#logger.debug(`Connecting to Deepgram: ${url}`);
+        const baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
+        const url = `${baseUrl}?${queryString.stringify(this._liveConfig())}`;
+        this.#logger.debug('connecting to Deepgram');
 
-        this.#ws = new WebSocket(url, {
-          headers: { Authorization: `Token ${this.#opts.apiKey}` },
-        });
-
-        // 1. Wait for Connection Open
-        await new Promise<void>((resolve, reject) => {
-          if (!this.#ws) return reject(new Error('WebSocket not initialized'));
-
-          const onOpen = () => {
-            this.#ws?.off('error', onError);
-            resolve();
-          };
-          const onError = (err: Error) => {
-            this.#ws?.off('open', onOpen);
-            reject(err);
-          };
-
-          this.#ws.once('open', onOpen);
-          this.#ws.once('error', onError);
-        });
+        try {
+          this.#ws = new WebSocket(url, {
+            headers: { Authorization: `Token ${this.#opts.apiKey}` },
+          });
+          await waitForWebSocketOpen(this.#ws, 'Deepgram');
+        } catch (error) {
+          if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+          throw new APIConnectionError({
+            message: `failed to connect to Deepgram (${errorName(error)})`,
+          });
+        }
 
         // 2. Run Concurrent Tasks (Send & Receive)
         const sendPromise = this.#sendTask();
@@ -300,7 +369,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
           break;
         }
       } catch (error) {
-        this.#logger.error('Deepgram stream error', { error });
+        this.#logger.error({ errorType: errorName(error) }, 'Deepgram stream error');
         throw error; // Let Base Class handle retry logic
       } finally {
         if (this.#ws?.readyState === WebSocket.OPEN) {
@@ -319,6 +388,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
 
     let hasEnded = false;
+    let inputEnded = false;
 
     // Manual Iterator to allow racing against Reconnect Signal
     const iterator = this.input[Symbol.asyncIterator]();
@@ -335,6 +405,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         if (!('abort' in result) && result.done) {
           // Normal stream end
           hasEnded = true;
+          inputEnded = true;
         } else {
           // Reconnect triggered - break loop immediately
           break;
@@ -361,15 +432,15 @@ class SpeechStreamv2 extends stt.SpeechStream {
           if (this.#ws!.readyState === WebSocket.OPEN) {
             this.#ws!.send(frame.data);
           }
-
-          if (hasEnded) {
-            this.#audioDurationCollector.flush();
-            hasEnded = false;
-          }
         }
       }
 
-      if (hasEnded) break;
+      if (hasEnded) {
+        this.#audioDurationCollector.flush();
+        hasEnded = false;
+      }
+
+      if (inputEnded) break;
     }
 
     // Only send CloseStream if we are exiting normally (not reconnecting)
@@ -444,9 +515,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
           type: stt.SpeechEventType.END_OF_SPEECH,
           requestId: this.#requestId,
         });
+        this.#onEndOfSpeech();
       }
     } else if (data.type === 'Error') {
-      this.#logger.warn('deepgram sent an error', { data });
+      this.#logger.warn({ 'lk.pii.data': data }, 'deepgram sent an error');
       const desc = (data.description as string) || 'unknown error from deepgram';
       throw new Error(`Deepgram API Error: ${desc}`);
     }
@@ -475,8 +547,9 @@ class SpeechStreamv2 extends stt.SpeechStream {
     this.queue.put(usageEvent);
   }
 
-  #getDeepgramUrl(): string {
-    const params: Record<string, string | string[]> = {
+  /** @internal */
+  _liveConfig(): Record<string, string | string[] | boolean> {
+    const params: Record<string, string | string[] | boolean> = {
       model: this.#opts.model,
       sample_rate: this.#opts.sampleRate.toString(),
       encoding: 'linear16',
@@ -497,15 +570,21 @@ class SpeechStreamv2 extends stt.SpeechStream {
       params.language_hint = this.#opts.languageHint;
     }
 
-    const baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
-    const qs = queryString.stringify(params);
-    return `${baseUrl}?${qs}`;
+    if (this.#opts.numerals) params.numerals = this.#opts.numerals;
+    if (this.#opts.profanityFilter) params.profanity_filter = this.#opts.profanityFilter;
+    if (this.#opts.redact !== undefined) params.redact = this.#opts.redact;
+
+    return params;
   }
 
   override close() {
     super.close();
     this.#ws?.close();
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 // --- Helpers ---

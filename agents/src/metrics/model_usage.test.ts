@@ -91,6 +91,35 @@ describe('model_usage', () => {
     });
 
     describe('collect LLM metrics', () => {
+      it('should aggregate cache creation tokens', () => {
+        const metrics: LLMMetrics = {
+          type: 'llm_metrics',
+          label: 'test',
+          requestId: 'req1',
+          timestamp: Date.now(),
+          durationMs: 100,
+          ttftMs: 50,
+          cancelled: false,
+          completionTokens: 10,
+          promptTokens: 100,
+          promptCachedTokens: 20,
+          cacheCreationTokens: 42,
+          totalTokens: 110,
+          tokensPerSecond: 10,
+          metadata: {
+            modelProvider: 'anthropic',
+            modelName: 'claude-sonnet-4',
+          },
+        };
+
+        collector.collect(metrics);
+        collector.collect({ ...metrics, cacheCreationTokens: 8 });
+
+        const usage = collector.flatten();
+        expect(usage).toHaveLength(1);
+        expect((usage[0] as LLMModelUsage).inputCacheCreationTokens).toBe(50);
+      });
+
       it('should aggregate LLM metrics by provider and model', () => {
         const metrics1: LLMMetrics = {
           type: 'llm_metrics',

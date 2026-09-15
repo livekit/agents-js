@@ -94,6 +94,10 @@ export class LLM extends llm.LLM {
     return 'api.mistral.ai';
   }
 
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    await this.#client.models.list(undefined, { signal });
+  }
+
   updateOptions(opts: {
     model?: MistralChatModels | string;
     maxCompletionTokens?: number;
@@ -123,7 +127,7 @@ export class LLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
@@ -187,7 +191,7 @@ export class LLMStream extends llm.LLMStream {
       client: Mistral;
       opts: LLMOpts;
       chatCtx: llm.ChatContext;
-      toolCtx?: llm.ToolContext;
+      toolCtx?: llm.ToolContextLike;
       connOptions: APIConnectOptions;
       extraKwargs: Record<string, unknown>;
     },
@@ -211,7 +215,9 @@ export class LLMStream extends llm.LLMStream {
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const toolsList: any[] = [];
-      if (this.toolCtx && Object.keys(this.toolCtx).length > 0) {
+      // Provider tools are not supported by the Mistral schema; `sortedToolEntries` yields only
+      // function tools (sorted by name), so they are skipped here.
+      if (this.toolCtx) {
         for (const [name, func] of llm.sortedToolEntries(this.toolCtx)) {
           toolsList.push({
             type: 'function' as const,

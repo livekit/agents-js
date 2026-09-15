@@ -133,6 +133,8 @@ export type TurnDetectionType =
 export type InputAudioTranscription = {
   model: InputTranscriptionModel;
   language?: string;
+  languages?: string[];
+  keywords?: string[];
   prompt?: string;
 };
 
@@ -280,6 +282,7 @@ export interface ConversationResource {
 }
 
 export type ResponseStatusDetails =
+  | string
   | {
       type: 'incomplete';
       reason: 'max_output_tokens' | 'content_filter' | string;
@@ -446,6 +449,7 @@ export interface ResponseCreateEvent extends BaseClientEvent {
 
 export interface ResponseCancelEvent extends BaseClientEvent {
   type: 'response.cancel';
+  response_id?: string;
 }
 
 export type ClientEvent =
@@ -535,6 +539,7 @@ export interface ConversationItemInputAudioTranscriptionCompletedEvent extends B
   item_id: string;
   content_index: number;
   transcript: string;
+  status?: 'in_progress' | 'completed' | string;
 }
 
 export interface ConversationItemInputAudioTranscriptionFailedEvent extends BaseServerEvent {

@@ -1,21 +1,34 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { RoomEvent } from '@livekit/rtc-node';
 import type { Room } from '@livekit/rtc-node';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { JobContext, type JobProcess, type RunningJobInfo } from './job.js';
+import { log } from './log.js';
+import { SimulationContext, parseSimulationDispatch } from './simulation.js';
 
-const { deleteRoomMock, roomServiceClientMock } = vi.hoisted(() => ({
+const { deleteRoomMock, roomServiceClientMock, setupCloudTracerMock } = vi.hoisted(() => ({
   deleteRoomMock: vi.fn(async () => {}),
   roomServiceClientMock: vi.fn(function RoomServiceClient() {
     return { deleteRoom: deleteRoomMock };
   }),
+  setupCloudTracerMock: vi.fn(async () => {}),
 }));
 
 vi.mock('livekit-server-sdk', () => ({
   RoomServiceClient: roomServiceClientMock,
 }));
+
+vi.mock('./telemetry/index.js', () => ({
+  setupCloudTracer: setupCloudTracerMock,
+  uploadSessionReport: vi.fn(async () => {}),
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 function createJobContext(infoOverrides: Partial<RunningJobInfo> = {}) {
   const room = {
@@ -86,5 +99,374 @@ describe('JobContext.deleteRoom', () => {
     await ctx.deleteRoom('other-room');
 
     expect(deleteRoomMock).toHaveBeenCalledWith('other-room');
+  });
+});
+
+describe('JobContext fake job (console mode)', () => {
+  function createFakeJobContext() {
+    const onConnect = vi.fn();
+    const room = {
+      name: 'console-room',
+      on: vi.fn(),
+      off: vi.fn(),
+      isConnected: false,
+      remoteParticipants: new Map(),
+      connect: vi.fn(async () => {}),
+    };
+
+    const ctx = new JobContext(
+      {} as unknown as JobProcess,
+      {
+        acceptArguments: { name: '', identity: 'console', metadata: '' },
+        job: { id: 'console-job', room: { name: 'console-room' } },
+        url: '',
+        token: '',
+        workerId: 'console',
+        fakeJob: true,
+      } as unknown as RunningJobInfo,
+      room as unknown as Room,
+      onConnect,
+      vi.fn(),
+      {} as unknown as InferenceExecutor,
+    );
+
+    return { ctx, onConnect, room };
+  }
+
+  it('reports isFakeJob', () => {
+    expect(createFakeJobContext().ctx.isFakeJob).toBe(true);
+    expect(createJobContext().isFakeJob).toBe(false);
+  });
+
+  it('connect() is an idempotent no-op that does not touch the room', async () => {
+    const { ctx, onConnect, room } = createFakeJobContext();
+
+    await ctx.connect();
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(room.connect).not.toHaveBeenCalled();
+
+    await ctx.connect();
+    expect(onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('deleteRoom() is a no-op', async () => {
+    const { ctx } = createFakeJobContext();
+
+    await ctx.deleteRoom();
+
+    expect(roomServiceClientMock).not.toHaveBeenCalled();
+    expect(deleteRoomMock).not.toHaveBeenCalled();
+  });
+
+  it('initRecording() is a no-op and does not parse the empty URL', async () => {
+    const { ctx } = createFakeJobContext();
+    await expect(ctx.initRecording()).resolves.toBeUndefined();
+  });
+});
+
+function createJobContextWithRoom(
+  infoOverrides: Partial<RunningJobInfo> = {},
+  jobOverrides: Record<string, unknown> = {},
+) {
+  const handlers = new Map<string, (...args: unknown[]) => void>();
+  const room = {
+    name: 'connected-room',
+    on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+      handlers.set(event, cb);
+      return room;
+    }),
+    off: vi.fn(),
+    isConnected: false,
+    remoteParticipants: new Map(),
+  };
+
+  const onShutdown = vi.fn();
+  const ctx = new JobContext(
+    {} as unknown as JobProcess,
+    {
+      acceptArguments: { name: 'agent', identity: 'agent', metadata: '' },
+      job: { id: 'job-id', room: { name: 'assigned-room' }, attributes: {}, ...jobOverrides },
+      url: 'wss://example.livekit.cloud',
+      token: 'token',
+      workerId: 'worker-id',
+      ...infoOverrides,
+    } as unknown as RunningJobInfo,
+    room as unknown as Room,
+    vi.fn(),
+    onShutdown,
+    {} as unknown as InferenceExecutor,
+  );
+  return { ctx, handlers, onShutdown };
+}
+
+describe('JobContext.simulationContext', () => {
+  const dispatch = JSON.stringify({
+    simulationRunId: 'SR_1',
+    scenario: { label: 's', userdata: '{"k":1}' },
+    mode: 'SIMULATION_MODE_TEXT',
+  });
+
+  it('resolves a SimulationContext from the dispatch job attribute', () => {
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { attributes: { 'lk.simulator.dispatch': dispatch } },
+    );
+    const sim = ctx.simulationContext();
+    expect(sim).toBeDefined();
+    expect(sim!.scenario.label).toBe('s');
+    expect(sim!.jobContext).toBe(ctx);
+    // cached: same instance on re-read
+    expect(ctx.simulationContext()).toBe(sim);
+  });
+
+  it('returns undefined without the attribute', () => {
+    const { ctx } = createJobContextWithRoom();
+    expect(ctx.simulationContext()).toBeUndefined();
+  });
+
+  it('returns undefined (and does not throw) on malformed dispatch JSON', () => {
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { attributes: { 'lk.simulator.dispatch': '{nope' } },
+    );
+    expect(ctx.simulationContext()).toBeUndefined();
+    expect(ctx.simulationContext()).toBeUndefined(); // stays cached
+  });
+
+  it('returns undefined when the dispatch has no simulation_run_id', () => {
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { attributes: { 'lk.simulator.dispatch': '{"scenario":{}}' } },
+    );
+    expect(ctx.simulationContext()).toBeUndefined();
+  });
+});
+
+describe('JobContext.inferenceHeaders', () => {
+  const dispatch = (mode: string) =>
+    JSON.stringify({ simulationRunId: 'SR_1', scenario: { label: 's' }, mode });
+
+  it('forces low inference priority under a text simulation', () => {
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { attributes: { 'lk.simulator.dispatch': dispatch('SIMULATION_MODE_TEXT') } },
+    );
+    expect(ctx.inferenceHeaders).toEqual({ 'X-LiveKit-Inference-Priority': 'low' });
+  });
+
+  it('leaves audio simulations at their configured priority', () => {
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { attributes: { 'lk.simulator.dispatch': dispatch('SIMULATION_MODE_AUDIO') } },
+    );
+    expect(ctx.inferenceHeaders).toEqual({});
+  });
+
+  it('is empty for an ordinary job', () => {
+    const { ctx } = createJobContextWithRoom();
+    expect(ctx.inferenceHeaders).toEqual({});
+  });
+});
+
+describe('simulator participant lifecycle', () => {
+  it('shuts the job down when a participant with lk.simulator disconnects', () => {
+    const { handlers, onShutdown } = createJobContextWithRoom();
+    const cb = handlers.get(RoomEvent.ParticipantDisconnected);
+    expect(cb).toBeDefined();
+    cb!({ identity: 'sim', attributes: { 'lk.simulator': 'true' } });
+    expect(onShutdown).toHaveBeenCalledWith('simulation completed');
+  });
+
+  it('ignores non-simulator participants', () => {
+    const { handlers, onShutdown } = createJobContextWithRoom();
+    handlers.get(RoomEvent.ParticipantDisconnected)!({ identity: 'user', attributes: {} });
+    expect(onShutdown).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobContext telemetry metadata', () => {
+  it('includes redaction when the project enables it', () => {
+    const { ctx } = createJobContextWithRoom({}, { enableRedaction: true });
+
+    expect(ctx._otelMetadata()).toEqual({ 'lk.redaction.enabled': true });
+  });
+
+  it('includes redaction when the recording option enables it', () => {
+    const ctx = createJobContext();
+
+    expect(
+      ctx._otelMetadata({
+        audio: false,
+        traces: true,
+        logs: false,
+        transcript: false,
+        redaction: true,
+      }),
+    ).toEqual({ 'lk.redaction.enabled': true });
+  });
+
+  it('includes simulation identity when the job has simulation dispatch metadata', () => {
+    const ctx = createJobContext({
+      job: {
+        id: 'job-id',
+        room: { name: 'assigned-room' },
+        attributes: {
+          'lk.simulator.dispatch': JSON.stringify({
+            simulationRunId: 'run_abc',
+            jobId: 'job_def',
+          }),
+        },
+      },
+    } as unknown as Partial<RunningJobInfo>);
+
+    expect(ctx._otelMetadata()).toEqual({
+      'lk.simulation.enabled': true,
+      'lk.simulation.run_id': 'run_abc',
+      'lk.simulation.job_id': 'job_def',
+    });
+  });
+
+  it('omits blank simulation ids', () => {
+    const ctx = createJobContext();
+    const simulation = new SimulationContext(parseSimulationDispatch('{}'), ctx);
+    vi.spyOn(ctx, 'simulationContext').mockReturnValue(simulation);
+
+    expect(ctx._otelMetadata()).toEqual({ 'lk.simulation.enabled': true });
+  });
+});
+
+describe('JobContext recording redaction', () => {
+  it('tracks project and session redaction in the resolved state', async () => {
+    const { ctx: projectRedacted } = createJobContextWithRoom({}, { enableRedaction: true });
+    const { ctx: sessionRedacted } = createJobContextWithRoom();
+
+    expect(projectRedacted._redactionEnabled).toBe(true);
+    expect(sessionRedacted._redactionEnabled).toBe(false);
+
+    await sessionRedacted.initRecording({
+      audio: false,
+      traces: false,
+      logs: false,
+      transcript: false,
+      redaction: true,
+    });
+
+    expect(sessionRedacted._redactionEnabled).toBe(true);
+  });
+
+  it.each([
+    { source: 'project', projectRedaction: true, sessionRedaction: false },
+    { source: 'session', projectRedaction: false, sessionRedaction: true },
+  ])(
+    'rejects audio without transcripts under $source redaction',
+    async ({ projectRedaction, sessionRedaction }) => {
+      const { ctx } = createJobContextWithRoom({}, { enableRedaction: projectRedaction });
+
+      await expect(
+        ctx.initRecording({
+          audio: true,
+          traces: false,
+          logs: false,
+          transcript: false,
+          redaction: sessionRedaction,
+        }),
+      ).rejects.toThrow('audio upload requires transcript upload when redaction is enabled');
+    },
+  );
+});
+
+describe('JobContext observability URL', () => {
+  const tracesOn = {
+    audio: false,
+    traces: true,
+    logs: false,
+    transcript: false,
+    redaction: false,
+  } as const;
+
+  let prevObservabilityUrl: string | undefined;
+
+  beforeEach(() => {
+    prevObservabilityUrl = process.env.LIVEKIT_OBSERVABILITY_URL;
+    delete process.env.LIVEKIT_OBSERVABILITY_URL;
+  });
+
+  afterEach(() => {
+    if (prevObservabilityUrl === undefined) {
+      delete process.env.LIVEKIT_OBSERVABILITY_URL;
+    } else {
+      process.env.LIVEKIT_OBSERVABILITY_URL = prevObservabilityUrl;
+    }
+  });
+
+  it('configures the cloud tracer with the LiveKit Cloud URL', async () => {
+    const ctx = createJobContext();
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://example.livekit.cloud' }),
+    );
+  });
+
+  it('skips the cloud tracer on a self-hosted URL', async () => {
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).not.toHaveBeenCalled();
+  });
+
+  it('uses LIVEKIT_OBSERVABILITY_URL on a self-hosted URL', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'https://obs.example.com:8443';
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://obs.example.com:8443' }),
+    );
+  });
+
+  it('preserves a plaintext scheme on LIVEKIT_OBSERVABILITY_URL', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'http://collector.internal';
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'http://collector.internal' }),
+    );
+  });
+
+  it('strips a trailing slash so endpoint paths do not double up', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'https://obs.example.com/';
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://obs.example.com' }),
+    );
+  });
+
+  it('prefers LIVEKIT_OBSERVABILITY_URL over the job Cloud URL', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'https://override.example.com';
+    const ctx = createJobContext();
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://override.example.com' }),
+    );
+  });
+
+  it('falls back to the Cloud URL when LIVEKIT_OBSERVABILITY_URL is not a valid URL', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'not a url';
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    const ctx = createJobContext();
+    await ctx.initRecording(tracesOn);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'not a url' }),
+      'invalid LIVEKIT_OBSERVABILITY_URL, falling back to the job URL',
+    );
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://example.livekit.cloud' }),
+    );
+  });
+
+  it('does not enable the cloud tracer on a self-hosted URL when LIVEKIT_OBSERVABILITY_URL is invalid', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'not a url';
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).not.toHaveBeenCalled();
   });
 });

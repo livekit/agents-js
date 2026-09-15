@@ -6,12 +6,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { Task } from '../utils.js';
 import { AudioRecognition, type RecognitionHooks, STTPipeline } from './audio_recognition.js';
 import type { STTNode } from './io.js';
+
+interface AudioRecognitionTestState {
+  sttPipeline?: STTPipeline;
+  sttOwnershipTransferred: boolean;
+  sttConsumerTask?: Task<void>;
+}
 
 function createHooks() {
   const hooks: RecognitionHooks = {
     onInterruption: vi.fn(),
+    onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
     onEndOfSpeech: vi.fn(),
@@ -19,6 +27,7 @@ function createHooks() {
     onFinalTranscript: vi.fn(),
     onEndOfTurn: vi.fn(async () => true),
     onPreemptiveGeneration: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
     onUserTurnExceeded: vi.fn(),
     retrieveChatCtx: () => ChatContext.empty(),
   };
@@ -119,27 +128,27 @@ describe('AudioRecognition STT pipeline handoff', () => {
     }
   });
 
-  it('resets handoff-sensitive STT state when attaching a pipeline', async () => {
+  it('resets handoff-sensitive STT state without clearing the pipeline input anchor', async () => {
     const sttNode: STTNode = async () =>
       new ReadableStream<SpeechEvent | string>({
         start() {},
       });
 
     const pipeline = new STTPipeline(sttNode);
+    pipeline.inputStartedAt = Date.now() - 60_000;
     const { recognition } = createRecognition(sttNode);
 
     (recognition as any).transcriptBuffer = [
       { type: SpeechEventType.FINAL_TRANSCRIPT, alternatives: [{ text: 'stale transcript' }] },
     ];
     (recognition as any).ignoreUserTranscriptUntil = Date.now();
-    (recognition as any)._inputStartedAt = Date.now();
 
     try {
       await recognition.start({ sttPipeline: pipeline });
 
       expect((recognition as any).transcriptBuffer).toEqual([]);
       expect((recognition as any).ignoreUserTranscriptUntil).toBeUndefined();
-      expect((recognition as any)._inputStartedAt).toBeUndefined();
+      expect(recognition.inputStartedAt).toBe(pipeline.inputStartedAt);
     } finally {
       await recognition.close();
       await pipeline.close();
@@ -250,6 +259,39 @@ describe('AudioRecognition STT pipeline handoff', () => {
       expect((recognition as any).sttPipeline).toBeUndefined();
     } finally {
       await recognition.close();
+    }
+  });
+
+  it('retains pipeline ownership when consumer cancellation fails', async () => {
+    const sttNode: STTNode = async () =>
+      new ReadableStream<SpeechEvent | string>({
+        start() {},
+      });
+    const pipeline = new STTPipeline(sttNode);
+    const { recognition } = createRecognition(sttNode);
+    const state = recognition as unknown as AudioRecognitionTestState;
+    const consumerTask = Task.from(async ({ signal }) => {
+      await new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      throw new Error('consumer cancellation failed');
+    });
+    state.sttPipeline = pipeline;
+    state.sttConsumerTask = consumerTask;
+
+    try {
+      await expect(recognition.detachSttPipeline()).rejects.toThrow('consumer cancellation failed');
+
+      expect(state.sttPipeline).toBe(pipeline);
+      expect(state.sttOwnershipTransferred).toBe(false);
+      expect(state.sttConsumerTask).toBeUndefined();
+
+      await expect(recognition.close()).resolves.toBeUndefined();
+      expect(state.sttPipeline).toBeUndefined();
+    } finally {
+      await consumerTask.result.catch(() => undefined);
+      await recognition.close();
+      await pipeline.close();
     }
   });
 });

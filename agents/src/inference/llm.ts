@@ -4,6 +4,12 @@
 import OpenAI from 'openai';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import * as llm from '../llm/index.js';
+import {
+  THINK_TAG_END,
+  THINK_TAG_START,
+  ThinkingTokenFilter,
+  stripThinkingTokens,
+} from '../llm/utils.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
@@ -57,7 +63,9 @@ export type XAIModels =
   | 'xai/grok-4-1-fast-reasoning'
   | 'xai/grok-4.20-0309-non-reasoning'
   | 'xai/grok-4.20-0309-reasoning'
-  | 'xai/grok-4.20-multi-agent-0309';
+  | 'xai/grok-4.20-multi-agent-0309'
+  | 'xai/grok-4.3'
+  | 'xai/grok-4.5';
 
 type ChatCompletionPredictionContentParam =
   Expand<OpenAI.Chat.Completions.ChatCompletionPredictionContent>;
@@ -80,7 +88,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   presence_penalty?: number;
   prompt_cache_key?: string;
   prompt_cache_retention?: 'in_memory' | '24h';
-  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
+  reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high';
   safety_identifier?: string;
   seed?: number;
   service_tier?: 'auto' | 'default' | 'flex' | 'scale' | 'priority';
@@ -132,6 +140,10 @@ const UNSUPPORTED_PARAMS: Record<string, Set<string>> = {
 
 const REASONING_EFFORT_TOOL_INCOMPATIBLE_PREFIXES = new Set(['gpt-5.2', 'gpt-5.4']);
 
+const MODEL_THINK_TAGS = new Map<string, [string, string]>([
+  ['google/gemma-4-31b-it', ['<|channel>thought', '<channel|>']],
+]);
+
 function dropUnsupportedParams(
   model: string,
   params: Record<string, unknown>,
@@ -159,7 +171,11 @@ function dropUnsupportedParams(
   return result;
 }
 
-export type InferenceClass = 'priority' | 'standard';
+/**
+ * Scheduling class for a request. `low` yields to voice traffic, so it is only
+ * appropriate for work no caller is waiting on.
+ */
+export type InferenceClass = 'priority' | 'standard' | 'low';
 
 export interface InferenceLLMOptions {
   model: LLMModels;
@@ -232,6 +248,7 @@ export class LLM extends llm.LLM {
 
     this.client = new OpenAI({
       baseURL: this.opts.baseURL,
+      maxRetries: 0,
       // Non-empty placeholder; replaced with a fresh access token before each
       // request (see LLMStream.run). openai >= 6.36.0 rejects an empty apiKey.
       apiKey: 'placeholder',
@@ -248,6 +265,11 @@ export class LLM extends llm.LLM {
 
   get provider(): string {
     return 'livekit';
+  }
+
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    this.client.apiKey = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
+    await this.client.models.list({ signal });
   }
 
   static fromModelString(modelString: string): LLM {
@@ -277,7 +299,7 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
@@ -285,13 +307,14 @@ export class LLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     inferenceClass?: InferenceClass;
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     let modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     parallelToolCalls =
@@ -299,7 +322,11 @@ export class LLM extends llm.LLM {
         ? parallelToolCalls
         : this.opts.modelOptions.parallel_tool_calls;
 
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -402,18 +429,26 @@ export class LLMStream extends llm.LLMStream {
         this.providerFmt,
       )) as OpenAI.ChatCompletionMessageParam[];
 
+      // Provider-defined tools are not supported by the inference adapter; `sortedToolEntries`
+      // yields only function tools (sorted by name), so they are skipped here. See AJS-112.
       const tools = this.toolCtx
         ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
+            // zod v3 conversion embeds a `$schema` URI ("draft/2019-09") that some gateway
+            // deployments reject, silently ending the stream with no tool call. Python's
+            // pydantic schemas carry no `$schema` key, so strip it for parity. Destructure
+            // instead of `delete` so a caller-supplied raw JSON schema object isn't mutated.
+            const { $schema: _dropped, ...parameters } = llm.toJsonSchema(
+              func.parameters,
+              true,
+              this.strictToolSchema,
+            ) as unknown as Record<string, unknown>;
             const oaiParams = {
               type: 'function' as const,
               function: {
                 name,
                 description: func.description,
-                parameters: llm.toJsonSchema(
-                  func.parameters,
-                  true,
-                  this.strictToolSchema,
-                ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
+                parameters:
+                  parameters as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
               } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
             };
 
@@ -443,7 +478,6 @@ export class LLMStream extends llm.LLMStream {
       }
 
       const extraHeaders: Record<string, string> = {
-        ...buildMetadataHeaders(),
         ...((requestOptions.extra_headers as Record<string, string> | undefined) ?? {}),
       };
       const extraBody = requestOptions.extra_body as Record<string, unknown> | undefined;
@@ -454,6 +488,9 @@ export class LLMStream extends llm.LLMStream {
       if (this.inferenceClass !== undefined) {
         extraHeaders[INFERENCE_PRIORITY_HEADER] = this.inferenceClass;
       }
+      // Job metadata is merged last so a job's own assertions (e.g. a text
+      // simulation forcing low priority) outrank the model's configured class.
+      Object.assign(extraHeaders, buildMetadataHeaders());
       delete requestOptions.extra_headers;
       delete requestOptions.extra_body;
       delete requestOptions.extra_query;
@@ -480,29 +517,34 @@ export class LLMStream extends llm.LLMStream {
         return;
       }
 
+      const thinkingFilter = new ThinkingTokenFilter(
+        ...(MODEL_THINK_TAGS.get(this.model) ?? [THINK_TAG_START, THINK_TAG_END]),
+      );
+
       for await (const chunk of stream) {
         if (this.abortController.signal.aborted) {
           break;
         }
 
         for (const choice of chunk.choices) {
-          const chatChunk = this.parseChoice(chunk.id, choice);
+          const chatChunk = this.parseChoice(chunk.id, choice, thinkingFilter);
           if (chatChunk) {
-            retryable = false;
+            if (llm.hasResponse(chatChunk)) {
+              retryable = false;
+            }
             this.queue.put(chatChunk);
           }
         }
 
         if (chunk.usage) {
           const usage = chunk.usage;
-          retryable = false;
           this.queue.put({
             id: chunk.id,
             usage: {
-              completionTokens: usage.completion_tokens,
-              promptTokens: usage.prompt_tokens,
+              completionTokens: usage.completion_tokens || 0,
+              promptTokens: usage.prompt_tokens || 0,
               promptCachedTokens: usage.prompt_tokens_details?.cached_tokens || 0,
-              totalTokens: usage.total_tokens,
+              totalTokens: usage.total_tokens || 0,
             },
           });
         }
@@ -536,12 +578,17 @@ export class LLMStream extends llm.LLMStream {
   private parseChoice(
     id: string,
     choice: OpenAI.ChatCompletionChunk.Choice,
+    thinkingFilter: ThinkingTokenFilter,
   ): llm.ChatChunk | undefined {
     const delta = choice.delta;
 
     // https://github.com/livekit/agents/issues/688
     // the delta can be None when using Azure OpenAI (content filtering)
     if (delta === undefined) return undefined;
+
+    const content = stripThinkingTokens(delta.content, thinkingFilter, {
+      final: choice.finish_reason !== null && choice.finish_reason !== undefined,
+    });
 
     if (delta.tool_calls) {
       // check if we have functions to calls
@@ -622,7 +669,7 @@ export class LLMStream extends llm.LLMStream {
       ((delta as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
 
     // Regular content message
-    if (!delta.content && !deltaExtra) {
+    if (!content && !deltaExtra) {
       return undefined;
     }
 
@@ -630,7 +677,7 @@ export class LLMStream extends llm.LLMStream {
       id,
       delta: {
         role: 'assistant',
-        content: delta.content || undefined,
+        content: content || undefined,
         extra: deltaExtra,
       },
     };

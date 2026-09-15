@@ -182,6 +182,11 @@ export const sttPreflightTranscriptEventSchema = sttInterimTranscriptEventSchema
   type: z.literal('preflight_transcript'),
 });
 
+// Speech onset event reported by providers with server-side detection
+export const sttStartOfSpeechEventSchema = z.object({
+  type: z.literal('start_of_speech'),
+});
+
 // Session created event
 export const sttSessionCreatedEventSchema = z.object({
   type: z.literal('session.created'),
@@ -199,11 +204,13 @@ export const sttSessionClosedEventSchema = z.object({
 });
 
 // Error event
-export const sttErrorEventSchema = z.object({
-  type: z.literal('error'),
-  message: z.string().optional(),
-  code: z.number().optional(),
-});
+export const sttErrorEventSchema = z
+  .object({
+    type: z.literal('error'),
+    message: z.string().optional(),
+    code: z.number().optional(),
+  })
+  .passthrough();
 
 // Discriminated union for well-known STT server events
 export const sttKnownServerEventSchema = z.discriminatedUnion('type', [
@@ -213,6 +220,7 @@ export const sttKnownServerEventSchema = z.discriminatedUnion('type', [
   sttInterimTranscriptEventSchema,
   sttFinalTranscriptEventSchema,
   sttPreflightTranscriptEventSchema,
+  sttStartOfSpeechEventSchema,
   sttErrorEventSchema,
 ]);
 
@@ -223,6 +231,7 @@ const knownSttServerEventTypes = new Set([
   'interim_transcript',
   'final_transcript',
   'preflight_transcript',
+  'start_of_speech',
   'error',
 ]);
 
@@ -242,6 +251,7 @@ export type SttWord = z.infer<typeof sttWordSchema>;
 export type SttInterimTranscriptEvent = z.infer<typeof sttInterimTranscriptEventSchema>;
 export type SttFinalTranscriptEvent = z.infer<typeof sttFinalTranscriptEventSchema>;
 export type SttPreflightTranscriptEvent = z.infer<typeof sttPreflightTranscriptEventSchema>;
+export type SttStartOfSpeechEvent = z.infer<typeof sttStartOfSpeechEventSchema>;
 export type SttTranscriptEvent =
   | SttInterimTranscriptEvent
   | SttFinalTranscriptEvent

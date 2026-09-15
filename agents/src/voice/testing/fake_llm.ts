@@ -4,7 +4,7 @@
 import type { ChatContext } from '../../llm/chat_context.js';
 import { FunctionCall } from '../../llm/chat_context.js';
 import { LLMStream as BaseLLMStream, LLM, type LLMStream } from '../../llm/llm.js';
-import type { ToolChoice, ToolContext } from '../../llm/tool_context.js';
+import type { ToolChoice, ToolContextLike } from '../../llm/tool_context.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { delay } from '../../utils.js';
 
@@ -42,7 +42,7 @@ export class FakeLLM extends LLM {
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
   }: {
     chatCtx: ChatContext;
-    toolCtx?: ToolContext;
+    toolCtx?: ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: ToolChoice;
@@ -65,7 +65,7 @@ class FakeLLMStream extends BaseLLMStream {
 
   constructor(
     fake: FakeLLM,
-    params: { chatCtx: ChatContext; toolCtx?: ToolContext; connOptions: APIConnectOptions },
+    params: { chatCtx: ChatContext; toolCtx?: ToolContextLike; connOptions: APIConnectOptions },
   ) {
     super(fake, params);
     this.fake = fake;
@@ -73,6 +73,9 @@ class FakeLLMStream extends BaseLLMStream {
 
   protected async run(): Promise<void> {
     const input = this.getInputText();
+    if (input === undefined) {
+      return;
+    }
     const decision = this.fake.lookup(input);
     if (!decision) {
       return;
@@ -113,7 +116,7 @@ class FakeLLMStream extends BaseLLMStream {
     }
   }
 
-  private getInputText(): string {
+  private getInputText(): string | undefined {
     const items = this.chatCtx.items;
     if (items.length === 0) {
       throw new Error('No input text found');
@@ -131,8 +134,16 @@ class FakeLLMStream extends BaseLLMStream {
     }
 
     const last = items[items.length - 1]!;
-    if (last.type === 'message' && last.role === 'user') return last.textContent ?? '';
+    if (last.type === 'message') {
+      return last.role === 'user' ? last.textContent ?? '' : undefined;
+    }
     if (last.type === 'function_call_output') return last.output;
-    throw new Error('No input text found');
+    if (
+      last.type === 'function_call' ||
+      last.type === 'agent_handoff' ||
+      last.type === 'agent_config_update'
+    ) {
+      return undefined;
+    }
   }
 }

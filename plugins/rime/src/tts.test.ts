@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger } from '@livekit/agents';
+import { initializeLogger, log } from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts } from '@livekit/agents-plugins-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -35,6 +35,32 @@ describe('Rime TTS streaming', () => {
     vi.restoreAllMocks();
   });
 
+  it('preserves model-specific default speakers', () => {
+    const defaultTTS = new TTS({ apiKey: 'test-rime-key' });
+    const explicitCodaTTS = new TTS({ apiKey: 'test-rime-key', modelId: 'coda' });
+
+    expect(defaultTTS).toHaveProperty('opts.modelId', 'coda');
+    expect(defaultTTS).toHaveProperty('opts.speaker', 'luna');
+    expect(explicitCodaTTS).toHaveProperty('opts.modelId', 'coda');
+    expect(explicitCodaTTS).toHaveProperty('opts.speaker', 'lyra');
+  });
+
+  it('warns when the Arcana model is selected', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const rimeTTS = new TTS({ apiKey: 'test-rime-key', modelId: 'arcana' });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Rime Arcana is no longer supported. Use modelId: 'coda' instead.",
+    );
+
+    warnSpy.mockClear();
+    rimeTTS.updateOptions({ modelId: 'arcana' });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Rime Arcana is no longer supported. Use modelId: 'coda' instead.",
+    );
+  });
+
   it('emits audio before the Rime response body closes', async () => {
     let bodyController!: ReadableStreamDefaultController<Uint8Array>;
     const body = new ReadableStream<Uint8Array>({
@@ -43,7 +69,7 @@ describe('Rime TTS streaming', () => {
       },
     });
 
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(body, {
         status: 200,
         headers: { 'Content-Type': 'audio/pcm' },
@@ -53,9 +79,13 @@ describe('Rime TTS streaming', () => {
     const rimeTTS = new TTS({
       apiKey: 'test-rime-key',
       baseURL: 'https://rime.test/v1/rime-tts',
-      modelId: 'arcana',
-      speaker: 'luna',
+      modelId: 'coda',
       samplingRate: 16000,
+      repetition_penalty: 1.1,
+      temperature: 0.5,
+      top_p: 0.9,
+      max_tokens: 200,
+      timeScaleFactor: 1.2,
     });
 
     const stream = rimeTTS.synthesize('This should stream before the response ends.');
@@ -71,6 +101,17 @@ describe('Rime TTS streaming', () => {
     expect(firstResult.done).toBe(false);
     expect(firstResult.value.final).toBe(false);
     expect(firstResult.value.frame.samplesPerChannel).toBe(1600);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const request = fetchSpy.mock.calls[0]?.[1];
+    expect(JSON.parse(request?.body as string)).toMatchObject({
+      modelId: 'coda',
+      speaker: 'lyra',
+      repetition_penalty: 1.1,
+      temperature: 0.5,
+      top_p: 0.9,
+      max_tokens: 200,
+      timeScaleFactor: 1.2,
+    });
 
     bodyController.close();
 

@@ -4,6 +4,8 @@
 import type { LanguageCode } from '@livekit/agents';
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   type AudioBuffer,
   AudioByteStream,
   Future,
@@ -13,6 +15,7 @@ import {
   mergeFrames,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
@@ -61,6 +64,25 @@ export interface STTOptions {
    * xAI's default is 10ms, but we default to 100ms for better compatibility with LK EOT models.
    */
   endpointing: number;
+  /**
+   * Voice-activity detection threshold, range 0.0-1.0. Lower values capture quieter/noisier
+   * speech. When unset, xAI's websocket default (0.08) applies.
+   */
+  vadThreshold?: number;
+  /**
+   * Confidence threshold (0.0-1.0) for xAI's ML end-of-turn ("Smart Turn") prediction at
+   * silence boundaries. When unset, Smart Turn is left at xAI's default behavior.
+   */
+  smartTurn?: number;
+  /**
+   * Maximum silence in milliseconds (1-5000) before an utterance-final event is forced even when
+   * Smart Turn predicts the speaker is continuing.
+   */
+  smartTurnTimeout?: number;
+  /**
+   * Key terms/phrases (max 100, 50 chars each) to bias transcription accuracy toward.
+   */
+  keyterm?: string[];
 }
 
 // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 57-79 lines
@@ -195,18 +217,34 @@ export class SpeechStream extends stt.SpeechStream {
       streamURL.searchParams.set('language', this.#opts.language);
       // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 372-375 lines
       streamURL.searchParams.set('endpointing', String(this.#opts.endpointing));
-
-      ws = new WebSocket(streamURL, {
-        headers: { Authorization: `Bearer ${this.#apiKey}` },
-      });
+      if (this.#opts.vadThreshold !== undefined) {
+        streamURL.searchParams.set('vad_threshold', String(this.#opts.vadThreshold));
+      }
+      if (this.#opts.smartTurn !== undefined) {
+        streamURL.searchParams.set('smart_turn', String(this.#opts.smartTurn));
+      }
+      if (this.#opts.smartTurnTimeout !== undefined) {
+        streamURL.searchParams.set('smart_turn_timeout', String(this.#opts.smartTurnTimeout));
+      }
+      if (this.#opts.keyterm !== undefined) {
+        for (const term of this.#opts.keyterm) {
+          streamURL.searchParams.append('keyterm', term);
+        }
+      }
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
+        ws = new WebSocket(streamURL, {
+          headers: { Authorization: `Bearer ${this.#apiKey}` },
         });
+        await waitForWebSocketOpen(ws, 'xAI');
+      } catch (error) {
+        if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+        throw new APIConnectionError({
+          message: `failed to connect to xAI (${errorName(error)})`,
+        });
+      }
 
+      try {
         await this.#runWS(ws);
       } catch (e) {
         if (!this.closed && !this.input.closed) {
@@ -238,11 +276,18 @@ export class SpeechStream extends stt.SpeechStream {
     let closing = false;
 
     const wsMonitor = Task.from(async (controller) => {
-      const closed = new Promise<void>(async (_, reject) => {
-        ws.once('close', (code, reason) => {
+      const closed = new Promise<void>((_, reject) => {
+        ws.once('close', (code) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            this.#logger.error({ code }, 'xAI WebSocket closed unexpectedly');
+            reject(new APIConnectionError({ message: 'xAI WebSocket closed unexpectedly' }));
+          }
+        });
+        ws.once('error', (error) => {
+          if (!closing) {
+            reject(
+              new APIConnectionError({ message: `xAI WebSocket failed (${errorName(error)})` }),
+            );
           }
         });
       });
@@ -299,7 +344,13 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`xAI STT: error processing message: ${msg}`);
+            this.#logger.error(
+              {
+                error: err,
+                'lk.pii.message': msg.toString(),
+              },
+              'xAI STT failed to process message',
+            );
             reject(err);
           }
         });
@@ -417,6 +468,10 @@ export class SpeechStream extends stt.SpeechStream {
       this.#logger.warn(`received unexpected message from xAI: ${msgType}`);
     }
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 function wordsToSpeechData(

@@ -250,7 +250,15 @@ async function toResponsesChatItem(item: ChatItem) {
           ? listContent
           : [...listContent, { type: 'input_text', text: textContent }];
 
-    return { role: item.role, content };
+    const result: Record<string, unknown> = { role: item.role, content };
+    if (item.role === 'assistant') {
+      const phase = (item.extra?.openai as Record<string, unknown> | undefined)?.phase;
+      if (phase !== undefined) {
+        result.phase = phase;
+      }
+    }
+
+    return result;
   } else if (item.type === 'function_call') {
     return {
       type: 'function_call',

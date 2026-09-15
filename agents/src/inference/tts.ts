@@ -10,9 +10,9 @@ import { ConnectionPool } from '../connection_pool.js';
 import { type LanguageCode, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
-import { basic as tokenizeBasic } from '../tokenize/index.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
+import { dropBracketCues, sentenceTokenizer } from '../tts/provider_format.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import {
   Event,
@@ -44,14 +44,6 @@ export type CartesiaModels =
 
 export type DeepgramTTSModels = 'deepgram/aura' | 'deepgram/aura-2';
 
-export type ElevenlabsModels =
-  | 'elevenlabs/eleven_flash_v2'
-  | 'elevenlabs/eleven_flash_v2_5'
-  | 'elevenlabs/eleven_turbo_v2'
-  | 'elevenlabs/eleven_turbo_v2_5'
-  | 'elevenlabs/eleven_multilingual_v2'
-  | 'elevenlabs/eleven_v3';
-
 export type InworldModels =
   | 'inworld/inworld-tts-2'
   | 'inworld/inworld-tts-1.5-max'
@@ -60,9 +52,15 @@ export type InworldModels =
   | 'inworld/inworld-tts-1-max'
   | 'inworld/inworld-tts-1';
 
-export type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
+export type RimeModels = 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
 
 export type XaiTTSModels = 'xai/tts-1';
+
+export type FishAudioModels =
+  | 'fishaudio'
+  | 'fishaudio/s2.1-pro'
+  | 'fishaudio/s2.1-pro-free'
+  | 'fishaudio/s2-pro';
 
 export interface CartesiaOptions {
   emotion?: string;
@@ -75,29 +73,6 @@ export interface CartesiaOptions {
   add_timestamps?: boolean;
   add_phoneme_timestamps?: boolean;
   use_normalized_timestamps?: boolean;
-}
-
-export interface ElevenlabsOptions {
-  /** Inactivity timeout in seconds. Default: 60. */
-  inactivity_timeout?: number;
-  /** Text normalization mode. Default: "auto". */
-  apply_text_normalization?: 'auto' | 'off' | 'on';
-  auto_mode?: boolean;
-  enable_logging?: boolean;
-  enable_ssml_parsing?: boolean;
-  sync_alignment?: boolean;
-  language_code?: string;
-  /** Voice stability tuning, typically in the range [0, 1]. */
-  stability?: number;
-  /** Voice similarity tuning, typically in the range [0, 1]. */
-  similarity_boost?: number;
-  /** Style exaggeration tuning, typically in the range [0, 1]. */
-  style?: number;
-  /** Speech speed multiplier. */
-  speed?: number;
-  use_speaker_boost?: boolean;
-  chunk_length_schedule?: number[];
-  preferred_alignment?: string;
 }
 
 export interface DeepgramTTSOptions {
@@ -127,6 +102,8 @@ export interface InworldOptions {
   speaking_rate?: number;
   /** Range 0-2. */
   temperature?: number;
+  /** Controls output variation on inworld-tts-2 only. */
+  delivery_mode?: 'DELIVERY_MODE_UNSPECIFIED' | 'STABLE' | 'BALANCED' | 'CREATIVE';
   timestamp_type?: 'TIMESTAMP_TYPE_UNSPECIFIED' | 'WORD' | 'CHARACTER';
   apply_text_normalization?: 'APPLY_TEXT_NORMALIZATION_UNSPECIFIED' | 'ON' | 'OFF';
   /** @deprecated Backward-compatible alias. Use `apply_text_normalization`. */
@@ -136,23 +113,53 @@ export interface InworldOptions {
 export interface XaiTTSOptions {
   /** Output bit rate in bits per second. */
   bit_rate?: 32000 | 64000 | 96000 | 128000 | 192000;
+  /** Speaking-rate multiplier. Default: 1.0. */
+  speed?: number;
+}
+
+/** See https://docs.fish.audio/api-reference/endpoint/websocket/tts-live */
+export interface FishAudioOptions {
+  /** Prosody speaking-rate multiplier, 1.0 is natural. */
+  speed?: number;
+  /** Prosody loudness adjustment in dB, 0 is natural. */
+  volume?: number;
+  /** Consistent output loudness; S2-Pro family only. */
+  normalize_loudness?: boolean;
+  /** Range 0-1, higher is more varied/expressive. */
+  temperature?: number;
+  /** Nucleus sampling probability mass, range 0-1. */
+  top_p?: number;
+  /** Normalize numbers/dates/abbreviations before synthesis. */
+  normalize?: boolean;
+  /** Streaming latency mode. */
+  latency?: 'normal' | 'balanced' | 'low';
+  /** Characters buffered before auto-synthesis, range 100-300. */
+  chunk_length?: number;
+  /** Max audio tokens per text chunk, default 1024. */
+  max_new_tokens?: number;
+  /** Min characters before splitting a new chunk, range 0-100. */
+  min_chunk_length?: number;
+  /** Use prior audio as context for consistency. */
+  condition_on_previous_chunks?: boolean;
+  /** Early-stopping threshold for batching, range 0-1. */
+  early_stop_threshold?: number;
 }
 
 type _TTSModels =
   | CartesiaModels
   | DeepgramTTSModels
-  | ElevenlabsModels
   | RimeModels
   | InworldModels
-  | XaiTTSModels;
+  | XaiTTSModels
+  | FishAudioModels;
 
 export type TTSModels =
   | CartesiaModels
   | DeepgramTTSModels
-  | ElevenlabsModels
   | RimeModels
   | InworldModels
   | XaiTTSModels
+  | FishAudioModels
   | AnyString;
 
 export type ModelWithVoice = `${_TTSModels}:${string}` | TTSModels;
@@ -161,14 +168,14 @@ export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
   ? CartesiaOptions
   : TModel extends DeepgramTTSModels
     ? DeepgramTTSOptions
-    : TModel extends ElevenlabsModels
-      ? ElevenlabsOptions
-      : TModel extends RimeModels
-        ? RimeOptions
-        : TModel extends InworldModels
-          ? InworldOptions
-          : TModel extends XaiTTSModels
-            ? XaiTTSOptions
+    : TModel extends RimeModels
+      ? RimeOptions
+      : TModel extends InworldModels
+        ? InworldOptions
+        : TModel extends XaiTTSModels
+          ? XaiTTSOptions
+          : TModel extends FishAudioModels
+            ? FishAudioOptions
             : Record<string, unknown>;
 
 /** Parse a model string into [model, voice]. Voice is undefined if not specified. */
@@ -198,9 +205,6 @@ export function hasAlignedTranscript(
   if (provider === 'cartesia') {
     return Boolean(opts.add_timestamps);
   }
-  if (provider === 'elevenlabs') {
-    return Boolean(opts.sync_alignment);
-  }
   if (provider === 'inworld') {
     return opts.timestamp_type === 'WORD' || opts.timestamp_type === 'CHARACTER';
   }
@@ -209,7 +213,7 @@ export function hasAlignedTranscript(
 
 /** Inference Fallback Adapter: configuration for a fallback TTS model that runs server-side in LiveKit Inference, providing automatic fallback between providers. */
 export interface TTSFallbackModel {
-  /** Model name (e.g. "cartesia/sonic", "elevenlabs/eleven_flash_v2", "rime/arcana"). */
+  /** Model name (e.g. "cartesia/sonic", "deepgram/aura-2", "rime/coda"). */
   model: string;
   /** Voice to use for the model. */
   voice: string;
@@ -370,6 +374,23 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return 'inference.TTS';
   }
 
+  /**
+   * Key the shared markup tables off the gateway model's provider.
+   *
+   * `llmInstructions` / `normalize` / `convert` are inherited from the base markup helper,
+   * keyed on this.
+   */
+  protected override markupProviderKey(): string {
+    const model = this.opts?.model ?? '';
+    const provider = model.split('/')[0] ?? '';
+    if (provider === 'inworld' && model.includes('tts-2')) {
+      return 'inworld';
+    } else if (provider === 'inworld') {
+      return ''; // older inworld models don't support markup
+    }
+    return provider;
+  }
+
   get model(): string {
     return this.opts.model ?? 'unknown';
   }
@@ -448,7 +469,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     }
 
     const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
-    const url = `${baseURL}/tts`;
+    const url = `${baseURL}/tts?model=${encodeURIComponent(this.model)}`;
     const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
 
     const params = {
@@ -505,6 +526,17 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
 export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeStream {
   private opts: InferenceTTSOptions<TModel>;
   private tts: TTS<TModel>;
+  /**
+   * Snapshot whether expressive is active now, while the framework holds it fixed for this
+   * synthesis (set synchronously before `stream()`). Reading it lazily in `run` would race
+   * with the next turn/session mutating the shared TTS instance.
+   */
+  private expressive: boolean;
+  /**
+   * Alignment arrives finer-grained than a cue, so `dropBracketCues` parks the tail of an
+   * unclosed span here between messages.
+   */
+  private heldTokens: TimedString[] = [];
 
   #logger = log();
 
@@ -512,6 +544,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     super(tts, connOptions);
     this.opts = opts;
     this.tts = tts;
+    this.expressive = tts.expressive;
   }
 
   get label() {
@@ -545,7 +578,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     // Python side.
     let pendingTimedTranscripts: TimedString[] = [];
 
-    const sendTokenizerStream = new tokenizeBasic.SentenceTokenizer().stream();
+    // chunking defaults (cap + expressive batch size) live in provider_format
+    const provider = (this.opts.model ?? '').split('/')[0] ?? '';
+    const sendTokenizerStream = sentenceTokenizer(provider, {
+      expressive: this.expressive,
+    }).stream();
     const eventChannel = createStreamChannel<TtsServerEvent>();
     const requestId = shortuuid('tts_request_');
     const inputSentEvent = new Event();
@@ -595,7 +632,9 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           sendTokenizerStream.flush();
           continue;
         }
-        sendTokenizerStream.pushText(data);
+        // only expressive turns can carry markup; without it the text is a plain
+        // utterance and must reach the provider byte-for-byte
+        sendTokenizerStream.pushText(this.expressive ? this.tts.markup.normalize(data) : data);
       }
       // Only call endInput if the stream hasn't been closed by cleanup
       if (!closing) {
@@ -615,10 +654,17 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         if (this.opts.model) generationConfig.model = this.opts.model;
         if (this.opts.language) generationConfig.language = this.opts.language;
 
+        // re-normalize at sentence level: tags split across input chunks aren't caught by
+        // the per-chunk normalize in the input task
+        const converted = this.expressive
+          ? this.tts.markup.convert(this.tts.markup.normalize(ev.token))
+          : ev.token;
+
+        this.markStarted();
         await sendClientEvent(
           {
             type: 'input_transcript',
-            transcript: ev.token + ' ',
+            transcript: converted + ' ',
             generation_config: generationConfig,
             extra: (this.opts.modelOptions as Record<string, unknown>) ?? {},
           },
@@ -758,29 +804,35 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               }
               break;
             case 'output_alignment':
+              let aligned: TimedString[] = [];
               if (serverEvent.words && serverEvent.words.length > 0) {
-                for (const w of serverEvent.words) {
-                  pendingTimedTranscripts.push(
-                    createTimedString({
-                      text: w.word,
-                      startTime: w.start,
-                      endTime: w.end,
-                    }),
-                  );
-                }
+                aligned = serverEvent.words.map((w) =>
+                  createTimedString({
+                    text: provider === 'cartesia' ? `${w.word} ` : w.word,
+                    startTime: w.start,
+                    endTime: w.end,
+                  }),
+                );
               } else if (serverEvent.chars && serverEvent.chars.length > 0) {
-                for (const c of serverEvent.chars) {
-                  pendingTimedTranscripts.push(
-                    createTimedString({
-                      text: c.char,
-                      startTime: c.start,
-                      endTime: c.end,
-                    }),
-                  );
-                }
+                aligned = serverEvent.chars.map((c) =>
+                  createTimedString({ text: c.char, startTime: c.start, endTime: c.end }),
+                );
+              }
+              if (aligned.length > 0) {
+                // the provider aligned the *converted* text, so under expressive it carries
+                // native cues that were never spoken
+                pendingTimedTranscripts.push(
+                  ...(this.expressive ? dropBracketCues(aligned, this.heldTokens) : aligned),
+                );
               }
               break;
             case 'done':
+              if (this.heldTokens.length > 0) {
+                // release an unclosed span, cue unresolved
+                pendingTimedTranscripts.push(
+                  ...dropBracketCues([], this.heldTokens, { final: true }),
+                );
+              }
               for (const frame of bstream.flush()) {
                 sendLastFrame(currentSessionId!, false);
                 lastFrame = frame;

@@ -16,6 +16,7 @@ export const logMetrics = (metrics: AgentMetrics) => {
         ttftMs: roundTwoDecimals(metrics.ttftMs),
         inputTokens: metrics.promptTokens,
         promptCachedTokens: metrics.promptCachedTokens,
+        cacheCreationTokens: metrics.cacheCreationTokens ?? 0,
         outputTokens: metrics.completionTokens,
         tokensPerSecond: roundTwoDecimals(metrics.tokensPerSecond),
       })

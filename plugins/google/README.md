@@ -36,7 +36,7 @@ const llm = new LLM({
 });
 ```
 
-To use the Gemini realtime model or TTS (Beta)
+To use the Gemini realtime model or TTS (TTS is Beta)
 
 ```typescript
 import * as google from '@livekit/agents-plugin-google';
@@ -61,12 +61,6 @@ const geminiTTS = new google.beta.TTS(),
 - `gemini-1.5-flash-8b` - Ultra-fast lightweight model
 - `gemini-2.0-flash-exp` - Latest experimental model
 - And more (see models.ts for full list)
-
-### Realtime Model Notes
-
-- `gemini-3.1-flash-live-preview` is supported as a realtime model, but `generateReply()` is not currently compatible with it.
-- This matters for `voice.AgentSession` flows that rely on programmatic reply generation, such as explicit post-tool continuation, greetings, reconnect replies, and other server-triggered follow-up turns.
-- If your voice-agent flow depends on `generateReply()`, prefer a Gemini 2.5 native-audio live model for now.
 
 ### Thinking Configuration
 

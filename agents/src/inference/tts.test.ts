@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { type WebSocket, WebSocketServer } from 'ws';
+import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { STT } from './stt.js';
+import { describeLiveKitInference } from './test_utils.js';
 import {
   TTS,
   type TTSFallbackModel,
@@ -27,6 +33,41 @@ function makeTts(overrides: Record<string, unknown> = {}) {
   };
   return new TTS({ ...defaults, ...overrides });
 }
+
+describe('Inference TTS connection', () => {
+  it('includes the model in the dial URL', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let resolveRequestUrl!: (url: string) => void;
+    const requestUrl = new Promise<string>((resolve) => {
+      resolveRequestUrl = resolve;
+    });
+
+    server.on('connection', (_socket, request) => {
+      resolveRequestUrl(request.url ?? '');
+    });
+
+    const tts = makeTts({
+      model: 'cartesia/sonic-3',
+      baseURL: `http://127.0.0.1:${address.port}`,
+    });
+    let socket: WebSocket | undefined;
+
+    try {
+      socket = await tts.connectWs(1_000);
+
+      expect(new URL(await requestUrl, 'ws://127.0.0.1').searchParams.get('model')).toBe(
+        'cartesia/sonic-3',
+      );
+    } finally {
+      socket?.terminate();
+      for (const client of server.clients) client.terminate();
+      await tts.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
 
 describe('parseTTSModelString', () => {
   it('simple model without voice', () => {
@@ -54,7 +95,7 @@ describe('parseTTSModelString', () => {
   });
 
   it.each([
-    ['elevenlabs/eleven_flash_v2:voice123', 'elevenlabs/eleven_flash_v2', 'voice123'],
+    ['deepgram/aura-2:voice123', 'deepgram/aura-2', 'voice123'],
     ['rime:speaker-a', 'rime', 'speaker-a'],
     ['rime/mist:narrator', 'rime/mist', 'narrator'],
     ['inworld/inworld-tts-1:character', 'inworld/inworld-tts-1', 'character'],
@@ -90,42 +131,42 @@ describe('normalizeTTSFallback', () => {
   });
 
   it('list of string models', () => {
-    const result = normalizeTTSFallback(['cartesia/sonic', 'elevenlabs/eleven_flash_v2']);
+    const result = normalizeTTSFallback(['cartesia/sonic', 'deepgram/aura-2']);
     expect(result).toEqual([
       { model: 'cartesia/sonic', voice: '' },
-      { model: 'elevenlabs/eleven_flash_v2', voice: '' },
+      { model: 'deepgram/aura-2', voice: '' },
     ]);
   });
 
   it('list of string models with voices', () => {
-    const result = normalizeTTSFallback(['cartesia/sonic:voice1', 'elevenlabs:voice2']);
+    const result = normalizeTTSFallback(['cartesia/sonic:voice1', 'deepgram/aura-2:voice2']);
     expect(result).toEqual([
       { model: 'cartesia/sonic', voice: 'voice1' },
-      { model: 'elevenlabs', voice: 'voice2' },
+      { model: 'deepgram/aura-2', voice: 'voice2' },
     ]);
   });
 
   it('list of FallbackModel dicts', () => {
     const fallbacks: TTSFallbackModel[] = [
       { model: 'cartesia/sonic', voice: 'narrator' },
-      { model: 'elevenlabs', voice: '' },
+      { model: 'deepgram/aura-2', voice: '' },
     ];
     const result = normalizeTTSFallback(fallbacks);
     expect(result).toEqual([
       { model: 'cartesia/sonic', voice: 'narrator' },
-      { model: 'elevenlabs', voice: '' },
+      { model: 'deepgram/aura-2', voice: '' },
     ]);
   });
 
   it('mixed list of strings and dicts', () => {
     const result = normalizeTTSFallback([
       'cartesia/sonic:voice1',
-      { model: 'elevenlabs/eleven_flash_v2', voice: 'custom' } as TTSFallbackModel,
+      { model: 'deepgram/aura-2', voice: 'custom' } as TTSFallbackModel,
       'rime/mist',
     ]);
     expect(result).toEqual([
       { model: 'cartesia/sonic', voice: 'voice1' },
-      { model: 'elevenlabs/eleven_flash_v2', voice: 'custom' },
+      { model: 'deepgram/aura-2', voice: 'custom' },
       { model: 'rime/mist', voice: '' },
     ]);
   });
@@ -149,12 +190,12 @@ describe('normalizeTTSFallback', () => {
   it('list with extraKwargs preserved', () => {
     const result = normalizeTTSFallback([
       { model: 'cartesia/sonic', voice: 'v1', extraKwargs: { speed: 'slow' } } as TTSFallbackModel,
-      'elevenlabs:voice2',
+      'deepgram/aura-2:voice2',
       { model: 'rime/mist', voice: '', extraKwargs: { custom: true } } as TTSFallbackModel,
     ]);
     expect(result).toEqual([
       { model: 'cartesia/sonic', voice: 'v1', extraKwargs: { speed: 'slow' } },
-      { model: 'elevenlabs', voice: 'voice2' },
+      { model: 'deepgram/aura-2', voice: 'voice2' },
       { model: 'rime/mist', voice: '', extraKwargs: { custom: true } },
     ]);
   });
@@ -189,8 +230,8 @@ describe('TTS constructor fallback and connOptions', () => {
   });
 
   it('fallback single string is normalized', () => {
-    const tts = makeTts({ fallback: 'elevenlabs/eleven_flash_v2' });
-    expect(tts['opts'].fallback).toEqual([{ model: 'elevenlabs/eleven_flash_v2', voice: '' }]);
+    const tts = makeTts({ fallback: 'deepgram/aura-2' });
+    expect(tts['opts'].fallback).toEqual([{ model: 'deepgram/aura-2', voice: '' }]);
   });
 
   it('fallback single string with voice is normalized', () => {
@@ -199,10 +240,10 @@ describe('TTS constructor fallback and connOptions', () => {
   });
 
   it('fallback list of strings is normalized', () => {
-    const tts = makeTts({ fallback: ['cartesia/sonic', 'elevenlabs'] });
+    const tts = makeTts({ fallback: ['cartesia/sonic', 'deepgram/aura-2'] });
     expect(tts['opts'].fallback).toEqual([
       { model: 'cartesia/sonic', voice: '' },
-      { model: 'elevenlabs', voice: '' },
+      { model: 'deepgram/aura-2', voice: '' },
     ]);
   });
 
@@ -232,13 +273,13 @@ describe('TTS constructor fallback and connOptions', () => {
     const tts = makeTts({
       fallback: [
         'cartesia/sonic:voice1',
-        { model: 'elevenlabs', voice: 'custom', extraKwargs: { speed: 'slow' } },
+        { model: 'deepgram/aura-2', voice: 'custom', extraKwargs: { mip_opt_out: true } },
         'rime/mist',
       ],
     });
     expect(tts['opts'].fallback).toEqual([
       { model: 'cartesia/sonic', voice: 'voice1' },
-      { model: 'elevenlabs', voice: 'custom', extraKwargs: { speed: 'slow' } },
+      { model: 'deepgram/aura-2', voice: 'custom', extraKwargs: { mip_opt_out: true } },
       { model: 'rime/mist', voice: '' },
     ]);
   });
@@ -272,26 +313,7 @@ describe('TTS constructor fallback and connOptions', () => {
   });
 });
 
-describe('TTS provider modelOptions parity', () => {
-  it('preserves ElevenLabs inference model options', () => {
-    const modelOptions = {
-      speed: 1.2,
-      stability: 0.5,
-      similarity_boost: 0.8,
-      enable_logging: false,
-    };
-
-    const tts = new TTS({
-      model: 'elevenlabs/eleven_flash_v2_5' as const,
-      apiKey: 'test-key',
-      apiSecret: 'test-secret',
-      baseURL: 'https://example.livekit.cloud',
-      modelOptions,
-    });
-
-    expect(tts['opts'].modelOptions).toEqual(modelOptions);
-  });
-
+describe('TTS provider modelOptions', () => {
   it('accepts expanded Cartesia inference model options', () => {
     const modelOptions = {
       speed: 1.15,
@@ -362,25 +384,18 @@ describe('TTS provider modelOptions parity', () => {
 describe('hasAlignedTranscript', () => {
   it('returns false for unknown provider', () => {
     expect(hasAlignedTranscript('rime/mistv2', { add_timestamps: true })).toBe(false);
-    expect(hasAlignedTranscript('deepgram/aura-2', { sync_alignment: true })).toBe(false);
+    expect(hasAlignedTranscript('deepgram/aura-2', { timestamp_type: 'WORD' })).toBe(false);
   });
 
   it('returns false for an empty options payload', () => {
     expect(hasAlignedTranscript('cartesia/sonic', {})).toBe(false);
-    expect(hasAlignedTranscript('elevenlabs/eleven_flash_v2', undefined)).toBe(false);
+    expect(hasAlignedTranscript('inworld/inworld-tts-1', undefined)).toBe(false);
     expect(hasAlignedTranscript(undefined, { add_timestamps: true })).toBe(false);
   });
 
   it('detects Cartesia add_timestamps opt-in', () => {
     expect(hasAlignedTranscript('cartesia/sonic', { add_timestamps: true })).toBe(true);
     expect(hasAlignedTranscript('cartesia/sonic-3', { add_timestamps: false })).toBe(false);
-  });
-
-  it('detects ElevenLabs sync_alignment opt-in', () => {
-    expect(hasAlignedTranscript('elevenlabs/eleven_flash_v2', { sync_alignment: true })).toBe(true);
-    expect(
-      hasAlignedTranscript('elevenlabs/eleven_multilingual_v2', { sync_alignment: false }),
-    ).toBe(false);
   });
 
   it('detects Inworld WORD/CHARACTER timestamp types', () => {
@@ -410,14 +425,6 @@ describe('TTS alignedTranscript capability', () => {
     expect(tts.capabilities.alignedTranscript).toBe(true);
   });
 
-  it('reports alignedTranscript=true when ElevenLabs sync_alignment is set', () => {
-    const tts = makeTts({
-      model: 'elevenlabs/eleven_flash_v2',
-      modelOptions: { sync_alignment: true },
-    });
-    expect(tts.capabilities.alignedTranscript).toBe(true);
-  });
-
   it('reports alignedTranscript=true when Inworld timestamp_type is WORD', () => {
     const tts = makeTts({
       model: 'inworld/inworld-tts-1',
@@ -440,11 +447,11 @@ describe('TTS alignedTranscript capability', () => {
   it('recomputes alignedTranscript when updateOptions changes the model', () => {
     const tts = makeTts({
       model: 'cartesia/sonic',
-      modelOptions: { sync_alignment: true },
+      modelOptions: { timestamp_type: 'WORD' },
     });
     expect(tts.capabilities.alignedTranscript).toBe(false);
 
-    tts.updateOptions({ model: 'elevenlabs/eleven_flash_v2' });
+    tts.updateOptions({ model: 'inworld/inworld-tts-1' });
     expect(tts.capabilities.alignedTranscript).toBe(true);
   });
 
@@ -455,7 +462,7 @@ describe('TTS alignedTranscript capability', () => {
     tts.updateOptions({ modelOptions: { add_timestamps: true } });
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
 
-    tts.updateOptions({ model: 'elevenlabs/eleven_flash_v2' });
+    tts.updateOptions({ model: 'deepgram/aura-2' });
     expect(invalidateSpy).toHaveBeenCalledTimes(2);
 
     tts.updateOptions({ voice: 'narrator' });
@@ -468,4 +475,30 @@ describe('TTS alignedTranscript capability', () => {
     tts.updateOptions({});
     expect(invalidateSpy).toHaveBeenCalledTimes(4);
   });
+});
+
+describeLiveKitInference('LiveKit Inference TTS integration', agents, async (harness) => {
+  const models = [
+    {
+      model: 'cartesia/sonic-3',
+      voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+    },
+    { model: 'inworld/inworld-tts-2', voice: 'Ashley' },
+    { model: 'rime/coda', voice: 'celeste' },
+  ] as const;
+
+  for (const options of models) {
+    describe(options.model, async () => {
+      await harness.tts(
+        new TTS(options),
+        new STT({
+          model: 'deepgram/nova-3',
+          modelOptions: { endpointing: 1000 },
+        }),
+        {
+          streamingValidationStt: true,
+        },
+      );
+    });
+  }
 });

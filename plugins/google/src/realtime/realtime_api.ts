@@ -33,7 +33,7 @@ import {
 import { Mutex } from '@livekit/mutex';
 import { AudioFrame, AudioResampler, type VideoFrame } from '@livekit/rtc-node';
 import { type LLMTools } from '../tools.js';
-import { toFunctionDeclarations } from '../utils.js';
+import { toToolsConfig } from '../utils.js';
 import type * as api_proto from './api_proto.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
 
@@ -49,6 +49,40 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
+
+const KNOWN_VERTEXAI_MODELS = new Set(['gemini-live-2.5-flash-native-audio']);
+
+const KNOWN_GEMINI_API_MODELS = new Set([
+  'gemini-3.8-live',
+  'gemini-3.8-live-extended-thinking',
+  'gemini-3.1-flash-live-preview',
+  'gemini-2.5-flash-native-audio-preview-12-2025',
+]);
+
+// generateReply() appends a "." user turn so Gemini sees a completed turn. These models
+// answer that placeholder with an empty turn instead, so they must not get it.
+const MODELS_WITHOUT_REPLY_PLACEHOLDER = ['3.1', '3.8'];
+
+function needsReplyPlaceholder(model: string): boolean {
+  return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
+}
+
+function validateModelAPIMatch(model: string, vertexai: boolean): void {
+  if (vertexai && KNOWN_GEMINI_API_MODELS.has(model)) {
+    throw new Error(
+      `Model '${model}' is a Gemini API model, but vertexai=true. Use a VertexAI model ` +
+        `(e.g., 'gemini-live-2.5-flash-native-audio') or set vertexai=false.`,
+    );
+  }
+
+  if (!vertexai && KNOWN_VERTEXAI_MODELS.has(model)) {
+    throw new Error(
+      `Model '${model}' is a VertexAI model, but vertexai=false. Use a Gemini API model ` +
+        `(e.g., 'gemini-2.5-flash-native-audio-preview-12-2025') or set vertexai=true.`,
+    );
+  }
+}
+
 /**
  * Default image encoding options for Google Realtime API
  */
@@ -68,13 +102,6 @@ export const DEFAULT_IMAGE_ENCODE_OPTIONS = {
 export interface InputTranscription {
   itemId: string;
   transcript: string;
-}
-
-/**
- * Helper function to check if two sets are equal
- */
-function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
-  return a.size === b.size && [...a].every((x) => b.has(x));
 }
 
 /**
@@ -348,7 +375,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       : 'gemini-2.5-flash-native-audio-preview-12-2025';
 
     const model = options.model || defaultModel;
-    const mutableSession = !model.includes('3.1');
+    validateModelAPIMatch(model, vertexai);
 
     super({
       messageTruncation: false,
@@ -357,17 +384,11 @@ export class RealtimeModel extends llm.RealtimeModel {
       autoToolReplyGeneration: true,
       audioOutput: options.modalities?.includes(Modality.AUDIO) ?? true,
       manualFunctionCalls: false,
-      midSessionChatCtxUpdate: mutableSession,
-      midSessionInstructionsUpdate: mutableSession,
+      midSessionChatCtxUpdate: true,
+      midSessionInstructionsUpdate: true,
       midSessionToolsUpdate: false,
       perResponseToolChoice: false,
     });
-
-    if (!mutableSession) {
-      this.#logger.warn(
-        `'${model}' has limited mid-session update support. instructions, chat context, and tool updates will not be applied until the next session.`,
-      );
-    }
 
     this._options = {
       model,
@@ -451,11 +472,10 @@ export class RealtimeModel extends llm.RealtimeModel {
  * supporting both text and audio modalities with function calling capabilities.
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private _tools: llm.ToolContext = {};
+  private _tools: llm.ToolContext = llm.ToolContext.empty();
   private _chatCtx = llm.ChatContext.empty();
 
   private options: RealtimeOptions;
-  private geminiDeclarations: types.FunctionDeclaration[] = [];
   private messageChannel = new Queue<api_proto.ClientEvents>();
   private inputResampler?: AudioResampler;
   private inputResamplerInputRate?: number;
@@ -523,6 +543,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         };
 
     this.#client = new GoogleGenAI(clientOptions);
+
     this.#task = this.#mainTask();
   }
 
@@ -673,9 +694,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         turns: [
           {
             parts: [{ text: instructions }],
-            // Vertex AI ignores role=None or role="system" and only works with role="model".
-            // Gemini Live API (non-Vertex) errors on role="system"; role=None works as system role.
-            role: this.options.vertexai ? 'model' : undefined,
+            // Both APIs error on role="system". Gemini 2.5 accepted an omitted role as the
+            // system role, but 3.1 and 3.8 reject it. "model" is accepted by all three.
+            role: 'model',
           },
         ],
         turnComplete: false,
@@ -764,15 +785,12 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateTools(tools: llm.ToolContext): Promise<void> {
-    const newDeclarations = toFunctionDeclarations(tools);
-    const currentToolNames = new Set(this.geminiDeclarations.map((f) => f.name));
-    const newToolNames = new Set(newDeclarations.map((f) => f.name));
-
-    if (!setsEqual(currentToolNames, newToolNames)) {
-      this.geminiDeclarations = newDeclarations;
-      this._tools = tools;
-      this.markRestartNeeded();
+    if (this._tools.equals(tools)) {
+      return;
     }
+
+    this._tools = tools;
+    this.markRestartNeeded();
   }
 
   get chatCtx(): llm.ChatContext {
@@ -780,7 +798,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools(): llm.ToolContext {
-    return { ...this._tools };
+    return this._tools.copy();
   }
 
   get manualActivityDetection(): boolean {
@@ -870,8 +888,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.inUserActivity = false;
     }
 
-    // Gemini requires the last message to end with user's turn
-    // so we need to add a placeholder user turn in order to trigger a new generation
     const turns: types.Content[] = [];
     if (instructions !== undefined) {
       turns.push({
@@ -879,10 +895,12 @@ export class RealtimeSession extends llm.RealtimeSession {
         role: 'model',
       });
     }
-    turns.push({
-      parts: [{ text: '.' }],
-      role: 'user',
-    });
+    if (needsReplyPlaceholder(this.options.model)) {
+      turns.push({
+        parts: [{ text: '.' }],
+        role: 'user',
+      });
+    }
 
     this.sendClientEvent({
       type: 'content',
@@ -996,12 +1014,19 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.#logger.debug('Connecting to Gemini Realtime API...');
 
         const sessionOpened = new Event();
+        // The SDK forwards the queued setupComplete message before connect()
+        // returns, so this callback can fire before we hold the session. Ignoring
+        // those changes nothing: onReceiveMessage already dropped anything
+        // arriving before activeSession was set, a few lines below.
+        const connected: { session?: types.Session } = {};
         const session = await this.#client.live.connect({
           model: this.options.model,
           callbacks: {
             onopen: () => sessionOpened.set(),
             onmessage: (message: types.LiveServerMessage) => {
-              this.onReceiveMessage(session, message);
+              if (connected.session) {
+                this.onReceiveMessage(connected.session, message);
+              }
             },
             // onerror is called for network-level errors (connection refused, DNS failure, TLS errors).
             // Application-level errors (e.g., invalid model name) come through onclose with error codes.
@@ -1044,6 +1069,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           },
           config,
         });
+        connected.session = session;
 
         await sessionOpened.wait();
 
@@ -1059,10 +1085,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             .toProviderFormat('google', false);
 
           if (turns.length > 0) {
-            await session.sendClientContent({
-              turns,
-              turnComplete: false,
-            });
+            await session.sendClientContent({ turns, turnComplete: false });
           }
         } finally {
           unlock();
@@ -1141,7 +1164,13 @@ export class RealtimeSession extends llm.RealtimeSession {
           case 'content':
             const { turns, turnComplete } = msg.value;
             if (LK_GOOGLE_DEBUG) {
-              this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
+              this.#logger.debug(
+                {
+                  eventType: msg.type,
+                  'lk.pii.event': this.loggableClientEvent(msg),
+                },
+                'sent Gemini Live client event',
+              );
             }
             await session.sendClientContent({
               turns,
@@ -1152,7 +1181,13 @@ export class RealtimeSession extends llm.RealtimeSession {
             const { functionResponses } = msg.value;
             if (functionResponses) {
               if (LK_GOOGLE_DEBUG) {
-                this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
+                this.#logger.debug(
+                  {
+                    eventType: msg.type,
+                    'lk.pii.event': this.loggableClientEvent(msg),
+                  },
+                  'sent Gemini Live client event',
+                );
               }
               try {
                 await session.sendToolResponse({
@@ -1213,9 +1248,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       (part) => part.inlineData?.data,
     );
     if (LK_GOOGLE_DEBUG) {
-      this.#logger.debug(`(server) <- ${JSON.stringify(this.loggableServerMessage(response))}`);
+      this.#logger.debug(
+        { 'lk.pii.response': this.loggableServerMessage(response) },
+        'received Gemini Live server event',
+      );
     } else if (!hasAudioData) {
-      this.#logger.debug(`(server) <- ${JSON.stringify(this.loggableServerMessage(response))}`);
+      this.#logger.debug(
+        { 'lk.pii.response': this.loggableServerMessage(response) },
+        'received Gemini Live server event',
+      );
     }
     const unlock = await this.sessionLock.lock();
 
@@ -1390,6 +1431,11 @@ export class RealtimeSession extends llm.RealtimeSession {
         itemId: targetGen.inputId,
         transcript: targetGen.inputTranscription,
         isFinal: true,
+        // This fires once the reply is done generating, seconds after the user
+        // spoke, so hand over when the turn actually began. The generation is
+        // created as soon as the server takes the turn, which is always before
+        // any of its own audio reaches the room.
+        turnStartedAt: targetGen._createdTimestamp,
       } as llm.InputTranscriptionCompleted);
 
       // since gemini doesn't give us a view of the chat history on the server side,
@@ -1435,6 +1481,11 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private buildConnectConfig(): types.LiveConnectConfig {
     const opts = this.options;
+    const [tools] = toToolsConfig({
+      toolCtx: this._tools,
+      geminiTools: this.options.geminiTools,
+      toolBehavior: this.options.toolBehavior,
+    });
 
     const config: types.LiveConnectConfig = {
       thinkingConfig: opts.thinkingConfig,
@@ -1452,21 +1503,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         },
         languageCode: opts.language,
       },
-      tools:
-        this.geminiDeclarations.length > 0 || this.options.geminiTools
-          ? [
-              {
-                functionDeclarations:
-                  this.options.toolBehavior !== undefined
-                    ? this.geminiDeclarations.map((d) => ({
-                        ...d,
-                        behavior: this.options.toolBehavior,
-                      }))
-                    : this.geminiDeclarations,
-                ...this.options.geminiTools,
-              },
-            ]
-          : undefined,
+      tools,
       inputAudioTranscription: opts.inputAudioTranscription,
       outputAudioTranscription: opts.outputAudioTranscription,
       sessionResumption: this.sessionResumptionHandle
@@ -1599,6 +1636,14 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const discardOutput = this.earlyCompletionPending;
 
+    // With audio output and output transcription on, the spoken words arrive as
+    // outputTranscription; a text part on the model turn is never spoken (an unflagged
+    // thought, or a function call the model wrote out as text) and would leak unspoken
+    // text into the transcript.
+    const forwardModelText =
+      !this._realtimeModel.capabilities.audioOutput ||
+      this.options.outputAudioTranscription === undefined;
+
     if (serverContent.modelTurn && !discardOutput) {
       const turn = serverContent.modelTurn;
 
@@ -1608,7 +1653,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           continue;
         }
 
-        if (part.text) {
+        if (part.text && forwardModelText) {
           gen.outputText += part.text;
           gen.textChannel.write(part.text);
         }

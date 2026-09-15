@@ -242,7 +242,7 @@ export class SpeechStream extends stt.SpeechStream {
 
             // Skip if no transcript text
             if (!transcript) {
-              this.#logger.debug('Received non-transcript message:', msg);
+              this.#logger.debug({ 'lk.pii.message': msg }, 'Received non-transcript message');
               return;
             }
 
@@ -307,7 +307,13 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`STT: Error processing message: ${data}`);
+            this.#logger.error(
+              {
+                error: err,
+                'lk.pii.message': String(data),
+              },
+              'Baseten STT failed to process message',
+            );
             reject(err);
           }
         });

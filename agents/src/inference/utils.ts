@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AccessToken } from 'livekit-server-sdk';
+import type { IncomingMessage } from 'node:http';
 import { WebSocket } from 'ws';
-import { APIConnectionError, APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { getJobContext } from '../job.js';
 import { version } from '../version.js';
 
@@ -56,6 +57,8 @@ export async function createAccessToken(
 /**
  * Build metadata headers for inference requests.
  * Includes SDK version/platform, and optionally room/job/agent IDs from the current job context.
+ * Includes X-LiveKit-Worker-Token when LIVEKIT_WORKER_TOKEN is set (hosted agents).
+ * The job context's {@link JobContext.inferenceHeaders} are merged last and win.
  */
 export function buildMetadataHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -71,12 +74,20 @@ export function buildMetadataHeaders(): Record<string, string> {
     if (ctx.job.id) {
       headers['X-LiveKit-Job-Id'] = ctx.job.id;
     }
-    if (ctx.room.isConnected) {
-      const agentSid = ctx.agent?.sid;
-      if (agentSid) {
-        headers['X-LiveKit-Agent-Id'] = agentSid;
-      }
+    // for hosted agents where job context is always present
+    const workerToken = process.env.LIVEKIT_WORKER_TOKEN;
+    if (workerToken) {
+      headers['X-LiveKit-Worker-Token'] = workerToken;
     }
+    // Only emit the agent SID once the room is connected: before connection the
+    // local participant SID is unset/placeholder and would leak into requests.
+    const agentSid = ctx.agent?.sid;
+    if (ctx.room.isConnected && agentSid) {
+      headers['X-LiveKit-Agent-Id'] = agentSid;
+    }
+    // merged last: what the job asserts about itself outranks what an individual
+    // model was configured with.
+    Object.assign(headers, ctx.inferenceHeaders);
   }
 
   return headers;
@@ -90,32 +101,39 @@ export async function connectWs(
   return new ThrowsPromise<WebSocket, APIConnectionError | APIStatusError>((resolve, reject) => {
     const socket = new WebSocket(url, { headers: { ...buildMetadataHeaders(), ...headers } });
 
+    let opened = false;
+
     const timeout = setTimeout(() => {
-      reject(new APIConnectionError({ message: 'Timeout connecting to LiveKit WebSocket' }));
+      socket.terminate();
+      reject(new APITimeoutError({ message: 'Timeout connecting to LiveKit WebSocket' }));
     }, timeoutMs);
 
     const onOpen = () => {
       clearTimeout(timeout);
+      opened = true;
       resolve(socket);
     };
 
-    const onError = (err: unknown) => {
+    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+      const statusCode = response.statusCode ?? -1;
       clearTimeout(timeout);
-      if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
-        reject(
-          new APIStatusError({
-            message: 'LiveKit gateway quota exceeded',
-            options: { statusCode: 429 },
-          }),
-        );
-      } else {
-        reject(new APIConnectionError({ message: 'Error connecting to LiveKit WebSocket' }));
-      }
+      reject(
+        new APIStatusError({
+          message: `Unexpected server response: ${statusCode}`,
+          options: { statusCode },
+        }),
+      );
+      socket.terminate();
     };
 
-    const onClose = (code: number) => {
+    const onError = () => {
       clearTimeout(timeout);
-      if (code !== 1000) {
+      reject(new APIConnectionError({ message: 'Error connecting to LiveKit WebSocket' }));
+    };
+
+    const onClose = () => {
+      clearTimeout(timeout);
+      if (!opened) {
         reject(
           new APIConnectionError({
             message: 'Connection closed unexpectedly',
@@ -124,6 +142,7 @@ export async function connectWs(
       }
     };
     socket.once('open', onOpen);
+    socket.once('unexpected-response', onUnexpectedResponse);
     socket.once('error', onError);
     socket.once('close', onClose);
   });
