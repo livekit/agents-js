@@ -352,14 +352,13 @@ function setupCloudMetrics(
   cloudMeterProvider = provider;
   if (!cloudMeterShutdownRegistered) {
     cloudMeterShutdownRegistered = true;
-    process.once('beforeExit', async () => {
+    process.once('beforeExit', () => {
       const ownedProvider = cloudMeterProvider;
       cloudMeterProvider = undefined;
-      try {
-        await ownedProvider?.shutdown({ timeoutMillis: 10_000 });
-      } catch (error) {
+      // the pending export keeps the loop alive, so the shutdown completes before exit
+      void ownedProvider?.shutdown({ timeoutMillis: 10_000 }).catch((error: unknown) => {
         console.error('Failed to shut down cloud metrics:', error);
-      }
+      });
     });
   }
   return provider;
