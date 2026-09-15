@@ -46,6 +46,9 @@ export type LoopMonitorSeverity = 'warning' | 'error';
  */
 export type LoopStallCause = 'code' | 'host';
 
+/** What a report's `cpuTime` covers: the event-loop thread, or the whole process on older Node. */
+export type LoopCpuScope = 'thread' | 'process';
+
 export interface BlockedReport {
   /** Heartbeat lag in milliseconds. */
   duration: number;
@@ -53,14 +56,20 @@ export interface BlockedReport {
   startedAt: number;
   warnThreshold: number;
   severity: LoopMonitorSeverity;
-  /** Garbage-collection pause time observed during the stall, in milliseconds. */
+  /**
+   * Garbage-collection pause time observed during the stall, in milliseconds. Node delivers GC
+   * entries to observers a couple of loop turns after the fact, so a report is emitted one
+   * heartbeat after its stall to include them.
+   */
   gcTime: number;
   /**
-   * CPU consumed during the stall, in milliseconds. This is process-wide (every thread, including
-   * the libuv pool and the native media threads), not the event loop thread alone: Node does not
-   * expose per-thread CPU accounting. It can therefore exceed the stall duration.
+   * CPU consumed during the stall, in milliseconds. Scoped to the event-loop thread where Node
+   * offers `process.threadCpuUsage()` (22.15 / 23.9 and later); process-wide before that, which
+   * also counts the libuv pool and the native media threads and can exceed the stall duration.
    */
   cpuTime: number;
+  /** What `cpuTime` covers. */
+  cpuScope: LoopCpuScope;
   /** How late the watchdog thread woke during the stall, in milliseconds. 0 without a watchdog. */
   watchdogGap: number;
   /**
@@ -148,6 +157,11 @@ setInterval(() => {
 }, interval);
 `;
 
+// Per-thread CPU accounting (Node 22.15 / 23.9+). Older runtimes fall back to the process total.
+const threadCpuUsage: (() => NodeJS.CpuUsage) | undefined = (
+  process as { threadCpuUsage?: () => NodeJS.CpuUsage }
+).threadCpuUsage?.bind(process);
+
 /** Detect synchronous work that prevents the Node event loop from servicing timers. */
 export class EventLoopMonitor {
   readonly warnThreshold: number;
@@ -166,6 +180,9 @@ export class EventLoopMonitor {
   #lastCpuUsage: NodeJS.CpuUsage = { user: 0, system: 0 };
   #gcObserver?: PerformanceObserver;
   #gcTime = 0;
+  /** A stall detected on the previous tick, held back one heartbeat for its GC entries. */
+  #pending?: BlockedReport;
+  private cpuScope: LoopCpuScope = threadCpuUsage ? 'thread' : 'process';
   #watchdog?: Worker;
   #watchdogState?: BigInt64Array;
   #reportContext?: Context;
@@ -212,7 +229,7 @@ export class EventLoopMonitor {
     if (this.#started || this.#closed) return;
     this.#started = true;
     this.#lastTickAt = performance.now();
-    this.#lastCpuUsage = process.cpuUsage();
+    this.#lastCpuUsage = this.#cpuUsage();
     this.#startGcObserver();
     if (this.#useWatchdog) this.#startWatchdog();
     this.#scheduleTick();
@@ -224,6 +241,9 @@ export class EventLoopMonitor {
     this.#closed = true;
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = undefined;
+    // a stall waiting for its GC entries must not be lost to the shutdown that follows
+    this.#flushPending(this.#gcTime);
+    this.#gcTime = 0;
     this.#gcObserver?.disconnect();
     this.#gcObserver = undefined;
     const watchdog = this.#watchdog;
@@ -277,11 +297,15 @@ export class EventLoopMonitor {
     this.#timer.unref();
   }
 
+  #cpuUsage(): NodeJS.CpuUsage {
+    return this.cpuScope === 'thread' && threadCpuUsage ? threadCpuUsage() : process.cpuUsage();
+  }
+
   #onTick(): void {
     if (this.#closed) return;
     const now = performance.now();
     const lag = now - (this.#lastTickAt + this.tickInterval);
-    const cpu = process.cpuUsage();
+    const cpu = this.#cpuUsage();
     const cpuTime =
       (cpu.user - this.#lastCpuUsage.user + cpu.system - this.#lastCpuUsage.system) / 1000;
     const gcTime = this.#gcTime;
@@ -292,8 +316,25 @@ export class EventLoopMonitor {
     this.#lastCpuUsage = cpu;
     const watchdogGap = this.#consumeWatchdogGap(windowStart);
     this.#scheduleTick();
+    // GC entries for the previous stall reach the observer through two immediates, which the
+    // late tick can run ahead of; they have landed by now, so the previous stall gets them
+    const gcClaimed = this.#flushPending(gcTime);
     if (lag < this.warnThreshold) return;
-    this.report(this.buildReport(lag, { cpuTime, gcTime, watchdogGap }));
+    this.#pending = this.buildReport(lag, {
+      cpuTime,
+      gcTime: gcClaimed ? 0 : gcTime,
+      watchdogGap,
+    });
+  }
+
+  /** Emit the stall held from the previous tick, crediting it the GC time seen since. */
+  #flushPending(gcTime: number): boolean {
+    const pending = this.#pending;
+    if (!pending) return false;
+    this.#pending = undefined;
+    pending.gcTime = Math.min(pending.gcTime + gcTime, pending.duration);
+    this.report(pending);
+    return true;
   }
 
   /**
@@ -321,10 +362,14 @@ export class EventLoopMonitor {
     timings: { cpuTime: number; gcTime: number; watchdogGap: number },
   ): BlockedReport {
     // the watchdog is an independent thread: if it too woke late by most of the stall, the
-    // process was not being scheduled (host contention, CPU quota, a suspended machine). A
-    // descheduled process burns no CPU, which rules out the loop having been busy instead.
+    // process was not being scheduled (host contention, CPU quota, a suspended machine). Under
+    // contention the scheduler can also starve only the watchdog while the loop thread runs
+    // synchronous code, which is still code's fault: the loop thread's own CPU time tells, since
+    // a thread that was not running burns none. Process-wide CPU cannot say which thread was
+    // busy, so without per-thread accounting the watchdog alone decides.
     const watchdogStarved = timings.watchdogGap >= lag * 0.5;
-    const processDescheduled = watchdogStarved && timings.cpuTime < lag * 0.5;
+    const loopThreadBusy = this.cpuScope === 'thread' && timings.cpuTime >= lag * 0.5;
+    const processDescheduled = watchdogStarved && !loopThreadBusy;
     return {
       duration: lag,
       // the block started no earlier than the last on-time tick
@@ -335,6 +380,7 @@ export class EventLoopMonitor {
       severity: lag >= this.errorThreshold ? 'error' : 'warning',
       gcTime: Math.min(timings.gcTime, lag),
       cpuTime: timings.cpuTime,
+      cpuScope: this.cpuScope,
       watchdogGap: timings.watchdogGap,
       cause: processDescheduled ? 'host' : 'code',
     };
@@ -408,7 +454,8 @@ export class EventLoopMonitor {
       duration: round(report.duration),
       threshold: report.warnThreshold,
       gcTime: round(report.gcTime),
-      processCpuTime: round(report.cpuTime),
+      cpuTime: round(report.cpuTime),
+      cpuScope: report.cpuScope,
       watchdogGap: round(report.watchdogGap),
       cause: report.cause,
       loop: this.#name,

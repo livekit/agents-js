@@ -18,6 +18,7 @@ import {
 import {
   finalizeSession,
   flushJobLogs,
+  flushJobMetrics,
   runShutdownCallbacks,
   validateSessionEndTimeout,
   waitForEntrypointShutdown,
@@ -332,7 +333,10 @@ const startJob = (
     process.on('message', messageHandler);
 
     await join.await;
+    // stop the monitor first so a stall from the shutdown callbacks is recorded, then export:
+    // the periodic reader gets no further turn before process.exit() below
     if (loopMonitor) stopMonitoring(loopMonitor);
+    await flushJobMetrics(logger);
     clearTimeout(orphanedTimeout);
     process.off('message', messageHandler);
 

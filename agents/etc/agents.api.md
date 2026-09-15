@@ -2187,6 +2187,7 @@ declare namespace beta {
 // @public (undocumented)
 interface BlockedReport {
     cause: LoopStallCause;
+    cpuScope: LoopCpuScope;
     cpuTime: number;
     duration: number;
     gcTime: number;
@@ -4171,6 +4172,9 @@ export class FixedGate implements AudioGate {
 }
 
 // @internal
+function flushCloudMetrics(): Promise<void>;
+
+// @internal
 function flushOtelLogs(): Promise<void>;
 
 // Warning: (ae-missing-release-tag) "flushPinoLogs" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -5652,6 +5656,11 @@ export const logMetrics: (metrics: AgentMetrics) => void;
 // @public
 export function loopAudioFramesFromFile(filePath: string, options?: AudioDecodeOptions): AsyncGenerator<AudioFrame, void, unknown>;
 
+// Warning: (ae-missing-release-tag) "LoopCpuScope" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+type LoopCpuScope = 'thread' | 'process';
+
 declare namespace loopMonitor {
     export {
         startMonitoring,
@@ -5667,6 +5676,7 @@ declare namespace loopMonitor {
         SPAN_NAME,
         LoopMonitorSeverity,
         LoopStallCause,
+        LoopCpuScope,
         BlockedReport,
         LoopMonitorThresholds,
         EventLoopMonitorOptions,
@@ -8382,6 +8392,7 @@ declare namespace telemetry {
         loopMonitor,
         traceTypes,
         FanoutSpanProcessor,
+        flushCloudMetrics,
         flushOtelLogs,
         setTracerProvider,
         setupCloudTracer,

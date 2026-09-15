@@ -590,13 +590,10 @@ export async function setupCloudTracer(
           ...(deploymentId ? { [ATTR_DEPLOYMENT_ID]: deploymentId } : {}),
         }),
       );
-    const meterProvider = setupCloudMetrics(observabilityUrl, headers, meterResource);
-    if (meterProvider) {
-      const { getJobContext } = await import('../job.js');
-      getJobContext(false)?.addShutdownCallback(() =>
-        meterProvider.forceFlush({ timeoutMillis: 10_000 }),
-      );
-    }
+    // The final export belongs to the job bootstrap (flushCloudMetrics), after every shutdown
+    // callback has run: a stall inside one of them is only recorded once it returns, and the
+    // periodic reader would not get another turn before process.exit().
+    setupCloudMetrics(observabilityUrl, headers, meterResource);
 
     if (enableTraces) {
       const url = `${observabilityUrl}/observability/traces/otlp/v0`;
@@ -688,6 +685,16 @@ export async function setupCloudTracer(
  */
 export async function flushOtelLogs(): Promise<void> {
   await flushPinoLogs();
+}
+
+/**
+ * Export every measurement the cloud meter provider holds. Call it once all work that could
+ * record a metric is done: the job process exits explicitly, so no later flush would run.
+ *
+ * @internal
+ */
+export async function flushCloudMetrics(): Promise<void> {
+  await cloudMeterProvider?.forceFlush({ timeoutMillis: 10_000 });
 }
 
 /** Proto field names and shapes, matching what livekit/agents emits for the same log body. */

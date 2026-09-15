@@ -130,9 +130,9 @@ export const ATTR_BLOCKING_STACK = 'lk.blocking.stack';
 /** Garbage-collection pause time inside the stall, in seconds. */
 export const ATTR_BLOCKING_GC_TIME = 'lk.blocking.gc_time';
 /**
- * CPU consumed during the stall, in seconds. In Node this is process-wide (every thread,
- * including the libuv pool and native media threads), not the event-loop thread as in the Python
- * SDK, so it can exceed `lk.blocking.duration`.
+ * CPU consumed by the event-loop thread during the stall, in seconds. On Node runtimes without
+ * `process.threadCpuUsage()` (before 22.15 / 23.9) it is process-wide instead, counting the libuv
+ * pool and native media threads too, and can then exceed `lk.blocking.duration`.
  */
 export const ATTR_BLOCKING_CPU_TIME = 'lk.blocking.cpu_time';
 /** Not populated by the Node runtime: there is no lazy-import equivalent to attribute. */

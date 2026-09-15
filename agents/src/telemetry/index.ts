@@ -29,6 +29,7 @@ export * as loopMonitor from './loop_monitor.js';
 export * as traceTypes from './trace_types.js';
 export {
   FanoutSpanProcessor,
+  flushCloudMetrics,
   flushOtelLogs,
   setTracerProvider,
   setupCloudTracer,
