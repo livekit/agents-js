@@ -1522,6 +1522,8 @@ export class AgentSession<
       const unlock = await this.activityLock.lock();
       let onEnterTask: Task<void> | undefined;
       let reusableResources: ReusableResources | undefined;
+      let handoffSpan: Span | undefined;
+      let handoffCtx: Context | undefined;
 
       try {
         if (this.closing && newActivity === 'start') {
@@ -1549,16 +1551,36 @@ export class AgentSession<
           this.nextActivity = agent._agentActivity;
         }
 
+        // one span for the handoff: the old agent's drain/pause and on_exit, then the new one's
+        // start/resume and on_enter nest under it. Passed explicitly to the calls that spawn
+        // long-lived tasks, made current only around the ones that do not
+        if (prevActivityObj && this.nextActivity) {
+          handoffSpan = tracer.startSpan({
+            name: 'update_agent',
+            context: this.rootSpanContext,
+            attributes: {
+              [traceTypes.ATTR_PREVIOUS_AGENT_LABEL]: prevActivityObj.agent.id,
+              [traceTypes.ATTR_AGENT_LABEL]: this.nextActivity.agent.id,
+            },
+          });
+          handoffCtx = trace.setSpan(this.rootSpanContext ?? otelContext.active(), handoffSpan);
+        }
+
         if (prevActivityObj && prevActivityObj !== this.nextActivity) {
           if (previousActivity === 'pause') {
-            reusableResources = await prevActivityObj.pause({
-              blockedTasks,
-              newActivity: this.nextActivity,
-            });
+            const pause = () =>
+              prevActivityObj.pause({
+                blockedTasks,
+                newActivity: this.nextActivity,
+              });
+            reusableResources = handoffCtx
+              ? await otelContext.with(handoffCtx, pause)
+              : await pause();
           } else {
             prevActivityObj.blockNewTurns();
             reusableResources = await prevActivityObj.drain({
               newActivity: this.nextActivity,
+              traceContext: handoffCtx,
             });
             await prevActivityObj.close();
           }
@@ -1605,10 +1627,11 @@ export class AgentSession<
         if (newActivity === 'start') {
           await activity.start({
             reuseResources: reusableResources,
-            traceContext: options.traceContext,
+            // the initial start is not a handoff: it lives under session_start
+            traceContext: handoffCtx ?? options.traceContext,
           });
         } else {
-          await activity.resume({ reuseResources: reusableResources });
+          await activity.resume({ reuseResources: reusableResources, traceContext: handoffCtx });
         }
         reusableResources = undefined;
 
@@ -1618,6 +1641,9 @@ export class AgentSession<
           activity.attachAudioInput(this._input.audio.stream);
         }
       } catch (error) {
+        if (handoffSpan && error instanceof Error) {
+          recordException(handoffSpan, error);
+        }
         // JS safeguard: session cleanup owns the detached resources until the next activity
         // starts successfully, preventing leaks when handoff fails mid-transition.
         if (reusableResources) {
@@ -1625,6 +1651,7 @@ export class AgentSession<
         }
         throw error;
       } finally {
+        handoffSpan?.end();
         unlock();
       }
 
