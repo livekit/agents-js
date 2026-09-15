@@ -31,6 +31,7 @@ import {
   ATTR_BLOCKING_DURATION,
   ATTR_BLOCKING_GC_TIME,
   ATTR_BLOCKING_SEVERITY,
+  ATTR_BLOCKING_SUPPRESSED,
   ATTR_BLOCKING_THRESHOLD,
 } from './trace_types.js';
 import { setTracerProvider, tracer } from './traces.js';
@@ -234,6 +235,24 @@ describe.sequential('event loop monitor', () => {
     await settle();
     expect(blockedSpans()).toEqual([]);
     expect(reports).toHaveLength(1);
+  });
+
+  it('does not charge the span quota for stalls that cannot have a span', () => {
+    monitor.stop();
+    // an idle child before its job: reports, but no job context to parent a span to
+    monitor.setReportContext(undefined);
+    for (let i = 0; i < MAX_SPANS_PER_MINUTE * 2; i++) {
+      monitor['report'](monitor['buildReport'](100, timings()));
+    }
+    expect(blockedSpans()).toEqual([]);
+    // the job starts: its very first stall still gets a span, with nothing counted as suppressed
+    monitor.setReportContext(trace.setSpan(ROOT_CONTEXT, sessionRoot), (fn) =>
+      runWithJobContext(fakeJob(), fn),
+    );
+    monitor['report'](monitor['buildReport'](100, timings()));
+    const [span] = blockedSpans();
+    expect(span).toBeDefined();
+    expect(span!.attributes[ATTR_BLOCKING_SUPPRESSED]).toBeUndefined();
   });
 
   it('records every stall on the active session', () => {

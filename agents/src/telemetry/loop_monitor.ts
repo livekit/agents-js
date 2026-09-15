@@ -388,7 +388,6 @@ export class EventLoopMonitor {
 
   private report(report: BlockedReport): void {
     const now = performance.now();
-    const emitSpan = this.#spanLimiter.allow(now);
     // host contention and blocking code are fixed by different people: each has its own log
     // quota so a noisy neighbor cannot silence a report about the agent's code, or the reverse
     const emitLog =
@@ -402,10 +401,13 @@ export class EventLoopMonitor {
         log().error({ error }, 'failed to record the blocked event loop metric');
       }
       recordLoopStall(report.duration / 1000, report.startedAt + report.duration, report.cause);
+      // a span needs a job to belong to (a root span here would be a stray trace), so the span
+      // quota is only charged once the job context is restored and a span can exist: stalls of
+      // an idle child before its job, or of the worker process, must not use up the job's budget
+      const spanEligible = this.#emitSpans && getJobContext(false) !== undefined;
+      const emitSpan = spanEligible && this.#spanLimiter.allow(now);
       if (!emitSpan && !emitLog) return;
-      if (emitSpan && this.#emitSpans) {
-        this.#emitSpan(report, this.#spanLimiter.takeSuppressed());
-      }
+      if (emitSpan) this.#emitSpan(report, this.#spanLimiter.takeSuppressed());
       if (emitLog) this.#emitLog(report);
       this.onReport?.(report);
     };
@@ -420,7 +422,6 @@ export class EventLoopMonitor {
   }
 
   #emitSpan(report: BlockedReport, suppressed: number): void {
-    if (!getJobContext(false)) return; // no job, no trace to belong to
     const attributes: Attributes = {
       [ATTR_BLOCKING_DURATION]: report.duration / 1000,
       [ATTR_BLOCKING_THRESHOLD]: report.warnThreshold / 1000,
