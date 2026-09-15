@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-phonic
 
+## 1.9.0
+
+### Patch Changes
+
+- Updated dependencies [[`d074b68`](https://github.com/livekit/agents-js/commit/d074b68b0fcb0f96768b425f27167a3c6ea2e5cd), [`3b068a5`](https://github.com/livekit/agents-js/commit/3b068a5679eae29ed114dfc7caa114dd9145accc), [`78dde70`](https://github.com/livekit/agents-js/commit/78dde705069bf38a3e9abcc6561c7163911b0ae7), [`931a217`](https://github.com/livekit/agents-js/commit/931a217014cd9425130d6580cc4cec2c44de96dc), [`c82fd8c`](https://github.com/livekit/agents-js/commit/c82fd8ca4046d3d03d235007953c17c19d9d766a)]:
+  - @livekit/agents@1.9.0
+
 ## 1.8.1
 
 ### Patch Changes

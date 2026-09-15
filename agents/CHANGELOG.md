@@ -1,5 +1,21 @@
 # @livekit/agents
 
+## 1.9.0
+
+### Minor Changes
+
+- Flag synchronous code that blocks agent event loops in telemetry and logs. - [#2459](https://github.com/livekit/agents-js/pull/2459) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+### Patch Changes
+
+- Keep healthy STT providers available when fallback streams close with transcripts in flight. - [#2381](https://github.com/livekit/agents-js/pull/2381) ([@swayamg20](https://github.com/swayamg20))
+
+- Fail fast with a clear error when a DuplexModel such as GPT-Live is started under a text simulation, which has no audio, instead of timing out on the first reply. - [#2481](https://github.com/livekit/agents-js/pull/2481) ([@u9g](https://github.com/u9g))
+
+- Reject late inline AgentTasks on an outgoing activity so handoff and shutdown do not deadlock while draining non-cancellable tools. - [#2488](https://github.com/livekit/agents-js/pull/2488) ([@swayamg20](https://github.com/swayamg20))
+
+- Place recorded audio where the sink reports it actually played, instead of inferring it from the moment playback finished. - [#2327](https://github.com/livekit/agents-js/pull/2327) ([@longcw](https://github.com/longcw))
+
 ## 1.8.1
 
 ### Patch Changes
