@@ -32,7 +32,7 @@ jobs:
       published: ${{ steps.changesets.outputs.published }}
       published_packages: ${{ steps.changesets.outputs.publishedPackages }}
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           lfs: true
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
