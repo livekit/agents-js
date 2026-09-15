@@ -25,7 +25,9 @@ import {
 interface STTStatus {
   available: boolean;
   recoveringRecognizeTask: Task<void> | null;
-  recoveringStreamTasks: Set<Task<void>>;
+  recoveringStreamTask: Task<void> | null;
+  waitingStreams: Set<FallbackSpeechStream>;
+  recoveryClosed: boolean;
 }
 
 /**
@@ -69,8 +71,9 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
  *
  * When the primary STT fails, the adapter switches to the next available
  * provider in the list for the active session. Failed providers are monitored
- * by a parallel probe stream that receives the same live audio — when a probe
- * yields a non-empty FINAL_TRANSCRIPT the provider is marked available again.
+ * by one probe stream per provider. The probe receives its owner's live audio;
+ * another waiting stream takes over if the owner closes. A non-empty
+ * FINAL_TRANSCRIPT marks the provider available again.
  *
  * Non-streaming STTs are automatically wrapped with {@link StreamAdapter}
  * provided a `vad` is passed in.
@@ -152,7 +155,9 @@ export class FallbackAdapter extends STT {
     this._status = this.sttInstances.map(() => ({
       available: true,
       recoveringRecognizeTask: null,
-      recoveringStreamTasks: new Set<Task<void>>(),
+      recoveringStreamTask: null,
+      waitingStreams: new Set<FallbackSpeechStream>(),
+      recoveryClosed: false,
     }));
 
     this.setupEventForwarding();
@@ -226,20 +231,26 @@ export class FallbackAdapter extends STT {
   private tryRecoverRecognize(stt: STT, frame: Parameters<STT['recognize']>[0]): void {
     const idx = this.sttInstances.indexOf(stt);
     const status = this._status[idx];
-    if (!status) return;
+    if (!status || status.recoveryClosed) return;
     if (status.recoveringRecognizeTask && !status.recoveringRecognizeTask.done) return;
 
     status.recoveringRecognizeTask = Task.from(async (controller) => {
       try {
         await stt.recognize(frame, controller.signal);
         status.available = true;
-        this._logger.info({ stt: stt.label }, `${stt.label} recovered`);
+        this._logger.info({ stt: stt.label }, 'STT recovered');
         this.emitAvailabilityChanged(stt, true);
       } catch (e) {
         if (e instanceof APIError) {
-          this._logger.warn({ stt: stt.label, err: e }, `${stt.label} recovery failed`);
+          this._logger.warn(
+            { stt: stt.label, errorType: e instanceof Error ? e.constructor.name : typeof e },
+            'STT recovery failed',
+          );
         } else {
-          this._logger.debug({ stt: stt.label, err: e }, `${stt.label} recovery unexpected error`);
+          this._logger.debug(
+            { stt: stt.label, errorType: e instanceof Error ? e.constructor.name : typeof e },
+            'STT recovery failed',
+          );
         }
       }
     });
@@ -276,17 +287,10 @@ export class FallbackAdapter extends STT {
           this._setActiveStt(stt);
           return result;
         } catch (e) {
-          if (e instanceof APIError) {
-            this._logger.warn(
-              { stt: stt.label, err: e },
-              `${stt.label} failed, switching to next STT`,
-            );
-          } else {
-            this._logger.warn(
-              { stt: stt.label, err: e },
-              `${stt.label} unexpected error, switching to next STT`,
-            );
-          }
+          this._logger.warn(
+            { stt: stt.label, errorType: e instanceof Error ? e.constructor.name : typeof e },
+            'STT failed, switching to next provider',
+          );
           if (status.available) {
             status.available = false;
             this.emitAvailabilityChanged(stt, false);
@@ -312,10 +316,12 @@ export class FallbackAdapter extends STT {
   override async close(): Promise<void> {
     const tasks: Task<void>[] = [];
     for (const status of this._status) {
+      status.recoveryClosed = true;
+      status.waitingStreams.clear();
       if (status.recoveringRecognizeTask && !status.recoveringRecognizeTask.done) {
         tasks.push(status.recoveringRecognizeTask);
       }
-      tasks.push(...status.recoveringStreamTasks);
+      if (status.recoveringStreamTask) tasks.push(status.recoveringStreamTask);
     }
     if (tasks.length > 0) {
       await cancelAndWait(tasks, 1000);
@@ -332,6 +338,9 @@ class FallbackSpeechStream extends SpeechStream {
   label = 'stt.FallbackSpeechStream';
   private fallbackAdapter: FallbackAdapter;
   private recoveringStreams = new Map<SpeechStream, Task<void>>();
+  private attemptedRecoveries = new Set<STT>();
+  private inputEnded = false;
+  private waitingForRecovery = false;
   private _logger = log();
 
   constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
@@ -355,29 +364,38 @@ class FallbackSpeechStream extends SpeechStream {
     if (!this.output.closed) this.output.close();
   }
 
-  private tryRecoverStream(sttInstance: STT): void {
-    if (this.abortSignal.aborted) return;
+  private tryRecoverStream(sttInstance: STT): boolean {
+    if (this.abortSignal.aborted || this.attemptedRecoveries.has(sttInstance)) return false;
     const idx = this.fallbackAdapter.sttInstances.indexOf(sttInstance);
     const status = this.fallbackAdapter.status[idx];
-    if (!status) return;
-
-    const probe = sttInstance.stream({
-      connOptions: {
-        maxRetry: 0,
-        timeoutMs: this.fallbackAdapter.attemptTimeoutMs,
-        retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
-      },
-    });
-    if (this.abortSignal.aborted) {
-      probe.close();
-      return;
+    if (!status || status.available || status.recoveryClosed) return false;
+    if (status.recoveringStreamTask && !status.recoveringStreamTask.done) {
+      status.waitingStreams.add(this);
+      return false;
     }
+    status.waitingStreams.delete(this);
+    this.attemptedRecoveries.add(sttInstance);
 
-    // Absorb child 'error' events while the probe is active. JS EventEmitter
-    // crashes if 'error' fires with no listener; the probe's iterator ends
-    // naturally on failure, so we don't need to do anything with the payload.
-    const errorSink: (e: STTError) => void = () => {};
-    sttInstance.on('error', errorSink);
+    let probe: SpeechStream;
+    try {
+      probe = sttInstance.stream({
+        connOptions: {
+          maxRetry: 0,
+          timeoutMs: this.fallbackAdapter.attemptTimeoutMs,
+          retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
+        },
+      });
+      probe.startTimeOffset = this.startTimeOffset;
+    } catch (error) {
+      this._logger.warn(
+        {
+          stt: sttInstance.label,
+          errorType: error instanceof Error ? error.constructor.name : typeof error,
+        },
+        'STT recovery failed',
+      );
+      return false;
+    }
     const closeProbe = () => {
       try {
         probe.close();
@@ -385,40 +403,56 @@ class FallbackSpeechStream extends SpeechStream {
         /* already closed */
       }
     };
+    if (this.abortSignal.aborted || status.recoveryClosed) {
+      closeProbe();
+      return false;
+    }
 
-    const task: Task<void> = Task.from(async (controller) => {
+    // Absorb provider error events; each probe records its own terminal outcome.
+    const errorSink: (e: STTError) => void = () => {};
+    sttInstance.on('error', errorSink);
+
+    const task = Task.from(async (controller) => {
       controller.signal.addEventListener('abort', closeProbe, { once: true });
       try {
-        let gotTranscript = false;
+        let transcript: SpeechEvent | undefined;
         for await (const ev of probe) {
           if (controller.signal.aborted || this.abortSignal.aborted) break;
           if (ev.type === SpeechEventType.FINAL_TRANSCRIPT) {
             const text = ev.alternatives?.[0]?.text;
             if (!text) continue;
-            gotTranscript = true;
+            transcript = ev;
             break;
           }
         }
-        if (!gotTranscript || controller.signal.aborted || this.abortSignal.aborted) return;
+        if (!transcript || controller.signal.aborted || this.abortSignal.aborted) return;
         if (!status.available) {
           status.available = true;
-          for (const recoveryTask of status.recoveringStreamTasks) {
-            if (recoveryTask !== task) recoveryTask.cancel();
-          }
-          this._logger.info({ stt: sttInstance.label }, `${sttInstance.label} recovered`);
+          this._logger.info({ stt: sttInstance.label }, 'STT recovered');
           this.fallbackAdapter.emitAvailabilityChanged(sttInstance, true);
+        }
+        if (this.waitingForRecovery && !this.abortSignal.aborted && !this.queue.closed) {
+          this.waitingForRecovery = false;
+          this.fallbackAdapter._setActiveStt(sttInstance);
+          this.queue.put(transcript);
         }
       } catch (e) {
         if (controller.signal.aborted || this.abortSignal.aborted) return;
         if (e instanceof APIError) {
           this._logger.warn(
-            { stt: sttInstance.label, err: e },
-            `${sttInstance.label} recovery failed`,
+            {
+              stt: sttInstance.label,
+              errorType: e instanceof Error ? e.constructor.name : typeof e,
+            },
+            'STT recovery failed',
           );
         } else {
           this._logger.debug(
-            { stt: sttInstance.label, err: e },
-            `${sttInstance.label} recovery unexpected error`,
+            {
+              stt: sttInstance.label,
+              errorType: e instanceof Error ? e.constructor.name : typeof e,
+            },
+            'STT recovery failed',
           );
         }
       } finally {
@@ -428,15 +462,49 @@ class FallbackSpeechStream extends SpeechStream {
       }
     });
     this.recoveringStreams.set(probe, task);
-    status.recoveringStreamTasks.add(task);
+    status.recoveringStreamTask = task;
     task.addDoneCallback(() => {
       this.recoveringStreams.delete(probe);
-      status.recoveringStreamTasks.delete(task);
+      if (status.recoveringStreamTask !== task) return;
+      status.recoveringStreamTask = null;
+      if (status.available || status.recoveryClosed) {
+        status.waitingStreams.clear();
+        return;
+      }
+      for (const stream of status.waitingStreams) {
+        status.waitingStreams.delete(stream);
+        if (stream.tryRecoverStream(sttInstance)) break;
+      }
     });
+    if (this.inputEnded) {
+      try {
+        probe.endInput();
+      } catch {
+        closeProbe();
+      }
+    }
+    return true;
+  }
+
+  private async waitForRecovery(): Promise<void> {
+    while (!this.abortSignal.aborted && !this.fallbackAdapter.status.some((s) => s.available)) {
+      const tasks = [...this.recoveringStreams.values()];
+      if (tasks.length === 0) return;
+      await new Promise<void>((resolve) => {
+        const wake = () => {
+          this.abortSignal.removeEventListener('abort', wake);
+          for (const task of tasks) task.removeDoneCallback(wake);
+          resolve();
+        };
+        this.abortSignal.addEventListener('abort', wake, { once: true });
+        for (const task of tasks) task.addDoneCallback(wake);
+      });
+    }
   }
 
   protected async run(): Promise<void> {
     if (this.abortSignal.aborted) return;
+    this.attemptedRecoveries.clear();
     const startTime = Date.now();
     const allFailed = this.fallbackAdapter.status.every((s) => !s.available);
     if (allFailed) {
@@ -450,11 +518,6 @@ class FallbackSpeechStream extends SpeechStream {
     // type to `never` based on its initial value. TS's control-flow analysis
     // for closures can't always see that outer code reassigns the var.
     const mainRef: { current: SpeechStream | null } = { current: null };
-    // Tracks whether the forwarder has finished draining `this.input`.
-    // Children elected after this point never receive input, so we must
-    // end their input immediately on election (mirrors Python's check for
-    // forward_input_task.done() before starting a new one).
-    let forwarderFinished = false;
     // Forwarder runs as a Task so we can cancel+await it on terminal failure.
     const forwarderTask = Task.from(async (controller) => {
       for await (const item of this.input) {
@@ -473,22 +536,25 @@ class FallbackSpeechStream extends SpeechStream {
             if (typeof item === 'symbol') current.flush();
             else current.pushFrame(item);
           } catch (e) {
-            this._logger.debug({ err: e }, 'error forwarding input to main stream');
+            this._logger.debug(
+              { errorType: e instanceof Error ? e.constructor.name : typeof e },
+              'error forwarding input to main stream',
+            );
           }
         }
       }
-      const endTarget = mainRef.current;
-      if (endTarget !== null) {
+      this.inputEnded = true;
+      for (const endTarget of [mainRef.current, ...this.recoveringStreams.keys()]) {
         try {
-          endTarget.endInput();
+          endTarget?.endInput();
         } catch {
           /* already ended */
         }
       }
-      forwarderFinished = true;
     });
 
     const closeStreams = () => {
+      for (const status of this.fallbackAdapter.status) status.waitingStreams.delete(this);
       for (const task of this.recoveringStreams.values()) {
         task.cancel();
       }
@@ -503,14 +569,24 @@ class FallbackSpeechStream extends SpeechStream {
 
     this.abortSignal.addEventListener('abort', closeStreams, { once: true });
     try {
+      if (allFailed) {
+        this.waitingForRecovery = true;
+        try {
+          for (const stt of this.fallbackAdapter.sttInstances) this.tryRecoverStream(stt);
+          await this.waitForRecovery();
+        } finally {
+          this.waitingForRecovery = false;
+        }
+      }
       for (let i = 0; i < this.fallbackAdapter.sttInstances.length; i++) {
         if (this.abortSignal.aborted) return;
         const sttInstance = this.fallbackAdapter.sttInstances[i]!;
         const status = this.fallbackAdapter.status[i]!;
-        if (!(status.available || allFailed)) {
+        if (!status.available) {
           this.tryRecoverStream(sttInstance);
           continue;
         }
+        this.attemptedRecoveries.delete(sttInstance);
 
         // Absorb provider errors here; the child records its own terminal outcome.
         const errListener = () => {};
@@ -533,7 +609,7 @@ class FallbackSpeechStream extends SpeechStream {
             // will never call endInput() on this child. End it here so the
             // child's `for await (input)` loop can terminate cleanly instead
             // of hanging forever.
-            if (forwarderFinished) {
+            if (this.inputEnded) {
               try {
                 child.endInput();
               } catch {
@@ -554,30 +630,23 @@ class FallbackSpeechStream extends SpeechStream {
             child.close();
           }
 
-          if (this.abortSignal.aborted || !child._failed) {
+          if (this.abortSignal.aborted || (!child._failed && this.inputEnded)) {
             return;
           }
           if (status.available) {
             status.available = false;
             this.fallbackAdapter.emitAvailabilityChanged(sttInstance, false);
           }
-          this._logger.warn(
-            { stt: sttInstance.label },
-            `${sttInstance.label} failed, switching to next STT`,
-          );
+          this._logger.warn({ stt: sttInstance.label }, 'STT failed, switching to next provider');
         } catch (e) {
           if (this.abortSignal.aborted) return;
-          if (e instanceof APIError) {
-            this._logger.warn(
-              { stt: sttInstance.label, err: e },
-              `${sttInstance.label} failed, switching to next STT`,
-            );
-          } else {
-            this._logger.warn(
-              { stt: sttInstance.label, err: e },
-              `${sttInstance.label} unexpected error, switching to next STT`,
-            );
-          }
+          this._logger.warn(
+            {
+              stt: sttInstance.label,
+              errorType: e instanceof Error ? e.constructor.name : typeof e,
+            },
+            'STT failed, switching to next provider',
+          );
           if (status.available) {
             status.available = false;
             this.fallbackAdapter.emitAvailabilityChanged(sttInstance, false);

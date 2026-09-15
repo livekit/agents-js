@@ -6,6 +6,7 @@ import type { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '../_exceptions.js';
 import { asLanguageCode } from '../language.js';
+import { log } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
 import { Future, delay } from '../utils.js';
 import { Agent, AgentTask } from '../voice/agent.js';
@@ -193,7 +194,7 @@ describe('FallbackSpeechStream lifecycle', () => {
     child.fail();
     const probe = await getStream(primary, 1);
     const fallback = await getStream(secondary);
-    const [recoveryTask] = adapter.status[0]!.recoveringStreamTasks;
+    const recoveryTask = adapter.status[0]!.recoveringStreamTask;
 
     stream.close();
 
@@ -214,6 +215,7 @@ describe('FallbackSpeechStream lifecycle', () => {
 
     const other = adapter.stream();
     const otherChild = await getStream(secondary, 1);
+    other.endInput();
     otherChild.finish();
     expect((await other.next()).done).toBe(true);
 
@@ -253,14 +255,20 @@ describe('FallbackSpeechStream lifecycle', () => {
     await getStream(secondary);
 
     const replacement = adapter.stream();
-    await getStream(secondary, 1);
+    const replacementFallback = await getStream(secondary, 1);
+    expect(primary.streams).toHaveLength(2);
+    const oldPushFrame = vi.spyOn(oldProbe, 'pushFrame');
+    const fallbackPushFrame = vi.spyOn(replacementFallback, 'pushFrame');
+    const frame = new AudioFrame(new Int16Array(160), 16_000, 1, 160);
+    replacement.pushFrame(frame);
+    await vi.waitFor(() => expect(fallbackPushFrame).toHaveBeenCalledWith(frame));
+    expect(oldPushFrame).not.toHaveBeenCalled();
     owner.close();
 
     const probe = await getStream(primary, 2);
     expect(oldProbe.isClosed).toBe(true);
     expect(probe.isClosed).toBe(false);
     const pushFrame = vi.spyOn(probe, 'pushFrame');
-    const frame = new AudioFrame(new Int16Array(160), 16_000, 1, 160);
     replacement.pushFrame(frame);
     await vi.waitFor(() => expect(pushFrame).toHaveBeenCalledWith(frame));
 
@@ -272,35 +280,205 @@ describe('FallbackSpeechStream lifecycle', () => {
     ]);
   });
 
-  it.each(['close', 'recover', 'one recovery'] as const)(
-    'cleans up concurrent probes on %s',
-    async (action) => {
-      adapter.stream();
+  it.each(['close', 'recover'] as const)('does not start a waiting probe on %s', async (action) => {
+    adapter.stream();
+    (await getStream(primary)).fail();
+    const firstProbe = await getStream(primary, 1);
+    await getStream(secondary);
+    adapter.stream();
+    await getStream(secondary, 1);
+    expect(primary.streams).toHaveLength(2);
+
+    if (action === 'close') {
+      await adapter.close();
+    } else {
+      firstProbe.emitText('primary recovered');
+    }
+
+    await vi.waitFor(() => expect(primary.listenerCount('error')).toBe(0));
+    expect(firstProbe.isClosed).toBe(true);
+    expect(primary.streams).toHaveLength(2);
+    expect(secondary.streams.every((stream) => !stream.isClosed)).toBe(true);
+    expect(adapter.status[0]!.recoveringStreamTask).toBeNull();
+    expect(availability).toEqual([
+      { label: 'primary', available: false },
+      ...(action !== 'close' ? [{ label: 'primary', available: true }] : []),
+    ]);
+  });
+
+  it('skips a closed waiting stream when transferring recovery', async () => {
+    const owner = adapter.stream();
+    (await getStream(primary)).fail();
+    const oldProbe = await getStream(primary, 1);
+    await getStream(secondary);
+    const waiting = adapter.stream();
+    await getStream(secondary, 1);
+    const replacement = adapter.stream();
+    await getStream(secondary, 2);
+    expect(primary.streams).toHaveLength(2);
+
+    waiting.close();
+    owner.close();
+
+    const probe = await getStream(primary, 2);
+    expect(oldProbe.isClosed).toBe(true);
+    expect(primary.streams).toHaveLength(3);
+    const pushFrame = vi.spyOn(probe, 'pushFrame');
+    const frame = new AudioFrame(new Int16Array(160), 16_000, 1, 160);
+    replacement.pushFrame(frame);
+    await vi.waitFor(() => expect(pushFrame).toHaveBeenCalledWith(frame));
+  });
+
+  it('continues transcription when a child exits before parent input EOF', async () => {
+    const stream = adapter.stream();
+    (await getStream(primary)).finish();
+
+    const fallback = await getStream(secondary);
+    const pushFrame = vi.spyOn(fallback, 'pushFrame');
+    const frame = new AudioFrame(new Int16Array(160), 16_000, 1, 160);
+    stream.pushFrame(frame);
+    await vi.waitFor(() => expect(pushFrame).toHaveBeenCalledWith(frame));
+    fallback.emitText('continued transcription');
+    expect((await stream.next()).value?.alternatives?.[0]?.text).toBe('continued transcription');
+    expect(availability).toEqual([{ label: 'primary', available: false }]);
+  });
+
+  it('tries the next waiting stream if a replacement probe throws during setup', async () => {
+    const owner = adapter.stream();
+    (await getStream(primary)).fail();
+    await getStream(primary, 1);
+    await getStream(secondary);
+    adapter.stream();
+    await getStream(secondary, 1);
+    const replacement = adapter.stream();
+    await getStream(secondary, 2);
+    vi.spyOn(primary, 'stream').mockImplementationOnce(() => {
+      throw new Error('probe setup failed');
+    });
+
+    owner.close();
+
+    const probe = await getStream(primary, 2);
+    const pushFrame = vi.spyOn(probe, 'pushFrame');
+    const frame = new AudioFrame(new Int16Array(160), 16_000, 1, 160);
+    replacement.pushFrame(frame);
+    await vi.waitFor(() => expect(pushFrame).toHaveBeenCalledWith(frame));
+  });
+
+  it('waits for a successful probe before using an unavailable provider', async () => {
+    for (const status of adapter.status) status.available = false;
+    const stream = adapter.stream();
+    const probe = await getStream(primary);
+    await getStream(secondary);
+    expect(primary.streams).toHaveLength(1);
+
+    probe.emitText('probe confirmed recovery');
+
+    const main = await getStream(primary, 1);
+    expect(probe.isClosed).toBe(true);
+    expect(availability).toEqual([{ label: 'primary', available: true }]);
+    main.emitText('normal transcription');
+    expect((await stream.next()).value?.alternatives?.[0]?.text).toBe('probe confirmed recovery');
+    expect((await stream.next()).value?.alternatives?.[0]?.text).toBe('normal transcription');
+  });
+
+  it('ends without normal streams when every recovery probe fails', async () => {
+    for (const status of adapter.status) status.available = false;
+    adapter.on('error', () => {});
+    const stream = adapter.stream();
+    const primaryProbe = await getStream(primary);
+    const secondaryProbe = await getStream(secondary);
+
+    stream.endInput();
+    primaryProbe.fail();
+    secondaryProbe.fail();
+
+    expect((await stream.next()).done).toBe(true);
+    expect(primary.streams).toHaveLength(1);
+    expect(secondary.streams).toHaveLength(1);
+    expect(availability).toEqual([]);
+  });
+
+  it('closes while waiting for recovery when every provider is unavailable', async () => {
+    for (const status of adapter.status) status.available = false;
+    const stream = adapter.stream();
+    const primaryProbe = await getStream(primary);
+    const secondaryProbe = await getStream(secondary);
+
+    stream.close();
+
+    await vi.waitFor(() => expect(primary.listenerCount('error')).toBe(0));
+    expect(secondary.listenerCount('error')).toBe(0);
+    expect(primaryProbe.isClosed).toBe(true);
+    expect(secondaryProbe.isClosed).toBe(true);
+    expect(availability).toEqual([]);
+  });
+
+  it.each([
+    ['APIError', APIError],
+    ['Error', Error],
+  ] as const)('logs safe metadata for a %s provider error', async (_name, ErrorType) => {
+    const error = new ErrorType('secret provider response');
+    error.cause = new Error('secret credentials');
+    const warn = vi.spyOn(log(), 'warn');
+    vi.spyOn(primary, 'stream').mockImplementation(() => {
+      throw error;
+    });
+
+    adapter.stream();
+    await getStream(secondary);
+
+    expect(warn).toHaveBeenCalledWith(
+      { stt: 'primary', errorType: ErrorType.name },
+      'STT failed, switching to next provider',
+    );
+    for (const [attributes] of warn.mock.calls) {
+      expect(attributes).not.toHaveProperty('err');
+      expect(attributes).not.toHaveProperty('error');
+    }
+  });
+
+  it('transfers the recovery probe through an AgentTask handoff', async () => {
+    const beginHandoff = new Future<void>();
+    const task = AgentTask.create<void>({ instructions: 'question' });
+    const parent = Agent.create({
+      instructions: 'parent',
+      onEnter: async () => {
+        await beginHandoff.await;
+        await task.run();
+      },
+    });
+    const session = new AgentSession({
+      stt: adapter,
+      vad: null,
+      turnDetection: 'manual',
+      turnHandling: { interruption: { enabled: false } },
+    });
+    try {
+      await session.start({ agent: parent });
       (await getStream(primary)).fail();
-      const firstProbe = await getStream(primary, 1);
+      const oldProbe = await getStream(primary, 1);
       await getStream(secondary);
-      adapter.stream();
-      const secondProbe = await getStream(primary, 2);
+
+      beginHandoff.resolve();
       await getStream(secondary, 1);
+      const probe = await getStream(primary, 2);
 
-      if (action === 'close') {
-        await adapter.close();
-      } else {
-        firstProbe.emitText('primary recovered');
-        if (action === 'recover') secondProbe.emitText('primary also recovered');
-      }
-
-      await vi.waitFor(() => expect(primary.listenerCount('error')).toBe(0));
-      expect(firstProbe.isClosed).toBe(true);
-      expect(secondProbe.isClosed).toBe(true);
-      expect(secondary.streams.every((stream) => !stream.isClosed)).toBe(true);
-      expect(adapter.status[0]!.recoveringStreamTasks.size).toBe(0);
+      expect(session.currentAgent).toBe(task);
+      expect(oldProbe.isClosed).toBe(true);
+      expect(primary.streams.filter((stream) => !stream.isClosed)).toEqual([probe]);
+      probe.emitText('primary recovered in task');
+      await vi.waitFor(() => expect(adapter.status[0]!.available).toBe(true));
       expect(availability).toEqual([
         { label: 'primary', available: false },
-        ...(action !== 'close' ? [{ label: 'primary', available: true }] : []),
+        { label: 'primary', available: true },
       ]);
-    },
-  );
+    } finally {
+      beginHandoff.resolve();
+      if (!task.done) task.complete(undefined);
+      await session.close();
+    }
+  });
 
   it('preserves recovery through an AgentTask handoff', async () => {
     const beginHandoff = new Future<void>();
