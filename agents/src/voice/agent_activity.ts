@@ -5156,7 +5156,12 @@ export class AgentActivity implements RecognitionHooks {
 
       this.cancelPreemptiveGeneration();
 
-      await this._onExitTask.result;
+      try {
+        await this._onExitTask.result;
+      } catch (error) {
+        if (this._onExitTask.cancelled) throw error;
+        this.logger.error(error, 'error in agent onExit');
+      }
       await this._pauseSchedulingTask([]);
 
       // detach after speech tasks are done but before _closeSessionResources

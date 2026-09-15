@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { expect, it, vi } from 'vitest';
 import { ToolError, tool } from '../llm/tool_context.js';
-import { Future } from '../utils.js';
+import { Future, Task } from '../utils.js';
 import { Agent, AgentTask } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
@@ -219,3 +219,79 @@ it.each([
   },
   5_000,
 );
+
+it.each(['success', 'failure'] as const)(
+  'resumes the parent after task onExit throws (result=%s)',
+  async (outcome) => {
+    const result = new Future<unknown>();
+    const failure = new ToolError('task failed');
+    const task = AgentTask.create<string>({
+      instructions: 'finish the task',
+      onEnter: () => task.complete(outcome === 'success' ? 'done' : failure),
+      onExit: async () => {
+        throw new Error('onExit failed');
+      },
+    });
+    const answered = vi.fn();
+    const agent = Agent.create({
+      instructions: 'parent',
+      tools: [
+        tool({
+          name: 'transfer',
+          description: 'Run the task.',
+          execute: async () => {
+            try {
+              const value = await task.run();
+              result.resolve(value);
+              return value;
+            } catch (error) {
+              result.resolve(error);
+              throw error;
+            }
+          },
+        }),
+        tool({ name: 'answer', description: 'Answer the next turn.', execute: answered }),
+      ],
+    });
+    const session = new AgentSession({
+      llm: new FakeLLM([
+        { input: 'transfer', toolCalls: [{ name: 'transfer', args: {} }] },
+        { input: 'next turn', toolCalls: [{ name: 'answer', args: {} }] },
+      ]),
+      turnHandling: { turnDetection: 'manual' },
+    });
+    try {
+      await session.start({ agent });
+      const parentActivity = agent._agentActivity!;
+      session.generateReply({ userInput: 'transfer' });
+      expect(await result.await).toBe(outcome === 'success' ? 'done' : failure);
+      expect(session._activity).toBe(parentActivity);
+      expect(parentActivity.schedulingPaused).toBe(false);
+      expect(task._agentActivity).toBeUndefined();
+      await vi.waitFor(() => expect(parentActivity.currentSpeech).toBeUndefined());
+      session.generateReply({ userInput: 'next turn' });
+      await vi.waitFor(() => expect(answered).toHaveBeenCalledOnce());
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+it('propagates onExit cancellation from drain', async () => {
+  const cancellation = new Error('onExit cancelled');
+  cancellation.name = 'AbortError';
+  const onExit = vi.fn().mockImplementationOnce(() => {
+    Task.current()!.cancel();
+    throw cancellation;
+  });
+  const agent = Agent.create({ instructions: 'parent', onExit });
+  const session = new AgentSession({ llm: new FakeLLM([]) });
+  try {
+    await session.start({ agent });
+    const activity = agent._agentActivity!;
+    await expect(activity.drain()).rejects.toBe(cancellation);
+    expect(activity.schedulingPaused).toBe(false);
+  } finally {
+    await session.close();
+  }
+});
