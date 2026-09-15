@@ -171,11 +171,6 @@ interface Speech {
   startedAt: number;
   quietMs: number;
 }
-interface DelegatedResponse {
-  callIds: Set<string>;
-  returned: Set<string>;
-  completed: boolean;
-}
 
 /**
  * GPT-Live WebSocket session, accessible through Agent.duplexSession.
@@ -194,8 +189,12 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private readonly debug = Number(process.env.LK_OPENAI_DEBUG ?? 0) !== 0;
   private readonly history = llm.ChatContext.empty();
   private readonly speech = new Map<Role, Speech>();
-  private readonly delegatedResponses = new Map<string | null, DelegatedResponse>();
-  private readonly callToDelegation = new Map<string, string | null>();
+  // delegation id -> call ids of its response that has not completed yet; on completion the
+  // call ids move to the open set, and stay there until each output is sent to the backend.
+  // backendResponsePending is set once an output is sent and cleared by the response.create
+  private readonly backendRunningResponses = new Map<string | null, Set<string>>();
+  private readonly backendOpenCalls = new Set<string>();
+  private backendResponsePending = false;
   private readonly delegationIds = new Set<string>();
   private readonly bstream = new AudioByteStream(SAMPLE_RATE, 1, SAMPLE_RATE / 10);
   private inputResampler?: AudioResampler;
@@ -385,8 +384,9 @@ export class GPTLiveSession extends llm.DuplexSession<{
                 this.resetInputAudio();
                 this.endSpeech('user');
                 this.speech.clear();
-                this.delegatedResponses.clear();
-                this.callToDelegation.clear();
+                this.backendRunningResponses.clear();
+                this.backendOpenCalls.clear();
+                this.backendResponsePending = false;
                 this.delegationIds.clear();
                 this.usageSeconds = 0;
                 this._sessionId = undefined;
@@ -674,11 +674,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private handleResponseEvent(delegationId: string | null, event: ResponsesEvent): void {
     switch (event.type) {
       case 'response.created':
-        this.delegatedResponses.set(delegationId, {
-          callIds: new Set(),
-          returned: new Set(),
-          completed: false,
-        });
+        this.backendRunningResponses.set(delegationId, new Set());
         break;
       case 'response.output_item.done': {
         const item = event.item;
@@ -690,17 +686,15 @@ export class GPTLiveSession extends llm.DuplexSession<{
           );
           return;
         }
-        let pending = this.delegatedResponses.get(delegationId);
-        if (!pending) {
+        let calls = this.backendRunningResponses.get(delegationId);
+        if (!calls) {
           this.logger.warn(
             { 'lk.pii.call_id': item.call_id, 'lk.pii.delegation_id': delegationId },
             'GPT-Live function call outside a known response',
           );
-          pending = { callIds: new Set(), returned: new Set(), completed: true };
-          this.delegatedResponses.set(delegationId, pending);
+          calls = this.backendOpenCalls;
         }
-        pending.callIds.add(item.call_id);
-        this.callToDelegation.set(item.call_id, delegationId);
+        calls.add(item.call_id);
         const call = new llm.FunctionCall({
           id: item.id ?? shortuuid('fc_'),
           callId: item.call_id,
@@ -713,11 +707,12 @@ export class GPTLiveSession extends llm.DuplexSession<{
       }
       case 'response.completed': {
         this.handleResponseUsage(event.response);
-        const pending = this.delegatedResponses.get(delegationId);
-        if (pending) {
-          pending.completed = true;
-          this.maybeContinueResponse(delegationId);
+        const calls = this.backendRunningResponses.get(delegationId);
+        if (calls) {
+          this.backendRunningResponses.delete(delegationId);
+          for (const callId of calls) this.backendOpenCalls.add(callId);
         }
+        this.maybeContinueResponse();
         break;
       }
       case 'response.failed':
@@ -732,9 +727,10 @@ export class GPTLiveSession extends llm.DuplexSession<{
           },
           'GPT-Live backend response did not complete',
         );
-        const pending = this.delegatedResponses.get(delegationId);
-        for (const callId of pending?.callIds ?? []) this.callToDelegation.delete(callId);
-        this.delegatedResponses.delete(delegationId);
+        // the service discards a failed response's calls: an output for one is refused, so it
+        // goes to the voice model as context instead
+        this.backendRunningResponses.delete(delegationId);
+        this.maybeContinueResponse();
         break;
       }
     }
@@ -767,12 +763,16 @@ export class GPTLiveSession extends llm.DuplexSession<{
     }
   }
 
-  private maybeContinueResponse(delegationId: string | null): void {
-    const pending = this.delegatedResponses.get(delegationId);
-    if (!pending?.completed || [...pending.callIds].some((id) => !pending.returned.has(id))) return;
-    this.delegatedResponses.delete(delegationId);
-    if (!pending.callIds.size) return;
-    for (const callId of pending.callIds) this.callToDelegation.delete(callId);
+  private maybeContinueResponse(): void {
+    // one response.create continues the chain, and only once nothing is still asking and every
+    // call in the conversation has its answer: the service refuses a partial batch
+    if (
+      this.backendRunningResponses.size ||
+      this.backendOpenCalls.size ||
+      !this.backendResponsePending
+    )
+      return;
+    this.backendResponsePending = false;
     this.queueEvent(
       {
         type: 'response.create',
@@ -952,7 +952,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
   async _appendItems(items: llm.ChatItem[]): Promise<void> {
     this.history.insert(items);
     if (!this.sessionStartSent) return;
-    const outputs: { output: llm.FunctionCallOutput; delegationId: string | null }[] = [];
+    const outputs: llm.FunctionCallOutput[] = [];
     const lines: string[] = [];
     for (const item of items) {
       if (item.type === 'message' && (item.role === 'system' || item.role === 'developer')) {
@@ -960,8 +960,12 @@ export class GPTLiveSession extends llm.DuplexSession<{
           this.append('session.instructions.append', item.textContent, null, {
             replayOnReconnect: false,
           });
-      } else if (item.type === 'function_call_output' && this.callToDelegation.has(item.callId)) {
-        outputs.push({ output: item, delegationId: this.callToDelegation.get(item.callId)! });
+      } else if (
+        item.type === 'function_call_output' &&
+        (this.backendOpenCalls.has(item.callId) ||
+          [...this.backendRunningResponses.values()].some((calls) => calls.has(item.callId)))
+      ) {
+        outputs.push(item);
       } else {
         const rendered = renderItem(item);
         if (rendered) lines.push(`${rendered[0]}: ${rendered[1]}`);
@@ -969,7 +973,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
     }
     if (lines.length)
       this.append('session.thinking.append', lines.join('\n'), null, { replayOnReconnect: false });
-    for (const { output, delegationId } of outputs) {
+    for (const output of outputs) {
       this.queueEvent(
         {
           type: 'response.item.create',
@@ -978,8 +982,12 @@ export class GPTLiveSession extends llm.DuplexSession<{
         } satisfies ClientEvent,
         false,
       );
-      this.delegatedResponses.get(delegationId)?.returned.add(output.callId);
-      this.maybeContinueResponse(delegationId);
+      this.backendOpenCalls.delete(output.callId);
+      for (const calls of this.backendRunningResponses.values()) calls.delete(output.callId);
+    }
+    if (outputs.length) {
+      this.backendResponsePending = true;
+      this.maybeContinueResponse();
     }
   }
   /** Prompt an immediate spoken reply to instructions or the newest typed user message. */
