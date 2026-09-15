@@ -2,8 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { Throws } from '@livekit/throws-transformer/throws';
+import { type Attributes, type Span, trace } from '@opentelemetry/api';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
+import * as traceTypes from '../telemetry/trace_types.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import type { ChatContext } from './chat_context.js';
 import type { ChatChunk } from './llm.js';
@@ -103,8 +105,29 @@ export class FallbackAdapter extends LLM {
     }
   }
 
-  get model(): string {
-    return 'FallbackAdapter';
+  /**
+   * The instance the next request goes to first: the first one marked available, or the primary
+   * once all are down (they are then all retried, primary first). A failed instance's recovery
+   * task flips it back to available, so a recovered primary is reported again before it has
+   * served.
+   */
+  private nextInstance(): LLM {
+    const index = this._status.findIndex((status) => status.available);
+    return this.llms[index === -1 ? 0 : index]!;
+  }
+
+  /**
+   * The model of the instance that serves next (see `nextInstance`). Spans and metrics read
+   * this, so a failover shows the model expected to answer rather than the adapter; the instance
+   * that actually served is stamped per request by the stream.
+   */
+  override get model(): string {
+    return this.nextInstance().model;
+  }
+
+  /** The provider of the instance that serves next (see {@link model}). */
+  override get provider(): string {
+    return this.nextInstance().provider;
   }
 
   label(): string {
@@ -147,6 +170,21 @@ export class FallbackAdapter extends LLM {
  * LLMStream implementation for FallbackAdapter.
  * Handles fallback logic between multiple LLM providers.
  */
+function providerAttr(llm: LLM): Attributes {
+  const normalized = traceTypes.genAIProviderName(llm.provider);
+  return normalized ? { [traceTypes.ATTR_GEN_AI_PROVIDER_NAME]: normalized } : {};
+}
+
+/** The instance that served: its label, position, model and provider. */
+function fallbackAttrs(llm: LLM, index: number): Attributes {
+  return {
+    [traceTypes.ATTR_FALLBACK_LABEL]: llm.label(),
+    [traceTypes.ATTR_FALLBACK_INDEX]: index,
+    [traceTypes.ATTR_GEN_AI_REQUEST_MODEL]: llm.model,
+    ...providerAttr(llm),
+  };
+}
+
 class FallbackLLMStream extends LLMStream {
   private adapter: FallbackAdapter;
   private parallelToolCalls?: boolean;
@@ -154,6 +192,8 @@ class FallbackLLMStream extends LLMStream {
   private extraKwargs?: Record<string, unknown>;
   private _currentStream?: LLMStream;
   private _log = log();
+  // the span this request was made under (llm_node): told which instance served
+  private callerSpan: Span | undefined = trace.getActiveSpan();
 
   constructor(
     adapter: FallbackAdapter,
@@ -182,6 +222,22 @@ class FallbackLLMStream extends LLMStream {
    */
   override get chatCtx(): ChatContext {
     return this._currentStream?.chatCtx ?? super.chatCtx;
+  }
+
+  /**
+   * The instance that served: on the current (attempt) span, and as the response side of the
+   * adapter's request span and the caller's (llm_node). Request-side attributes named the
+   * instance expected to serve; the response side names the one that did, read from `llm`
+   * rather than the adapter since concurrent requests may be served by different instances.
+   */
+  private recordServed(llm: LLM, index: number): void {
+    trace.getActiveSpan()?.setAttributes(fallbackAttrs(llm, index));
+    const responseAttrs: Attributes = {
+      [traceTypes.ATTR_GEN_AI_RESPONSE_MODEL]: llm.model,
+      ...providerAttr(llm),
+    };
+    this.llmRequestSpan?.setAttributes(responseAttrs);
+    this.callerSpan?.setAttributes(responseAttrs);
   }
 
   /**
@@ -352,6 +408,7 @@ class FallbackLLMStream extends LLMStream {
             { llm: llm.label(), totalChunks: chunkCount, textLength: textSent.length },
             'FallbackAdapter: Provider succeeded',
           );
+          this.recordServed(llm, i);
           return;
         } catch (error) {
           // Mark as unavailable if it was available before

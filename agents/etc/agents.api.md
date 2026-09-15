@@ -1376,6 +1376,16 @@ const ATTR_EXCEPTION_TRACE = "exception.stacktrace";
 // @public (undocumented)
 const ATTR_EXCEPTION_TYPE = "exception.type";
 
+// Warning: (ae-missing-release-tag) "ATTR_FALLBACK_INDEX" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_FALLBACK_INDEX = "lk.fallback.index";
+
+// Warning: (ae-missing-release-tag) "ATTR_FALLBACK_LABEL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_FALLBACK_LABEL = "lk.fallback.label";
+
 // Warning: (ae-missing-release-tag) "ATTR_FIRST_FRAME_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -1646,6 +1656,11 @@ const ATTR_INTERRUPTION_PREDICTION_DURATION = "lk.interruption.prediction_durati
 // @public (undocumented)
 const ATTR_INTERRUPTION_PROBABILITY = "lk.interruption.probability";
 
+// Warning: (ae-missing-release-tag) "ATTR_INTERRUPTION_SOURCE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_INTERRUPTION_SOURCE = "lk.interruption.source";
+
 // Warning: (ae-missing-release-tag) "ATTR_INTERRUPTION_TOTAL_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1691,6 +1706,21 @@ const ATTR_JOB_ID = "lk.job_id";
 // @public
 const ATTR_JOB_LAUNCH_LATENCY = "lk.job.launch_latency";
 
+// Warning: (ae-missing-release-tag) "ATTR_KEYTERMS_ADDED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_KEYTERMS_ADDED = "lk.keyterms.added";
+
+// Warning: (ae-missing-release-tag) "ATTR_KEYTERMS_COUNT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_KEYTERMS_COUNT = "lk.keyterms.count";
+
+// Warning: (ae-missing-release-tag) "ATTR_KEYTERMS_REMOVED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_KEYTERMS_REMOVED = "lk.keyterms.removed";
+
 // Warning: (ae-missing-release-tag) "ATTR_LANGFUSE_COMPLETION_START_TIME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1731,10 +1761,20 @@ const ATTR_PARTICIPANT_IDENTITY = "lk.pii.participant_identity";
 // @public (undocumented)
 const ATTR_PARTICIPANT_KIND = "lk.participant_kind";
 
+// Warning: (ae-missing-release-tag) "ATTR_PLAYOUT_POSITION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_PLAYOUT_POSITION = "lk.playout.position";
+
 // Warning: (ae-missing-release-tag) "ATTR_PRE_CONNECT_AUDIO_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 const ATTR_PRE_CONNECT_AUDIO_DURATION = "lk.pre_connect_audio.duration";
+
+// Warning: (ae-missing-release-tag) "ATTR_PREVIOUS_AGENT_LABEL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_PREVIOUS_AGENT_LABEL = "lk.previous_agent_label";
 
 // Warning: (ae-missing-release-tag) "ATTR_PROVIDER_REQUEST_IDS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -2916,6 +2956,7 @@ abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> 
         inputTokens?: number;
         outputTokens?: number;
     }): void;
+    protected get ttsRequestSpan(): Span | undefined;
 }
 
 declare namespace cli {
@@ -4222,8 +4263,9 @@ export class FallbackAdapter extends LLM {
     readonly llms: LLM[];
     // (undocumented)
     readonly maxRetryPerLLM: number;
-    // (undocumented)
     get model(): string;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "model"
+    get provider(): string;
     // (undocumented)
     readonly retryInterval: number;
     // (undocumented)
@@ -4250,9 +4292,8 @@ class FallbackAdapter_2 extends STT {
     label: string;
     // (undocumented)
     readonly maxRetryPerSTT: number;
-    // (undocumented)
     get model(): string;
-    // (undocumented)
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "model"
     get provider(): string;
     // (undocumented)
     _pushConversationItem(ev: ConversationItemAddedEvent): void;
@@ -4262,8 +4303,6 @@ class FallbackAdapter_2 extends STT {
     protected _recognize(frame: Parameters<STT['recognize']>[0], abortSignal?: AbortSignal): Promise<SpeechEvent>;
     // (undocumented)
     readonly retryIntervalMs: number;
-    // @internal
-    _setActiveStt(stt: STT): void;
     // Warning: (ae-forgotten-export) The symbol "STTStatus" needs to be exported by the entry point index.d.ts
     get status(): STTStatus[];
     // (undocumented)
@@ -4292,6 +4331,9 @@ class FallbackAdapter_3 extends TTS {
     // (undocumented)
     markUnAvailable(index: number): void;
     readonly maxRetryPerTTS: number;
+    get model(): string;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "model"
+    get provider(): string;
     readonly recoveryDelayMs: number;
     // Warning: (ae-forgotten-export) The symbol "TTSStatus" needs to be exported by the entry point index.d.ts
     get status(): TTSStatus[];
@@ -5174,6 +5216,11 @@ export type InterruptionModelUsage = {
     totalRequests: number;
 };
 
+// Warning: (ae-missing-release-tag) "InterruptionSource" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type InterruptionSource = 'audio_activity' | 'user_turn' | 'programmatic';
+
 // Warning: (ae-internal-missing-underscore) The name "intervalForRetry" should be prefixed with an underscore because the declaration is marked as @internal
 //
 // @internal
@@ -5477,7 +5524,7 @@ export class KeytermDetector extends KeytermDetector_base {
     // @internal
     _pendingTerms: Map<string, number>;
     // @internal
-    runOnce(chatCtx: ChatContext, abortSignal?: AbortSignal): Promise<void>;
+    runOnce(chatCtx: ChatContext, abortSignal?: AbortSignal, parent?: Context): Promise<void>;
     // (undocumented)
     setStaticKeyterms(terms: string[]): void;
     // Warning: (ae-forgotten-export) The symbol "KeytermDetectorSession" needs to be exported by the entry point index.d.ts
@@ -5805,6 +5852,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     get connOptions(): APIConnectOptions;
     // (undocumented)
     protected _connOptions: APIConnectOptions;
+    protected get llmRequestSpan(): Span | undefined;
     // (undocumented)
     protected logger: Logger;
     // (undocumented)
@@ -7941,9 +7989,11 @@ export class SpeechHandle {
     get id(): string;
     // (undocumented)
     get inputDetails(): InputDetails;
-    interrupt(force?: boolean): SpeechHandle;
+    interrupt(force?: boolean, source?: InterruptionSource): SpeechHandle;
     // (undocumented)
     get interrupted(): boolean;
+    // @internal
+    _interruptSource?: InterruptionSource;
     // @internal (undocumented)
     _itemAdded(items: ChatItem[]): void;
     // @internal (undocumented)
@@ -7991,7 +8041,9 @@ export class SpeechHandle {
     waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void>;
 }
 
-// @public
+// Warning: (ae-missing-release-tag) "SpeechHandleCircularWaitError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
 export class SpeechHandleCircularWaitError extends Error {
     constructor(functionCallName: string);
 }
@@ -8580,6 +8632,7 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     }): void;
     // @internal
     get startedTime(): SynthesizeStreamStartedTime | undefined;
+    protected get ttsRequestSpan(): Span | undefined;
     // (undocumented)
     updateInputStream(text: ReadableStream_2<string>): void;
 }
@@ -9273,6 +9326,9 @@ declare namespace traceTypes {
         ATTR_JOB_LAUNCH_LATENCY,
         ATTR_JOB_ENTRYPOINT_LATENCY,
         ATTR_JOB_DISPATCH_LATENCY,
+        ATTR_KEYTERMS_COUNT,
+        ATTR_KEYTERMS_ADDED,
+        ATTR_KEYTERMS_REMOVED,
         ATTR_ROOM_AUTO_SUBSCRIBE,
         ATTR_ROOM_E2EE,
         ATTR_ROOM_REMOTE_PARTICIPANT_COUNT,
@@ -9347,6 +9403,11 @@ declare namespace traceTypes {
         ATTR_AMD_SPEECH_DURATION,
         ATTR_AMD_DELAY,
         ATTR_AMD_TRANSCRIPT,
+        ATTR_INTERRUPTION_SOURCE,
+        ATTR_PLAYOUT_POSITION,
+        ATTR_PREVIOUS_AGENT_LABEL,
+        ATTR_FALLBACK_LABEL,
+        ATTR_FALLBACK_INDEX,
         ATTR_IS_INTERRUPTION,
         ATTR_INTERRUPTION_PROBABILITY,
         ATTR_INTERRUPTION_TOTAL_DURATION,
@@ -10147,6 +10208,7 @@ declare namespace voice {
         SpeechHandleCircularWaitError,
         InputDetails,
         ResolvedSpeechHandle,
+        InterruptionSource,
         testing,
         RunOutputOptions,
         textTransforms,
@@ -10571,9 +10633,9 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:393:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1058:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1744:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1744:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1744:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1771:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1771:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1771:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
