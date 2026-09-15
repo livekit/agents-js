@@ -272,31 +272,35 @@ describe('FallbackSpeechStream lifecycle', () => {
     ]);
   });
 
-  it.each(['close', 'recover'] as const)('cleans up concurrent probes on %s', async (action) => {
-    adapter.stream();
-    (await getStream(primary)).fail();
-    const firstProbe = await getStream(primary, 1);
-    await getStream(secondary);
-    adapter.stream();
-    const secondProbe = await getStream(primary, 2);
-    await getStream(secondary, 1);
+  it.each(['close', 'recover', 'one recovery'] as const)(
+    'cleans up concurrent probes on %s',
+    async (action) => {
+      adapter.stream();
+      (await getStream(primary)).fail();
+      const firstProbe = await getStream(primary, 1);
+      await getStream(secondary);
+      adapter.stream();
+      const secondProbe = await getStream(primary, 2);
+      await getStream(secondary, 1);
 
-    if (action === 'close') {
-      await adapter.close();
-    } else {
-      firstProbe.emitText('primary recovered');
-      secondProbe.emitText('primary also recovered');
-    }
+      if (action === 'close') {
+        await adapter.close();
+      } else {
+        firstProbe.emitText('primary recovered');
+        if (action === 'recover') secondProbe.emitText('primary also recovered');
+      }
 
-    await vi.waitFor(() => expect(primary.listenerCount('error')).toBe(0));
-    expect(firstProbe.isClosed).toBe(true);
-    expect(secondProbe.isClosed).toBe(true);
-    expect(adapter.status[0]!.recoveringStreamTasks.size).toBe(0);
-    expect(availability).toEqual([
-      { label: 'primary', available: false },
-      ...(action === 'recover' ? [{ label: 'primary', available: true }] : []),
-    ]);
-  });
+      await vi.waitFor(() => expect(primary.listenerCount('error')).toBe(0));
+      expect(firstProbe.isClosed).toBe(true);
+      expect(secondProbe.isClosed).toBe(true);
+      expect(secondary.streams.every((stream) => !stream.isClosed)).toBe(true);
+      expect(adapter.status[0]!.recoveringStreamTasks.size).toBe(0);
+      expect(availability).toEqual([
+        { label: 'primary', available: false },
+        ...(action !== 'close' ? [{ label: 'primary', available: true }] : []),
+      ]);
+    },
+  );
 
   it('preserves recovery through an AgentTask handoff', async () => {
     const beginHandoff = new Future<void>();

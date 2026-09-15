@@ -386,7 +386,7 @@ class FallbackSpeechStream extends SpeechStream {
       }
     };
 
-    const task = Task.from(async (controller) => {
+    const task: Task<void> = Task.from(async (controller) => {
       controller.signal.addEventListener('abort', closeProbe, { once: true });
       try {
         let gotTranscript = false;
@@ -402,6 +402,9 @@ class FallbackSpeechStream extends SpeechStream {
         if (!gotTranscript || controller.signal.aborted || this.abortSignal.aborted) return;
         if (!status.available) {
           status.available = true;
+          for (const recoveryTask of status.recoveringStreamTasks) {
+            if (recoveryTask !== task) recoveryTask.cancel();
+          }
           this._logger.info({ stt: sttInstance.label }, `${sttInstance.label} recovered`);
           this.fallbackAdapter.emitAvailabilityChanged(sttInstance, true);
         }
