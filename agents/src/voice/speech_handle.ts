@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
-import type { Context } from '@opentelemetry/api';
+import { type Context, type Span, context as otelContext, trace } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
 import { log } from '../log.js';
+import { recordInvokeAgentDuration } from '../telemetry/otel_metrics.js';
+import * as traceTypes from '../telemetry/trace_types.js';
+import { recordException } from '../telemetry/utils.js';
 import type { Task } from '../utils.js';
 import { Event, Future, dedent, shortuuid } from '../utils.js';
 import { functionCallStorage } from './agent.js';
@@ -96,6 +99,13 @@ export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
  */
 export type InterruptionSource = 'audio_activity' | 'user_turn' | 'programmatic';
 
+/** An open `agent_turn` handed from a discarded speech to its successor. @internal */
+export interface AgentTurnCarry {
+  span: Span;
+  startedAt: number | undefined;
+  agentName: string | undefined;
+}
+
 export class SpeechHandleCircularWaitError extends Error {
   constructor(functionCallName: string) {
     super(dedent`
@@ -149,8 +159,17 @@ export class SpeechHandle {
   /** @internal */
   _numSteps = 1;
 
+  /**
+   * @internal One `agent_turn` span for the whole speech, however many generations (LLM steps)
+   * it takes; opened by the first reply task, ended with the speech in `_markDone`.
+   */
+  _agentTurnSpan?: Span;
   /** @internal - OpenTelemetry context for the agent turn span */
   _agentTurnContext?: Context;
+  /** @internal - when the turn opened (performance.now), for the duration metric */
+  _agentTurnStartedAt?: number;
+  /** @internal - the agent the turn was opened for, for the duration metric */
+  _agentTurnAgentName?: string;
 
   /** @internal - when the speech was scheduled, for the queue-wait attribute */
   _scheduledAt?: number;
@@ -222,6 +241,17 @@ export class SpeechHandle {
 
   get id(): string {
     return this._id;
+  }
+
+  /** @internal The id of the current generation (LLM step) of this speech. */
+  get _generationId(): string {
+    return `${this._id}_${this._numSteps}`;
+  }
+
+  /** @internal The id of the generation before the current one; undefined on the first. */
+  get _parentGenerationId(): string | undefined {
+    if (this._numSteps <= 1) return undefined;
+    return `${this._id}_${this._numSteps - 1}`;
   }
 
   get scheduled(): boolean {
@@ -522,6 +552,8 @@ export class SpeechHandle {
       }
       this.doneFut.resolve();
     }
+    // a pipeline LLM failure is stored on the handle before the tasks finish
+    this.endAgentTurn(error !== undefined ? error : this._error);
 
     // Keep this outside the doneFut guard: if the handle is already done but a
     // generation future is still active, _waitForGeneration() must be released.
@@ -530,6 +562,62 @@ export class SpeechHandle {
     }
 
     this.clearInterruptTimeout();
+  }
+
+  /**
+   * Detach this speech's open `agent_turn` so a successor can continue it.
+   *
+   * Used when a preemptive generation is discarded for another speech answering the same user
+   * turn: the wasted generation stays visible under the one turn instead of becoming a turn of
+   * its own. After this the speech ends without touching the span.
+   * @internal
+   */
+  _takeAgentTurn(): AgentTurnCarry | undefined {
+    const span = this._agentTurnSpan;
+    if (span === undefined) return undefined;
+    const carry: AgentTurnCarry = {
+      span,
+      startedAt: this._agentTurnStartedAt,
+      agentName: this._agentTurnAgentName,
+    };
+    this._agentTurnSpan = undefined;
+    this._agentTurnContext = undefined;
+    this._agentTurnStartedAt = undefined;
+    this._agentTurnAgentName = undefined;
+    return carry;
+  }
+
+  /** @internal Adopt the `agent_turn` taken from `discarded` (see {@link _takeAgentTurn}). */
+  _continueAgentTurn(carry: AgentTurnCarry, discarded: SpeechHandle): void {
+    // adopted even when sampled out: the duration metric still needs the start time
+    const { span, startedAt, agentName } = carry;
+    span.addEvent('preemptive_generation_discarded', {
+      [traceTypes.ATTR_SPEECH_ID]: discarded.id,
+    });
+    span.setAttribute(traceTypes.ATTR_SPEECH_ID, this.id);
+    this._agentTurnSpan = span;
+    this._agentTurnContext = trace.setSpan(otelContext.active(), span);
+    this._agentTurnStartedAt = startedAt;
+    this._agentTurnAgentName = agentName;
+  }
+
+  /** Close the speech's `agent_turn` span: the speech is done, whatever step it was on. */
+  private endAgentTurn(error: unknown): void {
+    const span = this._agentTurnSpan;
+    this._agentTurnSpan = undefined;
+    if (span === undefined) return;
+    // the duration metric does not depend on the span being sampled in
+    if (this._agentTurnStartedAt !== undefined && this._agentTurnAgentName !== undefined) {
+      recordInvokeAgentDuration(
+        (performance.now() - this._agentTurnStartedAt) / 1000,
+        this._agentTurnAgentName,
+      );
+    }
+    if (!span.isRecording()) return;
+    if (error instanceof Error) {
+      recordException(span, error);
+    }
+    span.end();
   }
 
   /** @internal */
