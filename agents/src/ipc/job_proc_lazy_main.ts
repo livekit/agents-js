@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Room, RoomEvent, dispose } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
-import { context as otelContext } from '@opentelemetry/api';
+import { context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
@@ -19,6 +19,7 @@ import {
   finalizeSession,
   flushJobLogs,
   flushJobMetrics,
+  flushJobTraces,
   runShutdownCallbacks,
   validateSessionEndTimeout,
   waitForEntrypointShutdown,
@@ -26,10 +27,13 @@ import {
 import { initializeLogger, log } from '../log.js';
 import { loggerOptions, setLoggerState } from '../log_core.js';
 import type { SimulationContext } from '../simulation.js';
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { getMonitor, startMonitoring, stopMonitoring } from '../telemetry/loop_monitor.js';
 import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
+import { preload } from './_preload.js';
 import type { InferenceExecutor } from './inference_executor.js';
+import { startJobSpan } from './job_trace.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
@@ -128,6 +132,9 @@ const startJob = (
 ): JobTask => {
   let connect = false;
   let shutdown = false;
+  // a shutdown the agent asked for (ctx.shutdown()), as opposed to the room dropping or the
+  // worker's request
+  let userInitiated = false;
 
   const room = new Room();
   room.on(RoomEvent.Disconnected, () => {
@@ -141,6 +148,7 @@ const startJob = (
   };
   const onShutdown = (reason: string) => {
     shutdown = true;
+    userInitiated = true;
     closeEvent.emit('close', reason || 'user requested');
   };
 
@@ -148,6 +156,28 @@ const startJob = (
   ctx._simulationEndFnc = onSimulationEnd;
 
   const task = (async () => {
+    let closeReason = '';
+    // listen before the first await: a shutdown request that lands while the trace pipeline
+    // is being prepared would otherwise emit `close` to nobody, and the job would never end
+    const closePromise = once(closeEvent, 'close').then((close) => {
+      logger.debug('shutting down');
+      shutdown = true;
+      closeReason = String(close[0] ?? '');
+      safeSend({
+        case: 'exiting',
+        value: { reason: close[0] },
+      });
+    });
+
+    // before the first span: without a provider the job's root would not record
+    await ctx._prepareTelemetry();
+
+    // the job's root span, from the availability request to the end of shutdown; the
+    // entrypoint returning is an event on it
+    const jobSpan = startJobSpan(ctx);
+    const jobSpanContext = trace.setSpan(otelContext.active(), jobSpan);
+    ctx._jobSpanContext = jobSpanContext;
+
     const unconnectedTimeout = setTimeout(() => {
       if (!(connect || shutdown)) {
         logger.warn(
@@ -158,60 +188,86 @@ const startJob = (
     }, 10000);
 
     try {
-      const closePromise = once(closeEvent, 'close').then((close) => {
-        logger.debug('shutting down');
-        shutdown = true;
-        safeSend({
-          case: 'exiting',
-          value: { reason: close[0] },
-        });
-      });
-
-      // Run the job function within the AsyncLocalStorage context
-      const entrypointPromise = runWithJobContextAsync(ctx, async () => {
-        const { tracer, traceTypes } = await import('../telemetry/index.js');
-        return tracer.startActiveSpan(
-          async (span) => {
-            span.setAttribute(traceTypes.ATTR_JOB_ID, info.job.id);
-            span.setAttribute(traceTypes.ATTR_AGENT_NAME, info.job.agentName);
-            span.setAttribute(traceTypes.ATTR_ROOM_NAME, info.job.room?.name ?? '');
-            getMonitor()?.setReportContext(otelContext.active(), (fn) =>
-              runWithJobContext(ctx, fn),
-            );
-            return func(ctx);
-          },
-          { name: 'job_entrypoint' },
-        );
-      });
-
-      void entrypointPromise.catch(() => {
-        closeEvent.emit('close', EXIT_REASON.jobCrashed);
-      });
-      await closePromise;
-      await waitForEntrypointShutdown(entrypointPromise, logger);
-    } finally {
-      clearTimeout(unconnectedTimeout);
-    }
-
-    try {
-      await runWithJobContextAsync(ctx, async () => {
-        try {
-          await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
-        } finally {
-          safeSend({ case: 'shuttingDown', value: undefined });
-        }
-
-        try {
-          await room.disconnect();
-          logger.debug('disconnected from room');
-        } catch (error) {
-          logger.error({ error }, 'error while disconnecting room');
-        }
-
-        await runShutdownCallbacks(ctx.shutdownCallbacks, logger);
-      });
-    } finally {
       try {
+        let entrypointPromise: Promise<void>;
+        if (shutdown) {
+          // the close arrived while the pipeline was being prepared: the job is already
+          // ending, so the entrypoint is not started (python starts it and cancels it at once;
+          // a running async function cannot be cancelled here)
+          logger.debug('shutdown requested before the entrypoint started, skipping it');
+          jobSpan.addEvent('entrypoint_skipped');
+          entrypointPromise = Promise.resolve();
+        } else {
+          // Run the job function within the AsyncLocalStorage context, under the job's span:
+          // agent_session and everything else the entrypoint starts nests below it
+          entrypointPromise = runWithJobContextAsync(ctx, () =>
+            otelContext.with(jobSpanContext, async () => {
+              // the loop monitor's heartbeat predates the job: give its reports this context
+              getMonitor()?.setReportContext(otelContext.active(), (fn) =>
+                runWithJobContext(ctx, fn),
+              );
+              try {
+                await func(ctx);
+              } catch (error) {
+                recordException(jobSpan, error instanceof Error ? error : new Error(String(error)));
+                throw error;
+              }
+              jobSpan.addEvent('entrypoint_returned');
+            }),
+          );
+
+          void entrypointPromise.catch(() => {
+            closeEvent.emit('close', EXIT_REASON.jobCrashed);
+          });
+        }
+        await closePromise;
+        await waitForEntrypointShutdown(entrypointPromise, logger);
+      } finally {
+        clearTimeout(unconnectedTimeout);
+      }
+
+      // the shutdown sequence as one bar under the job: session close, the user's
+      // onSessionEnd, the report upload, the room disconnect, and the shutdown callbacks
+      await runWithJobContextAsync(ctx, () =>
+        tracer.startActiveSpan(
+          async () => {
+            try {
+              await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
+            } finally {
+              safeSend({ case: 'shuttingDown', value: undefined });
+            }
+
+            await tracer.startActiveSpan(
+              async (span) => {
+                try {
+                  await room.disconnect();
+                  logger.debug('disconnected from room');
+                } catch (error) {
+                  recordException(span, error instanceof Error ? error : new Error(String(error)));
+                  logger.error({ error }, 'error while disconnecting room');
+                }
+              },
+              { name: 'room_disconnect' },
+            );
+
+            await runShutdownCallbacks(ctx.shutdownCallbacks, logger);
+          },
+          {
+            name: 'job_shutdown',
+            context: jobSpanContext,
+            attributes: {
+              [traceTypes.ATTR_SHUTDOWN_REASON]: closeReason,
+              [traceTypes.ATTR_SHUTDOWN_USER_INITIATED]: userInitiated,
+            },
+          },
+        ),
+      );
+    } finally {
+      // whatever happened above, the job ends: root span, per-job telemetry state, flushes
+      jobSpan.end();
+      ctx._onCleanup();
+      try {
+        await flushJobTraces(logger);
         await flushJobLogs(logger);
       } finally {
         safeSend({ case: 'done', value: undefined });
@@ -271,6 +327,9 @@ const startJob = (
     });
 
     logger.debug('initializing job runner');
+    // the framework's warm-up, ahead of the user's: one-time work that would otherwise stall
+    // the loop at session start
+    preload();
     await agent.prewarm(proc);
     logger.debug('job runner initialized');
     const loopMonitor = startMonitoring({ name: 'job' });
