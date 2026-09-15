@@ -3,6 +3,7 @@ SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 
 SPDX-License-Identifier: Apache-2.0
 -->
+
 # Rime plugin for LiveKit Agents
 
 The Agents Framework is designed for building realtime, programmable
@@ -41,12 +42,12 @@ One stream uses one continuous synthesis context. Text fragments pass through a
 LiveKit sentence tokenizer before transmission. The default tokenizer emits one
 sentence at a time. A custom `tokenizer` must emit complete, stable sentence units.
 
-| Stream method | Behavior |
-| --- | --- |
-| `pushText(text)` | Buffer text and send complete sentences. |
-| `flush()` | Release buffered text locally. Keep the context open. |
-| `endInput()` | Send remaining text, then `end`. Wait for `done`. |
-| `close()` | Stop synthesis and send `cancel` when a context is active. |
+| Stream method    | Behavior                                                   |
+| ---------------- | ---------------------------------------------------------- |
+| `pushText(text)` | Buffer text and send complete sentences.                   |
+| `flush()`        | Release buffered text locally. Keep the context open.      |
+| `endInput()`     | Send remaining text, then `end`. Wait for `done`.          |
+| `close()`        | Stop synthesis and send `cancel` when a context is active. |
 
 Only call `flush()` at a complete sentence or stable clause boundary. You can
 send more text after a flush. No protocol `flush` message exists in v1.
@@ -86,3 +87,14 @@ send the resolved rate explicitly.
 options and endpoint. A v1 model change requires a different model endpoint.
 Changing only the URL query does not change the model. Transport mode cannot
 change after construction.
+
+## Tests
+
+Run `pnpm exec vitest run plugins/rime/src` from the repository root after building
+`@livekit/agents`. The local tests need no API keys. The optional service test needs
+both `RIME_API_KEY` and `OPENAI_API_KEY`.
+
+The audio tests generate WAV, MP3, Ogg, and WebM samples at test setup. Install a
+full FFmpeg build with `libmp3lame` and `libopus` on `PATH` to run these tests. The
+bundled LiveKit FFmpeg supports playback but does not include all required encoders
+and output formats.

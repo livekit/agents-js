@@ -18,9 +18,9 @@ import {
   type WebSocketResponse,
   WebSocketResponseSchema,
 } from '@rimelabs/api';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 import { decodeMuLaw } from './audio.js';
 import { RimeConnection, decodeResponse, providerError } from './connection.js';
@@ -45,6 +45,45 @@ afterEach(async () => {
     ),
   );
 });
+
+// Generate the decoder inputs once, without storing protocol or audio fixtures.
+const encodedAudio = {} as Record<RimeAudioFormat, Buffer>;
+beforeAll(() => {
+  const pcm = Buffer.alloc(12000);
+  for (let i = 0; i < pcm.length; i += 2) pcm.writeInt16LE(Math.round(Math.sin(i / 20) * 5000), i);
+  encodedAudio['audio/pcm'] = pcm;
+  encodedAudio['audio/pcmu'] = Buffer.alloc(6000, 255);
+  const formats = [
+    ['audio/wav', 'wav', 'pcm_s16le'],
+    ['audio/mpeg', 'mp3', 'libmp3lame'],
+    ['audio/ogg;codecs=opus', 'ogg', 'libopus'],
+    ['audio/webm;codecs=opus', 'webm', 'libopus'],
+  ] as const;
+  for (const [format, container, codec] of formats) {
+    encodedAudio[format] = execFileSync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        's16le',
+        '-ar',
+        '24000',
+        '-ac',
+        '1',
+        '-i',
+        'pipe:0',
+        '-c:a',
+        codec,
+        '-f',
+        container,
+        'pipe:1',
+      ],
+      { input: pcm, timeout: 5000 },
+    );
+  }
+}, 20000);
 
 type Send = (payload: WebSocketResponse['payload'], contextId?: string) => void;
 async function server(
@@ -650,6 +689,40 @@ describe.each(['binary', 'json'] as const)('Rime v1 %s', (protocol) => {
     expect(start.case === 'start' && start.value.mistParameters?.pauseBetweenBrackets).toBe(false);
   });
 
+  it.each([false, true])(
+    'keeps stream metrics after parent updates, new stream first=%s',
+    async (newFirst) => {
+      const a = await server();
+      const b = await server();
+      const { value, errors } = client(a.url, protocol);
+      const metrics: TTSMetrics[] = [];
+      value.on('metrics_collected', (event) => metrics.push(event));
+      const old = value.stream({ connOptions: options });
+      value.updateOptions({ websocketURL: b.url.replace('/coda/', '/mist/'), samplingRate: 16000 });
+      const next = value.stream({ connOptions: options });
+      const streams = [
+        { stream: old, model: 'coda', sampleRate: 24000 },
+        { stream: next, model: 'mistv3', sampleRate: 16000 },
+      ];
+      if (newFirst) streams.reverse();
+      for (const { stream, model, sampleRate } of streams) {
+        stream.pushText('Hello.');
+        stream.endInput();
+        const frames = await collect(stream);
+        expect(frames.length).toBeGreaterThan(0);
+        expect(frames.every((frame) => frame.frame.sampleRate === sampleRate)).toBe(true);
+        expect(metrics.at(-1)).toMatchObject({
+          requestId: frames[0]!.requestId,
+          label: value.label,
+          metadata: { modelName: model, modelProvider: value.provider },
+        });
+        expect(value.model).toBe('mistv3');
+      }
+      expect(metrics).toHaveLength(2);
+      expect(errors).toEqual([]);
+    },
+  );
+
   it('replays complete input on retry before audio', async () => {
     let attempt = 0;
     const peer = await server({
@@ -696,18 +769,7 @@ describe.each(['binary', 'json'] as const)('Rime v1 %s', (protocol) => {
     'audio/ogg;codecs=opus',
     'audio/webm;codecs=opus',
   ] as const)('decodes %s including split packets', async (format) => {
-    const pcm = Buffer.alloc(12000);
-    for (let i = 0; i < pcm.length; i += 2)
-      pcm.writeInt16LE(Math.round(Math.sin(i / 20) * 5000), i);
-    const fixtures = JSON.parse(
-      readFileSync(new URL('./fixtures/audio-formats.json', import.meta.url), 'utf8'),
-    ) as Record<RimeAudioFormat, string>;
-    const audio =
-      format === 'audio/pcm'
-        ? pcm
-        : format === 'audio/pcmu'
-          ? Buffer.alloc(6000, 255)
-          : Buffer.from(fixtures[format], 'base64');
+    const audio = encodedAudio[format];
     const peer = await server({ audio });
     const { value, errors } = client(peer.url, protocol, { audioFormat: format });
     const stream = value.stream({ connOptions: { ...options, timeoutMs: 2000 } });
@@ -774,37 +836,4 @@ it('times out a blocked write without retaining its payload', async () => {
     'timed out',
   );
   connection.close();
-});
-
-const fixtures = JSON.parse(
-  readFileSync(new URL('./fixtures/websocket-v1.json', import.meta.url), 'utf8'),
-) as { message: string; binary: string; json: Record<string, never> }[];
-describe('published protocol wire contract', () => {
-  it.each(fixtures.map((fixture, i) => ({ ...fixture, i })))(
-    'matches fixed envelope $i',
-    (fixture) => {
-      const bytes = Buffer.from(fixture.binary, 'hex');
-      if (fixture.message === 'WebSocketRequest') {
-        const message = fromJsonString(WebSocketRequestSchema, JSON.stringify(fixture.json));
-        expect(Buffer.from(toBinary(WebSocketRequestSchema, message)).toString('hex')).toBe(
-          fixture.binary,
-        );
-        expect(toJson(WebSocketRequestSchema, fromBinary(WebSocketRequestSchema, bytes))).toEqual(
-          fixture.json,
-        );
-      } else {
-        for (const protocol of ['binary', 'json'] as const) {
-          const message = decodeResponse(
-            protocol === 'binary' ? bytes : Buffer.from(JSON.stringify(fixture.json)),
-            protocol === 'binary',
-            protocol,
-          );
-          expect(toJson(WebSocketResponseSchema, message)).toEqual(fixture.json);
-          expect(Buffer.from(toBinary(WebSocketResponseSchema, message)).toString('hex')).toBe(
-            fixture.binary,
-          );
-        }
-      }
-    },
-  );
 });

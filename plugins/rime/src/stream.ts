@@ -27,6 +27,7 @@ import {
   providerError,
 } from './connection.js';
 import { type TTSOptions, getSampleRate } from './options.js';
+import { StreamTTS } from './stream_tts.js';
 import type { TTS } from './tts.js';
 
 export class SynthesizeStream extends tts.SynthesizeStream {
@@ -45,7 +46,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     private opts: TTSOptions,
     connOptions?: APIConnectOptions,
   ) {
-    super(parent, connOptions);
+    super(new StreamTTS(parent, opts.modelId, getSampleRate(opts)), connOptions);
     this.opts = { ...opts };
     const pool = connectionPools.get(parent);
     if (!pool) throw new Error('Rime connection pool is not initialized');
@@ -53,10 +54,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     this.pool.retain();
     // Record text before the metrics task observes cancellation, even with queued audio.
     this.abortSignal.addEventListener('abort', () => super.flush(), { once: true });
-  }
-
-  protected override get metricsModel(): string {
-    return this.opts.modelId;
   }
 
   override flush() {

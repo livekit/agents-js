@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type APIError, tts } from '@livekit/agents';
+import { type APIError, type TTSMetrics, tts } from '@livekit/agents';
 import type { AddressInfo } from 'node:net';
 import { afterEach, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
@@ -86,8 +86,10 @@ it('keeps existing WS3 streams bound to their original options', async () => {
   const value = new TTS({ apiKey: 'key', baseURL: peer.url, speaker: 'original' });
   clients.push(value);
   value.on('error', () => {});
+  const metrics: TTSMetrics[] = [];
+  value.on('metrics_collected', (event) => metrics.push(event));
   const old = value.stream();
-  value.updateOptions({ speaker: 'updated', samplingRate: 16000 });
+  value.updateOptions({ modelId: 'mistv2', speaker: 'updated', samplingRate: 16000 });
   old.pushText('Hello.');
   old.endInput();
   for await (const frame of old)
@@ -100,6 +102,8 @@ it('keeps existing WS3 streams bound to their original options', async () => {
   expect(peer.urls).toHaveLength(2);
   expect(new URL(peer.urls[0]!, peer.url).searchParams.get('speaker')).toBe('original');
   expect(new URL(peer.urls[1]!, peer.url).searchParams.get('speaker')).toBe('updated');
+  expect(metrics.map((event) => event.metadata?.modelName)).toEqual(['coda', 'mistv2']);
+  expect(metrics.every((event) => event.label === value.label)).toBe(true);
 });
 
 it.each(['error', 'close', 'invalid'])(
@@ -109,7 +113,10 @@ it.each(['error', 'close', 'invalid'])(
     const value = new TTS({ apiKey: 'key', baseURL: peer.url });
     clients.push(value);
     const errors: APIError[] = [];
-    value.on('error', (event) => errors.push(event.error as APIError));
+    value.on('error', (event) => {
+      expect(event.label).toBe(value.label);
+      errors.push(event.error as APIError);
+    });
     const stream = value.stream({
       connOptions: { maxRetry: 0, timeoutMs: 100, retryIntervalMs: 0 },
     });

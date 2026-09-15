@@ -119,8 +119,9 @@ export class ChunkedStream extends tts.ChunkedStream {
   label = 'rime-tts.ChunkedStream';
   private opts: TTSOptions;
   private requestOptions: APIConnectOptions;
+  private attempts = 0;
   constructor(
-    parent: TTS,
+    private parent: TTS,
     private text: string,
     opts: TTSOptions,
     connOptions?: APIConnectOptions,
@@ -133,6 +134,34 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 
   protected async run() {
+    this.attempts++;
+    try {
+      await this.runAttempt();
+    } catch (error) {
+      if (this.abortSignal.aborted) return;
+      if (
+        error instanceof APIError &&
+        error.retryable &&
+        this.attempts <= this.requestOptions.maxRetry
+      )
+        throw error;
+
+      // Let the base class retry temporary failures. Report the final failure here
+      // so its background task can finish and close output without rejecting.
+      this.parent.emit('error', {
+        type: 'tts_error',
+        timestamp: Date.now(),
+        label: this.parent.label,
+        error:
+          error instanceof APIError
+            ? error
+            : new APIConnectionError({ message: 'Rime HTTP request failed' }),
+        recoverable: false,
+      });
+    }
+  }
+
+  private async runAttempt() {
     if (this.abortSignal.aborted) return;
     const requestId = shortuuid();
     const controller = new AbortController();

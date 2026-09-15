@@ -35,6 +35,37 @@ describe('Rime TTS streaming', () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    { status: 401, maxRetry: 2, attempts: 1 },
+    { status: 503, maxRetry: 2, attempts: 3 },
+    { status: 503, maxRetry: 0, attempts: 1 },
+  ])(
+    'reports terminal HTTP $status once after $attempts attempts',
+    async ({ status, maxRetry, attempts }) => {
+      const fetch = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async () => new Response(null, { status }));
+      const value = new TTS({ apiKey: 'test-key' });
+      const errors: unknown[] = [];
+      value.on('error', (event) => errors.push(event));
+      const stream = value.synthesize('Hello.', { maxRetry, timeoutMs: 100, retryIntervalMs: 0 });
+      const frames = [];
+      for await (const frame of stream) frames.push(frame);
+      // Let any rejected background task reach the test runner.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(frames).toEqual([]);
+      expect(fetch).toHaveBeenCalledTimes(attempts);
+      expect(errors).toEqual([
+        expect.objectContaining({
+          label: value.label,
+          recoverable: false,
+          error: expect.objectContaining({ statusCode: status }),
+        }),
+      ]);
+      await value.close();
+    },
+  );
+
   it('retries after a body timeout even when HTTP cancellation does not settle', async () => {
     let finishCancellation!: () => void;
     const cancellation = new Promise<void>((resolve) => {

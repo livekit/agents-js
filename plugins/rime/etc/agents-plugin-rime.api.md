@@ -44,8 +44,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     // (undocumented)
     label: string;
     // (undocumented)
-    protected get metricsModel(): string;
-    // (undocumented)
     protected onStreamDone(): void;
     // (undocumented)
     protected run(): Promise<void>;
