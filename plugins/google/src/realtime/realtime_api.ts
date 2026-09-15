@@ -50,6 +50,15 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
 
+const GO_AWAY_RESTART_MARGIN_MS = 10_000;
+const GO_AWAY_IDLE_POLL_MS = 250;
+
+/** `goAway.timeLeft` is a protobuf Duration string such as "300s". */
+export function goAwayTimeLeftMs(timeLeft: string | undefined): number {
+  const seconds = Number.parseFloat((timeLeft ?? '').replace(/s$/, ''));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+}
+
 const KNOWN_VERTEXAI_MODELS = new Set(['gemini-live-2.5-flash-native-audio']);
 
 const KNOWN_GEMINI_API_MODELS = new Set([
@@ -1906,8 +1915,23 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private handleGoAway(goAway: types.LiveServerGoAway): void {
     this.#logger.warn({ timeLeft: goAway.timeLeft }, 'Gemini server indicates disconnection soon.');
-    // TODO(brian): this isn't a seamless reconnection just yet
-    this.sessionShouldClose.set();
+    // Restart between turns: restarting mid-generation cuts the reply the user
+    // is hearing, and the time the server grants is enough to let it finish.
+    // The deadline keeps a generation that never completes from outliving the
+    // connection.
+    const deadline =
+      Date.now() + Math.max(0, goAwayTimeLeftMs(goAway.timeLeft) - GO_AWAY_RESTART_MARGIN_MS);
+    const restartWhenIdle = (): void => {
+      if (this.#closed || this.sessionShouldClose.isSet) {
+        return;
+      }
+      if (!this.currentGeneration || Date.now() >= deadline) {
+        this.sessionShouldClose.set();
+        return;
+      }
+      setTimeout(restartWhenIdle, GO_AWAY_IDLE_POLL_MS);
+    };
+    restartWhenIdle();
   }
 
   async commitAudio() {}
