@@ -1503,6 +1503,7 @@ export class AgentSession<
               newActivity: this.nextActivity,
             });
           } else {
+            prevActivityObj.blockNewTurns();
             reusableResources = await prevActivityObj.drain({
               newActivity: this.nextActivity,
             });

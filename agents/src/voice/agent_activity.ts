@@ -4999,8 +4999,12 @@ export class AgentActivity implements RecognitionHooks {
         }
         // A handoff holds the session transition lock while draining this task's owner.
         // Check after acquiring the slot so a preceding inline task can resume us first.
-        if (this.newTurnsBlocked || this.schedulingPaused) {
-          throw new ToolError('the activity that awaited the inline task is draining');
+        if (this.newTurnsBlocked) {
+          throw new ToolError(
+            'An agent transition is in progress, so this tool call cannot continue. ' +
+              'Wait until the transition is complete before retrying, if the tool is ' +
+              'available to the new agent.',
+          );
         }
 
         // A run must only watch this task once it has the slot. Otherwise it would wait
@@ -5139,10 +5143,6 @@ export class AgentActivity implements RecognitionHooks {
     const unlock = await this.lock.lock();
     try {
       if (this._schedulingPaused) return undefined;
-
-      // Queued handoffs may have blocked an earlier activity, not this one.
-      // Close admission before onExit can start an inline task that awaits this drain.
-      this.blockNewTurns();
 
       this._onExitTask = this.createSpeechTask({
         taskFn: () =>
