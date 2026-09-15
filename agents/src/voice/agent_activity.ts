@@ -5160,7 +5160,10 @@ export class AgentActivity implements RecognitionHooks {
         await this._onExitTask.result;
       } catch (error) {
         if (this._onExitTask.cancelled) throw error;
-        this.logger.error(error, 'error in agent onExit');
+        this.logger.error(
+          { 'lk.pii.error': error instanceof Error ? error.message : String(error) },
+          'error in agent onExit',
+        );
       }
       await this._pauseSchedulingTask([]);
 
