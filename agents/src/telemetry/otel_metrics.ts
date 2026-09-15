@@ -21,10 +21,10 @@ function eventLoopBlockedHistogram(): Histogram {
   return blockedDuration;
 }
 
-/** Record a synchronous event-loop block in seconds. */
-export function recordEventLoopBlocked(duration: number, severity: string): void {
+/** Record an event-loop stall in seconds, with the severity and what caused it. */
+export function recordEventLoopBlocked(duration: number, severity: string, cause: string): void {
   const ctx = getJobContext(false);
-  const attributes: Attributes = { severity };
+  const attributes: Attributes = { severity, cause };
   if (ctx) {
     Object.assign(attributes, ctx._otelMetadata());
     const roomId = ctx.job.room?.sid;

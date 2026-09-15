@@ -563,7 +563,7 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     // @internal (undocumented)
     _recorderIO?: RecorderIO;
     // @internal (undocumented)
-    _recordLoopStall(durationInS: number, timestampMs: number): void;
+    _recordLoopStall(durationInS: number, timestampMs: number, cause: string): void;
     // @internal
     _redactionEnabled: boolean;
     // (undocumented)
@@ -1144,6 +1144,11 @@ const ATTR_AMD_SPEECH_DURATION = "lk.amd.speech_duration";
 // @public (undocumented)
 const ATTR_AMD_TRANSCRIPT = "lk.pii.amd.transcript";
 
+// Warning: (ae-missing-release-tag) "ATTR_BLOCKING_CAUSE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_BLOCKING_CAUSE = "lk.blocking.cause";
+
 // Warning: (ae-missing-release-tag) "ATTR_BLOCKING_COUNT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1161,12 +1166,12 @@ const ATTR_BLOCKING_DURATION = "lk.blocking.duration";
 
 // Warning: (ae-missing-release-tag) "ATTR_BLOCKING_GC_TIME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 const ATTR_BLOCKING_GC_TIME = "lk.blocking.gc_time";
 
 // Warning: (ae-missing-release-tag) "ATTR_BLOCKING_IMPORT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 const ATTR_BLOCKING_IMPORT = "lk.blocking.import";
 
 // Warning: (ae-missing-release-tag) "ATTR_BLOCKING_MAX_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1181,7 +1186,7 @@ const ATTR_BLOCKING_SEVERITY = "lk.blocking.severity";
 
 // Warning: (ae-missing-release-tag) "ATTR_BLOCKING_STACK" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 const ATTR_BLOCKING_STACK = "lk.blocking.stack";
 
 // Warning: (ae-missing-release-tag) "ATTR_BLOCKING_SUPPRESSED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1191,7 +1196,7 @@ const ATTR_BLOCKING_SUPPRESSED = "lk.blocking.suppressed";
 
 // Warning: (ae-missing-release-tag) "ATTR_BLOCKING_TASK" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 const ATTR_BLOCKING_TASK = "lk.blocking.task";
 
 // Warning: (ae-missing-release-tag) "ATTR_BLOCKING_THRESHOLD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -2139,13 +2144,16 @@ declare namespace beta {
 //
 // @public (undocumented)
 interface BlockedReport {
+    cause: LoopStallCause;
     cpuTime: number;
     duration: number;
+    gcTime: number;
     // (undocumented)
     severity: LoopMonitorSeverity;
     startedAt: number;
     // (undocumented)
     warnThreshold: number;
+    watchdogGap: number;
 }
 
 // Warning: (ae-missing-release-tag) "BufferedSentenceStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -3533,14 +3541,9 @@ class EventAssert {
 // @public
 class EventLoopMonitor {
     constructor(options?: EventLoopMonitorOptions);
-    // @internal (undocumented)
-    _buildReport(duration: number, cpuTime: number): BlockedReport;
     // (undocumented)
     readonly errorThreshold: number;
-    // @internal
-    _onReport?: (report: BlockedReport) => void;
-    // @internal (undocumented)
-    _report(report: BlockedReport): void;
+    onReport?: (report: BlockedReport) => void;
     setReportContext(context: Context | undefined, runner?: ReportContextRunner): void;
     start(): void;
     stop(): void;
@@ -3548,6 +3551,7 @@ class EventLoopMonitor {
     readonly tickInterval: number;
     // (undocumented)
     readonly warnThreshold: number;
+    get watchdogActive(): boolean;
 }
 
 // Warning: (ae-missing-release-tag) "EventLoopMonitorOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -3564,6 +3568,7 @@ interface EventLoopMonitorOptions {
     tickInterval?: number;
     // (undocumented)
     warnThreshold?: number;
+    watchdog?: boolean;
 }
 
 // Warning: (ae-missing-release-tag) "EventRangeAssert" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -5471,7 +5476,6 @@ export function loopAudioFramesFromFile(filePath: string, options?: AudioDecodeO
 
 declare namespace loopMonitor {
     export {
-        _tickIntervalFor,
         startMonitoring,
         stopMonitoring,
         getMonitor,
@@ -5484,9 +5488,9 @@ declare namespace loopMonitor {
         MAX_LOGS_PER_MINUTE,
         SPAN_NAME,
         LoopMonitorSeverity,
+        LoopStallCause,
         BlockedReport,
         LoopMonitorThresholds,
-        _RateLimiter,
         EventLoopMonitorOptions,
         ReportContextRunner,
         EventLoopMonitor,
@@ -5511,6 +5515,9 @@ class LoopMonitorThresholds {
     // (undocumented)
     readonly warn: number;
 }
+
+// @public
+type LoopStallCause = 'code' | 'host';
 
 // Warning: (ae-missing-release-tag) "markInferenceSpanRecorded" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -6168,15 +6175,6 @@ export interface QueueAudioOutputClearEvent {
 //
 // @public
 export type QueueAudioOutputItem = AudioFrame | AudioSegmentEnd;
-
-// @internal (undocumented)
-class _RateLimiter {
-    constructor(limit: number);
-    // (undocumented)
-    allow(now: number): boolean;
-    // (undocumented)
-    takeSuppressed(): number;
-}
 
 // Warning: (ae-missing-release-tag) "readStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -7587,6 +7585,8 @@ interface StartMonitoringOptions {
     name?: string;
     // (undocumented)
     thresholds?: LoopMonitorThresholds;
+    // (undocumented)
+    watchdog?: boolean;
 }
 
 // Warning: (ae-missing-release-tag) "startSoon" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -8359,9 +8359,6 @@ class ThresholdOptions {
 // @public
 type ThresholdOverride = number | Record<string, number> | undefined;
 
-// @internal (undocumented)
-function _tickIntervalFor(warnThreshold: number): number;
-
 // Warning: (ae-missing-release-tag) "TimedString" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -8751,6 +8748,7 @@ declare namespace traceTypes {
         ATTR_BLOCKING_DURATION,
         ATTR_BLOCKING_THRESHOLD,
         ATTR_BLOCKING_SEVERITY,
+        ATTR_BLOCKING_CAUSE,
         ATTR_BLOCKING_TASK,
         ATTR_BLOCKING_STACK,
         ATTR_BLOCKING_GC_TIME,

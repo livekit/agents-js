@@ -1894,7 +1894,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _recordLoopStall(durationInS: number, timestampMs: number): void {
+  _recordLoopStall(durationInS: number, timestampMs: number, cause: string): void {
     const span = this.sessionSpan;
     if (!span?.isRecording()) {
       return;
@@ -1905,7 +1905,10 @@ export class AgentSession<
     this.loopStallMax = Math.max(this.loopStallMax, durationInS);
     span.addEvent(
       LOOP_STALL_EVENT,
-      { [traceTypes.ATTR_BLOCKING_DURATION]: durationInS },
+      {
+        [traceTypes.ATTR_BLOCKING_DURATION]: durationInS,
+        [traceTypes.ATTR_BLOCKING_CAUSE]: cause,
+      },
       timestampMs,
     );
     span.setAttributes({

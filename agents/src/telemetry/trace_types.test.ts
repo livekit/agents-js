@@ -167,6 +167,7 @@ const SAFE_KEYS = new Set([
   'lk.blocking.duration',
   'lk.blocking.threshold',
   'lk.blocking.severity',
+  'lk.blocking.cause',
   'lk.blocking.task',
   'lk.blocking.stack',
   'lk.blocking.gc_time',

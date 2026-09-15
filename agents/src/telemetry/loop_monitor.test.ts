@@ -7,6 +7,7 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { Worker } from 'node:worker_threads';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type JobContext, getJobContext, runWithJobContext } from '../job.js';
+import { log } from '../log.js';
 import {
   type BlockedReport,
   DEFAULT_ERROR_THRESHOLD,
@@ -15,18 +16,20 @@ import {
   ENV_WARN_THRESHOLD_MS,
   EventLoopMonitor,
   LoopMonitorThresholds,
+  MAX_LOGS_PER_MINUTE,
   MAX_SPANS_PER_MINUTE,
   SPAN_NAME,
-  _RateLimiter,
-  _tickIntervalFor,
   getMonitor,
   startMonitoring,
   stopMonitoring,
 } from './loop_monitor.js';
 import * as otelMetrics from './otel_metrics.js';
+import { RateLimiter } from './rate_limiter.js';
 import {
+  ATTR_BLOCKING_CAUSE,
   ATTR_BLOCKING_CPU_TIME,
   ATTR_BLOCKING_DURATION,
+  ATTR_BLOCKING_GC_TIME,
   ATTR_BLOCKING_SEVERITY,
   ATTR_BLOCKING_THRESHOLD,
 } from './trace_types.js';
@@ -40,8 +43,27 @@ function blockLoop(duration: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, duration);
 }
 
+/** Block the loop while allocating heavily, so V8 has to collect during the block. */
+function blockLoopWithGarbage(duration: number): void {
+  const until = performance.now() + duration;
+  let garbage: unknown[] = [];
+  while (performance.now() < until) {
+    garbage.push(new Array(1000).fill({ x: 1 }));
+    if (garbage.length > 20_000) garbage = [];
+  }
+}
+
 function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, TICK * 4));
+}
+
+/** Wait until the watchdog thread has woken at least once, so it can vouch for the process. */
+async function watchdogReady(monitor: EventLoopMonitor): Promise<void> {
+  const deadline = Date.now() + 2000;
+  while (!monitor.watchdogActive && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  await new Promise((resolve) => setTimeout(resolve, WARN));
 }
 
 function fakeJob(session?: unknown): JobContext {
@@ -50,6 +72,13 @@ function fakeJob(session?: unknown): JobContext {
     job: { id: 'AJ_test', room: { sid: 'RM_test' } },
   } as unknown as JobContext;
 }
+
+/** Reports that blame code on the loop. A noisy CI host can deschedule the test process too. */
+function codeReports(reports: BlockedReport[]): BlockedReport[] {
+  return reports.filter((report) => report.cause === 'code');
+}
+
+const timings = (cpuTime = 20, watchdogGap = 0, gcTime = 0) => ({ cpuTime, gcTime, watchdogGap });
 
 describe.sequential('event loop monitor', () => {
   let exporter: InMemorySpanExporter;
@@ -70,7 +99,7 @@ describe.sequential('event loop monitor', () => {
       errorThreshold: ERROR,
       tickInterval: TICK,
     });
-    monitor._onReport = (report) => reports.push(report);
+    monitor.onReport = (report) => reports.push(report);
     sessionRoot = tracer.startSpan({ name: 'agent_session' });
     const session = { rootSpanContext: trace.setSpan(ROOT_CONTEXT, sessionRoot) };
     const job = fakeJob(session);
@@ -78,7 +107,7 @@ describe.sequential('event loop monitor', () => {
       runWithJobContext(job, fn),
     );
     monitor.start();
-    await new Promise((resolve) => setTimeout(resolve, WARN));
+    await watchdogReady(monitor);
   });
 
   afterEach(async () => {
@@ -110,6 +139,12 @@ describe.sequential('event loop monitor', () => {
       (span!.endTime[1] - span!.startTime[1]) / 1e6;
     expect(elapsed).toBeCloseTo(duration * 1000, 3);
     expect(span!.attributes[ATTR_BLOCKING_CPU_TIME]).toBeTypeOf('number');
+    expect(span!.attributes[ATTR_BLOCKING_GC_TIME]).toBe(0);
+    expect(span!.attributes[ATTR_BLOCKING_CAUSE]).toBe('code');
+    // the watchdog thread kept running while the loop thread waited: the process was scheduled
+    const [report] = reports;
+    expect(report!.cause).toBe('code');
+    expect(report!.watchdogGap).toBeLessThan(report!.duration * 0.5);
   });
 
   it('reports a block between thresholds as a warning', async () => {
@@ -120,13 +155,27 @@ describe.sequential('event loop monitor', () => {
     expect(span!.status.code).toBe(SpanStatusCode.UNSET);
   });
 
+  it('attributes garbage collection pauses inside a block', async () => {
+    blockLoopWithGarbage(200);
+    await settle();
+    // the longest stall is the block above; a loaded host can add shorter ones around it
+    const report = codeReports(reports).sort((a, b) => b.duration - a.duration)[0];
+    expect(report).toBeDefined();
+    expect(report!.gcTime).toBeGreaterThan(0);
+    expect(report!.gcTime).toBeLessThanOrEqual(report!.duration);
+    const span = blockedSpans().find(
+      (candidate) => candidate.attributes[ATTR_BLOCKING_DURATION] === report!.duration / 1000,
+    );
+    expect(span!.attributes[ATTR_BLOCKING_GC_TIME]).toBeCloseTo(report!.gcTime / 1000, 6);
+  });
+
   it('does not report cooperative work', async () => {
     for (let i = 0; i < 40; i++) {
       blockLoop(2);
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     await new Promise((resolve) => setTimeout(resolve, WARN * 2));
-    expect(reports).toEqual([]);
+    expect(codeReports(reports)).toEqual([]);
   });
 
   it('parents a pre-session stall to the report context', async () => {
@@ -153,13 +202,16 @@ describe.sequential('event loop monitor', () => {
 
   it('records every stall on the active session', () => {
     monitor.stop();
-    const seen: number[] = [];
-    const job = fakeJob({ _recordLoopStall: (duration: number) => seen.push(duration) });
+    const seen: [number, string][] = [];
+    const job = fakeJob({
+      _recordLoopStall: (duration: number, _timestamp: number, cause: string) =>
+        seen.push([duration, cause]),
+    });
     monitor.setReportContext(undefined, (fn) => runWithJobContext(job, fn));
-    const report = monitor._buildReport(100, 20);
-    for (let i = 0; i < 40; i++) monitor._report(report);
+    const report = monitor['buildReport'](100, timings());
+    for (let i = 0; i < 40; i++) monitor['report'](report);
     expect(seen).toHaveLength(40);
-    expect(seen.every((duration) => duration === 0.1)).toBe(true);
+    expect(seen.every(([duration, cause]) => duration === 0.1 && cause === 'code')).toBe(true);
   });
 
   it('stops idempotently and stays quiet', async () => {
@@ -172,7 +224,7 @@ describe.sequential('event loop monitor', () => {
 
   it('does not report an idle loop', async () => {
     await new Promise((resolve) => setTimeout(resolve, WARN * 12));
-    expect(reports).toEqual([]);
+    expect(codeReports(reports)).toEqual([]);
   });
 
   it('does not report blocking work outside the event loop', async () => {
@@ -185,7 +237,7 @@ describe.sequential('event loop monitor', () => {
       worker.once('exit', () => resolve());
     });
     await settle();
-    expect(reports).toEqual([]);
+    expect(codeReports(reports)).toEqual([]);
   });
 
   it('keeps spans disabled in worker mode', async () => {
@@ -198,9 +250,9 @@ describe.sequential('event loop monitor', () => {
       emitSpans: false,
     });
     const workerReports: BlockedReport[] = [];
-    workerMonitor._onReport = (report) => workerReports.push(report);
+    workerMonitor.onReport = (report) => workerReports.push(report);
     workerMonitor.start();
-    await new Promise((resolve) => setTimeout(resolve, WARN));
+    await watchdogReady(workerMonitor);
     blockLoop(80);
     await settle();
     workerMonitor.stop();
@@ -211,10 +263,10 @@ describe.sequential('event loop monitor', () => {
   it('records the metric for every stall past span rate limits in seconds', () => {
     monitor.stop();
     const record = vi.spyOn(otelMetrics, 'recordEventLoopBlocked').mockImplementation(() => {});
-    const report = monitor._buildReport(100, 20);
-    for (let i = 0; i < 40; i++) monitor._report(report);
+    const report = monitor['buildReport'](100, timings());
+    for (let i = 0; i < 40; i++) monitor['report'](report);
     expect(record).toHaveBeenCalledTimes(40);
-    expect(record).toHaveBeenCalledWith(0.1, 'warning');
+    expect(record).toHaveBeenCalledWith(0.1, 'warning', 'code');
     expect(reports).toHaveLength(MAX_SPANS_PER_MINUTE);
   });
 
@@ -227,9 +279,86 @@ describe.sequential('event loop monitor', () => {
     });
     const context = trace.setSpan(ROOT_CONTEXT, sessionRoot);
     monitor.setReportContext(context, (fn) => runWithJobContext(job, fn));
-    for (let i = 0; i < 40; i++) monitor._report(monitor._buildReport(100, 20));
+    for (let i = 0; i < 40; i++) monitor['report'](monitor['buildReport'](100, timings()));
     expect(jobs).toHaveLength(40);
     expect(jobs.every((value) => value === job)).toBe(true);
+  });
+
+  describe('host contention', () => {
+    it('is told apart from blocking code by the watchdog and CPU time', () => {
+      monitor.stop();
+      // watchdog late by most of the stall and (nearly) no CPU burned: nothing ran
+      const descheduled = monitor['buildReport'](400, timings(10, 300));
+      expect(descheduled.cause).toBe('host');
+      // watchdog on time: the loop thread alone was stuck, in a blocking wait
+      expect(monitor['buildReport'](400, timings(10, 4)).cause).toBe('code');
+      // watchdog starved but the process was busy the whole time: code kept the loop
+      expect(monitor['buildReport'](400, timings(380, 300)).cause).toBe('code');
+    });
+
+    it('keeps the severity of its impact', () => {
+      monitor.stop();
+      // a stall past the error threshold delays audio the same however it came about
+      expect(monitor['buildReport'](400, timings(10, 300)).severity).toBe('error');
+      expect(monitor['buildReport'](70, timings(1, 60)).severity).toBe('warning');
+    });
+
+    it('is flagged as host contention on the span, the metric, the session, and the log', () => {
+      monitor.stop();
+      const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+      const record = vi.spyOn(otelMetrics, 'recordEventLoopBlocked').mockImplementation(() => {});
+      const stalls: string[] = [];
+      const session = {
+        rootSpanContext: trace.setSpan(ROOT_CONTEXT, sessionRoot),
+        _recordLoopStall: (_duration: number, _timestamp: number, cause: string) =>
+          stalls.push(cause),
+      };
+      monitor.setReportContext(trace.setSpan(ROOT_CONTEXT, sessionRoot), (fn) =>
+        runWithJobContext(fakeJob(session), fn),
+      );
+      monitor['report'](monitor['buildReport'](400, timings(10, 300)));
+      const [span] = blockedSpans();
+      expect(span!.attributes[ATTR_BLOCKING_CAUSE]).toBe('host');
+      expect(span!.status.code).toBe(SpanStatusCode.ERROR);
+      expect(span!.status.message).toContain('not scheduled');
+      expect(record).toHaveBeenCalledWith(0.4, 'error', 'host');
+      expect(stalls).toEqual(['host']);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toMatchObject({ cause: 'host' });
+      expect(warn.mock.calls[0]![1]).toContain('CPU contention or a container CPU quota');
+      expect(warn.mock.calls[0]![1]).not.toContain('synchronous work');
+    });
+
+    it('has its own log quota so neither cause silences the other', () => {
+      monitor.stop();
+      const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+      const host = monitor['buildReport'](400, timings(10, 300));
+      for (let i = 0; i < 10; i++) monitor['report'](host);
+      expect(warn).toHaveBeenCalledTimes(MAX_LOGS_PER_MINUTE);
+      // a genuine block right after still has its full quota
+      monitor['report'](monitor['buildReport'](400, timings(10, 4)));
+      expect(warn).toHaveBeenCalledTimes(MAX_LOGS_PER_MINUTE + 1);
+      expect(warn.mock.calls.at(-1)![1]).toContain('synchronous work');
+    });
+
+    it('is named as a possible cause when no watchdog is running', async () => {
+      monitor.stop();
+      const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+      const bare = new EventLoopMonitor({
+        warnThreshold: WARN,
+        errorThreshold: ERROR,
+        tickInterval: TICK,
+        watchdog: false,
+      });
+      bare.start();
+      expect(bare.watchdogActive).toBe(false);
+      const report = bare['buildReport'](400, timings(10, 0));
+      expect(report.cause).toBe('code');
+      bare['report'](report);
+      bare.stop();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![1]).toContain('did not schedule the process');
+    });
   });
 });
 
@@ -240,7 +369,7 @@ describe.sequential('event loop monitor helpers', () => {
   });
 
   it('rate limiter counts suppressed reports and uses a rolling window', () => {
-    const limiter = new _RateLimiter(2);
+    const limiter = new RateLimiter(2);
     expect(limiter.allow(100_000)).toBe(true);
     expect(limiter.allow(100_100)).toBe(true);
     expect(limiter.allow(100_200)).toBe(false);
@@ -288,19 +417,34 @@ describe.sequential('event loop monitor helpers', () => {
     expect(() => new EventLoopMonitor({ warnThreshold: 0 })).toThrow();
     expect(() => new EventLoopMonitor({ warnThreshold: 100, errorThreshold: 50 })).toThrow();
     expect(() => new EventLoopMonitor({ warnThreshold: 10, tickInterval: 50 })).toThrow();
+    // a NaN tick interval would become a zero-delay timer and spin the loop
+    expect(() => new EventLoopMonitor({ warnThreshold: NaN })).toThrow();
+    expect(() => new EventLoopMonitor({ warnThreshold: 100, errorThreshold: NaN })).toThrow();
+    expect(() => new EventLoopMonitor({ warnThreshold: 100, tickInterval: NaN })).toThrow();
+    expect(() => new EventLoopMonitor({ warnThreshold: Infinity })).toThrow();
   });
 
-  it('uses a bounded fifth of the warning threshold', () => {
-    expect(_tickIntervalFor(100)).toBe(20);
-    expect(_tickIntervalFor(250)).toBe(50);
-    expect(_tickIntervalFor(1000)).toBe(50);
-    expect(_tickIntervalFor(50)).toBe(20);
+  it('uses a bounded fifth of the warning threshold as the tick interval', () => {
+    const tickFor = (warn: number) => {
+      const monitor = startMonitoring({
+        thresholds: new LoopMonitorThresholds(warn, warn * 5),
+        watchdog: false,
+      });
+      const tick = monitor!.tickInterval;
+      stopMonitoring();
+      return tick;
+    };
+    expect(tickFor(100)).toBe(20);
+    expect(tickFor(250)).toBe(50);
+    expect(tickFor(1000)).toBe(50);
+    expect(tickFor(50)).toBe(20);
   });
 
   it('raises a warning threshold below the tick floor', () => {
     const monitor = startMonitoring({
       thresholds: new LoopMonitorThresholds(5, 10),
       emitSpans: false,
+      watchdog: false,
     });
     expect(monitor?.warnThreshold).toBe(20);
     expect(monitor?.errorThreshold).toBe(20);

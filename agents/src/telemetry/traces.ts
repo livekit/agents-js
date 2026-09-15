@@ -297,11 +297,17 @@ let cloudMeterProvider: MeterProvider | undefined;
 let cloudMetricsUnavailable = false;
 let cloudMeterShutdownRegistered = false;
 
-function isNoopMeterProvider(provider: ReturnType<typeof metrics.getMeterProvider>): boolean {
-  // The API does not publicly export its singleton NoopMeterProvider. The constructor is the
-  // stable distinction available in OTel API 1.x, equivalent to checking the private proxy/no-op
-  // provider in the Python SDK.
-  return provider.constructor.name === 'NoopMeterProvider';
+// @opentelemetry/api keeps every registered global under this well-known symbol, keyed by API
+// major version; the default no-op meter provider is never stored there. Reading the registry
+// directly also sees a provider installed through a second copy of the API package, which an
+// `instanceof` or constructor-name check on `metrics.getMeterProvider()` would not.
+const OTEL_API_GLOBAL_KEY = Symbol.for('opentelemetry.js.api.1');
+
+function hasGlobalMeterProvider(): boolean {
+  const registry = (globalThis as { [OTEL_API_GLOBAL_KEY]?: { metrics?: unknown } })[
+    OTEL_API_GLOBAL_KEY
+  ];
+  return registry?.metrics !== undefined;
 }
 
 function setupCloudMetrics(
@@ -311,10 +317,10 @@ function setupCloudMetrics(
 ): MeterProvider | undefined {
   if (cloudMeterProvider || cloudMetricsUnavailable) return cloudMeterProvider;
 
-  const currentProvider = metrics.getMeterProvider();
-  if (!isNoopMeterProvider(currentProvider)) {
+  if (hasGlobalMeterProvider()) {
     // Metric readers are fixed when an SDK 2.x MeterProvider is constructed. Preserve an
-    // application-installed global provider rather than replacing it and breaking its exporter.
+    // application-installed global provider rather than replacing it and breaking its exporter;
+    // measurements still reach it through the API's global meter.
     cloudMetricsUnavailable = true;
     return undefined;
   }
