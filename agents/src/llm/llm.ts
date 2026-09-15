@@ -240,6 +240,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     });
   }
 
+  /** The `llm_request` span of this stream, once the main task has opened it. */
+  protected get llmRequestSpan(): Span | undefined {
+    return this.#llmRequestSpan;
+  }
+
   /** The GenAI inference span's request side, per the OTel GenAI conventions. */
   private recordGenAIRequest(span: Span) {
     genAI.setRequestAttributes(span, {

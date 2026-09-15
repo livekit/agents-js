@@ -376,6 +376,11 @@ export abstract class SynthesizeStream
     });
   }
 
+  /** The `tts_request` span of this stream, once the main task has opened it. */
+  protected get ttsRequestSpan(): Span | undefined {
+    return this.#ttsRequestSpan;
+  }
+
   private _mainTaskImpl = async (span: Span) => {
     this.#ttsRequestSpan = span;
     span.setAttributes({
@@ -772,6 +777,11 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
         }
       }
     });
+  }
+
+  /** The `tts_request` span of this stream, once the main task has opened it. */
+  protected get ttsRequestSpan(): Span | undefined {
+    return this.#ttsRequestSpan;
   }
 
   private _mainTaskImpl = async (span: Span) => {

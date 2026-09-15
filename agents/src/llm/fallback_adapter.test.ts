@@ -264,4 +264,37 @@ describe('FallbackAdapter', () => {
       }),
     );
   });
+
+  it('reports the model and provider of the instance that serves next', () => {
+    class IdentifiedLLM extends MockLLM {
+      constructor(
+        label: string,
+        private readonly _model: string,
+        private readonly _provider: string,
+      ) {
+        super(label);
+      }
+      override get model(): string {
+        return this._model;
+      }
+      override get provider(): string {
+        return this._provider;
+      }
+    }
+    const primary = new IdentifiedLLM('primary', 'primary-model', 'primary');
+    const fallback = new IdentifiedLLM('fallback', 'fallback-model', 'fallback');
+    const adapter = new FallbackAdapter({ llms: [primary, fallback] });
+    // model and provider follow the instance that serves next, so spans and metrics name the
+    // model that will answer rather than the adapter; the label stays the adapter's own
+    expect(adapter.model).toBe('primary-model');
+    expect(adapter.provider).toBe('primary');
+    expect(adapter.label()).toContain('FallbackAdapter');
+    adapter._status[0]!.available = false;
+    expect(adapter.model).toBe('fallback-model');
+    expect(adapter.provider).toBe('fallback');
+    // once the primary recovers (its recovery task flips it back to available) the next request
+    // goes to it first, so that is what model and provider report
+    adapter._status[0]!.available = true;
+    expect(adapter.model).toBe('primary-model');
+  });
 });
