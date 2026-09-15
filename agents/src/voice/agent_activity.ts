@@ -91,6 +91,7 @@ import {
 import { VAD, type VADEvent } from '../vad.js';
 import {
   Agent,
+  AgentTask,
   type AgentUpdateOptions,
   type ModelSettings,
   StopResponse,
@@ -809,14 +810,24 @@ export class AgentActivity implements RecognitionHooks {
 
     if (runOnEnter) {
       this._onEnterTask = this.createSpeechTask({
-        taskFn: () =>
-          onEnterStorage.run({ session: this.agentSession, agent: this.agent }, () =>
-            tracer.startActiveSpan(async () => this.agent.onEnter(), {
-              name: 'on_enter',
-              context: trace.setSpan(ROOT_CONTEXT, startSpan),
-              attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
-            }),
-          ),
+        taskFn: async () => {
+          // A user turn committed while onEnter runs is not this agent's to decline.
+          const enteredOn = this.agentSession._unansweredUserMetrics;
+          try {
+            await onEnterStorage.run({ session: this.agentSession, agent: this.agent }, () =>
+              tracer.startActiveSpan(async () => this.agent.onEnter(), {
+                name: 'on_enter',
+                context: trace.setSpan(ROOT_CONTEXT, startSpan),
+                attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
+              }),
+            );
+          } finally {
+            // Speeches created inside onEnter already claimed their turn.
+            if (this.agentSession._unansweredUserMetrics === enteredOn) {
+              this.agentSession._unansweredUserMetrics = undefined;
+            }
+          }
+        },
         inlineTask: true,
         name: 'AgentActivity_onEnter',
       });
@@ -1605,10 +1616,20 @@ export class AgentActivity implements RecognitionHooks {
       }),
     );
 
+    const previousUserMetrics = this.takeOnEnterUserMetrics();
+
     const stateLease = this.createAgentStateLease(handle);
     const task = this.createSpeechTask({
       taskFn: (abortController: AbortController) =>
-        this.ttsTask(stateLease, text, addToChatCtx, {}, abortController, audio),
+        this.ttsTask(
+          stateLease,
+          text,
+          addToChatCtx,
+          {},
+          abortController,
+          audio,
+          previousUserMetrics,
+        ),
       ownedSpeechHandle: handle,
       name: 'AgentActivity.tts_say',
     });
@@ -2771,6 +2792,7 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle: handle,
       }),
     );
+    const previousUserMetrics = this.takeOnEnterUserMetrics();
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
     const stateLease = this.createAgentStateLease(handle);
 
@@ -2814,6 +2836,7 @@ export class AgentActivity implements RecognitionHooks {
             abortController,
             instructions,
             userMessage,
+            previousUserMetrics,
           ),
         ownedSpeechHandle: handle,
         name: 'AgentActivity.pipelineReply',
@@ -2907,6 +2930,17 @@ export class AgentActivity implements RecognitionHooks {
       .filter(
         (tool): tool is Tool => isFunctionTool(tool) && !!(tool.flags & ToolFlag.IGNORE_ON_ENTER),
       );
+  }
+
+  private takeOnEnterUserMetrics(): MetricsReport | undefined {
+    const onEnterData = onEnterStorage.getStore();
+    if (onEnterData?.agent !== this.agent || onEnterData.session !== this.agentSession) {
+      return undefined;
+    }
+
+    const metrics = this.agentSession._unansweredUserMetrics;
+    this.agentSession._unansweredUserMetrics = undefined;
+    return metrics;
   }
 
   /**
@@ -3138,6 +3172,7 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
     audio?: ReadableStream<AudioFrame> | null,
+    previousUserMetrics?: MetricsReport,
   ): Promise<void> {
     const { speechHandle } = stateLease;
     speechHandle._agentTurnContext = otelContext.active();
@@ -3272,22 +3307,31 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
+      const replyStoppedSpeakingAt = Date.now();
+      const replyAssistantMetrics: MetricsReport = {};
+      if (replyTtsGenData?.ttfb !== undefined) {
+        replyAssistantMetrics.ttsNodeTtfb = replyTtsGenData.ttfb;
+      }
+      if (replyStartedSpeakingAt !== undefined) {
+        replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
+        replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
+
+        if (replyStartedForwardingAt !== undefined) {
+          replyAssistantMetrics.playbackLatency =
+            (replyStartedSpeakingAt - replyStartedForwardingAt) / 1000; // ms -> seconds
+        }
+
+        // The audio answers the user turn whether or not its message is stored.
+        if (previousUserMetrics?.stoppedSpeakingAt !== undefined) {
+          const e2eLatency = replyStartedSpeakingAt / 1000 - previousUserMetrics.stoppedSpeakingAt;
+          replyAssistantMetrics.e2eLatency = e2eLatency;
+          trace
+            .getSpan(speechHandle._agentTurnContext)
+            ?.setAttribute(traceTypes.ATTR_E2E_LATENCY, e2eLatency);
+        }
+      }
+
       if (addToChatCtx) {
-        const replyStoppedSpeakingAt = Date.now();
-        const replyAssistantMetrics: MetricsReport = {};
-        if (replyTtsGenData?.ttfb !== undefined) {
-          replyAssistantMetrics.ttsNodeTtfb = replyTtsGenData.ttfb;
-        }
-        if (replyStartedSpeakingAt !== undefined) {
-          replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
-          replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
-
-          if (replyStartedForwardingAt !== undefined) {
-            replyAssistantMetrics.playbackLatency =
-              (replyStartedSpeakingAt - replyStartedForwardingAt) / 1000; // ms -> seconds
-          }
-        }
-
         const message = ChatMessage.create({
           role: 'assistant',
           content: textOut?.text || '',
@@ -3541,6 +3585,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agent._chatCtx.insert(newMessage);
       this.agentSession._conversationItemAdded(newMessage);
       userMetrics = newMessage.metrics;
+      this.agentSession._unansweredUserMetrics = userMetrics;
     }
 
     if (speechHandle.interrupted) {
@@ -3795,10 +3840,13 @@ export class AgentActivity implements RecognitionHooks {
         assistantMetrics.e2eLatency = e2eLatency;
         span.setAttribute(traceTypes.ATTR_E2E_LATENCY, e2eLatency);
       }
+
+      if (this.agentSession._unansweredUserMetrics === userMetrics) {
+        this.agentSession._unansweredUserMetrics = undefined;
+      }
     }
 
     span.setAttribute(traceTypes.ATTR_SPEECH_INTERRUPTED, speechHandle.interrupted);
-    let hasSpeechMessage = false;
 
     if (speechHandle.interrupted) {
       this.logger.debug(
@@ -3812,7 +3860,6 @@ export class AgentActivity implements RecognitionHooks {
       const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
 
       if (forwardedText) {
-        hasSpeechMessage = true;
         const message = ChatMessage.create({
           role: 'assistant',
           content: forwardedText,
@@ -3854,7 +3901,6 @@ export class AgentActivity implements RecognitionHooks {
 
     const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
     if (forwardedText) {
-      hasSpeechMessage = true;
       const message = ChatMessage.create({
         role: 'assistant',
         id: llmGenData.id,
@@ -3909,7 +3955,10 @@ export class AgentActivity implements RecognitionHooks {
     });
     if (!toolExecutionCompleted) return;
 
-    if (toolOutput.output.length === 0) return;
+    if (toolOutput.output.length === 0) {
+      this.agentSession._unansweredUserMetrics = undefined;
+      return;
+    }
 
     // important: no agent output should be used after this point
     const { maxToolSteps } = this.agentSession.sessionOptions;
@@ -3934,6 +3983,11 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.updateAgent(newAgentTask);
       schedulingPaused = true;
     }
+
+    const chainContinues =
+      shouldGenerateToolReply ||
+      this.agentSession.currentAgent !== this.agent ||
+      (this.agent instanceof AgentTask && this.agent.done);
 
     const toolMessages = [
       ...functionToolsExecutedEvent.functionCalls,
@@ -3974,7 +4028,7 @@ export class AgentActivity implements RecognitionHooks {
             replyAbortController,
             instructions,
             undefined,
-            hasSpeechMessage ? undefined : userMetrics,
+            this.agentSession._unansweredUserMetrics,
           ),
         ownedSpeechHandle: speechHandle,
         name: 'AgentActivity.pipelineReply',
@@ -3983,6 +4037,10 @@ export class AgentActivity implements RecognitionHooks {
       toolResponseTask.result.finally(() => this.onPipelineReplyDone(toolResponseLease));
 
       this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+    }
+
+    if (!chainContinues) {
+      this.agentSession._unansweredUserMetrics = undefined;
     }
   };
 
