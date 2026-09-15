@@ -28,9 +28,12 @@ export { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 export * as loopMonitor from './loop_monitor.js';
 export * as traceTypes from './trace_types.js';
 export {
+  discardPreparedCloudTracer,
   FanoutSpanProcessor,
   flushCloudMetrics,
+  flushCloudTraces,
   flushOtelLogs,
+  prepareCloudTracer,
   setTracerProvider,
   setupCloudTracer,
   tracer,
@@ -42,6 +45,7 @@ export {
   type StartSpanOptions,
 } from './traces.js';
 export {
+  participantAttributes,
   recordException,
   recordRealtimeMetrics,
   redactionEnabled,

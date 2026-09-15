@@ -48,6 +48,7 @@ function createFakeSession(rootSpanContext = ROOT_CONTEXT): AgentSession {
     _cancelUserAwayTimer: vi.fn(),
     _userSpeakingSpan: undefined,
     _userState: 'listening',
+    _addSessionEvent: vi.fn(),
     emit: vi.fn(),
     rootSpanContext,
   } as unknown as AgentSession;
