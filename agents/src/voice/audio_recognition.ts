@@ -1977,6 +1977,10 @@ export class AudioRecognition {
 
   private async forwardInputAudioToStt(pipeline: STTPipeline, signal: AbortSignal) {
     for await (const frame of readStream(this.sttInputStream, signal)) {
+      // Track the STT input sample rate so a manual commit can flush with silence
+      // even when no VAD speech event has reported it (e.g. manual turn detection
+      // without a VAD). Mirrors Python's `_push_audio`.
+      this.sampleRate = frame.sampleRate;
       const frameDurationMs = (frame.samplesPerChannel / frame.sampleRate) * 1000;
       pipeline.inputStartedAt ??= Date.now() - frameDurationMs;
       await pipeline.audioChannel.write(frame);
