@@ -67,6 +67,21 @@ function needsReplyPlaceholder(model: string): boolean {
   return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
 }
 
+/**
+ * The SDK rejects an empty `turns` array ("contents are required"), so a
+ * content event carrying no turns is sent as a bare `turnComplete`. That is
+ * how a reply is requested on models that take no placeholder user turn.
+ */
+export function toClientContentParams({
+  turns,
+  turnComplete,
+}: types.LiveClientContent): types.LiveSendClientContentParameters {
+  return {
+    ...(turns && turns.length > 0 ? { turns } : {}),
+    turnComplete: turnComplete ?? true,
+  };
+}
+
 function validateModelAPIMatch(model: string, vertexai: boolean): void {
   if (vertexai && KNOWN_GEMINI_API_MODELS.has(model)) {
     throw new Error(
@@ -1162,7 +1177,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         switch (msg.type) {
           case 'content':
-            const { turns, turnComplete } = msg.value;
             if (LK_GOOGLE_DEBUG) {
               this.#logger.debug(
                 {
@@ -1172,10 +1186,7 @@ export class RealtimeSession extends llm.RealtimeSession {
                 'sent Gemini Live client event',
               );
             }
-            await session.sendClientContent({
-              turns,
-              turnComplete: turnComplete ?? true,
-            });
+            await session.sendClientContent(toClientContentParams(msg.value));
             break;
           case 'tool_response':
             const { functionResponses } = msg.value;
