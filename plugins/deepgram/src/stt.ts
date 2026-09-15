@@ -21,7 +21,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { PeriodicCollector } from './_utils.js';
+import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
 export interface STTOptions {
@@ -385,6 +385,11 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket) {
     this.#resetWS = new Future();
     let closing = false;
+    // Scoped to this connection. An abandoned `input.next()` stays parked inside the
+    // queue and shifts the next frame off it for a promise nobody awaits, so a sender
+    // left over from a previous attempt steals audio from the current one. The read
+    // has to be cancelled, not merely raced against.
+    const attempt = new AbortController();
 
     const keepalive = setInterval(() => {
       try {
@@ -394,6 +399,13 @@ export class SpeechStream extends stt.SpeechStream {
         return;
       }
     }, 5000);
+
+    // the KeepAlive above is an application-level message: it keeps Deepgram from
+    // timing the session out, but it cannot tell us whether the socket is still
+    // there. Only a ping that goes unanswered can.
+    const stopHeartbeat = startWebSocketHeartbeat(ws, () =>
+      this.#logger.warn('Deepgram did not answer a ping in time, terminating the socket'),
+    );
 
     // gets cancelled also when sendTask is complete
     const wsMonitor = Task.from(async (controller) => {
@@ -432,7 +444,10 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
+          const result = await Promise.race([
+            this.input.next({ signal: attempt.signal }),
+            abortPromise,
+          ]);
 
           if (result === undefined) return; // aborted
           if (result.done) {
@@ -468,9 +483,14 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(JSON.stringify({ type: 'Finalize' }));
           }
         }
+      } catch (e) {
+        if (attempt.signal.aborted) return; // teardown, not a failure of this send
+        throw e;
       } finally {
         closing = true;
-        ws.send(JSON.stringify({ type: 'CloseStream' }));
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'CloseStream' }));
+        }
         wsMonitor.cancel();
       }
     };
@@ -588,13 +608,24 @@ export class SpeechStream extends stt.SpeechStream {
       await Promise.race([listenMessage, waitForAbort(controller.signal)]);
     }, this.abortController);
 
-    await Promise.race([
-      this.#resetWS.await,
-      Promise.all([sendTask(), listenTask.result, wsMonitor]),
-    ]);
-    closing = true;
-    ws.close();
-    clearInterval(keepalive);
+    const sendPromise = sendTask();
+    try {
+      await Promise.race([
+        this.#resetWS.await,
+        // wsMonitor.result, not wsMonitor: Task is not thenable, so passing the
+        // object made Promise.all resolve it instantly and the monitor's rejection
+        // was never observed. A dropped socket could not reach the retry below.
+        Promise.all([sendPromise, listenTask.result, wsMonitor.result]),
+      ]);
+    } finally {
+      closing = true;
+      ws.close();
+      clearInterval(keepalive);
+      stopHeartbeat();
+      // settle this attempt's sender before the caller opens the next socket
+      attempt.abort();
+      await sendPromise.catch(() => {});
+    }
   }
 
   private onAudioDurationReport(duration: number) {
