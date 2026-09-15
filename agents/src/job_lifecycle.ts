@@ -3,13 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Logger } from 'pino';
 import { type JobContext, runWithJobContextAsync } from './job.js';
-import { flushOtelLogs } from './telemetry/index.js';
+import { flushCloudMetrics, flushOtelLogs } from './telemetry/index.js';
 import { IdleTimeoutError, waitUntilTimeout } from './utils.js';
 
 export const DEFAULT_SESSION_END_TIMEOUT = 300 * 1000;
 const ENTRYPOINT_SHUTDOWN_TIMEOUT = 15 * 1000;
 const SESSION_CLOSE_TIMEOUT = 60 * 1000;
 const OTEL_LOG_FLUSH_TIMEOUT = 10 * 1000;
+const OTEL_METRIC_FLUSH_TIMEOUT = 10 * 1000;
 const MAX_TIMER_TIMEOUT = 2_147_483_647;
 
 type SessionEndCallback = (ctx: JobContext) => unknown;
@@ -122,5 +123,14 @@ export async function flushJobLogs(logger: Logger): Promise<void> {
     timeout: 'OTEL log flush timed out; proceeding with job shutdown',
     error: 'Failed to flush OTEL logs',
     lateReject: 'OTEL log flush rejected after shutdown timeout',
+  });
+}
+
+/** Export the last metrics of the job. Run it after everything that can still record one. */
+export async function flushJobMetrics(logger: Logger): Promise<void> {
+  await waitOrContinue(() => flushCloudMetrics(), OTEL_METRIC_FLUSH_TIMEOUT, logger, {
+    timeout: 'OTEL metric flush timed out; proceeding with job shutdown',
+    error: 'Failed to flush OTEL metrics',
+    lateReject: 'OTEL metric flush rejected after shutdown timeout',
   });
 }

@@ -11,6 +11,7 @@ import {
   type SpanOptions,
   type Tracer,
   type TracerProvider,
+  metrics,
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
@@ -22,6 +23,11 @@ import {
   envDetector,
   resourceFromAttributes,
 } from '@opentelemetry/resources';
+import {
+  AggregationTemporality,
+  MeterProvider,
+  PeriodicExportingMetricReader,
+} from '@opentelemetry/sdk-metrics';
 import type {
   ReadableSpan,
   Span as SdkSpan,
@@ -52,7 +58,7 @@ import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { uploadRecording } from './recording_upload.js';
 import { allowPiiFromEnv } from './redaction.js';
 import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
-import { UploadGateTraceExporter, uploadGate } from './upload_gate.js';
+import { UploadGateMetricExporter, UploadGateTraceExporter, uploadGate } from './upload_gate.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -287,6 +293,77 @@ const customProviderConfigs = new WeakMap<TracerProvider, CustomProviderConfig>(
 /** Providers that already carry the in-process PII stripper — installed at most once. */
 const piiRedactionInstalled = new WeakSet<TracerProvider>();
 
+let cloudMeterProvider: MeterProvider | undefined;
+let cloudMetricsUnavailable = false;
+let cloudMeterShutdownRegistered = false;
+
+// @opentelemetry/api keeps every registered global under this well-known symbol, keyed by API
+// major version; the default no-op meter provider is never stored there. Reading the registry
+// directly also sees a provider installed through a second copy of the API package, which an
+// `instanceof` or constructor-name check on `metrics.getMeterProvider()` would not.
+const OTEL_API_GLOBAL_KEY = Symbol.for('opentelemetry.js.api.1');
+
+function hasGlobalMeterProvider(): boolean {
+  const registry = (globalThis as { [OTEL_API_GLOBAL_KEY]?: { metrics?: unknown } })[
+    OTEL_API_GLOBAL_KEY
+  ];
+  return registry?.metrics !== undefined;
+}
+
+function setupCloudMetrics(
+  observabilityUrl: string,
+  headers: Record<string, string>,
+  resource: ReturnType<typeof resourceFromAttributes>,
+): MeterProvider | undefined {
+  if (cloudMeterProvider || cloudMetricsUnavailable) return cloudMeterProvider;
+
+  if (hasGlobalMeterProvider()) {
+    // Metric readers are fixed when an SDK 2.x MeterProvider is constructed. Preserve an
+    // application-installed global provider rather than replacing it and breaking its exporter;
+    // measurements still reach it through the API's global meter.
+    cloudMetricsUnavailable = true;
+    return undefined;
+  }
+
+  const exporter = new UploadGateMetricExporter({
+    url: `${observabilityUrl}/observability/metrics/otlp/v0`,
+    headers,
+    compression: CompressionAlgorithm.GZIP,
+    temporalityPreference: AggregationTemporality.DELTA,
+  });
+  const provider = new MeterProvider({
+    resource,
+    readers: [
+      new PeriodicExportingMetricReader({
+        exporter,
+        exportIntervalMillis: 30_000,
+      }),
+    ],
+  });
+
+  if (!metrics.setGlobalMeterProvider(provider)) {
+    // Another provider won the set-once global between the check and registration. Do not leave
+    // the orphaned periodic reader running.
+    void provider.shutdown().catch(() => undefined);
+    cloudMetricsUnavailable = true;
+    return undefined;
+  }
+
+  cloudMeterProvider = provider;
+  if (!cloudMeterShutdownRegistered) {
+    cloudMeterShutdownRegistered = true;
+    process.once('beforeExit', () => {
+      const ownedProvider = cloudMeterProvider;
+      cloudMeterProvider = undefined;
+      // the pending export keeps the loop alive, so the shutdown completes before exit
+      void ownedProvider?.shutdown({ timeoutMillis: 10_000 }).catch((error: unknown) => {
+        console.error('Failed to shut down cloud metrics:', error);
+      });
+    });
+  }
+  return provider;
+}
+
 /**
  * Installs {@link PIIFilteringSpanProcessor} on a provider LiveKit does not own.
  *
@@ -501,6 +578,23 @@ export async function setupCloudTracer(
         }),
       );
 
+    // A meter provider has process lifetime and cannot carry room/job identity safely. Those
+    // fields are attached to each measurement by otel_metrics instead.
+    const meterResource = defaultResource()
+      .merge(detectResources({ detectors: [envDetector] }))
+      .merge(
+        resourceFromAttributes({
+          [ATTR_SERVICE_NAME]: 'livekit-agents',
+          ...(agentName ? { [ATTR_AGENT_NAME]: agentName } : {}),
+          ...(cloudAgentId ? { [ATTR_CLOUD_AGENT_ID]: cloudAgentId } : {}),
+          ...(deploymentId ? { [ATTR_DEPLOYMENT_ID]: deploymentId } : {}),
+        }),
+      );
+    // The final export belongs to the job bootstrap (flushCloudMetrics), after every shutdown
+    // callback has run: a stall inside one of them is only recorded once it returns, and the
+    // periodic reader would not get another turn before process.exit().
+    setupCloudMetrics(observabilityUrl, headers, meterResource);
+
     if (enableTraces) {
       const url = `${observabilityUrl}/observability/traces/otlp/v0`;
       const createCloudExporter = () =>
@@ -591,6 +685,16 @@ export async function setupCloudTracer(
  */
 export async function flushOtelLogs(): Promise<void> {
   await flushPinoLogs();
+}
+
+/**
+ * Export every measurement the cloud meter provider holds. Call it once all work that could
+ * record a metric is done: the job process exits explicitly, so no later flush would run.
+ *
+ * @internal
+ */
+export async function flushCloudMetrics(): Promise<void> {
+  await cloudMeterProvider?.forceFlush({ timeoutMillis: 10_000 });
 }
 
 /** Proto field names and shapes, matching what livekit/agents emits for the same log body. */

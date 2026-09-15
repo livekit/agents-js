@@ -116,6 +116,33 @@ export const ATTR_REALTIME_MODEL_METRICS = 'lk.realtime_model_metrics';
 /** End-to-end latency in seconds. */
 export const ATTR_E2E_LATENCY = 'lk.e2e_latency';
 
+// Event loop blocking
+/** Heartbeat lag in seconds. */
+export const ATTR_BLOCKING_DURATION = 'lk.blocking.duration';
+export const ATTR_BLOCKING_THRESHOLD = 'lk.blocking.threshold';
+export const ATTR_BLOCKING_SEVERITY = 'lk.blocking.severity';
+/** `code` for synchronous work on the loop, `host` when the process itself was not scheduled. */
+export const ATTR_BLOCKING_CAUSE = 'lk.blocking.cause';
+/** Not populated by the Node runtime: it cannot sample another thread's JavaScript stack. */
+export const ATTR_BLOCKING_TASK = 'lk.blocking.task';
+/** Not populated by the Node runtime: it cannot sample another thread's JavaScript stack. */
+export const ATTR_BLOCKING_STACK = 'lk.blocking.stack';
+/** Garbage-collection pause time inside the stall, in seconds. */
+export const ATTR_BLOCKING_GC_TIME = 'lk.blocking.gc_time';
+/**
+ * CPU consumed by the event-loop thread during the stall, in seconds. On Node runtimes without
+ * `process.threadCpuUsage()` (before 22.15 / 23.9) it is process-wide instead, counting the libuv
+ * pool and native media threads too, and can then exceed `lk.blocking.duration`.
+ */
+export const ATTR_BLOCKING_CPU_TIME = 'lk.blocking.cpu_time';
+/** Not populated by the Node runtime: there is no lazy-import equivalent to attribute. */
+export const ATTR_BLOCKING_IMPORT = 'lk.blocking.import';
+export const ATTR_BLOCKING_SUPPRESSED = 'lk.blocking.suppressed';
+// Summary attributes on agent_session.
+export const ATTR_BLOCKING_COUNT = 'lk.blocking.count';
+export const ATTR_BLOCKING_TOTAL_DURATION = 'lk.blocking.total_duration';
+export const ATTR_BLOCKING_MAX_DURATION = 'lk.blocking.max_duration';
+
 // OpenTelemetry GenAI semantic conventions, mirroring the attribute registry of
 // https://github.com/open-telemetry/semantic-conventions-genai. Backends ingest these
 // directly, so the names must stay byte-for-byte identical to the registry. The ones the

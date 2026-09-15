@@ -27,6 +27,22 @@ const TRANSCRIPT =
 
 const STREAM_CHUNK_DURATION_MS = 10;
 const TRAILING_SILENCE_DURATION_MS = 2_000;
+// Audio is streamed on a fixed schedule, so a test takes the clip's 50 s at real time rather
+// than drifting past it by a timer's overhead per 10 ms chunk. A multiple of real time can be
+// set per harness call (`streamSpeed`) or globally with STT_TEST_STREAM_SPEED. Providers cap
+// this: AssemblyAI and xAI fail at 4x, and at 2x they finalize no sooner than at 1x, since they
+// process audio at its own pace. The wall-clock win comes from running the suites concurrently.
+const DEFAULT_STREAM_SPEED = Number(process.env.STT_TEST_STREAM_SPEED) || 1;
+
+/** Resolve when chunk `index` is due on a schedule running `speed` times real time. */
+const paceChunk = (startedAt: number, index: number, speed: number): Promise<void> => {
+  const due = startedAt + ((index + 1) * STREAM_CHUNK_DURATION_MS) / speed;
+  const wait = due - performance.now();
+  // when behind schedule, still yield to the loop so the output side can drain the stream
+  return new Promise((resolve) =>
+    wait > 0 ? setTimeout(resolve, wait) : setImmediate(() => resolve()),
+  );
+};
 
 const validate = async (text: string, transcript: string, threshold: number) => {
   text = text.toLowerCase().replace(/\s/g, ' ').trim();
@@ -37,10 +53,11 @@ const validate = async (text: string, transcript: string, threshold: number) => 
 export const stt = async (
   stt: sttlib.STT,
   vad: VAD,
-  supports: Partial<{ streaming: boolean; nonStreaming: boolean }> = {},
+  supports: Partial<{ streaming: boolean; nonStreaming: boolean; streamSpeed: number }> = {},
 ) => {
   initializeLogger({ pretty: false });
   supports = { streaming: true, nonStreaming: true, ...supports };
+  const streamSpeed = supports.streamSpeed ?? DEFAULT_STREAM_SPEED;
   describe('STT', () => {
     it.skipIf(!supports.nonStreaming).each([24000, 44100])(
       'should properly transcribe speech at %i Hz',
@@ -74,9 +91,11 @@ export const stt = async (
         stt.on('error', onStreamError);
 
         const input = async () => {
+          const startedAt = performance.now();
+          let chunk = 0;
           for (const frame of frames) {
             stream.pushFrame(frame);
-            await new Promise((resolve) => setTimeout(resolve, STREAM_CHUNK_DURATION_MS));
+            await paceChunk(startedAt, chunk++, streamSpeed);
           }
 
           const silence = new AudioFrame(
@@ -91,7 +110,7 @@ export const stt = async (
             elapsed += STREAM_CHUNK_DURATION_MS
           ) {
             stream.pushFrame(silence);
-            await new Promise((resolve) => setTimeout(resolve, STREAM_CHUNK_DURATION_MS));
+            await paceChunk(startedAt, chunk++, streamSpeed);
           }
           stream.endInput();
         };

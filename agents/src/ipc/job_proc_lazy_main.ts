@@ -3,14 +3,22 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Room, RoomEvent, dispose } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { context as otelContext } from '@opentelemetry/api';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
-import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
+import {
+  JobContext,
+  JobProcess,
+  type RunningJobInfo,
+  runWithJobContext,
+  runWithJobContextAsync,
+} from '../job.js';
 import {
   finalizeSession,
   flushJobLogs,
+  flushJobMetrics,
   runShutdownCallbacks,
   validateSessionEndTimeout,
   waitForEntrypointShutdown,
@@ -18,6 +26,7 @@ import {
 import { initializeLogger, log } from '../log.js';
 import { loggerOptions, setLoggerState } from '../log_core.js';
 import type { SimulationContext } from '../simulation.js';
+import { getMonitor, startMonitoring, stopMonitoring } from '../telemetry/loop_monitor.js';
 import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
@@ -166,6 +175,9 @@ const startJob = (
             span.setAttribute(traceTypes.ATTR_JOB_ID, info.job.id);
             span.setAttribute(traceTypes.ATTR_AGENT_NAME, info.job.agentName);
             span.setAttribute(traceTypes.ATTR_ROOM_NAME, info.job.room?.name ?? '');
+            getMonitor()?.setReportContext(otelContext.active(), (fn) =>
+              runWithJobContext(ctx, fn),
+            );
             return func(ctx);
           },
           { name: 'job_entrypoint' },
@@ -261,6 +273,7 @@ const startJob = (
     logger.debug('initializing job runner');
     await agent.prewarm(proc);
     logger.debug('job runner initialized');
+    const loopMonitor = startMonitoring({ name: 'job' });
     safeSend({ case: 'initializeResponse', value: undefined });
 
     let job: JobTask | undefined = undefined;
@@ -320,6 +333,10 @@ const startJob = (
     process.on('message', messageHandler);
 
     await join.await;
+    // stop the monitor first so a stall from the shutdown callbacks is recorded, then export:
+    // the periodic reader gets no further turn before process.exit() below
+    if (loopMonitor) stopMonitoring(loopMonitor);
+    await flushJobMetrics(logger);
     clearTimeout(orphanedTimeout);
     process.off('message', messageHandler);
 
