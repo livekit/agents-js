@@ -36,11 +36,6 @@ import { type LLMTools } from '../tools.js';
 import { toToolsConfig } from '../utils.js';
 import type * as api_proto from './api_proto.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
-import {
-  type LiveSocketHost,
-  forwardHistoryConfigToSetup,
-  historyConfigForSetup,
-} from './live_setup.js';
 
 // Input audio constants (matching Python)
 const INPUT_AUDIO_SAMPLE_RATE = 16000;
@@ -54,6 +49,40 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
+
+const KNOWN_VERTEXAI_MODELS = new Set(['gemini-live-2.5-flash-native-audio']);
+
+const KNOWN_GEMINI_API_MODELS = new Set([
+  'gemini-3.8-live',
+  'gemini-3.8-live-extended-thinking',
+  'gemini-3.1-flash-live-preview',
+  'gemini-2.5-flash-native-audio-preview-12-2025',
+]);
+
+// generateReply() appends a "." user turn so Gemini sees a completed turn. These models
+// answer that placeholder with an empty turn instead, so they must not get it.
+const MODELS_WITHOUT_REPLY_PLACEHOLDER = ['3.1', '3.8'];
+
+function needsReplyPlaceholder(model: string): boolean {
+  return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
+}
+
+function validateModelAPIMatch(model: string, vertexai: boolean): void {
+  if (vertexai && KNOWN_GEMINI_API_MODELS.has(model)) {
+    throw new Error(
+      `Model '${model}' is a Gemini API model, but vertexai=true. Use a VertexAI model ` +
+        `(e.g., 'gemini-live-2.5-flash-native-audio') or set vertexai=false.`,
+    );
+  }
+
+  if (!vertexai && KNOWN_VERTEXAI_MODELS.has(model)) {
+    throw new Error(
+      `Model '${model}' is a VertexAI model, but vertexai=false. Use a Gemini API model ` +
+        `(e.g., 'gemini-2.5-flash-native-audio-preview-12-2025') or set vertexai=true.`,
+    );
+  }
+}
+
 /**
  * Default image encoding options for Google Realtime API
  */
@@ -142,15 +171,6 @@ interface ToolCallStatus {
   status: 'pending' | 'continuing' | 'completed' | 'cancelled';
   willContinueSent: boolean;
   createdAt: number;
-}
-
-/** Empty unless the turn is pure text, so non-text turns stay where they are. */
-function textOf(turn: types.Content): string {
-  const parts = turn.parts ?? [];
-  if (parts.length === 0 || parts.some((part) => !part.text)) {
-    return '';
-  }
-  return parts.map((part) => part.text).join('');
 }
 
 /**
@@ -355,7 +375,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       : 'gemini-2.5-flash-native-audio-preview-12-2025';
 
     const model = options.model || defaultModel;
-    const mutableSession = !model.includes('3.1');
+    validateModelAPIMatch(model, vertexai);
 
     super({
       messageTruncation: false,
@@ -364,17 +384,11 @@ export class RealtimeModel extends llm.RealtimeModel {
       autoToolReplyGeneration: true,
       audioOutput: options.modalities?.includes(Modality.AUDIO) ?? true,
       manualFunctionCalls: false,
-      midSessionChatCtxUpdate: mutableSession,
-      midSessionInstructionsUpdate: mutableSession,
+      midSessionChatCtxUpdate: true,
+      midSessionInstructionsUpdate: true,
       midSessionToolsUpdate: false,
       perResponseToolChoice: false,
     });
-
-    if (!mutableSession) {
-      this.#logger.warn(
-        `'${model}' has limited mid-session update support. instructions, chat context, and tool updates will not be applied until the next session.`,
-      );
-    }
 
     this._options = {
       model,
@@ -487,13 +501,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
   private generationPendingTurnComplete?: ResponseGeneration;
 
-  /**
-   * Whether the server will read the leading `clientContent` as history rather than
-   * as a turn to answer. The prefill is sent the same way either way — after the
-   * session starts — but when this is set it has to close the history phase (see below).
-   */
-  #prefillReadAsHistory = false;
-
   #client: GoogleGenAI;
   #task: Promise<void>;
   #logger = log();
@@ -536,22 +543,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         };
 
     this.#client = new GoogleGenAI(clientOptions);
-
-    // Decided here rather than per connection: the setup frame is written before
-    // the framework seeds the chat context, so the model is the only input.
-    const historyConfig = historyConfigForSetup({
-      // An unstated capability keeps the existing plain-prefill behaviour.
-      mutableChatCtx: realtimeModel.capabilities.midSessionChatCtxUpdate ?? true,
-    });
-    if (historyConfig) {
-      if (forwardHistoryConfigToSetup(this.#client as unknown as LiveSocketHost, historyConfig)) {
-        this.#prefillReadAsHistory = true;
-      } else {
-        this.#logger.warn(
-          'unable to reach the Gemini Live socket factory; an initial chat context will not be seeded with its original roles',
-        );
-      }
-    }
 
     this.#task = this.#mainTask();
   }
@@ -703,9 +694,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         turns: [
           {
             parts: [{ text: instructions }],
-            // Vertex AI ignores role=None or role="system" and only works with role="model".
-            // Gemini Live API (non-Vertex) errors on role="system"; role=None works as system role.
-            role: this.options.vertexai ? 'model' : undefined,
+            // Both APIs error on role="system". Gemini 2.5 accepted an omitted role as the
+            // system role, but 3.1 and 3.8 reject it. "model" is accepted by all three.
+            role: 'model',
           },
         ],
         turnComplete: false,
@@ -897,8 +888,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.inUserActivity = false;
     }
 
-    // Gemini requires the last message to end with user's turn
-    // so we need to add a placeholder user turn in order to trigger a new generation
     const turns: types.Content[] = [];
     if (instructions !== undefined) {
       turns.push({
@@ -906,10 +895,12 @@ export class RealtimeSession extends llm.RealtimeSession {
         role: 'model',
       });
     }
-    turns.push({
-      parts: [{ text: '.' }],
-      role: 'user',
-    });
+    if (needsReplyPlaceholder(this.options.model)) {
+      turns.push({
+        parts: [{ text: '.' }],
+        role: 'user',
+      });
+    }
 
     this.sendClientEvent({
       type: 'content',
@@ -1094,31 +1085,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             .toProviderFormat('google', false);
 
           if (turns.length > 0) {
-            if (this.#prefillReadAsHistory) {
-              // https://ai.google.dev/api/live#HistoryConfig: the server reads
-              // clientContent as history until it sees turnComplete, that history
-              // never triggers a model call, and the conversation then starts via
-              // realtimeInput. A context ending on a user question therefore has
-              // to leave the history and arrive as realtime text, or the server
-              // silently files it away and answers nothing.
-              const history = [...(turns as types.Content[])];
-              const question =
-                history[history.length - 1]?.role === 'user'
-                  ? textOf(history[history.length - 1]!)
-                  : '';
-              if (question) {
-                history.pop();
-              }
-
-              if (history.length > 0) {
-                await session.sendClientContent({ turns: history, turnComplete: true });
-              }
-              if (question) {
-                session.sendRealtimeInput({ text: question });
-              }
-            } else {
-              await session.sendClientContent({ turns, turnComplete: false });
-            }
+            await session.sendClientContent({ turns, turnComplete: false });
           }
         } finally {
           unlock();
