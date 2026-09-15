@@ -2996,13 +2996,28 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession?.interrupt();
     }
 
+    // The interrupted pipeline commits its spoken text before marking the generation done.
+    // Snapshot after that commit, including speech already interrupted by adaptive detection.
+    // Do not await the whole handle (which also owns tools), or an unauthorized generation.
+    if (
+      !(this.llm instanceof RealtimeModel) &&
+      currentSpeech?.interrupted &&
+      currentSpeech._hasGenerations
+    ) {
+      await currentSpeech._waitForGeneration();
+    }
+
     let userMessage: ChatMessage | undefined = ChatMessage.create({
       role: 'user',
       content: info.newTranscript,
       transcriptConfidence: info.transcriptConfidence,
     });
 
-    if (this.schedulingPaused || this.newTurnsBlocked) {
+    if (
+      this.schedulingPaused ||
+      this.newTurnsBlocked ||
+      (!(this.llm instanceof RealtimeModel) && this.agentSession._closing)
+    ) {
       this.logger.warn(
         { 'lk.pii.user_input': info.newTranscript },
         'skipping onUserTurnCompleted, speech scheduling is paused',
