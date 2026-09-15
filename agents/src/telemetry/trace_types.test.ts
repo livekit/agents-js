@@ -174,6 +174,9 @@ const SAFE_KEYS = new Set([
   'lk.job.launch_latency',
   'lk.job.entrypoint_latency',
   'lk.job.dispatch_latency',
+  'lk.keyterms.count',
+  'lk.keyterms.added',
+  'lk.keyterms.removed',
   'lk.room.auto_subscribe',
   'lk.room.e2ee',
   'lk.room.remote_participant_count',
@@ -253,6 +256,12 @@ const SAFE_KEYS = new Set([
   'lk.amd.delay',
   // Adaptive interruption
   'lk.is_interruption',
+  // interruptions, handoff, fallback (enums, labels, sizes)
+  'lk.interruption.source',
+  'lk.playout.position',
+  'lk.previous_agent_label',
+  'lk.fallback.label',
+  'lk.fallback.index',
   'lk.interruption.probability',
   'lk.interruption.total_duration',
   'lk.interruption.prediction_duration',

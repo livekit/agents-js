@@ -247,6 +247,19 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     });
   }
 
+  /** The `llm_request` span of this stream, once the main task has opened it. */
+  /**
+   * The model named on the response side of the request span. The LLM's own model by default;
+   * a fallback adapter's stream reports the instance that actually served.
+   */
+  protected get responseModel(): string {
+    return this.#llm.model;
+  }
+
+  protected get llmRequestSpan(): Span | undefined {
+    return this.#llmRequestSpan;
+  }
+
   /** The GenAI inference span's request side, per the OTel GenAI conventions. */
   private recordGenAIRequest(span: Span) {
     genAI.setRequestAttributes(span, {
@@ -418,7 +431,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       });
       genAI.setResponseAttributes(this.#llmRequestSpan, {
         responseId: requestId || undefined,
-        model: this.#llm.model,
+        model: this.responseModel,
         finishReasons: [finishReason],
         timeToFirstChunk: metrics.ttftMs >= 0 ? metrics.ttftMs / 1000 : undefined,
       });
