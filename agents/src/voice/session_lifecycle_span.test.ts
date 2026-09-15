@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
 import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
+import { assertTraceWellFormed } from '../telemetry/testing/trace_schema.js';
 import { delay } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, VADStream } from '../vad.js';
 import { Agent } from './agent.js';
@@ -299,6 +300,8 @@ describe.sequential('session lifecycle spans', () => {
     expect(userStates.some((e) => e.attributes?.[traceTypes.ATTR_NEW_STATE] === 'speaking')).toBe(
       true,
     );
+    // the whole tree, not just the edges this test names (telemetry/testing/trace_schema)
+    assertTraceWellFormed(exporter.getFinishedSpans());
   });
 
   it("copies a linked SIP participant's attributes with only the number tagged as PII", async () => {
@@ -333,5 +336,7 @@ describe.sequential('session lifecycle spans', () => {
     const linked = root.events.filter((event) => event.name === 'participant_linked');
     expect(linked).toHaveLength(1);
     expect(linked[0]!.attributes?.[traceTypes.ATTR_PARTICIPANT_KIND]).toBe('SIP');
+    // the whole tree, not just the edges this test names (telemetry/testing/trace_schema)
+    assertTraceWellFormed(exporter.getFinishedSpans());
   });
 });

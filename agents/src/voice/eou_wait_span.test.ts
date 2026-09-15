@@ -32,6 +32,7 @@ import { initializeLogger } from '../log.js';
 import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import { REDACTED_EXCEPTION_MESSAGE } from '../telemetry/redaction.js';
+import { assertTraceWellFormed } from '../telemetry/testing/trace_schema.js';
 import { Future, delay } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, VADStream } from '../vad.js';
 import { Agent } from './agent.js';
@@ -561,7 +562,10 @@ describe.sequential('eou_wait span', () => {
         llm,
         turnHandling: {
           turnDetection: 'vad',
-          endpointing: { minDelay: 100, maxDelay: 100 },
+          // the fake STT's final lands 100 ms after the speech ends; the decision must come
+          // after it by a margin a loaded CI host cannot eat, else a late final opens a
+          // second user turn
+          endpointing: { minDelay: 300, maxDelay: 300 },
         },
       });
       const audioInput = new ScriptedAudioInput();
@@ -634,6 +638,8 @@ describe.sequential('eou_wait span', () => {
         expect(attrs[key], key).toBeTypeOf('number');
       }
       expect(attrs[traceTypes.ATTR_ON_USER_TURN_COMPLETED_DELAY]).toBeGreaterThanOrEqual(0.045);
+      // the whole tree, not just the edges this test names (telemetry/testing/trace_schema)
+      assertTraceWellFormed(exporter.getFinishedSpans());
     });
 
     it('keeps the turn open for recognition when the hook returns at once', async () => {
@@ -686,6 +692,8 @@ describe.sequential('eou_wait span', () => {
         JSON.stringify(hook.events.map((e) => [e.name, e.attributes ?? {}]));
       expect(rendered).not.toContain('Hello');
       expect(rendered).not.toContain('lookup failed');
+      // the whole tree, not just the edges this test names (telemetry/testing/trace_schema)
+      assertTraceWellFormed(exporter.getFinishedSpans());
     });
   });
 });
