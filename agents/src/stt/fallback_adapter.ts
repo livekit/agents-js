@@ -234,13 +234,15 @@ export class FallbackAdapter extends STT {
     if (!status || status.recoveryClosed) return;
     if (status.recoveringRecognizeTask && !status.recoveringRecognizeTask.done) return;
 
-    status.recoveringRecognizeTask = Task.from(async (controller) => {
+    const task = Task.from(async (controller) => {
       try {
         await stt.recognize(frame, controller.signal);
+        if (controller.signal.aborted || status.recoveryClosed) return;
         status.available = true;
         this._logger.info({ stt: stt.label }, 'STT recovered');
         this.emitAvailabilityChanged(stt, true);
       } catch (e) {
+        if (controller.signal.aborted || status.recoveryClosed) return;
         if (e instanceof APIError) {
           this._logger.warn(
             { stt: stt.label, errorType: e instanceof Error ? e.constructor.name : typeof e },
@@ -253,6 +255,10 @@ export class FallbackAdapter extends STT {
           );
         }
       }
+    });
+    status.recoveringRecognizeTask = task;
+    task.addDoneCallback(() => {
+      if (status.recoveringRecognizeTask === task) status.recoveringRecognizeTask = null;
     });
   }
 
@@ -425,13 +431,24 @@ class FallbackSpeechStream extends SpeechStream {
             break;
           }
         }
-        if (!transcript || controller.signal.aborted || this.abortSignal.aborted) return;
+        if (
+          !transcript ||
+          controller.signal.aborted ||
+          this.abortSignal.aborted ||
+          status.recoveryClosed
+        )
+          return;
         if (!status.available) {
           status.available = true;
           this._logger.info({ stt: sttInstance.label }, 'STT recovered');
           this.fallbackAdapter.emitAvailabilityChanged(sttInstance, true);
         }
-        if (this.waitingForRecovery && !this.abortSignal.aborted && !this.queue.closed) {
+        if (
+          this.waitingForRecovery &&
+          !this.abortSignal.aborted &&
+          !status.recoveryClosed &&
+          !this.queue.closed
+        ) {
           this.waitingForRecovery = false;
           this.fallbackAdapter._setActiveStt(sttInstance);
           this.queue.put(transcript);
@@ -488,7 +505,9 @@ class FallbackSpeechStream extends SpeechStream {
 
   private async waitForRecovery(): Promise<void> {
     while (!this.abortSignal.aborted && !this.fallbackAdapter.status.some((s) => s.available)) {
-      const tasks = [...this.recoveringStreams.values()];
+      const tasks = this.fallbackAdapter.status
+        .map((status) => status.recoveringStreamTask)
+        .filter((task): task is Task<void> => task !== null);
       if (tasks.length === 0) return;
       await new Promise<void>((resolve) => {
         const wake = () => {
