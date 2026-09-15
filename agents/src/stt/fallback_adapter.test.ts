@@ -56,10 +56,6 @@ class RetryTimelineStream extends SpeechStream {
     this.runOffsets.push(this.startTimeOffset);
 
     if (this.mainAttempt === 0) {
-      this.queue.put({
-        type: SpeechEventType.FINAL_TRANSCRIPT,
-        alternatives: [{ text: 'probe recovered', startTime: 0, endTime: 0, confidence: 1 }],
-      });
       return;
     }
 
@@ -467,7 +463,7 @@ describe('FallbackSpeechStream (streaming path)', () => {
     const events: SpeechEvent[] = [];
     for await (const ev of stream) events.push(ev);
 
-    expect(events.map((e) => e.alternatives?.[0]?.text)).toEqual(['probe recovered', 'recovered']);
+    expect(events.map((e) => e.alternatives?.[0]?.text)).toEqual(['recovered']);
     expect(stt.mainStreams).toHaveLength(2);
     expect(stt.mainStreams[0]?.startTimeOffset).toBeGreaterThanOrEqual(30);
     expect(stt.mainStreams[1]?.startTimeOffset).toBeGreaterThan(

@@ -74,6 +74,7 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
  * by one probe stream per provider. The probe receives its owner's live audio;
  * another waiting stream takes over if the owner closes. A non-empty
  * FINAL_TRANSCRIPT marks the provider available again.
+ * If every provider is unavailable, normal streams retry them in priority order.
  *
  * Non-streaming STTs are automatically wrapped with {@link StreamAdapter}
  * provided a `vad` is passed in.
@@ -344,9 +345,7 @@ class FallbackSpeechStream extends SpeechStream {
   label = 'stt.FallbackSpeechStream';
   private fallbackAdapter: FallbackAdapter;
   private recoveringStreams = new Map<SpeechStream, Task<void>>();
-  private attemptedRecoveries = new Set<STT>();
   private inputEnded = false;
-  private waitingForRecovery = false;
   private _logger = log();
 
   constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
@@ -371,7 +370,7 @@ class FallbackSpeechStream extends SpeechStream {
   }
 
   private tryRecoverStream(sttInstance: STT): boolean {
-    if (this.abortSignal.aborted || this.attemptedRecoveries.has(sttInstance)) return false;
+    if (this.abortSignal.aborted) return false;
     const idx = this.fallbackAdapter.sttInstances.indexOf(sttInstance);
     const status = this.fallbackAdapter.status[idx];
     if (!status || status.available || status.recoveryClosed) return false;
@@ -380,7 +379,6 @@ class FallbackSpeechStream extends SpeechStream {
       return false;
     }
     status.waitingStreams.delete(this);
-    this.attemptedRecoveries.add(sttInstance);
 
     let probe: SpeechStream;
     try {
@@ -391,7 +389,6 @@ class FallbackSpeechStream extends SpeechStream {
           retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
         },
       });
-      probe.startTimeOffset = this.startTimeOffset;
     } catch (error) {
       this._logger.warn(
         {
@@ -421,18 +418,18 @@ class FallbackSpeechStream extends SpeechStream {
     const task = Task.from(async (controller) => {
       controller.signal.addEventListener('abort', closeProbe, { once: true });
       try {
-        let transcript: SpeechEvent | undefined;
+        let recovered = false;
         for await (const ev of probe) {
           if (controller.signal.aborted || this.abortSignal.aborted) break;
           if (ev.type === SpeechEventType.FINAL_TRANSCRIPT) {
             const text = ev.alternatives?.[0]?.text;
             if (!text) continue;
-            transcript = ev;
+            recovered = true;
             break;
           }
         }
         if (
-          !transcript ||
+          !recovered ||
           controller.signal.aborted ||
           this.abortSignal.aborted ||
           status.recoveryClosed
@@ -442,16 +439,6 @@ class FallbackSpeechStream extends SpeechStream {
           status.available = true;
           this._logger.info({ stt: sttInstance.label }, 'STT recovered');
           this.fallbackAdapter.emitAvailabilityChanged(sttInstance, true);
-        }
-        if (
-          this.waitingForRecovery &&
-          !this.abortSignal.aborted &&
-          !status.recoveryClosed &&
-          !this.queue.closed
-        ) {
-          this.waitingForRecovery = false;
-          this.fallbackAdapter._setActiveStt(sttInstance);
-          this.queue.put(transcript);
         }
       } catch (e) {
         if (controller.signal.aborted || this.abortSignal.aborted) return;
@@ -503,27 +490,8 @@ class FallbackSpeechStream extends SpeechStream {
     return true;
   }
 
-  private async waitForRecovery(): Promise<void> {
-    while (!this.abortSignal.aborted && !this.fallbackAdapter.status.some((s) => s.available)) {
-      const tasks = this.fallbackAdapter.status
-        .map((status) => status.recoveringStreamTask)
-        .filter((task): task is Task<void> => task !== null);
-      if (tasks.length === 0) return;
-      await new Promise<void>((resolve) => {
-        const wake = () => {
-          this.abortSignal.removeEventListener('abort', wake);
-          for (const task of tasks) task.removeDoneCallback(wake);
-          resolve();
-        };
-        this.abortSignal.addEventListener('abort', wake, { once: true });
-        for (const task of tasks) task.addDoneCallback(wake);
-      });
-    }
-  }
-
   protected async run(): Promise<void> {
     if (this.abortSignal.aborted) return;
-    this.attemptedRecoveries.clear();
     const startTime = Date.now();
     const allFailed = this.fallbackAdapter.status.every((s) => !s.available);
     if (allFailed) {
@@ -588,24 +556,14 @@ class FallbackSpeechStream extends SpeechStream {
 
     this.abortSignal.addEventListener('abort', closeStreams, { once: true });
     try {
-      if (allFailed) {
-        this.waitingForRecovery = true;
-        try {
-          for (const stt of this.fallbackAdapter.sttInstances) this.tryRecoverStream(stt);
-          await this.waitForRecovery();
-        } finally {
-          this.waitingForRecovery = false;
-        }
-      }
       for (let i = 0; i < this.fallbackAdapter.sttInstances.length; i++) {
         if (this.abortSignal.aborted) return;
         const sttInstance = this.fallbackAdapter.sttInstances[i]!;
         const status = this.fallbackAdapter.status[i]!;
-        if (!status.available) {
+        if (!status.available && !allFailed) {
           this.tryRecoverStream(sttInstance);
           continue;
         }
-        this.attemptedRecoveries.delete(sttInstance);
 
         // Absorb provider errors here; the child records its own terminal outcome.
         const errListener = () => {};
