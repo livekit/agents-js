@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, ConnectionState, RoomEvent } from '@livekit/rtc-node';
 import { ROOT_CONTEXT, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
@@ -12,6 +12,7 @@ import { RealtimeModel } from '../../llm/index.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { setTracerProvider, tracer } from '../../telemetry/index.js';
+import * as rpcTracing from '../../telemetry/rpc.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { AgentSessionEventTypes, CloseReason, createCloseEvent } from '../events.js';
 import { AudioInput, AudioOutput, TextOutput } from '../io.js';
@@ -105,6 +106,50 @@ function createFakeSession(llm?: RealtimeModel): FakeSession {
     _closeSoon: vi.fn(),
   };
 }
+
+describe('RoomIO rpc tracing', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * A session may start on a room that connects later (ctx.connect() after session.start(), or
+   * a room the user connects). Tracing goes in on the connected transition, not only when the
+   * room is already up at start(); install is idempotent so a reconnect is harmless.
+   */
+  it('installs rpc tracing when the room connects', () => {
+    const install = vi.spyOn(rpcTracing, 'install').mockReturnValue(true);
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false },
+      outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+    });
+
+    try {
+      roomIO.start();
+      const onConnectionState = room.on.mock.calls.find(
+        ([event]) => event === RoomEvent.ConnectionStateChanged,
+      )?.[1] as ((state: ConnectionState) => void) | undefined;
+      expect(onConnectionState).toBeDefined();
+
+      onConnectionState!(ConnectionState.CONN_DISCONNECTED);
+      expect(install).not.toHaveBeenCalled();
+
+      room.isConnected = true;
+      onConnectionState!(ConnectionState.CONN_CONNECTED);
+      expect(install).toHaveBeenCalledTimes(1);
+      expect(install).toHaveBeenCalledWith(room.localParticipant, undefined);
+
+      onConnectionState!(ConnectionState.CONN_CONNECTED); // reconnected
+      expect(install).toHaveBeenCalledTimes(2); // same singleton each time; the SDK dedups
+    } finally {
+      void roomIO.close();
+    }
+  });
+});
 
 describe('RoomIO agent state attributes', () => {
   it('handles a failed update and publishes later state changes', async () => {

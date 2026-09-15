@@ -31,6 +31,7 @@ import {
   traceTypes,
   uploadSessionReport,
 } from './telemetry/index.js';
+import * as rpcTracing from './telemetry/rpc.js';
 import { sessionSpan } from './telemetry/session_context.js';
 import {
   ATTRIBUTE_REDACTION_ENABLED,
@@ -513,6 +514,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
         jobCtx: this as JobContext<unknown> as JobContext,
       },
     );
+    rpcTracing.install(this.#room.localParticipant, this as JobContext<unknown> as JobContext);
     this.#onConnect();
 
     this.#room.remoteParticipants.forEach(this.onParticipantConnected);

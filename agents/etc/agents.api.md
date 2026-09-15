@@ -15,15 +15,17 @@ import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
 import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
+import { IncomingRpcNext } from '@livekit/rtc-node';
 import { JobType } from '@livekit/protocol';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
-import type { LocalParticipant } from '@livekit/rtc-node';
+import { LocalParticipant } from '@livekit/rtc-node';
 import { LocalTrackPublication } from '@livekit/rtc-node';
 import { Logger } from 'pino';
 import type { LogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { NoiseCancellationOptions } from '@livekit/rtc-node';
 import OpenAI from 'openai';
+import { OutgoingRpcNext } from '@livekit/rtc-node';
 import { Participant } from '@livekit/rtc-node';
 import { ParticipantKind } from '@livekit/rtc-node';
 import type * as proto from '@livekit/protocol';
@@ -33,6 +35,8 @@ import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } fro
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { RemoteTrackPublication } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
+import { RpcCallInfo } from '@livekit/rtc-node';
+import { RpcInterceptor } from '@livekit/rtc-node';
 import { RpcInvocationData } from '@livekit/rtc-node';
 import type { RtcConfiguration } from '@livekit/rtc-node';
 import { Scenario } from '@livekit/protocol';
@@ -47,6 +51,7 @@ import type { SIPOutboundConfig } from '@livekit/protocol';
 import { Span } from '@opentelemetry/api';
 import type { Span as Span_2 } from '@opentelemetry/sdk-trace-base';
 import type { SpanExporter } from '@opentelemetry/sdk-trace-base';
+import { SpanKind } from '@opentelemetry/api';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
@@ -1804,6 +1809,56 @@ const ATTR_ROOM_REMOTE_PARTICIPANT_COUNT = "lk.room.remote_participant_count";
 //
 // @public (undocumented)
 const ATTR_ROOM_SID = "lk.room_sid";
+
+// Warning: (ae-missing-release-tag) "ATTR_RPC_CALLER_IDENTITY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_RPC_CALLER_IDENTITY = "lk.rpc.caller_identity";
+
+// Warning: (ae-missing-release-tag) "ATTR_RPC_DESTINATION_IDENTITY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_RPC_DESTINATION_IDENTITY = "lk.rpc.destination_identity";
+
+// Warning: (ae-missing-release-tag) "ATTR_RPC_ERROR_CODE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_RPC_ERROR_CODE = "lk.rpc.error_code";
+
+// Warning: (ae-missing-release-tag) "ATTR_RPC_METHOD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_RPC_METHOD = "rpc.method";
+
+// Warning: (ae-missing-release-tag) "ATTR_RPC_PAYLOAD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_RPC_PAYLOAD = "lk.pii.rpc.payload";
+
+// Warning: (ae-missing-release-tag) "ATTR_RPC_PAYLOAD_SIZE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_RPC_PAYLOAD_SIZE = "lk.rpc.payload_size";
+
+// Warning: (ae-missing-release-tag) "ATTR_RPC_REQUEST_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_RPC_REQUEST_ID = "lk.rpc.request_id";
+
+// Warning: (ae-missing-release-tag) "ATTR_RPC_RESPONSE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_RPC_RESPONSE = "lk.pii.rpc.response";
+
+// Warning: (ae-missing-release-tag) "ATTR_RPC_RESPONSE_SIZE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_RPC_RESPONSE_SIZE = "lk.rpc.response_size";
+
+// Warning: (ae-missing-release-tag) "ATTR_RPC_RESPONSE_TIMEOUT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_RPC_RESPONSE_TIMEOUT = "lk.rpc.response_timeout";
 
 // Warning: (ae-missing-release-tag) "ATTR_SESSION_OPTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -5040,6 +5095,11 @@ export interface InputTranscriptionCompleted {
     turnStartedAt?: number;
 }
 
+// Warning: (ae-missing-release-tag) "install" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+function install(localParticipant: LocalParticipant | undefined, jobCtx?: JobContext): void;
+
 // Warning: (ae-missing-release-tag) "InstructionParts" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -5078,6 +5138,11 @@ export class Instructions {
     readonly type: "instructions";
     readonly value: string;
 }
+
+// Warning: (ae-missing-release-tag) "interceptor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const interceptor: TracingRpcInterceptor;
 
 // Warning: (ae-missing-release-tag) "InterruptionMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -5930,6 +5995,11 @@ function matchMood(label: string, fallback?: AgentMood | null): AgentMood | null
 //
 // @public (undocumented)
 const MAX_LOGS_PER_MINUTE = 5;
+
+// Warning: (ae-missing-release-tag) "MAX_PAYLOAD_ATTR_LEN" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const MAX_PAYLOAD_ATTR_LEN = 1024;
 
 // Warning: (ae-missing-release-tag) "MAX_SPANS_PER_MINUTE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -7028,6 +7098,15 @@ export class RoomSessionTransport extends SessionTransport {
     start(): Promise<void>;
 }
 
+declare namespace rpc {
+    export {
+        install,
+        MAX_PAYLOAD_ATTR_LEN,
+        TracingRpcInterceptor,
+        interceptor
+    }
+}
+
 // Warning: (ae-missing-release-tag) "runApp" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -8036,6 +8115,7 @@ interface StartSpanOptions {
     attributes?: Attributes;
     context?: Context;
     endOnExit?: boolean;
+    kind?: SpanKind;
     name: string;
     startTime?: number;
 }
@@ -8623,6 +8703,7 @@ declare namespace telemetry {
         genAI,
         REDACTED_EXCEPTION_MESSAGE,
         loopMonitor,
+        rpc,
         traceTypes,
         discardPreparedCloudTracer,
         FanoutSpanProcessor,
@@ -9160,6 +9241,16 @@ declare namespace traceTypes {
         ATTR_DISCONNECT_REASON,
         ATTR_OLD_STATE,
         ATTR_NEW_STATE,
+        ATTR_RPC_METHOD,
+        ATTR_RPC_REQUEST_ID,
+        ATTR_RPC_CALLER_IDENTITY,
+        ATTR_RPC_DESTINATION_IDENTITY,
+        ATTR_RPC_PAYLOAD,
+        ATTR_RPC_PAYLOAD_SIZE,
+        ATTR_RPC_RESPONSE,
+        ATTR_RPC_RESPONSE_SIZE,
+        ATTR_RPC_RESPONSE_TIMEOUT,
+        ATTR_RPC_ERROR_CODE,
         ATTR_CLOSE_REASON,
         ATTR_CLOSE_DRAIN,
         ATTR_SHUTDOWN_REASON,
@@ -9293,6 +9384,16 @@ declare namespace traceTypes {
         ATTR_EXCEPTION_MESSAGE,
         ATTR_LANGFUSE_COMPLETION_START_TIME
     }
+}
+
+// Warning: (ae-missing-release-tag) "TracingRpcInterceptor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+class TracingRpcInterceptor implements RpcInterceptor {
+    // (undocumented)
+    interceptIncoming(invocation: RpcInvocationData, next: IncomingRpcNext): Promise<string>;
+    // (undocumented)
+    interceptOutgoing(call: RpcCallInfo, next: OutgoingRpcNext): Promise<string>;
 }
 
 // Warning: (ae-missing-release-tag) "TranscriptionOutputOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
