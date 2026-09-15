@@ -31,6 +31,7 @@ import { initializeLogger } from '../log.js';
 import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import * as otelMetrics from '../telemetry/otel_metrics.js';
+import { assertTraceWellFormed } from '../telemetry/testing/trace_schema.js';
 import { Agent } from './agent.js';
 import { continueDiscardedTurn, withAgentTurn } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
@@ -187,6 +188,8 @@ describe.sequential('agent_turn span', () => {
       expect(ms(turn!.startTime)).toBeLessThanOrEqual(ms(child.startTime) + 2);
       expect(ms(child.endTime)).toBeLessThanOrEqual(ms(turn!.endTime) + 2);
     }
+    // the whole tree, not just the edges this test names (telemetry/testing/trace_schema)
+    assertTraceWellFormed(exporter.getFinishedSpans());
   });
 
   it('a plain reply is one generation', async () => {
@@ -200,6 +203,8 @@ describe.sequential('agent_turn span', () => {
     expect(attrs[traceTypes.ATTR_AGENT_TURN_ID]).toBe(`${attrs[traceTypes.ATTR_SPEECH_ID]}_1`);
     expect(turn!.events.filter((event) => event.name === 'generation')).toHaveLength(1);
     expect(attrs[traceTypes.ATTR_AGENT_PARENT_TURN_ID]).toBeUndefined();
+    // the whole tree, not just the edges this test names (telemetry/testing/trace_schema)
+    assertTraceWellFormed(exporter.getFinishedSpans());
   });
 
   it('a discarded preemptive generation hands its turn to the successor', async () => {
