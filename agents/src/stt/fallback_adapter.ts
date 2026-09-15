@@ -223,7 +223,11 @@ export class FallbackAdapter extends STT {
     (this as unknown as NodeJS.EventEmitter).emit('stt_availability_changed', event);
   }
 
-  private tryRecoverRecognize(stt: STT, frame: Parameters<STT['recognize']>[0]): void {
+  private tryRecoverRecognize(
+    stt: STT,
+    frame: Parameters<STT['recognize']>[0],
+    options?: { language?: string },
+  ): void {
     const idx = this.sttInstances.indexOf(stt);
     const status = this._status[idx];
     if (!status) return;
@@ -231,7 +235,7 @@ export class FallbackAdapter extends STT {
 
     status.recoveringRecognizeTask = Task.from(async (controller) => {
       try {
-        await stt.recognize(frame, controller.signal);
+        await stt.recognize(frame, controller.signal, options);
         status.available = true;
         this._logger.info({ stt: stt.label }, `${stt.label} recovered`);
         this.emitAvailabilityChanged(stt, true);
@@ -253,13 +257,15 @@ export class FallbackAdapter extends STT {
   override async recognize(
     frame: Parameters<STT['recognize']>[0],
     abortSignal?: AbortSignal,
+    options?: { language?: string },
   ): Promise<SpeechEvent> {
-    return this._recognize(frame, abortSignal);
+    return this._recognize(frame, abortSignal, options);
   }
 
   protected async _recognize(
     frame: Parameters<STT['recognize']>[0],
     abortSignal?: AbortSignal,
+    options?: { language?: string },
   ): Promise<SpeechEvent> {
     const startTime = Date.now();
     const allFailed = this._status.every((s) => !s.available);
@@ -272,7 +278,7 @@ export class FallbackAdapter extends STT {
       const status = this._status[i]!;
       if (status.available || allFailed) {
         try {
-          const result = await stt.recognize(frame, abortSignal);
+          const result = await stt.recognize(frame, abortSignal, options);
           this._setActiveStt(stt);
           return result;
         } catch (e) {
@@ -293,7 +299,7 @@ export class FallbackAdapter extends STT {
           }
         }
       }
-      this.tryRecoverRecognize(stt, frame);
+      this.tryRecoverRecognize(stt, frame, options);
     }
 
     const labels = this.sttInstances.map((s) => s.label).join(', ');
@@ -302,10 +308,11 @@ export class FallbackAdapter extends STT {
     });
   }
 
-  stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
+  stream(options?: { connOptions?: APIConnectOptions; language?: string }): SpeechStream {
     return new FallbackSpeechStream(
       this,
       options?.connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
+      options?.language,
     );
   }
 
@@ -334,11 +341,13 @@ class FallbackSpeechStream extends SpeechStream {
   label = 'stt.FallbackSpeechStream';
   private fallbackAdapter: FallbackAdapter;
   private recoveringStreams: SpeechStream[] = [];
+  private language?: string;
   private _logger = log();
 
-  constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
+  constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions, language?: string) {
     super(adapter, undefined, connOptions);
     this.fallbackAdapter = adapter;
+    this.language = language;
   }
 
   // Skip `metrics_collected` emission in the adapter stream — children's
@@ -369,6 +378,7 @@ class FallbackSpeechStream extends SpeechStream {
         timeoutMs: this.fallbackAdapter.attemptTimeoutMs,
         retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
       },
+      language: this.language,
     });
     this.recoveringStreams.push(probe);
 
@@ -492,6 +502,7 @@ class FallbackSpeechStream extends SpeechStream {
             timeoutMs: this.fallbackAdapter.attemptTimeoutMs,
             retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
           },
+          language: this.language,
         });
         // Keep child timestamps anchored to the parent stream's current retry attempt.
         child.startTimeOffset = this.startTimeOffset + (Date.now() - startTime) / 1000;
