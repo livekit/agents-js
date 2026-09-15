@@ -14,8 +14,10 @@ import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { ParticipantInfo } from 'livekit-server-sdk';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { extname } from 'node:path';
+import { parse as parseToml } from 'smol-toml';
 import { WebSocket } from 'ws';
 import { APIStatusError } from './_exceptions.js';
 import { ATTRIBUTE_AGENT_NAME } from './constants.js';
@@ -155,6 +157,21 @@ export class WorkerPermissions {
   }
 }
 
+/** `[agent] name` from `livekit.toml` in the working directory, or '' when absent or unreadable. */
+const tomlAgentName = (): string => {
+  try {
+    const doc = parseToml(readFileSync('livekit.toml', 'utf8'));
+    const agent = doc.agent;
+    if (typeof agent === 'object' && agent !== null && !Array.isArray(agent)) {
+      const name = (agent as Record<string, unknown>).name;
+      if (typeof name === 'string') return name;
+    }
+  } catch {
+    return '';
+  }
+  return '';
+};
+
 /**
  * Data class describing worker behaviour.
  *
@@ -247,13 +264,15 @@ export class ServerOptions {
      * be dispatched to rooms automatically. Instead, you can either specify the agent(s) to be
      * dispatched in the end-user's token, or use the AgentDispatch.createDispatch API.
      *
-     * By default it uses `LIVEKIT_AGENT_NAME` from environment.
+     * @deprecated Set `[agent] name` in `livekit.toml` instead; this option will be removed in a
+     * future release. When unset, the name comes from `LIVEKIT_AGENT_NAME`, then from
+     * `livekit.toml` in the working directory (production only).
      */
     agentName?: string;
     /**
-     * Internal flag indicating that `agentName` was resolved from `LIVEKIT_AGENT_NAME`. Forwarded
-     * through ServerOptions re-construction (e.g. cli.ts spread) so the env-source signal isn't
-     * lost.
+     * Internal flag indicating that `agentName` was resolved outside code (env or `livekit.toml`).
+     * Forwarded through ServerOptions re-construction (e.g. cli.ts spread) so the env-source
+     * signal isn't lost.
      */
     agentNameIsEnv?: boolean;
     serverType?: JobType;
@@ -297,8 +316,9 @@ export class ServerOptions {
       this.agentName = process.env.LIVEKIT_AGENT_NAME;
       this.agentNameIsEnv = agentNameIsEnv ?? true;
     } else {
-      this.agentName = '';
-      this.agentNameIsEnv = agentNameIsEnv ?? false;
+      // `lk agent dev` workers must never register under the deployed agent's name.
+      this.agentName = production ? tomlAgentName() : '';
+      this.agentNameIsEnv = this.agentName !== '';
     }
     this.serverType = serverType;
     this.maxRetry = maxRetry;
@@ -465,6 +485,12 @@ export class AgentServer {
       await this.#inferenceExecutor.initialize();
     }
 
+    if (this.#opts.agentName && !this.#opts.agentNameIsEnv) {
+      this.#logger.warn(
+        'agentName is set in code; move it to livekit.toml ([agent] name). ' +
+          'The agentName option will be removed in a future release.',
+      );
+    }
     this.#logger.info('starting worker');
     this.#closed = false;
     this.#loopMonitor = startMonitoring({ name: 'worker', emitSpans: false });
