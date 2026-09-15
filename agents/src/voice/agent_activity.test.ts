@@ -905,7 +905,12 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
   };
 
   const generateReply = vi.fn(
-    () => ({ id: 'speech_fake', _cancel: () => {} }) as unknown as SpeechHandle,
+    () =>
+      ({
+        id: 'speech_fake',
+        _cancel: () => {},
+        _takeAgentTurn: () => undefined,
+      }) as unknown as SpeechHandle,
   );
   const cancelPreemptiveGeneration = vi.fn();
 

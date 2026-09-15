@@ -120,8 +120,17 @@ export const ATTR_SHUTDOWN_USER_INITIATED = 'lk.shutdown.user_initiated';
 export const ATTR_CALLBACK_NAME = 'lk.callback.name';
 
 // assistant turn
+/**
+ * On `agent_turn`: the latest generation (LLM step) of the speech; each step is also a
+ * `generation` event carrying its own id.
+ */
 export const ATTR_AGENT_TURN_ID = 'lk.generation_id';
 export const ATTR_AGENT_PARENT_TURN_ID = 'lk.parent_generation_id';
+/**
+ * On `agent_turn`: how many generations (LLM steps) the speech took; more than one means tool
+ * calls were executed before the final reply.
+ */
+export const ATTR_GENERATION_COUNT = 'lk.generation_count';
 export const ATTR_USER_INPUT = 'lk.pii.user_input';
 export const ATTR_INSTRUCTIONS = 'lk.pii.instructions';
 export const ATTR_SPEECH_INTERRUPTED = 'lk.interrupted';
@@ -486,3 +495,7 @@ export const ATTR_EXCEPTION_MESSAGE = 'exception.message';
 
 // Platform-specific attributes
 export const ATTR_LANGFUSE_COMPLETION_START_TIME = 'langfuse.observation.completion_start_time';
+
+// metric names (OpenTelemetry GenAI semantic conventions)
+/** Histogram, seconds: one agent turn (`invoke_agent`), however many LLM steps it took. */
+export const METRIC_GEN_AI_INVOKE_AGENT_DURATION = 'gen_ai.invoke_agent.duration';

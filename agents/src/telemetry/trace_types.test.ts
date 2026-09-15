@@ -132,6 +132,7 @@ const SAFE_KEYS = new Set([
   'lk.deployment_id',
   'lk.session_options',
   'lk.generation_id',
+  'lk.generation_count',
   'lk.parent_generation_id',
   'lk.interrupted',
   // LLM node metadata
@@ -298,7 +299,8 @@ const SAFE_KEYS = new Set([
 function declaredKeys(): Record<string, string> {
   return Object.fromEntries(
     Object.entries(traceTypes).filter((entry): entry is [string, string] => {
-      return typeof entry[1] === 'string';
+      // metric names are not attribute keys: they carry no values to classify
+      return typeof entry[1] === 'string' && !entry[0].startsWith('METRIC_');
     }),
   );
 }

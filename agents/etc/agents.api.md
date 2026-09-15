@@ -1137,7 +1137,7 @@ const ATTR_AGENT_PARENT_TURN_ID = "lk.parent_generation_id";
 
 // Warning: (ae-missing-release-tag) "ATTR_AGENT_TURN_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 const ATTR_AGENT_TURN_ID = "lk.generation_id";
 
 // Warning: (ae-missing-release-tag) "ATTR_AMD_CATEGORY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1639,6 +1639,11 @@ const ATTR_GEN_AI_USAGE_TEXT_OUTPUT_TOKENS = "gen_ai.usage.text.output_tokens";
 //
 // @public (undocumented)
 const ATTR_GEN_AI_WORKFLOW_NAME = "gen_ai.workflow.name";
+
+// Warning: (ae-missing-release-tag) "ATTR_GENERATION_COUNT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_GENERATION_COUNT = "lk.generation_count";
 
 // Warning: (ae-missing-release-tag) "ATTR_INSTRUCTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -6131,6 +6136,11 @@ class MetadataLogProcessor implements LogRecordProcessor {
     shutdown(): Promise<void>;
 }
 
+// Warning: (ae-missing-release-tag) "METRIC_GEN_AI_INVOKE_AGENT_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const METRIC_GEN_AI_INVOKE_AGENT_DURATION = "gen_ai.invoke_agent.duration";
+
 declare namespace metrics {
     export {
         AgentMetrics,
@@ -7912,7 +7922,15 @@ export class SpeechHandle {
     // @internal (undocumented)
     _addItemAddedCallback(callback: (item: ChatItem) => void): void;
     // @internal
+    _agentTurnAgentName?: string;
+    // @internal
     _agentTurnContext?: Context;
+    // @internal
+    _agentTurnGenerations: number;
+    // @internal
+    _agentTurnSpan?: Span;
+    // @internal
+    _agentTurnStartedAt?: number;
     // (undocumented)
     get allowInterruptions(): boolean;
     set allowInterruptions(value: boolean);
@@ -7926,6 +7944,11 @@ export class SpeechHandle {
     get chatItems(): ChatItem[];
     // @internal (undocumented)
     _clearAuthorization(): void;
+    // Warning: (ae-forgotten-export) The symbol "AgentTurnContinuation" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "_takeAgentTurn"
+    //
+    // @internal
+    _continueAgentTurn(carry: AgentTurnCarry, from: SpeechHandle, continuation?: AgentTurnContinuation): void;
     // (undocumented)
     static create(options?: {
         allowInterruptions?: boolean;
@@ -7935,7 +7958,19 @@ export class SpeechHandle {
     }): SpeechHandle;
     // (undocumented)
     done(): boolean;
+    // @internal
+    _emittedGenerationStep?: number;
+    // @internal
+    _error: unknown;
     exception(): unknown;
+    // @internal
+    _generationBaseId?: string;
+    // @internal
+    get _generationId(): string;
+    // @internal
+    get _generationStep(): number;
+    // @internal (undocumented)
+    _generationStepBase: number;
     // @internal (undocumented)
     get _hasGenerations(): boolean;
     // @internal (undocumented)
@@ -7966,6 +8001,8 @@ export class SpeechHandle {
     // (undocumented)
     readonly parent?: SpeechHandle | undefined;
     // @internal
+    get _parentGenerationId(): string | undefined;
+    // @internal
     _queueWait(): number | undefined;
     // @internal (undocumented)
     _releaseInterruptions(): void;
@@ -7982,6 +8019,10 @@ export class SpeechHandle {
     static SPEECH_PRIORITY_NORMAL: number;
     // @internal (undocumented)
     _stepIndex: number;
+    // Warning: (ae-forgotten-export) The symbol "AgentTurnCarry" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
+    _takeAgentTurn(): AgentTurnCarry | undefined;
     // @internal (undocumented)
     _tasks: Task<void>[];
     then<R1 = ResolvedSpeechHandle, R2 = never>(onFulfilled?: ((value: ResolvedSpeechHandle) => R1 | PromiseLike<R1>) | null, onRejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null): Promise<R1 | R2>;
@@ -9316,6 +9357,7 @@ declare namespace traceTypes {
         ATTR_CALLBACK_NAME,
         ATTR_AGENT_TURN_ID,
         ATTR_AGENT_PARENT_TURN_ID,
+        ATTR_GENERATION_COUNT,
         ATTR_USER_INPUT,
         ATTR_INSTRUCTIONS,
         ATTR_SPEECH_INTERRUPTED,
@@ -9445,7 +9487,8 @@ declare namespace traceTypes {
         ATTR_EXCEPTION_TRACE,
         ATTR_EXCEPTION_TYPE,
         ATTR_EXCEPTION_MESSAGE,
-        ATTR_LANGFUSE_COMPLETION_START_TIME
+        ATTR_LANGFUSE_COMPLETION_START_TIME,
+        METRIC_GEN_AI_INVOKE_AGENT_DURATION
     }
 }
 
