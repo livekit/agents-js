@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AudioFrame } from '@livekit/rtc-node';
 import type { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '../_exceptions.js';
@@ -192,13 +193,13 @@ describe('FallbackSpeechStream lifecycle', () => {
     child.fail();
     const probe = await getStream(primary, 1);
     const fallback = await getStream(secondary);
-    const recoveryTask = adapter.status[0]!.recoveringStreamTask!;
+    const [recoveryTask] = adapter.status[0]!.recoveringStreamTasks;
 
     stream.close();
 
     expect(probe.isClosed).toBe(true);
     expect(fallback.isClosed).toBe(true);
-    await recoveryTask.result;
+    await recoveryTask!.result;
     await vi.waitFor(() => expect(secondary.listenerCount('error')).toBe(0));
     expect(primary.listenerCount('error')).toBe(0);
     expect(availability).toEqual([{ label: 'primary', available: false }]);
@@ -221,6 +222,79 @@ describe('FallbackSpeechStream lifecycle', () => {
     expect(availability).toEqual([
       { label: 'primary', available: false },
       { label: 'primary', available: true },
+    ]);
+  });
+
+  it('ends a healthy stream after another child from the same provider fails', async () => {
+    adapter.stream();
+    const failingChild = await getStream(primary);
+    const healthy = adapter.stream();
+    const healthyChild = await getStream(primary, 1);
+
+    failingChild.fail();
+    await getStream(secondary);
+    healthy.endInput();
+    healthyChild.finish();
+
+    let ended = false;
+    const completion = healthy.next().then((event) => {
+      ended = !!event.done;
+    });
+    await vi.waitFor(() => expect(ended).toBe(true));
+    await completion;
+    expect(secondary.streams).toHaveLength(1);
+    expect(availability).toEqual([{ label: 'primary', available: false }]);
+  });
+
+  it('keeps recovery alive when another stream with an active probe closes', async () => {
+    const owner = adapter.stream();
+    (await getStream(primary)).fail();
+    const oldProbe = await getStream(primary, 1);
+    await getStream(secondary);
+
+    const replacement = adapter.stream();
+    await getStream(secondary, 1);
+    owner.close();
+
+    const probe = await getStream(primary, 2);
+    expect(oldProbe.isClosed).toBe(true);
+    expect(probe.isClosed).toBe(false);
+    const pushFrame = vi.spyOn(probe, 'pushFrame');
+    const frame = new AudioFrame(new Int16Array(160), 16_000, 1, 160);
+    replacement.pushFrame(frame);
+    await vi.waitFor(() => expect(pushFrame).toHaveBeenCalledWith(frame));
+
+    probe.emitText('primary recovered in replacement');
+    await vi.waitFor(() => expect(adapter.status[0]!.available).toBe(true));
+    expect(availability).toEqual([
+      { label: 'primary', available: false },
+      { label: 'primary', available: true },
+    ]);
+  });
+
+  it.each(['close', 'recover'] as const)('cleans up concurrent probes on %s', async (action) => {
+    adapter.stream();
+    (await getStream(primary)).fail();
+    const firstProbe = await getStream(primary, 1);
+    await getStream(secondary);
+    adapter.stream();
+    const secondProbe = await getStream(primary, 2);
+    await getStream(secondary, 1);
+
+    if (action === 'close') {
+      await adapter.close();
+    } else {
+      firstProbe.emitText('primary recovered');
+      secondProbe.emitText('primary also recovered');
+    }
+
+    await vi.waitFor(() => expect(primary.listenerCount('error')).toBe(0));
+    expect(firstProbe.isClosed).toBe(true);
+    expect(secondProbe.isClosed).toBe(true);
+    expect(adapter.status[0]!.recoveringStreamTasks.size).toBe(0);
+    expect(availability).toEqual([
+      { label: 'primary', available: false },
+      ...(action === 'recover' ? [{ label: 'primary', available: true }] : []),
     ]);
   });
 

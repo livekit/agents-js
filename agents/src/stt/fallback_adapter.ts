@@ -25,7 +25,7 @@ import {
 interface STTStatus {
   available: boolean;
   recoveringRecognizeTask: Task<void> | null;
-  recoveringStreamTask: Task<void> | null;
+  recoveringStreamTasks: Set<Task<void>>;
 }
 
 /**
@@ -152,7 +152,7 @@ export class FallbackAdapter extends STT {
     this._status = this.sttInstances.map(() => ({
       available: true,
       recoveringRecognizeTask: null,
-      recoveringStreamTask: null,
+      recoveringStreamTasks: new Set<Task<void>>(),
     }));
 
     this.setupEventForwarding();
@@ -315,9 +315,7 @@ export class FallbackAdapter extends STT {
       if (status.recoveringRecognizeTask && !status.recoveringRecognizeTask.done) {
         tasks.push(status.recoveringRecognizeTask);
       }
-      if (status.recoveringStreamTask && !status.recoveringStreamTask.done) {
-        tasks.push(status.recoveringStreamTask);
-      }
+      tasks.push(...status.recoveringStreamTasks);
     }
     if (tasks.length > 0) {
       await cancelAndWait(tasks, 1000);
@@ -362,7 +360,6 @@ class FallbackSpeechStream extends SpeechStream {
     const idx = this.fallbackAdapter.sttInstances.indexOf(sttInstance);
     const status = this.fallbackAdapter.status[idx];
     if (!status) return;
-    if (status.recoveringStreamTask && !status.recoveringStreamTask.done) return;
 
     const probe = sttInstance.stream({
       connOptions: {
@@ -381,8 +378,16 @@ class FallbackSpeechStream extends SpeechStream {
     // naturally on failure, so we don't need to do anything with the payload.
     const errorSink: (e: STTError) => void = () => {};
     sttInstance.on('error', errorSink);
+    const closeProbe = () => {
+      try {
+        probe.close();
+      } catch {
+        /* already closed */
+      }
+    };
 
     const task = Task.from(async (controller) => {
+      controller.signal.addEventListener('abort', closeProbe, { once: true });
       try {
         let gotTranscript = false;
         for await (const ev of probe) {
@@ -395,9 +400,11 @@ class FallbackSpeechStream extends SpeechStream {
           }
         }
         if (!gotTranscript || controller.signal.aborted || this.abortSignal.aborted) return;
-        status.available = true;
-        this._logger.info({ stt: sttInstance.label }, `${sttInstance.label} recovered`);
-        this.fallbackAdapter.emitAvailabilityChanged(sttInstance, true);
+        if (!status.available) {
+          status.available = true;
+          this._logger.info({ stt: sttInstance.label }, `${sttInstance.label} recovered`);
+          this.fallbackAdapter.emitAvailabilityChanged(sttInstance, true);
+        }
       } catch (e) {
         if (controller.signal.aborted || this.abortSignal.aborted) return;
         if (e instanceof APIError) {
@@ -412,13 +419,17 @@ class FallbackSpeechStream extends SpeechStream {
           );
         }
       } finally {
+        controller.signal.removeEventListener('abort', closeProbe);
         sttInstance.off('error', errorSink);
-        probe.close();
+        closeProbe();
       }
     });
     this.recoveringStreams.set(probe, task);
-    task.addDoneCallback(() => this.recoveringStreams.delete(probe));
-    status.recoveringStreamTask = task;
+    status.recoveringStreamTasks.add(task);
+    task.addDoneCallback(() => {
+      this.recoveringStreams.delete(probe);
+      status.recoveringStreamTasks.delete(task);
+    });
   }
 
   protected async run(): Promise<void> {
@@ -498,14 +509,8 @@ class FallbackSpeechStream extends SpeechStream {
           continue;
         }
 
-        // Capture child errors: the base SpeechStream's mainTask emits an
-        // `error` event and then closes its output queue — consumers never
-        // see the throw via `for await`. Without this listener we can't
-        // distinguish a provider failure from a silent end-of-input.
-        let childErrored = false;
-        const errListener = (e: STTError) => {
-          if (!e.recoverable) childErrored = true;
-        };
+        // Absorb provider errors here; the child records its own terminal outcome.
+        const errListener = () => {};
         sttInstance.on('error', errListener);
 
         try {
@@ -546,7 +551,7 @@ class FallbackSpeechStream extends SpeechStream {
             child.close();
           }
 
-          if (this.abortSignal.aborted || !childErrored) {
+          if (this.abortSignal.aborted || !child._failed) {
             return;
           }
           if (status.available) {
