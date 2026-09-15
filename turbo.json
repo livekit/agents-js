@@ -117,6 +117,7 @@
     "MISTRAL_API_KEY",
     "META_API_KEY",
     "MODEL_API_KEY",
+    "STT_TEST_STREAM_SPEED",
     "VITEST"
   ],
   "tasks": {

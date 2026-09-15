@@ -1075,7 +1075,9 @@ describeLiveKitInference('LiveKit Inference STT integration', agents, async (har
     'assemblyai/universal-streaming',
     'xai/stt-1',
   ] as const) {
-    describe(model, { retry: 1 }, async () => {
+    // each model is an independent gateway session: run the models, and both sample rates of
+    // each, at the same time instead of one 50 s clip after another
+    describe(model, { retry: 1, concurrent: true }, async () => {
       const stt =
         model === 'assemblyai/universal-streaming'
           ? new STT({ model, modelOptions: { format_turns: true } })
