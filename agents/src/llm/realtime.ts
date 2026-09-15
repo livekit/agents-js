@@ -48,6 +48,8 @@ export interface RealtimeCapabilities {
   messageTruncation: boolean;
   /** Whether the model emits server-side speech start and stop events for turn taking. */
   turnDetection: boolean;
+  /** Whether the model may speak over the caller and decides when to yield. Defaults to false. */
+  supportsOverlappingSpeech?: boolean;
   /** Whether the model emits user audio transcription events. */
   userTranscription: boolean;
   /** Whether the model automatically generates a reply after receiving tool results. */
@@ -87,6 +89,8 @@ export interface InputTranscriptionCompleted {
   itemId: string;
   transcript: string;
   isFinal: boolean;
+  /** Confidence in the user transcript, when the provider supplies it. */
+  confidence?: number;
   /**
    * When the turn this transcript belongs to began, in milliseconds since epoch.
    *

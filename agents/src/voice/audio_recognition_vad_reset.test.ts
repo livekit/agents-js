@@ -23,7 +23,7 @@ interface RecognitionInternals {
   onSTTEvent: (ev: SpeechEvent) => Promise<void>;
   bounceEOUTask?: { cancelAndWait: () => Promise<void> };
   vadTask?: { cancelAndWait: () => Promise<void> };
-  updateVad: (vad: VAD | undefined, usingDefaultVad: boolean) => Promise<void>;
+  updateVad: (vad: VAD | undefined) => Promise<void>;
   resetVadTask: () => Promise<void>;
   startVadTask: (vad: VAD) => void;
 }
@@ -104,7 +104,7 @@ describe('AudioRecognition STT end-of-speech VAD reset', () => {
     }
   });
 
-  it('preserves the VAD-owned lastSpeakingTime on STT end-of-speech', async () => {
+  it('replaces the VAD-owned lastSpeakingTime on STT end-of-speech', async () => {
     const { recognition, internals } = makeRecognition();
     // VAD is active and already set lastSpeakingTime from its inference/EOS path.
     internals.vad = {} as VAD;
@@ -117,8 +117,7 @@ describe('AudioRecognition STT end-of-speech VAD reset', () => {
     try {
       await internals.onSTTEvent({ type: SpeechEventType.END_OF_SPEECH });
 
-      // STT EOS must not clobber the VAD-derived value.
-      expect(internals.lastSpeakingTime).toBe(vadSpeakingTime);
+      expect(internals.lastSpeakingTime).toBeGreaterThan(vadSpeakingTime);
     } finally {
       await internals.bounceEOUTask?.cancelAndWait().catch(() => {});
     }
@@ -171,7 +170,7 @@ describe('AudioRecognition STT end-of-speech VAD reset', () => {
       internals.vad = vad;
     });
 
-    const update = internals.updateVad(replacementVad, false);
+    const update = internals.updateVad(replacementVad);
     const reset = internals.resetVadTask();
     releaseInitialCancel();
     await Promise.all([update, reset]);

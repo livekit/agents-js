@@ -552,6 +552,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
           const segmentId = serverMsg.context_id;
 
+          // A pooled websocket may still hold audio/done from an interrupted
+          // previous context; ignore messages tagged with another context id.
+          if (segmentId !== requestId) continue;
+
           // Handle error frames first. 4xx (e.g. empty-transcript on
           // function-call turns) is non-fatal — log and fall through so an
           // accompanying done:true still triggers the unified close path

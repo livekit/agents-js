@@ -351,7 +351,7 @@ export abstract class SynthesizeStream
     // Ensure `this.output` is closed once mainTask settles, even when
     // `monitorMetrics` never started (no `pushText` was ever called).
     // Without this, consumers iterating the stream hang forever.
-    startSoon(async () => {
+    const runMainTask = async () => {
       try {
         await this.mainTask();
       } catch {
@@ -370,6 +370,9 @@ export abstract class SynthesizeStream
           this.output.close();
         }
       }
+    };
+    startSoon(() => {
+      void runMainTask();
     });
   }
 

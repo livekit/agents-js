@@ -103,7 +103,7 @@ type EndOfTurnMetrics = {
   endOfUtteranceDelay: number | undefined;
 };
 
-function computeEndOfTurnMetrics({
+export function _computeEndOfTurnMetrics({
   speechStartTime,
   lastSpeakingTime,
   lastFinalTranscriptTime,
@@ -180,7 +180,11 @@ export class STTPipeline {
   constructor(sttNode: STTNode) {
     this.sttNode = sttNode;
     this._pumpTask = Task.from(({ signal }) => this.sttPump(signal));
-    this._pumpTask.addDoneCallback(() => this._eventChannel.close());
+    this._pumpTask.addDoneCallback(() => {
+      this._eventChannel.close().catch((error) => {
+        log().error(error, 'Error closing STT event channel');
+      });
+    });
   }
 
   get audioChannel() {
@@ -232,13 +236,6 @@ export interface AudioRecognitionOptions {
   stt?: STTNode;
   /** Voice activity detection. */
   vad?: VAD;
-  /**
-   * True iff the wired VAD was auto-provisioned by `AgentSession` rather than
-   * supplied by the caller. Read at every "is VAD configured?" call site so
-   * a framework-default VAD behaves like no VAD for downstream eligibility
-   * decisions (e.g. STT-hook `speaking=` payload).
-   */
-  usingDefaultVad?: boolean;
   /** Turn detector for end-of-turn prediction. Accepts text-based detectors
    * via `_TurnDetector` (e.g. plugins/livekit) or audio-based detectors via
    * `TurnDetector` (e.g. `inference.TurnDetector`). */
@@ -291,7 +288,6 @@ export class AudioRecognition {
   private stt?: STTNode;
   private sttPipeline?: STTPipeline;
   private vad?: VAD;
-  private usingDefaultVad: boolean;
   private turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
   private turnDetectorStream?: BaseStreamingTurnDetectorStream;
   /**
@@ -408,7 +404,6 @@ export class AudioRecognition {
     this.hooks = opts.recognitionHooks;
     this.stt = opts.stt;
     this.vad = opts.vad;
-    this.usingDefaultVad = opts.usingDefaultVad ?? false;
     this.turnDetector = opts.turnDetector;
     this.checkVadSilenceRequirement();
     // The FSM stream is opened on `start()` so callers can hand off the
@@ -576,13 +571,6 @@ export class AudioRecognition {
     }
   }
 
-  /** True iff the user supplied their own VAD (default-VAD is treated as
-   * absent at sites that decide between "use VAD signal" and "STT-derived
-   * speaking"). */
-  private get hasUserVad(): boolean {
-    return this.vad !== undefined && !this.usingDefaultVad;
-  }
-
   /**
    * Swap the active turn detector at runtime. When an `BaseStreamingTurnDetector`
    * is provided, opens a per-turn FSM stream after retiring the prior one.
@@ -713,12 +701,11 @@ export class AudioRecognition {
     }
   }
 
-  async updateVad(vad: VAD | undefined, usingDefaultVad: boolean): Promise<void> {
+  async updateVad(vad: VAD | undefined): Promise<void> {
     this.checkVadSilenceRequirement(undefined, vad);
     const unlock = await this.vadLifecycleLock.lock();
     try {
       this.vad = vad;
-      this.usingDefaultVad = usingDefaultVad;
       this.isInterruptionEnabled = !!(this.interruptionDetection && this.vad);
 
       await this.vadTask?.cancelAndWait();
@@ -756,18 +743,6 @@ export class AudioRecognition {
     // text-only and don't carry a stream.
     if (this.turnDetector instanceof BaseStreamingTurnDetector || this.turnDetector === undefined) {
       this.updateTurnDetector(this.turnDetector, { stream: options?.turnDetectorStream });
-    }
-  }
-
-  async stop() {
-    await this.sttConsumerTask?.cancelAndWait();
-    await this.sttForwardTask?.cancelAndWait();
-    await this.vadTask?.cancelAndWait();
-    await this.interruptionTask?.cancelAndWait();
-    if (this.turnDetectorStream !== undefined) {
-      const stream = this.turnDetectorStream;
-      this.turnDetectorStream = undefined;
-      await stream.aclose().catch(() => undefined);
     }
   }
 
@@ -1249,13 +1224,24 @@ export class AudioRecognition {
       firstAlternative !== undefined &&
       firstAlternative.endTime > 0 &&
       inputStartedAt !== undefined;
+    const hasAbsoluteSpeechEndTime = ev.speechEndTime !== undefined;
     // clamp to now: a reused STT stream's clock can be far ahead of this
     // activity's input epoch (e.g. after a handoff), and a future
     // lastSpeakingTime would stall the EOU bounce task for that long
     // (1.4.5 silence regression from #1603; see audio_recognition_eou.test.ts)
-    const sttLastSpeakingTime = hasSTTEndTime
-      ? Math.min(firstAlternative.endTime * 1000 + inputStartedAt, Date.now())
-      : Date.now();
+    const sttLastSpeakingTime =
+      ev.speechEndTime !== undefined
+        ? Math.min(ev.speechEndTime, Date.now())
+        : hasSTTEndTime
+          ? Math.min(firstAlternative.endTime * 1000 + inputStartedAt, Date.now())
+          : Date.now();
+    // Prefer STT timing when no VAD anchor exists. In STT turn detection, a real
+    // timestamp or an explicit end-of-speech event owns the turn boundary too.
+    const useSTTSpeakingTime =
+      this.vad === undefined ||
+      this.lastSpeakingTime === undefined ||
+      (this.turnDetectionMode === 'stt' &&
+        (hasAbsoluteSpeechEndTime || hasSTTEndTime || ev.type === SpeechEventType.END_OF_SPEECH));
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
@@ -1271,7 +1257,7 @@ export class AudioRecognition {
 
         this.hooks.onFinalTranscript(
           ev,
-          this.hasUserVad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+          this.vad !== undefined || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
         );
 
         this.logger.debug(
@@ -1290,8 +1276,7 @@ export class AudioRecognition {
         this.audioInterimTranscript = '';
         this.audioPreflightTranscript = '';
 
-        if (!this.hasUserVad || this.lastSpeakingTime === undefined) {
-          // vad disabled or missed a speech, use stt timestamp
+        if (useSTTSpeakingTime) {
           this.lastSpeakingTime = sttLastSpeakingTime;
         }
 
@@ -1324,7 +1309,7 @@ export class AudioRecognition {
       case SpeechEventType.PREFLIGHT_TRANSCRIPT:
         this.hooks.onInterimTranscript(
           ev,
-          this.hasUserVad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+          this.vad !== undefined || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
         );
         const preflightTranscript = ev.alternatives?.[0]?.text ?? '';
         const preflightConfidence = ev.alternatives?.[0]?.confidence ?? 0;
@@ -1351,8 +1336,7 @@ export class AudioRecognition {
           `${this.audioTranscript} ${preflightTranscript}`.trimStart();
         this.audioInterimTranscript = preflightTranscript;
 
-        if (!this.hasUserVad || this.lastSpeakingTime === undefined) {
-          // vad disabled or missed a speech, use stt timestamp
+        if (useSTTSpeakingTime) {
           this.lastSpeakingTime = sttLastSpeakingTime;
         }
 
@@ -1384,7 +1368,7 @@ export class AudioRecognition {
         );
         this.hooks.onInterimTranscript(
           ev,
-          this.hasUserVad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+          this.vad !== undefined || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
         );
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
@@ -1425,10 +1409,7 @@ export class AudioRecognition {
           const span = this.ensureUserTurnSpan();
           const ctx = this.userTurnContext(span);
           if (this.speaking) {
-            this.endpointing.onEndOfSpeech(
-              speechEndTime,
-              this.interruptionDetected === false && this.isAgentSpeaking,
-            );
+            this.endpointing.onEndOfSpeech(speechEndTime, this.interruptionDetected);
           }
           otelContext.with(ctx, () => {
             this.hooks.onEndOfSpeech({
@@ -1451,9 +1432,7 @@ export class AudioRecognition {
         // and user state won't be updated until a new VAD SOS is received.
         // Reset VAD so that incorrect end of turn from STT can be corrected by VAD interruption.
         // If user is still speaking (an immediate VAD SOS will interrupt the agent).
-        // Default-bundled VAD is treated as absent here — only user-supplied VADs
-        // are reset/flushed, matching the matrix in PR_DESCRIPTION.
-        if (this.hasUserVad && this.vadSpeechStarted) {
+        if (this.vad !== undefined && this.vadSpeechStarted) {
           if (this.vadStream) {
             this.vadStream.flush();
           } else {
@@ -1470,8 +1449,11 @@ export class AudioRecognition {
         }
         this.speaking = false;
         this.userTurnCommitted = true;
-        if (!this.hasUserVad || this.lastSpeakingTime === undefined) {
-          // vad disabled or missed a speech, use stt timestamp
+        if (ev.speechEndTime !== undefined) {
+          // Clamp provider clock skew so endpointing sleep cannot be extended
+          // by an anchor that lies in the future.
+          this.lastSpeakingTime = Math.min(ev.speechEndTime, Date.now());
+        } else if (useSTTSpeakingTime) {
           this.lastSpeakingTime = sttLastSpeakingTime;
         }
 
@@ -1819,7 +1801,7 @@ export class AudioRecognition {
         // sometimes, we can't calculate the metrics because VAD was unreliable or
         // the speaking anchor is stale/out-of-order. in this case, we just ignore the
         // calculation, it's better than providing likely wrong values
-        const metrics = computeEndOfTurnMetrics({
+        const metrics = _computeEndOfTurnMetrics({
           speechStartTime,
           lastSpeakingTime,
           lastFinalTranscriptTime,
@@ -2101,10 +2083,7 @@ export class AudioRecognition {
               const span = this.ensureUserTurnSpan();
               const ctx = this.userTurnContext(span);
               if (this.speaking) {
-                this.endpointing.onEndOfSpeech(
-                  endTime,
-                  this.interruptionDetected === false && this.isAgentSpeaking,
-                );
+                this.endpointing.onEndOfSpeech(endTime, this.interruptionDetected);
               }
               otelContext.with(ctx, () => this.hooks.onEndOfSpeech(ev));
             }
@@ -2169,7 +2148,7 @@ export class AudioRecognition {
 
       const cleanup = async () => {
         try {
-          signal.removeEventListener('abort', cleanup);
+          signal.removeEventListener('abort', onAbort);
           eventReader.releaseLock();
           await stream.close();
         } catch (e) {
@@ -2177,7 +2156,10 @@ export class AudioRecognition {
         }
       };
 
-      signal.addEventListener('abort', cleanup, { once: true });
+      const onAbort = () => {
+        void cleanup();
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
 
       let forwardTask: Promise<void> | undefined;
 

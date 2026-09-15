@@ -118,16 +118,14 @@ export class AvatarSession extends voice.AvatarSession {
     });
 
     const anam = new AnamAPI(apiKey, apiUrl, this.opts.connOptions);
-    logger.debug({ livekitUrl }, 'requesting Anam session token');
+    logger.debug({ livekitUrl }, 'starting Anam engine session');
 
-    const { sessionToken } = await anam.createSessionToken({
+    const started = await anam.startSession({
       personaConfig: this.opts.personaConfig,
       livekitUrl,
       livekitToken: jwt,
       sessionOptions: this.opts.sessionOptions,
     });
-    logger.debug('starting Anam engine session');
-    const started = await anam.startEngineSession({ sessionToken });
     this.sessionId = started.sessionId;
 
     agentSession.output.audio = new voice.DataStreamAudioOutput({
