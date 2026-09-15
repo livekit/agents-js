@@ -623,7 +623,11 @@ export class AgentActivity implements RecognitionHooks {
     this.userSilenceEvent.set();
   }
 
-  async start(options?: { reuseResources?: ReusableResources }): Promise<void> {
+  async start(options?: {
+    reuseResources?: ReusableResources;
+    /** Parent for `start_agent_activity`: the session's startup bar, or a handoff span. */
+    traceContext?: Context;
+  }): Promise<void> {
     const unlock = await this.lock.lock();
     try {
       if (this.llm instanceof LLM) {
@@ -634,6 +638,7 @@ export class AgentActivity implements RecognitionHooks {
         spanName: 'start_agent_activity',
         runOnEnter: true,
         reuseResources: options?.reuseResources,
+        traceContext: options?.traceContext,
       });
     } finally {
       unlock();
@@ -657,12 +662,14 @@ export class AgentActivity implements RecognitionHooks {
     spanName: 'start_agent_activity' | 'resume_agent_activity';
     runOnEnter: boolean;
     reuseResources?: ReusableResources;
+    traceContext?: Context;
   }): Promise<void> {
     const { spanName, runOnEnter, reuseResources } = options;
+    const parentContext = options.traceContext ?? this.agentSession.rootSpanContext ?? ROOT_CONTEXT;
     const startSpan = tracer.startSpan({
       name: spanName,
       attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
-      context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
+      context: parentContext,
     });
     genAI.setAgentAttributes(startSpan, {
       operation: traceTypes.GenAIOperationName.CREATE_AGENT,
@@ -673,7 +680,12 @@ export class AgentActivity implements RecognitionHooks {
 
     this.agent._agentActivity = this;
 
-    await this.setupToolsets();
+    // detached: MCP servers connect here and their tasks live on; a current span would become
+    // the parent of whatever those tasks emit later
+    await tracer.detachedSpan(() => this.setupToolsets(), {
+      name: 'setup_toolsets',
+      context: trace.setSpan(parentContext, startSpan),
+    });
 
     if (this.llm instanceof RealtimeModel) {
       const rtReused = reuseResources?.rtSession !== undefined;
@@ -5212,13 +5224,17 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  async drain(options?: { newActivity?: AgentActivity }): Promise<ReusableResources | undefined> {
+  async drain(options?: {
+    newActivity?: AgentActivity;
+    /** Parent for `drain_agent_activity`: `session_close` or a handoff span; else the session. */
+    traceContext?: Context;
+  }): Promise<ReusableResources | undefined> {
     // parented to the session rather than to whichever speech task is current, so the whole
     // session stays one trace. Python reaches the same place by inheriting the session
     // context that AgentSession attaches.
     return tracer.startActiveSpan(async (span) => this._drainImpl(span, options?.newActivity), {
       name: 'drain_agent_activity',
-      context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
+      context: options?.traceContext ?? this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
     });
   }
 

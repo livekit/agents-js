@@ -61,7 +61,13 @@ import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metri
 import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
-import { genAI, traceTypes, tracer } from '../telemetry/index.js';
+import {
+  genAI,
+  participantAttributes,
+  recordException,
+  traceTypes,
+  tracer,
+} from '../telemetry/index.js';
 import {
   DEFAULT_SPEECH_STEERING_OPTIONS,
   type SpeechSteeringOptions,
@@ -495,6 +501,8 @@ type ActivityTransitionOptions = {
   newActivity?: 'start' | 'resume';
   blockedTasks?: Task<any>[];
   waitOnEnter?: boolean;
+  /** Parent for the new activity's `start_agent_activity` span (the session's startup bar). */
+  traceContext?: Context;
 };
 
 /** True when the surrounding job runs under a text simulation (the simulated
@@ -585,6 +593,11 @@ export class AgentSession<
 
   private sessionSpan?: Span;
   private agentSpeakingSpan?: Span;
+  /**
+   * Parent for the startup spans while `start()` runs; passed explicitly, never made current.
+   * @internal
+   */
+  sessionStartContext?: Context;
   private loopStallCount = 0;
   private loopStallTotal = 0;
   private loopStallMax = 0;
@@ -880,6 +893,20 @@ export class AgentSession<
 
     const tasks: Promise<void>[] = [];
 
+    const jobCtx = getJobContext(false);
+    if (jobCtx) {
+      span.setAttributes({
+        [traceTypes.ATTR_ROOM_NAME]: jobCtx.job.room?.name ?? '',
+        [traceTypes.ATTR_JOB_ID]: jobCtx.job.id,
+        [traceTypes.ATTR_AGENT_NAME]: jobCtx.job.agentName,
+        // join keys shared with server, SIP and client traces
+        [traceTypes.ATTR_ROOM_SID]: jobCtx.job.room?.sid ?? '',
+        [traceTypes.ATTR_DISPATCH_ID]: jobCtx.job.dispatchId,
+        [traceTypes.ATTR_WORKER_ID]: jobCtx.workerId,
+        [traceTypes.ATTR_JOB_AGENT_ID]: jobCtx.job.state?.agentId ?? '',
+      });
+    }
+
     const consoleInst = AgentsConsole.getInstance();
     if (consoleInst.enabled && !consoleInst.ioAcquired) {
       if (this.input.audio || this.output.audio) {
@@ -934,7 +961,8 @@ export class AgentSession<
         outputOptions,
       });
 
-      this._roomIO.start();
+      // passed, not made current: RoomIO's tasks live for the whole session
+      this._roomIO.start(this.sessionStartContext);
 
       const transport = new RoomSessionTransport(room, this._roomIO);
       this.sessionHost = new SessionHost(transport);
@@ -974,7 +1002,12 @@ export class AgentSession<
 
     // TODO(AJS-265): add shutdown callback to job context
     // Initial start does not wait on onEnter
-    tasks.push(this._updateActivity(this.agent, { waitOnEnter: false }));
+    tasks.push(
+      this._updateActivity(this.agent, {
+        waitOnEnter: false,
+        traceContext: this.sessionStartContext,
+      }),
+    );
 
     const startupResults = await ThrowsPromise.allSettled(tasks);
     for (const result of startupResults) {
@@ -1085,6 +1118,14 @@ export class AgentSession<
 
     this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 
+    // startup as one bar: room connect, participant wait, model prewarm, on_enter. Parented
+    // explicitly to the spans it groups, never made current (see telemetry/session_context)
+    const sessionStartSpan = tracer.startSpan({
+      name: 'session_start',
+      context: this.rootSpanContext,
+    });
+    this.sessionStartContext = trace.setSpan(this.rootSpanContext, sessionStartSpan);
+
     try {
       await this._startImpl({
         agent,
@@ -1094,10 +1135,15 @@ export class AgentSession<
         span: this.sessionSpan,
       });
     } catch (error) {
+      recordException(sessionStartSpan, error instanceof Error ? error : new Error(String(error)));
+      sessionStartSpan.end();
+      this.sessionStartContext = undefined;
       this._closeSoon({ reason: CloseReason.ERROR });
       await this.closingTask;
       throw error;
     }
+    sessionStartSpan.end();
+    this.sessionStartContext = undefined;
   }
 
   updateAgent(agent: Agent): void {
@@ -1558,7 +1604,10 @@ export class AgentSession<
 
         const activity = this.activity!;
         if (newActivity === 'start') {
-          await activity.start({ reuseResources: reusableResources });
+          await activity.start({
+            reuseResources: reusableResources,
+            traceContext: options.traceContext,
+          });
         } else {
           await activity.resume({ reuseResources: reusableResources });
         }
@@ -1786,6 +1835,10 @@ export class AgentSession<
 
     const oldState = this._agentState;
     this._agentState = state;
+    this._addSessionEvent('agent_state_changed', {
+      [traceTypes.ATTR_OLD_STATE]: oldState,
+      [traceTypes.ATTR_NEW_STATE]: state,
+    });
 
     // Handle user away timer based on state changes
     if (state === 'listening' && this._userState === 'listening') {
@@ -1827,6 +1880,11 @@ export class AgentSession<
 
     const oldState = this._userState;
     this._userState = state;
+    this._addSessionEvent(
+      'user_state_changed',
+      { [traceTypes.ATTR_OLD_STATE]: oldState, [traceTypes.ATTR_NEW_STATE]: state },
+      options?.lastSpeakingTime,
+    );
 
     // Handle user away timer based on state changes
     if (state === 'listening' && this._agentState === 'listening') {
@@ -1922,6 +1980,24 @@ export class AgentSession<
 
   /** @internal */
   _onRoomIOParticipantLinked(participant: RemoteParticipant): void {
+    const span = this.sessionSpan;
+    if (span?.isRecording()) {
+      span.addEvent('participant_linked', participantAttributes(participant));
+      if (participant.info.kind === ParticipantKind.SIP) {
+        // join keys with the telephony trace; only the end user's number is PII
+        const sipAttrs: Record<string, string> = {};
+        for (const [key, value] of Object.entries(participant.attributes ?? {})) {
+          if (!key.startsWith('sip.')) continue;
+          sipAttrs[
+            key === 'sip.phoneNumber'
+              ? traceTypes.ATTR_SIP_PHONE_NUMBER
+              : traceTypes.ATTR_SIP_PREFIX + key.slice('sip.'.length)
+          ] = value;
+        }
+        span.setAttributes(sipAttrs);
+      }
+    }
+
     if (this._aecWarmupDurationExplicit) {
       return;
     }
@@ -1935,6 +2011,20 @@ export class AgentSession<
       clearTimeout(this._aecWarmupTimer);
       this._aecWarmupTimer = null;
     }
+  }
+
+  /**
+   * Timestamped marker on the agent_session span (state changes, room events).
+   * @internal
+   */
+  _addSessionEvent(
+    name: string,
+    attributes: Record<string, string | number | boolean>,
+    timestampMs?: number,
+  ): void {
+    const span = this.sessionSpan;
+    if (!span?.isRecording()) return;
+    span.addEvent(name, attributes, timestampMs);
   }
 
   /** @internal */
@@ -1992,16 +2082,13 @@ export class AgentSession<
     return this.closeImplInner(reason, error, drain);
   }
 
-  private async closeImplInner(
+  /** The part of closing that runs under the `session_close` span. */
+  private async teardownActivity(
+    wasStarted: boolean,
     reason: ShutdownReason,
-    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
-    drain: boolean = false,
+    drain: boolean,
+    traceContext: Context,
   ): Promise<void> {
-    const wasStarted = this.started;
-    if (!wasStarted && !this.activity && !this.sessionSpan) {
-      return;
-    }
-
     this.closing = true;
     // Set closingTask before listeners can call close() again.
     await Promise.resolve();
@@ -2021,7 +2108,7 @@ export class AgentSession<
       // A concurrent updateAgent can prevent the task from resuming its parent.
       // In that case its activity still needs the normal exit and close sequence.
       if (task._agentActivity === activity) {
-        await activity.drain();
+        await activity.drain({ traceContext });
         await activity.close();
       }
       if (!task._oldAgent) break;
@@ -2037,7 +2124,7 @@ export class AgentSession<
         }
       }
 
-      await activity.drain();
+      await activity.drain({ traceContext });
       // wait any uninterruptible speech to finish
       await activity.currentSpeech?.waitForPlayout();
 
@@ -2068,38 +2155,75 @@ export class AgentSession<
     const sessionToolsets = this._toolCtx.toolsets;
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
     this._sessionToolsetsSetup = false;
+  }
 
-    if (this.sessionSpan) {
-      this.sessionSpan.end();
-      this.sessionSpan = undefined;
+  private async closeImplInner(
+    reason: ShutdownReason,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+    drain: boolean = false,
+  ): Promise<void> {
+    const wasStarted = this.started;
+    if (!wasStarted && !this.activity && !this.sessionSpan) {
+      return;
     }
 
-    if (this._userSpeakingSpan) {
-      this._userSpeakingSpan.end();
-      this._userSpeakingSpan = undefined;
+    // the whole close as one bar under agent_session: activity teardown, the close event's
+    // handlers, the session host and room io. What any of it emits (a handler's spans, a stall
+    // in a plugin's teardown) nests here, and agent_session ends only after all of it
+    const closeSpan = tracer.startSpan({
+      name: 'session_close',
+      context: this.rootSpanContext,
+      attributes: {
+        [traceTypes.ATTR_CLOSE_REASON]: String(reason),
+        [traceTypes.ATTR_CLOSE_DRAIN]: drain,
+      },
+    });
+    if (error?.type) {
+      closeSpan.setAttribute(traceTypes.ATTR_EXCEPTION_TYPE, error.type);
     }
+    const closeContext = trace.setSpan(this.rootSpanContext ?? otelContext.active(), closeSpan);
+    try {
+      await otelContext.with(closeContext, async () => {
+        await this.teardownActivity(wasStarted, reason, drain, closeContext);
 
-    if (this.agentSpeakingSpan) {
-      this.agentSpeakingSpan.end();
-      this.agentSpeakingSpan = undefined;
+        this.started = false;
+
+        if (wasStarted) this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
+
+        await this.sessionHost?.close();
+        this.sessionHost = undefined;
+
+        // close room io after the close event is emitted
+        await this._roomIO?.close();
+        this._roomIO = undefined;
+      });
+    } finally {
+      // the session is closed whatever the teardown raised
+      this.started = false;
+      this._cancelUserAwayTimer();
+      this._userState = 'listening';
+      this._agentState = 'initializing';
+      this.sttErrorCounts = 0;
+      this.llmErrorCounts = 0;
+      this.ttsErrorCounts = 0;
+
+      if (this._userSpeakingSpan) {
+        this._userSpeakingSpan.end();
+        this._userSpeakingSpan = undefined;
+      }
+
+      if (this.agentSpeakingSpan) {
+        this.agentSpeakingSpan.end();
+        this.agentSpeakingSpan = undefined;
+      }
+
+      closeSpan.end();
+      if (this.sessionSpan) {
+        this.sessionSpan.end();
+        this.sessionSpan = undefined;
+      }
+      this.rootSpanContext = undefined;
     }
-
-    this.started = false;
-
-    if (wasStarted) this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
-
-    this._userState = 'listening';
-    this._agentState = 'initializing';
-    this.rootSpanContext = undefined;
-    this.sttErrorCounts = 0;
-    this.llmErrorCounts = 0;
-    this.ttsErrorCounts = 0;
-
-    await this.sessionHost?.close();
-    this.sessionHost = undefined;
-
-    await this._roomIO?.close();
-    this._roomIO = undefined;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }

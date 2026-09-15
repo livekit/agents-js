@@ -11,7 +11,13 @@
  * `agent_turn` through a full fake session.
  */
 import { AudioFrame } from '@livekit/rtc-node';
-import { SpanStatusCode, context as otelContext, trace } from '@opentelemetry/api';
+import {
+  type Context,
+  ROOT_CONTEXT,
+  SpanStatusCode,
+  context as otelContext,
+  trace,
+} from '@opentelemetry/api';
 import { hrTimeToMilliseconds } from '@opentelemetry/core';
 import {
   InMemorySpanExporter,
@@ -165,6 +171,7 @@ describe.sequential('eou_wait span', () => {
       minDelay: number;
       commit?: boolean;
       turnDetector?: _TurnDetector;
+      rootSpanContext?: Context;
     }) {
       const vad = new ScriptedVAD();
       const hooks: RecognitionHooks = {
@@ -190,6 +197,7 @@ describe.sequential('eou_wait span', () => {
         turnDetectionMode: 'vad',
         minEndpointingDelay: opts.minDelay,
         maxEndpointingDelay: Math.max(opts.minDelay, 1000),
+        rootSpanContext: opts.rootSpanContext,
       });
       ar['audioTranscript'] = 'hello there';
       await ar.start();
@@ -238,6 +246,36 @@ describe.sequential('eou_wait span', () => {
         // the wait closes before the turn does
         expect(endMs(wait)).toBeLessThanOrEqual(endMs(userTurn));
         expect(ar['eouWaitSpan']).toBeUndefined();
+      } finally {
+        await ar.close();
+      }
+    });
+
+    it('pins user_turn to the session root, whatever span is current', async () => {
+      // a turn committed from a late STT final while session_close is current must still sit
+      // directly under agent_session, not under the close span
+      const root = tracer.startSpan({ name: 'agent_session' });
+      const { ar } = await makeRecognition({
+        minDelay: 10,
+        rootSpanContext: trace.setSpan(ROOT_CONTEXT, root),
+      });
+      try {
+        const close = await tracer.startActiveSpan(
+          async (span) => {
+            ar['lastSpeakingTime'] = Date.now();
+            runEou(ar, 'stt');
+            await awaitBounce(ar);
+            return span;
+          },
+          { name: 'session_close' },
+        );
+        root.end();
+
+        const turn = only(exporter, 'user_turn');
+        expect(turn.parentSpanContext?.spanId).toBe(root.spanContext().spanId);
+        expect(turn.parentSpanContext?.spanId).not.toBe(close.spanContext().spanId);
+        const wait = only(exporter, 'eou_wait');
+        expect(wait.parentSpanContext?.spanId).toBe(turn.spanContext().spanId);
       } finally {
         await ar.close();
       }
