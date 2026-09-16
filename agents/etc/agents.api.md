@@ -8449,6 +8449,7 @@ interface TwilioConnectorWarmTransferTaskOptions extends Omit<WarmTransferTaskOp
     ringingTimeout?: number | null;
     twilioAccountSid?: string;
     twilioAuthToken?: string;
+    twilioCallToken?: string;
     twilioFromNumber: string;
 }
 

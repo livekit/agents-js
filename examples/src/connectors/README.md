@@ -78,6 +78,33 @@ Calls then reach a support agent that escalates to a supervisor when asked, with
 
 Warm transfer on WhatsApp connector calls is not supported yet.
 
+### Preserve an inbound Twilio caller's number
+
+Capture `From` and `CallToken` from the validated inbound Twilio voice webhook.
+Keep them together in server-side state keyed by the inbound `CallSid`, and retrieve
+them for the specific call requesting a transfer:
+
+```ts
+await new TwilioConnectorWarmTransferTask({
+  phoneNumber: supervisorNumber,
+  twilioFromNumber: inboundFrom,
+  twilioCallToken: inboundCallToken,
+  chatCtx: this.chatCtx,
+}).run();
+```
+
+The optional `twilioCallToken` is passed unchanged to Twilio's Calls API as
+`CallToken`. The SDK does not add it to the connector request or TwiML. Keep the
+token out of prompts, chat history, logs, and participant attributes.
+
+`twilioFromNumber` must match the original incoming call's `From`; the token does
+not authorize an arbitrary caller ID. Without an inbound token, omit
+`twilioCallToken` and use a Twilio number or verified caller ID. A rejected token
+fails the dial; there is no automatic retry with a different caller ID.
+
+The [Twilio Calls API](https://www.twilio.com/docs/voice/api/call-resource#create-a-call)
+supports CallToken directly, so this workflow does not require a Twilio conference.
+
 ## Connectors and SIP
 
 Connectors are one of two telephony paths. SIP trunking (see [`../telephony_amd.ts`](../telephony_amd.ts)) stays the recommended path when you are starting fresh: it works with any provider and LiveKit manages routing with dispatch rules. Use the connector when your call logic already lives in Twilio, or for WhatsApp, which has no phone number to trunk.

@@ -854,12 +854,22 @@ export interface TwilioConnectorWarmTransferTaskOptions
   > {
   /** Phone number of the human agent to dial, in E.164 format. */
   phoneNumber: string;
-  /** Twilio number the call is placed from (the caller ID the human agent sees). */
+  /**
+   * Caller ID shown to the human agent. Use a Twilio number or verified caller ID,
+   * or the original incoming call's `From` when supplying its `twilioCallToken`.
+   */
   twilioFromNumber: string;
   /** Twilio account SID. Falls back to the `TWILIO_ACCOUNT_SID` environment variable. */
   twilioAccountSid?: string;
   /** Twilio auth token. Falls back to the `TWILIO_AUTH_TOKEN` environment variable. */
   twilioAuthToken?: string;
+  /**
+   * `CallToken` from the original incoming Twilio voice webhook, authorizing reuse
+   * of that call's caller ID. Supply the same call's `From` as `twilioFromNumber`.
+   * Retrieve the token from server-side state for that specific call; keep it out
+   * of prompts and participant attributes. When omitted, no CallToken is sent.
+   */
+  twilioCallToken?: string;
   /**
    * How long to wait, in milliseconds, for the human agent to answer before
    * giving up and cancelling the call. Defaults to 30 seconds: Twilio reports
@@ -887,6 +897,7 @@ export function createTwilioConnectorWarmTransferTask(
     twilioFromNumber,
     twilioAccountSid = process.env.TWILIO_ACCOUNT_SID ?? '',
     twilioAuthToken = process.env.TWILIO_AUTH_TOKEN ?? '',
+    twilioCallToken,
     ringingTimeout = TWILIO_RINGING_TIMEOUT_MS,
     ...baseOptions
   } = options;
@@ -917,6 +928,7 @@ export function createTwilioConnectorWarmTransferTask(
         to: phoneNumber,
         from: twilioFromNumber,
         twiml,
+        callToken: twilioCallToken,
       });
 
       try {
@@ -1020,12 +1032,13 @@ const twilioRequest = (auth: TwilioRestAuth, path: string, form: Record<string, 
 /** Place the human agent call with the Twilio REST API; returns the call SID. */
 async function createTwilioCall(
   auth: TwilioRestAuth,
-  options: { to: string; from: string; twiml: string },
+  options: { to: string; from: string; twiml: string; callToken?: string },
 ): Promise<string> {
   const resp = await twilioRequest(auth, '/Calls.json', {
     To: options.to,
     From: options.from,
     Twiml: options.twiml,
+    ...(options.callToken !== undefined ? { CallToken: options.callToken } : {}),
   });
   const body = await resp.text();
   if (!resp.ok) {
