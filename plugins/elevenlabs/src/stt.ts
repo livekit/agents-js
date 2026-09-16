@@ -55,6 +55,12 @@ export interface STTOptions {
   tagAudioEvents?: boolean;
   useRealtime?: boolean;
   sampleRate?: STTRealtimeSampleRates;
+  /**
+   * Duration of each outgoing realtime audio chunk in milliseconds. Must be a positive integer.
+   * Defaults to 50. Larger chunks reduce message frequency but increase buffering latency.
+   * Flushes send any shorter remaining chunk before committing. Only used for Scribe v2 realtime.
+   */
+  audioChunkDuration?: number;
   serverVad?: VADOptions | null;
   includeTimestamps?: boolean;
   httpSession?: STTHTTPSession;
@@ -91,6 +97,7 @@ interface ResolvedSTTOptions {
   tagAudioEvents: boolean;
   includeTimestamps: boolean;
   sampleRate: STTRealtimeSampleRates;
+  audioChunkDuration: number;
   serverVad?: VADOptions | null;
   keyterms?: string[];
   secondaryLanguages?: string[];
@@ -234,6 +241,11 @@ export class STT extends stt.STT {
   label = 'elevenlabs.STT';
 
   constructor(opts: STTOptions = {}) {
+    const audioChunkDuration = opts.audioChunkDuration === undefined ? 50 : opts.audioChunkDuration;
+    if (!Number.isInteger(audioChunkDuration) || audioChunkDuration <= 0) {
+      throw new Error('audioChunkDuration must be a positive integer');
+    }
+
     let model = opts.model;
     if (opts.modelId !== undefined) {
       if (model !== undefined) {
@@ -300,6 +312,7 @@ export class STT extends stt.STT {
       languageCode: opts.languageCode ? normalizeLanguage(opts.languageCode) : undefined,
       tagAudioEvents: opts.tagAudioEvents ?? true,
       sampleRate: opts.sampleRate ?? 16000,
+      audioChunkDuration,
       serverVad: opts.serverVad,
       includeTimestamps,
       modelId,
@@ -672,8 +685,10 @@ export class SpeechStream extends stt.SpeechStream {
         }, sessionController);
 
         const sendTask = Task.from(async (controller) => {
-          const samples50Ms = Math.floor(this.#opts.sampleRate / 20);
-          const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samples50Ms);
+          const samplesPerChunk = Math.floor(
+            (this.#opts.sampleRate * this.#opts.audioChunkDuration) / 1000,
+          );
+          const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
           const abortPromise = waitForAbort(controller.signal);
           const streamAbortPromise = waitForAbort(this.abortSignal);
           let hasEnded = false;
