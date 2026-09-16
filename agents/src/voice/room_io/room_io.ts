@@ -334,11 +334,15 @@ export class RoomIO {
     });
   };
 
-  private onAgentStateChanged = async (ev: AgentStateChangedEvent) => {
+  private onAgentStateChanged = (ev: AgentStateChangedEvent) => {
     if (this.room.isConnected && this.room.localParticipant) {
-      await this.room.localParticipant.setAttributes({
-        [`lk.agent.state`]: ev.newState,
-      });
+      this.room.localParticipant
+        .setAttributes({
+          [`lk.agent.state`]: ev.newState,
+        })
+        .catch((error) => {
+          this.logger.error(error, 'Failed to update agent state attributes');
+        });
     }
   };
 

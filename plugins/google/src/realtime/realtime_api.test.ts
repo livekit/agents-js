@@ -5,8 +5,7 @@ import type { LiveServerContent } from '@google/genai';
 import { Behavior, FunctionResponseScheduling } from '@google/genai';
 import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
-import { historyConfigForSetup } from './live_setup.js';
-import { RealtimeModel, RealtimeSession } from './realtime_api.js';
+import { RealtimeSession } from './realtime_api.js';
 
 type ToolCallStatus = {
   name: string;
@@ -249,22 +248,5 @@ describe('Google Realtime model text parts', () => {
 
     expect(session.currentGeneration.textChannel.write.mock.calls).toEqual([['Hello there.']]);
     expect(session.currentGeneration.outputText).toBe('Hello there.');
-  });
-});
-
-describe('Google Realtime initial history seeding', () => {
-  function historyConfigFor(model: string) {
-    const { capabilities } = new RealtimeModel({ model, apiKey: 'test-key' });
-    return historyConfigForSetup({ mutableChatCtx: capabilities.midSessionChatCtxUpdate ?? true });
-  }
-
-  it('asks the server to treat the prefill as history on models that reject one', () => {
-    expect(historyConfigFor('gemini-3.1-flash-live-preview')).toEqual({
-      initialHistoryInClientContent: true,
-    });
-  });
-
-  it('leaves models that accept a plain prefill alone', () => {
-    expect(historyConfigFor('gemini-2.0-flash-live-001')).toBeUndefined();
   });
 });

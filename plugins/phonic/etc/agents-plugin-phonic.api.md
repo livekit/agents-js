@@ -24,6 +24,7 @@ import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
+import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { TrackPublishOptions } from '@livekit/rtc-node';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
@@ -31,6 +32,11 @@ import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 import { z } from 'zod';
+
+// Warning: (ae-missing-release-tag) "PhonicConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+type PhonicConfig = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'instructions'>>;
 
 // Warning: (ae-missing-release-tag) "PhonicToolConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -55,6 +61,8 @@ declare namespace realtime {
         RealtimeModel,
         RealtimeModelOptions,
         PhonicToolConfig,
+        PhonicConfig,
+        toPhonicToolDefinitions,
         Voice
     }
 }
@@ -106,6 +114,10 @@ class RealtimeModel extends llm.RealtimeModel {
         connOptions?: APIConnectOptions;
         baseUrl?: string;
     });
+    // Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
+    _activeSession?: RealtimeSession_2;
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
@@ -116,8 +128,8 @@ class RealtimeModel extends llm.RealtimeModel {
     _options: RealtimeModelOptions;
     // (undocumented)
     get provider(): string;
-    // Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
     session(): RealtimeSession_2;
+    updateOptions(config: PhonicConfig): void;
 }
 
 // Warning: (ae-missing-release-tag) "RealtimeModelOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -205,6 +217,11 @@ interface RealtimeModelOptions {
     welcomeMessage?: string;
 }
 
+// Warning: (ae-missing-release-tag) "toPhonicToolDefinitions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+function toPhonicToolDefinitions(toolContext: llm.ToolContext): Phonic.ResponsesToolDefinition[];
+
 // Warning: (ae-missing-release-tag) "Voice" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -212,7 +229,7 @@ type Voice = 'sabrina' | 'grant' | 'virginia' | 'landon' | 'eleanor' | 'shelby' 
 
 // Warnings were encountered during analysis:
 //
-// src/realtime/realtime_model.ts:281:7 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_model.ts:314:7 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

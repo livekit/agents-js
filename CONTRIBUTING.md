@@ -52,6 +52,19 @@ be approved:
 - There's no need to mess around with `CHANGELOG.md` or package manifests — we have a bot handle
   that for us. A maintainer will add the necessary notes before merging.
 
+### Review lifecycle changes
+
+For changes to session helpers, shutdown, or cleanup:
+
+- Identify the owner of each long-running operation and what settles it on success, failure,
+  cancellation, and shutdown.
+- Trace what teardown waits for. Release dependent work before draining the activity. A helper
+  must not depend on the session's `Close` event to release work that `Agent.onExit()` awaits.
+- Check synchronous throws and promise rejections separately. Keep promise settlement and local
+  state release independent of optional session calls. A throw inside `finally` skips later cleanup.
+- Use real session and activity objects to check lifecycle behavior. Mock external providers.
+- For Python ports, compare lifetime ownership and teardown order as well as method behavior.
+
 ## Assist others in the community
 
 If you can't contribute code, you can still help us greatly by helping out community members who

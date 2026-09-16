@@ -12,6 +12,7 @@ import {
   Task,
   createTimedString,
   delay,
+  getBaseLanguage,
   log,
   normalizeLanguage,
   stt,
@@ -23,10 +24,86 @@ import { WebSocket } from 'ws';
 import type { STTEncoding, STTModels, VoiceFocus } from './models.js';
 
 // Speech models in the Universal-3 Pro family, which share the same parameter support.
-const U3_PRO_MODELS = ['u3-rt-pro', 'u3-rt-pro-beta-1', 'universal-3-5-pro'] as const;
+const U3_PRO_MODELS = [
+  'u3-rt-pro',
+  'u3-rt-pro-beta-1',
+  'universal-3-5-pro',
+  'universal-3-6-pro',
+] as const;
+
+const U3_PRO_ONLY_PARAMS = [
+  'prompt',
+  'agentContext',
+  'previousContextNTurns',
+  'continuousPartials',
+  'interruptionDelay',
+  'voiceFocus',
+  'voiceFocusThreshold',
+  'mode',
+  'languageCodes',
+] as const;
+
+const MAX_LANGUAGE_CODES = 10;
+const MAX_AGENT_CONTEXT_CHARS = 1750;
 
 function isU3ProModel(model: STTModels): boolean {
   return U3_PRO_MODELS.includes(model as (typeof U3_PRO_MODELS)[number]);
+}
+
+function validateModelOptions(opts: Partial<STTOptions>, speechModel: STTModels): void {
+  if (isU3ProModel(speechModel)) return;
+  for (const param of U3_PRO_ONLY_PARAMS) {
+    if (opts[param] !== undefined) {
+      throw new Error(
+        `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
+      );
+    }
+  }
+}
+
+function normalizeLanguageCodes(languageCodes: string | string[]): string[] {
+  const codes =
+    typeof languageCodes === 'string' ? (languageCodes ? [languageCodes] : []) : languageCodes;
+  const normalized = [...new Set(codes.map(getBaseLanguage))];
+  if (normalized.length > MAX_LANGUAGE_CODES) {
+    throw new Error(
+      `languageCodes accepts at most ${MAX_LANGUAGE_CODES} codes (got ${normalized.length} after normalization)`,
+    );
+  }
+  if (normalized.includes('multi') && normalized.length > 1) {
+    throw new Error(
+      "'multi' routes to the unsteered multilingual model and cannot be combined with other language codes",
+    );
+  }
+  return normalized;
+}
+
+function validateAgentContext(agentContext: string | undefined): void {
+  const length = agentContext === undefined ? 0 : Array.from(agentContext).length;
+  if (length > MAX_AGENT_CONTEXT_CHARS) {
+    throw new Error(
+      `agentContext exceeds maximum length of ${MAX_AGENT_CONTEXT_CHARS} characters (got ${length})`,
+    );
+  }
+}
+
+function normalizeUpdateOptions(
+  opts: Partial<STTOptions>,
+  speechModel: STTModels,
+): Partial<STTOptions> {
+  const nextOpts = { ...opts };
+  if (nextOpts.speechModel === 'u3-pro') nextOpts.speechModel = 'universal-3-5-pro';
+  // UpdateConfiguration cannot change the model of an existing provider session.
+  if (nextOpts.speechModel !== undefined && nextOpts.speechModel !== speechModel) {
+    throw new Error('speechModel cannot be changed via updateOptions; create a new STT instead.');
+  }
+  delete nextOpts.speechModel;
+  validateModelOptions(nextOpts, speechModel);
+  validateAgentContext(nextOpts.agentContext);
+  if (nextOpts.languageCodes !== undefined) {
+    nextOpts.languageCodes = normalizeLanguageCodes(nextOpts.languageCodes);
+  }
+  return nextOpts;
 }
 
 // AssemblyAI Universal-Streaming (v3) message envelope. All fields are optional
@@ -79,6 +156,7 @@ export interface STTOptions {
    */
   bufferSizeMs: number;
   encoding: STTEncoding;
+  /** Model selected at construction. Create a new STT to switch models. */
   speechModel: STTModels;
   languageDetection?: boolean;
   /**
@@ -92,6 +170,10 @@ export interface STTOptions {
   /** Maximum silence (ms) before end-of-turn is forced regardless of confidence. */
   maxTurnSilence?: number;
   formatTurns?: boolean;
+  /** Emit additional partial transcripts during long turns. Universal-3 Pro only. */
+  continuousPartials?: boolean;
+  /** Delay before the first early partial is emitted, in milliseconds. Universal-3 Pro only. */
+  interruptionDelay?: number;
   keytermsPrompt?: string[];
   /** Only supported with the Universal-3 Pro model family. */
   prompt?: string;
@@ -120,11 +202,13 @@ export interface STTOptions {
    * or `max_accuracy`. Explicit turn-silence values still take precedence over mode defaults.
    */
   mode?: 'min_latency' | 'balanced' | 'max_accuracy';
+  /** Languages to steer transcription toward. Universal-3 Pro only. */
+  languageCodes?: string | string[];
   /**
    * When the model supports it, let an `AgentSession` push each assistant reply into
-   * `agentContext` so it is carried into the model's conversation context. Defaults to false;
-   * set true to enable. Prior user turns are carried automatically by the model regardless of
-   * this flag. Ignored on models without context support.
+   * `agentContext` so it is carried into the model's conversation context. Defaults to true for
+   * Universal-3 Pro models; set false to disable. Prior user turns are carried automatically by
+   * the model regardless of this flag. Ignored on models without context support.
    */
   agentContextCarryover?: boolean;
   baseUrl: string;
@@ -156,6 +240,12 @@ export class STT extends stt.STT {
   }
 
   constructor(opts: Partial<STTOptions> = {}) {
+    validateAgentContext(opts.agentContext);
+    if (opts.languageCodes !== undefined) {
+      const languageCodes = normalizeLanguageCodes(opts.languageCodes);
+      opts.languageCodes = languageCodes.length > 0 ? languageCodes : undefined;
+    }
+
     // u3-rt-pro family — "u3-pro" is normalized below — and is opt-in via the user)
     const rawModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
@@ -169,7 +259,7 @@ export class STT extends stt.STT {
       interimResults: true,
       alignedTranscript: 'word',
       keyterms: true,
-      chatContext: (opts.agentContextCarryover ?? false) && supportsCarryover,
+      chatContext: (opts.agentContextCarryover ?? true) && supportsCarryover,
     });
 
     if (opts.speechModel === 'u3-pro') {
@@ -178,22 +268,7 @@ export class STT extends stt.STT {
     }
 
     const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;
-    if (!isU3ProModel(speechModel)) {
-      for (const param of [
-        'prompt',
-        'agentContext',
-        'previousContextNTurns',
-        'voiceFocus',
-        'voiceFocusThreshold',
-        'mode',
-      ] as const) {
-        if (opts[param] !== undefined) {
-          throw new Error(
-            `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
-          );
-        }
-      }
-    }
+    validateModelOptions(opts, speechModel);
 
     const apiKey = opts.apiKey ?? defaultSTTOptions.apiKey;
     if (!apiKey) {
@@ -220,8 +295,7 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    // session keyterms so a user update doesn't drop them)
-    const nextOpts = { ...opts };
+    const nextOpts = normalizeUpdateOptions(opts, this.#opts.speechModel);
     if (nextOpts.keytermsPrompt !== undefined) {
       this.#userKeyterms = [...nextOpts.keytermsPrompt];
       nextOpts.keytermsPrompt = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
@@ -259,9 +333,12 @@ export class STT extends stt.STT {
   }
 
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    if (!this.capabilities.chatContext) return;
     const chatItem = ev.item;
     if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
-      this.updateOptions({ agentContext: chatItem.textContent });
+      this.updateOptions({
+        agentContext: Array.from(chatItem.textContent).slice(-MAX_AGENT_CONTEXT_CHARS).join(''),
+      });
     }
   }
 
@@ -309,18 +386,26 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
+    opts = normalizeUpdateOptions(opts, this.#opts.speechModel);
     this.#opts = { ...this.#opts, ...opts };
 
     const configMsg: Record<string, unknown> = { type: 'UpdateConfiguration' };
     if (opts.prompt !== undefined) configMsg.prompt = opts.prompt;
     if (opts.agentContext !== undefined) configMsg.agent_context = opts.agentContext;
     if (opts.keytermsPrompt !== undefined) configMsg.keyterms_prompt = opts.keytermsPrompt;
+    if (opts.languageCodes !== undefined) configMsg.language_codes = opts.languageCodes;
     if (opts.maxTurnSilence !== undefined) configMsg.max_turn_silence = opts.maxTurnSilence;
     if (opts.minTurnSilence !== undefined) configMsg.min_turn_silence = opts.minTurnSilence;
     if (opts.endOfTurnConfidenceThreshold !== undefined) {
       configMsg.end_of_turn_confidence_threshold = opts.endOfTurnConfidenceThreshold;
     }
     if (opts.vadThreshold !== undefined) configMsg.vad_threshold = opts.vadThreshold;
+    if (opts.continuousPartials !== undefined) {
+      configMsg.continuous_partials = opts.continuousPartials;
+    }
+    if (opts.interruptionDelay !== undefined) {
+      configMsg.interruption_delay = opts.interruptionDelay;
+    }
 
     // Only send if any actual fields (besides `type`) were specified.
     if (Object.keys(configMsg).length > 1) {
@@ -392,6 +477,8 @@ export class SpeechStream extends stt.SpeechStream {
       encoding: this.#opts.encoding,
       speech_model: this.#opts.speechModel,
       format_turns: this.#opts.formatTurns,
+      continuous_partials: this.#opts.continuousPartials,
+      interruption_delay: this.#opts.interruptionDelay,
       end_of_turn_confidence_threshold: this.#opts.endOfTurnConfidenceThreshold,
       min_turn_silence: minSilence,
       max_turn_silence: maxSilence,
@@ -400,6 +487,10 @@ export class SpeechStream extends stt.SpeechStream {
           ? JSON.stringify(this.#opts.keytermsPrompt)
           : undefined,
       language_detection: languageDetection,
+      language_codes:
+        this.#opts.languageCodes !== undefined && this.#opts.languageCodes.length > 0
+          ? JSON.stringify(this.#opts.languageCodes)
+          : undefined,
       inactivity_timeout: this.#opts.inactivityTimeout,
       prompt: this.#opts.prompt,
       agent_context: this.#opts.agentContext,

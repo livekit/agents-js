@@ -28,6 +28,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
+import { DuplexRealtimeAdapter, DuplexRealtimeSession } from '../llm/duplex_adapter.js';
 import { AsyncToolset, type Toolset } from '../llm/index.js';
 import {
   type ChatItem,
@@ -69,7 +70,7 @@ import type {
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
-import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
 import { isFlushSentinel } from '../types.js';
@@ -329,6 +330,7 @@ export class AgentActivity implements RecognitionHooks {
   private realtimeSession?: RealtimeSession;
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
   private turnDetectionMode?: TurnDetectionMode;
+  private rtOverlappingSpeechEnabled = false;
   private logger = log();
   private _schedulingPaused = true;
   private newTurnsBlocked = false;
@@ -451,6 +453,14 @@ export class AgentActivity implements RecognitionHooks {
       asyncToolOptions: this.agent._asyncToolOptions ?? this.agentSession._asyncToolOptions,
     });
 
+    // a duplex model has no text modality, and the adapter resolves each reply from the audio
+    // the model produces; without audio a text simulation would only time out on turn one
+    if (this.agentSession._textOnly && this.llm instanceof DuplexRealtimeAdapter) {
+      throw new Error(
+        'a DuplexModel speaks only through audio, so it cannot run under a text simulation; run `lk agent simulate audio` instead',
+      );
+    }
+
     if (
       this.llm instanceof RealtimeModel &&
       this.agentSession.sessionOptions.recordingOptions.audio &&
@@ -464,6 +474,10 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this._resolvedTurnDetection = this._resolveTurnDetection(this.turnDetection);
+    this.rtOverlappingSpeechEnabled =
+      this.llm instanceof RealtimeModel &&
+      this.llm.capabilities.turnDetection &&
+      this.llm.capabilities.supportsOverlappingSpeech === true;
     this.turnDetectionMode =
       typeof this._resolvedTurnDetection === 'string' ? this._resolvedTurnDetection : undefined;
 
@@ -597,7 +611,13 @@ export class AgentActivity implements RecognitionHooks {
     const startSpan = tracer.startSpan({
       name: spanName,
       attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
-      context: ROOT_CONTEXT,
+      context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
+    });
+    genAI.setAgentAttributes(startSpan, {
+      operation: traceTypes.GenAIOperationName.CREATE_AGENT,
+      agentName: this.agent.id,
+      model: this.llm?.model,
+      provider: this.llm?.provider,
     });
 
     this.agent._agentActivity = this;
@@ -646,6 +666,20 @@ export class AgentActivity implements RecognitionHooks {
           !rtReused || capabilities.midSessionToolsUpdate ? this.tools : undefined,
         );
       } catch (error) {
+        if (this.realtimeSession instanceof DuplexRealtimeSession) {
+          startSpan.end();
+          if (this.agentSession._started) {
+            this.onError({
+              type: 'realtime_model_error',
+              timestamp: Date.now(),
+              label: this.llm.label(),
+              error:
+                error instanceof Error ? error : new RealtimeError('duplex configuration failed'),
+              recoverable: false,
+            });
+          }
+          throw error;
+        }
         this.logger.error(error, 'failed to update realtime session');
       }
 
@@ -1033,7 +1067,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.realtimeSession) {
       removeInstructions(chatCtx);
-      this.realtimeSession.updateChatCtx(chatCtx);
+      await this.realtimeSession.updateChatCtx(chatCtx);
     } else {
       updateInstructions({
         chatCtx,
@@ -1631,21 +1665,23 @@ export class AgentActivity implements RecognitionHooks {
   };
 
   private onError(ev: RealtimeModelError | STTError | TTSError | LLMError): void {
-    if (ev.type === 'realtime_model_error') {
-      const errorEvent = createErrorEvent(ev, this.llm);
-      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
-    } else if (ev.type === 'stt_error') {
-      const errorEvent = createErrorEvent(ev, this.stt);
-      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
-    } else if (ev.type === 'tts_error') {
-      const errorEvent = createErrorEvent(ev, this.tts);
-      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
-    } else if (ev.type === 'llm_error') {
-      const errorEvent = createErrorEvent(ev, this.llm);
-      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+    try {
+      if (ev.type === 'realtime_model_error') {
+        const errorEvent = createErrorEvent(ev, this.llm);
+        this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+      } else if (ev.type === 'stt_error') {
+        const errorEvent = createErrorEvent(ev, this.stt);
+        this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+      } else if (ev.type === 'tts_error') {
+        const errorEvent = createErrorEvent(ev, this.tts);
+        this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+      } else if (ev.type === 'llm_error') {
+        const errorEvent = createErrorEvent(ev, this.llm);
+        this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+      }
+    } finally {
+      this.agentSession._onError(ev);
     }
-
-    this.agentSession._onError(ev);
   }
 
   // -- Realtime Session events --
@@ -1667,6 +1703,8 @@ export class AgentActivity implements RecognitionHooks {
         );
       }
     }
+
+    if (this.rtOverlappingSpeechEnabled) return;
 
     // this.interrupt() is going to raise when allow_interruptions is False,
     // llm.InputSpeechStartedEvent is only fired by the server when the turn_detection is enabled.
@@ -1728,6 +1766,7 @@ export class AgentActivity implements RecognitionHooks {
         content: ev.transcript,
         id: ev.itemId,
         createdAt: turnStartedAt,
+        transcriptConfidence: ev.confidence ?? 1,
         metrics: userMetrics,
       });
       // insert rather than append: this transcript can arrive after the reply that
@@ -2288,7 +2327,11 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     if (ownedSpeechHandle) {
-      const interruptOwnedSpeech = () => ownedSpeechHandle.interrupt(true);
+      // Must not return the handle: SpeechHandle is a thenable, and EventTarget calls `.then()`
+      // on a listener's return value, which trips the circular-wait guard inside the owning tool.
+      const interruptOwnedSpeech = () => {
+        ownedSpeechHandle.interrupt(true);
+      };
       taskController.signal.addEventListener('abort', interruptOwnedSpeech, { once: true });
       if (taskController.signal.aborted) {
         interruptOwnedSpeech();
@@ -3249,6 +3292,7 @@ export class AgentActivity implements RecognitionHooks {
           role: 'assistant',
           content: textOut?.text || '',
           interrupted: speechHandle.interrupted,
+          createdAt: replyStartedSpeakingAt ?? Date.now(),
           metrics: replyAssistantMetrics,
         });
         this.agent._chatCtx.insert(message);
@@ -3698,6 +3742,7 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
+      agentName: this.agent.id,
       session: this.agentSession,
       speechHandle,
       toolCtx,
@@ -3903,7 +3948,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._toolItemsAdded(toolCallOutputs);
     }
 
-    if (shouldGenerateToolReply) {
+    if (shouldGenerateToolReply && !this.agentSession._closing) {
       _stripRunningToolCalls(chatCtx);
       chatCtx.insert(toolMessages);
 
@@ -3941,6 +3986,17 @@ export class AgentActivity implements RecognitionHooks {
     }
   };
 
+  /**
+   * An agent turn is the convention's `invoke_agent`: the framework running the agent
+   * in-process, with the inference (`chat`) and tool (`execute_tool`) spans nested underneath.
+   */
+  private recordAgentTurn(span: Span): void {
+    genAI.setAgentAttributes(span, {
+      operation: traceTypes.GenAIOperationName.INVOKE_AGENT,
+      agentName: this.agent.id,
+    });
+  }
+
   private pipelineReplyTask = async (
     stateLease: AgentStateLease,
     chatCtx: ChatContext,
@@ -3952,7 +4008,8 @@ export class AgentActivity implements RecognitionHooks {
     _previousUserMetrics?: MetricsReport,
   ): Promise<void> =>
     tracer.startActiveSpan(
-      async (span) =>
+      async (span) => (
+        this.recordAgentTurn(span),
         this._pipelineReplyTaskImpl({
           stateLease,
           chatCtx,
@@ -3963,7 +4020,8 @@ export class AgentActivity implements RecognitionHooks {
           newMessage,
           span,
           _previousUserMetrics,
-        }),
+        })
+      ),
       {
         name: 'agent_turn',
         context: this.agentSession.rootSpanContext,
@@ -3978,15 +4036,23 @@ export class AgentActivity implements RecognitionHooks {
     addToChatCtx: boolean = true,
   ): Promise<void> {
     return tracer.startActiveSpan(
-      async (span) =>
-        this._realtimeGenerationTaskImpl({
-          stateLease,
-          ev,
-          modelSettings,
-          replyAbortController,
-          addToChatCtx,
-          span,
-        }),
+      async (span) => {
+        this.recordAgentTurn(span);
+        const inferenceSpan = tracer.startSpan({ name: 'realtime_inference' });
+        try {
+          return await this._realtimeGenerationTaskImpl({
+            stateLease,
+            ev,
+            modelSettings,
+            replyAbortController,
+            addToChatCtx,
+            span,
+            inferenceSpan,
+          });
+        } finally {
+          inferenceSpan.end();
+        }
+      },
       {
         name: 'agent_turn',
         context: this.agentSession.rootSpanContext,
@@ -4001,6 +4067,7 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController,
     addToChatCtx,
     span,
+    inferenceSpan,
   }: {
     stateLease: AgentStateLease;
     ev: GenerationCreatedEvent;
@@ -4008,6 +4075,7 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController: AbortController;
     addToChatCtx: boolean;
     span: Span;
+    inferenceSpan: Span;
   }): Promise<void> {
     const { speechHandle } = stateLease;
     speechHandle._agentTurnContext = otelContext.active();
@@ -4030,10 +4098,20 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('llm is not a realtime model');
     }
 
-    // Store span for metrics recording when they arrive later
-    span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, realtimeModel.model);
+    genAI.setRequestAttributes(inferenceSpan, {
+      operation: traceTypes.GenAIOperationName.GENERATE_CONTENT,
+      provider: realtimeModel.provider,
+      model: realtimeModel.model,
+      stream: true,
+      // a realtime model can be configured text-only
+      outputType: this.agentSession.output.audioEnabled
+        ? traceTypes.GenAIOutputType.SPEECH
+        : traceTypes.GenAIOutputType.TEXT,
+    });
+    // the provider metrics land here rather than on `agent_turn`; they can arrive after the
+    // turn ends, in which case recordRealtimeMetrics opens its own child span
     if (this.realtimeSpans && ev.responseId) {
-      this.realtimeSpans.set(ev.responseId, span);
+      this.realtimeSpans.set(ev.responseId, inferenceSpan);
     }
 
     this.logger.debug(
@@ -4050,7 +4128,7 @@ export class AgentActivity implements RecognitionHooks {
     const toolCtx = realtimeSession.tools;
 
     const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
-    if (speechHandle.allowInterruptions) {
+    if (speechHandle.allowInterruptions && !this.rtOverlappingSpeechEnabled) {
       authorizationTasks.push(this.userSilenceEvent.wait());
     }
     await speechHandle.waitIfNotInterrupted(authorizationTasks);
@@ -4367,6 +4445,7 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
+      agentName: this.agent.id,
       session: this.agentSession,
       speechHandle,
       toolCtx,
@@ -4765,7 +4844,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
-    if (speechHandle.allowInterruptions) {
+    if (speechHandle.allowInterruptions && !this.rtOverlappingSpeechEnabled) {
       authorizationTasks.push(this.userSilenceEvent.wait());
     }
     await speechHandle.waitIfNotInterrupted(authorizationTasks);
@@ -4918,6 +4997,15 @@ export class AgentActivity implements RecognitionHooks {
         if (this.closed || this.agentSession._closing) {
           throw new ToolError('the activity that awaited the inline task is closing');
         }
+        // A handoff holds the session transition lock while draining this task's owner.
+        // Check after acquiring the slot so a preceding inline task can resume us first.
+        if (this.newTurnsBlocked) {
+          throw new ToolError(
+            'An agent transition is in progress, so this tool call cannot continue. ' +
+              'Wait until the transition is complete before retrying, if the tool is ' +
+              'available to the new agent.',
+          );
+        }
 
         // A run must only watch this task once it has the slot. Otherwise it would wait
         // for user input needed by the task currently ahead of it.
@@ -5037,10 +5125,12 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async drain(options?: { newActivity?: AgentActivity }): Promise<ReusableResources | undefined> {
-    // Create drain_agent_activity as a ROOT span (new trace) to match Python behavior
+    // parented to the session rather than to whichever speech task is current, so the whole
+    // session stays one trace. Python reaches the same place by inheriting the session
+    // context that AgentSession attaches.
     return tracer.startActiveSpan(async (span) => this._drainImpl(span, options?.newActivity), {
       name: 'drain_agent_activity',
-      context: ROOT_CONTEXT,
+      context: this.agentSession.rootSpanContext ?? ROOT_CONTEXT,
     });
   }
 
@@ -5066,7 +5156,15 @@ export class AgentActivity implements RecognitionHooks {
 
       this.cancelPreemptiveGeneration();
 
-      await this._onExitTask.result;
+      try {
+        await this._onExitTask.result;
+      } catch (error) {
+        if (this._onExitTask.cancelled) throw error;
+        this.logger.error(
+          { 'lk.pii.error': error instanceof Error ? error.message : String(error) },
+          'error in agent onExit',
+        );
+      }
       await this._pauseSchedulingTask([]);
 
       // detach after speech tasks are done but before _closeSessionResources
@@ -5241,6 +5339,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private pauseEnabled(): boolean {
+    if (this.rtOverlappingSpeechEnabled) return false;
     const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
     return !!(
       interruptionOptions.resumeFalseInterruption &&
@@ -5498,8 +5597,6 @@ export class AgentActivity implements RecognitionHooks {
         'input_audio_transcription_completed',
         this.onRealtimeInputAudioTranscriptionCompleted,
       );
-      this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
-      this.realtimeSession.off('error', this.onModelError);
     }
 
     if (this.stt instanceof STT) {
@@ -5529,8 +5626,14 @@ export class AgentActivity implements RecognitionHooks {
     await this.agentSession._keytermDetector.aclose();
 
     this.detachAudioInput();
-    this.realtimeSpans?.clear();
-    await this.realtimeSession?.close();
+    try {
+      await this.realtimeSession?.close();
+    } finally {
+      // Providers can report final usage while closing the connection.
+      this.realtimeSession?.off('metrics_collected', this.onMetricsCollected);
+      this.realtimeSession?.off('error', this.onModelError);
+      this.realtimeSpans?.clear();
+    }
     await this.audioRecognition?.close();
     await this.closeToolsets();
     this.realtimeSession = undefined;

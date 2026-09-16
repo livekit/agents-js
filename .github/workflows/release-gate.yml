@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: release-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  release-gate:
+    name: Release gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check release PR approvals
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          if [[ "$HEAD_REF" != changeset-release/* ]]; then
+            echo "Not a release PR, skipping"
+            exit 0
+          fi
+
+          if [[ "$PR_AUTHOR" != "github-actions[bot]" || "$HEAD_REPO" != "$REPO" ]]; then
+            echo "::error::Release PRs must be created by the release workflow in this repository"
+            exit 1
+          fi
+
+          reviewers=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUMBER/reviews" | jq -r '
+            flatten
+            | map(select(.user.type == "User" and
+                (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")))
+            | group_by(.user.login)[]
+            | sort_by(.submitted_at, .id) | last
+            | select(.state == "APPROVED") | .user.login
+          ')
+
+          approvals=0
+          while IFS= read -r reviewer; do
+            if [ -z "$reviewer" ]; then
+              continue
+            fi
+            can_push=$(gh api "repos/$REPO/collaborators/$reviewer/permission" --jq '.user.permissions.push')
+            if [ "$can_push" = "true" ]; then
+              approvals=$((approvals + 1))
+            fi
+          done <<< "$reviewers"
+
+          echo "Approvals: $approvals"
+          if [ "$approvals" -lt 2 ]; then
+            echo "::error::Release PRs require at least 2 approvals from reviewers with write access (got $approvals)"
+            exit 1
+          fi

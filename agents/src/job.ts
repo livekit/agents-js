@@ -18,10 +18,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from 'pino';
+import { INFERENCE_PRIORITY_HEADER } from './inference/utils.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
-import { SimulationContext, parseSimulationDispatch } from './simulation.js';
-import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
+import { SimulationContext, SimulationMode, parseSimulationDispatch } from './simulation.js';
+import { setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import {
   ATTRIBUTE_REDACTION_ENABLED,
   ATTRIBUTE_SIMULATION_ENABLED,
@@ -35,6 +36,33 @@ import { isCloud } from './utils.js';
 import type { AgentSession, ResolvedRecordingOptions } from './voice/agent_session.js';
 import { AgentsConsole } from './voice/console_io.js';
 import { type SessionReport, createSessionReport, sessionReportToJSON } from './voice/report.js';
+
+/**
+ * Base URL for LiveKit Cloud observability (`LIVEKIT_OBSERVABILITY_URL`, else the Cloud job URL).
+ * Consumers append their endpoint path, so the override keeps its scheme, port, and any base path.
+ * Invalid overrides are logged and ignored.
+ */
+function observabilityUrl(livekitUrl: string): string | undefined {
+  const override = process.env.LIVEKIT_OBSERVABILITY_URL;
+  if (override) {
+    try {
+      new URL(override);
+      return override.replace(/\/+$/, '');
+    } catch (error) {
+      log().warn(
+        { error, url: override },
+        'invalid LIVEKIT_OBSERVABILITY_URL, falling back to the job URL',
+      );
+    }
+  }
+
+  try {
+    const url = new URL(livekitUrl);
+    return url.hostname && isCloud(url) ? `https://${url.hostname}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // AsyncLocalStorage for job context, similar to Python's contextvars
 const jobContextStorage = new AsyncLocalStorage<JobContext<unknown>>();
@@ -236,6 +264,27 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       this as JobContext<unknown> as JobContext,
     );
     return this.#simulationCtx;
+  }
+
+  /** Headers this job asserts about itself on every inference request.
+   *
+   * Merged last by `buildMetadataHeaders`, so what the job asserts about
+   * itself outranks what an individual model was configured with. Empty for
+   * an ordinary job. */
+  get inferenceHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+
+    // A text simulation is batch load: a run fans out many jobs at once and nobody
+    // is waiting on the answers, so it must not compete with live traffic for
+    // gateway capacity, and it must not be able to ask for priority either. Audio
+    // simulations are excluded: they run in real time against the audio pipeline,
+    // so their latency has to stay representative of production.
+    const sim = this.simulationContext();
+    if (sim !== undefined && sim.simulationMode === SimulationMode.TEXT) {
+      headers[INFERENCE_PRIORITY_HEADER] = 'low';
+    }
+
+    return headers;
   }
 
   get workerId(): string {
@@ -456,16 +505,16 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // Upload session report to LiveKit Cloud if enabled. A fake job (console
     // mode) has no backing cloud URL, so skip the upload entirely.
     if (!this.isFakeJob) {
-      const url = new URL(this.#info.url);
+      const observabilityBaseUrl = observabilityUrl(this.#info.url);
 
       if (
         (recordingEnabled(report.options.recordingOptions) || report.enableRecording) &&
-        isCloud(url)
+        observabilityBaseUrl
       ) {
         try {
           await uploadSessionReport({
             agentName: this.job.agentName,
-            cloudHostname: url.hostname,
+            observabilityUrl: observabilityBaseUrl,
             report,
             metadata: this._otelMetadata(report.options.recordingOptions),
           });
@@ -493,12 +542,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
     // Explicitly clear the recorded events to avoid leaking memory
     session._recordedEvents = [];
-
-    try {
-      await flushOtelLogs();
-    } catch (error) {
-      this.#logger.error({ error }, 'Failed to flush OTEL logs');
-    }
   }
 
   /**
@@ -563,8 +606,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     }
     this._redactionEnabled = redactionEnabled;
 
-    const url = new URL(this.#info.url);
-    if (!isCloud(url)) {
+    const observabilityBaseUrl = observabilityUrl(this.#info.url);
+    if (!observabilityBaseUrl) {
       return;
     }
 
@@ -574,11 +617,14 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
-    this.#logger.debug({ hostname: url.hostname }, 'Configuring session recording (cloud tracer)');
+    this.#logger.debug(
+      { url: observabilityBaseUrl },
+      'Configuring session recording (cloud tracer)',
+    );
     await setupCloudTracer({
       roomId: this.job.room!.sid,
       jobId: this.job.id,
-      cloudHostname: url.hostname,
+      observabilityUrl: observabilityBaseUrl,
       agentName: this.job.agentName,
       enableTraces: options.traces,
       enableLogs: options.logs,

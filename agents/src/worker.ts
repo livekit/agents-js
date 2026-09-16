@@ -28,7 +28,13 @@ import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
+import { DEFAULT_SESSION_END_TIMEOUT, validateSessionEndTimeout } from './job_lifecycle.js';
 import { log } from './log.js';
+import {
+  type EventLoopMonitor,
+  startMonitoring,
+  stopMonitoring,
+} from './telemetry/loop_monitor.js';
 import { Future, rejectOnAbort } from './utils.js';
 import { version } from './version.js';
 
@@ -166,6 +172,10 @@ export class ServerOptions {
   numIdleProcesses: number;
   drainTimeout: number;
   shutdownProcessTimeout: number;
+  /**
+   * Maximum time to wait for `onSessionEnd`. Defaults to five minutes.
+   */
+  sessionEndTimeout: number;
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
@@ -193,6 +203,7 @@ export class ServerOptions {
     numIdleProcesses = undefined,
     drainTimeout = DRAIN_TIMEOUT,
     shutdownProcessTimeout = 60 * 1000,
+    sessionEndTimeout = DEFAULT_SESSION_END_TIMEOUT,
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
     agentName = '',
@@ -225,6 +236,10 @@ export class ServerOptions {
     /** Number of milliseconds to wait for current jobs to finish upon shutdown. */
     drainTimeout?: number;
     shutdownProcessTimeout?: number;
+    /**
+     * Maximum number of milliseconds to wait for `onSessionEnd`.
+     */
+    sessionEndTimeout?: number;
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
     /**
@@ -265,6 +280,7 @@ export class ServerOptions {
     this.numIdleProcesses = numIdleProcesses || Default.numIdleProcesses(production);
     this.drainTimeout = drainTimeout;
     this.shutdownProcessTimeout = shutdownProcessTimeout;
+    this.sessionEndTimeout = validateSessionEndTimeout(sessionEndTimeout);
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
     // agentNameIsEnv may be passed explicitly when ServerOptions is re-constructed (e.g.
@@ -336,6 +352,7 @@ export class AgentServer {
   #httpServer?: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
+  #loopMonitor?: EventLoopMonitor;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: ServerOptions) {
@@ -387,15 +404,16 @@ export class AgentServer {
 
     this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded();
 
-    this.#procPool = new ProcPool(
-      opts.agent,
-      opts.numIdleProcesses,
-      opts.initializeProcessTimeout,
-      opts.shutdownProcessTimeout,
-      this.#inferenceExecutor,
-      opts.jobMemoryWarnMB,
-      opts.jobMemoryLimitMB,
-    );
+    this.#procPool = new ProcPool({
+      agent: opts.agent,
+      numIdleProcesses: opts.numIdleProcesses,
+      initializeTimeout: opts.initializeProcessTimeout,
+      closeTimeout: opts.shutdownProcessTimeout,
+      sessionEndTimeout: opts.sessionEndTimeout,
+      inferenceExecutor: this.#inferenceExecutor,
+      memoryWarnMB: opts.jobMemoryWarnMB,
+      memoryLimitMB: opts.jobMemoryLimitMB,
+    });
 
     this.#opts = opts;
 
@@ -449,6 +467,7 @@ export class AgentServer {
 
     this.#logger.info('starting worker');
     this.#closed = false;
+    this.#loopMonitor = startMonitoring({ name: 'worker', emitSpans: false });
     this.#procPool.start();
 
     const workerWS = async () => {
@@ -901,12 +920,22 @@ export class AgentServer {
 
     const req = new JobRequest(msg.job!, onReject, onAccept);
     this.#logger
-      .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+      .child({
+        jobId: msg.job?.id,
+        room_id: msg.job?.room?.sid,
+        resuming: msg.resuming,
+        agentName: this.#opts.agentName,
+      })
       .info('received job request');
 
     if (this.#draining) {
       this.#logger
-        .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+        .child({
+          jobId: msg.job?.id,
+          room_id: msg.job?.room?.sid,
+          resuming: msg.resuming,
+          agentName: this.#opts.agentName,
+        })
         .info('Worker is draining and no longer available, rejecting job');
       await req.reject();
       return;
@@ -959,6 +988,8 @@ export class AgentServer {
     this.#logger.debug('shutting down worker');
 
     this.#closed = true;
+    if (this.#loopMonitor) stopMonitoring(this.#loopMonitor);
+    this.#loopMonitor = undefined;
 
     await this.#inferenceExecutor?.close();
     await this.#procPool.close();

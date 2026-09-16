@@ -14,6 +14,7 @@ import type { Context } from '@opentelemetry/api';
 import { ContextWindowCompressionConfig } from '@google/genai';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { FunctionResponseScheduling } from '@google/genai';
 import { GenerateContentConfig } from '@google/genai';
@@ -34,6 +35,7 @@ import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
+import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { TrackPublishOptions } from '@livekit/rtc-node';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
@@ -246,7 +248,7 @@ export class GoogleSearch extends GeminiTool {
 // Warning: (ae-missing-release-tag) "LiveAPIModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-type LiveAPIModels = 'gemini-live-2.5-flash-native-audio' | 'gemini-live-2.5-flash-preview-native-audio-09-2025' | 'gemini-live-2.5-flash-preview-native-audio' | 'gemini-3.1-flash-live-preview' | 'gemini-2.5-flash-native-audio-preview-12-2025' | 'gemini-2.0-flash-exp';
+type LiveAPIModels = 'gemini-live-2.5-flash-native-audio' | 'gemini-live-2.5-flash-preview-native-audio-09-2025' | 'gemini-live-2.5-flash-preview-native-audio' | 'gemini-3.8-live' | 'gemini-3.8-live-extended-thinking' | 'gemini-3.1-flash-live-preview' | 'gemini-2.5-flash-native-audio-preview-12-2025' | 'gemini-2.0-flash-exp';
 
 // Warning: (ae-missing-release-tag) "LLM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -567,7 +569,7 @@ type Voice = 'Achernar' | 'Achird' | 'Algenib' | 'Algieba' | 'Alnilam' | 'Aoede'
 // Warnings were encountered during analysis:
 //
 // src/aiplatform_llm.ts:176:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
-// src/realtime/realtime_api.ts:268:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_api.ts:288:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

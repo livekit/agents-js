@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it } from 'vitest';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { WebSocketServer } from 'ws';
+import { APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
@@ -602,6 +606,468 @@ describe('STT VAD handling for Speechmatics models', () => {
   });
 });
 
+describe('Inference STT connection lifecycle', () => {
+  it('keeps receiving transcripts after session.finalized', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    const transcripts: string[] = [];
+    let closeBeforeTranscript = false;
+    let transcriptSent = false;
+    let requestUrl: string | undefined;
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+    let resolveFinalizeReceived!: () => void;
+    const finalizeReceived = new Promise<void>((resolve) => {
+      resolveFinalizeReceived = resolve;
+    });
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket, request) => {
+      requestUrl = request.url;
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.finalize') {
+          resolveFinalizeReceived();
+          socket.send(JSON.stringify({ type: 'session.finalized' }));
+          setTimeout(() => {
+            if (socket.readyState !== 1) return;
+            socket.send(
+              JSON.stringify({
+                type: 'final_transcript',
+                transcript: 'final words',
+                language: 'en',
+              }),
+            );
+            transcriptSent = true;
+          }, 25);
+        }
+        if (event.type === 'session.close') {
+          closeBeforeTranscript = !transcriptSent;
+        }
+      });
+    });
+
+    const stt = makeStt({
+      model: 'deepgram/nova-3',
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    let resolveTranscript!: () => void;
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+          resolveTranscript();
+        }
+      }
+    })();
+
+    try {
+      await sessionCreated;
+      vi.useFakeTimers();
+      stream.endInput();
+      await finalizeReceived;
+      await vi.advanceTimersByTimeAsync(25);
+      await transcriptReceived;
+      await vi.advanceTimersByTimeAsync(3_000);
+      await outputTask;
+      await socketClosed;
+
+      expect(new URL(requestUrl!, 'ws://127.0.0.1').searchParams.get('model')).toBe(
+        'deepgram/nova-3',
+      );
+      expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+      expect(transcripts).toEqual(['final words']);
+      expect(closeBeforeTranscript).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('finishes when session.closed follows input end', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    const transcripts: string[] = [];
+    let sessionClosedSent = false;
+    let socketClosedBeforeSessionClosed = false;
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('close', () => {
+        socketClosedBeforeSessionClosed = !sessionClosedSent;
+        resolveSocketClosed();
+      });
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type !== 'session.finalize') return;
+        socket.send(
+          JSON.stringify({
+            type: 'final_transcript',
+            transcript: 'final words',
+            language: 'en',
+          }),
+        );
+        sessionClosedSent = true;
+        socket.send(JSON.stringify({ type: 'session.closed' }));
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    try {
+      stream.endInput();
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+        }
+      }
+      await socketClosed;
+
+      expect(messageTypes).toEqual(['session.create', 'session.finalize']);
+      expect(transcripts).toEqual(['final words']);
+      expect(socketClosedBeforeSessionClosed).toBe(false);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('accepts a socket close after input ends', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type === 'session.finalize') socket.close(1011, 'finalization interrupted');
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const errors: Error[] = [];
+    stt.on('error', ({ error }) => errors.push(error));
+    const stream = stt.stream();
+
+    try {
+      stream.endInput();
+      for await (const _ of stream) {
+        /* drain */
+      }
+
+      expect(connectionCount).toBe(1);
+      expect(errors).toHaveLength(0);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('reconnects when the socket closes before input ends', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+    let resolveSecondConnection!: () => void;
+    const secondConnection = new Promise<void>((resolve) => {
+      resolveSecondConnection = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      const connection = connectionCount;
+      if (connection === 2) resolveSecondConnection();
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (connection === 1 && event.type === 'session.create') {
+          socket.send(JSON.stringify({ type: 'session.closed' }), () => socket.close());
+        }
+        if (connection === 2 && event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'final_transcript',
+              transcript: 'final words',
+              language: 'en',
+            }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    const transcripts: string[] = [];
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+        }
+      }
+    })();
+
+    try {
+      await secondConnection;
+      stream.endInput();
+      await outputTask;
+
+      expect(connectionCount).toBe(2);
+      expect(transcripts).toEqual(['final words']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('does not require a final transcript after an interim', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'interim_transcript',
+              transcript: 'interim words',
+              language: 'en',
+            }),
+          );
+        }
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    let resolveTranscript!: () => void;
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.INTERIM_TRANSCRIPT) resolveTranscript();
+      }
+    })();
+
+    try {
+      await sessionCreated;
+      vi.useFakeTimers();
+      stream.endInput();
+      await transcriptReceived;
+      await vi.advanceTimersByTimeAsync(30_000);
+      await outputTask;
+
+      expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+    } finally {
+      vi.useRealTimers();
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('sends session.close and closes the socket when the stream closes', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    try {
+      await sessionCreated;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      stream.close();
+      await socketClosed;
+
+      expect(messageTypes).toEqual(['session.create', 'session.close']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('does not retry an inactivity timeout', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type !== 'session.finalize') return;
+        socket.send(
+          JSON.stringify({
+            type: 'error',
+            code: 2007,
+            message: 'customer content must not reach the API error',
+          }),
+        );
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const errors: Error[] = [];
+    stt.on('error', ({ error }) => errors.push(error));
+    const stream = stt.stream();
+
+    try {
+      stream.endInput();
+      for await (const _ of stream) {
+        /* drain */
+      }
+
+      expect(connectionCount).toBe(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toBeInstanceOf(APIStatusError);
+      expect(errors[0]).toMatchObject({
+        message: 'LiveKit STT returned an error',
+        statusCode: 2007,
+        body: { code: 2007 },
+        retryable: false,
+      });
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe('Inference STT errors', () => {
+  async function receiveGatewayError(gatewayError: Record<string, unknown>): Promise<Error> {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+
+    server.on('connection', (socket) => {
+      socket.once('message', () => {
+        setImmediate(() => socket.send(JSON.stringify(gatewayError)));
+      });
+    });
+
+    const stt = makeStt({ baseURL: `http://127.0.0.1:${port}` });
+    const errorPromise = new Promise<Error>((resolve) => {
+      stt.once('error', ({ error }) => resolve(error));
+    });
+    const stream = stt.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1_000 },
+    });
+
+    try {
+      return await errorPromise;
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+
+  it.each([
+    {
+      gatewayError: {
+        type: 'error',
+        message: 'STT connection limit exceeded',
+        code: 429,
+        category: 'MaxConcurrentGatewaySTT',
+        remaining_limit: 0,
+      },
+      statusCode: 429,
+    },
+    {
+      gatewayError: { type: 'error', message: 'unknown gateway failure' },
+      statusCode: -1,
+    },
+  ])('surfaces a mid-session gateway error with status $statusCode', async (testCase) => {
+    const error = await receiveGatewayError(testCase.gatewayError);
+
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect(error).toMatchObject({
+      message: `LiveKit Inference STT returned error: ${testCase.gatewayError.message}`,
+      statusCode: testCase.statusCode,
+      body: testCase.gatewayError,
+      retryable: true,
+    });
+  });
+});
+
 describeLiveKitInference('LiveKit Inference STT integration', agents, async (harness) => {
   for (const model of [
     'deepgram/nova-3',
@@ -609,8 +1075,14 @@ describeLiveKitInference('LiveKit Inference STT integration', agents, async (har
     'assemblyai/universal-streaming',
     'xai/stt-1',
   ] as const) {
-    describe(model, async () => {
-      await harness.stt(new STT({ model }), new InferenceVAD(), {
+    // each model is an independent gateway session: run the models, and both sample rates of
+    // each, at the same time instead of one 50 s clip after another
+    describe(model, { retry: 1, concurrent: true }, async () => {
+      const stt =
+        model === 'assemblyai/universal-streaming'
+          ? new STT({ model, modelOptions: { format_turns: true } })
+          : new STT({ model });
+      await harness.stt(stt, new InferenceVAD(), {
         nonStreaming: false,
       });
     });

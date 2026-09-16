@@ -59,10 +59,7 @@ export default defineAgent({
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
-        fallback: [
-          { model: 'elevenlabs/eleven_flash_v2', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' },
-          { model: 'rime/coda', voice: 'luna' },
-        ],
+        fallback: [{ model: 'rime/coda', voice: 'luna' }],
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {

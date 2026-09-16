@@ -61,6 +61,7 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => resources),
@@ -95,6 +96,7 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => resources),
@@ -132,6 +134,7 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => resources),
@@ -195,6 +198,7 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => undefined),
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => undefined),
@@ -228,6 +232,7 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => undefined),
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => undefined),

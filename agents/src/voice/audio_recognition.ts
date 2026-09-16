@@ -180,7 +180,11 @@ export class STTPipeline {
   constructor(sttNode: STTNode) {
     this.sttNode = sttNode;
     this._pumpTask = Task.from(({ signal }) => this.sttPump(signal));
-    this._pumpTask.addDoneCallback(() => this._eventChannel.close());
+    this._pumpTask.addDoneCallback(() => {
+      this._eventChannel.close().catch((error) => {
+        log().error(error, 'Error closing STT event channel');
+      });
+    });
   }
 
   get audioChannel() {
@@ -739,18 +743,6 @@ export class AudioRecognition {
     // text-only and don't carry a stream.
     if (this.turnDetector instanceof BaseStreamingTurnDetector || this.turnDetector === undefined) {
       this.updateTurnDetector(this.turnDetector, { stream: options?.turnDetectorStream });
-    }
-  }
-
-  async stop() {
-    await this.sttConsumerTask?.cancelAndWait();
-    await this.sttForwardTask?.cancelAndWait();
-    await this.vadTask?.cancelAndWait();
-    await this.interruptionTask?.cancelAndWait();
-    if (this.turnDetectorStream !== undefined) {
-      const stream = this.turnDetectorStream;
-      this.turnDetectorStream = undefined;
-      await stream.aclose().catch(() => undefined);
     }
   }
 
@@ -1417,10 +1409,7 @@ export class AudioRecognition {
           const span = this.ensureUserTurnSpan();
           const ctx = this.userTurnContext(span);
           if (this.speaking) {
-            this.endpointing.onEndOfSpeech(
-              speechEndTime,
-              this.interruptionDetected === false && this.isAgentSpeaking,
-            );
+            this.endpointing.onEndOfSpeech(speechEndTime, this.interruptionDetected);
           }
           otelContext.with(ctx, () => {
             this.hooks.onEndOfSpeech({
@@ -2094,10 +2083,7 @@ export class AudioRecognition {
               const span = this.ensureUserTurnSpan();
               const ctx = this.userTurnContext(span);
               if (this.speaking) {
-                this.endpointing.onEndOfSpeech(
-                  endTime,
-                  this.interruptionDetected === false && this.isAgentSpeaking,
-                );
+                this.endpointing.onEndOfSpeech(endTime, this.interruptionDetected);
               }
               otelContext.with(ctx, () => this.hooks.onEndOfSpeech(ev));
             }
@@ -2162,7 +2148,7 @@ export class AudioRecognition {
 
       const cleanup = async () => {
         try {
-          signal.removeEventListener('abort', cleanup);
+          signal.removeEventListener('abort', onAbort);
           eventReader.releaseLock();
           await stream.close();
         } catch (e) {
@@ -2170,7 +2156,10 @@ export class AudioRecognition {
         }
       };
 
-      signal.addEventListener('abort', cleanup, { once: true });
+      const onAbort = () => {
+        void cleanup();
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
 
       let forwardTask: Promise<void> | undefined;
 

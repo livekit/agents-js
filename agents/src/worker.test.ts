@@ -30,3 +30,33 @@ describe('AgentServer connection failures', () => {
     }
   });
 });
+
+describe('ServerOptions sessionEndTimeout', () => {
+  it('defaults to five minutes', () => {
+    const options = new ServerOptions({ agent: 'test-agent.js' });
+    expect(options.sessionEndTimeout).toBe(300_000);
+  });
+
+  it('accepts an override', () => {
+    const options = new ServerOptions({
+      agent: 'test-agent.js',
+      sessionEndTimeout: 12_345,
+    });
+    expect(options.sessionEndTimeout).toBe(12_345);
+  });
+
+  it.each([-1, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN])(
+    'rejects invalid value %s',
+    (sessionEndTimeout) => {
+      expect(() => new ServerOptions({ agent: 'test-agent.js', sessionEndTimeout })).toThrow(
+        'sessionEndTimeout must be a finite, non-negative number',
+      );
+    },
+  );
+
+  it('rejects values above the Node.js timer limit', () => {
+    expect(
+      () => new ServerOptions({ agent: 'test-agent.js', sessionEndTimeout: 2_147_483_648 }),
+    ).toThrow('sessionEndTimeout must not exceed 2147483647 milliseconds');
+  });
+});

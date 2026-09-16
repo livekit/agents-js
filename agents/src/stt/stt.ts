@@ -315,6 +315,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   abstract label: string;
   protected closed = false;
   #stt: STT;
+  #failed = false;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   private _connOptions: APIConnectOptions;
@@ -339,7 +340,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(async () => {
+    const runMainTask = async () => {
       try {
         await this.mainTask();
       } catch {
@@ -347,6 +348,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       } finally {
         this.queue.close();
       }
+    };
+    startSoon(() => {
+      void runMainTask();
     });
   }
 
@@ -414,6 +418,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    if (!recoverable) this.#failed = true;
     this.#stt.emit('error', {
       type: 'stt_error',
       timestamp: Date.now(),
@@ -486,6 +491,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected get abortSignal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  /** Whether this stream ended with an unrecoverable error. @internal */
+  get _failed(): boolean {
+    return this.#failed;
   }
 
   get startTimeOffset(): number {
