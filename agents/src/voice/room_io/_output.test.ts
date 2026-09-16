@@ -1107,3 +1107,39 @@ function publishedSegments(room: FakeRoom) {
       (call[0] as { segments: { id: string; text: string; final: boolean }[] }).segments[0]!,
   );
 }
+
+describe('ParticipantLegacyTranscriptionOutput client protocol threshold', () => {
+  it('publishes nothing when every client rebuilds from streams', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('a', fakeRemote('a', { clientProtocol: 3 }));
+    room.remoteParticipants.set('b', fakeRemote('b', { clientProtocol: 3 }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+  });
+
+  it('publishes when one client still reads legacy transcriptions', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('modern', fakeRemote('modern', { clientProtocol: 3 }));
+    room.remoteParticipants.set('legacy', fakeRemote('legacy', { clientProtocol: 0 }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    const [partial, final] = publishedSegments(room);
+    expect(partial).toMatchObject({ text: 'hello', final: false });
+    expect(final).toMatchObject({ text: 'hello', final: true });
+    expect(final!.id).toBe(partial!.id);
+  });
+
+  it('treats an absent client protocol as a legacy client', async () => {
+    // protobuf-es types clientProtocol as optional, and `undefined < 3` is false in JS. Without
+    // the coalesce in the gate this participant would read as modern and lose its transcripts.
+    const room = createFakeRoom();
+    room.remoteParticipants.set('unknown', fakeRemote('unknown', { clientProtocol: undefined }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(2);
+  });
+});
