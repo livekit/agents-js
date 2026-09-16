@@ -1143,3 +1143,84 @@ describe('ParticipantLegacyTranscriptionOutput client protocol threshold', () =>
     expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('ParticipantLegacyTranscriptionOutput participant selection', () => {
+  it('publishes nothing when the room has no standard participant', async () => {
+    // an empty considered set means skip: a SIP-only room has nobody who renders transcripts
+    for (const remotes of [
+      [],
+      [fakeRemote('sip', { clientProtocol: 0, kind: ParticipantKind.SIP })],
+    ]) {
+      const room = createFakeRoom();
+      for (const remote of remotes) {
+        room.remoteParticipants.set(remote.identity, remote);
+      }
+
+      await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+      expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([
+    ['sip', ParticipantKind.SIP],
+    ['ingress', ParticipantKind.INGRESS],
+    ['agent', ParticipantKind.AGENT],
+    ['connector', ParticipantKind.CONNECTOR],
+  ])('ignores a legacy %s participant', async (_name, kind) => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('user', fakeRemote('user', { clientProtocol: 3 }));
+    room.remoteParticipants.set('service', fakeRemote('service', { clientProtocol: 0, kind }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+  });
+
+  it('publishes for a legacy standard participant', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('user', fakeRemote('user', { clientProtocol: 0 }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores our own avatar worker', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('user', fakeRemote('user', { clientProtocol: 3 }));
+    room.remoteParticipants.set(
+      'avatar',
+      fakeRemote('avatar', { clientProtocol: 0, onBehalf: 'agent' }),
+    );
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+  });
+
+  it('counts the avatar worker of another agent', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('user', fakeRemote('user', { clientProtocol: 3 }));
+    room.remoteParticipants.set(
+      'avatar',
+      fakeRemote('avatar', { clientProtocol: 0, onBehalf: 'other-agent' }),
+    );
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts a legacy participant when the local identity is unknown', async () => {
+    // an absent attribute and an absent local identity are both undefined; comparing them
+    // directly would exclude every participant that carries no publish-on-behalf attribute
+    const room = createFakeRoom();
+    room.localParticipant.identity = undefined as unknown as string;
+    room.remoteParticipants.set('user', fakeRemote('user', { clientProtocol: 0 }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(2);
+  });
+});
