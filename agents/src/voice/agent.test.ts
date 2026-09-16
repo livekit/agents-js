@@ -1,14 +1,22 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { APIConnectionError } from '../_exceptions.js';
 import { ChatContext, ChatMessage, ToolError, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
-import { SynthesizeStream } from '../tts/index.js';
+import { FakeSTT } from '../stt/testing/fake_stt.js';
+import {
+  type ChunkedStream,
+  SynthesizeStream,
+  TTS,
+  StreamAdapter as TTSStreamAdapter,
+} from '../tts/index.js';
 import { Task } from '../utils.js';
+import { VAD, VADStream } from '../vad.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
 import { AgentActivity, agentActivityStorage } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
@@ -46,6 +54,61 @@ class TimeoutError extends Error {
   constructor(timeout: number) {
     super(`timed out after ${timeout}ms`);
   }
+}
+
+class FakeVAD extends VAD {
+  label = 'fake-vad';
+
+  constructor() {
+    super({ updateInterval: 100 });
+  }
+
+  stream(): VADStream {
+    return new (class extends VADStream {})(this);
+  }
+}
+
+class NonStreamingSTT extends FakeSTT {
+  closeCount = 0;
+
+  constructor() {
+    super({ capabilities: { streaming: false, interimResults: false } });
+  }
+
+  override async close(): Promise<void> {
+    this.closeCount++;
+  }
+}
+
+class NonStreamingTTS extends TTS {
+  label = 'non-streaming-tts';
+  closeCount = 0;
+
+  constructor() {
+    super(24_000, 1, { streaming: false });
+  }
+
+  synthesize(): ChunkedStream {
+    throw new Error('not used by the node lifecycle test');
+  }
+
+  stream(): SynthesizeStream {
+    throw new Error('non-streaming test TTS');
+  }
+
+  override async close(): Promise<void> {
+    this.closeCount++;
+  }
+}
+
+function bindTestActivity(agent: Agent, models: { stt?: FakeSTT; tts?: TTS; vad?: VAD }): void {
+  (agent as any)._agentActivity = {
+    ...models,
+    agentSession: {
+      connOptions: { sttConnOptions: {}, ttsConnOptions: {} },
+    },
+    _resolveExpressiveOptions: () => undefined,
+  };
 }
 
 async function closeWithTimeout(session: AgentSession): Promise<void> {
@@ -463,6 +526,84 @@ describe('Agent', () => {
       expect(capturedInput).toBeInstanceOf(ReadableStream);
       await expect(collectReadableStream(result!)).resolves.toEqual([frame]);
     });
+  });
+
+  describe('temporary speech stream adapters', () => {
+    it('closes the STT adapter when the node is cancelled', async () => {
+      const stt = new NonStreamingSTT();
+      const baseline = stt.listenerCount('metrics_collected');
+      const agent = new Agent({ instructions: 'test' });
+      bindTestActivity(agent, { stt, vad: new FakeVAD() });
+      const input = new ReadableStream<AudioFrame>();
+
+      const output = await Agent.default.sttNode(agent, input, {});
+      expect(output).not.toBeNull();
+      expect(stt.listenerCount('metrics_collected')).toBeGreaterThan(baseline);
+
+      await output!.cancel();
+
+      expect(stt.listenerCount('metrics_collected')).toBe(baseline);
+      expect(stt.closeCount).toBe(0);
+    });
+
+    it.each(['success', 'failure', 'blocked'] as const)(
+      'closes the TTS adapter after %s',
+      async (mode) => {
+        const tts = new NonStreamingTTS();
+        tts.on('error', () => {});
+        const baseline = tts.listenerCount('metrics_collected');
+        const agent = new Agent({ instructions: 'test' });
+        bindTestActivity(agent, { tts });
+        const frame = new AudioFrame(new Int16Array(160), 24_000, 1, 160);
+        let unblock!: () => void;
+        const blocked = new Promise<void>((resolve) => {
+          unblock = resolve;
+        });
+        const adaptedStream = {
+          updateInputStream() {},
+          close: unblock,
+          async *[Symbol.asyncIterator]() {
+            if (mode === 'failure') {
+              throw new APIConnectionError({ message: 'probe failure' });
+            }
+            if (mode === 'blocked') {
+              await blocked;
+              return;
+            }
+            yield { frame, timedTranscripts: [] };
+            yield SynthesizeStream.END_OF_STREAM;
+          },
+        } as unknown as SynthesizeStream;
+        const streamSpy = vi
+          .spyOn(TTSStreamAdapter.prototype, 'stream')
+          .mockReturnValue(adaptedStream);
+        const input = new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue('Hello world, this is a complete sentence.');
+            controller.close();
+          },
+        });
+
+        try {
+          const output = await Agent.default.ttsNode(agent, input, {});
+          expect(output).not.toBeNull();
+
+          if (mode === 'success') {
+            expect(await collectReadableStream(output!)).toHaveLength(1);
+          } else if (mode === 'failure') {
+            await expect(collectReadableStream(output!)).rejects.toThrow('probe failure');
+          } else {
+            await output!.cancel();
+          }
+
+          expect(tts.listenerCount('metrics_collected')).toBe(baseline);
+          expect(tts.closeCount).toBe(0);
+        } finally {
+          unblock();
+          streamSpy.mockRestore();
+        }
+      },
+    );
   });
 
   it('should require AgentTask to run inside task context', async () => {

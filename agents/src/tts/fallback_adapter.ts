@@ -440,7 +440,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     })();
 
     for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
-      const tts = this.adapter.getStreamingInstance(i);
       const originalTts = this.adapter.ttsInstances[i]!;
       const status = this.adapter.status[i]!;
       let lastRequestId: string = '';
@@ -450,7 +449,11 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         this.adapter.markUnAvailable(i);
         continue;
       }
-      const resampler = this.adapter.createResamplerForTTS(i);
+      const tts = this.adapter.getStreamingInstance(i);
+      let stream!: SynthesizeStream;
+      let resampler: AudioResampler | null = null;
+      const closeStream = () => stream?.close();
+      this.abortSignal.addEventListener('abort', closeStream, { once: true });
 
       // ttfb measures the fallback adapter as a whole: anchor on the first
       // time a sentence was handed to any underlying TTS — even one that
@@ -459,6 +462,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       let captureStartedTime: () => void = () => {};
 
       try {
+        resampler = this.adapter.createResamplerForTTS(i);
         this._logger.debug({ tts: originalTts.label }, 'attempting TTS stream');
 
         const connOptions: APIConnectOptions = {
@@ -466,7 +470,8 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           maxRetry: this.adapter.maxRetryPerTTS,
         };
 
-        const stream = tts.stream({ connOptions });
+        stream = tts.stream({ connOptions });
+        if (this.abortSignal.aborted) stream.close();
         let bufferIndex = 0;
         let streamOutputCompleted = false;
 
@@ -610,7 +615,12 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         // the stream may have received text and failed before emitting audio;
         // its started time must still anchor the fallback's ttfb
         captureStartedTime();
+        this.abortSignal.removeEventListener('abort', closeStream);
+        stream?.close();
         resampler?.close();
+        if (tts !== originalTts) {
+          await tts.close();
+        }
       }
     }
     await readInputLLMStream.catch(() => {});
