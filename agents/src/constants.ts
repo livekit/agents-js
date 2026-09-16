@@ -18,6 +18,14 @@ export const ATTRIBUTE_TRANSCRIPTION_EXPRESSION = 'lk.expression';
 export const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 export const TOPIC_CHAT = 'lk.chat';
 
+/**
+ * Minimum `ParticipantInfo.clientProtocol` of a client that rebuilds transcription events from
+ * `lk.transcription` text streams and ignores the deprecated `Transcription` data packet. While
+ * any considered participant is below this, the legacy packet is still published. The value is
+ * defined by the client SDKs (`client-sdk-js` `src/version.ts`).
+ */
+export const CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS = 3;
+
 export const ATTRIBUTE_AGENT_STATE = 'lk.agent.state';
 export const ATTRIBUTE_AGENT_NAME = 'lk.agent.name';
 
