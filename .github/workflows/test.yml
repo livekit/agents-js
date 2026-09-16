@@ -16,6 +16,7 @@ on:
       - 'agents/**'
       - 'package.json'
       - 'plugins/test/**'
+      - 'plugins/rime/**'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - 'turbo.json'
@@ -48,6 +49,8 @@ jobs:
         run: pnpm build
       - name: Test agents
         run: pnpm test agents --silent
+      - name: Test Rime plugin
+        run: pnpm test plugins/rime --silent
       - name: Test LiveKit inference
         env:
           LIVEKIT_INFERENCE_TESTS: '1'
