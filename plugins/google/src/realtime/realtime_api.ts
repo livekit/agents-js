@@ -1470,13 +1470,15 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private emitError(error: Error, recoverable: boolean): void {
-    this.emit('error', {
+    const event: llm.RealtimeModelError = {
+      type: 'realtime_model_error',
       timestamp: Date.now(),
       // TODO(brian): add label to realtime model
       label: 'google_realtime',
       error,
       recoverable,
-    });
+    };
+    this.emit('error', event);
   }
 
   private buildConnectConfig(): types.LiveConnectConfig {
