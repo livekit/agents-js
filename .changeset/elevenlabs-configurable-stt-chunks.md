@@ -1,5 +1,5 @@
 ---
-'@livekit/agents-plugin-elevenlabs': minor
+'@livekit/agents-plugin-elevenlabs': patch
 ---
 
 Allow realtime ElevenLabs STT audio chunk duration to be configured.
