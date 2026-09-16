@@ -859,8 +859,8 @@ export interface TwilioConnectorWarmTransferTaskOptions
   /** Phone number of the human agent to dial, in E.164 format. */
   phoneNumber: string;
   /**
-   * Caller ID shown to the human agent. Use a Twilio number or verified caller ID,
-   * or the original incoming call's `From` when supplying its `twilioCallToken`.
+   * Agent/business Twilio number or verified caller ID. Used without a token and
+   * for the caller-ID rejection fallback.
    */
   twilioFromNumber: string;
   /** Twilio account SID. Falls back to the `TWILIO_ACCOUNT_SID` environment variable. */
@@ -869,11 +869,15 @@ export interface TwilioConnectorWarmTransferTaskOptions
   twilioAuthToken?: string;
   /**
    * `CallToken` from the original incoming Twilio voice webhook, authorizing reuse
-   * of that call's caller ID. Supply the same call's `From` as `twilioFromNumber`.
+   * of that call's caller ID. Requires the same call's `From` as `originalCallerNumber`.
+   * HTTP 400 / Twilio error 21210 retries once from `twilioFromNumber` without a token.
+   * Other failures are not retried, to avoid duplicate calls.
    * Retrieve the token from server-side state for that specific call; keep it out
-   * of prompts and participant attributes. When omitted, no CallToken is sent.
+   * of prompts and participant attributes. When omitted or empty, use the business caller ID.
    */
   twilioCallToken?: string;
+  /** Incoming call’s `From`; used only with a nonempty `twilioCallToken`. */
+  originalCallerNumber?: string;
   /**
    * How long to wait, in milliseconds, for the human agent to answer before
    * giving up and cancelling the call. Defaults to 30 seconds: Twilio reports
@@ -902,6 +906,7 @@ export function createTwilioConnectorWarmTransferTask(
     twilioAccountSid = process.env.TWILIO_ACCOUNT_SID ?? '',
     twilioAuthToken = process.env.TWILIO_AUTH_TOKEN ?? '',
     twilioCallToken,
+    originalCallerNumber,
     ringingTimeout = TWILIO_RINGING_TIMEOUT_MS,
     ...baseOptions
   } = options;
@@ -911,6 +916,9 @@ export function createTwilioConnectorWarmTransferTask(
       'Twilio credentials are required: pass `twilioAccountSid` and `twilioAuthToken` or set' +
         ' the TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN environment variables',
     );
+  }
+  if (twilioCallToken && !originalCallerNumber) {
+    throw new Error('twilioCallToken requires originalCallerNumber');
   }
   const auth = { accountSid: twilioAccountSid, authToken: twilioAuthToken };
 
@@ -928,12 +936,27 @@ export function createTwilioConnectorWarmTransferTask(
       });
 
       const twiml = `<Response><Connect><Stream url=${escapeXmlAttribute(connectUrl)}/></Connect></Response>`;
-      const callSid = await createTwilioCall(auth, {
-        to: phoneNumber,
-        from: twilioFromNumber,
-        twiml,
-        callToken: twilioCallToken,
-      });
+      let callSid: string;
+      try {
+        callSid = await createTwilioCall(auth, {
+          to: phoneNumber,
+          from: twilioCallToken ? originalCallerNumber! : twilioFromNumber,
+          twiml,
+          callToken: twilioCallToken || undefined,
+        });
+      } catch (error) {
+        // Retry only a definitive caller-ID rejection before a call was created.
+        if (
+          !twilioCallToken ||
+          signal.aborted ||
+          !(error instanceof TwilioCallCreationError) ||
+          error.status !== 400 ||
+          error.code !== 21210
+        ) {
+          throw error;
+        }
+        callSid = await createTwilioCall(auth, { to: phoneNumber, from: twilioFromNumber, twiml });
+      }
 
       try {
         await waitForConnectorAnswer({ room, identity, ringingTimeout, signal });
@@ -1033,6 +1056,16 @@ const twilioRequest = (auth: TwilioRestAuth, path: string, form: Record<string, 
     body: new URLSearchParams(form),
   });
 
+class TwilioCallCreationError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code?: number,
+  ) {
+    // Do not include the response body: it can contain caller data or a token.
+    super(`Twilio call creation failed (${status}, code ${code ?? 'unknown'})`);
+  }
+}
+
 /** Place the human agent call with the Twilio REST API; returns the call SID. */
 async function createTwilioCall(
   auth: TwilioRestAuth,
@@ -1046,7 +1079,14 @@ async function createTwilioCall(
   });
   const body = await resp.text();
   if (!resp.ok) {
-    throw new Error(`Twilio call creation failed (${resp.status}): ${redactPhoneNumbers(body)}`);
+    let code: number | undefined;
+    try {
+      const parsed = JSON.parse(body) as { code?: unknown };
+      if (typeof parsed?.code === 'number') code = parsed.code;
+    } catch {
+      // Unparseable errors are never eligible for the caller-ID fallback.
+    }
+    throw new TwilioCallCreationError(resp.status, code);
   }
   return (JSON.parse(body) as { sid: string }).sid;
 }
@@ -1064,11 +1104,6 @@ function escapeXmlAttribute(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
   return `"${escaped}"`;
-}
-
-/** Mask phone-number-like digit runs before a provider payload is logged or thrown. */
-function redactPhoneNumbers(text: string): string {
-  return text.replace(/\+?\d{7,15}/g, (match) => `...${match.slice(-4)}`);
 }
 
 const renderInstructionPart = (value: Instructions | string): string =>

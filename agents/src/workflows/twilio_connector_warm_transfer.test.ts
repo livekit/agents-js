@@ -61,7 +61,8 @@ function setupTransfer(callToken?: string, answered = true) {
   } as unknown as Room;
   const task = createTwilioConnectorWarmTransferTask({
     phoneNumber: HUMAN_NUMBER,
-    twilioFromNumber: callToken === undefined ? TWILIO_NUMBER : CALLER_NUMBER,
+    twilioFromNumber: TWILIO_NUMBER,
+    originalCallerNumber: CALLER_NUMBER,
     twilioCallToken: callToken,
     twilioAccountSid: 'AC_test_account',
     twilioAuthToken: 'test_auth_token',
@@ -103,7 +104,7 @@ describe('Twilio connector CallToken forwarding', () => {
     expect(JSON.stringify(task.chatCtx.toJSON())).not.toContain(CALL_TOKEN);
   });
 
-  it('does not retry a rejected token with another caller ID', async () => {
+  it('does not retry an unrelated rejection', async () => {
     const { fetch, complete, enter } = setupTransfer(CALL_TOKEN);
     fetch.mockResolvedValue(new Response('{"message":"Invalid CallToken"}', { status: 403 }));
 
@@ -128,4 +129,82 @@ describe('Twilio connector CallToken forwarding', () => {
     });
     expect(complete).toHaveBeenCalledWith(expect.any(Error));
   });
+});
+
+describe('Twilio caller-ID fallback', () => {
+  it.each([false, true])('retries only once; second failure=%s', async (secondFailure) => {
+    const { fetch, connect, complete, enter } = setupTransfer(CALL_TOKEN);
+    fetch.mockResolvedValueOnce(new Response('{"code":21210}', { status: 400 }));
+    if (secondFailure) {
+      fetch.mockResolvedValueOnce(new Response('{"code":21210}', { status: 400 }));
+    }
+    await enter();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenCalledOnce();
+    const first = new URLSearchParams(fetch.mock.calls[0]![1].body.toString());
+    const second = new URLSearchParams(fetch.mock.calls[1]![1].body.toString());
+    expect(first.get('From')).toBe(CALLER_NUMBER);
+    expect(first.get('CallToken')).toBe(CALL_TOKEN);
+    expect(second.get('From')).toBe(TWILIO_NUMBER);
+    expect(second.has('CallToken')).toBe(false);
+    expect(second.get('Twiml')).toBe(first.get('Twiml'));
+    if (secondFailure) expect(complete).toHaveBeenCalledWith(expect.any(Error));
+    else expect(complete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [400, 21211],
+    [403, 21210],
+    [429, 20429],
+    [500, 21210],
+  ])('does not retry status %s code %s', async (status, code) => {
+    const { fetch, complete, enter } = setupTransfer(CALL_TOKEN);
+    fetch.mockResolvedValueOnce(new Response(JSON.stringify({ code }), { status }));
+    await enter();
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('does not retry an ambiguous network timeout', async () => {
+    const { fetch, complete, enter } = setupTransfer(CALL_TOKEN);
+    fetch.mockRejectedValueOnce(new Error('request timed out'));
+    await enter();
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('requires original caller when a token is supplied', () => {
+    expect(() =>
+      createTwilioConnectorWarmTransferTask({
+        phoneNumber: HUMAN_NUMBER,
+        twilioFromNumber: TWILIO_NUMBER,
+        twilioAccountSid: 'AC_test',
+        twilioAuthToken: 'test',
+        twilioCallToken: CALL_TOKEN,
+      }),
+    ).toThrow('twilioCallToken requires originalCallerNumber');
+  });
+});
+
+it.each([undefined, ''])(
+  'does not retry business caller rejection with token %s',
+  async (token) => {
+    const { fetch, enter } = setupTransfer(token);
+    fetch.mockResolvedValueOnce(new Response('{"code":21210}', { status: 400 }));
+    await enter();
+    expect(fetch).toHaveBeenCalledOnce();
+    const form = new URLSearchParams(fetch.mock.calls[0]![1].body.toString());
+    expect(form.get('From')).toBe(TWILIO_NUMBER);
+    expect(form.has('CallToken')).toBe(false);
+  },
+);
+
+it('cancels an unanswered fallback call by its own SID', async () => {
+  const { fetch, enter } = setupTransfer(CALL_TOKEN, false);
+  fetch.mockResolvedValueOnce(new Response('{"code":21210}', { status: 400 }));
+  fetch.mockResolvedValueOnce(new Response('{"sid":"CA_fallback"}'));
+  await enter();
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch.mock.calls[2]![0]).toContain('/Calls/CA_fallback.json');
+  expect(Object.fromEntries(fetch.mock.calls[2]![1].body)).toEqual({ Status: 'canceled' });
 });

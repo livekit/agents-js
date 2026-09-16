@@ -9422,6 +9422,7 @@ class TwilioConnectorWarmTransferTask extends AgentTask<WarmTransferResult> {
 //
 // @public
 interface TwilioConnectorWarmTransferTaskOptions extends Omit<WarmTransferTaskOptions, 'sipCallTo' | 'sipTrunkId' | 'sipConnection' | 'sipNumber' | 'sipHeaders' | 'dtmf' | 'ringingTimeout' | 'humanAgentIdentity' | 'originateHumanAgent'> {
+    originalCallerNumber?: string;
     phoneNumber: string;
     ringingTimeout?: number | null;
     twilioAccountSid?: string;

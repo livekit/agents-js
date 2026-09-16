@@ -87,7 +87,8 @@ them for the specific call requesting a transfer:
 ```ts
 await new TwilioConnectorWarmTransferTask({
   phoneNumber: supervisorNumber,
-  twilioFromNumber: inboundFrom,
+  twilioFromNumber: agentPhoneNumber,
+  originalCallerNumber: inboundFrom,
   twilioCallToken: inboundCallToken,
   chatCtx: this.chatCtx,
 }).run();
@@ -97,10 +98,17 @@ The optional `twilioCallToken` is passed unchanged to Twilio's Calls API as
 `CallToken`. The SDK does not add it to the connector request or TwiML. Keep the
 token out of prompts, chat history, logs, and participant attributes.
 
-`twilioFromNumber` must match the original incoming call's `From`; the token does
-not authorize an arbitrary caller ID. Without an inbound token, omit
-`twilioCallToken` and use a Twilio number or verified caller ID. A rejected token
-fails the dial; there is no automatic retry with a different caller ID.
+`twilioFromNumber` is the agent/business Twilio number or verified caller ID.
+`originalCallerNumber` must match the original incoming call's `From`; the token
+does not authorize an arbitrary caller ID. Supplying a nonempty `twilioCallToken`
+requires `originalCallerNumber`. Without a token (or with an empty token), the task
+uses the business number, even when the original caller number is available.
+
+If Twilio explicitly rejects the preservation attempt with HTTP 400 and
+[error 21210 (unverified From)](https://www.twilio.com/docs/api/errors/21210),
+the task retries once from the business number without the token. Other errors,
+including network timeouts and failures after call creation, are not retried to
+avoid duplicate calls. A failed fallback is propagated to the transfer workflow.
 
 The [Twilio Calls API](https://www.twilio.com/docs/voice/api/call-resource#create-a-call)
 supports CallToken directly, so this workflow does not require a Twilio conference.
