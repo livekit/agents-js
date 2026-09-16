@@ -739,7 +739,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private handleResponseUsage(response: ResponsesEvent['response']): void {
     const usage = response?.usage;
     if (usage) {
-      const metric: metrics.LLMMetrics & { reasoningTokens: number } = {
+      const metric: metrics.LLMMetrics = {
         type: 'llm_metrics',
         label: this.duplexModel.label(),
         requestId: response?.id ?? '',

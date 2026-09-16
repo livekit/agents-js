@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { LiveServerContent } from '@google/genai';
+import type { LiveServerContent, UsageMetadata } from '@google/genai';
 import { Behavior, FunctionResponseScheduling } from '@google/genai';
 import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
@@ -248,5 +248,64 @@ describe('Google Realtime model text parts', () => {
 
     expect(session.currentGeneration.textChannel.write.mock.calls).toEqual([['Hello there.']]);
     expect(session.currentGeneration.outputText).toBe('Hello there.');
+  });
+});
+
+type UsageMetadataSessionInternals = {
+  currentGeneration: {
+    responseId: string;
+    _createdTimestamp: number;
+    _firstTokenTimestamp?: number;
+    _completedTimestamp?: number;
+    _done: boolean;
+  };
+  emit: ReturnType<typeof vi.fn>;
+  handleUsageMetadata(usage: UsageMetadata): void;
+};
+
+function createUsageSession(): UsageMetadataSessionInternals {
+  const session = Object.create(RealtimeSession.prototype) as UsageMetadataSessionInternals;
+  const createdTimestamp = Date.now() - 1000;
+  session.currentGeneration = {
+    responseId: 'resp_1',
+    _createdTimestamp: createdTimestamp,
+    _firstTokenTimestamp: createdTimestamp + 100,
+    _completedTimestamp: createdTimestamp + 1000,
+    _done: true,
+  };
+  session.emit = vi.fn();
+  return session;
+}
+
+describe('Google Realtime usage metadata', () => {
+  it('reports thoughtsTokenCount as reasoningTokens', () => {
+    const session = createUsageSession();
+
+    session.handleUsageMetadata({
+      promptTokenCount: 397,
+      responseTokenCount: 49,
+      thoughtsTokenCount: 26,
+      totalTokenCount: 446,
+    });
+
+    expect(session.emit).toHaveBeenCalledWith(
+      'metrics_collected',
+      expect.objectContaining({
+        inputTokens: 397,
+        outputTokens: 49,
+        reasoningTokens: 26,
+        totalTokens: 446,
+      }),
+    );
+  });
+
+  it('keeps a reported zero distinguishable from an omitted count', () => {
+    const reported = createUsageSession();
+    reported.handleUsageMetadata({ responseTokenCount: 10, thoughtsTokenCount: 0 });
+    expect(reported.emit.mock.calls[0]![1]).toHaveProperty('reasoningTokens', 0);
+
+    const omitted = createUsageSession();
+    omitted.handleUsageMetadata({ responseTokenCount: 10 });
+    expect(omitted.emit.mock.calls[0]![1].reasoningTokens).toBeUndefined();
   });
 });
