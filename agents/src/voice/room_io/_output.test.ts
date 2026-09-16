@@ -1,16 +1,27 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame, LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
+import {
+  AudioFrame,
+  LocalAudioTrack,
+  ParticipantKind,
+  TrackPublishOptions,
+  TrackSource,
+} from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ATTRIBUTE_PUBLISH_ON_BEHALF,
   ATTRIBUTE_TRANSCRIPTION_EXPRESSION,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
 } from '../../constants.js';
 import { TranscriptMarkupStripper } from '../../tts/provider_format.js';
 import { Future } from '../../utils.js';
 import type { PlaybackProgressedEvent } from '../io.js';
-import { ParticipantAudioOutput, ParticipantTranscriptionOutput } from './_output.js';
+import {
+  ParticipantAudioOutput,
+  ParticipantLegacyTranscriptionOutput,
+  ParticipantTranscriptionOutput,
+} from './_output.js';
 
 type CaptureFrameArg = Parameters<ParticipantAudioOutput['captureFrame']>[0];
 
@@ -997,3 +1008,102 @@ describe('ParticipantTranscriptionOutput markup stripping', () => {
     });
   });
 });
+
+// -- legacy transcription gate ------------------------------------------------
+
+type FakeRoom = ReturnType<typeof createFakeRoom>;
+
+/**
+ * A room stand-in for the legacy transcription gate. `isConnected` must be true, otherwise
+ * `publishTranscription` never reaches the local participant and every test passes for the
+ * wrong reason.
+ */
+function createFakeRoom() {
+  return {
+    isConnected: true,
+    remoteParticipants: new Map<string, ReturnType<typeof fakeRemote>>(),
+    localParticipant: { identity: 'agent', publishTranscription: vi.fn() },
+  };
+}
+
+/**
+ * A remote participant stand-in. `kind` is always set: the real getter falls back to STANDARD
+ * when the field is absent, so an under-specified fake would silently not test its own case.
+ */
+function fakeRemote(
+  identity: string,
+  options: {
+    clientProtocol?: number;
+    kind?: ParticipantKind;
+    onBehalf?: string;
+  } = {},
+) {
+  const attributes: Record<string, string> = {};
+  if (options.onBehalf !== undefined) {
+    attributes[ATTRIBUTE_PUBLISH_ON_BEHALF] = options.onBehalf;
+  }
+
+  return {
+    identity,
+    kind: options.kind ?? ParticipantKind.STANDARD,
+    attributes,
+    info: { clientProtocol: options.clientProtocol },
+  };
+}
+
+/**
+ * A legacy sink wired up without running the constructor, which would attach listeners to a
+ * real Room. Mirrors the private state the gate and the publish path read.
+ */
+function makeLegacyOutput(room: FakeRoom) {
+  const output = Object.create(
+    ParticipantLegacyTranscriptionOutput.prototype,
+  ) as ParticipantLegacyTranscriptionOutput & {
+    room: FakeRoom;
+    participantIdentity: string | null;
+    trackId?: string;
+    isDeltaStream: boolean;
+    capturing: boolean;
+    currentId: string;
+    pushedText: string;
+    legacyStatusLogged: boolean | null;
+    expressiveEnabled: () => boolean;
+    logger: { debug: (...args: unknown[]) => void };
+    handleCaptureText: (text: string) => Promise<void>;
+    handleFlush: () => void;
+    flushTask: Promise<void> | null;
+  };
+
+  output.room = room;
+  output.participantIdentity = 'agent';
+  output.trackId = 'TR_legacy';
+  output.isDeltaStream = true;
+  output.capturing = false;
+  output.currentId = 'SG_test';
+  output.pushedText = '';
+  output.legacyStatusLogged = null;
+  // the publish path reads visibleText(), which calls expressiveEnabled(). The constructor
+  // normally sets it, and Object.create skips the constructor.
+  output.expressiveEnabled = () => false;
+  output.logger = { debug: vi.fn() };
+  output.flushTask = null;
+
+  return output;
+}
+
+/** Push text through the sink and settle the flush task, as a real segment would. */
+async function captureAndFlush(output: ReturnType<typeof makeLegacyOutput>, text: string) {
+  await output.handleCaptureText(text);
+  output.handleFlush();
+  if (output.flushTask) {
+    await output.flushTask;
+  }
+}
+
+/** The segments of every publishTranscription call the fake room received. */
+function publishedSegments(room: FakeRoom) {
+  return room.localParticipant.publishTranscription.mock.calls.map(
+    (call) =>
+      (call[0] as { segments: { id: string; text: string; final: boolean }[] }).segments[0]!,
+  );
+}
