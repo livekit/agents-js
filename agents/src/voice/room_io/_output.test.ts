@@ -1224,3 +1224,71 @@ describe('ParticipantLegacyTranscriptionOutput participant selection', () => {
     expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('ParticipantLegacyTranscriptionOutput gate dynamics', () => {
+  it('keeps segment state warm for a client that joins mid-segment', async () => {
+    // the load-bearing case for the gate sitting at the publish site rather than in
+    // handleCaptureText: the late joiner must receive the whole segment, not just the tail
+    const room = createFakeRoom();
+    room.remoteParticipants.set('modern', fakeRemote('modern', { clientProtocol: 3 }));
+
+    const output = makeLegacyOutput(room);
+
+    await output.handleCaptureText('hello ');
+    expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+
+    room.remoteParticipants.set('legacy', fakeRemote('legacy', { clientProtocol: 0 }));
+
+    await output.handleCaptureText('world');
+    expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(1);
+
+    output.handleFlush();
+    if (output.flushTask) {
+      await output.flushTask;
+    }
+
+    const [partial, final] = publishedSegments(room);
+    expect(partial).toMatchObject({ text: 'hello world', final: false });
+    expect(final).toMatchObject({ text: 'hello world', final: true });
+    expect(final!.id).toBe(partial!.id);
+  });
+
+  it('still publishes the lk.transcription stream when the legacy packet is skipped', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('modern', fakeRemote('modern', { clientProtocol: 3 }));
+
+    // mirrors the makeOutput helper in the markup-stripping suite above: Object.create skips
+    // the constructor, so the stripper, segmentTags and expressiveEnabled must be set by hand.
+    const chunks: string[] = [];
+    const modern = Object.create(
+      ParticipantTranscriptionOutput.prototype,
+    ) as ParticipantTranscriptionOutput & Record<string, any>;
+
+    modern.room = room;
+    modern.participantIdentity = 'agent';
+    modern.isDeltaStream = true;
+    modern.capturing = false;
+    modern.currentId = 'SG_test';
+    modern.latestText = '';
+    modern.writer = null;
+    modern.flushTask = null;
+    modern.jsonFormat = false;
+    modern.expressiveEnabled = () => false;
+    modern.stripper = new TranscriptMarkupStripper();
+    modern.segmentTags = [];
+    modern.logger = { error: vi.fn(), warn: vi.fn() };
+    modern.createTextWriter = async () => ({
+      write: async (text: string) => {
+        chunks.push(text);
+      },
+      close: async () => {},
+    });
+
+    const legacy = makeLegacyOutput(room);
+
+    await Promise.all([modern.captureText('hello'), legacy.handleCaptureText('hello')]);
+
+    expect(chunks.join('')).toBe('hello');
+    expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+  });
+});
