@@ -714,6 +714,115 @@ describe('ElevenLabs STT', () => {
     }
   });
 
+  it('defaults audio chunks to 50ms', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const sent: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => sent.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      stream.pushFrame(makeFrame(784));
+      stream.flush();
+      await waitUntil(() => sent.some((message) => message.commit === true));
+      expect(sent.map((message) => message.commit)).toEqual([false, true]);
+      expect(Buffer.from(sent[0]?.audio_base_64 as string, 'base64')).toHaveLength(1568);
+
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => sent.length === 3);
+      expect(sent[2]?.commit).toBe(false);
+      expect(Buffer.from(sent[2]?.audio_base_64 as string, 'base64')).toHaveLength(1600);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it.each([0, -1, 0.5, 100.5, true, false, null, '100'])(
+    'rejects invalid audio chunk duration %j',
+    (audioChunkDuration) => {
+      expect(
+        () =>
+          new STT({
+            apiKey: 'test-key',
+            audioChunkDuration: audioChunkDuration as number,
+          }),
+      ).toThrow('audioChunkDuration must be a positive integer');
+    },
+  );
+
+  for (const sampleRate of [8000, 16000, 48000] as const) {
+    for (const audioChunkDuration of [1, 50, 75, 100, 200]) {
+      for (const tailDuration of [0, 1]) {
+        it(`preserves ${sampleRate}Hz audio with ${audioChunkDuration}ms chunks and ${tailDuration}ms tail`, async () => {
+          const { wss, baseURL } = await startWebSocketServer();
+          const sent: Record<string, unknown>[] = [];
+          wss.on('connection', (ws) => {
+            ws.on('message', (raw) =>
+              sent.push(JSON.parse(raw.toString()) as Record<string, unknown>),
+            );
+          });
+
+          const stream = new STT({
+            apiKey: 'test-key',
+            baseURL,
+            model: 'scribe_v2_realtime',
+            sampleRate,
+            audioChunkDuration,
+          }).stream();
+          const totalSamples = Math.floor(
+            (sampleRate * (audioChunkDuration * 2 + tailDuration)) / 1000,
+          );
+          const audio = Buffer.from(
+            Array.from({ length: totalSamples * 2 }, (_, index) => index % 251),
+          );
+          const inputFrameBytes = Math.floor((sampleRate * 20) / 1000) * 2;
+          const chunkBytes = Math.floor((sampleRate * audioChunkDuration) / 1000) * 2;
+          const expectedChunks = Array.from(
+            { length: Math.ceil(audio.length / chunkBytes) },
+            (_, index) => audio.subarray(index * chunkBytes, (index + 1) * chunkBytes),
+          );
+
+          try {
+            for (let offset = 0; offset < audio.length; offset += inputFrameBytes) {
+              const data = audio.subarray(offset, offset + inputFrameBytes);
+              stream.pushFrame(
+                new AudioFrame(
+                  new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2),
+                  sampleRate,
+                  1,
+                  data.byteLength / 2,
+                ),
+              );
+            }
+
+            await waitUntil(() => sent.length >= Math.floor(audio.length / chunkBytes));
+            stream.flush();
+            await waitUntil(() => sent.length >= expectedChunks.length + 1);
+
+            expect(sent.slice(0, -1).map((message) => message.audio_base_64)).toEqual(
+              expectedChunks.map((chunk) => chunk.toString('base64')),
+            );
+            expect(sent.map((message) => message.commit)).toEqual([
+              ...expectedChunks.map(() => false),
+              true,
+            ]);
+            expect(sent.every((message) => message.sample_rate === sampleRate)).toBe(true);
+            expect(sent.at(-1)?.audio_base_64).toBe('');
+          } finally {
+            stream.close();
+            await closeWebSocketServer(wss);
+          }
+        });
+      }
+    }
+  }
+
   it('builds realtime query params for language, timestamps, and server VAD', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     let requestUrl = '';
