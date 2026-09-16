@@ -1925,7 +1925,17 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (this.#closed || this.sessionShouldClose.isSet) {
         return;
       }
-      if (!this.currentGeneration || this.currentGeneration._done || Date.now() >= deadline) {
+      // Idle: no reply being generated, no reply request waiting for its
+      // generation, no blocking tool call waiting for its result, no manual
+      // user activity. With automatic activity detection the server owns the
+      // speech boundaries and the client has no signal for an utterance in
+      // progress; the poll interval bounds that window.
+      const idle =
+        (!this.currentGeneration || this.currentGeneration._done) &&
+        !(this.pendingGenerationFut && !this.pendingGenerationFut.done) &&
+        !this.shouldBlockRealtimeInputForPendingTools() &&
+        !this.inUserActivity;
+      if (idle || Date.now() >= deadline) {
         this.sessionShouldClose.set();
         return;
       }
