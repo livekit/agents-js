@@ -318,7 +318,7 @@ export class TTSv2 extends tts.TTS {
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream;
     // (undocumented)
-    updateOptions(opts: Partial<Pick<TTSv2Options, 'model' | 'encoding' | 'sampleRate' | 'bitRate'>>): void;
+    updateOptions(opts: Partial<Pick<TTSv2Options, 'model' | 'encoding' | 'sampleRate'>>): void;
 }
 
 // Warning: (ae-missing-release-tag) "TTSv2Options" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -327,8 +327,7 @@ export class TTSv2 extends tts.TTS {
 export interface TTSv2Options {
     apiKey?: string;
     baseUrl: string;
-    bitRate?: number | null;
-    encoding: FluxTTSEncoding | string;
+    encoding: FluxTTSEncoding;
     mipOptOut: boolean;
     model: FluxTTSModels | string;
     sampleRate: number;

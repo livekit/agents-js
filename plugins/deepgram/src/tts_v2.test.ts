@@ -13,7 +13,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
-import { TTSv2 } from './tts_v2.js';
+import { type FluxTTSEncoding, TTSv2 } from './tts_v2.js';
 
 const SAMPLE_RATE = 24000;
 // One 10ms frame of silence, the shape Flux streams back between SpeechStarted and
@@ -134,6 +134,41 @@ describe('Deepgram TTSv2 (Flux) streaming', () => {
     expect(endOfStreamCount).toBe(1);
   });
 
+  // The whole reason this plugin carries a StreamChannel of WordStreams and a runSegments
+  // loop: the framework flushes between sentences and keeps pushing onto the same stream.
+  // This is also the only test that pins the ordering invariant keeping that loop from
+  // deadlocking — `wordStream.endInput()` for segment N runs before the (backpressured)
+  // `segments.write()` for segment N+1, so segment N can always complete.
+  it('synthesizes each flushed segment on the same socket', async () => {
+    const { server, ttsv2 } = await setup();
+
+    const stream = ttsv2.stream();
+    stream.pushText('first segment');
+    stream.flush();
+    stream.pushText('second segment');
+    stream.endInput();
+
+    let segments = 0;
+    const finals: tts.SynthesizedAudio[] = [];
+    try {
+      for await (const event of stream) {
+        if (event === tts.SynthesizeStream.END_OF_STREAM) {
+          if (++segments === 2) break;
+          continue;
+        }
+        if (event.final) finals.push(event);
+      }
+    } finally {
+      stream.close();
+    }
+
+    expect(segments).toBe(2);
+    expect(finals).toHaveLength(2);
+    expect(new Set(finals.map((f) => f.segmentId)).size).toBe(2);
+    expect(server.connections).toBe(1);
+    expect(server.spoken).toEqual(['first ', 'segment ', 'second ', 'segment ']);
+  });
+
   // SpeechMetadata, not the trailing Flushed, is the authoritative end-of-turn marker.
   it('reuses the pooled socket across turns', async () => {
     const { server, ttsv2 } = await setup();
@@ -166,15 +201,22 @@ describe('Deepgram TTSv2 (Flux) streaming', () => {
 });
 
 describe('Deepgram TTSv2 encoding validation', () => {
+  // `encoding` is typed to the single supported value, so these casts are what a
+  // JavaScript caller (or a stale build) would do; TypeScript callers get a compile error
+  // instead, which is the point of the narrow type.
+  const invalid = (encoding: string) => encoding as FluxTTSEncoding;
+
   // AudioByteStream expects raw PCM and this plugin has no decoder, so a compressed
   // encoding must fail loudly rather than emit garbage frames.
   it.each(['mp3', 'opus', 'flac', 'aac', 'mulaw'])('rejects %s', (encoding) => {
-    expect(() => new TTSv2({ apiKey: 'test-key', encoding })).toThrow(/unsupported/);
+    expect(() => new TTSv2({ apiKey: 'test-key', encoding: invalid(encoding) })).toThrow(
+      /unsupported/,
+    );
   });
 
   it('rejects a compressed encoding passed to updateOptions', () => {
     const ttsv2 = new TTSv2({ apiKey: 'test-key' });
-    expect(() => ttsv2.updateOptions({ encoding: 'mp3' })).toThrow(/unsupported/);
+    expect(() => ttsv2.updateOptions({ encoding: invalid('mp3') })).toThrow(/unsupported/);
   });
 });
 

@@ -40,6 +40,14 @@ const CLOSE_MSG = JSON.stringify({ type: 'Close' });
 // one connection open indefinitely. Matches the Python plugin's 3600s.
 const MAX_SESSION_DURATION_MS = 3_600_000;
 
+// Inactivity budget for a batch synthesize() request, matching the Python plugin's
+// ClientTimeout(total=30). Note this is a socket-idle timeout, not a total one: it covers
+// a stalled connect and a stalled response body, but a slow-yet-steady response can still
+// run past it. Without it a server that accepts the request and goes quiet would hang the
+// call forever, since Node imposes no default timeout and the base retry loop only runs
+// once run() settles.
+const BATCH_REQUEST_TIMEOUT_MS = 30_000;
+
 // Lets each SynthesizeStreamv2 reach the pool owned by the TTS that created it, without
 // widening the public constructor signature with an internal type.
 const connectionPools = new WeakMap<TTSv2, ConnectionPool<WebSocket>>();
@@ -78,14 +86,9 @@ export interface TTSv2Options {
    * Audio encoding to use. Only `linear16` is supported: the LiveKit pipeline plays raw
    * PCM and this plugin does not decode compressed audio.
    */
-  encoding: FluxTTSEncoding | string;
+  encoding: FluxTTSEncoding;
   /** Sample rate of audio in Hz. */
   sampleRate: number;
-  /**
-   * Bit rate for compressed encodings. Accepted for API parity and forwarded on the
-   * batch {@link TTSv2.synthesize} path only; it has no effect on linear16 output.
-   */
-  bitRate?: number | null;
   /** Deepgram API key. Falls back to `$DEEPGRAM_API_KEY`. */
   apiKey?: string;
   /** Base URL for the Deepgram Flux TTS API. */
@@ -104,7 +107,6 @@ const defaultTTSv2Options: TTSv2Options = {
   model: 'flux-alexis-en',
   encoding: 'linear16',
   sampleRate: 24000,
-  bitRate: null,
   apiKey: process.env.DEEPGRAM_API_KEY,
   baseUrl: BASE_URL_V2,
   mipOptOut: false,
@@ -113,6 +115,11 @@ const defaultTTSv2Options: TTSv2Options = {
 
 /**
  * Deepgram Flux TTS (the `/v2/speak` endpoint).
+ *
+ * Sits alongside {@link TTS}, the Aura client for `/v1/speak`; this class does not replace
+ * it. Both the streaming ({@link TTSv2.stream}) and batch ({@link TTSv2.synthesize}) paths
+ * emit `linear16` only — Deepgram also offers mp3/opus/flac/aac, but the LiveKit pipeline
+ * plays raw PCM and this plugin ships no decoder, so any other encoding is rejected.
  *
  * @example
  * ```typescript
@@ -163,9 +170,7 @@ export class TTSv2 extends tts.TTS {
     connectionPools.set(this, this.#pool);
   }
 
-  updateOptions(
-    opts: Partial<Pick<TTSv2Options, 'model' | 'encoding' | 'sampleRate' | 'bitRate'>>,
-  ) {
+  updateOptions(opts: Partial<Pick<TTSv2Options, 'model' | 'encoding' | 'sampleRate'>>) {
     if (opts.encoding !== undefined) {
       validateEncoding(opts.encoding);
     }
@@ -175,12 +180,7 @@ export class TTSv2 extends tts.TTS {
     // These params are baked into the WebSocket URL at connection time, so any existing
     // pooled connection must be invalidated to avoid serving audio at the wrong
     // rate/encoding.
-    if (
-      opts.model !== undefined ||
-      opts.encoding !== undefined ||
-      opts.sampleRate !== undefined ||
-      opts.bitRate !== undefined
-    ) {
+    if (opts.model !== undefined || opts.encoding !== undefined || opts.sampleRate !== undefined) {
       this.#pool.invalidate();
     }
   }
@@ -212,8 +212,6 @@ export class TTSv2 extends tts.TTS {
   }
 
   async #connectWebSocket(timeoutMs: number): Promise<WebSocket> {
-    // Streaming only supports linear16 end-to-end, so bitRate (compressed batch output
-    // only) is intentionally not forwarded here.
     const config = {
       encoding: this.#opts.encoding,
       model: this.#opts.model,
@@ -286,9 +284,6 @@ export class ChunkedStreamv2 extends tts.ChunkedStream {
       sample_rate: this.#opts.sampleRate,
       mip_opt_out: String(this.#opts.mipOptOut),
     };
-    if (this.#opts.bitRate !== undefined && this.#opts.bitRate !== null) {
-      params.bit_rate = this.#opts.bitRate;
-    }
 
     const url = new URL(this.#opts.baseUrl);
     url.search = queryString.stringify(params);
@@ -349,12 +344,28 @@ export class ChunkedStreamv2 extends tts.ChunkedStream {
 
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
-      this.#logger.error({ err }, 'Deepgram Flux TTS request error');
+      // The timeout below destroys the request with its own error, which then arrives
+      // here; it is already an explanatory APITimeoutError, so don't log it as unexpected.
+      if (!(err instanceof APITimeoutError)) {
+        this.#logger.error({ err }, 'Deepgram Flux TTS request error');
+      }
       if (!doneFut.done) doneFut.reject(err);
     });
     req.on('close', () => {
       if (!doneFut.done) doneFut.resolve();
     });
+
+    // 'error' fires before 'close', so the reject below wins over the close handler's
+    // resolve. APITimeoutError is retryable, so the base ChunkedStream retry loop picks
+    // this up rather than the turn dying outright.
+    req.setTimeout(BATCH_REQUEST_TIMEOUT_MS, () => {
+      req.destroy(
+        new APITimeoutError({
+          message: `Deepgram Flux TTS request timed out after ${BATCH_REQUEST_TIMEOUT_MS}ms`,
+        }),
+      );
+    });
+
     req.write(JSON.stringify({ text: this.#text }));
     req.end();
 
