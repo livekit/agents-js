@@ -522,33 +522,13 @@ export class AvatarSession extends voice.AvatarSession {
               message: 'LiveAvatar connection closed unexpectedly.',
             });
           }
-          let parsed: { type?: string; state?: string };
+          let parsed: Record<string, unknown>;
           try {
-            parsed = JSON.parse(msg.toString()) as { type?: string; state?: string };
+            parsed = JSON.parse(msg.toString()) as Record<string, unknown>;
           } catch {
             continue;
           }
-          switch (parsed.type) {
-            case 'session.state_updated':
-              this.#logger.debug({ state: parsed.state }, 'LiveAvatar session state');
-              if (parsed.state === 'connected') {
-                if (!this.sessionConnectedFuture.done) {
-                  this.sessionConnectedFuture.resolve();
-                }
-              }
-              break;
-            case 'agent.speak_interrupted':
-              this.handleAgentSpeakInterrupted();
-              break;
-            case 'agent.speak_ended':
-              this.handleAgentSpeakEnded();
-              break;
-            case 'agent.speak_started':
-              this.handleAgentSpeakStarted();
-              break;
-            default:
-              this.#logger.debug({ type: parsed.type }, 'Unhandled LiveAvatar event');
-          }
+          this.handleServerEvent(parsed);
         }
       };
 
@@ -611,6 +591,56 @@ export class AvatarSession extends voice.AvatarSession {
     }
   }
 
+  private handleServerEvent(event: Record<string, unknown>): void {
+    const eventType = event.type;
+    switch (eventType) {
+      case 'session.state_updated':
+        this.#logger.debug({ state: event.state }, 'LiveAvatar session state');
+        if (event.state === 'connected' && !this.sessionConnectedFuture.done) {
+          this.sessionConnectedFuture.resolve();
+        }
+        break;
+      case 'agent.speak_interrupted':
+        this.handleAgentSpeakInterrupted();
+        break;
+      case 'agent.speak_ended':
+        this.handleAgentSpeakEnded();
+        break;
+      case 'agent.speak_started':
+        this.handleAgentSpeakStarted();
+        break;
+      case 'agent.state_updated':
+        this.handleAgentStateUpdated(event);
+        break;
+      case 'agent.audio_buffer_cleared':
+        this.handleAgentSpeakInterrupted();
+        break;
+      case 'agent.audio_buffer_appended':
+      case 'agent.audio_buffer_committed':
+        // Command acknowledgements; playback follows speak_* / agent.state_updated.
+        this.#logger.debug({ type: eventType }, `LiveAvatar ${eventType}`);
+        break;
+      case 'error':
+        this.#logger.error({ error: event.error ?? event }, 'LiveAvatar error');
+        break;
+      case 'warning':
+        this.#logger.warn({ warning: event.warning ?? event }, 'LiveAvatar warning');
+        break;
+      default:
+        this.#logger.debug({ type: eventType }, 'Unhandled LiveAvatar event');
+    }
+  }
+
+  private handleAgentStateUpdated(event: Record<string, unknown>): void {
+    const newState = event.new_state ?? event.state;
+    this.#logger.debug({ previousState: event.previous_state, newState }, 'LiveAvatar agent state');
+    if (newState === 'talking') {
+      this.handleAgentSpeakStarted();
+    } else if ((newState === 'idle' || newState === 'listening') && this.avatarSpeaking) {
+      this.handleAgentSpeakEnded();
+    }
+  }
+
   /**
    * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 310-311 lines
    */
@@ -622,6 +652,9 @@ export class AvatarSession extends voice.AvatarSession {
    * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 313-322 lines
    */
   private handleAgentSpeakEnded(): void {
+    if (!this.avatarSpeaking && !this.audioPlaying) {
+      return;
+    }
     this.avatarSpeaking = false;
     if (!this.avatarInterrupted && this.audioBuffer) {
       this.audioBuffer.notifyPlaybackFinished(this.playbackPosition, false);
@@ -634,8 +667,11 @@ export class AvatarSession extends voice.AvatarSession {
    * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 324-327 lines
    */
   private handleAgentSpeakStarted(): void {
+    const alreadySpeaking = this.avatarSpeaking;
     this.avatarSpeaking = true;
     this.avatarInterrupted = false;
-    this.audioBuffer?.notifyPlaybackStarted();
+    if (!alreadySpeaking) {
+      this.audioBuffer?.notifyPlaybackStarted();
+    }
   }
 }
