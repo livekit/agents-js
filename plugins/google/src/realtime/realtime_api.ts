@@ -1925,7 +1925,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (this.#closed || this.sessionShouldClose.isSet) {
         return;
       }
-      if (!this.currentGeneration || Date.now() >= deadline) {
+      if (!this.currentGeneration || this.currentGeneration._done || Date.now() >= deadline) {
         this.sessionShouldClose.set();
         return;
       }
