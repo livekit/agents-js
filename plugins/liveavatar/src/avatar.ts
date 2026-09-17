@@ -616,8 +616,10 @@ export class AvatarSession extends voice.AvatarSession {
         this.handleAgentSpeakInterrupted();
         break;
       case 'agent.audio_buffer_appended':
+        // One ack per speak chunk, too frequent to log.
+        break;
       case 'agent.audio_buffer_committed':
-        // Command acknowledgements; playback follows speak_* / agent.state_updated.
+        // Command acknowledgement; playback follows speak_* / agent.state_updated.
         this.#logger.debug({ type: eventType }, `LiveAvatar ${eventType}`);
         break;
       case 'error':
@@ -669,8 +671,10 @@ export class AvatarSession extends voice.AvatarSession {
   private handleAgentSpeakStarted(): void {
     const alreadySpeaking = this.avatarSpeaking;
     this.avatarSpeaking = true;
-    this.avatarInterrupted = false;
     if (!alreadySpeaking) {
+      // only a new turn clears the latch; a redundant start would otherwise let
+      // a second notifyPlaybackFinished through
+      this.avatarInterrupted = false;
       this.audioBuffer?.notifyPlaybackStarted();
     }
   }

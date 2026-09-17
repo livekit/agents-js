@@ -125,6 +125,33 @@ describe('LiveAvatar WebSocket event dispatch', () => {
     expect(buffer.finished).toEqual([]);
   });
 
+  it('keeps the interrupted latch across a redundant talking event', () => {
+    const [, avatar, buffer] = createAvatar();
+    avatar.playbackPosition = 2.5;
+    avatar.handleServerEvent({
+      type: 'agent.state_updated',
+      previous_state: 'idle',
+      new_state: 'talking',
+    });
+    avatar.handleServerEvent({ type: 'agent.audio_buffer_cleared' });
+    // A duplicate start for the same turn must not clear the latch, or the
+    // following speak end would report a second, non-interrupted playback.
+    avatar.handleServerEvent({
+      type: 'agent.state_updated',
+      previous_state: 'talking',
+      new_state: 'talking',
+    });
+    expect(avatar.avatarInterrupted).toBe(true);
+    avatar.handleServerEvent({
+      type: 'agent.state_updated',
+      previous_state: 'talking',
+      new_state: 'idle',
+    });
+    expect(avatar.avatarSpeaking).toBe(false);
+    expect(buffer.started).toBe(1);
+    expect(buffer.finished).toEqual([]);
+  });
+
   it('logs error events at error level', () => {
     const [, avatar, buffer] = createAvatar();
     const error = { type: 'invalid_request_error', message: 'bad audio' };
