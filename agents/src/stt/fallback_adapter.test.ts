@@ -574,11 +574,39 @@ describe('FallbackAdapter dynamic model/provider getters', () => {
     }
   }
 
-  it('returns wrapper defaults before any STT is active', () => {
+  it('reports the primary before any traffic', () => {
+    // model and provider follow the instance that serves next, so spans and metrics name the
+    // model that will answer rather than the adapter; the label stays the adapter's own
     const a = new IdentifiedFakeSTT({ label: 'a', model: 'a-model', provider: 'a-provider' });
     const adapter = new FallbackAdapter({ sttInstances: [a] });
-    expect(adapter.model).toBe('FallbackAdapter');
-    expect(adapter.provider).toBe('livekit');
+    expect(adapter.model).toBe('a-model');
+    expect(adapter.provider).toBe('a-provider');
+    expect(adapter.label).toContain('FallbackAdapter');
+  });
+
+  it('follows availability: a recovered primary is reported again before it serves', () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+    });
+    const fallback = new IdentifiedFakeSTT({
+      label: 'fallback',
+      model: 'fallback-model',
+      provider: 'fallback-provider',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+    adapter.status[0]!.available = false;
+    expect(adapter.model).toBe('fallback-model');
+    expect(adapter.provider).toBe('fallback-provider');
+    // once the primary recovers (its recovery task flips it back to available) the next request
+    // goes to it first, so that is what model and provider report
+    adapter.status[0]!.available = true;
+    expect(adapter.model).toBe('primary-model');
+    // all down: they are all retried, primary first
+    adapter.status[0]!.available = false;
+    adapter.status[1]!.available = false;
+    expect(adapter.model).toBe('primary-model');
   });
 
   it('reflects the active child after a successful recognize()', async () => {

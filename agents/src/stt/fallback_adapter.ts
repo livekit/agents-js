@@ -102,14 +102,6 @@ export class FallbackAdapter extends STT {
   private _status: STTStatus[] = [];
   private _logger = log();
   private _metricsForwarders = new Map<STT, (m: STTMetrics) => void>();
-  // Last child that produced output or returned a recognize result. Surfaced
-  // via the dynamic label/model/provider getters so OTel attributes like
-  // `gen_ai.request.model` on `user_turn` (refreshed on every STT event by
-  // {@link audio_recognition.refreshUserTurnSttAttributes}) reflect the
-  // actual provider used, not the wrapper. Not safe to share an adapter
-  // across concurrent sessions/streams — concurrent writers would corrupt
-  // attribution.
-  private _activeStt: STT | undefined;
 
   label = 'stt.FallbackAdapter';
 
@@ -169,22 +161,28 @@ export class FallbackAdapter extends STT {
   // that actually transcribed, not the static wrapper. `audio_recognition.
   // refreshUserTurnSttAttributes` re-reads these on every STT event, so a
   // mid-turn fallover surfaces the new child immediately.
-  override get model(): string {
-    return this._activeStt?.model ?? 'FallbackAdapter';
-  }
-
-  override get provider(): string {
-    return this._activeStt?.provider ?? 'livekit';
+  /**
+   * The instance the next request goes to first: the first one marked available, or the primary
+   * once all are down (they are then all retried, primary first). A failed instance's recovery
+   * task flips it back to available, so a recovered primary is reported again before it has
+   * served.
+   */
+  private nextInstance(): STT {
+    const index = this._status.findIndex((status) => status.available);
+    return this.sttInstances[index === -1 ? 0 : index]!;
   }
 
   /**
-   * Record the child that most recently produced output. Called by
-   * `_recognize()` on a successful return and by the streaming path on
-   * every event yielded by the elected child.
-   * @internal
+   * The model of the instance that serves next (see `nextInstance`). Spans and metrics read
+   * this, so a failover shows the model expected to answer rather than the adapter.
    */
-  _setActiveStt(stt: STT): void {
-    this._activeStt = stt;
+  override get model(): string {
+    return this.nextInstance().model;
+  }
+
+  /** The provider of the instance that serves next (see {@link model}). */
+  override get provider(): string {
+    return this.nextInstance().provider;
   }
 
   /**
@@ -291,7 +289,6 @@ export class FallbackAdapter extends STT {
       if (status.available || allFailed) {
         try {
           const result = await stt.recognize(frame, abortSignal);
-          this._setActiveStt(stt);
           return result;
         } catch (e) {
           this._logger.warn(
@@ -600,7 +597,6 @@ class FallbackSpeechStream extends SpeechStream {
               if (this.abortSignal.aborted || this.queue.closed) {
                 return;
               }
-              this.fallbackAdapter._setActiveStt(sttInstance);
               this.queue.put(ev);
             }
           } finally {
