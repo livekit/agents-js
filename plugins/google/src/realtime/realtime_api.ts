@@ -1487,6 +1487,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       toolCtx: this._tools,
       geminiTools: this.options.geminiTools,
       toolBehavior: this.options.toolBehavior,
+      useParametersJsonSchema: false,
     });
 
     const config: types.LiveConnectConfig = {
