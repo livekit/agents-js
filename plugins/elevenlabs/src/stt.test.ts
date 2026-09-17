@@ -369,6 +369,45 @@ describe('ElevenLabs STT', () => {
     expect(finals[0]?.alternatives?.[0]?.language).toBe('es');
   });
 
+  describe.each([
+    'partial_transcript',
+    'committed_transcript',
+    'committed_transcript_with_timestamps',
+  ] as const)('%s language', (messageType) => {
+    it.each([
+      ['es', {}, 'es'],
+      ['es', { language_code: null }, 'es'],
+      ['es', { language_code: '' }, 'es'],
+      ['es', { language_code: 'fra' }, 'fr'],
+      [undefined, {}, 'en'],
+      [undefined, { language_code: null }, 'en'],
+      [undefined, { language_code: '' }, 'en'],
+      [undefined, { language_code: 'fra' }, 'fr'],
+    ] as const)(
+      'falls back from $1 with configured language $0 to $2',
+      async (languageCode, languageData, expectedLanguage) => {
+        const events = await processStreamEvents(
+          [{ message_type: messageType, text: 'hola', ...languageData }],
+          2,
+          null,
+          {
+            languageCode,
+            includeTimestamps: messageType === 'committed_transcript_with_timestamps',
+            includeLanguageDetection: false,
+          },
+        );
+
+        const transcript = events.at(-1);
+        expect(transcript?.type).toBe(
+          messageType === 'partial_transcript'
+            ? sttLib.SpeechEventType.INTERIM_TRANSCRIPT
+            : sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+        );
+        expect(transcript?.alternatives?.[0]?.language).toBe(expectedLanguage);
+      },
+    );
+  });
+
   it('forwards advancing partial transcripts', async () => {
     const events = await processStreamEvents(
       [partialTranscript('yeah'), partialTranscript('yeah please')],

@@ -927,7 +927,7 @@ export class SpeechStream extends stt.SpeechStream {
     const words = data.words ?? [];
     const startTime = words.length > 0 ? words[0]?.start ?? 0 : 0;
     const endTime = words.length > 0 ? words[words.length - 1]?.end ?? 0 : 0;
-    const languageCode = data.language_code ?? this.#language;
+    const languageCode = data.language_code || this.#language;
     const normalizedLanguage = languageCode
       ? normalizeLanguage(languageCode)
       : normalizeLanguage('en');
