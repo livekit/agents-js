@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { LLMMetrics, RealtimeModelMetrics, STTMetrics, TTSMetrics } from './base.js';
+import {
+  type LLMMetrics,
+  type RealtimeModelMetrics,
+  type STTMetrics,
+  type TTSMetrics,
+  getSTTTotalTokens,
+} from './base.js';
 import {
   type LLMModelUsage,
   ModelUsageCollector,
@@ -72,13 +78,14 @@ describe('model_usage', () => {
         provider: 'deepgram',
         model: 'nova-2',
         inputTokens: 10,
+        inputAudioTokens: 5,
         outputTokens: 20,
         audioDurationMs: 5000,
       };
 
       const filtered = filterZeroValues(usage);
 
-      expect(Object.keys(filtered)).toHaveLength(6);
+      expect(Object.keys(filtered)).toHaveLength(7);
       expect(filtered).toEqual(usage);
     });
   });
@@ -291,6 +298,25 @@ describe('model_usage', () => {
     });
 
     describe('collect STT metrics', () => {
+      it('defaults total tokens to input plus output', () => {
+        const metrics = {
+          type: 'stt_metrics',
+          inputTokens: 80,
+          outputTokens: 20,
+        } as STTMetrics;
+        expect(getSTTTotalTokens(metrics)).toBe(100);
+      });
+
+      it('keeps an explicit total', () => {
+        const metrics = {
+          type: 'stt_metrics',
+          inputTokens: 80,
+          outputTokens: 20,
+          totalTokens: 99,
+        } as STTMetrics;
+        expect(getSTTTotalTokens(metrics)).toBe(99);
+      });
+
       it('should aggregate STT metrics by provider and model', () => {
         const metrics1: STTMetrics = {
           type: 'stt_metrics',
@@ -300,6 +326,7 @@ describe('model_usage', () => {
           durationMs: 0,
           audioDurationMs: 5000,
           inputTokens: 50,
+          inputAudioTokens: 40,
           outputTokens: 100,
           streamed: true,
           metadata: {
@@ -316,6 +343,7 @@ describe('model_usage', () => {
           durationMs: 0,
           audioDurationMs: 3000,
           inputTokens: 30,
+          inputAudioTokens: 20,
           outputTokens: 60,
           streamed: true,
           metadata: {
@@ -336,6 +364,7 @@ describe('model_usage', () => {
         expect(sttUsage.model).toBe('nova-2');
         expect(sttUsage.audioDurationMs).toBe(8000); // 5000 + 3000
         expect(sttUsage.inputTokens).toBe(80); // 50 + 30
+        expect(sttUsage.inputAudioTokens).toBe(60); // 40 + 20
         expect(sttUsage.outputTokens).toBe(160); // 100 + 60
       });
     });

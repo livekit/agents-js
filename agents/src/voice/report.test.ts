@@ -200,6 +200,41 @@ describe('sessionReportToJSON', () => {
     ]);
   });
 
+  it('serializes realtime transcription token usage', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory: ChatContext.empty(),
+      timestamp: 0,
+      startedAt: 0,
+      modelUsage: [
+        {
+          type: 'stt_usage',
+          provider: 'api.openai.com',
+          model: 'whisper-1',
+          inputTokens: 10,
+          inputAudioTokens: 8,
+          outputTokens: 2,
+          audioDurationMs: 0,
+        },
+      ],
+    });
+
+    expect(sessionReportToJSON(report).usage).toEqual([
+      {
+        type: 'stt_usage',
+        provider: 'api.openai.com',
+        model: 'whisper-1',
+        input_tokens: 10,
+        input_audio_tokens: 8,
+        output_tokens: 2,
+      },
+    ]);
+  });
+
   it('omits session usage update events from serialized events', () => {
     const report = createSessionReport({
       jobId: 'job',

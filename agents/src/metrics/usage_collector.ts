@@ -14,6 +14,9 @@ export interface UsageSummary {
   llmCompletionTokens: number;
   ttsCharactersCount: number;
   sttAudioDurationMs: number;
+  sttInputTokens?: number;
+  sttOutputTokens?: number;
+  sttInputAudioTokens?: number;
 }
 
 /**
@@ -32,6 +35,9 @@ export class UsageCollector {
       llmCompletionTokens: 0,
       ttsCharactersCount: 0,
       sttAudioDurationMs: 0,
+      sttInputTokens: 0,
+      sttOutputTokens: 0,
+      sttInputAudioTokens: 0,
     };
   }
 
@@ -48,6 +54,11 @@ export class UsageCollector {
       this.summary.ttsCharactersCount += metrics.charactersCount;
     } else if (metrics.type === 'stt_metrics') {
       this.summary.sttAudioDurationMs += metrics.audioDurationMs;
+      this.summary.sttInputTokens = (this.summary.sttInputTokens ?? 0) + (metrics.inputTokens ?? 0);
+      this.summary.sttOutputTokens =
+        (this.summary.sttOutputTokens ?? 0) + (metrics.outputTokens ?? 0);
+      this.summary.sttInputAudioTokens =
+        (this.summary.sttInputAudioTokens ?? 0) + (metrics.inputAudioTokens ?? 0);
     }
   }
 

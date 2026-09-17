@@ -51,14 +51,18 @@ export type STTMetrics = {
    * The request duration in milliseconds, 0.0 if the STT is streaming.
    */
   durationMs: number;
-  /**
-   * The duration of the pushed audio in milliseconds.
-   */
+  /** The duration of the pushed audio in milliseconds, or 0.0 when unknown. */
   audioDurationMs: number;
-  /** Input audio tokens (for token-based billing). */
+  /** Total input tokens, including both audio and text (for token-based billing). */
   inputTokens?: number;
-  /** Output text tokens (for token-based billing). */
+  /** Total output tokens (for token-based billing). */
   outputTokens?: number;
+  /**
+   * Sum of input and output tokens. Defaults to inputTokens + outputTokens when omitted.
+   */
+  totalTokens?: number;
+  /** Audio input tokens, a subset of inputTokens when reported by the provider. */
+  inputAudioTokens?: number;
   /**
    * Whether the STT is streaming (e.g using websocket).
    */
@@ -66,6 +70,11 @@ export type STTMetrics = {
   /** Metadata for model provider and name tracking. */
   metadata?: MetricsMetadata;
 };
+
+/** @internal */
+export function getSTTTotalTokens(metrics: STTMetrics): number {
+  return metrics.totalTokens ?? (metrics.inputTokens ?? 0) + (metrics.outputTokens ?? 0);
+}
 
 export type TTSMetrics = {
   type: 'tts_metrics';
