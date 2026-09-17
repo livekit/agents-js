@@ -30,6 +30,7 @@ type AvatarSessionInternals = {
   audioPlaying: boolean;
   avatarInterrupted: boolean;
   avatarSpeaking: boolean;
+  chunkInterrupted: boolean;
   handleServerEvent(event: Record<string, unknown>): void;
   onClearBuffer(event: { wasCapturing: boolean }): void;
   playbackPosition: number;
@@ -184,5 +185,35 @@ describe('LiveAvatar WebSocket event dispatch', () => {
     const sendEvent = vi.spyOn(session, 'sendEvent');
     avatar.onClearBuffer({ wasCapturing: true });
     expect(sendEvent).not.toHaveBeenCalled();
+  });
+
+  it('sends an interrupt on barge-in after the segment was flushed', () => {
+    const [session, avatar, buffer] = createAvatar();
+    avatar.handleServerEvent({
+      type: 'agent.state_updated',
+      previous_state: 'idle',
+      new_state: 'talking',
+    });
+    // forwardAudio outruns real time, so flush() clears wasCapturing while the
+    // avatar is still rendering the segment; audioPlaying is what remains true.
+    avatar.audioPlaying = true;
+    avatar.playbackPosition = 3.5;
+    const sendEvent = vi.spyOn(session, 'sendEvent');
+    avatar.onClearBuffer({ wasCapturing: false });
+    expect(sendEvent).toHaveBeenCalledWith({
+      type: 'agent.interrupt',
+      event_id: expect.any(String),
+    });
+    expect(buffer.finished).toEqual([[3.5, true]]);
+    // No segment is in flight, so the next segment's first frame must survive.
+    expect(avatar.chunkInterrupted).toBe(false);
+  });
+
+  it('ignores a clear with nothing captured and nothing playing', () => {
+    const [session, avatar, buffer] = createAvatar();
+    const sendEvent = vi.spyOn(session, 'sendEvent');
+    avatar.onClearBuffer({ wasCapturing: false });
+    expect(sendEvent).not.toHaveBeenCalled();
+    expect(buffer.finished).toEqual([]);
   });
 });
