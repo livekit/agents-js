@@ -69,8 +69,10 @@ export type STTModelUsage = {
   provider: string;
   /** The model name (e.g., 'nova-2', 'best'). */
   model: string;
-  /** Input audio tokens (for token-based STT billing). */
+  /** Total input tokens, including both audio and text (for token-based STT billing). */
   inputTokens: number;
+  /** Audio input tokens, a subset of inputTokens when reported by the provider. */
+  inputAudioTokens?: number;
   /** Output text tokens (for token-based STT billing). */
   outputTokens: number;
   /** Duration of processed audio in milliseconds. */
@@ -199,6 +201,7 @@ export class ModelUsageCollector {
         provider,
         model,
         inputTokens: 0,
+        inputAudioTokens: 0,
         outputTokens: 0,
         audioDurationMs: 0,
       };
@@ -277,6 +280,8 @@ export class ModelUsageCollector {
       const [provider, model] = this.extractProviderModel(metrics);
       const sttUsage = this.getSTTUsage(provider, model);
       sttUsage.inputTokens += metrics.inputTokens ?? 0;
+      sttUsage.inputAudioTokens =
+        (sttUsage.inputAudioTokens ?? 0) + (metrics.inputAudioTokens ?? 0);
       sttUsage.outputTokens += metrics.outputTokens ?? 0;
       sttUsage.audioDurationMs += metrics.audioDurationMs;
     } else if (metrics.type === 'interruption_metrics') {

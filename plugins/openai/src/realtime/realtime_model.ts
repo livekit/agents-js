@@ -105,6 +105,44 @@ export function isFatalError(error: unknown): boolean {
   return typeof errorCode === 'string' && FATAL_ERROR_CODES.has(errorCode);
 }
 
+function coerceTranscriptionUsage(usage: unknown): api_proto.TranscriptionUsage | undefined {
+  if (usage === null || typeof usage !== 'object') return undefined;
+  const value = usage as Record<string, unknown>;
+  if (value.type === 'duration') {
+    return typeof value.seconds === 'number'
+      ? { type: 'duration', seconds: value.seconds }
+      : undefined;
+  }
+  if (
+    value.type !== 'tokens' ||
+    typeof value.input_tokens !== 'number' ||
+    typeof value.output_tokens !== 'number' ||
+    typeof value.total_tokens !== 'number'
+  ) {
+    return undefined;
+  }
+
+  const details = value.input_token_details;
+  if (details !== undefined && (details === null || typeof details !== 'object')) return undefined;
+  const audioTokens = (details as Record<string, unknown> | undefined)?.audio_tokens;
+  const textTokens = (details as Record<string, unknown> | undefined)?.text_tokens;
+  if (audioTokens !== undefined && typeof audioTokens !== 'number') return undefined;
+  if (textTokens !== undefined && typeof textTokens !== 'number') return undefined;
+  return {
+    type: 'tokens',
+    input_tokens: value.input_tokens,
+    output_tokens: value.output_tokens,
+    total_tokens: value.total_tokens,
+    input_token_details:
+      details === undefined
+        ? undefined
+        : {
+            audio_tokens: audioTokens as number | undefined,
+            text_tokens: textTokens as number | undefined,
+          },
+  };
+}
+
 class CreateResponseHandle {
   instructions?: string;
   doneFut: Future<llm.GenerationCreatedEvent>;
@@ -853,11 +891,19 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.instructions = _instructions;
   }
 
-  updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
+  updateOptions({
+    toolChoice,
+    inputAudioTranscription,
+  }: {
+    toolChoice?: llm.ToolChoice;
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
+  }): void {
     const currentToolChoice = toOaiToolChoice(this._options.toolChoice);
-    const nextToolChoice = toOaiToolChoice(toolChoice);
-    if (currentToolChoice === nextToolChoice) {
-      this._options.toolChoice = toolChoice;
+    const nextToolChoice =
+      toolChoice === undefined ? currentToolChoice : toOaiToolChoice(toolChoice);
+    const transcriptionChanged = inputAudioTranscription !== undefined;
+    if (currentToolChoice === nextToolChoice && !transcriptionChanged) {
+      if (toolChoice !== undefined) this._options.toolChoice = toolChoice;
       return;
     }
 
@@ -866,8 +912,19 @@ export class RealtimeSession extends llm.RealtimeSession {
       ...(!isLegacyAzure && { type: 'realtime' }),
     };
 
-    this._options.toolChoice = toolChoice;
-    options.tool_choice = toOaiToolChoice(toolChoice);
+    if (currentToolChoice !== nextToolChoice) {
+      this._options.toolChoice = toolChoice;
+      options.tool_choice = toOaiToolChoice(toolChoice);
+    }
+
+    if (transcriptionChanged) {
+      this._options.inputAudioTranscription = inputAudioTranscription;
+      if (isLegacyAzure) {
+        options.input_audio_transcription = inputAudioTranscription;
+      } else {
+        options.audio = { input: { transcription: inputAudioTranscription } };
+      }
+    }
 
     // TODO(brian): add other options here
 
@@ -1728,6 +1785,42 @@ export class RealtimeSession extends llm.RealtimeSession {
       transcript: event.transcript,
       isFinal: true,
     });
+    this.emitTranscriptionMetrics(event);
+  }
+
+  private emitTranscriptionMetrics(
+    event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
+  ): void {
+    const usage = coerceTranscriptionUsage(event.usage);
+    if (!usage) return;
+
+    const baseMetrics = {
+      type: 'stt_metrics' as const,
+      requestId: event.event_id ?? '',
+      timestamp: Date.now(),
+      durationMs: 0,
+      label: this.oaiRealtimeModel.label(),
+      streamed: true,
+      metadata: {
+        modelName: this._options.inputAudioTranscription?.model,
+        modelProvider: this.oaiRealtimeModel.provider,
+      },
+    };
+    const sttMetrics: metrics.STTMetrics =
+      usage.type === 'tokens'
+        ? {
+            ...baseMetrics,
+            audioDurationMs: 0,
+            inputTokens: usage.input_tokens,
+            outputTokens: usage.output_tokens,
+            totalTokens: usage.total_tokens,
+            inputAudioTokens: usage.input_token_details?.audio_tokens ?? 0,
+          }
+        : {
+            ...baseMetrics,
+            audioDurationMs: usage.seconds * 1000,
+          };
+    this.emit('metrics_collected', sttMetrics);
   }
 
   private handleConversationItemInputAudioTranscriptionFailed(

@@ -289,6 +289,8 @@ interface ConversationItemInputAudioTranscriptionCompletedEvent extends BaseServ
     transcript: string;
     // (undocumented)
     type: 'conversation.item.input_audio_transcription.completed';
+    // (undocumented)
+    usage?: TranscriptionUsage | null;
 }
 
 // Warning: (ae-missing-release-tag) "ConversationItemInputAudioTranscriptionDeltaEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1176,6 +1178,7 @@ declare namespace realtime {
         ConversationItemCreatedEvent,
         ConversationItemAddedEvent_2 as ConversationItemAddedEvent,
         ConversationItemInputAudioTranscriptionDeltaEvent,
+        TranscriptionUsage,
         ConversationItemInputAudioTranscriptionCompletedEvent,
         ConversationItemInputAudioTranscriptionFailedEvent,
         ConversationItemTruncatedEvent,
@@ -1378,6 +1381,7 @@ class RealtimeSession_2 extends llm.RealtimeSession {
     // (undocumented)
     updateOptions(input: {
         toolChoice?: llm.ToolChoice;
+        inputAudioTranscription?: api_proto.InputAudioTranscription;
     }): void;
     // (undocumented)
     updateTools(_tools: llm.ToolContext): Promise<void>;
@@ -2164,6 +2168,23 @@ interface TracingConfig {
     enabled?: boolean;
 }
 
+// Warning: (ae-missing-release-tag) "TranscriptionUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+type TranscriptionUsage = {
+    type: 'tokens';
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    input_token_details?: {
+        audio_tokens?: number;
+        text_tokens?: number;
+    };
+} | {
+    type: 'duration';
+    seconds: number;
+};
+
 // Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -2386,7 +2407,7 @@ export type XAIChatModels = 'grok-3' | 'grok-3-fast' | 'grok-3-mini' | 'grok-3-m
 
 // Warnings were encountered during analysis:
 //
-// src/realtime/realtime_model.ts:193:7 - (ae-forgotten-export) The symbol "Modality_2" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_model.ts:231:7 - (ae-forgotten-export) The symbol "Modality_2" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

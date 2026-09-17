@@ -8121,6 +8121,8 @@ export type STTMetrics = {
     audioDurationMs: number;
     inputTokens?: number;
     outputTokens?: number;
+    totalTokens?: number;
+    inputAudioTokens?: number;
     streamed: boolean;
     metadata?: MetricsMetadata;
 };
@@ -8139,6 +8141,7 @@ export type STTModelUsage = {
     provider: string;
     model: string;
     inputTokens: number;
+    inputAudioTokens?: number;
     outputTokens: number;
     audioDurationMs: number;
 };
@@ -9430,6 +9433,12 @@ export interface UsageSummary {
     // (undocumented)
     sttAudioDurationMs: number;
     // (undocumented)
+    sttInputAudioTokens?: number;
+    // (undocumented)
+    sttInputTokens?: number;
+    // (undocumented)
+    sttOutputTokens?: number;
+    // (undocumented)
     ttsCharactersCount: number;
 }
 
@@ -10149,8 +10158,8 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/chat_context.ts:76:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:702:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
-// src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/metrics/base.ts:202:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
+// src/metrics/base.ts:207:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
+// src/metrics/base.ts:211:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:365:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:387:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver

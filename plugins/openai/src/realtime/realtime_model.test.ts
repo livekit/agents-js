@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIError, Future, Task, llm, stream } from '@livekit/agents';
+import { APIError, Future, Task, llm, metrics, stream } from '@livekit/agents';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
@@ -561,17 +561,28 @@ describe('RealtimeSession input_audio_transcription delta handling', () => {
     inputTranscriptAccumulators: Map<string, Map<number, string>>;
     audioCapableItemIds: Set<string>;
     itemDeleteFutures: Record<string, never>;
+    oaiRealtimeModel: RealtimeModel;
+    _options: { inputAudioTranscription?: api_proto.InputAudioTranscription | null };
     remoteChatCtx: {
       get: (id: string) => { item: llm.ChatMessage } | undefined;
       delete: (id: string) => void;
     };
-    on: (event: string, listener: (payload: llm.InputTranscriptionCompleted) => void) => void;
+    on: RealtimeSession['on'];
+    sendEvent: (event: api_proto.ClientEvent) => void;
+    updateOptions: RealtimeSession['updateOptions'];
   };
 
   function createTranscriptSession(opts?: {
     chatItems?: Record<string, llm.ChatMessage>;
   }): TranscriptionInternals {
     const session = Object.create(RealtimeSession.prototype) as TranscriptionInternals;
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      inputAudioTranscription: { model: 'whisper-1' },
+    });
+    session.oaiRealtimeModel = model;
+    session._options = { inputAudioTranscription: { model: 'whisper-1' } };
+    session.sendEvent = vi.fn();
     session.inputTranscriptAccumulators = new Map<string, Map<number, string>>();
     session.audioCapableItemIds = new Set<string>();
     session.itemDeleteFutures = {};
@@ -607,6 +618,7 @@ describe('RealtimeSession input_audio_transcription delta handling', () => {
     transcript: string,
     content_index = 0,
     status?: string,
+    usage?: unknown,
   ): api_proto.ConversationItemInputAudioTranscriptionCompletedEvent {
     return {
       type: 'conversation.item.input_audio_transcription.completed',
@@ -615,8 +627,125 @@ describe('RealtimeSession input_audio_transcription delta handling', () => {
       content_index,
       transcript,
       status,
-    };
+      usage,
+    } as api_proto.ConversationItemInputAudioTranscriptionCompletedEvent;
   }
+
+  it('emits STT metrics for raw duration usage', () => {
+    const session = createTranscriptSession();
+    const collected: metrics.STTMetrics[] = [];
+    session.on('metrics_collected', (metric) => {
+      if (metric.type === 'stt_metrics') collected.push(metric);
+    });
+
+    session.handleConversationItemInputAudioTranscriptionCompleted(
+      completed('item_a', 'hello', 0, undefined, { type: 'duration', seconds: 2.5 }),
+    );
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0]!.audioDurationMs).toBe(2500);
+    expect(collected[0]!.streamed).toBe(true);
+    expect(collected[0]!.metadata?.modelName).toBe('whisper-1');
+  });
+
+  it('emits STT metrics for raw token usage', () => {
+    const session = createTranscriptSession();
+    const collected: metrics.STTMetrics[] = [];
+    session.on('metrics_collected', (metric) => {
+      if (metric.type === 'stt_metrics') collected.push(metric);
+    });
+
+    session.handleConversationItemInputAudioTranscriptionCompleted(
+      completed('item_a', 'hello', 0, undefined, {
+        type: 'tokens',
+        input_tokens: 10,
+        output_tokens: 2,
+        total_tokens: 12,
+        input_token_details: { audio_tokens: 8 },
+      }),
+    );
+
+    expect(collected[0]).toMatchObject({
+      inputTokens: 10,
+      outputTokens: 2,
+      totalTokens: 12,
+      inputAudioTokens: 8,
+      streamed: true,
+    });
+  });
+
+  it.each([undefined, { type: 'unknown' }, { type: 'tokens' }])(
+    'preserves the transcript for missing or invalid usage %#',
+    (usage) => {
+      const session = createTranscriptSession();
+      const collected: metrics.STTMetrics[] = [];
+      const transcripts: llm.InputTranscriptionCompleted[] = [];
+      session.on('metrics_collected', (metric) => {
+        if (metric.type === 'stt_metrics') collected.push(metric);
+      });
+      session.on('input_audio_transcription_completed', (event) => transcripts.push(event));
+
+      session.handleConversationItemInputAudioTranscriptionCompleted(
+        completed('item_a', 'hello', 0, undefined, usage),
+      );
+
+      expect(collected).toEqual([]);
+      expect(transcripts).toEqual([{ itemId: 'item_a', transcript: 'hello', isFinal: true }]);
+    },
+  );
+
+  it('uses the current session transcription model after an update', () => {
+    const session = createTranscriptSession();
+    const collected: metrics.STTMetrics[] = [];
+    session.on('metrics_collected', (metric) => {
+      if (metric.type === 'stt_metrics') collected.push(metric);
+    });
+
+    session.updateOptions({
+      inputAudioTranscription: { model: 'gpt-4o-transcribe' },
+    });
+    session.handleConversationItemInputAudioTranscriptionCompleted(
+      completed('item_a', 'hello', 0, undefined, { type: 'duration', seconds: 2.5 }),
+    );
+
+    expect(session.sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session: expect.objectContaining({
+          audio: { input: { transcription: { model: 'gpt-4o-transcribe' } } },
+        }),
+      }),
+    );
+    expect(session.oaiRealtimeModel._options.inputAudioTranscription?.model).toBe('whisper-1');
+    expect(collected[0]!.metadata?.modelName).toBe('gpt-4o-transcribe');
+  });
+
+  it('preserves transcription audio tokens in session usage', () => {
+    const session = createTranscriptSession();
+    const collector = new metrics.ModelUsageCollector();
+    session.on('metrics_collected', (metric) => collector.collect(metric));
+
+    session.handleConversationItemInputAudioTranscriptionCompleted(
+      completed('item_a', 'hello', 0, undefined, {
+        type: 'tokens',
+        input_tokens: 10,
+        output_tokens: 2,
+        total_tokens: 12,
+        input_token_details: { audio_tokens: 8, text_tokens: 2 },
+      }),
+    );
+
+    expect(collector.flatten()).toEqual([
+      {
+        type: 'stt_usage',
+        provider: 'api.openai.com',
+        model: 'whisper-1',
+        inputTokens: 10,
+        inputAudioTokens: 8,
+        outputTokens: 2,
+        audioDurationMs: 0,
+      },
+    ]);
+  });
 
   it('emits in-progress completed events as interim transcripts', () => {
     const chatMessage = new llm.ChatMessage({ role: 'user', content: '', id: 'item_a' });

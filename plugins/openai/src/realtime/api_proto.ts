@@ -534,12 +534,29 @@ export interface ConversationItemInputAudioTranscriptionDeltaEvent extends BaseS
   delta?: string;
 }
 
+export type TranscriptionUsage =
+  | {
+      type: 'tokens';
+      input_tokens: number;
+      output_tokens: number;
+      total_tokens: number;
+      input_token_details?: {
+        audio_tokens?: number;
+        text_tokens?: number;
+      };
+    }
+  | {
+      type: 'duration';
+      seconds: number;
+    };
+
 export interface ConversationItemInputAudioTranscriptionCompletedEvent extends BaseServerEvent {
   type: 'conversation.item.input_audio_transcription.completed';
   item_id: string;
   content_index: number;
   transcript: string;
   status?: 'in_progress' | 'completed' | string;
+  usage?: TranscriptionUsage | null;
 }
 
 export interface ConversationItemInputAudioTranscriptionFailedEvent extends BaseServerEvent {

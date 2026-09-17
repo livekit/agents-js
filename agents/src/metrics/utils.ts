@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { log } from '../log.js';
-import type { AgentMetrics } from './base.js';
+import { type AgentMetrics, getSTTTotalTokens } from './base.js';
 
 function roundTwoDecimals(value: number) {
   return Math.round(value * 100) / 100;
@@ -59,6 +59,10 @@ export const logMetrics = (metrics: AgentMetrics) => {
     logger
       .child({
         audioDurationMs: Math.round(metrics.audioDurationMs),
+        inputTokens: metrics.inputTokens ?? 0,
+        outputTokens: metrics.outputTokens ?? 0,
+        totalTokens: getSTTTotalTokens(metrics),
+        inputAudioTokens: metrics.inputAudioTokens ?? 0,
       })
       .info('STT metrics');
   } else if (metrics.type === 'interruption_metrics') {
