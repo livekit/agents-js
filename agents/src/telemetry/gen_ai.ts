@@ -437,6 +437,11 @@ export function realtimeUsageAttributes(metrics: RealtimeModelMetrics): Attribut
     [traceTypes.ATTR_GEN_AI_USAGE_AUDIO_OUTPUT_TOKENS]: metrics.outputTokenDetails.audioTokens,
     [traceTypes.ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS]: metrics.inputTokenDetails.cachedTokens,
   };
+  if (metrics.reasoningTokens !== undefined) {
+    attrs[traceTypes.ATTR_GEN_AI_USAGE_REASONING_OUTPUT_TOKENS] = metrics.reasoningTokens;
+    // unofficial spelling recognised by Langfuse, kept alongside the standard one
+    attrs[traceTypes.ATTR_GEN_AI_USAGE_REASONING_TOKENS] = metrics.reasoningTokens;
+  }
   return attrs;
 }
 

@@ -1865,6 +1865,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     const inputTokens = usage.promptTokenCount || 0;
     const outputTokens = usage.responseTokenCount || 0;
     const totalTokens = usage.totalTokenCount || 0;
+    // Gemini reports thinking tokens as a subset of responseTokenCount, so they are surfaced
+    // alongside outputTokens rather than added to it. Keep the field absent when the provider
+    // omitted it: a reported 0 and a missing count bill differently.
+    const reasoningTokens = usage.thoughtsTokenCount ?? undefined;
 
     const realtimeMetrics = {
       type: 'realtime_model_metrics',
@@ -1876,6 +1880,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       label: 'google_realtime',
       inputTokens,
       outputTokens,
+      reasoningTokens,
       totalTokens,
       tokensPerSecond: durationMs > 0 ? outputTokens / (durationMs / 1000) : 0,
       inputTokenDetails: {
