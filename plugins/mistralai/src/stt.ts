@@ -26,6 +26,7 @@ import type {
   TranscriptionStreamTextDelta,
 } from '@mistralai/mistralai/extra/realtime';
 import { RealtimeTranscription } from '@mistralai/mistralai/extra/realtime';
+import { mistralAPIError } from './errors.js';
 import type { MistralSTTModels } from './models.js';
 
 const SAMPLE_RATE = 16000;
@@ -135,30 +136,11 @@ export class STT extends stt.STT {
         throw error;
       }
 
-      const err = error as { statusCode?: number; status?: number; message?: string };
-      const statusCode = err.statusCode ?? err.status;
-
-      if (statusCode !== undefined) {
-        if (statusCode === 429) {
-          throw new APIStatusError({
-            message: `Mistral STT: rate limit error - ${err.message ?? 'unknown error'}`,
-            options: { statusCode, retryable: true },
-          });
-        }
-        if (statusCode === 408 || statusCode === 504) {
-          throw new APIStatusError({
-            message: `Mistral STT: timeout error - ${err.message ?? 'unknown error'}`,
-            options: { statusCode, retryable: true },
-          });
-        }
-        throw new APIStatusError({
-          message: `Mistral STT: error (${statusCode}) - ${err.message ?? 'unknown error'}`,
-          options: { statusCode, retryable: statusCode >= 500 },
-        });
-      }
+      const apiError = mistralAPIError(error);
+      if (apiError) throw apiError;
 
       throw new APIConnectionError({
-        message: `Mistral STT: connection error - ${err.message ?? 'unknown error'}`,
+        message: `Mistral STT: connection error - ${error instanceof Error ? error.message : String(error)}`,
         options: { retryable: true },
       });
     }
@@ -248,30 +230,11 @@ export class SpeechStream extends stt.SpeechStream {
         throw error;
       }
 
-      const err = error as { statusCode?: number; status?: number; message?: string };
-      const statusCode = err.statusCode ?? err.status;
-
-      if (statusCode !== undefined) {
-        if (statusCode === 429) {
-          throw new APIStatusError({
-            message: `Mistral STT: rate limit error - ${err.message ?? 'unknown error'}`,
-            options: { statusCode, retryable: true },
-          });
-        }
-        if (statusCode === 408 || statusCode === 504) {
-          throw new APIStatusError({
-            message: `Mistral STT: timeout error - ${err.message ?? 'unknown error'}`,
-            options: { statusCode, retryable: true },
-          });
-        }
-        throw new APIStatusError({
-          message: `Mistral STT: error (${statusCode}) - ${err.message ?? 'unknown error'}`,
-          options: { statusCode, retryable: statusCode >= 500 },
-        });
-      }
+      const apiError = mistralAPIError(error);
+      if (apiError) throw apiError;
 
       throw new APIConnectionError({
-        message: `Mistral STT: connection error - ${err.message ?? 'unknown error'}`,
+        message: `Mistral STT: connection error - ${error instanceof Error ? error.message : String(error)}`,
         options: { retryable: true },
       });
     }
