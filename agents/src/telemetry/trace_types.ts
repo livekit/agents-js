@@ -76,6 +76,7 @@ export const ATTR_RESPONSE_TTFB = 'lk.response.ttfb';
 // eou detection
 export const ATTR_EOU_PROBABILITY = 'lk.eou.probability';
 export const ATTR_EOU_UNLIKELY_THRESHOLD = 'lk.eou.unlikely_threshold';
+/** The endpointing delay in force for the turn, in seconds. */
 export const ATTR_EOU_DELAY = 'lk.eou.endpointing_delay';
 export const ATTR_EOU_LANGUAGE = 'lk.eou.language';
 /** Which signal triggered the EOU detection: 'vad' | 'stt' | 'manual'. */
@@ -83,11 +84,30 @@ export const ATTR_EOU_SOURCE = 'lk.eou.source';
 /** True when the audio EOT detector resolved this prediction from its
  * inference-window cache instead of running a fresh predict. */
 export const ATTR_EOU_FROM_CACHE = 'lk.eou.from_cache';
-/** Latest input-audio creation time → prediction receive time (ms). */
+/** Latest input-audio creation time → prediction receive time, in seconds. */
 export const ATTR_EOU_DETECTION_DELAY = 'lk.eou.detection_delay';
+// eou_wait span: from the user's last speech to the turn decision
+/** How the wait ended: `committed`, `user_resumed`, or `dropped`. */
+export const ATTR_EOU_OUTCOME = 'lk.eou.outcome';
+/** Seconds from the end of the user's speech to the turn decision. */
+export const ATTR_EOU_WAIT_DURATION = 'lk.eou.wait_duration';
+/** Times the endpointing wait restarted on a later trigger (late transcript, VAD). */
+export const ATTR_EOU_REARM_COUNT = 'lk.eou.rearm_count';
+/** Turn decisions the wait rejected (the detector said the user was not done) before it ended. */
+export const ATTR_EOU_NOT_COMMITTED_COUNT = 'lk.eou.not_committed_count';
+/** On user_turn: endpointing waits the user cut short by speaking again. */
+export const ATTR_EOU_RESUME_COUNT = 'lk.eou.resume_count';
+/** Seconds the onUserTurnCompleted hook took; on the reply's agent_turn with the other stages. */
+export const ATTR_ON_USER_TURN_COMPLETED_DELAY = 'lk.on_user_turn_completed_delay';
+
+// speech scheduling
+/** Seconds a speech handle waited in the queue before generation was authorized. */
+export const ATTR_SPEECH_QUEUE_WAIT = 'lk.speech.queue_wait';
 export const ATTR_USER_TRANSCRIPT = 'lk.pii.user_transcript';
 export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
+/** Seconds from the end of the user's speech to the final transcript. */
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';
+/** Seconds from the end of the user's speech to the end-of-turn decision. */
 export const ATTR_END_OF_TURN_DELAY = 'lk.end_of_turn_delay';
 
 // answering machine detection
@@ -95,9 +115,9 @@ export const ATTR_AMD_CATEGORY = 'lk.amd.category';
 export const ATTR_AMD_REASON = 'lk.amd.reason';
 export const ATTR_AMD_IS_MACHINE = 'lk.amd.is_machine';
 export const ATTR_AMD_INTERRUPT_ON_MACHINE = 'lk.amd.interrupt_on_machine';
-/** Total user-speech duration captured before the AMD verdict (milliseconds). */
+/** Total user-speech duration captured before the AMD verdict, in seconds. */
 export const ATTR_AMD_SPEECH_DURATION = 'lk.amd.speech_duration';
-/** Time between speech end and the AMD verdict emission (milliseconds). */
+/** Time between speech end and the AMD verdict emission, in seconds. */
 export const ATTR_AMD_DELAY = 'lk.amd.delay';
 export const ATTR_AMD_TRANSCRIPT = 'lk.pii.amd.transcript';
 

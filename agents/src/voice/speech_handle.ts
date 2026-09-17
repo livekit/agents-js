@@ -145,6 +145,11 @@ export class SpeechHandle {
   /** @internal - OpenTelemetry context for the agent turn span */
   _agentTurnContext?: Context;
 
+  /** @internal - when the speech was scheduled, for the queue-wait attribute */
+  _scheduledAt?: number;
+  /** @internal - when generation was first authorized, for the queue-wait attribute */
+  _authorizedAt?: number;
+
   /** @internal - used by AgentTask/RunResult final output plumbing */
   _maybeRunFinalOutput?: unknown;
 
@@ -450,6 +455,7 @@ export class SpeechHandle {
   _authorizeGeneration(): void {
     const fut = new Future<void>();
     this.generations.push(fut);
+    this._authorizedAt ??= performance.now();
     this.authorizedEvent.set();
   }
 
@@ -514,9 +520,16 @@ export class SpeechHandle {
 
   /** @internal */
   _markScheduled(): void {
+    this._scheduledAt ??= performance.now();
     if (!this.scheduledFut.done) {
       this.scheduledFut.resolve();
     }
+  }
+
+  /** @internal Milliseconds between scheduling and the first generation authorization, once known. */
+  _queueWait(): number | undefined {
+    if (this._scheduledAt === undefined || this._authorizedAt === undefined) return undefined;
+    return Math.max(this._authorizedAt - this._scheduledAt, 0);
   }
 
   /** @internal */
