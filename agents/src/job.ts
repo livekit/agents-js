@@ -21,6 +21,7 @@ import type { Logger } from 'pino';
 import { INFERENCE_PRIORITY_HEADER } from './inference/utils.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
+import { runWithLogContext } from './log_core.js';
 import { SimulationContext, SimulationMode, parseSimulationDispatch } from './simulation.js';
 import { setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import {
@@ -94,7 +95,9 @@ export function getJobContext<ProcessUserData = Record<string, unknown>>(
  * @internal
  */
 export function runWithJobContext<T>(context: JobContext, fn: () => T): T {
-  return jobContextStorage.run(context as JobContext<unknown>, fn);
+  return jobContextStorage.run(context as JobContext<unknown>, () =>
+    runWithLogContext(() => context.logContextFields, fn),
+  );
 }
 
 /**
@@ -102,7 +105,9 @@ export function runWithJobContext<T>(context: JobContext, fn: () => T): T {
  * @internal
  */
 export function runWithJobContextAsync<T>(context: JobContext, fn: () => Promise<T>): Promise<T> {
-  return jobContextStorage.run(context as JobContext<unknown>, fn);
+  return jobContextStorage.run(context as JobContext<unknown>, () =>
+    runWithLogContext(() => context.logContextFields, fn),
+  );
 }
 
 /** Which tracks, if any, should the agent automatically subscribe to? */
@@ -165,6 +170,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   } = {};
   #logger: Logger;
   #inferenceExecutor: InferenceExecutor;
+  #logContextFields: Record<string, unknown> = {};
 
   /** @internal */
   _primaryAgentSession?: AgentSession;
@@ -285,6 +291,15 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     }
 
     return headers;
+  }
+
+  /** Structured fields injected into logs emitted from this job's async context. */
+  get logContextFields(): Record<string, unknown> {
+    return this.#logContextFields;
+  }
+
+  set logContextFields(fields: Record<string, unknown>) {
+    this.#logContextFields = fields;
   }
 
   get workerId(): string {

@@ -6,6 +6,7 @@ import {
   ServerOptions,
   cli,
   defineAgent,
+  getJobContext,
   inference,
   llm,
   log,
@@ -16,8 +17,9 @@ import {
   voice,
 } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
-import { type Attributes } from '@opentelemetry/api';
+import { type Attributes, type Context } from '@opentelemetry/api';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -27,9 +29,8 @@ import { z } from 'zod';
 // SDK 1.x, configure processors with `spanProcessors` and use `registerSpanProcessor` instead
 // of the removed provider `addSpanProcessor` method.
 // It exports spans over OTLP/HTTP, so it works with any OTLP-compatible backend
-// (Langfuse, Jaeger, Grafana Tempo, Honeycomb, etc.). To enable tracing, set the trace
-// provider with `telemetry.setTracerProvider` at the module level or inside the entrypoint
-// before `AgentSession.start()`.
+// (Langfuse, Jaeger, Grafana Tempo, Honeycomb, etc.). Set up the provider once at module scope
+// so jobs share its exporters and background threads.
 //
 // Configure the destination either by passing `url`/`headers` to `setupOtel`, or by leaving
 // them unset and exporting the standard OTLP environment variables:
@@ -44,8 +45,30 @@ import { z } from 'zod';
 //     headers: { Authorization: `Basic ${auth}`, 'x-langfuse-ingestion-version': '4' },
 //   });
 // Refer to their docs for latest instructions: https://langfuse.com/integrations/native/opentelemetry#opentelemetry-endpoint
+function getContextData(): Attributes {
+  const ctx = getJobContext(false);
+  if (!ctx) return {};
+  // Use the grouping key expected by your backend, e.g. langfuse.session.id.
+  return { 'session.id': ctx.room.name };
+}
+
+class SessionSpanProcessor implements SpanProcessor {
+  onStart(span: Span, _parentContext: Context): void {
+    span.setAttributes(getContextData());
+  }
+
+  onEnd(_span: ReadableSpan): void {}
+
+  forceFlush(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  shutdown(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
 function setupOtel(options?: {
-  metadata?: Attributes;
   url?: string;
   headers?: Record<string, string>;
 }): NodeTracerProvider {
@@ -58,12 +81,11 @@ function setupOtel(options?: {
   // attaches the metadata processor (and the LiveKit Cloud exporter, when enabled) later.
   const fanout = new telemetry.FanoutSpanProcessor();
   const traceProvider = new NodeTracerProvider({
-    spanProcessors: [new BatchSpanProcessor(traceExporter), fanout],
+    spanProcessors: [new SessionSpanProcessor(), new BatchSpanProcessor(traceExporter), fanout],
   });
 
   traceProvider.register();
   telemetry.setTracerProvider(traceProvider, {
-    metadata: options?.metadata,
     registerSpanProcessor: (processor) => fanout.add(processor),
   });
   return traceProvider;
@@ -136,20 +158,15 @@ class Alloy extends voice.Agent {
   }
 }
 
+const traceProvider = setupOtel();
+
 export default defineAgent({
   entry: async (ctx: JobContext) => {
-    // Set up the OpenTelemetry tracer.
-    const traceProvider = setupOtel({
-      // Metadata is set as attributes on all spans created by the tracer; some backends have
-      // their own grouping conventions (e.g. Langfuse uses `langfuse.session.id` or `session.id`).
-      metadata: {
-        'session.id': ctx.room.name,
-      },
-    });
+    Object.assign(ctx.logContextFields, getContextData());
 
-    // Shut down the provider to flush pending spans and release exporter resources.
+    // Flush pending spans without shutting down the process-wide provider.
     ctx.addShutdownCallback(async () => {
-      await traceProvider.shutdown();
+      await traceProvider.forceFlush();
     });
 
     const session = new voice.AgentSession({
