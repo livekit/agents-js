@@ -114,6 +114,35 @@ describe('MCPServer', () => {
     expect(reconnectedClient.close).toHaveBeenCalledOnce();
   });
 
+  it('reconnects when initialize overlaps an in-flight shutdown', async () => {
+    const firstConnection = deferred<void>();
+    const firstClient = {
+      connect: vi.fn(() => firstConnection.promise),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    clientMock.client = firstClient;
+    const server = new TestServer();
+
+    const firstInitialization = server.initialize();
+    await vi.waitFor(() => expect(firstClient.connect).toHaveBeenCalledOnce());
+    const closing = server.aclose();
+
+    const secondClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    clientMock.client = secondClient;
+    const secondInitialization = server.initialize();
+    firstConnection.resolve();
+
+    await Promise.all([firstInitialization, closing, secondInitialization]);
+
+    expect(secondClient.connect).toHaveBeenCalledOnce();
+    expect(server.initialized).toBe(true);
+    await server.aclose();
+    expect(secondClient.close).toHaveBeenCalledOnce();
+  });
+
   it('closes a stalled connecting client before awaiting initialization', async () => {
     const connection = deferred<void>();
     const close = vi.fn(async () => connection.resolve());
@@ -137,14 +166,19 @@ describe('MCPServer', () => {
     expect(server.initialized).toBe(false);
   });
 
-  it('logs only safe metadata when a tool-change listener fails', async () => {
+  it('runs later tool-change listeners when an earlier listener throws synchronously', async () => {
     const warn = vi.fn();
+    const laterListener = vi.fn();
     const server = new TestServer();
     server.setLogger({ warn });
-    server.onToolsChanged(() => Promise.reject(new Error('secret listener failure')));
+    server.onToolsChanged(() => {
+      throw new Error('secret listener failure');
+    });
+    server.onToolsChanged(laterListener);
 
     await server.emitToolsChanged();
 
+    expect(laterListener).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(
       { errorType: 'Error' },
       'failed to refresh MCP tools after change',
