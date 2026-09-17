@@ -123,7 +123,7 @@ export abstract class MCPServer {
   protected logger = log();
   private client: Client | null = null;
   private connectingClient: Client | null = null;
-  private initializing?: Promise<void>;
+  private initializing?: { generation: number; promise: Promise<void> };
   private connectionGeneration = 0;
   private cachedTools?: MCPToolDescriptor[];
   private toolsDirty = true;
@@ -159,7 +159,9 @@ export abstract class MCPServer {
 
   protected async notifyToolsChanged(): Promise<void> {
     this.invalidateCache();
-    const results = await Promise.allSettled([...this.listeners].map((listener) => listener()));
+    const results = await Promise.allSettled(
+      [...this.listeners].map((listener) => Promise.resolve().then(listener)),
+    );
     for (const result of results) {
       if (result.status === 'rejected') {
         this.logger.warn(
@@ -171,44 +173,64 @@ export abstract class MCPServer {
   }
 
   async initialize(): Promise<void> {
-    if (this.client) return;
-    const connectionGeneration = this.connectionGeneration;
-    this.initializing ??= (async () => {
-      const ClientCtor = await loadMCPClient();
-      const clientOptions: ClientOptions = {
-        listChanged: {
-          tools: {
-            autoRefresh: false,
-            debounceMs: 0,
-            onChanged: () => void this.notifyToolsChanged(),
-          },
-        },
-      };
-      const client = new ClientCtor({ name: 'livekit-agents', version: '1.0.0' }, clientOptions);
-      this.connectingClient = client;
-      try {
-        const transport = (await this.createTransport()) as Transport;
-        if (connectionGeneration !== this.connectionGeneration) return;
-        await client.connect(transport);
-        if (connectionGeneration !== this.connectionGeneration) {
-          return;
+    const requestedGeneration = this.connectionGeneration;
+    while (!this.client && requestedGeneration === this.connectionGeneration) {
+      const initializing = this.initializing;
+      if (initializing) {
+        try {
+          await initializing.promise;
+        } catch (error) {
+          if (initializing.generation === requestedGeneration) throw error;
         }
-        this.client = client;
-      } finally {
-        if (this.connectingClient === client) {
-          this.connectingClient = null;
-          if (this.client !== client) await this.closeClient(client);
-        }
+        continue;
       }
-    })().finally(() => {
-      this.initializing = undefined;
-    });
-    await this.initializing;
+
+      const connectionGeneration = requestedGeneration;
+      const entry = {
+        generation: connectionGeneration,
+        promise: (async () => {
+          const ClientCtor = await loadMCPClient();
+          const clientOptions: ClientOptions = {
+            listChanged: {
+              tools: {
+                autoRefresh: false,
+                debounceMs: 0,
+                onChanged: () => void this.notifyToolsChanged(),
+              },
+            },
+          };
+          const client = new ClientCtor(
+            { name: 'livekit-agents', version: '1.0.0' },
+            clientOptions,
+          );
+          this.connectingClient = client;
+          try {
+            const transport = (await this.createTransport()) as Transport;
+            if (connectionGeneration !== this.connectionGeneration) return;
+            await client.connect(transport);
+            if (connectionGeneration !== this.connectionGeneration) {
+              return;
+            }
+            this.client = client;
+          } finally {
+            if (this.connectingClient === client) {
+              this.connectingClient = null;
+              if (this.client !== client) await this.closeClient(client);
+            }
+          }
+        })(),
+      };
+      entry.promise = entry.promise.finally(() => {
+        if (this.initializing === entry) this.initializing = undefined;
+      });
+      this.initializing = entry;
+      await entry.promise;
+    }
   }
 
   async aclose(): Promise<void> {
     this.connectionGeneration += 1;
-    const initializing = this.initializing;
+    const initializing = this.initializing?.promise;
     const client = this.client;
     const connectingClient = this.connectingClient;
     this.connectingClient = null;
