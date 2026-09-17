@@ -165,9 +165,13 @@ export class SpeechHandle {
     readonly parent?: SpeechHandle,
   ) {
     this.interruptionHoldsRestore = _allowInterruptions;
-    this.doneFut.await.finally(() => {
+    void this.doneFut.await.finally(() => {
       for (const callback of this.doneCallbacks) {
-        callback(this);
+        try {
+          callback(this);
+        } catch (error) {
+          this.logger.warn({ error }, 'error in speech handle done callback');
+        }
       }
     });
   }
