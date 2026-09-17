@@ -5,7 +5,7 @@ import type { LiveServerContent, UsageMetadata } from '@google/genai';
 import { Behavior, FunctionResponseScheduling } from '@google/genai';
 import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
-import { RealtimeSession } from './realtime_api.js';
+import { RealtimeSession, toClientContentParams } from './realtime_api.js';
 
 type ToolCallStatus = {
   name: string;
@@ -307,5 +307,25 @@ describe('Google Realtime usage metadata', () => {
     const omitted = createUsageSession();
     omitted.handleUsageMetadata({ responseTokenCount: 10 });
     expect(omitted.emit.mock.calls[0]![1].reasoningTokens).toBeUndefined();
+  });
+});
+
+describe('Google Realtime client content params', () => {
+  it('omits an empty turns array so the SDK sends a bare turnComplete', () => {
+    // generateReply() sends no turns on models that take no placeholder user
+    // turn; the SDK throws on `turns: []`, which killed the send task.
+    expect(toClientContentParams({ turns: [], turnComplete: true })).toEqual({
+      turnComplete: true,
+    });
+    expect(toClientContentParams({ turnComplete: true })).toEqual({ turnComplete: true });
+  });
+
+  it('passes non-empty turns through and defaults turnComplete to true', () => {
+    const turns = [{ role: 'user', parts: [{ text: 'hi' }] }];
+    expect(toClientContentParams({ turns })).toEqual({ turns, turnComplete: true });
+    expect(toClientContentParams({ turns, turnComplete: false })).toEqual({
+      turns,
+      turnComplete: false,
+    });
   });
 });
