@@ -1,13 +1,37 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type APIConnectOptions, AudioByteStream, shortuuid, tts } from '@livekit/agents';
+import { type APIConnectOptions, APIError, AudioByteStream, shortuuid, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { OpenAI } from 'openai';
 import type { TTSModels, TTSVoices } from './models.js';
 
 const OPENAI_TTS_SAMPLE_RATE = 24000;
 const OPENAI_TTS_CHANNELS = 1;
+
+/** The `response_format` values the OpenAI speech endpoint accepts. */
+export type TTSResponseFormat = NonNullable<OpenAI.Audio.SpeechCreateParams['response_format']>;
+
+/**
+ * Content types this plugin cannot play. The body is written straight into an `AudioByteStream`
+ * as 16-bit samples, so a container or compressed body would come out as a click or as noise.
+ */
+const UNPLAYABLE_CONTENT_TYPES = new Set([
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/x-mpeg',
+  'audio/aac',
+  'audio/x-aac',
+  'audio/flac',
+  'audio/x-flac',
+  'audio/wav',
+  'audio/wave',
+  'audio/x-wav',
+  'audio/opus',
+  'audio/ogg',
+  'audio/webm',
+  'audio/mp4',
+]);
 
 export interface TTSOptions {
   model: TTSModels | string;
@@ -17,6 +41,7 @@ export interface TTSOptions {
   baseURL?: string;
   client?: OpenAI;
   apiKey?: string;
+  responseFormat?: TTSResponseFormat;
 }
 
 const defaultTTSOptions: TTSOptions = {
@@ -24,6 +49,7 @@ const defaultTTSOptions: TTSOptions = {
   model: 'tts-1',
   voice: 'alloy',
   speed: 1,
+  responseFormat: 'pcm',
 };
 
 export class TTS extends tts.TTS {
@@ -69,7 +95,12 @@ export class TTS extends tts.TTS {
       });
   }
 
-  updateOptions(opts: { model?: TTSModels | string; voice?: TTSVoices; speed?: number }) {
+  updateOptions(opts: {
+    model?: TTSModels | string;
+    voice?: TTSVoices;
+    speed?: number;
+    responseFormat?: TTSResponseFormat;
+  }) {
     this.#opts = { ...this.#opts, ...opts };
   }
 
@@ -90,7 +121,7 @@ export class TTS extends tts.TTS {
           model: this.#opts.model,
           voice: this.#opts.voice,
           instructions: this.#opts.instructions,
-          response_format: 'pcm',
+          response_format: this.#opts.responseFormat ?? 'pcm',
           speed: this.#opts.speed,
         },
         { signal },
@@ -127,7 +158,20 @@ export class ChunkedStream extends tts.ChunkedStream {
 
   protected async run() {
     try {
-      const buffer = await this.stream.then((r) => r.arrayBuffer());
+      const response = await this.stream;
+      const contentType = (response.headers.get('content-type') ?? '')
+        .split(';')[0]!
+        .trim()
+        .toLowerCase();
+      if (UNPLAYABLE_CONTENT_TYPES.has(contentType)) {
+        throw new APIError(
+          `OpenAI TTS returned '${contentType}', which cannot be played as raw PCM: this plugin ` +
+            `has no decoder. Request 'pcm' from the provider, or use a TTS plugin for that format.`,
+          { retryable: false },
+        );
+      }
+
+      const buffer = await response.arrayBuffer();
       const requestId = shortuuid();
       const audioByteStream = new AudioByteStream(OPENAI_TTS_SAMPLE_RATE, OPENAI_TTS_CHANNELS);
       const frames = audioByteStream.write(buffer);
