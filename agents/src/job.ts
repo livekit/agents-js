@@ -571,11 +571,18 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
         );
       }
       const result = callback(this, p);
-      result.finally(() => {
-        if (this.#participantTasks[p.identity!]?.result === result) {
-          delete this.#participantTasks[p.identity!];
-        }
-      });
+      void result
+        .finally(() => {
+          if (this.#participantTasks[p.identity!]?.result === result) {
+            delete this.#participantTasks[p.identity!];
+          }
+        })
+        .catch((error) => {
+          this.#logger.error(
+            { error, 'lk.pii.participant_identity': p.identity },
+            'error in participant entrypoint',
+          );
+        });
       this.#participantTasks[p.identity!] = { callback, result };
     }
   }

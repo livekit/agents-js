@@ -352,4 +352,33 @@ describe('ChunkedStream', () => {
     expect(stream.outputClosedDuringMetricsPut).toBe(false);
     await metricsCollected;
   });
+
+  it('reports a failed synthesis through the error event without an unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const tts = new TestTTS();
+      const errorEmitted = new Promise<void>((resolve) => tts.once('error', () => resolve()));
+      const stream = new FailingChunkedStream('failing synthesis', tts, RETRY_OPTIONS);
+
+      await errorEmitted;
+      for await (const _event of stream) {
+        // drain until the stream closes
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
 });
+
+class FailingChunkedStream extends ChunkedStream {
+  label = 'test.FailingChunkedStream';
+
+  protected async run(): Promise<void> {
+    throw new Error('synthesis failed');
+  }
+}

@@ -275,3 +275,29 @@ describe('SpeechHandle.exception', () => {
     expect(handle.exception()).toBe(error);
   });
 });
+
+describe('SpeechHandle - done callbacks', () => {
+  it('runs every done callback when one throws, without an unhandled rejection', async () => {
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const handle = SpeechHandle.create();
+      const calls: string[] = [];
+      handle.addDoneCallback(() => {
+        calls.push('first');
+        throw new Error('done callback failed');
+      });
+      handle.addDoneCallback(() => {
+        calls.push('second');
+      });
+
+      handle._markDone();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(calls).toEqual(['first', 'second']);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+});

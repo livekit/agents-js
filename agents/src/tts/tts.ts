@@ -652,7 +652,7 @@ export abstract class SynthesizeStream
     if (!this.#monitorMetricsTask) {
       this.#monitorMetricsTask = this.monitorMetrics();
       // Close output when metrics task completes
-      this.#monitorMetricsTask.finally(() => this.output.close());
+      void this.#monitorMetricsTask.finally(() => this.output.close()).catch(() => {});
     }
     this.#metricsText += text;
 
@@ -761,7 +761,11 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    ThrowsPromise.resolve().then(() => this.mainTask().finally(() => this.#metricsQueue.close()));
+    ThrowsPromise.resolve().then(() =>
+      this.mainTask()
+        .finally(() => this.#metricsQueue.close())
+        .catch(() => {}),
+    );
   }
 
   private drainAttemptQueue(attemptQueue: AsyncIterableQueue<SynthesizedAudio>): Promise<void> {
