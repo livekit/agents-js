@@ -5,7 +5,7 @@ import type { LiveServerContent } from '@google/genai';
 import { Behavior, FunctionResponseScheduling } from '@google/genai';
 import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
-import { RealtimeSession } from './realtime_api.js';
+import { RealtimeSession, goAwayTimeLeftMs } from './realtime_api.js';
 
 type ToolCallStatus = {
   name: string;
@@ -248,5 +248,14 @@ describe('Google Realtime model text parts', () => {
 
     expect(session.currentGeneration.textChannel.write.mock.calls).toEqual([['Hello there.']]);
     expect(session.currentGeneration.outputText).toBe('Hello there.');
+  });
+});
+
+describe('Google Realtime goAway', () => {
+  it('parses the Duration string the server sends', () => {
+    expect(goAwayTimeLeftMs('300s')).toBe(300_000);
+    expect(goAwayTimeLeftMs('0.5s')).toBe(500);
+    expect(goAwayTimeLeftMs(undefined)).toBe(0);
+    expect(goAwayTimeLeftMs('soon')).toBe(0);
   });
 });
