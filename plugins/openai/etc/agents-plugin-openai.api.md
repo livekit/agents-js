@@ -2209,7 +2209,6 @@ export interface TTSOptions {
     instructions?: string;
     // (undocumented)
     model: TTSModels | string;
-    // (undocumented)
     responseFormat?: TTSResponseFormat;
     // (undocumented)
     speed: number;
@@ -2220,7 +2219,7 @@ export interface TTSOptions {
 // Warning: (ae-missing-release-tag) "TTSResponseFormat" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type TTSResponseFormat = NonNullable<OpenAI.Audio.SpeechCreateParams['response_format']>;
+export type TTSResponseFormat = 'pcm' | (string & Record<never, never>);
 
 // Warning: (ae-missing-release-tag) "TTSVoices" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //

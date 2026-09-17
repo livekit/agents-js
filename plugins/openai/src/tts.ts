@@ -9,8 +9,12 @@ import type { TTSModels, TTSVoices } from './models.js';
 const OPENAI_TTS_SAMPLE_RATE = 24000;
 const OPENAI_TTS_CHANNELS = 1;
 
-/** The `response_format` values the OpenAI speech endpoint accepts. */
-export type TTSResponseFormat = NonNullable<OpenAI.Audio.SpeechCreateParams['response_format']>;
+/**
+ * `response_format` sent to the provider. Only raw PCM can be played, since this plugin ships no
+ * decoder. Any string is accepted for OpenAI-compatible servers that use a different name for
+ * raw PCM; a response in a container or compressed format is still rejected when it arrives.
+ */
+export type TTSResponseFormat = 'pcm' | (string & Record<never, never>);
 
 /**
  * Content types this plugin cannot play. The body is written straight into an `AudioByteStream`
@@ -27,8 +31,10 @@ const UNPLAYABLE_CONTENT_TYPES = new Set([
   'audio/wav',
   'audio/wave',
   'audio/x-wav',
+  'audio/vnd.wave',
   'audio/opus',
   'audio/ogg',
+  'application/ogg',
   'audio/webm',
   'audio/mp4',
 ]);
@@ -41,6 +47,7 @@ export interface TTSOptions {
   baseURL?: string;
   client?: OpenAI;
   apiKey?: string;
+  /** Defaults to `pcm`, the only playable format. Set only if your server names raw PCM differently. */
   responseFormat?: TTSResponseFormat;
 }
 
@@ -121,7 +128,9 @@ export class TTS extends tts.TTS {
           model: this.#opts.model,
           voice: this.#opts.voice,
           instructions: this.#opts.instructions,
-          response_format: this.#opts.responseFormat ?? 'pcm',
+          // pass a compatible server's own spelling through; the SDK only types OpenAI's
+          response_format: (this.#opts.responseFormat ??
+            'pcm') as OpenAI.Audio.SpeechCreateParams['response_format'],
           speed: this.#opts.speed,
         },
         { signal },

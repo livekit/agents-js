@@ -149,18 +149,25 @@ describe('OpenAI TTS against an OpenAI-compatible endpoint', () => {
     expect(requested).toBe('pcm');
   });
 
-  it('requests the configured response format and plays what the server declares', async () => {
+  it("sends a compatible server's own name for raw pcm and plays the result", async () => {
     let requested: string | undefined;
     const { audio, errors } = await collect(
       ttsAgainst(pcm, 'audio/pcm', {
-        responseFormat: 'wav',
+        responseFormat: 'pcm_s16le',
         onRequest: (b) => (requested = b.response_format),
       }),
     );
-    expect(requested).toBe('wav');
-    // the server ignored the request and said so; its label wins over what we asked for
+    expect(requested).toBe('pcm_s16le');
     expect(errors).toEqual([]);
     expect(audio.equals(pcm)).toBe(true);
+  });
+
+  it('rejects registered container aliases too', async () => {
+    for (const contentType of ['audio/vnd.wave', 'application/ogg']) {
+      const { audio, errors } = await collect(ttsAgainst(wav(pcm), contentType));
+      expect(audio.length).toBe(0);
+      expect(errors.map((e) => e.message).join()).toMatch(/cannot be played/);
+    }
   });
 
   it('applies a response format set through updateOptions', async () => {
@@ -168,8 +175,8 @@ describe('OpenAI TTS against an OpenAI-compatible endpoint', () => {
     const instance = ttsAgainst(pcm, 'audio/pcm', {
       onRequest: (b) => (requested = b.response_format),
     });
-    instance.updateOptions({ responseFormat: 'wav' });
+    instance.updateOptions({ responseFormat: 'pcm_s16le' });
     await collect(instance);
-    expect(requested).toBe('wav');
+    expect(requested).toBe('pcm_s16le');
   });
 });
