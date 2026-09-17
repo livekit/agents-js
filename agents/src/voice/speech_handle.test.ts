@@ -300,4 +300,32 @@ describe('SpeechHandle - done callbacks', () => {
       process.off('unhandledRejection', unhandled);
     }
   });
+
+  it('contains a throwing done callback added after the handle is done', async () => {
+    const uncaught: unknown[] = [];
+    const onUncaught = (error: unknown) => uncaught.push(error);
+    const previousListeners = process.listeners('uncaughtException');
+    process.removeAllListeners('uncaughtException');
+    process.on('uncaughtException', onUncaught);
+    try {
+      const handle = SpeechHandle.create();
+      handle._markDone();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      let called = false;
+      handle.addDoneCallback(() => {
+        called = true;
+        throw new Error('late done callback failed');
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(called).toBe(true);
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+      for (const listener of previousListeners) {
+        process.on('uncaughtException', listener);
+      }
+    }
+  });
 });
