@@ -11,6 +11,9 @@ import { version } from '../version.js';
 
 export type AnyString = string & NonNullable<unknown>;
 
+/** Scheduling class for an inference request. */
+export type InferenceClass = 'priority' | 'standard' | 'low';
+
 /** Default production inference URL */
 export const DEFAULT_INFERENCE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
@@ -43,6 +46,25 @@ export function getDefaultInferenceUrl(): string {
   return DEFAULT_INFERENCE_URL;
 }
 
+export function resolveCredentials(
+  apiKey?: string,
+  apiSecret?: string,
+): { apiKey: string; apiSecret: string } {
+  const resolvedApiKey =
+    apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
+  if (!resolvedApiKey) {
+    throw new Error('apiKey is required: pass apiKey or set LIVEKIT_API_KEY');
+  }
+
+  const resolvedApiSecret =
+    apiSecret || process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET;
+  if (!resolvedApiSecret) {
+    throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
+  }
+
+  return { apiKey: resolvedApiKey, apiSecret: resolvedApiSecret };
+}
+
 export async function createAccessToken(
   apiKey: string,
   apiSecret: string,
@@ -60,10 +82,13 @@ export async function createAccessToken(
  * Includes X-LiveKit-Worker-Token when LIVEKIT_WORKER_TOKEN is set (hosted agents).
  * The job context's {@link JobContext.inferenceHeaders} are merged last and win.
  */
-export function buildMetadataHeaders(): Record<string, string> {
+export function buildMetadataHeaders(inferenceClass?: InferenceClass): Record<string, string> {
   const headers: Record<string, string> = {
     'User-Agent': `livekit-agents-js/${version} (node ${process.version})`,
   };
+  if (inferenceClass) {
+    headers[INFERENCE_PRIORITY_HEADER] = inferenceClass;
+  }
 
   const ctx = getJobContext(false);
   if (ctx) {
@@ -97,9 +122,12 @@ export async function connectWs(
   url: string,
   headers: Record<string, string>,
   timeoutMs: number,
+  inferenceClass?: InferenceClass,
 ): Promise<WebSocket> {
   return new ThrowsPromise<WebSocket, APIConnectionError | APIStatusError>((resolve, reject) => {
-    const socket = new WebSocket(url, { headers: { ...buildMetadataHeaders(), ...headers } });
+    const socket = new WebSocket(url, {
+      headers: { ...buildMetadataHeaders(inferenceClass), ...headers },
+    });
 
     let opened = false;
 
