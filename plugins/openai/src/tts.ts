@@ -55,9 +55,15 @@ export class TTS extends tts.TTS {
    * `OPENAI_API_KEY` environment variable.
    */
   constructor(opts: Partial<TTSOptions> = defaultTTSOptions) {
-    super(opts.sampleRate ?? OPENAI_TTS_SAMPLE_RATE, OPENAI_TTS_CHANNELS, { streaming: false });
+    const sampleRate = opts.sampleRate ?? OPENAI_TTS_SAMPLE_RATE;
+    if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
+      throw new Error(
+        `OpenAI TTS sampleRate must be a positive integer, got ${String(opts.sampleRate)}`,
+      );
+    }
+    super(sampleRate, OPENAI_TTS_CHANNELS, { streaming: false });
 
-    this.#opts = { ...defaultTTSOptions, ...opts };
+    this.#opts = { ...defaultTTSOptions, ...opts, sampleRate };
     if (this.#opts.apiKey === undefined && !this.#opts.client) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -136,7 +142,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       const buffer = await this.stream.then((r) => r.arrayBuffer());
       const requestId = shortuuid();
       const audioByteStream = new AudioByteStream(this.sampleRate, OPENAI_TTS_CHANNELS);
-      const frames = audioByteStream.write(buffer);
+      const frames = [...audioByteStream.write(buffer), ...audioByteStream.flush()];
 
       let lastFrame: AudioFrame | undefined;
       const sendLastFrame = (segmentId: string, final: boolean) => {
