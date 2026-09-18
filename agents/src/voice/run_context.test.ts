@@ -4,6 +4,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { FunctionCall, type FunctionCallOutput } from '../llm/chat_context.js';
+import { log } from '../log.js';
 import { Future } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes } from './events.js';
@@ -326,6 +327,32 @@ describe('RunContext filler', () => {
         return 'lookup result';
       }),
     ).resolves.toBe('lookup result');
+  });
+
+  it('reports a session.say error that stops the filler', async () => {
+    const failure = new Error('no TTS model and the RealtimeSession does not support say()');
+    const session = new FakeFillerSession({ sayError: failure });
+    const functionCall = FunctionCall.create({
+      callId: 'call_123',
+      name: 'slow_lookup',
+      args: '{"query":"flights"}',
+    });
+    const ctx = new RunContext(
+      session as unknown as AgentSession<unknown>,
+      SpeechHandle.create(),
+      functionCall,
+    );
+    const error = vi.spyOn(log(), 'error').mockImplementation(() => undefined);
+
+    await ctx.filler('Still searching.', { delay: 0 }, async () => {
+      await sleep(10);
+    });
+
+    expect(error).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledWith(
+      { error: failure },
+      'filler stopped on an error, no further filler will play for this tool call',
+    );
   });
 
   it('requires a callback scope', async () => {
