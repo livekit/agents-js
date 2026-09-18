@@ -6591,6 +6591,7 @@ export class RemoteChatContext {
     // (undocumented)
     get(itemId: string): RemoteChatItem | null;
     insert(previousItemId: string | undefined, message: ChatItem): void;
+    get tailId(): string | undefined;
     // (undocumented)
     toChatCtx(): ChatContext;
 }
