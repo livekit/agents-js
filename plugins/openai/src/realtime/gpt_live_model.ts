@@ -51,7 +51,7 @@ const FATAL_ERROR_CODES = new Set([
  * @public
  */
 export interface ResponsesDelegationOptions {
-  /** Defaults to gpt-5.6-luna. */
+  /** Defaults to gpt-5.6-luna. On Azure, this is the required Responses deployment name. */
   model?: string;
   /** Backend instructions, separate from the voice persona. */
   instructions?: string;
@@ -86,7 +86,7 @@ export type GPTLiveVoices = 'aster' | 'beacon' | 'cinder' | 'marin' | 'stone' | 
  * @public
  */
 export interface GPTLiveModelOptions {
-  /** Voice model identifier. Defaults to gpt-live-1. */
+  /** Voice model identifier. Defaults to gpt-live-1. Ignored when azureDeployment is set. */
   model?: string;
   /**
    * A named voice (marin by default), or an authorized custom voice object. Fixed at startup.
@@ -97,26 +97,35 @@ export interface GPTLiveModelOptions {
   delegation?: DelegationTarget;
   /** Backend configuration when delegation is responses (the default). */
   responsesOptions?: ResponsesDelegationOptions;
-  /** Falls back to OPENAI_API_KEY. */
+  /** Falls back to OPENAI_API_KEY, or AZURE_OPENAI_API_KEY on Azure. */
   apiKey?: string;
-  /** Falls back to OPENAI_BASE_URL, then https://api.openai.com/v1. */
+  /** Falls back to OPENAI_BASE_URL, or AZURE_OPENAI_ENDPOINT on Azure. */
   baseURL?: string;
   /** Recycle the connection after this many milliseconds. Null (the default) disables the timer. */
   maxSessionDuration?: number | null;
   /** Connection/startup timeout and retry limits. Defaults to DEFAULT_API_CONNECT_OPTIONS. */
   connOptions?: APIConnectOptions;
+  /** Azure OpenAI deployment of the voice model. Prefer GPTLiveModel.withAzure. */
+  azureDeployment?: string;
+  /** Microsoft Entra ID token for Azure, instead of apiKey. Prefer GPTLiveModel.withAzure. */
+  entraToken?: string;
 }
-
-type LiveOptions = Required<GPTLiveModelOptions>;
 
 /** OpenAI GPT-Live full-duplex voice model, ready to pass to AgentSession.
  * @public
  */
 export class GPTLiveModel extends llm.DuplexModel {
   /** @internal */
-  readonly _opts: Required<GPTLiveModelOptions>;
+  readonly _opts: Omit<
+    Required<GPTLiveModelOptions>,
+    'apiKey' | 'azureDeployment' | 'entraToken'
+  > & {
+    apiKey?: string;
+    entraToken?: string;
+    isAzure: boolean;
+  };
 
-  /** Configure a voice model. Throws when no OpenAI API key is available. */
+  /** Configure a voice model. Throws when the selected provider configuration is incomplete. */
   constructor(options: GPTLiveModelOptions = {}) {
     super({
       userTranscription: true,
@@ -125,20 +134,121 @@ export class GPTLiveModel extends llm.DuplexModel {
       midSessionInstructionsUpdate: false,
       midSessionToolsUpdate: (options.delegation ?? 'responses') === 'responses',
     });
-    const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OpenAI API key is required: pass apiKey or set OPENAI_API_KEY');
+    const delegation = options.delegation ?? 'responses';
+    const responsesOptions = { ...options.responsesOptions };
+    const isAzure = options.azureDeployment !== undefined || options.entraToken !== undefined;
+    let apiKey: string | undefined;
+    let baseURL: string;
+    let model = options.model ?? DEFAULT_MODEL;
+    if (!isAzure) {
+      apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        throw new Error('OpenAI API key is required: pass apiKey or set OPENAI_API_KEY');
+      }
+      baseURL = options.baseURL ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
+    } else {
+      if (!options.azureDeployment) {
+        throw new Error("Azure needs azureDeployment, the voice model's deployment name");
+      }
+      model = options.azureDeployment;
+      if (options.apiKey && options.entraToken) {
+        throw new Error('apiKey and entraToken are mutually exclusive');
+      }
+      if (!options.entraToken) {
+        apiKey = options.apiKey ?? process.env.AZURE_OPENAI_API_KEY;
+        if (!apiKey) {
+          throw new Error(
+            'Missing Azure credentials. Pass apiKey or entraToken, or set the AZURE_OPENAI_API_KEY environment variable',
+          );
+        }
+      }
+      const endpoint = options.baseURL ?? process.env.AZURE_OPENAI_ENDPOINT;
+      if (!endpoint) {
+        throw new Error(
+          'Missing Azure endpoint. Pass azureEndpoint or baseURL, or set the AZURE_OPENAI_ENDPOINT environment variable',
+        );
+      }
+      baseURL = endpoint;
+      if (delegation === 'responses' && !responsesOptions.model) {
+        throw new Error(
+          "Azure responses delegation needs responsesOptions.model, the name of a Responses deployment in the same resource; or use delegation='client'",
+        );
+      }
     }
     this._opts = {
-      model: options.model ?? DEFAULT_MODEL,
+      model,
       voice: options.voice ?? 'marin',
-      delegation: options.delegation ?? 'responses',
-      responsesOptions: { ...options.responsesOptions },
+      delegation,
+      responsesOptions,
       apiKey,
-      baseURL: options.baseURL ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
+      baseURL,
       maxSessionDuration: options.maxSessionDuration ?? null,
       connOptions: { ...(options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS) },
+      entraToken: options.entraToken,
+      isAzure,
     };
+  }
+
+  /**
+   * Create a GPT-Live model served by Azure OpenAI.
+   *
+   * @returns A model that connects to the Azure resource.
+   * @throws Error if the deployment, credentials, endpoint, or Responses deployment is missing,
+   * or mutually exclusive options are provided together.
+   *
+   * @example
+   * ```ts
+   * const model = GPTLiveModel.withAzure({
+   *   azureDeployment: 'gpt-live-1',
+   *   azureEndpoint: 'https://resource.openai.azure.com',
+   *   apiKey: '<api-key>',
+   *   responsesOptions: { model: '<responses-deployment>' },
+   * });
+   * ```
+   */
+  static withAzure({
+    azureDeployment,
+    azureEndpoint,
+    apiKey,
+    entraToken,
+    baseURL,
+    voice,
+    delegation,
+    responsesOptions,
+    maxSessionDuration,
+    connOptions,
+  }: {
+    /** Deployment name of the GPT-Live voice model. */
+    azureDeployment: string;
+    /** Azure resource endpoint. Falls back to AZURE_OPENAI_ENDPOINT. */
+    azureEndpoint?: string;
+    /** Azure API key. Falls back to AZURE_OPENAI_API_KEY unless entraToken is given. */
+    apiKey?: string;
+    /** Microsoft Entra ID token, instead of apiKey. */
+    entraToken?: string;
+    /** Explicit base URL, such as a gateway. Mutually exclusive with azureEndpoint. */
+    baseURL?: string;
+    voice?: GPTLiveModelOptions['voice'];
+    delegation?: DelegationTarget;
+    /** Responses deployment configuration. model is required for responses delegation. */
+    responsesOptions?: ResponsesDelegationOptions;
+    maxSessionDuration?: number | null;
+    connOptions?: APIConnectOptions;
+  }): GPTLiveModel {
+    if (baseURL !== undefined && azureEndpoint !== undefined) {
+      throw new Error('baseURL and azureEndpoint are mutually exclusive');
+    }
+    return new GPTLiveModel({
+      voice,
+      delegation,
+      responsesOptions,
+      apiKey,
+      baseURL: baseURL ?? azureEndpoint,
+      maxSessionDuration,
+      connOptions,
+      azureDeployment,
+      entraToken,
+    });
   }
 
   /** Voice model identifier used for sessions and metrics. */
@@ -163,6 +273,7 @@ export class GPTLiveModel extends llm.DuplexModel {
   async close(): Promise<void> {}
 }
 
+type LiveOptions = GPTLiveModel['_opts'];
 type Role = 'user' | 'assistant';
 interface Speech {
   messageId: string;
@@ -432,20 +543,18 @@ export class GPTLiveSession extends llm.DuplexSession<{
   }
 
   private async runConnection(onOpen: () => void, onStarted: () => void): Promise<void> {
-    const url = new URL(this.opts.baseURL);
-    url.protocol =
-      url.protocol === 'https:' ? 'wss:' : url.protocol === 'http:' ? 'ws:' : url.protocol;
-    url.pathname = url.pathname.replace(/\/$/, '');
-    if (!url.pathname.endsWith('/live/sessions')) url.pathname += '/live/sessions';
-    url.search = '';
-    url.hash = '';
+    const url = liveSessionsURL(this.opts.baseURL, this.opts.isAzure);
     const done = new Future<Error | undefined>();
     this.connectionDone = done;
     const startTime = performance.now();
     const ws = new WebSocket(url, {
       headers: {
         'User-Agent': 'LiveKit Agents',
-        Authorization: `Bearer ${this.opts.apiKey}`,
+        ...(!this.opts.isAzure
+          ? { Authorization: `Bearer ${this.opts.apiKey}` }
+          : this.opts.entraToken
+            ? { Authorization: `Bearer ${this.opts.entraToken}` }
+            : { 'api-key': this.opts.apiKey! }),
       },
       handshakeTimeout: this.opts.connOptions.timeoutMs,
     });
@@ -1014,6 +1123,22 @@ export class GPTLiveSession extends llm.DuplexSession<{
       this.sendDelegationUpdate({ tool_choice: toToolChoice(options.toolChoice) });
     }
   }
+}
+
+/** @internal */
+export function liveSessionsURL(baseURL: string, isAzure: boolean): URL {
+  const url = new URL(baseURL);
+  url.protocol =
+    url.protocol === 'https:' ? 'wss:' : url.protocol === 'http:' ? 'ws:' : url.protocol;
+  let path = url.pathname.replace(/\/+$/, '');
+  if (isAzure && (path === '' || path === '/openai')) {
+    path = '/openai/v1';
+  }
+  if (!path.endsWith('/live/sessions')) path += '/live/sessions';
+  url.pathname = path;
+  url.search = '';
+  url.hash = '';
+  return url;
 }
 
 function toToolChoice(choice: llm.ToolChoice | null): NonNullable<ResponsesConfig['tool_choice']> {
