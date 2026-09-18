@@ -373,6 +373,12 @@ export class BaseStreamingTurnDetectorStream {
     this._audioInputNumChannels = undefined;
   }
 
+  /** Stop accepting audio and discard anything buffered for a transport that
+   * can no longer consume it. */
+  protected _discardAudioInput(): void {
+    void this._audioChannel.abort(new Error('turn detection disabled')).catch(() => {});
+  }
+
   // endregion
 
   // region: results
