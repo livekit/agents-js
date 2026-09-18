@@ -92,12 +92,10 @@ export type TelnyxChatModels =
 export type CerebrasChatModels = 'gpt-oss-120b' | 'zai-glm-4.7' | 'gemma-4-31b';
 
 export type PerplexityChatModels =
-  | 'llama-3.1-sonar-small-128k-online'
-  | 'llama-3.1-sonar-small-128k-chat'
-  | 'llama-3.1-sonar-large-128k-online'
-  | 'llama-3.1-sonar-large-128k-chat'
-  | 'llama-3.1-8b-instruct'
-  | 'llama-3.1-70b-instruct';
+  | 'sonar'
+  | 'sonar-pro'
+  | 'sonar-reasoning-pro'
+  | 'sonar-deep-research';
 
 export type GroqChatModels =
   | 'llama-3.1-8b-instant'
