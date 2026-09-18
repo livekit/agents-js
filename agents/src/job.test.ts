@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { RoomEvent } from '@livekit/rtc-node';
-import type { Room } from '@livekit/rtc-node';
+import type { RemoteParticipant, Room } from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { JobContext, type JobProcess, type RunningJobInfo } from './job.js';
@@ -468,5 +468,27 @@ describe('JobContext observability URL', () => {
     const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
     await ctx.initRecording(tracesOn);
     expect(setupCloudTracerMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobContext participant entrypoints', () => {
+  it('does not leave an unhandled rejection when a participant entrypoint fails', async () => {
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const ctx = createJobContext();
+      const entrypoint = vi.fn(async () => {
+        throw new Error('participant entrypoint failed');
+      });
+      ctx.addParticipantEntrypoint(entrypoint);
+
+      ctx.onParticipantConnected({ identity: 'participant' } as unknown as RemoteParticipant);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(entrypoint).toHaveBeenCalledOnce();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
   });
 });

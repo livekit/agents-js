@@ -1144,3 +1144,32 @@ world
     });
   });
 });
+
+describe('Task done callbacks', () => {
+  it('contains a throwing done callback added after the task is done', async () => {
+    const uncaught: unknown[] = [];
+    const onUncaught = (error: unknown) => uncaught.push(error);
+    const previousListeners = process.listeners('uncaughtException');
+    process.removeAllListeners('uncaughtException');
+    process.on('uncaughtException', onUncaught);
+    try {
+      const task = Task.from(async () => 'done');
+      await task.result;
+
+      let called = false;
+      task.addDoneCallback(() => {
+        called = true;
+        throw new Error('late done callback failed');
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(called).toBe(true);
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+      for (const listener of previousListeners) {
+        process.on('uncaughtException', listener);
+      }
+    }
+  });
+});

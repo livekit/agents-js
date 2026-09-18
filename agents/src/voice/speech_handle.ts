@@ -165,9 +165,9 @@ export class SpeechHandle {
     readonly parent?: SpeechHandle,
   ) {
     this.interruptionHoldsRestore = _allowInterruptions;
-    this.doneFut.await.finally(() => {
+    void this.doneFut.await.finally(() => {
       for (const callback of this.doneCallbacks) {
-        callback(this);
+        this.runDoneCallback(callback);
       }
     });
   }
@@ -379,10 +379,18 @@ export class SpeechHandle {
 
   addDoneCallback(callback: (sh: SpeechHandle) => void) {
     if (this.done()) {
-      queueMicrotask(() => callback(this));
+      queueMicrotask(() => this.runDoneCallback(callback));
       return;
     }
     this.doneCallbacks.add(callback);
+  }
+
+  private runDoneCallback(callback: (sh: SpeechHandle) => void) {
+    try {
+      callback(this);
+    } catch (error) {
+      this.logger.warn({ error }, 'error in speech handle done callback');
+    }
   }
 
   removeDoneCallback(callback: (sh: SpeechHandle) => void) {
