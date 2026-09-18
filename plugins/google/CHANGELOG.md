@@ -1,5 +1,22 @@
 # @livekit/agents-plugin-google
 
+## 1.9.1
+
+### Patch Changes
+
+- Send a bare `turnComplete` instead of an empty `turns` array when requesting a reply on Gemini Live models that take no placeholder user turn; the SDK rejected the empty array and the send task died, so `generateReply()` never produced a reply on `gemini-3.8-live`. - [#2506](https://github.com/livekit/agents-js/pull/2506) ([@anzemur](https://github.com/anzemur))
+
+- Stamp `type: 'realtime_model_error'` on the Gemini Live error event so `AgentSession` forwards it as `AgentSessionEventTypes.Error` instead of dropping it; the OpenAI realtime plugins already do. - [#2509](https://github.com/livekit/agents-js/pull/2509) ([@anzemur](https://github.com/anzemur))
+
+- Report reasoning tokens in usage metrics. `CompletionUsage`, `LLMMetrics` and `RealtimeModelMetrics` gain a `reasoningTokens` field, aggregated into `LLMModelUsage.outputReasoningTokens` and emitted as the `gen_ai.usage.reasoning*` span attributes — matching how the Python framework exposes them. - [#2517](https://github.com/livekit/agents-js/pull/2517) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+  The Gemini Live plugin now maps `usageMetadata.thoughtsTokenCount` onto that field. Gemini counts thinking tokens inside `responseTokenCount`, so `reasoningTokens` is reported alongside `outputTokens` rather than added to it, and is left `undefined` when the provider omits it — a reported zero stays distinguishable from a missing count without deriving it from `totalTokens - inputTokens - outputTokens`.
+
+- Preserve free-form object fields in Gemini text API function tool schemas. - [#2516](https://github.com/livekit/agents-js/pull/2516) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`21aa476`](https://github.com/livekit/agents-js/commit/21aa4763f2b89506fb1e56f6879b23e41a5bcfa6), [`5287be1`](https://github.com/livekit/agents-js/commit/5287be114b12fb16f0a3eb6ccca4173e6e3eb219), [`b7ad990`](https://github.com/livekit/agents-js/commit/b7ad990c5faa424b31697bd2e868232f81f2bdf5), [`b7ad990`](https://github.com/livekit/agents-js/commit/b7ad990c5faa424b31697bd2e868232f81f2bdf5), [`e1b64e4`](https://github.com/livekit/agents-js/commit/e1b64e4c835a56046b6b9d3d94e0d14ccc99708b)]:
+  - @livekit/agents@1.9.1
+
 ## 1.9.0
 
 ### Patch Changes
