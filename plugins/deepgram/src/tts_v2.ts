@@ -13,13 +13,13 @@ import {
   asError,
   log,
   shortuuid,
-  stream,
   tokenize,
   tts,
   waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { request } from 'node:https';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import * as queryString from 'node:querystring';
 import { type RawData, WebSocket } from 'ws';
 import type { FluxTTSModels } from './models.js';
@@ -285,15 +285,34 @@ export class ChunkedStreamv2 extends tts.ChunkedStream {
       mip_opt_out: String(this.#opts.mipOptOut),
     };
 
-    const url = new URL(this.#opts.baseUrl);
+    // Flux runs on https in production, but baseUrl is configurable: tests and
+    // self-hosted proxies use plain http, and the streaming path already accepts a
+    // ws:// URL. Pick the transport from the scheme rather than always dialling TLS,
+    // which turned any non-https baseUrl into a handshake failure.
+    const url = new URL(this.#opts.baseUrl.replace(/^ws/, 'http'));
+    const secure = url.protocol === 'https:';
+    const request = secure ? httpsRequest : httpRequest;
     url.search = queryString.stringify(params);
 
     const doneFut = new Future<void>();
 
+    // Node reports a severed response body as Error('aborted') with code ECONNRESET —
+    // the same message a caller-side abort produces, so only the signal tells them
+    // apart. Retry solely when nothing has been emitted yet: the base ChunkedStream
+    // forwards a failed attempt's frames to the consumer, so retrying after partial
+    // audio would splice a second synthesis onto the first.
+    let emitted = 0;
+    let bodyComplete = false;
+    const truncatedError = () =>
+      new APIConnectionError({
+        message: 'Deepgram Flux TTS response ended before the full body arrived',
+        options: { retryable: emitted === 0 },
+      });
+
     const req = request(
       {
         hostname: url.hostname,
-        port: parseInt(url.port) || 443,
+        port: parseInt(url.port) || (secure ? 443 : 80),
         path: url.pathname + url.search,
         method: 'POST',
         headers: {
@@ -316,28 +335,37 @@ export class ChunkedStreamv2 extends tts.ChunkedStream {
           return;
         }
 
+        const emit = (frame: AudioFrame) => {
+          if (this.queue.closed) return;
+          this.queue.put({ requestId, frame, final: false, segmentId: requestId });
+          emitted += 1;
+        };
+
         res.on('data', (chunk: Buffer) => {
-          for (const frame of bstream.write(chunk)) {
-            if (!this.queue.closed) {
-              this.queue.put({ requestId, frame, final: false, segmentId: requestId });
-            }
-          }
+          for (const frame of bstream.write(chunk)) emit(frame);
+        });
+
+        // 'end' is the only event that means the declared body arrived in full. 'close'
+        // fires either way, so completing there reported a severed connection as a
+        // successful, silently truncated synthesis.
+        res.on('end', () => {
+          bodyComplete = true;
+          for (const frame of bstream.flush()) emit(frame);
+          if (!this.queue.closed) this.queue.close();
+          if (!doneFut.done) doneFut.resolve();
         });
 
         res.on('error', (err) => {
-          if (err.message === 'aborted') return;
+          if (this.abortSignal.aborted) return; // the caller cancelled; not a failure
           this.#logger.error({ err }, 'Deepgram Flux TTS response error');
-          if (!doneFut.done) doneFut.reject(err);
+          if (!doneFut.done) {
+            doneFut.reject(err.message === 'aborted' ? truncatedError() : err);
+          }
         });
 
         res.on('close', () => {
-          for (const frame of bstream.flush()) {
-            if (!this.queue.closed) {
-              this.queue.put({ requestId, frame, final: false, segmentId: requestId });
-            }
-          }
-          if (!this.queue.closed) this.queue.close();
-          if (!doneFut.done) doneFut.resolve();
+          if (bodyComplete || this.abortSignal.aborted) return;
+          if (!doneFut.done) doneFut.reject(truncatedError());
         });
       },
     );
@@ -352,7 +380,12 @@ export class ChunkedStreamv2 extends tts.ChunkedStream {
       if (!doneFut.done) doneFut.reject(err);
     });
     req.on('close', () => {
-      if (!doneFut.done) doneFut.resolve();
+      if (doneFut.done) return;
+      // Reaching here without the body having completed means the request went away
+      // before the response finished. Resolving unconditionally, as this used to,
+      // turned that into a silent success.
+      if (bodyComplete || this.abortSignal.aborted) doneFut.resolve();
+      else doneFut.reject(truncatedError());
     });
 
     // 'error' fires before 'close', so the reject below wins over the close handler's
@@ -382,12 +415,79 @@ export class ChunkedStreamv2 extends tts.ChunkedStream {
   }
 }
 
+/**
+ * One flushed segment's words, buffered so a retry can replay them.
+ *
+ * `SynthesizeStream.input` is a single queue created once and never reset between
+ * retry attempts, so text read by attempt N is gone by attempt N+1. Holding the words
+ * here — rather than in a per-attempt `WordStream` — is what lets a failed segment be
+ * sent again instead of silently vanishing. Reads start from the beginning every time.
+ */
+class ReplaySegment {
+  #words: string[] = [];
+  #ended = false;
+  #waiters: (() => void)[] = [];
+
+  push(word: string): void {
+    this.#words.push(word);
+    this.#wake();
+  }
+
+  end(): void {
+    this.#ended = true;
+    this.#wake();
+  }
+
+  #wake(): void {
+    const waiters = this.#waiters;
+    this.#waiters = [];
+    for (const wake of waiters) wake();
+  }
+
+  /** Yields every word from the start, waiting for more until the segment is ended. */
+  async *read(signal: AbortSignal): AsyncGenerator<string> {
+    // Registered once rather than per wait: a long segment waits many times, and adding a
+    // listener each round would pile them up on a signal that may never fire.
+    let wakeOnAbort: () => void = () => {};
+    const onAbort = () => wakeOnAbort();
+    signal.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      let i = 0;
+      while (!signal.aborted) {
+        while (i < this.#words.length) {
+          yield this.#words[i]!;
+          i += 1;
+        }
+        if (this.#ended) return;
+        await new Promise<void>((resolve) => {
+          wakeOnAbort = resolve;
+          this.#waiters.push(resolve);
+        });
+      }
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+}
+
 /** Streaming synthesis against the `/v2/speak` WebSocket. */
 export class SynthesizeStreamv2 extends tts.SynthesizeStream {
   label = 'deepgram.SynthesizeStreamv2';
   #opts: TTSv2Options;
   #pool: ConnectionPool<WebSocket>;
   #logger = log();
+
+  // Segments read off `input` but not yet synthesized. Owned by the stream, not by an
+  // attempt, so a retry resumes from the segment that failed. Shifted on success, which
+  // keeps this bounded by what is genuinely outstanding.
+  #pending: ReplaySegment[] = [];
+  #inputDone = false;
+  #inputTask?: Promise<void>;
+  #inputError?: unknown;
+  #segmentWaiters: (() => void)[] = [];
+  // Frames handed to the consumer for the segment currently being synthesized.
+  #segmentEmitted = 0;
 
   constructor(tts: TTSv2, opts: TTSv2Options, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
@@ -397,62 +497,137 @@ export class SynthesizeStreamv2 extends tts.SynthesizeStream {
     this.#opts = opts;
   }
 
+  #wakeSegments(): void {
+    const waiters = this.#segmentWaiters;
+    this.#segmentWaiters = [];
+    for (const wake of waiters) wake();
+  }
+
+  /**
+   * Drains `input` into {@link ReplaySegment}s. Started once for the life of the stream:
+   * running it per attempt left the previous attempt's loop parked on the same queue,
+   * so two consumers raced for the caller's text.
+   */
+  #startInputTask(): void {
+    if (this.#inputTask) return;
+
+    this.#inputTask = (async () => {
+      let segment: ReplaySegment | undefined;
+      let tokenizer: tokenize.WordStream | undefined;
+      let forward: Promise<void> | undefined;
+
+      // Drain the tokenizer's tail into the segment, then mark it complete. Awaited so
+      // no word is stranded in the tokenizer when the segment is handed to the sender.
+      const closeSegment = async () => {
+        if (!tokenizer || !segment || !forward) return;
+        tokenizer.endInput();
+        await forward;
+        segment.end();
+        tokenizer = undefined;
+        segment = undefined;
+        forward = undefined;
+      };
+
+      try {
+        for await (const data of this.input) {
+          if (data === SynthesizeStreamv2.FLUSH_SENTINEL) {
+            await closeSegment();
+            continue;
+          }
+          if (!tokenizer) {
+            tokenizer = this.#opts.wordTokenizer.stream();
+            segment = new ReplaySegment();
+            this.#pending.push(segment);
+            this.#wakeSegments();
+
+            const words = tokenizer;
+            const target = segment;
+            forward = (async () => {
+              for await (const word of words) target.push(word.token);
+            })();
+          }
+          tokenizer.pushText(data);
+        }
+        await closeSegment();
+      } catch (e) {
+        this.#inputError = e;
+      } finally {
+        await closeSegment().catch(() => {});
+        // End anything still open, or a reader would wait on it forever.
+        for (const seg of this.#pending) seg.end();
+        this.#inputDone = true;
+        this.#wakeSegments();
+      }
+    })();
+  }
+
   protected async run() {
     // Only linear16 is playable end-to-end through the LiveKit pipeline. Fail fast with a
     // clear message instead of at connect time.
     validateEncoding(this.#opts.encoding);
 
     const requestId = shortuuid();
-    const segments = stream.createStreamChannel<tokenize.WordStream>();
 
-    // Converts incoming text into WordStreams, one per flushed segment.
-    const tokenizeInput = async () => {
-      let wordStream: tokenize.WordStream | undefined;
-      try {
-        for await (const data of this.input) {
-          if (data === SynthesizeStreamv2.FLUSH_SENTINEL) {
-            if (wordStream) wordStream.endInput();
-            wordStream = undefined;
-            continue;
-          }
-          if (!wordStream) {
-            wordStream = this.#opts.wordTokenizer.stream();
-            await segments.write(wordStream);
-          }
-          wordStream.pushText(data);
-        }
-        if (wordStream) wordStream.endInput();
-      } finally {
-        await segments.close();
-      }
-    };
+    // Runs for the life of the stream, not the attempt, so retries never contend with a
+    // leftover reader for `input`.
+    this.#startInputTask();
 
-    const runSegments = async () => {
-      const reader = segments.stream().getReader();
-      try {
-        while (!this.closed && !this.abortController.signal.aborted) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          await this.#runWs(value, requestId);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    };
+    // Registered once for the attempt: the loop below can wait many times, and a listener
+    // per wait would pile up on a signal that usually never fires.
+    const signal = this.abortController.signal;
+    let wakeOnAbort: () => void = () => {};
+    const onAbort = () => wakeOnAbort();
+    signal.addEventListener('abort', onAbort, { once: true });
 
     try {
-      await Promise.all([tokenizeInput(), runSegments()]);
+      while (!this.closed && !signal.aborted) {
+        const segment = this.#pending[0];
+        if (!segment) {
+          if (this.#inputDone) break;
+          await new Promise<void>((resolve) => {
+            wakeOnAbort = resolve;
+            this.#segmentWaiters.push(resolve);
+          });
+          continue;
+        }
+
+        try {
+          await this.#runWs(segment, requestId);
+        } catch (e) {
+          // Mirrors the Python base class, which refuses to retry once
+          // `output_emitter.pushed_duration() > 0`: replaying a segment whose opening
+          // words already played would say them to the listener twice. A segment that
+          // failed before emitting anything is still safe to replay, and completed
+          // segments have been shifted off, so this is narrower than Python's
+          // whole-stream check without being less safe.
+          if (this.#segmentEmitted > 0 && e instanceof APIError && e.retryable) {
+            throw new APIConnectionError({
+              message: `${asError(e).message} (not retried: part of this segment had already played)`,
+              options: { retryable: false },
+            });
+          }
+          throw e;
+        }
+        // Only drop it once it is actually synthesized; a throw above leaves it in place
+        // for the next attempt to replay.
+        this.#pending.shift();
+      }
+
+      if (this.#inputError) throw this.#inputError;
     } catch (e) {
-      if (this.abortController.signal.aborted) return;
+      if (signal.aborted) return;
       if (e instanceof APIError) throw e;
       throw new APIConnectionError({
         message: `Deepgram Flux TTS WebSocket failed: ${asError(e).message || 'unknown error'}`,
       });
+    } finally {
+      signal.removeEventListener('abort', onAbort);
     }
   }
 
-  async #runWs(wordStream: tokenize.WordStream, requestId: string): Promise<void> {
+  async #runWs(segment: ReplaySegment, requestId: string): Promise<void> {
     const segmentId = shortuuid();
+    this.#segmentEmitted = 0;
 
     // The receive side must not start its idle timer before any text has been sent: the
     // server says nothing until it has something to synthesize.
@@ -463,10 +638,12 @@ export class SynthesizeStreamv2 extends tts.SynthesizeStream {
 
     const sendTask = async (ws: WebSocket) => {
       try {
-        for await (const word of wordStream) {
+        // Reads from the start of the segment every time, so a retry re-sends the whole
+        // thing rather than whatever was left over.
+        for await (const word of segment.read(this.abortController.signal)) {
           if (this.abortController.signal.aborted) break;
           this.markStarted();
-          ws.send(JSON.stringify({ type: 'Speak', text: `${word.token} ` }));
+          ws.send(JSON.stringify({ type: 'Speak', text: `${word} ` }));
           markInputSent();
         }
 
@@ -491,6 +668,7 @@ export class SynthesizeStreamv2 extends tts.SynthesizeStream {
         if (lastFrame && !this.queue.closed) {
           this.queue.put({ requestId, segmentId, frame: lastFrame, final });
           lastFrame = undefined;
+          this.#segmentEmitted += 1;
         }
       };
 
