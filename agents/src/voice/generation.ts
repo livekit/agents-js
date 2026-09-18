@@ -170,47 +170,6 @@ export interface _TTSGenerationData {
   ttfb?: number;
 }
 
-// TODO(brian): remove this class in favor of ToolOutput
-export class _ToolOutput {
-  output: _JsOutput[];
-  firstToolFut: Future;
-
-  constructor() {
-    this.output = [];
-    this.firstToolFut = new Future();
-  }
-}
-
-// TODO(brian): remove this class in favor of ToolExecutionOutput
-export class _SanitizedOutput {
-  toolCall: FunctionCall;
-  toolCallOutput?: FunctionCallOutput;
-  replyRequired: boolean;
-  agentTask?: Agent;
-
-  constructor(
-    toolCall: FunctionCall,
-    toolCallOutput: FunctionCallOutput | undefined,
-    replyRequired: boolean,
-    agentTask: Agent | undefined,
-  ) {
-    this.toolCall = toolCall;
-    this.toolCallOutput = toolCallOutput;
-    this.replyRequired = replyRequired;
-    this.agentTask = agentTask;
-  }
-
-  static create(params: {
-    toolCall: FunctionCall;
-    toolCallOutput?: FunctionCallOutput;
-    replyRequired?: boolean;
-    agentTask?: Agent;
-  }) {
-    const { toolCall, toolCallOutput, replyRequired = true, agentTask } = params;
-    return new _SanitizedOutput(toolCall, toolCallOutput, replyRequired, agentTask);
-  }
-}
-
 function isValidToolOutput(toolOutput: unknown): boolean {
   const validTypes = ['string', 'number', 'boolean'];
 
@@ -283,91 +242,6 @@ export class ToolExecutionOutput {
 export interface ToolOutput {
   output: ToolExecutionOutput[];
   firstToolStartedFuture: Future<void>;
-}
-
-// TODO(brian): remove this class in favor of ToolExecutionOutput
-export class _JsOutput {
-  toolCall: FunctionCall;
-  output: unknown;
-  exception?: Error;
-
-  #logger = log();
-
-  constructor(toolCall: FunctionCall, output: unknown, exception: Error | undefined) {
-    this.toolCall = toolCall;
-    this.output = output;
-    this.exception = exception;
-  }
-
-  static create(params: { toolCall: FunctionCall; output?: unknown; exception?: Error }) {
-    const { toolCall, output = undefined, exception = undefined } = params;
-    return new _JsOutput(toolCall, output, exception);
-  }
-
-  sanitize(): _SanitizedOutput {
-    if (isToolError(this.exception)) {
-      return _SanitizedOutput.create({
-        toolCall: FunctionCall.create({ ...this.toolCall }),
-        toolCallOutput: FunctionCallOutput.create({
-          name: this.toolCall.name,
-          callId: this.toolCall.callId,
-          output: this.exception.message,
-          isError: true,
-        }),
-      });
-    }
-
-    if (isStopResponse(this.exception)) {
-      return _SanitizedOutput.create({
-        toolCall: FunctionCall.create({ ...this.toolCall }),
-      });
-    }
-
-    if (this.exception !== undefined) {
-      return _SanitizedOutput.create({
-        toolCall: FunctionCall.create({ ...this.toolCall }),
-        toolCallOutput: FunctionCallOutput.create({
-          name: this.toolCall.name,
-          callId: this.toolCall.callId,
-          output: 'An internal error occurred while executing the tool.', // Don't send the actual error message, as it may contain sensitive information
-          isError: true,
-        }),
-      });
-    }
-
-    let agentTask: Agent | undefined = undefined;
-    let toolOutput: unknown = this.output;
-    if (isAgentHandoff(this.output)) {
-      agentTask = this.output.agent;
-      toolOutput = this.output.returns;
-    }
-
-    if (!isValidToolOutput(toolOutput)) {
-      this.#logger.error(
-        {
-          callId: this.toolCall.callId,
-          function: this.toolCall.name,
-        },
-        `AI function ${this.toolCall.name} returned an invalid output`,
-      );
-      return _SanitizedOutput.create({
-        toolCall: FunctionCall.create({ ...this.toolCall }),
-        toolCallOutput: undefined,
-      });
-    }
-
-    return _SanitizedOutput.create({
-      toolCall: FunctionCall.create({ ...this.toolCall }),
-      toolCallOutput: FunctionCallOutput.create({
-        name: this.toolCall.name,
-        callId: this.toolCall.callId,
-        output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
-        isError: false,
-      }),
-      replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
-      agentTask,
-    });
-  }
 }
 
 export function createToolOutput(params: {
