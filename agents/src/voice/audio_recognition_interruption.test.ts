@@ -88,6 +88,40 @@ describe('AudioRecognition interruption buffering', () => {
     expect(internals.transcriptBuffer).toHaveLength(0);
   });
 
+  it('commits an accepted final when agent speech starts before its end sentinel', async () => {
+    const now = Date.now();
+    const recognition = new AudioRecognition({
+      recognitionHooks: createHooks(),
+      turnDetectionMode: 'stt',
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
+    });
+    const internals = recognition as unknown as {
+      isInterruptionEnabled: boolean;
+      sttPipeline: { inputStartedAt: number };
+      trySendInterruptionSentinel: () => Promise<boolean>;
+      onSTTEvent: (event: SpeechEvent) => Promise<void>;
+      transcriptBuffer: SpeechEvent[];
+      runEOUDetection: ReturnType<typeof vi.fn>;
+      userTurnCommitted: boolean;
+    };
+    internals.isInterruptionEnabled = true;
+    internals.sttPipeline = { inputStartedAt: now - 2_000 };
+    internals.trySendInterruptionSentinel = vi.fn(async () => true);
+    internals.runEOUDetection = vi.fn();
+
+    await internals.onSTTEvent(finalTranscript(0.5, 1));
+    await recognition.onStartOfAgentSpeech(now);
+    await internals.onSTTEvent({ type: SpeechEventType.END_OF_SPEECH });
+
+    expect(internals.transcriptBuffer).toHaveLength(1);
+
+    await recognition.onEndOfAgentSpeech(now + 1_000);
+
+    expect(internals.userTurnCommitted).toBe(true);
+    expect(internals.runEOUDetection).toHaveBeenCalledOnce();
+  });
+
   it('holds transcripts inside the bounded ignore window', () => {
     const recognition = createRecognitionInternals({
       ignoreUntil: 1_010_000,
