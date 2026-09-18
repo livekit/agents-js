@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+export type { RealtimeModels } from '@livekit/agents/llm/openai_realtime/api_proto';
+
 export type ChatModels =
   | 'gpt-5.6-luna'
   | 'gpt-5.6-sol'
