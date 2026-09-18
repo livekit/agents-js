@@ -1,5 +1,21 @@
 # @livekit/agents
 
+## 1.9.1
+
+### Patch Changes
+
+- Report reasoning tokens in usage metrics. `CompletionUsage`, `LLMMetrics` and `RealtimeModelMetrics` gain a `reasoningTokens` field, aggregated into `LLMModelUsage.outputReasoningTokens` and emitted as the `gen_ai.usage.reasoning*` span attributes — matching how the Python framework exposes them. - [#2517](https://github.com/livekit/agents-js/pull/2517) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+  The Gemini Live plugin now maps `usageMetadata.thoughtsTokenCount` onto that field. Gemini counts thinking tokens inside `responseTokenCount`, so `reasoningTokens` is reported alongside `outputTokens` rather than added to it, and is left `undefined` when the provider omits it — a reported zero stays distinguishable from a missing count without deriving it from `totalTokens - inputTokens - outputTokens`.
+
+- Session transports now throw when a message cannot be sent because the transport is closed or the room is disconnected, instead of returning silently. A RemoteSession request over a dead transport fails at once rather than waiting out its timeout, and the session host logs a failed event send with one warning. Matches the Python SessionTransport contract. - [#2482](https://github.com/livekit/agents-js/pull/2482) ([@u9g](https://github.com/u9g))
+
+- Reset the STT retry budget once a connection attempt outlived the connect timeout, so an idle socket recycled by the provider (Cartesia's `1001 Idle timeout` every ~3 minutes on a silent caller) no longer exhausts `maxRetry` and ends the session. - [#2494](https://github.com/livekit/agents-js/pull/2494) ([@u9g](https://github.com/u9g))
+
+- Recover the STT stream after an unrecoverable error instead of closing the session on the first one: `AgentSession` now applies `maxUnrecoverableErrors` to `stt_error` (reset by a user transcript) like it does for LLM and TTS, and the STT pipeline recreates its stream after a connection failure. Matches livekit/agents#6418. - [#2494](https://github.com/livekit/agents-js/pull/2494) ([@u9g](https://github.com/u9g))
+
+- Read the agent name from `[agent] name` in `livekit.toml` when neither the `agentName` option nor `LIVEKIT_AGENT_NAME` sets it, and warn when the name is set in code. - [#2504](https://github.com/livekit/agents-js/pull/2504) ([@u9g](https://github.com/u9g))
+
 ## 1.9.0
 
 ### Minor Changes
