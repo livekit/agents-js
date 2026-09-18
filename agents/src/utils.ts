@@ -564,11 +564,7 @@ export class Task<T> {
       )
       .finally(() => {
         for (const callback of this.doneCallbacks) {
-          try {
-            callback();
-          } catch (error) {
-            this.#logger.error({ error }, 'Task done callback failed');
-          }
+          this.runDoneCallback(callback);
         }
         this.doneCallbacks.clear();
       });
@@ -716,10 +712,18 @@ export class Task<T> {
 
   addDoneCallback(callback: () => void) {
     if (this.done) {
-      queueMicrotask(callback);
+      queueMicrotask(() => this.runDoneCallback(callback));
       return;
     }
     this.doneCallbacks.add(callback);
+  }
+
+  private runDoneCallback(callback: () => void) {
+    try {
+      callback();
+    } catch (error) {
+      this.#logger.error({ error }, 'Task done callback failed');
+    }
   }
 
   removeDoneCallback(callback: () => void) {
