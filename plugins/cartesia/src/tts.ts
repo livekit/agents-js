@@ -22,7 +22,8 @@ import {
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { request } from 'node:https';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { type RawData, WebSocket } from 'ws';
 import {
   TTSDefaultVoiceId,
@@ -316,10 +317,11 @@ export class ChunkedStream extends tts.ChunkedStream {
     const baseUrl = new URL(this.#opts.baseUrl);
     const doneFut = new Future<void>();
 
-    const req = request(
+    const isHttps = baseUrl.protocol === 'https:';
+    const req = (isHttps ? httpsRequest : httpRequest)(
       {
         hostname: baseUrl.hostname,
-        port: parseInt(baseUrl.port) || (baseUrl.protocol === 'https:' ? 443 : 80),
+        port: parseInt(baseUrl.port) || (isHttps ? 443 : 80),
         path: '/tts/bytes',
         method: 'POST',
         headers: {
@@ -955,7 +957,6 @@ const toCartesiaOptions = (
       sample_rate: opts.sampleRate,
     },
     language: getBaseLanguage(opts.language),
-    max_buffer_delay_ms: 0,
   };
 
   if (opts.pronunciationDictId) {
@@ -978,8 +979,12 @@ const toCartesiaOptions = (
     }
   }
 
-  if (streaming && opts.wordTimestamps !== false) {
-    result.add_timestamps = true;
+  if (streaming) {
+    // Websocket-only: /tts/bytes rejects requests that carry it.
+    result.max_buffer_delay_ms = 0;
+    if (opts.wordTimestamps !== false) {
+      result.add_timestamps = true;
+    }
   }
 
   return result;
