@@ -1253,7 +1253,7 @@ const ATTR_E2E_LATENCY = "lk.e2e_latency";
 
 // Warning: (ae-missing-release-tag) "ATTR_END_OF_TURN_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 const ATTR_END_OF_TURN_DELAY = "lk.end_of_turn_delay";
 
 // Warning: (ae-missing-release-tag) "ATTR_END_TIME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1263,7 +1263,7 @@ const ATTR_END_TIME = "lk.end_time";
 
 // Warning: (ae-missing-release-tag) "ATTR_EOU_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 const ATTR_EOU_DELAY = "lk.eou.endpointing_delay";
 
 // Warning: (ae-missing-release-tag) "ATTR_EOU_DETECTION_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1281,10 +1281,30 @@ const ATTR_EOU_FROM_CACHE = "lk.eou.from_cache";
 // @public (undocumented)
 const ATTR_EOU_LANGUAGE = "lk.eou.language";
 
+// Warning: (ae-missing-release-tag) "ATTR_EOU_NOT_COMMITTED_COUNT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_EOU_NOT_COMMITTED_COUNT = "lk.eou.not_committed_count";
+
+// Warning: (ae-missing-release-tag) "ATTR_EOU_OUTCOME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_EOU_OUTCOME = "lk.eou.outcome";
+
 // Warning: (ae-missing-release-tag) "ATTR_EOU_PROBABILITY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 const ATTR_EOU_PROBABILITY = "lk.eou.probability";
+
+// Warning: (ae-missing-release-tag) "ATTR_EOU_REARM_COUNT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_EOU_REARM_COUNT = "lk.eou.rearm_count";
+
+// Warning: (ae-missing-release-tag) "ATTR_EOU_RESUME_COUNT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_EOU_RESUME_COUNT = "lk.eou.resume_count";
 
 // Warning: (ae-missing-release-tag) "ATTR_EOU_SOURCE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1295,6 +1315,11 @@ const ATTR_EOU_SOURCE = "lk.eou.source";
 //
 // @public (undocumented)
 const ATTR_EOU_UNLIKELY_THRESHOLD = "lk.eou.unlikely_threshold";
+
+// Warning: (ae-missing-release-tag) "ATTR_EOU_WAIT_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_EOU_WAIT_DURATION = "lk.eou.wait_duration";
 
 // Warning: (ae-missing-release-tag) "ATTR_ERROR_TYPE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1606,6 +1631,11 @@ const ATTR_LANGFUSE_COMPLETION_START_TIME = "langfuse.observation.completion_sta
 // @public (undocumented)
 const ATTR_LLM_METRICS = "lk.llm_metrics";
 
+// Warning: (ae-missing-release-tag) "ATTR_ON_USER_TURN_COMPLETED_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_ON_USER_TURN_COMPLETED_DELAY = "lk.on_user_turn_completed_delay";
+
 // Warning: (ae-missing-release-tag) "ATTR_PARTICIPANT_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1681,6 +1711,11 @@ const ATTR_SPEECH_ID = "lk.speech_id";
 // @public (undocumented)
 const ATTR_SPEECH_INTERRUPTED = "lk.interrupted";
 
+// Warning: (ae-missing-release-tag) "ATTR_SPEECH_QUEUE_WAIT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_SPEECH_QUEUE_WAIT = "lk.speech.queue_wait";
+
 // Warning: (ae-missing-release-tag) "ATTR_START_TIME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1698,7 +1733,7 @@ const ATTR_TRANSCRIPT_CONFIDENCE = "lk.transcript_confidence";
 
 // Warning: (ae-missing-release-tag) "ATTR_TRANSCRIPTION_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 const ATTR_TRANSCRIPTION_DELAY = "lk.transcription_delay";
 
 // Warning: (ae-missing-release-tag) "ATTR_TTS_INPUT_TEXT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -7567,6 +7602,8 @@ export class SpeechHandle {
     // (undocumented)
     get allowInterruptions(): boolean;
     set allowInterruptions(value: boolean);
+    // @internal
+    _authorizedAt?: number;
     // @internal (undocumented)
     _authorizeGeneration(): void;
     // @internal (undocumented)
@@ -7612,6 +7649,8 @@ export class SpeechHandle {
     _numSteps: number;
     // (undocumented)
     readonly parent?: SpeechHandle | undefined;
+    // @internal
+    _queueWait(): number | undefined;
     // @internal (undocumented)
     _releaseInterruptions(): void;
     // (undocumented)
@@ -7620,6 +7659,8 @@ export class SpeechHandle {
     _removeItemAddedCallback(callback: (item: ChatItem) => void): void;
     // (undocumented)
     get scheduled(): boolean;
+    // @internal
+    _scheduledAt?: number;
     static SPEECH_PRIORITY_HIGH: number;
     static SPEECH_PRIORITY_LOW: number;
     static SPEECH_PRIORITY_NORMAL: number;
@@ -8935,6 +8976,13 @@ declare namespace traceTypes {
         ATTR_EOU_SOURCE,
         ATTR_EOU_FROM_CACHE,
         ATTR_EOU_DETECTION_DELAY,
+        ATTR_EOU_OUTCOME,
+        ATTR_EOU_WAIT_DURATION,
+        ATTR_EOU_REARM_COUNT,
+        ATTR_EOU_NOT_COMMITTED_COUNT,
+        ATTR_EOU_RESUME_COUNT,
+        ATTR_ON_USER_TURN_COMPLETED_DELAY,
+        ATTR_SPEECH_QUEUE_WAIT,
         ATTR_USER_TRANSCRIPT,
         ATTR_TRANSCRIPT_CONFIDENCE,
         ATTR_TRANSCRIPTION_DELAY,

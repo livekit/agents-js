@@ -94,7 +94,15 @@ export interface EndOfTurnInfo {
   skipReply?: boolean;
   /** The turn's speech overlapped agent speech and was classified a backchannel. */
   backchannelOverAgent?: boolean;
+  /**
+   * The turn's open `user_turn` span. The activity sets `userTurnSpanAdopted` to take
+   * ownership and ends it after `onUserTurnCompleted`; otherwise recognition ends it.
+   */
+  userTurnSpan?: Span;
+  userTurnSpanAdopted?: boolean;
 }
+
+export type EouWaitOutcome = 'committed' | 'user_resumed' | 'dropped';
 
 type EndOfTurnMetrics = {
   startedSpeakingAt: number | undefined;
@@ -377,6 +385,16 @@ export class AudioRecognition {
   private sampleRate?: number;
 
   private userTurnSpan?: Span;
+  // eou_wait: one span per user turn, from the last speech anchor to the turn decision
+  private eouWaitSpan?: Span;
+  private eouWaitStartedAt?: number;
+  private eouWaitRearms = 0;
+  private eouWaitNotCommitted = 0;
+  // eou_wait spans this user turn went through that ended with the user resuming
+  private userTurnResumes = 0;
+  // latest timestamp recorded inside the wait; the span must not end before it
+  private eouWaitFloor?: number;
+  private eouDetectionSpan?: Span;
   private userTurnTracker: UserTurnTracker = { words: 0, transcript: '' };
   // Provider-known STT ids for the current user turn. Written to the
   // `user_turn` span when it ends so we can correlate traces with the
@@ -603,7 +621,20 @@ export class AudioRecognition {
       this.endpointing = options.endpointing;
     }
     if (options.turnDetection !== undefined) {
-      this.turnDetectionMode = options.turnDetection ?? undefined;
+      const mode = options.turnDetection ?? undefined;
+      if (this.turnDetectionMode !== mode) {
+        const previousMode = this.turnDetectionMode;
+        this.turnDetectionMode = mode;
+        if (mode === 'manual' || previousMode === 'manual') {
+          this.bounceEOUTask?.cancel();
+          this.bounceEOUTask = undefined;
+          // the pending decision is abandoned with the mode; the user turn stays open
+          this.endEouWaitSpan('dropped');
+          this.userTurnCommitted = false;
+          this.turnDetectorStream?.cancelInference();
+          this.turnDetectorPredictionFut = undefined;
+        }
+      }
     }
   }
 
@@ -1412,6 +1443,7 @@ export class AudioRecognition {
         if (this.turnDetectionMode !== 'stt') break;
         {
           const speechStartTime = Date.now();
+          this.endEouWaitSpan('user_resumed', speechStartTime);
           const span = this.ensureUserTurnSpan(speechStartTime);
           const ctx = this.userTurnContext(span);
           this.endpointing.onStartOfSpeech(speechStartTime, this.isAgentSpeaking);
@@ -1596,8 +1628,20 @@ export class AudioRecognition {
       async (controller: AbortController) => {
         let endpointingDelay = this.endpointing.minDelay;
 
-        const userTurnSpan = this.ensureUserTurnSpan();
-        const userTurnCtx = this.userTurnContext(userTurnSpan);
+        // a turn created here (no VAD/start-of-speech opened it) starts at the earliest
+        // anchor known, so the eou_wait child back-dated to lastSpeakingTime fits inside
+        const anchors = [speechStartTime, lastSpeakingTime].filter(
+          (t): t is number => t !== undefined,
+        );
+        const userTurnSpan = this.ensureUserTurnSpan(
+          anchors.length ? Math.min(...anchors) : undefined,
+        );
+        const eouWaitSpan = this.ensureEouWaitSpan(userTurnSpan, {
+          trigger,
+          lastSpeakingTime,
+          endpointingDelay,
+        });
+        const eouWaitCtx = trace.setSpan(this.userTurnContext(userTurnSpan), eouWaitSpan);
 
         if (turnDetector) {
           if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
@@ -1606,190 +1650,205 @@ export class AudioRecognition {
           } else {
             await tracer.startActiveSpan(
               async (span) => {
-                this.logger.debug('Running turn detector model');
+                // ended explicitly: endEouWaitSpan closes it early if the user resumes
+                this.eouDetectionSpan = span;
+                try {
+                  this.logger.debug('Running turn detector model');
 
-                // undefined => the prediction never resolved (e.g. timed out
-                // or inference threw); gates the span attributes and the emit
-                // below.
-                let endOfTurnProbability: number | undefined;
-                let unlikelyThreshold: number | undefined;
-                let backchannelThreshold: number | undefined;
-                // True when the held future was already resolved when this
-                // bounce started — i.e. the prediction was served from the
-                // request the silence tick warmed, not awaited fresh.
-                let fromCache = false;
-                // The resolved prediction event for this turn, shared by
-                // reference across both EOU triggers (vad + stt final) so the
-                // emit can dedupe.
-                let predictionEvent: TurnDetectionEvent | undefined;
+                  // undefined => the prediction never resolved (e.g. timed out
+                  // or inference threw); gates the span attributes and the emit
+                  // below.
+                  let endOfTurnProbability: number | undefined;
+                  let unlikelyThreshold: number | undefined;
+                  let backchannelThreshold: number | undefined;
+                  // True when the held future was already resolved when this
+                  // bounce started — i.e. the prediction was served from the
+                  // request the silence tick warmed, not awaited fresh.
+                  let fromCache = false;
+                  // The resolved prediction event for this turn, shared by
+                  // reference across both EOU triggers (vad + stt final) so the
+                  // emit can dedupe.
+                  let predictionEvent: TurnDetectionEvent | undefined;
 
-                if (turnDetector instanceof BaseStreamingTurnDetectorStream) {
-                  const fut = this.turnDetectorPredictionFut;
-                  if (fut === undefined) {
-                    if (trigger === 'stt') {
-                      this.onMissingEotPrediction();
+                  if (turnDetector instanceof BaseStreamingTurnDetectorStream) {
+                    const fut = this.turnDetectorPredictionFut;
+                    if (fut === undefined) {
+                      if (trigger === 'stt') {
+                        this.onMissingEotPrediction();
+                      }
+                    } else {
+                      fromCache = fut.done;
+                      // Await the held future against the model prediction timeout.
+                      const predictionTimeout = turnDetector.predictionTimeout;
+                      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+                      const winner = await Promise.race([
+                        fut.await.then((ev) => ({ kind: 'value', ev }) as const),
+                        new Promise<{ kind: 'timeout' }>((resolve) => {
+                          timeoutId = setTimeout(
+                            () => resolve({ kind: 'timeout' }),
+                            predictionTimeout,
+                          );
+                        }),
+                      ]);
+                      if (timeoutId !== undefined) clearTimeout(timeoutId);
+
+                      // A newer trigger calls `bounceEOUTask?.cancel()`. A JS abort
+                      // does NOT interrupt the await above, so bail here before
+                      // touching shared state so the superseded bounce doesn't
+                      // clobber a freshly-armed future or double-emit.
+                      if (controller.signal.aborted) return;
+
+                      if (winner.kind === 'value') {
+                        predictionEvent = winner.ev;
+                        endOfTurnProbability = predictionEvent.endOfTurnProbability;
+                        unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
+                        backchannelThreshold = await turnDetector.backchannelThreshold(
+                          this.lastLanguage,
+                        );
+                      } else {
+                        this.logger.warn(
+                          { timeoutMs: predictionTimeout },
+                          'eot prediction timed out, committing without a prediction',
+                        );
+                        turnDetector.cancelInference({ timedOut: true });
+                        this.turnDetectorPredictionFut = undefined;
+                      }
                     }
                   } else {
-                    fromCache = fut.done;
-                    // Await the held future against the model prediction timeout.
-                    const predictionTimeout = turnDetector.predictionTimeout;
-                    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-                    const winner = await Promise.race([
-                      fut.await.then((ev) => ({ kind: 'value', ev }) as const),
-                      new Promise<{ kind: 'timeout' }>((resolve) => {
-                        timeoutId = setTimeout(
-                          () => resolve({ kind: 'timeout' }),
-                          predictionTimeout,
-                        );
-                      }),
-                    ]);
-                    if (timeoutId !== undefined) clearTimeout(timeoutId);
-
-                    // A newer trigger calls `bounceEOUTask?.cancel()`. A JS abort
-                    // does NOT interrupt the await above, so bail here before
-                    // touching shared state so the superseded bounce doesn't
-                    // clobber a freshly-armed future or double-emit.
-                    if (controller.signal.aborted) return;
-
-                    if (winner.kind === 'value') {
-                      predictionEvent = winner.ev;
-                      endOfTurnProbability = predictionEvent.endOfTurnProbability;
+                    try {
+                      endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
                       unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
-                      backchannelThreshold = await turnDetector.backchannelThreshold(
-                        this.lastLanguage,
-                      );
-                    } else {
-                      this.logger.warn(
-                        { timeoutMs: predictionTimeout },
-                        'eot prediction timed out, committing without a prediction',
-                      );
-                      turnDetector.cancelInference({ timedOut: true });
-                      this.turnDetectorPredictionFut = undefined;
+                    } catch (error) {
+                      this.logger.error(error, 'Error predicting end of turn');
                     }
+                    // See the streaming-branch note: bail if a newer trigger
+                    // superseded this bounce while it awaited.
+                    if (controller.signal.aborted) return;
                   }
-                } else {
-                  try {
-                    endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
-                    unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
-                  } catch (error) {
-                    this.logger.error(error, 'Error predicting end of turn');
+
+                  if (
+                    endOfTurnProbability !== undefined &&
+                    unlikelyThreshold !== undefined &&
+                    endOfTurnProbability < unlikelyThreshold
+                  ) {
+                    endpointingDelay = this.endpointing.maxDelay;
                   }
-                  // See the streaming-branch note: bail if a newer trigger
-                  // superseded this bounce while it awaited.
-                  if (controller.signal.aborted) return;
-                }
 
-                if (
-                  endOfTurnProbability !== undefined &&
-                  unlikelyThreshold !== undefined &&
-                  endOfTurnProbability < unlikelyThreshold
-                ) {
-                  endpointingDelay = this.endpointing.maxDelay;
-                }
-
-                this.logger.debug(
-                  {
-                    endOfTurnProbability,
-                    unlikelyThreshold,
-                    endpointingDelay,
-                    language: this.lastLanguage,
-                    trigger,
-                    fromCache,
-                  },
-                  'eot prediction',
-                );
-
-                const prediction = predictionEvent;
-
-                span.setAttribute(
-                  traceTypes.ATTR_CHAT_CTX,
-                  // snake_case wire shape, matching Python's EOU span: trim to the last
-                  // few items and drop function calls, instructions, empty messages,
-                  // handoffs, and config updates, so the span doesn't re-emit the whole
-                  // conversation on every EOU inference.
-                  JSON.stringify(
-                    toSnakeCaseDeep(
-                      new ChatContext(chatCtx.items.slice(-EOU_MAX_HISTORY_TURNS))
-                        .copy({
-                          excludeFunctionCall: true,
-                          excludeInstructions: true,
-                          excludeEmptyMessage: true,
-                          excludeHandoff: true,
-                          excludeConfigUpdate: true,
-                        })
-                        .toJSON({ excludeTimestamp: false }),
-                    ),
-                  ),
-                );
-                if (endOfTurnProbability !== undefined) {
-                  span.setAttribute(traceTypes.ATTR_EOU_PROBABILITY, endOfTurnProbability);
-                }
-                if (unlikelyThreshold !== undefined) {
-                  span.setAttribute(traceTypes.ATTR_EOU_UNLIKELY_THRESHOLD, unlikelyThreshold);
-                }
-                span.setAttribute(traceTypes.ATTR_EOU_DELAY, endpointingDelay);
-                span.setAttribute(traceTypes.ATTR_EOU_LANGUAGE, this.lastLanguage ?? '');
-                span.setAttribute(traceTypes.ATTR_EOU_FROM_CACHE, fromCache);
-                span.setAttribute(traceTypes.ATTR_EOU_SOURCE, trigger);
-
-                // Emit once the prediction resolved (a timeout / failed
-                // inference emits nothing). Both EOU triggers in a turn (vad +
-                // stt final) read the same resolved `TurnDetectionEvent`; dedupe
-                // by reference so the event fires once per request. The abort
-                // guard above drops a superseded bounce; this reference check
-                // catches the race where the first bounce completes (and emits)
-                // just before the second trigger fires. Text detectors have no
-                // shared event (`prediction === undefined`), so they always emit.
-                if (
-                  endOfTurnProbability !== undefined &&
-                  unlikelyThreshold !== undefined &&
-                  (prediction === undefined || prediction !== this.lastEmittedEotPrediction)
-                ) {
-                  this.lastEmittedEotPrediction = prediction;
-                  const inferenceDurationMs = prediction?.inferenceDuration ?? 0;
-                  const delayMs =
-                    lastSpeakingTime !== undefined ? Date.now() - lastSpeakingTime : 0;
-                  this.hooks.onEotPrediction(
-                    createEotPredictionEvent({
-                      probability: endOfTurnProbability,
-                      threshold: unlikelyThreshold,
-                      inferenceDurationMs,
-                      delayMs,
-                    }),
+                  this.logger.debug(
+                    {
+                      endOfTurnProbability,
+                      unlikelyThreshold,
+                      endpointingDelay,
+                      language: this.lastLanguage,
+                      trigger,
+                      fromCache,
+                    },
+                    'eot prediction',
                   );
 
-                  // Surface the backchannel opportunity whenever it clears its
-                  // threshold, regardless of end-of-turn; AgentActivity decides
-                  // whether to acknowledge mid-turn or let it lead the reply.
-                  // Shares the eot-emit dedupe so it fires once per request.
-                  const backchannelProbability = prediction?.backchannelProbability;
+                  const prediction = predictionEvent;
+
+                  span.setAttribute(
+                    traceTypes.ATTR_CHAT_CTX,
+                    // snake_case wire shape, matching Python's EOU span: trim to the last
+                    // few items and drop function calls, instructions, empty messages,
+                    // handoffs, and config updates, so the span doesn't re-emit the whole
+                    // conversation on every EOU inference.
+                    JSON.stringify(
+                      toSnakeCaseDeep(
+                        new ChatContext(chatCtx.items.slice(-EOU_MAX_HISTORY_TURNS))
+                          .copy({
+                            excludeFunctionCall: true,
+                            excludeInstructions: true,
+                            excludeEmptyMessage: true,
+                            excludeHandoff: true,
+                            excludeConfigUpdate: true,
+                          })
+                          .toJSON({ excludeTimestamp: false }),
+                      ),
+                    ),
+                  );
+                  if (endOfTurnProbability !== undefined) {
+                    span.setAttribute(traceTypes.ATTR_EOU_PROBABILITY, endOfTurnProbability);
+                  }
+                  if (unlikelyThreshold !== undefined) {
+                    span.setAttribute(traceTypes.ATTR_EOU_UNLIKELY_THRESHOLD, unlikelyThreshold);
+                  }
+                  span.setAttribute(traceTypes.ATTR_EOU_DELAY, endpointingDelay / 1000);
+                  span.setAttribute(traceTypes.ATTR_EOU_LANGUAGE, this.lastLanguage ?? '');
+                  span.setAttribute(traceTypes.ATTR_EOU_FROM_CACHE, fromCache);
+                  span.setAttribute(traceTypes.ATTR_EOU_SOURCE, trigger);
+
+                  // Emit once the prediction resolved (a timeout / failed
+                  // inference emits nothing). Both EOU triggers in a turn (vad +
+                  // stt final) read the same resolved `TurnDetectionEvent`; dedupe
+                  // by reference so the event fires once per request. The abort
+                  // guard above drops a superseded bounce; this reference check
+                  // catches the race where the first bounce completes (and emits)
+                  // just before the second trigger fires. Text detectors have no
+                  // shared event (`prediction === undefined`), so they always emit.
                   if (
-                    backchannelProbability !== undefined &&
-                    backchannelThreshold !== undefined &&
-                    backchannelProbability >= backchannelThreshold
+                    endOfTurnProbability !== undefined &&
+                    unlikelyThreshold !== undefined &&
+                    (prediction === undefined || prediction !== this.lastEmittedEotPrediction)
                   ) {
-                    this.hooks.onAgentBackchannelOpportunity(
-                      _createAgentBackchannelOpportunityEvent({
-                        probability: backchannelProbability,
-                        threshold: backchannelThreshold,
-                        endOfTurnProbability,
-                        endOfTurnThreshold: unlikelyThreshold,
-                        language: this.lastLanguage,
+                    this.lastEmittedEotPrediction = prediction;
+                    const inferenceDurationMs = prediction?.inferenceDuration ?? 0;
+                    const delayMs =
+                      lastSpeakingTime !== undefined ? Date.now() - lastSpeakingTime : 0;
+                    this.hooks.onEotPrediction(
+                      createEotPredictionEvent({
+                        probability: endOfTurnProbability,
+                        threshold: unlikelyThreshold,
+                        inferenceDurationMs,
+                        delayMs,
                       }),
                     );
-                  }
-                }
 
-                if (prediction?.detectionDelay !== undefined) {
-                  span.setAttribute(traceTypes.ATTR_EOU_DETECTION_DELAY, prediction.detectionDelay);
+                    // Surface the backchannel opportunity whenever it clears its
+                    // threshold, regardless of end-of-turn; AgentActivity decides
+                    // whether to acknowledge mid-turn or let it lead the reply.
+                    // Shares the eot-emit dedupe so it fires once per request.
+                    const backchannelProbability = prediction?.backchannelProbability;
+                    if (
+                      backchannelProbability !== undefined &&
+                      backchannelThreshold !== undefined &&
+                      backchannelProbability >= backchannelThreshold
+                    ) {
+                      this.hooks.onAgentBackchannelOpportunity(
+                        _createAgentBackchannelOpportunityEvent({
+                          probability: backchannelProbability,
+                          threshold: backchannelThreshold,
+                          endOfTurnProbability,
+                          endOfTurnThreshold: unlikelyThreshold,
+                          language: this.lastLanguage,
+                        }),
+                      );
+                    }
+                  }
+
+                  if (prediction?.detectionDelay !== undefined) {
+                    span.setAttribute(
+                      traceTypes.ATTR_EOU_DETECTION_DELAY,
+                      prediction.detectionDelay / 1000,
+                    );
+                  }
+                } finally {
+                  this.releaseEouDetectionSpan(span);
                 }
               },
               {
                 name: 'eou_detection',
-                context: userTurnCtx,
+                context: eouWaitCtx,
+                endOnExit: false,
               },
             );
           }
+        }
+
+        if (eouWaitSpan.isRecording()) {
+          // the wait may have ended with resumed speech; stamp the delay decided by the prediction
+          eouWaitSpan.setAttribute(traceTypes.ATTR_EOU_DELAY, endpointingDelay / 1000);
         }
 
         let extraSleep = endpointingDelay;
@@ -1844,7 +1903,7 @@ export class AudioRecognition {
           now: Date.now(),
         });
 
-        const committed = await this.hooks.onEndOfTurn({
+        const endOfTurn: EndOfTurnInfo = {
           newTranscript: this.audioTranscript,
           transcriptConfidence: confidenceAvg,
           transcriptionDelay: metrics.transcriptionDelay,
@@ -1852,14 +1911,19 @@ export class AudioRecognition {
           startedSpeakingAt: metrics.startedSpeakingAt,
           stoppedSpeakingAt: metrics.stoppedSpeakingAt,
           backchannelOverAgent: this.turnBackchannelOverAgent,
-        });
+          userTurnSpan,
+        };
+        const committed = await this.hooks.onEndOfTurn(endOfTurn);
 
         if (committed) {
+          this.endEouWaitSpan('committed');
           this._endUserTurnSpan({
             transcript: this.audioTranscript,
             confidence: confidenceAvg,
             transcriptionDelay: metrics.transcriptionDelay ?? 0,
             endOfUtteranceDelay: metrics.endOfUtteranceDelay ?? 0,
+            // the activity ends the span after onUserTurnCompleted (see EndOfTurnInfo)
+            keepOpen: endOfTurn.userTurnSpanAdopted === true,
           });
 
           // clear the transcript if the user turn was committed
@@ -1882,6 +1946,9 @@ export class AudioRecognition {
             this.turnDetectorFlushed = true;
           }
           this.resetTranscriptionTimeout();
+        } else if (eouWaitSpan.isRecording()) {
+          // the decision is deferred (below min words, realtime backchannel): keep waiting
+          this.eouWaitNotCommitted += 1;
         }
 
         this.turnBackchannelOverAgent = false;
@@ -2053,6 +2120,7 @@ export class AudioRecognition {
                 this.speechStartTime = startTime;
                 this.vadSpeechStarted = true;
               }
+              this.endEouWaitSpan('user_resumed', startTime);
               const span = this.ensureUserTurnSpan(startTime);
               const ctx = this.userTurnContext(span);
               this.endpointing.onStartOfSpeech(startTime, this.isAgentSpeaking);
@@ -2586,24 +2654,146 @@ export class AudioRecognition {
     confidence: number;
     transcriptionDelay: number;
     endOfUtteranceDelay: number;
+    /** Leave the span open for the activity to end (it was adopted at end of turn). */
+    keepOpen?: boolean;
   }): void {
+    // a wait still open here never reached a decision (teardown, clearUserTurn, ...)
+    this.endEouWaitSpan('dropped');
     if (this.userTurnSpan && info) {
       this.userTurnSpan.setAttributes({
         [traceTypes.ATTR_USER_TRANSCRIPT]: info.transcript,
         [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: info.confidence,
-        [traceTypes.ATTR_TRANSCRIPTION_DELAY]: info.transcriptionDelay,
-        [traceTypes.ATTR_END_OF_TURN_DELAY]: info.endOfUtteranceDelay,
+        [traceTypes.ATTR_TRANSCRIPTION_DELAY]: info.transcriptionDelay / 1000,
+        [traceTypes.ATTR_END_OF_TURN_DELAY]: info.endOfUtteranceDelay / 1000,
       });
       if (this.sttRequestIds.length) {
         this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
       }
     }
     if (this.userTurnSpan?.isRecording()) {
-      this.userTurnSpan.end();
+      this.stampUserTurnResumes(this.userTurnSpan);
+      if (!info?.keepOpen) {
+        this.userTurnSpan.end();
+      }
     }
     this.userTurnSpan = undefined;
     this.userTurnStart = undefined;
     this.sttRequestIds = [];
+  }
+
+  private stampUserTurnResumes(userTurnSpan: Span): void {
+    const resumes = this.userTurnResumes;
+    this.userTurnResumes = 0;
+    if (resumes && userTurnSpan.isRecording()) {
+      userTurnSpan.setAttribute(traceTypes.ATTR_EOU_RESUME_COUNT, resumes);
+    }
+  }
+
+  /**
+   * The turn's `eou_wait` span, created on the first end-of-turn trigger and back-dated to
+   * `lastSpeakingTime`. Later triggers for the same turn (a late STT final, another VAD end of
+   * speech) re-arm the wait as an event rather than start a new span.
+   */
+  private ensureEouWaitSpan(
+    userTurnSpan: Span,
+    {
+      trigger,
+      lastSpeakingTime,
+      endpointingDelay,
+    }: { trigger: string; lastSpeakingTime: number | undefined; endpointingDelay: number },
+  ): Span {
+    const span = this.eouWaitSpan;
+    if (span?.isRecording()) {
+      this.eouWaitRearms += 1;
+      this.eouWaitFloor = Date.now();
+      span.addEvent('rearmed', { [traceTypes.ATTR_EOU_SOURCE]: trigger }, this.eouWaitFloor);
+      span.setAttributes({
+        [traceTypes.ATTR_EOU_SOURCE]: trigger,
+        // the delay in force now; a prediction may raise it later
+        [traceTypes.ATTR_EOU_DELAY]: endpointingDelay / 1000,
+      });
+      return span;
+    }
+
+    const now = Date.now();
+    const startedAt = lastSpeakingTime !== undefined ? Math.min(lastSpeakingTime, now) : now;
+    // lk.eou.wait_duration is computed from this same value, so it equals the span's length
+    const newSpan = tracer.startSpan({
+      name: 'eou_wait',
+      context: this.userTurnContext(userTurnSpan),
+      startTime: startedAt,
+      attributes: {
+        [traceTypes.ATTR_EOU_SOURCE]: trigger,
+        [traceTypes.ATTR_EOU_DELAY]: endpointingDelay / 1000,
+      },
+    });
+    this.eouWaitSpan = newSpan;
+    this.eouWaitStartedAt = startedAt;
+    this.eouWaitRearms = 0;
+    this.eouWaitNotCommitted = 0;
+    this.eouWaitFloor = undefined;
+    return newSpan;
+  }
+
+  /** The wait owns the `eou_detection` span's end so it can close it early. */
+  private releaseEouDetectionSpan(span: Span): void {
+    if (this.eouDetectionSpan === span) {
+      this.eouDetectionSpan = undefined;
+    }
+    if (span.isRecording()) {
+      this.eouWaitFloor = Date.now();
+      span.end(this.eouWaitFloor);
+    }
+  }
+
+  private endEouWaitSpan(outcome: EouWaitOutcome, endTime?: number): void {
+    const span = this.eouWaitSpan;
+    this.eouWaitSpan = undefined;
+    const startedAt = this.eouWaitStartedAt;
+    this.eouWaitStartedAt = undefined;
+    const rearms = this.eouWaitRearms;
+    this.eouWaitRearms = 0;
+    const notCommitted = this.eouWaitNotCommitted;
+    this.eouWaitNotCommitted = 0;
+    if (!span?.isRecording()) return;
+
+    const requestedAt = endTime ?? Date.now();
+    // resumed speech can carry a VAD timestamp from before the anchor; never negative
+    let endedAt = startedAt !== undefined ? Math.max(requestedAt, startedAt) : requestedAt;
+
+    const detection = this.eouDetectionSpan;
+    this.eouDetectionSpan = undefined;
+    if (detection?.isRecording()) {
+      // the detector is still running: end it first so the child stays inside the parent
+      this.eouWaitFloor = Date.now();
+      detection.addEvent(
+        'superseded',
+        { [traceTypes.ATTR_EOU_OUTCOME]: outcome },
+        this.eouWaitFloor,
+      );
+      detection.end(this.eouWaitFloor);
+    }
+    const floor = this.eouWaitFloor;
+    this.eouWaitFloor = undefined;
+    if (floor !== undefined) {
+      // VAD reports a resume after the fact: never end before what the span contains
+      endedAt = Math.max(endedAt, floor);
+    }
+    if (outcome === 'user_resumed') {
+      span.addEvent('user_resumed', {}, Math.max(requestedAt, startedAt ?? 0));
+    }
+    span.setAttributes({
+      [traceTypes.ATTR_EOU_OUTCOME]: outcome,
+      // same integers as the span bounds, so the attribute equals the span's length
+      [traceTypes.ATTR_EOU_WAIT_DURATION]:
+        startedAt !== undefined ? (endedAt - startedAt) / 1000 : 0,
+      [traceTypes.ATTR_EOU_REARM_COUNT]: rearms,
+      [traceTypes.ATTR_EOU_NOT_COMMITTED_COUNT]: notCommitted,
+    });
+    span.end(endedAt);
+    if (outcome === 'user_resumed') {
+      this.userTurnResumes += 1;
+    }
   }
 
   private get vadBaseTurnDetection() {
