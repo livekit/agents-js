@@ -4,21 +4,26 @@
 
 ```ts
 
+import { AgentInference } from '@livekit/protocol';
 import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import type { Context } from '@opentelemetry/api';
+import { default as default_2 } from 'ws';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
 import { Logger } from 'pino';
 import { NoiseCancellationOptions } from '@livekit/rtc-node';
+import OpenAI from 'openai';
 import { Participant } from '@livekit/rtc-node';
 import { ParticipantKind } from '@livekit/rtc-node';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Reasoning } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
@@ -63,8 +68,8 @@ declare namespace realtime {
         GrokVoices_2 as GrokVoices,
         GrokRealtimeModels,
         RealtimeModelOptions,
-        RealtimeModel_3 as RealtimeModel,
-        RealtimeSession_3 as RealtimeSession
+        RealtimeModel_4 as RealtimeModel,
+        RealtimeSession_4 as RealtimeSession
     }
 }
 
@@ -72,12 +77,12 @@ declare namespace realtime {
 // Warning: (ae-missing-release-tag) "RealtimeModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-class RealtimeModel_3 extends OpenAIRealtimeModel {
+class RealtimeModel_4 extends OpenAIRealtimeModel {
     constructor(options?: RealtimeModelOptions);
     // (undocumented)
     label(): string;
     // (undocumented)
-    session(): RealtimeSession_3;
+    session(): RealtimeSession_4;
 }
 
 // Warning: (ae-forgotten-export) The symbol "OpenAIRealtimeModelOptions" needs to be exported by the entry point index.d.ts
@@ -97,14 +102,14 @@ interface RealtimeModelOptions extends Omit<OpenAIRealtimeModelOptions, 'model'>
 // Warning: (ae-missing-release-tag) "RealtimeSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-class RealtimeSession_3 extends OpenAIRealtimeSession {
+class RealtimeSession_4 extends OpenAIRealtimeSession {
     // (undocumented)
     close(): Promise<void>;
-    // Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "llm_3" needs to be exported by the entry point index.d.ts
     // Warning: (ae-forgotten-export) The symbol "realtime_2" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    protected createChatCtxUpdateEvents(chatCtx: llm.ChatContext, addMockAudio?: boolean): Promise<(realtime_2.ConversationItemCreateEvent | realtime_2.ConversationItemDeleteEvent)[]>;
+    protected createChatCtxUpdateEvents(chatCtx: llm_3.ChatContext, addMockAudio?: boolean): Promise<(realtime_2.ConversationItemCreateEvent | realtime_2.ConversationItemDeleteEvent)[]>;
     // (undocumented)
     protected handleConversationItemCreated(event: realtime_2.ConversationItemCreatedEvent): void;
     // (undocumented)
@@ -123,11 +128,11 @@ class RealtimeSession_3 extends OpenAIRealtimeSession {
     protected resetInputTurnState(): void;
 }
 
-// Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "stt_2" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "STT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export class STT extends stt.STT {
+export class STT extends stt_2.STT {
     constructor(opts?: Partial<STTOptions>);
     // (undocumented)
     close(): Promise<void>;
@@ -138,13 +143,13 @@ export class STT extends stt.STT {
     // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    _recognize(buffer: AudioBuffer_2): Promise<stt.SpeechEvent>;
-    // Warning: (ae-forgotten-export) The symbol "SpeechStream_2" needs to be exported by the entry point index.d.ts
+    _recognize(buffer: AudioBuffer_2): Promise<stt_2.SpeechEvent>;
+    // Warning: (ae-forgotten-export) The symbol "SpeechStream_3" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
-    }): SpeechStream_2;
+    }): SpeechStream_3;
     // (undocumented)
     updateOptions(opts: Partial<STTOptions>): void;
 }
@@ -175,11 +180,11 @@ export interface STTOptions {
     vadThreshold?: number;
 }
 
-// Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "tts_2" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export class TTS extends tts.TTS {
+export class TTS extends tts_2.TTS {
     constructor(opts?: TTSOptions);
     // (undocumented)
     close(): Promise<void>;
@@ -199,14 +204,14 @@ export class TTS extends tts.TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
-    // Warning: (ae-forgotten-export) The symbol "SynthesizeStream_2" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "SynthesizeStream_3" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
-    }): SynthesizeStream_2;
+    }): SynthesizeStream_3;
     // (undocumented)
-    synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream;
+    synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts_2.ChunkedStream;
     // (undocumented)
     updateOptions(opts: Omit<Partial<TTSOptions>, 'apiKey' | 'tokenizer'>): void;
 }
