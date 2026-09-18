@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as eot from './eot/index.js';
 import * as llm from './llm.js';
+import * as realtime from './realtime.js';
 import * as stt from './stt.js';
 import * as tts from './tts.js';
 
@@ -37,12 +38,15 @@ export {
   LLMStream,
   type ChatCompletionOptions,
   type GatewayOptions,
-  type InferenceClass,
   type InferenceLLMOptions,
   type LLMModels,
   type XAIModels,
   type ZAIModels,
 } from './llm.js';
+
+export { type InferenceClass } from './utils.js';
+
+export { RealtimeModel, RealtimeSession, type RealtimeModelOptions } from './realtime.js';
 
 export {
   normalizeSTTFallback,
@@ -75,4 +79,4 @@ export {
   type XaiTTSOptions,
 } from './tts.js';
 
-export { llm, stt, tts };
+export { llm, realtime, stt, tts };
