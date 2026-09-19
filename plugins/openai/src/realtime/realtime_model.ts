@@ -1121,9 +1121,23 @@ export class RealtimeSession extends llm.RealtimeSession {
       let waiting = true;
 
       const timeout = setTimeout(() => {
+        if (!waiting) return;
+        waiting = false;
+        // close() on a CONNECTING socket makes `ws` emit 'error' before 'close'; the listener
+        // below swallows it so the timeout is the error the caller sees.
         ws.close();
         reject(new Error('WebSocket connection timeout'));
       }, this._options.connOptions.timeoutMs);
+
+      // A handshake failure (refused, TLS, 4xx, or the timeout's close()) is emitted as 'error'
+      // before 'close'. Without a listener Node throws it as an unhandled 'error' event, which
+      // escapes this promise and takes the whole worker process down.
+      ws.once('error', (err) => {
+        if (!waiting) return;
+        waiting = false;
+        clearTimeout(timeout);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      });
 
       ws.once('open', () => {
         if (!waiting) return;
