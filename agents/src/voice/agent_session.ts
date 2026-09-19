@@ -679,6 +679,7 @@ export class AgentSession<
 
   /** @internal */
   _userSpeakingSpan?: Span;
+  private userSpeakingSpanStartedAt?: number;
 
   private logger = log();
 
@@ -1810,19 +1811,29 @@ export class AgentSession<
     }
 
     if (state === 'speaking' && this._userSpeakingSpan === undefined) {
+      const startedAt = options?.lastSpeakingTime ?? Date.now();
       this._userSpeakingSpan = tracer.startSpan({
         name: 'user_speaking',
         context: options?.otelContext ?? this.rootSpanContext,
-        startTime: options?.lastSpeakingTime,
+        startTime: startedAt,
       });
+      this.userSpeakingSpanStartedAt = startedAt;
 
       const linked = this._roomIO?.linkedParticipant;
       if (linked) {
         setParticipantSpanAttributes(this._userSpeakingSpan, linked);
       }
     } else if (this._userSpeakingSpan !== undefined) {
-      this._userSpeakingSpan.end(options?.lastSpeakingTime);
+      let endTime = options?.lastSpeakingTime;
+      if (endTime !== undefined && this.userSpeakingSpanStartedAt !== undefined) {
+        // A VAD end is backdated by the silence it waited on, so it can precede an
+        // STT-anchored start; never produce a negative span.
+        endTime = Math.max(endTime, this.userSpeakingSpanStartedAt);
+      }
+
+      this._userSpeakingSpan.end(endTime);
       this._userSpeakingSpan = undefined;
+      this.userSpeakingSpanStartedAt = undefined;
     }
 
     const oldState = this._userState;
@@ -2078,6 +2089,7 @@ export class AgentSession<
       this._userSpeakingSpan.end();
       this._userSpeakingSpan = undefined;
     }
+    this.userSpeakingSpanStartedAt = undefined;
 
     if (this.agentSpeakingSpan) {
       this.agentSpeakingSpan.end();
