@@ -81,6 +81,10 @@ export function convertJSONSchemaToOpenAPISchema(jsonSchema: JSONSchema7Definiti
       },
       {} as Record<string, unknown>,
     );
+    // Gemini generates an OpenAPI schema's properties alphabetically unless told
+    // otherwise; keep the declared order so earlier fields can inform later ones.
+    const keys = Object.keys(properties);
+    if (keys.length > 0) result.propertyOrdering = keys;
   }
 
   if (items) {
