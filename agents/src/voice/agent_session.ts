@@ -14,6 +14,8 @@ import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { context as otelContext, trace } from '@opentelemetry/api';
+import { hrTimeToMilliseconds } from '@opentelemetry/core';
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
@@ -1821,7 +1823,18 @@ export class AgentSession<
         setParticipantSpanAttributes(this._userSpeakingSpan, linked);
       }
     } else if (this._userSpeakingSpan !== undefined) {
-      this._userSpeakingSpan.end(options?.lastSpeakingTime);
+      let endTime = options?.lastSpeakingTime;
+      const startTime =
+        'startTime' in this._userSpeakingSpan
+          ? (this._userSpeakingSpan as unknown as ReadableSpan).startTime
+          : undefined;
+      if (endTime !== undefined && startTime !== undefined) {
+        // A VAD end is backdated by the silence it waited on, so it can precede an
+        // STT-anchored start; never produce a negative span.
+        endTime = Math.max(endTime, hrTimeToMilliseconds(startTime));
+      }
+
+      this._userSpeakingSpan.end(endTime);
       this._userSpeakingSpan = undefined;
     }
 

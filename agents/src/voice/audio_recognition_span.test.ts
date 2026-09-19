@@ -512,6 +512,50 @@ describe('AudioRecognition user_turn span', () => {
     expect(userSpeaking.parentSpanContext?.spanId).toBe(sessionSpan.spanContext().spanId);
   });
 
+  it('clamps a backdated user_speaking end to its start', () => {
+    const { exporter } = setupInMemoryTracing();
+    const fakeSession = createFakeSession();
+    const startedAt = Date.now();
+
+    AgentSession.prototype._updateUserState.call(fakeSession, 'speaking', {
+      lastSpeakingTime: startedAt,
+    });
+    AgentSession.prototype._updateUserState.call(fakeSession, 'listening', {
+      lastSpeakingTime: startedAt - 550,
+    });
+
+    const userSpeaking = spanByName(exporter.getFinishedSpans(), 'user_speaking');
+    expect(userSpeaking).toBeTruthy();
+    if (!userSpeaking) {
+      throw new Error('expected user_speaking span');
+    }
+    expect(userSpeaking.endTime).toEqual(userSpeaking.startTime);
+  });
+
+  it('keeps a user_speaking end after its start', () => {
+    const { exporter } = setupInMemoryTracing();
+    const fakeSession = createFakeSession();
+    const startedAt = Date.now();
+
+    AgentSession.prototype._updateUserState.call(fakeSession, 'speaking', {
+      lastSpeakingTime: startedAt,
+    });
+    AgentSession.prototype._updateUserState.call(fakeSession, 'listening', {
+      lastSpeakingTime: startedAt + 1_250,
+    });
+
+    const userSpeaking = spanByName(exporter.getFinishedSpans(), 'user_speaking');
+    expect(userSpeaking).toBeTruthy();
+    if (!userSpeaking) {
+      throw new Error('expected user_speaking span');
+    }
+    const durationNs =
+      (userSpeaking.endTime[0] - userSpeaking.startTime[0]) * 1e9 +
+      userSpeaking.endTime[1] -
+      userSpeaking.startTime[1];
+    expect(durationNs).toBe(1.25e9);
+  });
+
   it('does not mark a normal user_speaking span as a non-interruption', async () => {
     const { exporter } = setupInMemoryTracing();
     const recognition = new AudioRecognition({
