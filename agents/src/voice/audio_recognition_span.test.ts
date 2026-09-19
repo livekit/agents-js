@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ParticipantKind } from '@livekit/rtc-node';
-import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
+import { ROOT_CONTEXT, type Span, context as otelContext, trace } from '@opentelemetry/api';
 import {
   InMemorySpanExporter,
   type ReadableSpan,
@@ -513,23 +513,22 @@ describe('AudioRecognition user_turn span', () => {
   });
 
   it('clamps a backdated user_speaking end to its start', () => {
-    const { exporter } = setupInMemoryTracing();
+    setupInMemoryTracing();
     const fakeSession = createFakeSession();
     const startedAt = Date.now();
 
     AgentSession.prototype._updateUserState.call(fakeSession, 'speaking', {
       lastSpeakingTime: startedAt,
     });
+    const sdkSpan = fakeSession._userSpeakingSpan;
+    const end = vi.fn();
+    fakeSession._userSpeakingSpan = { end } as unknown as Span;
     AgentSession.prototype._updateUserState.call(fakeSession, 'listening', {
       lastSpeakingTime: startedAt - 550,
     });
 
-    const userSpeaking = spanByName(exporter.getFinishedSpans(), 'user_speaking');
-    expect(userSpeaking).toBeTruthy();
-    if (!userSpeaking) {
-      throw new Error('expected user_speaking span');
-    }
-    expect(userSpeaking.endTime).toEqual(userSpeaking.startTime);
+    expect(end).toHaveBeenCalledWith(startedAt);
+    sdkSpan?.end();
   });
 
   it('keeps a user_speaking end after its start', () => {
