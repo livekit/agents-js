@@ -14,8 +14,6 @@ import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { context as otelContext, trace } from '@opentelemetry/api';
-import { hrTimeToMilliseconds } from '@opentelemetry/core';
-import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
@@ -681,6 +679,7 @@ export class AgentSession<
 
   /** @internal */
   _userSpeakingSpan?: Span;
+  private userSpeakingSpanStartedAt?: number;
 
   private logger = log();
 
@@ -1812,11 +1811,13 @@ export class AgentSession<
     }
 
     if (state === 'speaking' && this._userSpeakingSpan === undefined) {
+      const startedAt = options?.lastSpeakingTime ?? Date.now();
       this._userSpeakingSpan = tracer.startSpan({
         name: 'user_speaking',
         context: options?.otelContext ?? this.rootSpanContext,
-        startTime: options?.lastSpeakingTime,
+        startTime: startedAt,
       });
+      this.userSpeakingSpanStartedAt = startedAt;
 
       const linked = this._roomIO?.linkedParticipant;
       if (linked) {
@@ -1824,18 +1825,15 @@ export class AgentSession<
       }
     } else if (this._userSpeakingSpan !== undefined) {
       let endTime = options?.lastSpeakingTime;
-      const startTime =
-        'startTime' in this._userSpeakingSpan
-          ? (this._userSpeakingSpan as unknown as ReadableSpan).startTime
-          : undefined;
-      if (endTime !== undefined && startTime !== undefined) {
+      if (endTime !== undefined && this.userSpeakingSpanStartedAt !== undefined) {
         // A VAD end is backdated by the silence it waited on, so it can precede an
         // STT-anchored start; never produce a negative span.
-        endTime = Math.max(endTime, hrTimeToMilliseconds(startTime));
+        endTime = Math.max(endTime, this.userSpeakingSpanStartedAt);
       }
 
       this._userSpeakingSpan.end(endTime);
       this._userSpeakingSpan = undefined;
+      this.userSpeakingSpanStartedAt = undefined;
     }
 
     const oldState = this._userState;
@@ -2091,6 +2089,7 @@ export class AgentSession<
       this._userSpeakingSpan.end();
       this._userSpeakingSpan = undefined;
     }
+    this.userSpeakingSpanStartedAt = undefined;
 
     if (this.agentSpeakingSpan) {
       this.agentSpeakingSpan.end();
