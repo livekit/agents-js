@@ -56,8 +56,27 @@ describe('Gemini function declarations', () => {
     expect(declaration.parameters).toEqual({
       type: 'object',
       properties: { fields: { type: 'object' } },
+      propertyOrdering: ['fields'],
       required: ['fields'],
     });
+  });
+
+  it('keeps declared property order on the Live API, nested objects included', () => {
+    const decide = llm.tool({
+      name: 'decide',
+      description: 'Reason first, then answer.',
+      parameters: z.object({
+        reasoning: z.string(),
+        answer: z.enum(['a', 'b']),
+        detail: z.object({ why: z.string(), confidence: z.number() }),
+      }),
+      execute: async () => {},
+    });
+    const parameters = singleDeclaration(new llm.ToolContext([decide]), false).parameters!;
+
+    expect(parameters.propertyOrdering).toEqual(['reasoning', 'answer', 'detail']);
+    expect(parameters.properties!.detail!.propertyOrdering).toEqual(['why', 'confidence']);
+    expect(parameters.properties!.reasoning!.propertyOrdering).toBeUndefined();
   });
 
   it('omits the schema for a function tool without parameters', () => {
