@@ -5,6 +5,7 @@ import { Plugin } from '@livekit/agents';
 
 export * from './models.js';
 export * from './tts.js';
+export * from './llm.js';
 
 class MiniMaxPlugin extends Plugin {
   constructor() {
