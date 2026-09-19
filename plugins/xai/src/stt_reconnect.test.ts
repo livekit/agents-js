@@ -10,11 +10,13 @@ import { STT } from './stt.js';
 
 // Point every xAI socket at the local server started by each test.
 let serverUrl = '';
+const clients: WsModule.WebSocket[] = [];
 vi.mock('ws', async (importOriginal) => {
   const actual = await importOriginal<typeof WsModule>();
   class LocalWebSocket extends actual.WebSocket {
     constructor(_url: string | URL, options?: ClientOptions) {
       super(serverUrl, options);
+      clients.push(this);
     }
   }
   return { ...actual, WebSocket: LocalWebSocket };
@@ -26,6 +28,7 @@ describe('xAI STT reconnect', () => {
   let wss: WebSocketServer;
 
   beforeEach(async () => {
+    clients.length = 0;
     wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await new Promise<void>((resolve) => wss.once('listening', resolve));
     const { port } = wss.address() as { port: number };
@@ -71,6 +74,9 @@ describe('xAI STT reconnect', () => {
 
       expect(event?.alternatives?.[0]?.text).toBe('hello again');
       expect(connections).toBe(2);
+      // the dropped attempt's listener is gone, so late frames from it cannot
+      // reach the reconnected stream
+      expect(clients[0]!.listenerCount('message')).toBe(0);
     } finally {
       clearInterval(feeder);
       stream.close();

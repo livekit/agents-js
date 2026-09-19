@@ -346,8 +346,9 @@ export class SpeechStream extends stt.SpeechStream {
     };
 
     const listenTask = Task.from(async (controller) => {
+      let onMessage: ((msg: WebSocket.RawData) => void) | undefined;
       const listenMessage = new Promise<void>((resolve, reject) => {
-        ws.on('message', (msg) => {
+        onMessage = (msg) => {
           try {
             const json = JSON.parse(msg.toString());
             this.#processStreamEvent(json);
@@ -365,10 +366,21 @@ export class SpeechStream extends stt.SpeechStream {
             );
             reject(err);
           }
-        });
+        };
+        ws.on('message', onMessage);
       });
 
-      await Promise.race([listenMessage, waitForAbort(controller.signal)]);
+      try {
+        // this.abortController is stream-wide, so the listener also ends with its
+        // attempt: a closed socket settles neither of the other two branches
+        await Promise.race([
+          listenMessage,
+          waitForAbort(controller.signal),
+          waitForAbort(attempt.signal),
+        ]);
+      } finally {
+        if (onMessage) ws.off('message', onMessage);
+      }
     }, this.abortController);
 
     const sendPromise = sendTask();
@@ -382,9 +394,9 @@ export class SpeechStream extends stt.SpeechStream {
     } finally {
       closing = true;
       ws.close();
-      // settle this attempt's sender before the caller opens the next socket
+      // settle this attempt's sender and listener before the caller opens the next socket
       attempt.abort();
-      await sendPromise.catch(() => {});
+      await Promise.allSettled([sendPromise, listenTask.result]);
     }
   }
 
