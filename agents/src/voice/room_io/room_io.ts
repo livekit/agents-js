@@ -28,8 +28,10 @@ import { type AgentSession } from '../agent_session.js';
 import {
   AgentSessionEventTypes,
   type AgentStateChangedEvent,
+  type CloseEvent,
   CloseReason,
   type ConversationItemAddedEvent,
+  type ShutdownReason,
   type UserInputTranscribedEvent,
 } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
@@ -165,6 +167,8 @@ export class RoomIO {
   private forwardUserTranscriptTask?: Task<void>;
   private initTask?: Task<void>;
   private deleteRoomTask?: Task<void>;
+  /** Why the session closed, from its close event: decides whether the job ends with it. */
+  private sessionCloseReason?: ShutdownReason;
   private jobContext?: JobContext;
 
   private logger = log();
@@ -304,7 +308,8 @@ export class RoomIO {
     this.transcriptionSynchronizer.enabled = !nativeTranscriptSync;
   };
 
-  private onAgentSessionClose = () => {
+  private onAgentSessionClose = (ev: CloseEvent) => {
+    this.sessionCloseReason = ev.reason;
     if (!this.inputOptions.deleteRoomOnClose || this.deleteRoomTask) {
       return;
     }
@@ -660,6 +665,21 @@ export class RoomIO {
           { 'lk.pii.room_name': this.room.name },
           'automatic room deletion timed out',
         );
+      }
+    }
+
+    // closeOnDisconnect closed the session because its participant left for good: nothing else
+    // will happen in this job, so end it now rather than wait for the server to close the empty
+    // room and disconnect the agent (its departure timeout, about 20 s). Only the job's primary
+    // session ends the job; a secondary one (a warm-transfer supervisor) closing does not.
+    if (
+      this.inputOptions.closeOnDisconnect &&
+      this.sessionCloseReason === CloseReason.PARTICIPANT_DISCONNECTED
+    ) {
+      const jobContext = this.jobContext ?? getJobContext(false);
+      if (jobContext && jobContext._primaryAgentSession === this.agentSession) {
+        this.logger.info('shutting down the job: the linked participant disconnected');
+        jobContext.shutdown('participant disconnected');
       }
     }
   }
