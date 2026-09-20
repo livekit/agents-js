@@ -7,19 +7,36 @@ import {
   SpanStatusCode,
   context as otelContext,
 } from '@opentelemetry/api';
+import { url as inspectorUrl } from 'node:inspector';
 import { PerformanceObserver } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import { getJobContext } from '../job.js';
 import { log } from '../log.js';
+import { blockedSpanTracker } from './blocked_span_tracker.js';
+import {
+  LATE_SAMPLE_FACTOR,
+  type StackSample,
+  WATCHDOG_SOURCE,
+  WD_LAST_WAKE,
+  WD_LATE_AT,
+  WD_LATE_GAP,
+  WD_MAIN_LAST_TICK,
+  WD_SLOTS,
+  type WatchdogMessage,
+  formatSample,
+  innermostLocation,
+  stackSamplingModeFromEnv,
+} from './loop_stack_sampler.js';
 import { recordEventLoopBlocked } from './otel_metrics.js';
 import { RateLimiter } from './rate_limiter.js';
-import { recordLoopStall, sessionRootContext } from './session_context.js';
+import { jobRootContext, recordLoopStall, sessionRootContext } from './session_context.js';
 import {
   ATTR_BLOCKING_CAUSE,
   ATTR_BLOCKING_CPU_TIME,
   ATTR_BLOCKING_DURATION,
   ATTR_BLOCKING_GC_TIME,
   ATTR_BLOCKING_SEVERITY,
+  ATTR_BLOCKING_STACK,
   ATTR_BLOCKING_SUPPRESSED,
   ATTR_BLOCKING_THRESHOLD,
 } from './trace_types.js';
@@ -37,6 +54,8 @@ export const ENV_ERROR_THRESHOLD_MS = 'LIVEKIT_AGENTS_LOOP_BLOCK_ERROR_MS';
 export const MAX_SPANS_PER_MINUTE = 6;
 export const MAX_LOGS_PER_MINUTE = 5;
 export const SPAN_NAME = 'event_loop_blocked';
+/** Spans a stall must not nest under: itself, from an earlier heartbeat. */
+const STALL_PARENT_EXCLUDES: ReadonlySet<string> = new Set([SPAN_NAME]);
 
 export type LoopMonitorSeverity = 'warning' | 'error';
 
@@ -49,11 +68,22 @@ export type LoopStallCause = 'code' | 'host';
 /** What a report's `cpuTime` covers: the event-loop thread, or the whole process on older Node. */
 export type LoopCpuScope = 'thread' | 'process';
 
+/**
+ * When the loop thread's stack is sampled (see loop_stack_sampler): `adaptive` from the
+ * process's first code-caused stall on (a healthy process never enables the debugger domain),
+ * `always` from the start, `never` not at all.
+ */
+export type StackSamplingMode = 'adaptive' | 'always' | 'never';
+
 export interface BlockedReport {
   /** Heartbeat lag in milliseconds. */
   duration: number;
   /** Approximate wall-clock start in milliseconds since the Unix epoch. */
   startedAt: number;
+  /** The last on-time heartbeat before the block, epoch ms: the block began within one tick after it. */
+  windowStart: number;
+  /** When the loop ran again (the late heartbeat), epoch ms. */
+  endedAt: number;
   warnThreshold: number;
   severity: LoopMonitorSeverity;
   /**
@@ -78,6 +108,15 @@ export interface BlockedReport {
    * attributed to `code`.
    */
   cause: LoopStallCause;
+  /**
+   * Sampled stacks of the loop thread during the stall, formatted like the Python monitor's:
+   * one block per sample (`# loop thread sampled Nms into the stall` then the innermost frames),
+   * blocks joined by `\n---\n`; or a one-line note saying why there is none. Absent for
+   * host-caused stalls and when sampling is off.
+   */
+  stack?: string;
+  /** The innermost frame of the agent's own code in the last sample, for the log line. */
+  location?: string;
 }
 
 export class LoopMonitorThresholds {
@@ -127,35 +166,15 @@ export interface EventLoopMonitorOptions {
    * code on the loop. Default true.
    */
   watchdog?: boolean;
+  /**
+   * When to sample the loop thread's stack with V8's profiler (see `loop_stack_sampler`):
+   * `adaptive` (default) after the process's first code-caused stall, `always` from the start,
+   * `never` not at all. Only job processes sample (spans enabled); the worker never does.
+   */
+  stacks?: StackSamplingMode;
 }
 
 export type ReportContextRunner = <T>(fn: () => T) => T;
-
-// Slots of the SharedArrayBuffer shared with the watchdog thread. Values are Date.now()
-// milliseconds as BigInt, since performance.now() has a different origin in every thread.
-const WD_LAST_WAKE = 0;
-const WD_LATE_AT = 1;
-const WD_LATE_GAP = 2;
-
-// The watchdog is an independent event loop, so a synchronous block on the main thread does not
-// delay it. When it wakes late too, the process itself was not running. It keeps the latest
-// wake-up time and the largest late wake-up it has seen since the main thread last looked.
-const WATCHDOG_SOURCE = `
-const { workerData } = require('node:worker_threads');
-const state = new BigInt64Array(workerData.shared);
-const interval = workerData.interval;
-let before = Date.now();
-setInterval(() => {
-  const now = Date.now();
-  const gap = now - before - interval;
-  before = now;
-  if (gap > Number(Atomics.load(state, ${WD_LATE_GAP}))) {
-    Atomics.store(state, ${WD_LATE_AT}, BigInt(now));
-    Atomics.store(state, ${WD_LATE_GAP}, BigInt(gap));
-  }
-  Atomics.store(state, ${WD_LAST_WAKE}, BigInt(now));
-}, interval);
-`;
 
 // Per-thread CPU accounting (Node 22.15 / 23.9+). Older runtimes fall back to the process total.
 const threadCpuUsage: (() => NodeJS.CpuUsage) | undefined = (
@@ -170,6 +189,14 @@ export class EventLoopMonitor {
   readonly #name: string;
   readonly #emitSpans: boolean;
   readonly #useWatchdog: boolean;
+  readonly #stackMode: StackSamplingMode;
+  #samplingRequested = false;
+  #samplingActive = false;
+  /** When the watchdog enabled the debugger domain (epoch ms): a stall overlapping it is that. */
+  #samplingStarted?: [number, number];
+  /** Stack samples the watchdog posted, by the stall's window start, until the report is emitted. */
+  readonly #samples = new Map<number, StackSample[]>();
+  #lastTickWall = 0;
   readonly #spanLimiter = new RateLimiter(MAX_SPANS_PER_MINUTE);
   readonly #logLimiter = new RateLimiter(MAX_LOGS_PER_MINUTE);
   readonly #hostLogLimiter = new RateLimiter(MAX_LOGS_PER_MINUTE);
@@ -198,6 +225,7 @@ export class EventLoopMonitor {
     this.#name = options.name ?? 'event-loop';
     this.#emitSpans = options.emitSpans ?? true;
     this.#useWatchdog = options.watchdog ?? true;
+    this.#stackMode = options.stacks ?? stackSamplingModeFromEnv();
     if (!Number.isFinite(this.warnThreshold) || this.warnThreshold <= 0) {
       throw new Error('warnThreshold must be finite and > 0');
     }
@@ -218,6 +246,11 @@ export class EventLoopMonitor {
     return this.#watchdogState !== undefined;
   }
 
+  /** Whether the stack sampler is running, i.e. the next stall will carry a stack. */
+  get stackSamplingActive(): boolean {
+    return this.#samplingActive;
+  }
+
   /** Set the OTel parent and, optionally, a runner that restores job AsyncLocalStorage. */
   setReportContext(context: Context | undefined, runner?: ReportContextRunner): void {
     this.#reportContext = context;
@@ -229,10 +262,26 @@ export class EventLoopMonitor {
     if (this.#started || this.#closed) return;
     this.#started = true;
     this.#lastTickAt = performance.now();
+    this.#lastTickWall = Date.now();
     this.#lastCpuUsage = this.#cpuUsage();
     this.#startGcObserver();
+    if (this.#stackMode === 'always' && this.#emitSpans) this.#samplingRequested = true;
     if (this.#useWatchdog) this.#startWatchdog();
     this.#scheduleTick();
+  }
+
+  /**
+   * Have the watchdog sample the loop thread's stack from now on (see loop_stack_sampler). Not
+   * while a debugger is attached to the process: our pauses would land in its session too.
+   */
+  #requestSampling(): void {
+    if (this.#samplingRequested || this.#closed) return;
+    if (inspectorUrl() !== undefined) {
+      log().debug('event loop stack sampling left off: an inspector is attached to the process');
+      return;
+    }
+    this.#samplingRequested = true;
+    this.#watchdog?.postMessage({ type: 'enable_sampling' });
   }
 
   /** Stop the heartbeat and the watchdog. Idempotent. */
@@ -250,6 +299,8 @@ export class EventLoopMonitor {
     this.#watchdog = undefined;
     this.#watchdogState = undefined;
     void watchdog?.terminate().catch(() => undefined);
+    this.#samplingActive = false;
+    this.#samples.clear();
   }
 
   #startGcObserver(): void {
@@ -265,12 +316,24 @@ export class EventLoopMonitor {
   }
 
   #startWatchdog(): void {
-    const shared = new SharedArrayBuffer(3 * BigInt64Array.BYTES_PER_ELEMENT);
+    const shared = new SharedArrayBuffer(WD_SLOTS * BigInt64Array.BYTES_PER_ELEMENT);
+    const state = new BigInt64Array(shared);
+    Atomics.store(state, WD_MAIN_LAST_TICK, BigInt(this.#lastTickWall));
+    if (this.#samplingRequested && inspectorUrl() !== undefined) {
+      log().debug('event loop stack sampling left off: an inspector is attached to the process');
+      this.#samplingRequested = false;
+    }
     try {
       const watchdog = new Worker(WATCHDOG_SOURCE, {
         eval: true,
         name: `livekit-loop-monitor-${this.#name}`,
-        workerData: { shared, interval: this.tickInterval },
+        workerData: {
+          shared,
+          interval: this.tickInterval,
+          warnThreshold: this.warnThreshold,
+          lateFactor: LATE_SAMPLE_FACTOR,
+          samplingEnabled: this.#samplingRequested,
+        },
       });
       // the watchdog must not keep the process alive, nor take it down
       watchdog.unref();
@@ -279,10 +342,38 @@ export class EventLoopMonitor {
         this.#dropWatchdog(watchdog);
       });
       watchdog.on('exit', () => this.#dropWatchdog(watchdog));
+      watchdog.on('message', (message: WatchdogMessage) => this.#onWatchdogMessage(message));
       this.#watchdog = watchdog;
-      this.#watchdogState = new BigInt64Array(shared);
+      this.#watchdogState = state;
     } catch (error) {
       log().debug({ error }, 'event loop watchdog could not start');
+    }
+  }
+
+  #onWatchdogMessage(message: WatchdogMessage): void {
+    switch (message.type) {
+      case 'sampling_started':
+        this.#samplingActive = true;
+        this.#samplingStarted = [message.from, message.to];
+        log().debug(
+          { enableDuration: message.to - message.from },
+          'event loop stack sampling started',
+        );
+        break;
+      case 'sampling_unavailable':
+        this.#samplingRequested = false;
+        log().debug({ reason: message.reason }, 'event loop stack sampling unavailable');
+        break;
+      case 'stall_sample': {
+        const samples = this.#samples.get(message.windowStart) ?? [];
+        samples.push(message.sample);
+        this.#samples.set(message.windowStart, samples);
+        // a stall whose report never came (the monitor stopped) must not pin its samples
+        for (const key of this.#samples.keys()) {
+          if (key < message.windowStart - 60_000) this.#samples.delete(key);
+        }
+        break;
+      }
     }
   }
 
@@ -290,6 +381,7 @@ export class EventLoopMonitor {
     if (this.#watchdog !== watchdog) return;
     this.#watchdog = undefined;
     this.#watchdogState = undefined;
+    this.#samplingActive = false;
   }
 
   #scheduleTick(): void {
@@ -310,21 +402,25 @@ export class EventLoopMonitor {
       (cpu.user - this.#lastCpuUsage.user + cpu.system - this.#lastCpuUsage.system) / 1000;
     const gcTime = this.#gcTime;
     this.#gcTime = 0;
-    // the window opens at the last on-time tick, expressed on the watchdog's wall clock
-    const windowStart = Date.now() - (now - this.#lastTickAt);
+    // the window opens at the last on-time tick, on the wall clock the watchdog shares
+    const nowWall = Date.now();
+    const windowStart = this.#lastTickWall;
     this.#lastTickAt = now;
+    this.#lastTickWall = nowWall;
     this.#lastCpuUsage = cpu;
+    const state = this.#watchdogState;
+    if (state) Atomics.store(state, WD_MAIN_LAST_TICK, BigInt(nowWall));
     const watchdogGap = this.#consumeWatchdogGap(windowStart);
     this.#scheduleTick();
     // GC entries for the previous stall reach the observer through two immediates, which the
     // late tick can run ahead of; they have landed by now, so the previous stall gets them
     const gcClaimed = this.#flushPending(gcTime);
     if (lag < this.warnThreshold) return;
-    this.#pending = this.buildReport(lag, {
-      cpuTime,
-      gcTime: gcClaimed ? 0 : gcTime,
-      watchdogGap,
-    });
+    this.#pending = this.buildReport(
+      lag,
+      { cpuTime, gcTime: gcClaimed ? 0 : gcTime, watchdogGap },
+      { start: windowStart, end: nowWall },
+    );
   }
 
   /** Emit the stall held from the previous tick, crediting it the GC time seen since. */
@@ -333,6 +429,10 @@ export class EventLoopMonitor {
     if (!pending) return false;
     this.#pending = undefined;
     pending.gcTime = Math.min(pending.gcTime + gcTime, pending.duration);
+    // the watchdog's samples for this stall arrived on the message port between the two ticks
+    const samples = this.#samples.get(pending.windowStart);
+    this.#samples.delete(pending.windowStart);
+    if (pending.cause === 'code') this.attachStack(pending, samples);
     this.report(pending);
     return true;
   }
@@ -360,7 +460,9 @@ export class EventLoopMonitor {
   private buildReport(
     lag: number,
     timings: { cpuTime: number; gcTime: number; watchdogGap: number },
+    window?: { start: number; end: number },
   ): BlockedReport {
+    const endedAt = window?.end ?? Date.now();
     // the watchdog is an independent thread: if it too woke late by most of the stall, the
     // process was not being scheduled (host contention, CPU quota, a suspended machine). Under
     // contention the scheduler can also starve only the watchdog while the loop thread runs
@@ -373,7 +475,9 @@ export class EventLoopMonitor {
     return {
       duration: lag,
       // the block started no earlier than the last on-time tick
-      startedAt: Date.now() - lag,
+      startedAt: endedAt - lag,
+      windowStart: window?.start ?? endedAt - lag - this.tickInterval,
+      endedAt,
       warnThreshold: this.warnThreshold,
       // severity measures the impact on the session, whatever the cause: audio and turn handling
       // were delayed either way. The cause says who can fix it.
@@ -406,6 +510,11 @@ export class EventLoopMonitor {
       // an idle child before its job, or of the worker process, must not use up the job's budget
       const spanEligible = this.#emitSpans && getJobContext(false) !== undefined;
       const emitSpan = spanEligible && this.#spanLimiter.allow(now);
+      // a code stall in a job process turns sampling on for the stalls that follow (adaptive);
+      // this one is reported without a stack, like the Python monitor's unsampled stalls
+      if (report.cause === 'code' && spanEligible && this.#stackMode === 'adaptive') {
+        this.#requestSampling();
+      }
       if (!emitSpan && !emitLog) return;
       if (emitSpan) this.#emitSpan(report, this.#spanLimiter.takeSuppressed());
       if (emitLog) this.#emitLog(report);
@@ -421,6 +530,41 @@ export class EventLoopMonitor {
     }
   }
 
+  /**
+   * Set `stack` and `location` from the watchdog's samples of this stall, or a note saying why
+   * there are none, worded like the Python monitor's.
+   */
+  private attachStack(report: BlockedReport, samples: StackSample[] | undefined): void {
+    const started = this.#samplingStarted;
+    if (started && started[0] <= report.endedAt && started[1] >= report.windowStart) {
+      // enabling the debugger domain enumerates every loaded script on the loop: this stall is
+      // that, whatever the pause then saw
+      report.stack =
+        '# no sample: the stack sampler was starting (enabling the debugger domain blocks the loop for the size of the loaded code)';
+      return;
+    }
+    // a pause that landed after the loop ran again saw whatever ran next, not the block
+    const inStall = (samples ?? []).filter((sample) => sample.pausedAt <= report.endedAt + 2);
+    if (inStall.length) {
+      report.stack = inStall.map(formatSample).join('\n---\n');
+      report.location = innermostLocation(inStall[inStall.length - 1]!);
+      return;
+    }
+    if (this.#stackMode === 'never') return;
+    if (samples?.length) {
+      const late = Math.max(samples[0]!.pausedAt - report.endedAt, 0);
+      report.stack =
+        '# no sample: the loop thread was in a native call for the whole stall, which the ' +
+        `pause could not interrupt (it landed ${late.toFixed(0)}ms after the call returned)`;
+      return;
+    }
+    report.stack = this.#samplingActive
+      ? '# no sample: the block ended before the watchdog looked'
+      : this.#emitSpans
+        ? "# no sample: stack sampling starts after a process's first stall"
+        : '# no sample: the worker process does not sample stacks';
+  }
+
   #emitSpan(report: BlockedReport, suppressed: number): void {
     const attributes: Attributes = {
       [ATTR_BLOCKING_DURATION]: report.duration / 1000,
@@ -431,9 +575,20 @@ export class EventLoopMonitor {
       [ATTR_BLOCKING_CPU_TIME]: report.cpuTime / 1000,
     };
     if (suppressed) attributes[ATTR_BLOCKING_SUPPRESSED] = suppressed;
+    if (report.stack) attributes[ATTR_BLOCKING_STACK] = report.stack;
+    // under the span that was blocked (see BlockedSpanTracker), else the session root, else the
+    // job's root: the heartbeat's own context predates all of them
+    const fallback = sessionRootContext() ?? jobRootContext() ?? this.#reportContext;
+    const blocked = blockedSpanTracker.blockedContext(
+      report.startedAt,
+      report.endedAt,
+      STALL_PARENT_EXCLUDES,
+      fallback ?? otelContext.active(),
+      this.tickInterval,
+    );
     const span = tracer.startSpan({
       name: SPAN_NAME,
-      context: sessionRootContext() ?? this.#reportContext,
+      context: blocked ?? fallback,
       startTime: report.startedAt,
       attributes,
     });
@@ -460,6 +615,8 @@ export class EventLoopMonitor {
       watchdogGap: round(report.watchdogGap),
       cause: report.cause,
       loop: this.#name,
+      ...(report.location ? { location: report.location } : {}),
+      ...(report.stack ? { stack: report.stack } : {}),
     };
     if (report.cause === 'host') {
       log().warn(
@@ -467,15 +624,17 @@ export class EventLoopMonitor {
         'process not scheduled; the host did not run the agent for the whole stall (CPU contention or a container CPU quota), which delays audio and turn handling like blocking code would. Check the CPU limit and co-located load',
       );
     } else if (this.watchdogActive) {
+      const where = report.location ? ` at ${report.location}` : '';
       log().warn(
         fields,
-        'event loop blocked; synchronous work on the agent loop delays audio and turn handling, move it to a worker thread or an async API',
+        `event loop blocked${where}; synchronous work on the agent loop delays audio and turn handling, move it to a worker thread or an async API`,
       );
     } else {
       // without the watchdog a stall could as well be the host not scheduling the process
+      const where = report.location ? ` at ${report.location}` : '';
       log().warn(
         fields,
-        'event loop stalled; either synchronous work on the agent loop (move it to a worker thread or an async API) or the host did not schedule the process (CPU contention or quota)',
+        `event loop stalled${where}; either synchronous work on the agent loop (move it to a worker thread or an async API) or the host did not schedule the process (CPU contention or quota)`,
       );
     }
   }
@@ -501,6 +660,7 @@ export interface StartMonitoringOptions {
   name?: string;
   emitSpans?: boolean;
   watchdog?: boolean;
+  stacks?: StackSamplingMode;
 }
 
 /** Start the process event-loop monitor, or return undefined if disabled/already running. */
@@ -526,6 +686,7 @@ export function startMonitoring(
     name: options.name,
     emitSpans: options.emitSpans,
     watchdog: options.watchdog,
+    stacks: options.stacks,
   });
   monitorState.monitor = monitor;
   monitor.start();
