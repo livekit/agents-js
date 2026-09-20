@@ -2469,13 +2469,17 @@ interface BlockedReport {
     cpuScope: LoopCpuScope;
     cpuTime: number;
     duration: number;
+    endedAt: number;
     gcTime: number;
+    location?: string;
     // (undocumented)
     severity: LoopMonitorSeverity;
+    stack?: string;
     startedAt: number;
     // (undocumented)
     warnThreshold: number;
     watchdogGap: number;
+    windowStart: number;
 }
 
 // Warning: (ae-missing-release-tag) "BufferedSentenceStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -3985,6 +3989,7 @@ class EventLoopMonitor {
     readonly errorThreshold: number;
     onReport?: (report: BlockedReport) => void;
     setReportContext(context: Context | undefined, runner?: ReportContextRunner): void;
+    get stackSamplingActive(): boolean;
     start(): void;
     stop(): void;
     // (undocumented)
@@ -4004,6 +4009,7 @@ interface EventLoopMonitorOptions {
     errorThreshold?: number;
     // (undocumented)
     name?: string;
+    stacks?: StackSamplingMode;
     // (undocumented)
     tickInterval?: number;
     // (undocumented)
@@ -5995,6 +6001,7 @@ declare namespace loopMonitor {
         LoopMonitorSeverity,
         LoopStallCause,
         LoopCpuScope,
+        StackSamplingMode,
         BlockedReport,
         LoopMonitorThresholds,
         EventLoopMonitorOptions,
@@ -8179,6 +8186,11 @@ function splitAllMarkup(text: string): [string, ExpressiveTag[]];
 // @public
 const splitWords: (text: string, ignorePunctuation?: boolean) => [string, number, number][];
 
+// Warning: (ae-missing-release-tag) "StackSamplingMode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+type StackSamplingMode = 'adaptive' | 'always' | 'never';
+
 // Warning: (ae-missing-release-tag) "startMonitoring" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -8192,6 +8204,8 @@ interface StartMonitoringOptions {
     emitSpans?: boolean;
     // (undocumented)
     name?: string;
+    // (undocumented)
+    stacks?: StackSamplingMode;
     // (undocumented)
     thresholds?: LoopMonitorThresholds;
     // (undocumented)

@@ -246,9 +246,13 @@ export const ATTR_BLOCKING_THRESHOLD = 'lk.blocking.threshold';
 export const ATTR_BLOCKING_SEVERITY = 'lk.blocking.severity';
 /** `code` for synchronous work on the loop, `host` when the process itself was not scheduled. */
 export const ATTR_BLOCKING_CAUSE = 'lk.blocking.cause';
-/** Not populated by the Node runtime: it cannot sample another thread's JavaScript stack. */
+/** Not populated by the Node runtime: it has no named tasks to attribute a stall to. */
 export const ATTR_BLOCKING_TASK = 'lk.blocking.task';
-/** Not populated by the Node runtime: it cannot sample another thread's JavaScript stack. */
+/**
+ * Stacks of the loop thread sampled during the stall by V8's profiler, one block per sample
+ * headed by when in the stall it was taken, innermost frames first; or a one-line note saying
+ * why there is none.
+ */
 export const ATTR_BLOCKING_STACK = 'lk.blocking.stack';
 /** Garbage-collection pause time inside the stall, in seconds. */
 export const ATTR_BLOCKING_GC_TIME = 'lk.blocking.gc_time';

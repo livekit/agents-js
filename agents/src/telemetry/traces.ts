@@ -51,6 +51,7 @@ import {
 } from '../types.js';
 import { version } from '../version.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
+import { blockedSpanTracker } from './blocked_span_tracker.js';
 import type { ObservabilityEndpoint } from './observability_endpoint.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
@@ -332,6 +333,22 @@ interface CustomProviderConfig {
 const customProviderConfigs = new WeakMap<TracerProvider, CustomProviderConfig>();
 /** Providers that already carry the in-process PII stripper — installed at most once. */
 const piiRedactionInstalled = new WeakSet<TracerProvider>();
+/** Providers already reporting their spans to the loop monitor's blocked-span tracker. */
+const blockedSpanTrackerInstalled = new WeakSet<TracerProvider>();
+
+/**
+ * Report the provider's spans to the loop monitor's {@link blockedSpanTracker}, so a stall
+ * nests under the span that was running. Once per provider; a user's provider needs a
+ * registrar, like PII redaction.
+ */
+function installBlockedSpanTracker(
+  provider: TracerProvider,
+  registerSpanProcessor: SpanProcessorRegistrar | undefined,
+): void {
+  if (blockedSpanTrackerInstalled.has(provider) || !registerSpanProcessor) return;
+  blockedSpanTrackerInstalled.add(provider);
+  registerSpanProcessor(blockedSpanTracker);
+}
 
 let cloudMeterProvider: MeterProvider | undefined;
 let cloudMetricsUnavailable = false;
@@ -528,6 +545,7 @@ export function setTracerProvider(
   }
 
   installPIIRedaction(provider, registerSpanProcessor, options?.allowPii);
+  installBlockedSpanTracker(provider, registerSpanProcessor);
 
   if (registerSpanProcessor) {
     customProviderConfigs.set(provider, {
@@ -635,10 +653,13 @@ export async function prepareCloudTracer(
       // strips PII while the span is still mutable, ahead of every exporter's onEnd
       new PIIFilteringSpanProcessor(allowPiiFromEnv() ?? true),
       metadata,
+      // which span a loop stall happened under (see BlockedSpanTracker)
+      blockedSpanTracker,
       new BatchSpanProcessor(gate),
     ],
   });
   piiRedactionInstalled.add(provider);
+  blockedSpanTrackerInstalled.add(provider);
   gate.openJob(options.jobId);
   preparedCloud = { provider, gate, metadata, observabilityUrl };
   // register() installs an AsyncLocalStorageContextManager (needed for span nesting) and sets
@@ -762,6 +783,7 @@ export async function setupCloudTracer(
             // strips PII while the span is still mutable, ahead of every exporter's onEnd
             new PIIFilteringSpanProcessor(allowPiiFromEnv() ?? true),
             new MetadataSpanProcessor(sessionMetadata),
+            blockedSpanTracker,
             new BatchSpanProcessor(createCloudExporter()),
           ],
         });
@@ -769,6 +791,7 @@ export async function setupCloudTracer(
         // setTracerProvider call below finds no registrar and warns that redaction could
         // not be installed, on the default path where it demonstrably was
         piiRedactionInstalled.add(tracerProvider);
+        blockedSpanTrackerInstalled.add(tracerProvider);
         // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
         // and sets the global tracer provider. Both use set-once semantics in the OTel API,
         // so if the user already called NodeSDK.start(), these are safe no-ops.
@@ -798,6 +821,7 @@ export async function setupCloudTracer(
           // the spans going to the user's own backend. room_id/job_id — the keys Cloud
           // correlates on — still ride along as span attributes via MetadataSpanProcessor.
           installPIIRedaction(existingProvider, config.registerSpanProcessor, undefined);
+          installBlockedSpanTracker(existingProvider, config.registerSpanProcessor);
           config.registerSpanProcessor(new MetadataSpanProcessor(sessionMetadata));
           config.registerSpanProcessor(cloudSpanProcessor);
         }
