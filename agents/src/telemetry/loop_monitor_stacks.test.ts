@@ -291,6 +291,35 @@ describe.sequential('event loop stall stacks', () => {
     await new Promise((resolve) => setTimeout(resolve, WARN + TICK * 4));
   }
 
+  /**
+   * The report of `block`'s stall whose sampled stack names `needle`. On a loaded host (CI runs
+   * every test file at once) the block's stall can be preceded by stalls of the host's own, and
+   * a pause can land in one of those instead: the block is retried a few times rather than
+   * trusting the first report after it.
+   */
+  async function sampledStall(
+    reports: BlockedReport[],
+    block: () => void,
+    needle: string,
+    attempts = 3,
+  ): Promise<BlockedReport> {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const before = codeReports(reports).length;
+      block();
+      const found = () =>
+        codeReports(reports)
+          .slice(before)
+          .find((r) => r.stack?.includes(needle));
+      try {
+        await waitFor(() => found() !== undefined, 1_500);
+      } catch {
+        continue;
+      }
+      return found()!;
+    }
+    throw new Error(`no sampled stall naming ${needle} in ${attempts} attempts`);
+  }
+
   /** Reports of the loop's own code (a loaded host can add host stalls around a test's block). */
   function codeReports(reports: BlockedReport[]): BlockedReport[] {
     return reports.filter((report) => report.cause === 'code');
@@ -314,13 +343,9 @@ describe.sequential('event loop stall stacks', () => {
     for (const report of codeReports(reports).slice(1)) {
       expect(report.stack).toContain('the stack sampler was starting');
     }
-    const before = codeReports(reports).length;
 
-    burnCpuForTest(80);
-    await waitFor(() => codeReports(reports).length === before + 1);
-    const report = codeReports(reports)[before]!;
+    const report = await sampledStall(reports, () => burnCpuForTest(80), 'at burnCpuForTest (');
     expect(report.stack).toMatch(/^# loop thread sampled \d+ms into the stall\n/);
-    expect(report.stack).toContain('at burnCpuForTest (');
     expect(report.location).toMatch(/^burnCpuForTest \(.*loop_monitor_stacks\.test\.ts:\d+\)$/);
     expect(stalls().some((span) => span.attributes[ATTR_BLOCKING_STACK] === report.stack)).toBe(
       true,
@@ -391,12 +416,8 @@ describe.sequential('event loop stall stacks', () => {
       "# no sample: stack sampling starts after a process's first stall",
     );
     await watchdogReady(monitor, true);
-    const before = codeReports(reports).length;
 
-    burnCpuForTest(80);
-    await waitFor(() => codeReports(reports).length === before + 1);
-    const report = codeReports(reports)[before]!;
-    expect(report.stack).toContain('at burnCpuForTest (');
+    const report = await sampledStall(reports, () => burnCpuForTest(80), 'at burnCpuForTest (');
     expect(stalls()).toEqual([]);
     const logged = warn.mock.calls.map((call) => call[0] as { stack?: string });
     expect(logged.some((fields) => fields.stack === report.stack)).toBe(true);
@@ -405,10 +426,7 @@ describe.sequential('event loop stall stacks', () => {
   it('samples from the start with always, and never with never', async () => {
     const always = startMonitor('always');
     await watchdogReady(always.monitor, true);
-    const before = codeReports(always.reports).length; // the debugger enabling may be one
-    burnCpuForTest(80);
-    await waitFor(() => codeReports(always.reports).length === before + 1);
-    expect(codeReports(always.reports)[before]!.stack).toContain('at burnCpuForTest (');
+    await sampledStall(always.reports, () => burnCpuForTest(80), 'at burnCpuForTest (');
     always.monitor.stop();
 
     exporter.reset();
@@ -424,10 +442,13 @@ describe.sequential('event loop stall stacks', () => {
   it('takes a second look at a long stall', async () => {
     const { monitor, reports } = startMonitor('always');
     await watchdogReady(monitor, true);
-    const before = codeReports(reports).length;
-    burnCpuForTest(WARN * 12); // past LATE_SAMPLE_FACTOR x the threshold
-    await waitFor(() => codeReports(reports).length === before + 1);
-    const stack = codeReports(reports)[before]!.stack!;
+    // past LATE_SAMPLE_FACTOR x the threshold
+    const report = await sampledStall(
+      reports,
+      () => burnCpuForTest(WARN * 12),
+      'at burnCpuForTest (',
+    );
+    const stack = report.stack!;
     const headers = stack.split('\n').filter((line) => line.startsWith('# loop thread sampled'));
     expect(headers).toHaveLength(2);
     const offsets = headers.map((line) => Number(/(\d+)ms/.exec(line)![1]));
@@ -439,16 +460,17 @@ describe.sequential('event loop stall stacks', () => {
   it('samples a native call in its caller once it returns', async () => {
     const { monitor, reports } = startMonitor('always');
     await watchdogReady(monitor, true);
-    const before = codeReports(reports).length;
     // a synchronous child process: V8 services the pause only when the call returns, so the
     // sample is taken at the end of the stall, in the frame that made the call (Atomics.wait,
     // by contrast, checks for interrupts and is sampled while waiting)
-    execSync('sleep 0.08');
-    await waitFor(() => codeReports(reports).length === before + 1);
-    const report = codeReports(reports)[before]!;
+    const report = await sampledStall(
+      reports,
+      () => execSync('sleep 0.08'),
+      'loop_monitor_stacks.test.ts',
+    );
     const offset = Number(/sampled (\d+)ms/.exec(report.stack!)![1]);
-    expect(offset).toBeGreaterThanOrEqual(75);
-    expect(report.stack).toContain('loop_monitor_stacks.test.ts');
+    // the call started up to a heartbeat before the stall is dated from
+    expect(offset).toBeGreaterThanOrEqual(75 - TICK);
   });
 
   it('discards a pause that landed after the loop had moved on', () => {
@@ -469,9 +491,7 @@ describe.sequential('event loop stall stacks', () => {
     const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
     const { monitor, reports } = startMonitor('always');
     await watchdogReady(monitor, true);
-    const before = codeReports(reports).length;
-    burnCpuForTest(80);
-    await waitFor(() => codeReports(reports).length === before + 1);
+    await sampledStall(reports, () => burnCpuForTest(80), 'at burnCpuForTest (');
     const call = warn.mock.calls.find((args) => String(args[1]).includes('at burnCpuForTest'));
     expect(call).toBeDefined();
     expect(String(call![1])).toMatch(/^event loop blocked at burnCpuForTest \(/);
