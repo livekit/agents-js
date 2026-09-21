@@ -81,10 +81,11 @@ export const WD_SLOTS = 4;
 export type WatchdogMessage =
   | { type: 'sampling_started'; from: number; to: number }
   | { type: 'sampling_unavailable'; reason: string }
+  | { type: 'sampling_stopped' }
   | { type: 'stall_sample'; windowStart: number; sample: StackSample };
 
 /** Messages to the watchdog thread. */
-export type WatchdogCommand = { type: 'enable_sampling' };
+export type WatchdogCommand = { type: 'enable_sampling' } | { type: 'disable_sampling' };
 
 /**
  * The watchdog thread. Every `interval` ms it records its own wake-up (late wake-ups mean the
@@ -137,7 +138,9 @@ async function enable() {
     if (pausing) {
       pausing.resolve(event.params);
     } else {
-      // a debugger statement in user code, or a breakpoint: nothing here can act on it
+      // a debugger statement in user code, which only pauses because this session enabled
+      // the domain: resume, as it would have been a no-op without it. Breakpoints of a real
+      // debugger never reach here: the monitor disables sampling as soon as one attaches
       s.post('Debugger.resume', () => undefined);
     }
   });
@@ -174,9 +177,25 @@ async function checkStall(now) {
     parentPort.postMessage({
       type: 'stall_sample',
       windowStart: incident.windowStart,
-      sample: { ...sample, offset: sample.pausedAt - incident.windowStart },
+      // measured from the stall's start as the report dates it: the tick that was due one
+      // interval after the last on-time one
+      sample: { ...sample, offset: sample.pausedAt - incident.windowStart - interval },
     });
   }
+}
+
+// an inspector attached to the process: get out of its way, its pauses are not ours to resume
+async function disable() {
+  const s = session;
+  if (!s) return;
+  session = undefined;
+  incident = undefined;
+  if (pausing) pausing.resolve(undefined);
+  try {
+    await new Promise((resolve) => s.post('Debugger.disable', () => resolve()));
+  } catch {}
+  s.disconnect();
+  parentPort.postMessage({ type: 'sampling_stopped' });
 }
 
 async function pauseMainThread() {
@@ -186,6 +205,7 @@ async function pauseMainThread() {
   try {
     await post('Debugger.pause');
     const params = await paused;
+    if (!params) return undefined; // sampling was disabled while the pause was pending
     const pausedAt = Date.now();
     const frames = params.callFrames.slice(0, ${MAX_STACK_FRAMES}).map((frame) => ({
       functionName: frame.functionName || '',
@@ -204,6 +224,7 @@ async function pauseMainThread() {
 
 parentPort.on('message', (command) => {
   if (command && command.type === 'enable_sampling') void enable();
+  if (command && command.type === 'disable_sampling') void disable();
 });
 if (workerData.samplingEnabled) void enable();
 `;

@@ -177,6 +177,50 @@ describe('BlockedSpanTracker', () => {
     expect(tracker.blockedSpan(T + 50, T + 80, new Set())).toBeUndefined();
   });
 
+  it('does not guess between two operations of the same kind', () => {
+    // two tools of one turn were both in flight when the loop blocked: timing cannot say which
+    // one spun, so the stall lands on the turn that contains both, not on the newer tool
+    vi.useFakeTimers();
+    const T = 2_000_000;
+    vi.setSystemTime(T);
+    const tracker = new BlockedSpanTracker({ retention: 60_000 });
+    const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
+    const t = provider.getTracer('test');
+    const session = t.startSpan('agent_session');
+    const turn = t.startSpan('agent_turn', {}, trace.setSpan(ROOT_CONTEXT, session));
+    const turnCtx = trace.setSpan(ROOT_CONTEXT, turn);
+    const toolA = t.startSpan('function_tool', {}, turnCtx);
+    vi.setSystemTime(T + 10);
+    const toolB = t.startSpan('function_tool', {}, turnCtx);
+    vi.setSystemTime(T + 100);
+    expect(tracker.blockedSpan(T + 50, T + 80, new Set())).toBe(turn);
+    // once one of them is over before the window, the other is the one that blocked
+    toolA.end();
+    vi.setSystemTime(T + 200);
+    expect(tracker.blockedSpan(T + 150, T + 180, new Set())).toBe(toolB);
+    toolB.end();
+
+    // operations of different kinds overlap all the time: the newest is the one that blocked
+    const userTurn = t.startSpan('user_turn', {}, trace.setSpan(ROOT_CONTEXT, session));
+    vi.setSystemTime(T + 210);
+    const rpc = t.startSpan('rpc_handler', {}, trace.setSpan(ROOT_CONTEXT, session));
+    vi.setSystemTime(T + 300);
+    expect(tracker.blockedSpan(T + 250, T + 280, new Set())).toBe(rpc);
+    rpc.end();
+    userTurn.end();
+
+    // two of a kind with no common ancestor in sight: nothing, rather than a wrong parent
+    const rootA = t.startSpan('rpc_handler');
+    vi.setSystemTime(T + 310);
+    const rootB = t.startSpan('rpc_handler');
+    vi.setSystemTime(T + 400);
+    expect(tracker.blockedSpan(T + 350, T + 380, new Set())).toBeUndefined();
+    rootA.end();
+    rootB.end();
+    turn.end();
+    session.end();
+  });
+
   it('ignores a span created after the window, whatever its start time claims', () => {
     const tracker = new BlockedSpanTracker();
     const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
@@ -281,6 +325,47 @@ describe.sequential('event loop stall stacks', () => {
     expect(stalls().some((span) => span.attributes[ATTR_BLOCKING_STACK] === report.stack)).toBe(
       true,
     );
+  });
+
+  it('has no stacks to offer without the watchdog thread, and says nothing', async () => {
+    // the sampler is the watchdog thread's: `always` without it would promise stacks that
+    // never come, and note on every stall that sampling starts after the first one
+    const reports: BlockedReport[] = [];
+    const monitor = new EventLoopMonitor({
+      warnThreshold: WARN,
+      errorThreshold: ERROR,
+      tickInterval: TICK,
+      watchdog: false,
+      stacks: 'always',
+    });
+    monitor.onReport = (report) => reports.push(report);
+    monitor.start();
+    monitors.push(monitor);
+    burnCpuForTest(70);
+    await waitFor(() => codeReports(reports).length >= 1);
+    expect(monitor.stackSamplingActive).toBe(false);
+    expect(codeReports(reports)[0]!.stack).toBeUndefined();
+  });
+
+  it('stops sampling when an inspector attaches, and says why', async () => {
+    const inspector = await import('node:inspector');
+    const { monitor, reports } = startMonitor('always');
+    await watchdogReady(monitor, true);
+    expect(monitor.stackSamplingActive).toBe(true);
+    // an operator enables the inspector on the running process
+    inspector.open(0, '127.0.0.1', false);
+    try {
+      expect(inspector.url()).toBeDefined();
+      await waitFor(() => !monitor.stackSamplingActive);
+      const before = codeReports(reports).length;
+      burnCpuForTest(70);
+      await waitFor(() => codeReports(reports).length >= before + 1);
+      const report = codeReports(reports)[before]!;
+      expect(report.stack).toContain('an inspector is attached');
+      expect(report.location).toBeUndefined();
+    } finally {
+      inspector.close();
+    }
   });
 
   it('samples in the worker process too, into the log', async () => {

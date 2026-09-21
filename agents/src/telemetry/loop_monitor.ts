@@ -167,9 +167,11 @@ export interface EventLoopMonitorOptions {
    */
   watchdog?: boolean;
   /**
-   * When to sample the loop thread's stack with V8's profiler (see `loop_stack_sampler`):
+   * When to sample the loop thread's stack through the inspector (see `loop_stack_sampler`):
    * `adaptive` (default) after the process's first code-caused stall, `always` from the start,
-   * `never` not at all. Only job processes sample (spans enabled); the worker never does.
+   * `never` not at all. The sampler runs on the watchdog thread, so `watchdog: false` means
+   * `never`. Sampling is not started, and is stopped, while an inspector is attached to the
+   * process: its pauses would land in the debugger's session.
    */
   stacks?: StackSamplingMode;
 }
@@ -192,6 +194,8 @@ export class EventLoopMonitor {
   readonly #stackMode: StackSamplingMode;
   #samplingRequested = false;
   #samplingActive = false;
+  /** An inspector attached to the process: sampling was stopped (or never started) for it. */
+  #inspectorAttached = false;
   /** When the watchdog enabled the debugger domain (epoch ms): a stall overlapping it is that. */
   #samplingStarted?: [number, number];
   /** Stack samples the watchdog posted, by the stall's window start, until the report is emitted. */
@@ -226,6 +230,11 @@ export class EventLoopMonitor {
     this.#emitSpans = options.emitSpans ?? true;
     this.#useWatchdog = options.watchdog ?? true;
     this.#stackMode = options.stacks ?? stackSamplingModeFromEnv();
+    if (!this.#useWatchdog && this.#stackMode !== 'never') {
+      // the sampler is the watchdog thread's: without it there is nothing to sample with
+      log().debug('event loop stack sampling is off: it needs the watchdog thread');
+      this.#stackMode = 'never';
+    }
     if (!Number.isFinite(this.warnThreshold) || this.warnThreshold <= 0) {
       throw new Error('warnThreshold must be finite and > 0');
     }
@@ -276,12 +285,30 @@ export class EventLoopMonitor {
    */
   #requestSampling(): void {
     if (this.#samplingRequested || this.#closed) return;
-    if (inspectorUrl() !== undefined) {
-      log().debug('event loop stack sampling left off: an inspector is attached to the process');
+    if (this.#inspectorAttached || inspectorUrl() !== undefined) {
+      if (!this.#inspectorAttached) {
+        this.#inspectorAttached = true;
+        log().debug('event loop stack sampling left off: an inspector is attached to the process');
+      }
       return;
     }
     this.#samplingRequested = true;
     this.#watchdog?.postMessage({ type: 'enable_sampling' });
+  }
+
+  /**
+   * An inspector attached after sampling started: stop, or its breakpoints would reach the
+   * sampler's session as pauses to resume. Checked on every heartbeat; off for good afterwards.
+   */
+  #stopSamplingForInspector(): void {
+    if (this.#inspectorAttached) return;
+    if (inspectorUrl() === undefined) return;
+    this.#inspectorAttached = true;
+    if (!this.#samplingRequested) return;
+    this.#samplingRequested = false;
+    this.#samplingActive = false;
+    this.#watchdog?.postMessage({ type: 'disable_sampling' });
+    log().debug('event loop stack sampling stopped: an inspector attached to the process');
   }
 
   /** Stop the heartbeat and the watchdog. Idempotent. */
@@ -364,6 +391,9 @@ export class EventLoopMonitor {
         this.#samplingRequested = false;
         log().debug({ reason: message.reason }, 'event loop stack sampling unavailable');
         break;
+      case 'sampling_stopped':
+        this.#samplingActive = false;
+        break;
       case 'stall_sample': {
         const samples = this.#samples.get(message.windowStart) ?? [];
         samples.push(message.sample);
@@ -412,6 +442,7 @@ export class EventLoopMonitor {
     if (state) Atomics.store(state, WD_MAIN_LAST_TICK, BigInt(nowWall));
     const watchdogGap = this.#consumeWatchdogGap(windowStart);
     this.#scheduleTick();
+    if (this.#stackMode !== 'never') this.#stopSamplingForInspector();
     // GC entries for the previous stall reach the observer through two immediates, which the
     // late tick can run ahead of; they have landed by now, so the previous stall gets them
     const gcClaimed = this.#flushPending(gcTime);
@@ -558,6 +589,11 @@ export class EventLoopMonitor {
       report.stack =
         '# no sample: the loop thread was in a native call for the whole stall, which the ' +
         `pause could not interrupt (it landed ${late.toFixed(0)}ms after the call returned)`;
+      return;
+    }
+    if (this.#inspectorAttached) {
+      report.stack =
+        '# no sample: an inspector is attached to the process, so stacks are not sampled';
       return;
     }
     report.stack = this.#samplingActive
