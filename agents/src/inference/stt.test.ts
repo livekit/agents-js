@@ -916,6 +916,103 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
+  it(
+    'does not let empty interims after finalize hold the stream open',
+    { timeout: 15_000 },
+    async () => {
+      // the sequence recorded from the gateway for xai/stt-1: finals during the audio, then
+      // after session.finalize an acknowledgment and an empty interim every second, for as long
+      // as the socket is open. Real timers: the 3 s wait after a final is a fixed constant, and
+      // the interims have to arrive over the socket while it runs
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const address = server.address() as AddressInfo;
+      const messageTypes: string[] = [];
+      let emptyInterims = 0;
+      let interimTimer: ReturnType<typeof setInterval> | undefined;
+      let finalizedAt = 0;
+      let resolveSessionCreated!: () => void;
+      const sessionCreated = new Promise<void>((resolve) => {
+        resolveSessionCreated = resolve;
+      });
+
+      server.on('connection', (socket) => {
+        socket.on('close', () => clearInterval(interimTimer));
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as { type: string };
+          messageTypes.push(event.type);
+          if (event.type === 'session.create') {
+            resolveSessionCreated();
+            socket.send(
+              JSON.stringify({
+                type: 'final_transcript',
+                transcript: 'final words',
+                language: 'en',
+              }),
+            );
+          }
+          if (event.type === 'session.finalize') {
+            finalizedAt = Date.now();
+            socket.send(JSON.stringify({ type: 'session.finalized' }));
+            interimTimer = setInterval(() => {
+              if (socket.readyState !== 1) return;
+              emptyInterims++;
+              socket.send(
+                JSON.stringify({
+                  type: 'interim_transcript',
+                  transcript: '',
+                  start: 50.753,
+                  duration: 1.21,
+                  language: 'en',
+                }),
+              );
+            }, 700);
+          }
+        });
+      });
+
+      const stt = makeStt({
+        model: 'xai/stt-1',
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+      const transcripts: string[] = [];
+      let resolveTranscript!: () => void;
+      const transcriptReceived = new Promise<void>((resolve) => {
+        resolveTranscript = resolve;
+      });
+      const outputTask = (async () => {
+        for await (const event of stream) {
+          if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+            transcripts.push(event.alternatives![0].text);
+            resolveTranscript();
+          }
+        }
+      })();
+
+      try {
+        await sessionCreated;
+        await transcriptReceived;
+        stream.endInput();
+        await outputTask;
+        const endedAfter = Date.now() - finalizedAt;
+
+        expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+        expect(transcripts).toEqual(['final words']);
+        // interims kept arriving through the wait, and did not extend it past its 3 s
+        expect(emptyInterims).toBeGreaterThanOrEqual(3);
+        expect(endedAfter).toBeGreaterThanOrEqual(2_500);
+        expect(endedAfter).toBeLessThan(5_000);
+      } finally {
+        clearInterval(interimTimer);
+        stream.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+
   it('sends session.close and closes the socket when the stream closes', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');

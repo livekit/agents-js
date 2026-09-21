@@ -898,10 +898,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (json.type === 'final_transcript') {
               finalTranscriptReceived = true;
             }
+            // a transcript keeps the finalization wait open; an interim with no text is not one
+            // (xai/stt-1 sends an empty interim every second after session.finalized, for as
+            // long as the socket is open, and the stream would never end)
+            const transcriptText = (json as { transcript?: string }).transcript;
             if (
-              json.type === 'interim_transcript' ||
               json.type === 'final_transcript' ||
-              json.type === 'preflight_transcript'
+              json.type === 'preflight_transcript' ||
+              (json.type === 'interim_transcript' && Boolean(transcriptText))
             ) {
               scheduleFinalizationTimeout();
             }
