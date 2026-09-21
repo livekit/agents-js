@@ -743,14 +743,18 @@ export class AgentServer {
           if (!msg.message.value.job) return;
           const task = this.#availability(msg.message.value);
           this.#tasks.push(task);
-          task.finally(() => {
-            const taskIndex = this.#tasks.indexOf(task);
-            if (taskIndex !== -1) {
-              this.#tasks.splice(taskIndex, 1);
-            } else {
-              throw new Error(`task ${task} not found in tasks`);
-            }
-          });
+          void task
+            .finally(() => {
+              const taskIndex = this.#tasks.indexOf(task);
+              if (taskIndex !== -1) {
+                this.#tasks.splice(taskIndex, 1);
+              } else {
+                throw new Error(`task ${task} not found in tasks`);
+              }
+            })
+            .catch((error) => {
+              this.#logger.error({ error }, 'error handling availability request');
+            });
           break;
         }
         case 'assignment': {
@@ -768,14 +772,18 @@ export class AgentServer {
         case 'termination': {
           const task = this.#termination(msg.message.value);
           this.#tasks.push(task);
-          task.finally(() => {
-            const taskIndex = this.#tasks.indexOf(task);
-            if (taskIndex !== -1) {
-              this.#tasks.splice(taskIndex, 1);
-            } else {
-              throw new Error(`task ${task} not found in tasks`);
-            }
-          });
+          void task
+            .finally(() => {
+              const taskIndex = this.#tasks.indexOf(task);
+              if (taskIndex !== -1) {
+                this.#tasks.splice(taskIndex, 1);
+              } else {
+                throw new Error(`task ${task} not found in tasks`);
+              }
+            })
+            .catch((error) => {
+              this.#logger.error({ error }, 'error handling job termination');
+            });
           break;
         }
       }
@@ -986,14 +994,18 @@ export class AgentServer {
 
     const task = jobRequestTask();
     this.#tasks.push(task);
-    task.finally(() => {
-      const taskIndex = this.#tasks.indexOf(task);
-      if (taskIndex !== -1) {
-        this.#tasks.splice(taskIndex, 1);
-      } else {
-        throw new Error(`task ${task} not found in tasks`);
-      }
-    });
+    void task
+      .finally(() => {
+        const taskIndex = this.#tasks.indexOf(task);
+        if (taskIndex !== -1) {
+          this.#tasks.splice(taskIndex, 1);
+        } else {
+          throw new Error(`task ${task} not found in tasks`);
+        }
+      })
+      .catch((error) => {
+        this.#logger.error({ error }, 'error handling job request');
+      });
   }
 
   async #termination(msg: JobTermination) {

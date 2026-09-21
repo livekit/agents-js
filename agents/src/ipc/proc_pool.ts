@@ -4,6 +4,7 @@
 import { MultiMutex, Mutex } from '@livekit/mutex';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { RunningJobInfo } from '../job.js';
+import { log } from '../log.js';
 import { Queue } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
@@ -165,14 +166,18 @@ export class ProcPool {
         const procUnlock = await this.procMutex.lock();
         const task = this.procWatchTask(procUnlock);
         this.tasks.push(task);
-        task.finally(() => {
-          const taskIndex = this.tasks.indexOf(task);
-          if (taskIndex !== -1) {
-            this.tasks.splice(taskIndex, 1);
-          } else {
-            throw new Error(`task ${task} not found in tasks`);
-          }
-        });
+        void task
+          .finally(() => {
+            const taskIndex = this.tasks.indexOf(task);
+            if (taskIndex !== -1) {
+              this.tasks.splice(taskIndex, 1);
+            } else {
+              throw new Error(`task ${task} not found in tasks`);
+            }
+          })
+          .catch((error) => {
+            log().error({ error }, 'error in process watch task');
+          });
       }
     }
   }
