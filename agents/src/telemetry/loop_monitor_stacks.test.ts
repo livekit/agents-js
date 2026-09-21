@@ -283,6 +283,40 @@ describe.sequential('event loop stall stacks', () => {
     );
   });
 
+  it('samples in the worker process too, into the log', async () => {
+    // no spans and no job in the worker: the stack still names the blocking code in the log,
+    // as the Python monitor's does in every process
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    const reports: BlockedReport[] = [];
+    const monitor = new EventLoopMonitor({
+      warnThreshold: WARN,
+      errorThreshold: ERROR,
+      tickInterval: TICK,
+      emitSpans: false,
+      stacks: 'adaptive',
+    });
+    monitor.onReport = (report) => reports.push(report);
+    monitor.start();
+    monitors.push(monitor);
+    await watchdogReady(monitor, false);
+
+    burnCpuForTest(70);
+    await waitFor(() => codeReports(reports).length >= 1);
+    expect(codeReports(reports)[0]!.stack).toBe(
+      "# no sample: stack sampling starts after a process's first stall",
+    );
+    await watchdogReady(monitor, true);
+    const before = codeReports(reports).length;
+
+    burnCpuForTest(80);
+    await waitFor(() => codeReports(reports).length === before + 1);
+    const report = codeReports(reports)[before]!;
+    expect(report.stack).toContain('at burnCpuForTest (');
+    expect(stalls()).toEqual([]);
+    const logged = warn.mock.calls.map((call) => call[0] as { stack?: string });
+    expect(logged.some((fields) => fields.stack === report.stack)).toBe(true);
+  });
+
   it('samples from the start with always, and never with never', async () => {
     const always = startMonitor('always');
     await watchdogReady(always.monitor, true);
