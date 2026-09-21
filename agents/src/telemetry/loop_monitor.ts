@@ -265,7 +265,7 @@ export class EventLoopMonitor {
     this.#lastTickWall = Date.now();
     this.#lastCpuUsage = this.#cpuUsage();
     this.#startGcObserver();
-    if (this.#stackMode === 'always' && this.#emitSpans) this.#samplingRequested = true;
+    if (this.#stackMode === 'always') this.#samplingRequested = true;
     if (this.#useWatchdog) this.#startWatchdog();
     this.#scheduleTick();
   }
@@ -510,9 +510,11 @@ export class EventLoopMonitor {
       // an idle child before its job, or of the worker process, must not use up the job's budget
       const spanEligible = this.#emitSpans && getJobContext(false) !== undefined;
       const emitSpan = spanEligible && this.#spanLimiter.allow(now);
-      // a code stall in a job process turns sampling on for the stalls that follow (adaptive);
-      // this one is reported without a stack, like the Python monitor's unsampled stalls
-      if (report.cause === 'code' && spanEligible && this.#stackMode === 'adaptive') {
+      // a code stall turns sampling on for the stalls that follow (adaptive), in every process:
+      // the worker's and an idle child's stalls are logged, and a log with a stack names the
+      // blocking code just as a span does. This one is reported without a stack, like the
+      // Python monitor's unsampled stalls
+      if (report.cause === 'code' && this.#stackMode === 'adaptive') {
         this.#requestSampling();
       }
       if (!emitSpan && !emitLog) return;
@@ -560,9 +562,7 @@ export class EventLoopMonitor {
     }
     report.stack = this.#samplingActive
       ? '# no sample: the block ended before the watchdog looked'
-      : this.#emitSpans
-        ? "# no sample: stack sampling starts after a process's first stall"
-        : '# no sample: the worker process does not sample stacks';
+      : "# no sample: stack sampling starts after a process's first stall";
   }
 
   #emitSpan(report: BlockedReport, suppressed: number): void {
