@@ -10,6 +10,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { APIStatusError } from '../src/_exceptions.js';
 import { initializeLogger } from '../src/log.js';
 import {
+  AsyncIterableQueue,
   Event,
   Queue,
   Task,
@@ -1175,5 +1176,19 @@ describe('waitUntilAborted', () => {
 
     await expect(outcome).resolves.toEqual({ result: undefined, isAborted: true });
     expect(removed).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe('AsyncIterableQueue.next with a signal', () => {
+  it('leaves the next item in the queue when the read is cancelled, so a torn-down reader cannot steal it', async () => {
+    const queue = new AsyncIterableQueue<number>();
+    const controller = new AbortController();
+    const cancelled = queue.next({ signal: controller.signal });
+
+    controller.abort();
+    await expect(cancelled).rejects.toBeDefined();
+    queue.put(1);
+
+    await expect(queue.next()).resolves.toEqual({ value: 1, done: false });
   });
 });

@@ -14,7 +14,6 @@ import {
   log,
   normalizeLanguage,
   stt,
-  waitUntilAborted,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { IncomingMessage } from 'node:http';
@@ -422,15 +421,24 @@ export class SpeechStream extends stt.SpeechStream {
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
 
     let hasEnded = false;
-    const iterator = this.input[Symbol.asyncIterator]();
+    // `input.next({ signal })` cancels the read itself on teardown, so a sender
+    // left over from a failed attempt cannot stay parked in the queue and steal
+    // the next attempt's first frame. It also replaces racing an un-cancellable
+    // `next()` against one long-lived abort promise, which appended a reaction
+    // — and the frame it captured — to that promise per frame, for the life of
+    // the stream (nodejs/node#17469).
+    const nextInput = async () => {
+      try {
+        return await this.input.next({ signal: abortSignal });
+      } catch (e) {
+        if (abortSignal.aborted) return undefined;
+        throw e;
+      }
+    };
 
     while (true) {
-      // One abort listener per item, removed once `next()` settles. Racing
-      // every item against a single long-lived abort promise appended a
-      // reaction — and the frame it captured — to that promise per item, for
-      // the life of the stream (nodejs/node#17469).
-      const { result, isAborted } = await waitUntilAborted(iterator.next(), abortSignal);
-      if (isAborted) return;
+      const result = await nextInput();
+      if (result === undefined) return; // aborted
 
       if (result.done) {
         hasEnded = true;

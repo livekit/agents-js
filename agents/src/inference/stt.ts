@@ -950,17 +950,24 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           Math.floor(this.opts.sampleRate / 20), // 50ms
         );
 
-        // Manual iteration to support cancellation. Each item is raced against
-        // the signal through `waitUntilAborted`, which installs and removes its
-        // own abort listener per call. Racing every item against ONE long-lived
-        // abort promise leaked: each race appended a reaction to that
-        // never-settling promise, and each reaction retained the settled
-        // `next()` promise and the AudioFrame it carried — 20 frames a second
-        // per stream, for the life of the stream (nodejs/node#17469).
-        const iterator = this.input[Symbol.asyncIterator]();
+        // Manual iteration to support cancellation. `input.next({ signal })`
+        // cancels the READ when this attempt is torn down, so an abandoned read
+        // cannot stay parked in the queue and shift the next attempt's first
+        // frame off it for nobody. It also replaces racing an un-cancellable
+        // `next()` against one long-lived abort promise, which appended a
+        // reaction — and the AudioFrame it captured — to that never-settling
+        // promise per frame, for the life of the stream (nodejs/node#17469).
+        const nextInput = async () => {
+          try {
+            return await this.input.next({ signal });
+          } catch (e) {
+            if (signal.aborted) return undefined; // teardown, not a failure of this send
+            throw e;
+          }
+        };
         while (true) {
-          const { result, isAborted } = await waitUntilAborted(iterator.next(), signal);
-          if (isAborted) {
+          const result = await nextInput();
+          if (result === undefined) {
             // Expected abort, don't log
             return;
           }
@@ -991,7 +998,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       const processVAD = async (stream: VADStream, socket: WebSocket, signal: AbortSignal) => {
-        // Same per-item abort race as `send`, for the same reason.
+        // `VADStream` has no cancellable read, so each event is raced through
+        // `waitUntilAborted`: one abort listener per call, removed on settle,
+        // instead of one shared abort promise accumulating a reaction per event.
         const iterator = stream[Symbol.asyncIterator]();
         while (true) {
           const { result, isAborted } = await waitUntilAborted(iterator.next(), signal);
