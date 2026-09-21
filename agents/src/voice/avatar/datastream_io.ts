@@ -202,14 +202,14 @@ export class DataStreamAudioOutput extends AudioOutput {
       return;
     }
 
-    void this.streamWriter
-      .close()
-      .finally(() => {
-        this.streamWriter = undefined;
-      })
-      .catch((error) => {
-        this.#logger.warn({ error }, 'failed to close avatar audio stream');
-      });
+    // Close the stream to mark the end of the segment. Clear the field synchronously, as
+    // Python does, so the next frame opens a fresh writer and this close cannot clear a
+    // writer that a later segment has since opened.
+    const writer = this.streamWriter;
+    this.streamWriter = undefined;
+    void writer.close().catch((error) => {
+      this.#logger.warn({ error }, 'failed to close avatar audio stream');
+    });
 
     this.firstFrameEmitted = false;
   }
