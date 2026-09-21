@@ -443,6 +443,9 @@ describe('STT aligned transcript capability', () => {
     expect(
       makeStt({ model: 'assemblyai/universal-streaming' }).capabilities.alignedTranscript,
     ).toBe('word');
+    expect(makeStt({ model: 'assemblyai/universal-3-6-pro' }).capabilities.alignedTranscript).toBe(
+      'word',
+    );
     expect(makeStt({ model: 'auto' }).capabilities.alignedTranscript).toBe(false);
     expect(makeStt({ model: 'inworld/inworld-stt-1' }).capabilities.alignedTranscript).toBe(false);
   });

@@ -1015,7 +1015,7 @@ export function asLanguageCode(language: string): LanguageCode;
 // Warning: (ae-missing-release-tag) "AssemblyaiModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type AssemblyaiModels = 'assemblyai/universal-streaming' | 'assemblyai/universal-streaming-multilingual' | 'assemblyai/u3-rt-pro' | 'assemblyai/universal-3-5-pro';
+type AssemblyaiModels = 'assemblyai/universal-streaming' | 'assemblyai/universal-streaming-multilingual' | 'assemblyai/u3-rt-pro' | 'assemblyai/universal-3-5-pro' | 'assemblyai/universal-3-6-pro';
 
 // Warning: (ae-missing-release-tag) "AssemblyAIOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
