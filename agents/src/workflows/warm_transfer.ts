@@ -870,7 +870,7 @@ export interface TwilioConnectorWarmTransferTaskOptions
   /**
    * `CallToken` from the original incoming Twilio voice webhook, authorizing reuse
    * of that call's caller ID. Requires the same call's `From` as `originalCallerNumber`.
-   * HTTP 400 / Twilio error 21210 retries once from `twilioFromNumber` without a token.
+   * HTTP 400 / Twilio error 21210 or 21212 retries once from `twilioFromNumber` without a token.
    * Other failures are not retried, to avoid duplicate calls.
    * Retrieve the token from server-side state for that specific call; keep it out
    * of prompts and participant attributes. When omitted or empty, use the business caller ID.
@@ -937,6 +937,11 @@ export function createTwilioConnectorWarmTransferTask(
 
       const twiml = `<Response><Connect><Stream url=${escapeXmlAttribute(connectUrl)}/></Connect></Response>`;
       let callSid: string;
+      // The connector session above is awaited, so the transfer may have been
+      // cancelled by now; don't place a call nothing is waiting for.
+      if (signal.aborted) {
+        throw new Error('dial cancelled');
+      }
       try {
         callSid = await createTwilioCall(auth, {
           to: phoneNumber,
@@ -946,12 +951,14 @@ export function createTwilioConnectorWarmTransferTask(
         });
       } catch (error) {
         // Retry only a definitive caller-ID rejection before a call was created.
+        // 21210 = From not verified (token rejected/expired), 21212 = invalid From
+        // (e.g. withheld/anonymous inbound caller).
         if (
           !twilioCallToken ||
           signal.aborted ||
           !(error instanceof TwilioCallCreationError) ||
           error.status !== 400 ||
-          error.code !== 21210
+          (error.code !== 21210 && error.code !== 21212)
         ) {
           throw error;
         }
@@ -962,7 +969,7 @@ export function createTwilioConnectorWarmTransferTask(
         await waitForConnectorAnswer({ room, identity, ringingTimeout, signal });
       } catch (error) {
         // We gave up waiting; cancel the still-ringing call so it doesn't linger.
-        await cancelTwilioCall(auth, callSid).catch(() => {});
+        await cancelTwilioCall(auth, callSid);
         throw error;
       }
     },
@@ -1093,7 +1100,20 @@ async function createTwilioCall(
 
 /** Cancel a still-ringing Twilio call. */
 async function cancelTwilioCall(auth: TwilioRestAuth, callSid: string): Promise<void> {
-  await twilioRequest(auth, `/Calls/${encodeURIComponent(callSid)}.json`, { Status: 'canceled' });
+  let resp: Response;
+  try {
+    resp = await twilioRequest(auth, `/Calls/${encodeURIComponent(callSid)}.json`, {
+      Status: 'canceled',
+    });
+  } catch {
+    // Keep transport error messages out of logs: they can contain request data.
+    log().warn('failed to cancel Twilio call: request failed');
+    return;
+  }
+  if (!resp.ok) {
+    // Preserve the original dial failure and report only the HTTP status.
+    log().warn({ status: resp.status }, 'failed to cancel Twilio call');
+  }
 }
 
 /** XML-escape a value and wrap it in double quotes for use as an attribute. */

@@ -105,8 +105,10 @@ requires `originalCallerNumber`. Without a token (or with an empty token), the t
 uses the business number, even when the original caller number is available.
 
 If Twilio explicitly rejects the preservation attempt with HTTP 400 and
-[error 21210 (unverified From)](https://www.twilio.com/docs/api/errors/21210),
-the task retries once from the business number without the token. Other errors,
+[error 21210 (unverified From)](https://www.twilio.com/docs/api/errors/21210) or
+[error 21212 (invalid From)](https://www.twilio.com/docs/api/errors/21212) — the
+latter covers withheld or anonymous inbound caller IDs — the task retries once
+from the business number without the token. Other errors,
 including network timeouts and failures after call creation, are not retried to
 avoid duplicate calls. A failed fallback is propagated to the transfer workflow.
 
