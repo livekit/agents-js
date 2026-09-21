@@ -152,9 +152,15 @@ export class Queue<T> {
   }
 
   async get(options: { signal?: AbortSignal } = {}): Promise<T> {
+    // A cancelled read must not take an item, whether or not one is buffered.
+    // `once` only consults the signal while the queue is empty, so without
+    // these checks a reader torn down between reads would keep draining the
+    // backlog — and a replacement reader would start from an empty queue.
+    options.signal?.throwIfAborted();
     while (this.items.length === 0) {
       await once(this.#events, 'put', { signal: options.signal });
     }
+    options.signal?.throwIfAborted();
 
     const item = this.items.shift();
     this.#events.emit('get');

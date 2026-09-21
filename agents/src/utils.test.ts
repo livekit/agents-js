@@ -1191,4 +1191,19 @@ describe('AsyncIterableQueue.next with a signal', () => {
 
     await expect(queue.next()).resolves.toEqual({ value: 1, done: false });
   });
+
+  it('rejects a read whose signal is already aborted even when items are buffered, leaving them for the next reader', async () => {
+    // A sender torn down between reads must not drain the backlog the
+    // replacement sender is about to need.
+    const queue = new AsyncIterableQueue<number>();
+    queue.put(1);
+    queue.put(2);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(queue.next({ signal: controller.signal })).rejects.toBeDefined();
+
+    await expect(queue.next()).resolves.toEqual({ value: 1, done: false });
+    await expect(queue.next()).resolves.toEqual({ value: 2, done: false });
+  });
 });
