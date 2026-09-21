@@ -17,7 +17,15 @@ import {
   SpeechEventType,
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
+import {
+  type AudioBuffer,
+  Event,
+  Task,
+  cancelAndWait,
+  shortuuid,
+  waitForAbort,
+  waitUntilAborted,
+} from '../utils.js';
 import { type VAD, VADEventType, type VADStream } from '../vad.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
@@ -942,75 +950,56 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           Math.floor(this.opts.sampleRate / 20), // 50ms
         );
 
-        // Create abort promise once to avoid memory leak
-        const abortPromise = new ThrowsPromise<never, Error>((_, reject) => {
-          if (signal.aborted) {
-            return reject(new Error('Send aborted'));
-          }
-          const onAbort = () => reject(new Error('Send aborted'));
-          signal.addEventListener('abort', onAbort, { once: true });
-        });
-
-        // Manual iteration to support cancellation
+        // Manual iteration to support cancellation. Each item is raced against
+        // the signal through `waitUntilAborted`, which installs and removes its
+        // own abort listener per call. Racing every item against ONE long-lived
+        // abort promise leaked: each race appended a reaction to that
+        // never-settling promise, and each reaction retained the settled
+        // `next()` promise and the AudioFrame it carried — 20 frames a second
+        // per stream, for the life of the stream (nodejs/node#17469).
         const iterator = this.input[Symbol.asyncIterator]();
-        try {
-          while (true) {
-            const result = await ThrowsPromise.race([iterator.next(), abortPromise]);
-
-            if (result.done) break;
-            const ev = result.value;
-
-            let frames: AudioFrame[];
-            if (ev === SpeechStream.FLUSH_SENTINEL) {
-              frames = audioStream.flush();
-            } else {
-              const frame = ev as AudioFrame;
-              vadStream?.pushFrame(frame);
-              frames = audioStream.write(new Int16Array(frame.data).buffer);
-            }
-
-            for (const frame of frames) {
-              this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
-              const base64 = Buffer.from(frame.data.buffer).toString('base64');
-              const msg = { type: 'input_audio', audio: base64 };
-              socket.send(JSON.stringify(msg));
-            }
-          }
-
-          inputEnded = true;
-          vadStream?.endInput();
-          sendSessionFinalize(socket);
-          scheduleFinalizationTimeout();
-        } catch (e) {
-          if ((e as Error).message === 'Send aborted') {
+        while (true) {
+          const { result, isAborted } = await waitUntilAborted(iterator.next(), signal);
+          if (isAborted) {
             // Expected abort, don't log
             return;
           }
-          throw e;
+          if (result.done) break;
+          const ev = result.value;
+
+          let frames: AudioFrame[];
+          if (ev === SpeechStream.FLUSH_SENTINEL) {
+            frames = audioStream.flush();
+          } else {
+            const frame = ev as AudioFrame;
+            vadStream?.pushFrame(frame);
+            frames = audioStream.write(new Int16Array(frame.data).buffer);
+          }
+
+          for (const frame of frames) {
+            this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
+            const base64 = Buffer.from(frame.data.buffer).toString('base64');
+            const msg = { type: 'input_audio', audio: base64 };
+            socket.send(JSON.stringify(msg));
+          }
         }
+
+        inputEnded = true;
+        vadStream?.endInput();
+        sendSessionFinalize(socket);
+        scheduleFinalizationTimeout();
       };
 
       const processVAD = async (stream: VADStream, socket: WebSocket, signal: AbortSignal) => {
-        const abortPromise = new ThrowsPromise<never, Error>((_, reject) => {
-          if (signal.aborted) {
-            return reject(new Error('VAD aborted'));
-          }
-          const onAbort = () => reject(new Error('VAD aborted'));
-          signal.addEventListener('abort', onAbort, { once: true });
-        });
-
+        // Same per-item abort race as `send`, for the same reason.
         const iterator = stream[Symbol.asyncIterator]();
-        try {
-          while (true) {
-            const result = await ThrowsPromise.race([iterator.next(), abortPromise]);
-            if (result.done) break;
-            if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
-            if (socket.readyState !== 1) return;
-            sendSessionFinalize(socket);
-          }
-        } catch (e) {
-          if ((e as Error).message === 'VAD aborted') return;
-          throw e;
+        while (true) {
+          const { result, isAborted } = await waitUntilAborted(iterator.next(), signal);
+          if (isAborted) return;
+          if (result.done) break;
+          if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
+          if (socket.readyState !== 1) return;
+          sendSessionFinalize(socket);
         }
       };
 

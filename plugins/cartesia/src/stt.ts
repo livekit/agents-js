@@ -14,7 +14,7 @@ import {
   log,
   normalizeLanguage,
   stt,
-  waitForAbort,
+  waitUntilAborted,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { IncomingMessage } from 'node:http';
@@ -423,12 +423,14 @@ export class SpeechStream extends stt.SpeechStream {
 
     let hasEnded = false;
     const iterator = this.input[Symbol.asyncIterator]();
-    const abortPromise = waitForAbort(abortSignal);
 
     while (true) {
-      const result = await Promise.race([iterator.next(), abortPromise]);
-
-      if (result === undefined) return; // aborted
+      // One abort listener per item, removed once `next()` settles. Racing
+      // every item against a single long-lived abort promise appended a
+      // reaction — and the frame it captured — to that promise per item, for
+      // the life of the stream (nodejs/node#17469).
+      const { result, isAborted } = await waitUntilAborted(iterator.next(), abortSignal);
+      if (isAborted) return;
 
       if (result.done) {
         hasEnded = true;

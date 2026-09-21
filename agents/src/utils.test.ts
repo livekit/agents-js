@@ -20,6 +20,7 @@ import {
   resampleStream,
   toStream,
   waitForWebSocketOpen,
+  waitUntilAborted,
 } from '../src/utils.js';
 
 describe('utils', () => {
@@ -1142,5 +1143,37 @@ world
 
       expect(first.cancelled).toBe(true);
     });
+  });
+});
+
+describe('waitUntilAborted', () => {
+  it('installs one abort listener per call and removes it once the promise settles', async () => {
+    // A loop that races one item at a time against the signal must not
+    // accumulate listeners or promise reactions across iterations: that is the
+    // shape of the STT send loops, at twenty audio frames a second.
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, 'addEventListener');
+    const removed = vi.spyOn(controller.signal, 'removeEventListener');
+
+    for (let index = 0; index < 100; index += 1) {
+      const outcome = await waitUntilAborted(Promise.resolve(index), controller.signal);
+      expect(outcome).toEqual({ result: index, isAborted: false });
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(added).toHaveBeenCalledTimes(100);
+    expect(removed).toHaveBeenCalledTimes(100);
+  });
+
+  it('resolves the abort marker when the signal fires first, and still removes its listener', async () => {
+    const controller = new AbortController();
+    const removed = vi.spyOn(controller.signal, 'removeEventListener');
+    const pending = new Promise<never>(() => {});
+
+    const outcome = waitUntilAborted(pending, controller.signal);
+    controller.abort();
+
+    await expect(outcome).resolves.toEqual({ result: undefined, isAborted: true });
+    expect(removed).toHaveBeenCalledTimes(0);
   });
 });

@@ -11,7 +11,7 @@ import {
   DEFAULT_API_CONNECT_OPTIONS,
   normalizeLanguage,
   stt,
-  waitForAbort,
+  waitUntilAborted,
 } from '@livekit/agents';
 import { performance } from 'node:perf_hooks';
 import type { ClientOptions, RawData } from 'ws';
@@ -701,7 +701,10 @@ export class SpeechStream extends stt.SpeechStream {
     let pending = Buffer.alloc(0);
     let pacingOrigin: number | undefined;
     let sentDurationMs = 0;
-    const abortPromise = waitForAbort(signal);
+    // Every race below goes through `waitUntilAborted`, one abort listener per
+    // call, removed on settle. Racing against a single long-lived abort promise
+    // appended a reaction — and the buffer it captured — to that promise per
+    // packet and per frame, for the life of the stream (nodejs/node#17469).
     const iterator = this.input[Symbol.asyncIterator]();
 
     const sendPacket = async (packet: Buffer) => {
@@ -709,11 +712,11 @@ export class SpeechStream extends stt.SpeechStream {
       pacingOrigin ??= performance.now();
       const delayMs = pacingOrigin + sentDurationMs - performance.now();
       if (delayMs > 0) {
-        const result = await Promise.race([
-          new Promise<'elapsed'>((resolve) => setTimeout(() => resolve('elapsed'), delayMs)),
-          abortPromise,
-        ]);
-        if (result !== 'elapsed') return;
+        const { isAborted } = await waitUntilAborted(
+          new Promise<void>((resolve) => setTimeout(resolve, delayMs)),
+          signal,
+        );
+        if (isAborted) return;
       }
       try {
         await send(ws, packet);
@@ -728,8 +731,8 @@ export class SpeechStream extends stt.SpeechStream {
     };
 
     while (true) {
-      const result = await Promise.race([iterator.next(), abortPromise]);
-      if (result === undefined) return;
+      const { result, isAborted } = await waitUntilAborted(iterator.next(), signal);
+      if (isAborted) return;
       if (result.done) break;
       const item = result.value;
       if (item === SpeechStream.FLUSH_SENTINEL) {
