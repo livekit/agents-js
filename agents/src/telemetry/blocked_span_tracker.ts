@@ -53,11 +53,17 @@ export class BlockedSpanTracker implements SpanProcessor {
   }
 
   /**
-   * The innermost span that was current across `[startedAt, endedAt]` (epoch ms): created
-   * before the window opened and still open, or ended no earlier than the window closed. Spans
-   * of the given names are skipped (the stall span itself). `slack` widens both ends: the
-   * block's start is known to within a heartbeat, and its end is the late heartbeat's run, a
-   * little after the blocking call returned and the span it was in ended.
+   * The span that was current across `[startedAt, endedAt]` (epoch ms): created before the
+   * window opened and still open, or ended no earlier than the window closed. Spans of the given
+   * names are skipped (the stall span itself). `slack` widens both ends: the block's start is
+   * known to within a heartbeat, and its end is the late heartbeat's run, a little after the
+   * blocking call returned and the span it was in ended.
+   *
+   * Among the spans that qualify, the innermost of one ancestry is the answer. When two
+   * operations of the same kind were both in flight (two tools, two RPC handlers), timing alone
+   * cannot say which one blocked: the answer is then their nearest common ancestor, or nothing,
+   * rather than a guess at one of them. Operations of different kinds overlap all the time (a
+   * user turn is open while an RPC handler runs) and the newest of them is the one that blocked.
    */
   blockedSpan(
     startedAt: number,
@@ -67,18 +73,50 @@ export class BlockedSpanTracker implements SpanProcessor {
   ): Span | undefined {
     const opened = startedAt + slack;
     const closed = endedAt - slack;
-    let best: { span: Span; createdAt: number } | undefined;
+    const candidates = new Map<string, { span: Span; createdAt: number }>();
     const consider = (entry: { span: Span; createdAt: number }) => {
       if (entry.createdAt > opened) return;
       if (exclude.has(spanName(entry.span))) return;
-      // ties (same millisecond) go to the later-created span, which the maps yield last
-      if (!best || entry.createdAt >= best.createdAt) best = entry;
+      candidates.set(entry.span.spanContext().spanId, entry);
     };
     for (const entry of this.#open.values()) consider(entry);
     for (const entry of this.#ended) {
       if (entry.endedAt >= closed) consider(entry);
     }
-    return best?.span;
+    if (!candidates.size) return undefined;
+
+    // the leaves: candidates no other candidate descends from
+    const hasChild = new Set<string>();
+    for (const entry of candidates.values()) {
+      let parent = parentSpanId(entry.span);
+      while (parent !== undefined && candidates.has(parent) && !hasChild.has(parent)) {
+        hasChild.add(parent);
+        parent = parentSpanId(candidates.get(parent)!.span);
+      }
+    }
+    const leaves = [...candidates.entries()].filter(([id]) => !hasChild.has(id));
+    // ties (same millisecond) go to the later-created span, which the maps yield last
+    let newest = leaves[0]!;
+    for (const leaf of leaves) if (leaf[1].createdAt >= newest[1].createdAt) newest = leaf;
+    const sameKind = leaves.filter(
+      ([, entry]) => spanName(entry.span) === spanName(newest[1].span),
+    );
+    if (sameKind.length <= 1) return newest[1].span;
+
+    // indistinguishable: the nearest ancestor (among the candidates) common to all of them
+    const chains = sameKind.map(([id]) => {
+      const chain: string[] = [];
+      let current: string | undefined = id;
+      while (current !== undefined && candidates.has(current)) {
+        chain.push(current);
+        current = parentSpanId(candidates.get(current)!.span);
+      }
+      return chain;
+    });
+    const shared = chains[0]!.find((id) => chains.every((chain) => chain.includes(id)));
+    if (shared === undefined) return undefined;
+    // the common ancestor is the deepest one of that kind that is not itself ambiguous
+    return candidates.get(shared)!.span;
   }
 
   /** The context carrying {@link blockedSpan}, or undefined. */
@@ -111,6 +149,10 @@ export class BlockedSpanTracker implements SpanProcessor {
 
 function spanName(span: Span): string {
   return (span as { name?: string }).name ?? '';
+}
+
+function parentSpanId(span: Span): string | undefined {
+  return (span as { parentSpanContext?: { spanId: string } }).parentSpanContext?.spanId;
 }
 
 /** The one tracker the loop monitor consults; installed on every provider the framework owns. */
