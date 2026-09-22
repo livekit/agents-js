@@ -5,6 +5,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
+import type { TTSMetrics } from '../metrics/base.js';
 import { basic } from '../tokenize/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Task, cancelAndWait } from '../utils.js';
@@ -120,15 +121,29 @@ export class FallbackAdapter extends TTS {
     return { streaming, alignedTranscript };
   }
 
+  private readonly forwardMetrics = (metrics: TTSMetrics) => {
+    this.emit('metrics_collected', metrics);
+  };
+
+  /**
+   * Child `error` events are absorbed, never re-emitted: an unrecoverable
+   * `tts_error` reaching `AgentSession` closes the session, and a child failing
+   * is exactly what this adapter exists to survive. Recovery probes make that
+   * fatal in practice — they re-fail every `recoveryDelayMs` for as long as a
+   * provider is down. A listener is still attached so a child's `emit('error')`
+   * never throws `ERR_UNHANDLED_ERROR`.
+   *
+   * Terminal failure still reaches the session: once every instance has failed,
+   * this adapter's own stream throws `APIConnectionError` and the base class
+   * emits that here.
+   */
+  private readonly absorbChildError = () => {};
+
   private setupEventForwarding(): void {
-    this.ttsInstances.forEach((tts) => {
-      tts.on('metrics_collected', (metrics) => {
-        this.emit('metrics_collected', metrics);
-      });
-      tts.on('error', (error) => {
-        this.emit('error', error);
-      });
-    });
+    for (const tts of this.ttsInstances) {
+      tts.on('metrics_collected', this.forwardMetrics);
+      tts.on('error', this.absorbChildError);
+    }
   }
 
   /**
@@ -278,10 +293,11 @@ export class FallbackAdapter extends TTS {
       await cancelAndWait(recoveryTasks, 1000);
     }
 
-    // Remove event listeners
+    // Remove only our own listeners: the instances belong to the caller, who
+    // may have subscribed to them directly.
     for (const tts of this.ttsInstances) {
-      tts.removeAllListeners('metrics_collected');
-      tts.removeAllListeners('error');
+      tts.off('metrics_collected', this.forwardMetrics);
+      tts.off('error', this.absorbChildError);
     }
 
     // Close all TTS instances

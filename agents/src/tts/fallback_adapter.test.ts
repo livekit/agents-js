@@ -4,12 +4,12 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { APIError } from '../_exceptions.js';
+import { APIError, APIStatusError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TTS_STARTED_TIME } from '../types.js';
 import { FallbackAdapter } from './fallback_adapter.js';
-import { ChunkedStream, SynthesizeStream, TTS } from './tts.js';
+import { ChunkedStream, SynthesizeStream, TTS, type TTSError } from './tts.js';
 
 const SAMPLE_RATE = 24000;
 
@@ -47,14 +47,14 @@ class MockSynthesizeStream extends SynthesizeStream {
           await this.sendToProvider();
           break;
         }
-        throw new APIError('mock TTS failed after receiving input');
+        throw this.mockTts.failWith ?? new APIError('mock TTS failed after receiving input');
       }
       // Throw immediately, before any pushText has been called.
       // This is the scenario that previously deadlocked the FallbackAdapter:
       // the inner stream's mainTask finishes before forwardBufferToTTS gets
       // a chance to call pushText, so #monitorMetricsTask never starts and
       // this.output is never closed.
-      throw new APIError('mock TTS failed immediately');
+      throw this.mockTts.failWith ?? new APIError('mock TTS failed immediately');
     }
 
     // Happy path: read text from this.input and emit a single audio frame per token.
@@ -84,7 +84,7 @@ class MockChunkedStream extends ChunkedStream {
   }
   protected async run(): Promise<void> {
     if (this.shouldFail) {
-      throw new APIError('mock TTS failed immediately');
+      throw this.mockTts.failWith ?? new APIError('mock TTS failed immediately');
     }
     this.queue.put({
       requestId: 'mock-req',
@@ -100,13 +100,15 @@ class MockTTS extends TTS {
   shouldFail = false;
   /** When failing, first consume a token (and mark started) before throwing. */
   failAfterInput = false;
+  /** The error raised when failing; defaults to a generic retryable APIError. */
+  failWith?: APIError;
   /** Simulated latency between receiving text and sending it to the provider. */
   sendDelayMs = 0;
   /** The started time the stream recorded when it "sent" text to the provider. */
   lastMarkedTime?: number;
 
-  constructor(label: string, sampleRate: number = SAMPLE_RATE) {
-    super(sampleRate, 1, { streaming: true });
+  constructor(label: string, sampleRate: number = SAMPLE_RATE, streaming = true) {
+    super(sampleRate, 1, { streaming });
     this.label = label;
   }
 
@@ -366,6 +368,154 @@ describe('TTS FallbackAdapter', () => {
     expect(startedTime).toBeGreaterThanOrEqual(submitTime);
     expect(startedTime).toBeLessThan(submitTime + 0.1);
 
+    await adapter.close();
+  });
+
+  it('keeps a child failure off the adapter while another instance can serve', async () => {
+    // A non-retryable child error (ElevenLabs 401 in the field report) used to
+    // be re-emitted verbatim, so AgentSession closed the session as
+    // unrecoverable while this adapter was busy failing over successfully.
+    const primary = new MockTTS('primary');
+    primary.shouldFail = true;
+    primary.failWith = new APIStatusError({
+      message: 'payment required',
+      options: { statusCode: 401 },
+    });
+    const secondary = new MockTTS('secondary');
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, secondary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    const adapterErrors: TTSError[] = [];
+    adapter.on('error', (error) => adapterErrors.push(error));
+
+    // the failed instance is probed for recovery immediately and the probe
+    // fails too, so a downed provider keeps producing child errors long after
+    // the utterance it broke
+    const childErrors: TTSError[] = [];
+    const probeFailed = new Promise<void>((resolve) => {
+      primary.on('error', (error) => {
+        childErrors.push(error);
+        if (childErrors.length === 2) resolve();
+      });
+    });
+
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello world');
+          controller.close();
+        },
+      }),
+    );
+
+    let frameCount = 0;
+    for await (const event of stream) {
+      if (event === SynthesizeStream.END_OF_STREAM) break;
+      frameCount++;
+    }
+    await probeFailed;
+
+    expect(frameCount).toBeGreaterThan(0);
+    expect(childErrors.map((e) => e.recoverable)).toEqual([false, false]);
+    expect(adapterErrors).toEqual([]);
+
+    stream.close();
+    await adapter.close();
+  });
+
+  it('reports an unrecoverable error once every instance has failed', async () => {
+    const primary = new MockTTS('primary');
+    primary.shouldFail = true;
+    const secondary = new MockTTS('secondary');
+    secondary.shouldFail = true;
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, secondary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    const adapterErrors: TTSError[] = [];
+    adapter.on('error', (error) => adapterErrors.push(error));
+
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello world');
+          controller.close();
+        },
+      }),
+    );
+
+    for await (const event of stream) {
+      if (event === SynthesizeStream.END_OF_STREAM) break;
+    }
+
+    expect(adapterErrors).toHaveLength(1);
+    expect(adapterErrors[0]!.label).toBe(adapter.label);
+    expect(adapterErrors[0]!.recoverable).toBe(false);
+    expect(adapterErrors[0]!.error.message).toContain('all TTS instances failed');
+
+    stream.close();
+    await adapter.close();
+  });
+
+  it('leaves listeners the caller registered on its own instances intact on close', async () => {
+    const tts = new MockTTS('primary');
+    const onError = () => {};
+    const onMetrics = () => {};
+    tts.on('error', onError);
+    tts.on('metrics_collected', onMetrics);
+
+    const adapter = new FallbackAdapter({ ttsInstances: [tts], recoveryDelayMs: 60_000 });
+    await adapter.close();
+
+    expect(tts.listeners('error')).toEqual([onError]);
+    expect(tts.listeners('metrics_collected')).toEqual([onMetrics]);
+  });
+
+  it('falls back from a failing non-streaming instance', async () => {
+    // A non-streaming instance reaches the streaming path through a
+    // StreamAdapter, so its failures arrive by a different route than a
+    // streaming instance's.
+    const primary = new MockTTS('primary', SAMPLE_RATE, false);
+    primary.shouldFail = true;
+    const secondary = new MockTTS('secondary');
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, secondary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    const adapterErrors: TTSError[] = [];
+    adapter.on('error', (error) => adapterErrors.push(error));
+    const probeFailed = new Promise<void>((resolve) => primary.once('error', () => resolve()));
+
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello world.');
+          controller.close();
+        },
+      }),
+    );
+
+    let frameCount = 0;
+    for await (const event of stream) {
+      if (event === SynthesizeStream.END_OF_STREAM) break;
+      frameCount++;
+    }
+    await probeFailed;
+
+    expect(frameCount).toBeGreaterThan(0);
+    expect(adapterErrors).toEqual([]);
+
+    stream.close();
     await adapter.close();
   });
 });
