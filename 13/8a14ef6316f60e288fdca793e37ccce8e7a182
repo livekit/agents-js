@@ -1,0 +1,31 @@
+agents/src/workflows/sip_dialer.ts
+  s_2461ceafdb7d32::t_149e64fc7e30a5 1-62
+agents/src/workflows/warm_transfer.test.ts
+  s_2461ceafdb7d32::t_556baeeda71418 4,153-194,197-198
+  s_2461ceafdb7d32::t_5cc82594379900 195-196,199-200
+agents/src/workflows/warm_transfer.ts
+  s_2461ceafdb7d32::t_71343cb2e8d2dd 6,34,48-52,60,81,121-160,162-164,183-188,190-211,338,452,460,538,549-552,558-559,596
+  s_2461ceafdb7d32::t_49f16745ef96ed 161,553-556
+agents/src/workflows/index.ts
+  s_2461ceafdb7d32::t_a848ba3bd96c61 16
+agents/src/workflows/warm_transfer_dialer.test.ts
+  s_2461ceafdb7d32::t_abb336a57f60f7 1-141
+agents/etc/agents.api.md
+  s_2461ceafdb7d32::t_b834cc8b26e70f 3093,9925-9953,9978,10106,10165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "138a14ef6316f60e288fdca793e37ccce8e7a182",
+  "prompts": {},
+  "sessions": {
+    "s_2461ceafdb7d32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c576-2ef6-70d0-a26e-a53969369e54",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
