@@ -835,5 +835,5 @@ it('times out a blocked write without retaining its payload', async () => {
   await expect(connection.send(secret, new AbortController().signal, 20)).rejects.toThrow(
     'timed out',
   );
-  connection.close();
+  await connection.close();
 });

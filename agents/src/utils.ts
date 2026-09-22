@@ -28,7 +28,7 @@ import { log } from './log.js';
  * Recursively expands all nested properties of a type,
  * resolving aliases so as to inspect the real shape in IDE.
  */
-// eslint-disable-next-line @typescript-eslint/ban-types
+// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 export type Expand<T> = T extends Function
   ? T
   : T extends object
@@ -380,12 +380,12 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
     if (this.#closed) {
       throw new Error('Queue is closed');
     }
-    this.#queue.put(item);
+    void this.#queue.put(item);
   }
 
   close(): void {
     this.#closed = true;
-    this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
+    void this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
   }
 
   async next(options: { signal?: AbortSignal } = {}): Promise<IteratorResult<T>> {
@@ -571,7 +571,7 @@ export class Task<T> {
         }
         this.doneCallbacks.clear();
       });
-    this.runTask();
+    void this.runTask();
   }
 
   /**

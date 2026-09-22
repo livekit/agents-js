@@ -217,7 +217,7 @@ class SegmentSynchronizerImpl {
     if (this.enabled) {
       this.mainTask()
         .then(() => {
-          this.outputStreamWriter.close();
+          void this.outputStreamWriter.close();
         })
         .catch((error) => {
           this.logger.error({ error }, 'mainTask SegmentSynchronizerImpl');
@@ -328,7 +328,7 @@ class SegmentSynchronizerImpl {
 
     this.textData.done = true;
     if (!this.enabled) {
-      this.outputStreamWriter.close();
+      void this.outputStreamWriter.close();
     } else {
       this.textData.wordStream.endInput();
     }
@@ -455,7 +455,7 @@ class SegmentSynchronizerImpl {
       pushedTextCursor = wordEnd;
 
       if (this.playbackCompleted) {
-        this.outputStreamWriter.write(
+        void this.outputStreamWriter.write(
           createTimedString({
             text: forwardedWord,
             endTime: this.synchronizedElapsedSeconds(),
@@ -514,7 +514,7 @@ class SegmentSynchronizerImpl {
       }
 
       await this.sleepIfNotClosed(delayTime / 2);
-      this.outputStreamWriter.write(
+      void this.outputStreamWriter.write(
         createTimedString({
           text: forwardedWord,
           endTime: this.synchronizedElapsedSeconds(),
@@ -528,7 +528,7 @@ class SegmentSynchronizerImpl {
 
     if (pushedTextCursor < this.textData.pushedText.length) {
       const remaining = this.textData.pushedText.slice(pushedTextCursor);
-      this.outputStreamWriter.write(
+      void this.outputStreamWriter.write(
         createTimedString({
           text: remaining,
           endTime: this.synchronizedElapsedSeconds(),
@@ -580,7 +580,7 @@ class SegmentSynchronizerImpl {
     }
     // Close the writer if endTextInput hasn't already done so (e.g. on interruption)
     if (!this.enabled && !this.textData.done) {
-      this.outputStreamWriter.close();
+      void this.outputStreamWriter.close();
     }
     this.textData.wordStream.close();
     await this.captureTask;
@@ -1037,6 +1037,9 @@ class SyncedTextOutput extends TextOutput {
     this.synchronizer._impl.pushText(text);
   }
 
+  // TextOutput.flush() is fire-and-forget for callers; this override awaits the rotation barrier
+  // internally, so it returns a promise the base contract does not expose.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
   async flush() {
     // Wait for any pending rotation to complete before accessing _impl
     await this.synchronizer.barrier();

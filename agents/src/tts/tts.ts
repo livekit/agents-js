@@ -334,10 +334,10 @@ export abstract class SynthesizeStream
     this.#tts = tts;
     this.connOptions = connOptions;
     this.deferredInputStream = new DeferredReadableStream();
-    this.pumpInput();
+    void this.pumpInput();
 
     this.abortController.signal.addEventListener('abort', () => {
-      this.deferredInputStream.detachSource();
+      void this.deferredInputStream.detachSource();
       // TODO (AJS-36) clean this up when we refactor with streams
       if (!this.input.closed) this.input.close();
       if (!this.output.closed) this.output.close();
@@ -755,7 +755,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       abortSignal.addEventListener('abort', () => this.abortController.abort(), { once: true });
     }
 
-    this.monitorMetrics();
+    void this.monitorMetrics();
 
     // this is a hack to immitate asyncio.create_task so that mainTask
     // is run **after** the constructor has finished. Otherwise we get

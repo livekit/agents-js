@@ -397,7 +397,7 @@ describe('TranscriptionSynchronizer playback-counter drift on a dropped frame', 
 
     // segment A: text + audio accepted downstream; its real finish stays in flight
     await synchronizer.textOutput.captureText('alpha');
-    synchronizer.textOutput.flush();
+    void synchronizer.textOutput.flush();
     await synchronizer.audioOutput.captureFrame(frame);
     synchronizer.audioOutput.flush();
 

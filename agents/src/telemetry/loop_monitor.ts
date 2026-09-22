@@ -415,7 +415,11 @@ export class EventLoopMonitor {
     try {
       const run = () =>
         this.#reportContext ? otelContext.with(this.#reportContext, emit) : emit();
-      this.#reportContextRunner ? this.#reportContextRunner(run) : run();
+      if (this.#reportContextRunner) {
+        this.#reportContextRunner(run);
+      } else {
+        run();
+      }
     } catch (error) {
       log().error({ error }, 'failed to report a blocked event loop');
     }

@@ -337,16 +337,13 @@ export class ServerOptions {
 }
 
 class PendingAssignment {
+  // assigned by the promise executor below; this is how JavaScript lets you settle promises externally
+  resolve!: (arg: JobAssignment) => void;
+  reject!: (error: AssignmentTimeoutError) => void;
   promise = new ThrowsPromise<JobAssignment, AssignmentTimeoutError>((resolve, reject) => {
-    this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
+    this.resolve = resolve;
     this.reject = reject;
   });
-  resolve(arg: JobAssignment) {
-    arg; // useless call to counteract TypeScript E6133
-  }
-  reject(error: AssignmentTimeoutError) {
-    error;
-  }
 }
 
 /**
@@ -599,7 +596,7 @@ export class AgentServer {
       return ThrowsPromise.all(
         this.#procPool.processes.map((proc): Promise<Throws<void, Error>> => {
           if (!proc.runningJob) {
-            proc.close();
+            void proc.close();
           }
           return proc.join();
         }),
@@ -751,7 +748,7 @@ export class AgentServer {
             .finally(() => {
               const taskIndex = this.#tasks.indexOf(task);
               if (taskIndex !== -1) {
-                this.#tasks.splice(taskIndex, 1);
+                void this.#tasks.splice(taskIndex, 1);
               } else {
                 throw new Error(`task ${task} not found in tasks`);
               }
@@ -780,7 +777,7 @@ export class AgentServer {
             .finally(() => {
               const taskIndex = this.#tasks.indexOf(task);
               if (taskIndex !== -1) {
-                this.#tasks.splice(taskIndex, 1);
+                void this.#tasks.splice(taskIndex, 1);
               } else {
                 throw new Error(`task ${task} not found in tasks`);
               }
@@ -1007,7 +1004,7 @@ export class AgentServer {
       .finally(() => {
         const taskIndex = this.#tasks.indexOf(task);
         if (taskIndex !== -1) {
-          this.#tasks.splice(taskIndex, 1);
+          void this.#tasks.splice(taskIndex, 1);
         } else {
           throw new Error(`task ${task} not found in tasks`);
         }

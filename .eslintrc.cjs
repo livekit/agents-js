@@ -23,6 +23,7 @@ module.exports = {
       {
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
+        caughtErrors: 'none',
       },
     ],
     'import/export': 0,
@@ -40,6 +41,7 @@ module.exports = {
       },
       rules: {
         '@typescript-eslint/no-misused-promises': 'error',
+        '@typescript-eslint/no-floating-promises': ['error', { ignoreIIFE: true }],
       },
     },
   ],

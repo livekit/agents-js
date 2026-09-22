@@ -13,14 +13,13 @@ import type { IPCMessage } from './message.js';
 import { type ProcOpts, SupervisedProc } from './supervised_proc.js';
 
 class PendingInference {
+  // assigned by the promise executor below; this is how JavaScript lets you resolve promises externally
+  resolve!: (arg: { requestId: string; data: unknown; error?: Error }) => void;
   promise = new ThrowsPromise<{ requestId: string; data: unknown; error?: Error }, never>(
     (resolve) => {
       this.resolve = resolve;
     },
   );
-  resolve(arg: { requestId: string; data: unknown; error?: Error }) {
-    arg;
-  }
 }
 
 const currentFileExtension = extname(import.meta.url);

@@ -217,7 +217,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#chatCtx = chatCtx;
     this.#toolCtx = toToolContext(toolCtx);
     this._connOptions = connOptions;
-    this.monitorMetrics();
+    void this.monitorMetrics();
     this.abortController.signal.addEventListener('abort', () => {
       // TODO (AJS-37) clean this up when we refactor with streams
       this.output.close();

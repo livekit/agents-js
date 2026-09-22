@@ -860,7 +860,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     options.signal?.addEventListener('abort', onAbort, { once: true });
-    this.sendGenerateReply(instructions, requestId);
+    void this.sendGenerateReply(instructions, requestId);
 
     return fut.await.finally(() => {
       options.signal?.removeEventListener('abort', onAbort);
@@ -1081,7 +1081,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     if (message.text) {
       gen.outputText += message.text;
-      gen.textChannel.write(
+      void gen.textChannel.write(
         createTimedString({
           text: message.text,
           startTime: gen.audioCursorSec,
@@ -1091,7 +1091,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (audioFrame) {
-      gen.audioChannel.write(audioFrame);
+      void gen.audioChannel.write(audioFrame);
       gen.audioCursorSec += audioDurationSec;
     }
   }
@@ -1119,7 +1119,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.startNewAssistantTurn({ userInitiated: false });
     }
 
-    this.currentGeneration!.functionChannel.write(
+    void this.currentGeneration!.functionChannel.write(
       llm.FunctionCall.create({
         callId: message.tool_call_id,
         name: message.tool_name,
@@ -1165,7 +1165,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const functionChannel = stream.createStreamChannel<llm.FunctionCall>();
     const messageChannel = stream.createStreamChannel<llm.MessageGeneration>();
 
-    messageChannel.write({
+    void messageChannel.write({
       messageId: responseId,
       textStream: textChannel.stream(),
       audioStream: audioChannel.stream(),
@@ -1216,10 +1216,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       });
     }
 
-    gen.textChannel.close();
-    gen.audioChannel.close();
-    gen.functionChannel.close();
-    gen.messageChannel.close();
+    void gen.textChannel.close();
+    void gen.audioChannel.close();
+    void gen.functionChannel.close();
+    void gen.messageChannel.close();
     this.currentGeneration = undefined;
   }
 
