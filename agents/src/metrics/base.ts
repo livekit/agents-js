@@ -15,6 +15,7 @@ export type AgentMetrics =
   | TTSMetrics
   | VADMetrics
   | EOUMetrics
+  | EOTInferenceMetrics
   | RealtimeModelMetrics
   | InterruptionMetrics
   | AvatarMetrics;
@@ -32,6 +33,15 @@ export type LLMMetrics = {
   completionTokens: number;
   promptTokens: number;
   promptCachedTokens: number;
+  /** Tokens used to write to the prompt cache. Not all providers report this. */
+  cacheCreationTokens?: number;
+  /**
+   * The number of completion tokens spent on hidden reasoning.
+   *
+   * Already counted in `completionTokens`; do not add it to totals. Not all providers break
+   * reasoning out separately, and it is 0 when they don't.
+   */
+  reasoningTokens?: number;
   totalTokens: number;
   tokensPerSecond: number;
   speechId?: string;
@@ -161,6 +171,10 @@ export type RealtimeModelMetrics = {
    * The duration of the session connection in milliseconds (for session-based billing like xAI).
    */
   sessionDurationMs?: number;
+  /** Time to acquire the realtime connection, in milliseconds. */
+  acquireTimeMs?: number;
+  /** Whether an existing realtime connection was reused. */
+  connectionReused?: boolean;
   /**
    * Time to first audio token in milliseconds. -1 if no audio token was sent.
    */
@@ -178,6 +192,14 @@ export type RealtimeModelMetrics = {
    */
   outputTokens: number;
   /**
+   * The number of output tokens spent on hidden reasoning, as reported by the provider
+   * (e.g. Gemini Live's `thoughtsTokenCount`).
+   *
+   * Already counted in `outputTokens`; do not add it to totals. Left `undefined` when the
+   * provider did not report it, so a reported zero stays distinguishable from a missing field.
+   */
+  reasoningTokens?: number;
+  /**
    * The total number of tokens in the Response.
    */
   totalTokens: number;
@@ -194,6 +216,25 @@ export type RealtimeModelMetrics = {
    */
   outputTokenDetails: RealtimeModelMetricsOutputTokenDetails;
   /** Metadata for model provider and name tracking. */
+  metadata?: MetricsMetadata;
+};
+
+/**
+ * Per-prediction telemetry for the audio EOT (end-of-turn) detector. Emitted
+ * by transports on each cloud or local prediction so we can track detection
+ * latency and inference time per call.
+ */
+export type EOTInferenceMetrics = {
+  type: 'eot_inference_metrics';
+  timestamp: number;
+  /** Latest RTT time taken to perform inference, in milliseconds. */
+  totalDuration: number;
+  /** Latest time taken by the model side, in milliseconds. */
+  predictionDuration: number;
+  /** Latest total time from audio-frame creation to prediction receive, in milliseconds. */
+  detectionDelay: number;
+  /** Number of prediction requests served (incremental). */
+  numRequests: number;
   metadata?: MetricsMetadata;
 };
 

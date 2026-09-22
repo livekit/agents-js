@@ -530,7 +530,7 @@ For plugin components such as STT, TTS, LLM. You can debug these individual comp
 
 When testing the inference LLM (`inference.LLM`):
 
-1. **Model Names**: Always use the full model names from `agents/src/inference/models.ts`. Use `'openai/gpt-4o-mini'` instead of just `'gpt-4o-mini'`.
+1. **Model Names**: Always use the full model names from `agents/src/inference/llm.ts`. Use `'openai/gpt-4o-mini'` instead of just `'gpt-4o-mini'`.
 
 2. **Logger Initialization**: Always initialize the logger before using any LLM functionality:
    ```typescript

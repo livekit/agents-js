@@ -1,18 +1,28 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it } from 'vitest';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { WebSocketServer } from 'ws';
+import { APIStatusError } from '../_exceptions.js';
+import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, type VADStream } from '../vad.js';
 import {
+  SpeechStream as InferenceSpeechStream,
   STT,
   type STTFallbackModel,
+  type STTModels,
   type XaiSTTModels,
   normalizeSTTFallback,
   parseSTTModelString,
 } from './stt.js';
+import { describeLiveKitInference } from './test_utils.js';
+import { VAD as InferenceVAD } from './vad.js';
 
 beforeAll(() => {
   initializeLogger({ level: 'silent', pretty: false });
@@ -28,6 +38,100 @@ function makeStt(overrides: Record<string, unknown> = {}) {
   };
   return new STT({ ...defaults, ...overrides });
 }
+
+function makeSpeechStream() {
+  const events: SpeechEvent[] = [];
+  const stream = Object.assign(Object.create(InferenceSpeechStream.prototype), {
+    queue: {
+      closed: false,
+      put: (event: SpeechEvent) => events.push(event),
+    },
+    speaking: false,
+    requestId: 'req-1',
+    speechDuration: 0,
+    _startTimeOffset: 0,
+    _pendingExtra: undefined,
+    opts: { language: 'en' },
+  }) as InferenceSpeechStream<STTModels>;
+  return { stream, events };
+}
+
+function transcript(transcript: string, isFinal = false) {
+  return {
+    type: isFinal ? ('final_transcript' as const) : ('interim_transcript' as const),
+    transcript,
+    language: 'en',
+    start: 0,
+    duration: isFinal ? 1 : 0,
+    confidence: 1,
+    words: [],
+  };
+}
+
+describe('Inference STT start of speech', () => {
+  it('reports onset immediately from a start_of_speech message', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+
+    expect(events.map(({ type }) => type)).toEqual([SpeechEventType.START_OF_SPEECH]);
+    expect(stream._speaking).toBe(true);
+  });
+
+  it('does not report onset twice when a transcript follows', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+    expect(events.splice(0).map(({ type }) => type)).toEqual([SpeechEventType.START_OF_SPEECH]);
+
+    stream['processTranscript'](transcript('are you'), SpeechEventType.INTERIM_TRANSCRIPT);
+
+    expect(events.map(({ type }) => type)).toEqual([SpeechEventType.INTERIM_TRANSCRIPT]);
+  });
+
+  it('ignores a duplicate start_of_speech message', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+    stream['processStartOfSpeech']();
+
+    expect(events.map(({ type }) => type)).toEqual([SpeechEventType.START_OF_SPEECH]);
+  });
+
+  it('falls back to the first transcript for providers without onset', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processTranscript'](transcript('are you'), SpeechEventType.INTERIM_TRANSCRIPT);
+
+    expect(events.map(({ type }) => type)).toEqual([
+      SpeechEventType.START_OF_SPEECH,
+      SpeechEventType.INTERIM_TRANSCRIPT,
+    ]);
+  });
+
+  it('does not report onset from an empty interim alone', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processTranscript'](transcript(''), SpeechEventType.INTERIM_TRANSCRIPT);
+
+    expect(events).toEqual([]);
+    expect(stream._speaking).toBe(false);
+  });
+
+  it('resets onset after the turn ends', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+    stream['processTranscript'](
+      transcript('are you open on sunday', true),
+      SpeechEventType.FINAL_TRANSCRIPT,
+    );
+    expect(stream._speaking).toBe(false);
+
+    stream['processStartOfSpeech']();
+    expect(events.map(({ type }) => type)).toContain(SpeechEventType.START_OF_SPEECH);
+  });
+});
 
 describe('parseSTTModelString', () => {
   it('simple model without language', () => {
@@ -326,6 +430,129 @@ describe('STT diarization capabilities', () => {
   });
 });
 
+describe('STT aligned transcript capability', () => {
+  it('agrees with the Cartesia Ink-2 plugin capability', () => {
+    const gatewayStt = makeStt({ model: 'cartesia/ink-2' });
+
+    expect(gatewayStt.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('keeps word alignment for models that send words', () => {
+    expect(makeStt({ model: 'cartesia/ink-whisper' }).capabilities.alignedTranscript).toBe('word');
+    expect(makeStt({ model: 'deepgram/nova-3' }).capabilities.alignedTranscript).toBe('word');
+    expect(
+      makeStt({ model: 'assemblyai/universal-streaming' }).capabilities.alignedTranscript,
+    ).toBe('word');
+    expect(makeStt({ model: 'assemblyai/universal-3-6-pro' }).capabilities.alignedTranscript).toBe(
+      'word',
+    );
+    expect(makeStt({ model: 'auto' }).capabilities.alignedTranscript).toBe(false);
+    expect(makeStt({ model: 'inworld/inworld-stt-1' }).capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('recomputes alignment when the model changes', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    expect(stt.capabilities.alignedTranscript).toBe('word');
+
+    stt.updateOptions({ model: 'cartesia/ink-2' });
+    expect(stt.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('does not claim alignment for unknown models', () => {
+    expect(makeStt({ model: 'new-provider/new-turn-model' }).capabilities.alignedTranscript).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ['cartesia/ink-whisper', 'word'],
+    ['cartesia/ink-2', false],
+    ['new-provider/new-turn-model', false],
+  ] as const)('constrains alignment based on fallback model %s', (fallback, expected) => {
+    const stt = makeStt({ model: 'deepgram/nova-3', fallback });
+
+    expect(stt.capabilities.alignedTranscript).toBe(expected);
+  });
+
+  it('still accounts for fallback alignment when the primary model changes', () => {
+    const stt = makeStt({
+      model: 'cartesia/ink-2',
+      fallback: 'new-provider/new-turn-model',
+    });
+
+    stt.updateOptions({ model: 'deepgram/nova-3' });
+
+    expect(stt.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('surfaces the gateway Ink-2 payload without word alignment', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processTranscript'](
+      {
+        transcript: 'are you open on sunday',
+        confidence: 1,
+        start: 0,
+        duration: 12.5,
+        words: [],
+        language: 'en',
+      },
+      SpeechEventType.FINAL_TRANSCRIPT,
+    );
+
+    const final = events.find((event) => event.type === SpeechEventType.FINAL_TRANSCRIPT) as {
+      alternatives: Array<{ startTime: number; endTime: number; words: unknown[] }>;
+    };
+    expect(final.alternatives[0]?.words).toEqual([]);
+    expect(final.alternatives[0]?.startTime).toBe(0);
+    expect(final.alternatives[0]?.endTime).toBe(12.5);
+  });
+});
+
+describe('STT session keyterms', () => {
+  it('updateOptions does not bake session keyterms into the user baseline', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    const stream = stt.stream();
+
+    stt._updateSessionKeyterms(['Niamh']);
+    // a later user option update must re-apply session terms to live streams...
+    stt.updateOptions({ modelOptions: { endpointing: 500 } as Record<string, unknown> });
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Niamh']);
+    // ...but must not pollute the STT's own user baseline with them
+    expect(stt['opts'].modelOptions ?? {}).not.toHaveProperty('keyterm');
+
+    stream.close();
+  });
+
+  it('session keyterm change after updateOptions drops stale terms', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    const stream = stt.stream();
+
+    stt._updateSessionKeyterms(['Stale']);
+    stt.updateOptions({ modelOptions: { endpointing: 500 } as Record<string, unknown> });
+
+    // detector replaced the session terms: the old one must disappear downstream
+    stt._updateSessionKeyterms(['Fresh']);
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Fresh']);
+
+    stream.close();
+  });
+
+  it('user keyterms from modelOptions are preserved across session updates', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3', modelOptions: { keyterm: ['Acme'] } });
+    const stream = stt.stream();
+
+    stt._updateSessionKeyterms(['Niamh']);
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Acme', 'Niamh']);
+
+    stt._updateSessionKeyterms(['Other']);
+    // user term stays; only the session portion is swapped
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Acme', 'Other']);
+
+    stream.close();
+  });
+});
+
 describe('STT VAD handling for Speechmatics models', () => {
   class MockVAD extends VAD {
     label = 'mock';
@@ -343,9 +570,10 @@ describe('STT VAD handling for Speechmatics models', () => {
     await expect(stt.vadPromise).resolves.toBeUndefined();
   });
 
-  it('speechmatics model with no user vad sets up a silero loader', () => {
+  it('speechmatics model with no user vad falls back to the inference VAD', async () => {
     const stt = makeStt({ model: 'speechmatics/enhanced' });
-    expect(typeof stt['vad']).toBe('function');
+    expect(stt['vad']).toBeInstanceOf(InferenceVAD);
+    await expect(stt.vadPromise).resolves.toBe(stt['vad']);
   });
 
   it('speechmatics model with user vad uses that vad', async () => {
@@ -372,11 +600,591 @@ describe('STT VAD handling for Speechmatics models', () => {
     await expect(stt.vadPromise).resolves.toBeUndefined();
   });
 
-  it('updateOptions non-speechmatics → speechmatics sets up silero loader', () => {
+  it('updateOptions non-speechmatics → speechmatics falls back to the inference VAD', () => {
     const stt = makeStt({ model: 'deepgram/nova-3' });
     expect(stt['vad']).toBeUndefined();
 
     stt.updateOptions({ model: 'speechmatics/enhanced' });
-    expect(typeof stt['vad']).toBe('function');
+    expect(stt['vad']).toBeInstanceOf(InferenceVAD);
   });
+});
+
+describe('Inference STT connection lifecycle', () => {
+  it('keeps receiving transcripts after session.finalized', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    const transcripts: string[] = [];
+    let closeBeforeTranscript = false;
+    let transcriptSent = false;
+    let requestUrl: string | undefined;
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+    let resolveFinalizeReceived!: () => void;
+    const finalizeReceived = new Promise<void>((resolve) => {
+      resolveFinalizeReceived = resolve;
+    });
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket, request) => {
+      requestUrl = request.url;
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.finalize') {
+          resolveFinalizeReceived();
+          socket.send(JSON.stringify({ type: 'session.finalized' }));
+          setTimeout(() => {
+            if (socket.readyState !== 1) return;
+            socket.send(
+              JSON.stringify({
+                type: 'final_transcript',
+                transcript: 'final words',
+                language: 'en',
+              }),
+            );
+            transcriptSent = true;
+          }, 25);
+        }
+        if (event.type === 'session.close') {
+          closeBeforeTranscript = !transcriptSent;
+        }
+      });
+    });
+
+    const stt = makeStt({
+      model: 'deepgram/nova-3',
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    let resolveTranscript!: () => void;
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+          resolveTranscript();
+        }
+      }
+    })();
+
+    try {
+      await sessionCreated;
+      vi.useFakeTimers();
+      stream.endInput();
+      await finalizeReceived;
+      await vi.advanceTimersByTimeAsync(25);
+      await transcriptReceived;
+      await vi.advanceTimersByTimeAsync(3_000);
+      await outputTask;
+      await socketClosed;
+
+      expect(new URL(requestUrl!, 'ws://127.0.0.1').searchParams.get('model')).toBe(
+        'deepgram/nova-3',
+      );
+      expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+      expect(transcripts).toEqual(['final words']);
+      expect(closeBeforeTranscript).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('finishes when session.closed follows input end', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    const transcripts: string[] = [];
+    let sessionClosedSent = false;
+    let socketClosedBeforeSessionClosed = false;
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('close', () => {
+        socketClosedBeforeSessionClosed = !sessionClosedSent;
+        resolveSocketClosed();
+      });
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type !== 'session.finalize') return;
+        socket.send(
+          JSON.stringify({
+            type: 'final_transcript',
+            transcript: 'final words',
+            language: 'en',
+          }),
+        );
+        sessionClosedSent = true;
+        socket.send(JSON.stringify({ type: 'session.closed' }));
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    try {
+      stream.endInput();
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+        }
+      }
+      await socketClosed;
+
+      expect(messageTypes).toEqual(['session.create', 'session.finalize']);
+      expect(transcripts).toEqual(['final words']);
+      expect(socketClosedBeforeSessionClosed).toBe(false);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('accepts a socket close after input ends', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type === 'session.finalize') socket.close(1011, 'finalization interrupted');
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const errors: Error[] = [];
+    stt.on('error', ({ error }) => errors.push(error));
+    const stream = stt.stream();
+
+    try {
+      stream.endInput();
+      for await (const _ of stream) {
+        /* drain */
+      }
+
+      expect(connectionCount).toBe(1);
+      expect(errors).toHaveLength(0);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('reconnects when the socket closes before input ends', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+    let resolveSecondConnection!: () => void;
+    const secondConnection = new Promise<void>((resolve) => {
+      resolveSecondConnection = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      const connection = connectionCount;
+      if (connection === 2) resolveSecondConnection();
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (connection === 1 && event.type === 'session.create') {
+          socket.send(JSON.stringify({ type: 'session.closed' }), () => socket.close());
+        }
+        if (connection === 2 && event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'final_transcript',
+              transcript: 'final words',
+              language: 'en',
+            }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    const transcripts: string[] = [];
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+        }
+      }
+    })();
+
+    try {
+      await secondConnection;
+      stream.endInput();
+      await outputTask;
+
+      expect(connectionCount).toBe(2);
+      expect(transcripts).toEqual(['final words']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('does not require a final transcript after an interim', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'interim_transcript',
+              transcript: 'interim words',
+              language: 'en',
+            }),
+          );
+        }
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    let resolveTranscript!: () => void;
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.INTERIM_TRANSCRIPT) resolveTranscript();
+      }
+    })();
+
+    try {
+      await sessionCreated;
+      vi.useFakeTimers();
+      stream.endInput();
+      await transcriptReceived;
+      await vi.advanceTimersByTimeAsync(30_000);
+      await outputTask;
+
+      expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+    } finally {
+      vi.useRealTimers();
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it(
+    'does not let empty interims after finalize hold the stream open',
+    { timeout: 15_000 },
+    async () => {
+      // the sequence recorded from the gateway for xai/stt-1: finals during the audio, then
+      // after session.finalize an acknowledgment and an empty interim every second, for as long
+      // as the socket is open. Real timers: the 3 s wait after a final is a fixed constant, and
+      // the interims have to arrive over the socket while it runs
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const address = server.address() as AddressInfo;
+      const messageTypes: string[] = [];
+      let emptyInterims = 0;
+      let interimTimer: ReturnType<typeof setInterval> | undefined;
+      let finalizedAt = 0;
+      let resolveSessionCreated!: () => void;
+      const sessionCreated = new Promise<void>((resolve) => {
+        resolveSessionCreated = resolve;
+      });
+
+      server.on('connection', (socket) => {
+        socket.on('close', () => clearInterval(interimTimer));
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as { type: string };
+          messageTypes.push(event.type);
+          if (event.type === 'session.create') {
+            resolveSessionCreated();
+            socket.send(
+              JSON.stringify({
+                type: 'final_transcript',
+                transcript: 'final words',
+                language: 'en',
+              }),
+            );
+          }
+          if (event.type === 'session.finalize') {
+            finalizedAt = Date.now();
+            socket.send(JSON.stringify({ type: 'session.finalized' }));
+            interimTimer = setInterval(() => {
+              if (socket.readyState !== 1) return;
+              emptyInterims++;
+              socket.send(
+                JSON.stringify({
+                  type: 'interim_transcript',
+                  transcript: '',
+                  start: 50.753,
+                  duration: 1.21,
+                  language: 'en',
+                }),
+              );
+            }, 700);
+          }
+        });
+      });
+
+      const stt = makeStt({
+        model: 'xai/stt-1',
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+      const transcripts: string[] = [];
+      let resolveTranscript!: () => void;
+      const transcriptReceived = new Promise<void>((resolve) => {
+        resolveTranscript = resolve;
+      });
+      const outputTask = (async () => {
+        for await (const event of stream) {
+          if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+            transcripts.push(event.alternatives![0].text);
+            resolveTranscript();
+          }
+        }
+      })();
+
+      try {
+        await sessionCreated;
+        await transcriptReceived;
+        stream.endInput();
+        await outputTask;
+        const endedAfter = Date.now() - finalizedAt;
+
+        expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+        expect(transcripts).toEqual(['final words']);
+        // interims kept arriving through the wait, and did not extend it past its 3 s
+        expect(emptyInterims).toBeGreaterThanOrEqual(3);
+        expect(endedAfter).toBeGreaterThanOrEqual(2_500);
+        expect(endedAfter).toBeLessThan(5_000);
+      } finally {
+        clearInterval(interimTimer);
+        stream.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+
+  it('sends session.close and closes the socket when the stream closes', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    try {
+      await sessionCreated;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      stream.close();
+      await socketClosed;
+
+      expect(messageTypes).toEqual(['session.create', 'session.close']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('does not retry an inactivity timeout', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type !== 'session.finalize') return;
+        socket.send(
+          JSON.stringify({
+            type: 'error',
+            code: 2007,
+            message: 'customer content must not reach the API error',
+          }),
+        );
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const errors: Error[] = [];
+    stt.on('error', ({ error }) => errors.push(error));
+    const stream = stt.stream();
+
+    try {
+      stream.endInput();
+      for await (const _ of stream) {
+        /* drain */
+      }
+
+      expect(connectionCount).toBe(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toBeInstanceOf(APIStatusError);
+      expect(errors[0]).toMatchObject({
+        message: 'LiveKit STT returned an error',
+        statusCode: 2007,
+        body: { code: 2007 },
+        retryable: false,
+      });
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe('Inference STT errors', () => {
+  async function receiveGatewayError(gatewayError: Record<string, unknown>): Promise<Error> {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+
+    server.on('connection', (socket) => {
+      socket.once('message', () => {
+        setImmediate(() => socket.send(JSON.stringify(gatewayError)));
+      });
+    });
+
+    const stt = makeStt({ baseURL: `http://127.0.0.1:${port}` });
+    const errorPromise = new Promise<Error>((resolve) => {
+      stt.once('error', ({ error }) => resolve(error));
+    });
+    const stream = stt.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1_000 },
+    });
+
+    try {
+      return await errorPromise;
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+
+  it.each([
+    {
+      gatewayError: {
+        type: 'error',
+        message: 'STT connection limit exceeded',
+        code: 429,
+        category: 'MaxConcurrentGatewaySTT',
+        remaining_limit: 0,
+      },
+      statusCode: 429,
+    },
+    {
+      gatewayError: { type: 'error', message: 'unknown gateway failure' },
+      statusCode: -1,
+    },
+  ])('surfaces a mid-session gateway error with status $statusCode', async (testCase) => {
+    const error = await receiveGatewayError(testCase.gatewayError);
+
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect(error).toMatchObject({
+      message: `LiveKit Inference STT returned error: ${testCase.gatewayError.message}`,
+      statusCode: testCase.statusCode,
+      body: testCase.gatewayError,
+      retryable: true,
+    });
+  });
+});
+
+describeLiveKitInference('LiveKit Inference STT integration', agents, async (harness) => {
+  for (const model of [
+    'deepgram/nova-3',
+    'cartesia/ink-whisper',
+    'assemblyai/universal-streaming',
+    'xai/stt-1',
+  ] as const) {
+    // each model is an independent gateway session: run the models, and both sample rates of
+    // each, at the same time instead of one 50 s clip after another
+    describe(model, { retry: 1, concurrent: true }, async () => {
+      const stt =
+        model === 'assemblyai/universal-streaming'
+          ? new STT({ model, modelOptions: { format_turns: true } })
+          : new STT({ model });
+      await harness.stt(stt, new InferenceVAD(), {
+        nonStreaming: false,
+      });
+    });
+  }
 });

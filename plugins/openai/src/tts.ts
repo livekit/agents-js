@@ -64,6 +64,7 @@ export class TTS extends tts.TTS {
       this.#opts.client ||
       new OpenAI({
         baseURL: this.#opts.baseURL,
+        maxRetries: 0,
         apiKey: this.#opts.apiKey,
       });
   }

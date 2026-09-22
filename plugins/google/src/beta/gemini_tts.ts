@@ -49,7 +49,7 @@ export type GeminiVoices =
   | 'Sadaltager'
   | 'Sulafat';
 
-const DEFAULT_MODEL: GeminiTTSModels = 'gemini-2.5-flash-lite-preview-tts';
+const DEFAULT_MODEL: GeminiTTSModels = 'gemini-3.1-flash-tts-preview';
 const DEFAULT_VOICE: GeminiVoices = 'Kore';
 const DEFAULT_SAMPLE_RATE = 24000; // not configurable
 const NUM_CHANNELS = 1;
@@ -234,6 +234,19 @@ export class ChunkedStream extends tts.ChunkedStream {
     ];
 
     try {
+      let lastFrame: AudioFrame | undefined;
+      const sendLastFrame = (final: boolean) => {
+        if (lastFrame) {
+          this.queue.put({
+            requestId,
+            frame: lastFrame,
+            segmentId: requestId,
+            final,
+          });
+          lastFrame = undefined;
+        }
+      };
+
       const responseStream = await this.#tts.client.models.generateContentStream({
         model: this.#tts.opts.model,
         contents,
@@ -241,8 +254,18 @@ export class ChunkedStream extends tts.ChunkedStream {
       });
 
       for await (const response of responseStream) {
-        await this.#processResponse(response, bstream, requestId);
+        await this.#processResponse(response, bstream, (frame) => {
+          sendLastFrame(false);
+          lastFrame = frame;
+        });
       }
+
+      for (const frame of bstream.flush()) {
+        sendLastFrame(false);
+        lastFrame = frame;
+      }
+
+      sendLastFrame(true);
     } catch (error: unknown) {
       if (error instanceof Error && error.name === 'AbortError') {
         return;
@@ -298,7 +321,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   async #processResponse(
     response: types.GenerateContentResponse,
     bstream: AudioByteStream,
-    requestId: string,
+    onFrame: (frame: AudioFrame) => void,
   ) {
     if (!response.candidates || response.candidates.length === 0) {
       return;
@@ -309,36 +332,15 @@ export class ChunkedStream extends tts.ChunkedStream {
       return;
     }
 
-    let lastFrame: AudioFrame | undefined;
-    const sendLastFrame = (final: boolean) => {
-      if (lastFrame) {
-        this.queue.put({
-          requestId,
-          frame: lastFrame,
-          segmentId: requestId,
-          final,
-        });
-        lastFrame = undefined;
-      }
-    };
-
     for (const part of candidate.content.parts) {
       if (part.inlineData?.data && part.inlineData.mimeType?.startsWith('audio/')) {
         const audioBuffer = Buffer.from(part.inlineData.data, 'base64');
 
         for (const frame of bstream.write(audioBuffer)) {
-          sendLastFrame(false);
-          lastFrame = frame;
+          onFrame(frame);
         }
       }
     }
-
-    for (const frame of bstream.flush()) {
-      sendLastFrame(false);
-      lastFrame = frame;
-    }
-
-    sendLastFrame(true);
   }
 }
 

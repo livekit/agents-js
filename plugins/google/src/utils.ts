@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type * as types from '@google/genai';
 import type { FunctionDeclaration, Schema } from '@google/genai';
-import { llm } from '@livekit/agents';
+import { llm, log } from '@livekit/agents';
 import type { JSONSchema7 } from 'json-schema';
+import { GeminiTool, type LLMTools } from './tools.js';
 
 /**
  * JSON Schema v7
@@ -79,6 +81,7 @@ export function convertJSONSchemaToOpenAPISchema(jsonSchema: JSONSchema7Definiti
       },
       {} as Record<string, unknown>,
     );
+    result.propertyOrdering = Object.keys(properties);
   }
 
   if (items) {
@@ -136,24 +139,90 @@ function isEmptyObjectSchema(jsonSchema: JSONSchema7Definition): boolean {
   );
 }
 
-export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclaration[] {
+export function toFunctionDeclarations(
+  toolCtx: llm.ToolContext,
+  useParametersJsonSchema = true,
+): FunctionDeclaration[] {
   const functionDeclarations: FunctionDeclaration[] = [];
 
-  for (const [name, tool] of Object.entries(toolCtx)) {
-    if (!llm.isFunctionTool(tool)) continue;
-
+  // Provider tools are not supported by the Gemini schema; `sortedToolEntries` yields only
+  // function tools (sorted by name), so they are skipped here.
+  for (const [name, tool] of llm.sortedToolEntries(toolCtx)) {
     const { description, parameters } = tool;
     const jsonSchema = llm.toJsonSchema(parameters, false);
 
     // Create a deep copy to prevent the Google GenAI library from mutating the schema
     const schemaCopy = JSON.parse(JSON.stringify(jsonSchema));
 
-    functionDeclarations.push({
+    const declaration: FunctionDeclaration = {
       name,
       description,
-      parameters: convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema,
-    });
+    };
+    if (useParametersJsonSchema) {
+      declaration.parametersJsonSchema = isEmptyObjectSchema(schemaCopy) ? undefined : schemaCopy;
+    } else {
+      declaration.parameters = convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema;
+    }
+    functionDeclarations.push(declaration);
   }
 
   return functionDeclarations;
+}
+
+export function toToolsConfig({
+  toolCtx,
+  geminiTools,
+  toolBehavior,
+  allowMixedTools = true,
+  useParametersJsonSchema = true,
+}: {
+  toolCtx?: llm.ToolContext;
+  geminiTools?: LLMTools;
+  toolBehavior?: types.Behavior;
+  allowMixedTools?: boolean;
+  useParametersJsonSchema?: boolean;
+}): [types.Tool[] | undefined, boolean] {
+  const tools: types.Tool[] = [];
+  let hasFunctionTools = false;
+
+  if (toolCtx) {
+    const functionDeclarations = toFunctionDeclarations(toolCtx, useParametersJsonSchema);
+    if (functionDeclarations.length > 0) {
+      hasFunctionTools = true;
+      tools.push({
+        functionDeclarations:
+          toolBehavior !== undefined
+            ? functionDeclarations.map((declaration) => ({
+                ...declaration,
+                behavior: toolBehavior,
+              }))
+            : functionDeclarations,
+      });
+    }
+  }
+
+  const providerTools: types.Tool[] = [];
+  if (geminiTools !== undefined) {
+    providerTools.push(geminiTools);
+  }
+
+  if (toolCtx !== undefined) {
+    for (const tool of toolCtx.providerTools) {
+      if (tool instanceof GeminiTool) {
+        providerTools.push(tool.toToolConfig());
+      }
+    }
+  }
+
+  // generateContent only supports combining built-in tools with function tools on the
+  // Gemini 3 Developer API: https://ai.google.dev/gemini-api/docs/tool-combination
+  if (hasFunctionTools && providerTools.length > 0 && !allowMixedTools) {
+    log().warn(
+      'ignoring provider tools; combining them with function tools requires the Gemini 3 Developer API (Vertex AI is not supported)',
+    );
+    return [tools.length > 0 ? tools : undefined, false];
+  }
+
+  tools.push(...providerTools);
+  return [tools.length > 0 ? tools : undefined, hasFunctionTools && providerTools.length > 0];
 }

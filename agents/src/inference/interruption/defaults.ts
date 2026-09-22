@@ -5,9 +5,8 @@ import type { ApiConnectOptions } from './interruption_stream.js';
 import type { InterruptionOptions } from './types.js';
 
 export const MIN_INTERRUPTION_DURATION_IN_S = 0.025 * 2; // 25ms per frame, 2 consecutive frames
-export const THRESHOLD = 0.5;
 export const MAX_AUDIO_DURATION_IN_S = 3.0;
-export const AUDIO_PREFIX_DURATION_IN_S = 0.5;
+export const AUDIO_PREFIX_DURATION_IN_S = 1.0;
 export const DETECTION_INTERVAL_IN_S = 0.1;
 export const REMOTE_INFERENCE_TIMEOUT_IN_S = 0.7;
 export const SAMPLE_RATE = 16000;
@@ -36,12 +35,13 @@ export function intervalForRetry(
 }
 
 // env-derived fields are resolved in the constructor, not at module load.
+// `threshold` is intentionally omitted: when the user does not override it, it stays undefined
+// so the server applies its fetched default.
 export const interruptionOptionDefaults: Omit<
   InterruptionOptions,
-  'baseUrl' | 'useProxy' | 'apiKey' | 'apiSecret'
+  'baseUrl' | 'apiKey' | 'apiSecret' | 'threshold'
 > = {
   sampleRate: SAMPLE_RATE,
-  threshold: THRESHOLD,
   minFrames: Math.ceil(MIN_INTERRUPTION_DURATION_IN_S * FRAMES_PER_SECOND),
   maxAudioDurationInS: MAX_AUDIO_DURATION_IN_S,
   audioPrefixDurationInS: AUDIO_PREFIX_DURATION_IN_S,

@@ -12,7 +12,11 @@ import {
   toError,
 } from '@livekit/agents';
 import OpenAI from 'openai';
-import type { ChatModels } from '../models.js';
+import type { ChatModels, Reasoning } from '../models.js';
+import { defaultReasoningEffort } from '../models.js';
+import { logProviderToolExecutions, toResponsesTools } from '../tool_utils.js';
+import type { ResponsesProviderToolType } from '../tool_utils.js';
+import { OpenAITool } from '../tools.js';
 import { WSLLM } from '../ws/llm.js';
 
 export interface LLMOptions {
@@ -30,6 +34,8 @@ export interface LLMOptions {
   serviceTier?: string;
   /** Upper bound for the number of tokens that can be generated for a response. */
   maxOutputTokens?: number;
+  /** Configuration options for reasoning models. */
+  reasoning?: Reasoning | null;
 
   /**
    * Whether to use the WebSocket API.
@@ -38,7 +44,9 @@ export interface LLMOptions {
   useWebSocket?: boolean;
 }
 
-type HttpLLMOptions = Omit<LLMOptions, 'useWebSocket'>;
+type HttpLLMOptions = Omit<LLMOptions, 'useWebSocket'> & {
+  providerToolType?: ResponsesProviderToolType;
+};
 
 const defaultLLMOptions: LLMOptions = {
   model: 'gpt-4.1',
@@ -55,6 +63,13 @@ class ResponsesHttpLLM extends llm.LLM {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
+    if (this.#opts.reasoning === undefined) {
+      const effort = defaultReasoningEffort(this.#opts.model);
+      if (effort !== undefined) {
+        this.#opts.reasoning = { effort };
+      }
+    }
+
     if (this.#opts.apiKey === undefined && this.#opts.client === undefined) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -63,6 +78,7 @@ class ResponsesHttpLLM extends llm.LLM {
       this.#opts.client ||
       new OpenAI({
         baseURL: this.#opts.baseURL,
+        maxRetries: 0,
         apiKey: this.#opts.apiKey,
       });
   }
@@ -77,25 +93,30 @@ class ResponsesHttpLLM extends llm.LLM {
 
   override chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
   }): ResponsesHttpLLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
 
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -126,6 +147,10 @@ class ResponsesHttpLLM extends llm.LLM {
       modelOptions.max_output_tokens = this.#opts.maxOutputTokens;
     }
 
+    if (this.#opts.reasoning !== undefined) {
+      modelOptions.reasoning = this.#opts.reasoning;
+    }
+
     return new ResponsesHttpLLMStream(this, {
       model: this.#opts.model,
       client: this.#client,
@@ -134,6 +159,7 @@ class ResponsesHttpLLM extends llm.LLM {
       connOptions,
       modelOptions,
       strictToolSchema: this.#opts.strictToolSchema ?? true,
+      providerToolType: this.#opts.providerToolType,
     });
   }
 }
@@ -143,6 +169,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
   private client: OpenAI;
   private modelOptions: Record<string, unknown>;
   private strictToolSchema: boolean;
+  private providerToolType?: ResponsesProviderToolType;
   private responseId: string;
 
   constructor(
@@ -155,6 +182,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       connOptions,
       modelOptions,
       strictToolSchema,
+      providerToolType,
     }: {
       model: string | ChatModels;
       client: OpenAI;
@@ -163,6 +191,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       connOptions: APIConnectOptions;
       modelOptions: Record<string, unknown>;
       strictToolSchema: boolean;
+      providerToolType?: ResponsesProviderToolType;
     },
   ) {
     super(llm, { chatCtx, toolCtx, connOptions });
@@ -170,6 +199,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
     this.client = client;
     this.modelOptions = modelOptions;
     this.strictToolSchema = strictToolSchema;
+    this.providerToolType = providerToolType;
     this.responseId = '';
   }
 
@@ -181,7 +211,9 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         'openai.responses',
       )) as OpenAI.Responses.ResponseInputItem[];
 
-      const tools = buildResponsesTools(this.toolCtx, this.strictToolSchema);
+      const tools = this.toolCtx
+        ? toResponsesTools(this.toolCtx, this.strictToolSchema, this.providerToolType)
+        : undefined;
 
       const requestOptions: Record<string, unknown> = { ...this.modelOptions };
       if (!tools) {
@@ -202,7 +234,6 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       );
 
       for await (const event of stream) {
-        retryable = false;
         let chunk: llm.ChatChunk | undefined;
 
         switch (event.type) {
@@ -224,10 +255,18 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
           case 'response.failed':
             this.handleResponseFailed(event);
             break;
+          case 'response.incomplete':
+            this.handleResponseIncomplete(event);
+            break;
         }
 
         if (chunk) {
           this.queue.put(chunk);
+          // a retry only duplicates output the caller has already seen; the
+          // stream-opening event and the usage-bearing one are neither
+          if (llm.hasResponse(chunk)) {
+            retryable = false;
+          }
         }
       }
     } catch (error) {
@@ -275,6 +314,13 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
     });
   }
 
+  private handleResponseIncomplete(event: OpenAI.Responses.ResponseIncompleteEvent): void {
+    throw new APIStatusError({
+      message: `response incomplete: ${event.response.incomplete_details?.reason ?? 'reason unavailable'}`,
+      options: { statusCode: -1, retryable: false },
+    });
+  }
+
   private handleResponseCreated(event: OpenAI.Responses.ResponseCreatedEvent): void {
     this.responseId = event.response.id;
   }
@@ -297,6 +343,19 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
               args: event.item.arguments,
             }),
           ],
+        },
+      };
+    } else if (event.item.type === 'message') {
+      const phase = (event.item as OpenAI.Responses.ResponseOutputMessage & { phase?: string })
+        .phase;
+      if (phase === undefined) return undefined;
+
+      chunk = {
+        id: this.responseId,
+        delta: {
+          role: 'assistant',
+          content: undefined,
+          extra: { openai: { phase } },
         },
       };
     }
@@ -336,57 +395,13 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
   }
 }
 
-function buildResponsesTools(
-  toolCtx: llm.ToolContext | undefined,
-  strictToolSchema: boolean,
-): OpenAI.Responses.Tool[] | undefined {
-  if (!toolCtx) return undefined;
-
-  const tools: OpenAI.Responses.Tool[] = [];
-  for (const [name, tool] of Object.entries(toolCtx)) {
-    if (llm.isProviderDefinedTool(tool)) {
-      tools.push(tool.config as unknown as OpenAI.Responses.Tool);
-      continue;
-    }
-
-    if (!llm.isFunctionTool(tool)) continue;
-
-    const oaiParams = {
-      type: 'function' as const,
-      name,
-      description: tool.description,
-      parameters: llm.toJsonSchema(
-        tool.parameters,
-        true,
-        strictToolSchema,
-      ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-    } as OpenAI.Responses.FunctionTool;
-
-    if (strictToolSchema) {
-      oaiParams.strict = true;
-    }
-
-    tools.push(oaiParams);
-  }
-
-  return tools.length > 0 ? tools : undefined;
-}
-
-function logProviderToolExecutions(output: OpenAI.Responses.ResponseOutputItem[]): void {
-  for (const item of output) {
-    if (!['message', 'reasoning', 'function_call', 'function_call_output'].includes(item.type)) {
-      log().info(
-        {
-          tool_type: item.type,
-          result: item,
-        },
-        'provider tool executed',
-      );
-    }
-  }
-}
-
 export class LLM extends llm.LLM {
+  /**
+   * Plugin provider-tool class serialized into Responses requests.
+   * Subclasses (e.g. xAI) override this so their tools are not dropped.
+   */
+  static readonly providerToolType: ResponsesProviderToolType = OpenAITool;
+
   #opts: LLMOptions;
   #llm: llm.LLM;
   #logger = log();
@@ -403,6 +418,7 @@ export class LLM extends llm.LLM {
 
     this.#opts = { ...defaultLLMOptions, ...opts };
     const { useWebSocket, client, ...baseOpts } = this.#opts;
+    const providerToolType = (this.constructor as typeof LLM).providerToolType;
 
     if (useWebSocket) {
       if (client !== undefined) {
@@ -410,9 +426,9 @@ export class LLM extends llm.LLM {
           'WebSocket mode does not support custom client; provided client will be ignored',
         );
       }
-      this.#llm = new WSLLM(baseOpts);
+      this.#llm = new WSLLM({ ...baseOpts, providerToolType });
     } else {
-      this.#llm = new ResponsesHttpLLM({ ...baseOpts, client });
+      this.#llm = new ResponsesHttpLLM({ ...baseOpts, client, providerToolType });
     }
 
     // Forward events from the inner delegate so consumers listening on this
@@ -450,7 +466,7 @@ export class LLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;

@@ -61,6 +61,7 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => resources),
@@ -95,6 +96,7 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => resources),
@@ -132,6 +134,7 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => resources),
@@ -195,6 +198,7 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => undefined),
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => undefined),
@@ -223,18 +227,15 @@ describe('AgentSession reusable resources handoff', () => {
     expect(item.newAgentId).toBe(nextAgent.id);
   });
 
-  it('skips starting a new activity while the session is closing and cleans up resources', async () => {
-    const closeFn = vi.fn(async () => {});
-    const resources: ReusableResources = {
-      sttPipeline: { close: closeFn } as any,
-    };
+  it('skips starting a new activity while the session is closing', async () => {
     const previousAgent = new Agent({ instructions: 'old' });
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
-      drain: vi.fn(async () => resources),
+      blockNewTurns: vi.fn(),
+      drain: vi.fn(async () => undefined),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => resources),
+      pause: vi.fn(async () => undefined),
     };
 
     const startSpy = vi.spyOn(AgentActivity.prototype, 'start').mockResolvedValue(undefined);
@@ -249,11 +250,10 @@ describe('AgentSession reusable resources handoff', () => {
         waitOnEnter: false,
       });
 
-      expect(previousActivity.drain).toHaveBeenCalledTimes(1);
-      expect(previousActivity.close).toHaveBeenCalledTimes(1);
-      expect(closeFn).toHaveBeenCalledTimes(1);
+      expect(previousActivity.drain).not.toHaveBeenCalled();
+      expect(previousActivity.close).not.toHaveBeenCalled();
       expect(startSpy).not.toHaveBeenCalled();
-      expect((session as any).activity).toBeUndefined();
+      expect((session as any).activity).toBe(previousActivity);
       expect((session as any).nextActivity).toBeUndefined();
     } finally {
       startSpy.mockRestore();

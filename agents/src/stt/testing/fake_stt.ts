@@ -36,6 +36,7 @@ export interface FakeUserSpeech {
   endTime: number;
   transcript: string;
   sttDelay: number;
+  final?: boolean;
 }
 
 /** Scale every timing field by `factor` — useful for speeding up tests. */
@@ -313,6 +314,11 @@ export class FakeRecognizeStream extends SpeechStream {
     const elapsed = (): number => Number(process.hrtime.bigint() - startHrt) / 1e6;
 
     for (const speech of speeches) {
+      if (!speech.transcript) {
+        const finalAt = speech.endTime + speech.sttDelay;
+        if (elapsed() < finalAt) await delay(finalAt - elapsed());
+        continue;
+      }
       const interimAt = speech.endTime + speech.sttDelay * 0.5;
       if (elapsed() < interimAt) await delay(interimAt - elapsed());
       const interim = speech.transcript.split(/\s+/).slice(0, 2).join(' ');
@@ -320,6 +326,7 @@ export class FakeRecognizeStream extends SpeechStream {
 
       const finalAt = speech.endTime + speech.sttDelay;
       if (elapsed() < finalAt) await delay(finalAt - elapsed());
+      if (speech.final === false) continue;
       this.sendFakeTranscript(speech.transcript, true);
     }
 

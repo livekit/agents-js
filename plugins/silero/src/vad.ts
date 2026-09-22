@@ -97,10 +97,14 @@ export class VAD extends baseVAD {
    * @param options -
    * @returns Promise\<{@link VAD}\>: An instance of the VAD class ready for streaming.
    */
-  static async load(opts: Partial<VADOptions> = {}): Promise<VAD> {
+  static async load(opts: Partial<VADOptions> = {}): Promise<baseVAD> {
     const mergedOpts: VADOptions = { ...defaultVADOptions, ...opts };
     const session = await newInferenceSession(mergedOpts.forceCPU);
     return new VAD(session, mergedOpts);
+  }
+
+  override get minSilenceDuration(): number {
+    return this.#opts.minSilenceDuration;
   }
 
   stream(): VADStream {
@@ -135,7 +139,8 @@ export class VADStream extends baseStream {
     this.#speechBufferMaxReached = false;
     this.#prefixPaddingSamples = 0;
 
-    this.#task = new Promise(async () => {
+    let resampler: AudioResampler | null = null;
+    const runInference = async () => {
       let inferenceData = new Float32Array(this.#model.windowSizeSamples);
 
       // a copy is exposed to the user in END_OF_SPEECH
@@ -150,12 +155,44 @@ export class VADStream extends baseStream {
       let speechThresholdDuration = 0;
       let silenceThresholdDuration = 0;
 
-      let inputFrames = [];
+      let inputFrames: AudioFrame[] = [];
       let inferenceFrames: AudioFrame[] = [];
-      let resampler: AudioResampler | null = null;
 
       // used to avoid drift when the sampleRate ratio is not an integer
       let inputCopyRemainingFrac = 0.0;
+
+      const resetState = () => {
+        this.#model.reset();
+        this.#expFilter = new ExpFilter(0.35);
+
+        speechBufferIndex = 0;
+        this.#speechBufferMaxReached = false;
+        this.#speechBuffer?.fill(0);
+
+        pubSpeaking = false;
+        pubSpeechDuration = 0;
+        pubSilenceDuration = 0;
+        pubCurrentSample = 0;
+        pubTimestamp = 0;
+        speechThresholdDuration = 0;
+        silenceThresholdDuration = 0;
+
+        inputFrames = [];
+        inferenceFrames = [];
+        inputCopyRemainingFrac = 0.0;
+        this.#extraInferenceTime = 0;
+
+        resampler?.close();
+        resampler =
+          this.#inputSampleRate && this.#opts.sampleRate !== this.#inputSampleRate
+            ? new AudioResampler(
+                this.#inputSampleRate,
+                this.#opts.sampleRate,
+                1,
+                AudioResamplerQuality.QUICK,
+              )
+            : null;
+      };
 
       while (!this.closed) {
         const { done, value: frame } = await this.inputReader.read();
@@ -164,7 +201,8 @@ export class VADStream extends baseStream {
         }
 
         if (typeof frame === 'symbol') {
-          continue; // ignore flush sentinel for now
+          resetState();
+          continue;
         }
 
         if (!this.#inputSampleRate || !this.#speechBuffer) {
@@ -251,7 +289,7 @@ export class VADStream extends baseStream {
           if (this.#extraInferenceTime > SLOW_INFERENCE_THRESHOLD) {
             this.#logger
               .child({ delay: this.#extraInferenceTime })
-              .warn('inference is slower than realtime');
+              .warn('VAD inference is slower than realtime');
           }
 
           if (pubSpeaking) {
@@ -388,8 +426,13 @@ export class VADStream extends baseStream {
           }
         }
       }
-      resampler?.close();
-    });
+    };
+    this.#task = runInference()
+      .catch((error) => {
+        this.#logger.error(error, 'Error in VAD inference task');
+        if (!this.closed) this.close();
+      })
+      .finally(() => resampler?.close());
   }
 
   /**

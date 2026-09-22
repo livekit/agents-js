@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { LiveServerContent, UsageMetadata } from '@google/genai';
 import { Behavior, FunctionResponseScheduling } from '@google/genai';
 import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
-import { RealtimeSession } from './realtime_api.js';
+import { RealtimeSession, toClientContentParams } from './realtime_api.js';
 
 type ToolCallStatus = {
   name: string;
@@ -178,5 +179,153 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     session.clearPendingToolCallIdsForResponses(result?.functionResponses ?? []);
 
     expect(session.pendingToolCallIds.has('call_123')).toBe(false);
+  });
+});
+
+type ServerContentSessionInternals = {
+  _realtimeModel: { capabilities: { audioOutput: boolean } };
+  options: { outputAudioTranscription?: Record<string, never> };
+  earlyCompletionPending: boolean;
+  currentGeneration: {
+    outputText: string;
+    textChannel: { write: ReturnType<typeof vi.fn> };
+  };
+  handleServerContent(serverContent: LiveServerContent): void;
+};
+
+function createServerContentSession({
+  audioOutput,
+  outputAudioTranscription,
+}: {
+  audioOutput: boolean;
+  outputAudioTranscription?: Record<string, never>;
+}): ServerContentSessionInternals {
+  const session = Object.create(RealtimeSession.prototype) as ServerContentSessionInternals;
+  session._realtimeModel = { capabilities: { audioOutput } };
+  session.options = { outputAudioTranscription };
+  session.earlyCompletionPending = false;
+  session.currentGeneration = {
+    outputText: '',
+    textChannel: { write: vi.fn() },
+  };
+  return session;
+}
+
+describe('Google Realtime model text parts', () => {
+  const modelTextTurn: LiveServerContent = {
+    modelTurn: { parts: [{ text: 'call:getWeather{location:Seattle' }] },
+    outputTranscription: { text: 'Let me check.' },
+  };
+
+  it('keeps unspoken model text out of the transcript in an audio session', () => {
+    const session = createServerContentSession({
+      audioOutput: true,
+      outputAudioTranscription: {},
+    });
+
+    session.handleServerContent(modelTextTurn);
+
+    expect(session.currentGeneration.textChannel.write.mock.calls).toEqual([['Let me check.']]);
+    expect(session.currentGeneration.outputText).toBe('Let me check.');
+  });
+
+  it('forwards model text when the session runs in text modality', () => {
+    const session = createServerContentSession({
+      audioOutput: false,
+      outputAudioTranscription: {},
+    });
+
+    session.handleServerContent({ modelTurn: { parts: [{ text: 'Hello there.' }] } });
+
+    expect(session.currentGeneration.textChannel.write.mock.calls).toEqual([['Hello there.']]);
+    expect(session.currentGeneration.outputText).toBe('Hello there.');
+  });
+
+  it('forwards model text when output transcription is disabled', () => {
+    const session = createServerContentSession({ audioOutput: true });
+
+    session.handleServerContent({ modelTurn: { parts: [{ text: 'Hello there.' }] } });
+
+    expect(session.currentGeneration.textChannel.write.mock.calls).toEqual([['Hello there.']]);
+    expect(session.currentGeneration.outputText).toBe('Hello there.');
+  });
+});
+
+type UsageMetadataSessionInternals = {
+  currentGeneration: {
+    responseId: string;
+    _createdTimestamp: number;
+    _firstTokenTimestamp?: number;
+    _completedTimestamp?: number;
+    _done: boolean;
+  };
+  emit: ReturnType<typeof vi.fn>;
+  handleUsageMetadata(usage: UsageMetadata): void;
+};
+
+function createUsageSession(): UsageMetadataSessionInternals {
+  const session = Object.create(RealtimeSession.prototype) as UsageMetadataSessionInternals;
+  const createdTimestamp = Date.now() - 1000;
+  session.currentGeneration = {
+    responseId: 'resp_1',
+    _createdTimestamp: createdTimestamp,
+    _firstTokenTimestamp: createdTimestamp + 100,
+    _completedTimestamp: createdTimestamp + 1000,
+    _done: true,
+  };
+  session.emit = vi.fn();
+  return session;
+}
+
+describe('Google Realtime usage metadata', () => {
+  it('reports thoughtsTokenCount as reasoningTokens', () => {
+    const session = createUsageSession();
+
+    session.handleUsageMetadata({
+      promptTokenCount: 397,
+      responseTokenCount: 49,
+      thoughtsTokenCount: 26,
+      totalTokenCount: 446,
+    });
+
+    expect(session.emit).toHaveBeenCalledWith(
+      'metrics_collected',
+      expect.objectContaining({
+        inputTokens: 397,
+        outputTokens: 49,
+        reasoningTokens: 26,
+        totalTokens: 446,
+      }),
+    );
+  });
+
+  it('keeps a reported zero distinguishable from an omitted count', () => {
+    const reported = createUsageSession();
+    reported.handleUsageMetadata({ responseTokenCount: 10, thoughtsTokenCount: 0 });
+    expect(reported.emit.mock.calls[0]![1]).toHaveProperty('reasoningTokens', 0);
+
+    const omitted = createUsageSession();
+    omitted.handleUsageMetadata({ responseTokenCount: 10 });
+    expect(omitted.emit.mock.calls[0]![1].reasoningTokens).toBeUndefined();
+  });
+});
+
+describe('Google Realtime client content params', () => {
+  it('omits an empty turns array so the SDK sends a bare turnComplete', () => {
+    // generateReply() sends no turns on models that take no placeholder user
+    // turn; the SDK throws on `turns: []`, which killed the send task.
+    expect(toClientContentParams({ turns: [], turnComplete: true })).toEqual({
+      turnComplete: true,
+    });
+    expect(toClientContentParams({ turnComplete: true })).toEqual({ turnComplete: true });
+  });
+
+  it('passes non-empty turns through and defaults turnComplete to true', () => {
+    const turns = [{ role: 'user', parts: [{ text: 'hi' }] }];
+    expect(toClientContentParams({ turns })).toEqual({ turns, turnComplete: true });
+    expect(toClientContentParams({ turns, turnComplete: false })).toEqual({
+      turns,
+      turnComplete: false,
+    });
   });
 });

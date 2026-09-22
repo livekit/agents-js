@@ -1,46 +1,32 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type JobContext,
-  type JobProcess,
-  ServerOptions,
-  cli,
-  defineAgent,
-  llm,
-  log,
-  voice,
-} from '@livekit/agents';
+import { type JobContext, ServerOptions, cli, defineAgent, llm, log, voice } from '@livekit/agents';
 import * as cartesia from '@livekit/agents-plugin-cartesia';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const logger = log();
 
     const getWeather = llm.tool({
+      name: 'getWeather',
       description: 'Called when the user asks about the weather.',
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }) => {
-        logger.info(`getting weather for ${location}`);
+        logger.info({ 'lk.pii.location': location }, 'getting weather');
         return `The weather in ${location} is sunny, and the temperature is 20 degrees Celsius.`;
       },
     });
 
     const agent = new voice.Agent({
       instructions: 'You are a helpful assistant. Always speak in English.',
-      tools: {
-        getWeather,
-      },
+      tools: [getWeather],
     });
 
     const session = new voice.AgentSession({

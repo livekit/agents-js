@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-rime",
-  "version": "1.4.4",
+  "version": "1.9.0",
   "description": "Rime plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -39,12 +39,15 @@
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.12",
     "@types/ws": "catalog:",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^2.14.1",
+    "@livekit/av": "^10.0.0",
+    "@rimelabs/api": "0.0.1",
     "ws": "catalog:"
   },
   "peerDependencies": {

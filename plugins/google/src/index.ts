@@ -15,6 +15,7 @@ export {
 export { beta };
 export { LLM, LLMStream, type LLMOptions } from './llm.js';
 export * from './models.js';
+export * from './tools.js';
 export { realtime };
 
 class GooglePlugin extends Plugin {

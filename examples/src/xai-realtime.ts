@@ -10,8 +10,9 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent({
       instructions: 'You are a helpful assistant. Keep your responses short and concise.',
-      tools: {
-        getWeather: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'getWeather',
           description: 'Get the weather for a given location.',
           parameters: z.object({
             location: z.string().describe('The location to get the weather for'),
@@ -20,7 +21,7 @@ export default defineAgent({
             return `The weather in ${location} is sunny.`;
           },
         }),
-      },
+      ],
     });
 
     const session = new voice.AgentSession({

@@ -4,7 +4,6 @@
 import {
   AutoSubscribe,
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -12,9 +11,7 @@ import {
   voice,
 } from '@livekit/agents';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -30,15 +27,12 @@ class VoiceAgent extends voice.Agent {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     await ctx.connect(undefined, AutoSubscribe.AUDIO_ONLY, undefined);
     await ctx.waitForParticipant();
-    const vad = ctx.proc.userData.vad! as silero.VAD;
 
     const getWeather = llm.tool({
+      name: 'getWeather',
       description: ' Called when the user asks about the weather.',
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
@@ -55,16 +49,12 @@ export default defineAgent({
     const agent = new VoiceAgent({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it.",
-      tools: {
-        getWeather,
-      },
+      tools: [getWeather],
     });
 
     const session = new voice.AgentSession({
-      vad,
       llm: new openai.realtime.RealtimeModel(),
       tts: new elevenlabs.TTS(),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 
     await session.start({

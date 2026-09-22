@@ -10,6 +10,10 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
+import { resolveObservabilityUrl } from './observability_endpoint.js';
+import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
+
+const OTLP_LOG_EXPORT_TIMEOUT_MS = 10_000;
 
 export interface SimpleLogRecord {
   /** Log message body */
@@ -25,14 +29,25 @@ export interface SimpleLogRecord {
 }
 
 export interface SimpleOTLPHttpLogExporterConfig {
-  /** LiveKit Cloud hostname */
+  /** @deprecated Pass `observabilityUrl` with `SimpleOTLPHttpLogExporterUrlConfig`. */
   cloudHostname: string;
   /** Resource attributes (e.g., room_id, job_id) */
-  resourceAttributes: Record<string, string>;
+  resourceAttributes: Record<string, unknown>;
   /** Scope name for the logger */
   scopeName: string;
   /** Scope attributes */
-  scopeAttributes?: Record<string, string>;
+  scopeAttributes?: Record<string, unknown>;
+}
+
+export interface SimpleOTLPHttpLogExporterUrlConfig {
+  /** Base URL for LiveKit Cloud observability, without a trailing slash. */
+  observabilityUrl: string;
+  /** Resource attributes (e.g., room_id, job_id) */
+  resourceAttributes: Record<string, unknown>;
+  /** Scope name for the logger */
+  scopeName: string;
+  /** Scope attributes */
+  scopeAttributes?: Record<string, unknown>;
 }
 
 /**
@@ -44,7 +59,7 @@ export interface SimpleOTLPHttpLogExporterConfig {
  * @example
  * ```typescript
  * const exporter = new SimpleOTLPHttpLogExporter({
- *   cloudHostname: 'cloud.livekit.io',
+ *   observabilityUrl: 'https://cloud.livekit.io',
  *   resourceAttributes: { room_id: 'xxx', job_id: 'yyy' },
  *   scopeName: 'chat_history',
  * });
@@ -55,7 +70,7 @@ export interface SimpleOTLPHttpLogExporterConfig {
  * ```
  */
 export class SimpleOTLPHttpLogExporter {
-  private readonly config: SimpleOTLPHttpLogExporterConfig;
+  private readonly config: SimpleOTLPHttpLogExporterConfig | SimpleOTLPHttpLogExporterUrlConfig;
   private jwt: string | null = null;
 
   private static readonly FORCE_DOUBLE_KEYS = new Set([
@@ -68,7 +83,7 @@ export class SimpleOTLPHttpLogExporter {
     'e2eLatency',
   ]);
 
-  constructor(config: SimpleOTLPHttpLogExporterConfig) {
+  constructor(config: SimpleOTLPHttpLogExporterConfig | SimpleOTLPHttpLogExporterUrlConfig) {
     this.config = config;
   }
 
@@ -77,20 +92,22 @@ export class SimpleOTLPHttpLogExporter {
    */
   async export(records: SimpleLogRecord[]): Promise<void> {
     if (records.length === 0) return;
+    if (uploadGate.disabled) return;
 
     await this.ensureJwt();
 
-    const endpoint = `https://${this.config.cloudHostname}/observability/logs/otlp/v0`;
+    const endpoint = `${resolveObservabilityUrl(this.config)}/observability/logs/otlp/v0`;
     const payload = this.buildPayload(records);
     const payloadJson = JSON.stringify(payload);
 
-    const response = await fetch(endpoint, {
+    const response = await fetchWithUploadGate(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.jwt}`,
         'Content-Type': 'application/json',
       },
       body: payloadJson,
+      signal: AbortSignal.timeout(OTLP_LOG_EXPORT_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -119,7 +136,7 @@ export class SimpleOTLPHttpLogExporter {
   private buildPayload(records: SimpleLogRecord[]): object {
     const resourceAttrs = Object.entries(this.config.resourceAttributes).map(([key, value]) => ({
       key,
-      value: { stringValue: value },
+      value: this.convertValue(value, key),
     }));
 
     if (!this.config.resourceAttributes['service.name']) {
@@ -129,7 +146,7 @@ export class SimpleOTLPHttpLogExporter {
     const scopeAttrs = this.config.scopeAttributes
       ? Object.entries(this.config.scopeAttributes).map(([key, value]) => ({
           key,
-          value: { stringValue: value },
+          value: this.convertValue(value, key),
         }))
       : [];
 
@@ -204,6 +221,11 @@ export class SimpleOTLPHttpLogExporter {
       };
     }
     if (typeof value === 'object') {
+      // Honor `toJSON()` like `JSON.stringify` does.
+      const toJSON = (value as { toJSON?: unknown }).toJSON;
+      if (typeof toJSON === 'function') {
+        return this.convertValue((value as { toJSON(): unknown }).toJSON(), path);
+      }
       return {
         kvlistValue: {
           values: Object.entries(value as Record<string, unknown>).map(([k, v]) => ({
