@@ -49,7 +49,6 @@ export const wsOutputItemSchema = z.union([
   z.object({ type: z.literal('file') }).passthrough(),
   z.object({ type: z.literal('computer_call') }).passthrough(),
   z.object({ type: z.literal('web_search_call') }).passthrough(),
-  // Server-side provider tools (xAI custom_tool_call, file_search_call, …)
   z.object({ type: z.string() }).passthrough(),
 ]);
 

@@ -396,10 +396,8 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
 }
 
 export class LLM extends llm.LLM {
-  /**
-   * Plugin provider-tool class serialized into Responses requests.
-   * Subclasses (e.g. xAI) override this so their tools are not dropped.
-   */
+  // the plugin's ProviderTool subclass; subclasses (e.g. xAI) override this so server-side
+  // provider tools are recognized when serializing the request. See toResponsesTools.
   static readonly providerToolType: ResponsesProviderToolType = OpenAITool;
 
   #opts: LLMOptions;

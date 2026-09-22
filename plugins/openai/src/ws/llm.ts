@@ -181,10 +181,6 @@ export interface WSLLMOptions {
   maxOutputTokens?: number;
   /** Configuration options for reasoning models. */
   reasoning?: Reasoning | null;
-  /**
-   * Provider-tool class serialized into Responses requests.
-   * Defaults to OpenAITool when omitted.
-   */
   providerToolType?: ResponsesProviderToolType;
 }
 

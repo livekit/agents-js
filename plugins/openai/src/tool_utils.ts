@@ -5,11 +5,6 @@ import { llm, log } from '@livekit/agents';
 import type OpenAI from 'openai';
 import { OpenAITool } from './tools.js';
 
-/**
- * Provider-tool class accepted by {@link toResponsesTools}. Subclasses of the
- * Responses LLM (e.g. xAI) pass their own plugin tool base so tools that are
- * not `OpenAITool` still serialize. Matches Python `provider_tool_type`.
- */
 export type ResponsesProviderToolType = abstract new (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- plugin tool constructors take plugin-specific option bags
   ...args: any[]
@@ -75,14 +70,6 @@ export function toResponsesTools(
   return tools.length > 0 ? tools : undefined;
 }
 
-/**
- * Log server-side provider tool runs from a Responses `response.completed` output list.
- *
- * Every `item.type` is a discriminator of OpenAI's `ResponseOutputItem` union.
- * Only `message`, `reasoning`, `function_call`, and `function_call_output` are
- * produced/consumed by the agent itself; everything else (web_search, xAI
- * `custom_tool_call`, …) was executed by the provider.
- */
 export function logProviderToolExecutions(
   output: ReadonlyArray<{ type: string }> | undefined,
   logger: { info: (obj: unknown, msg: string) => void } = log(),
@@ -90,6 +77,11 @@ export function logProviderToolExecutions(
   if (!output) return;
 
   for (const item of output) {
+    // Every item.type is a discriminator of openai's ResponseOutputItem union.
+    // Of those, only these are produced/consumed by the agent itself; all other
+    // members of the union are tools the Responses API runs server-side (e.g.
+    // openai web_search, xAI web_search and x_search's custom_tool_call subcalls),
+    // so anything not in this set is a provider-executed tool.
     if (!AGENT_OUTPUT_ITEM_TYPES.has(item.type)) {
       logger.info(
         {
