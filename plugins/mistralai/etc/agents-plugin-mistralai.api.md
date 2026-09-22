@@ -10,6 +10,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import type { Context } from '@opentelemetry/api';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
@@ -33,6 +34,16 @@ import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 import { z } from 'zod';
 
+// Warning: (ae-missing-release-tag) "ApiMode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export enum ApiMode {
+    // (undocumented)
+    CHAT_COMPLETIONS = "chat_completions",
+    // (undocumented)
+    CONVERSATIONS = "conversations"
+}
+
 // Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "ChunkedStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -48,6 +59,37 @@ export class ChunkedStream extends tts.ChunkedStream {
     label: string;
     // (undocumented)
     protected run(): Promise<void>;
+}
+
+// Warning: (ae-missing-release-tag) "CodeInterpreter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export class CodeInterpreter extends MistralTool {
+    constructor();
+    // (undocumented)
+    toJSON(): Record<string, unknown>;
+}
+
+// Warning: (ae-missing-release-tag) "Connector" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export class Connector extends MistralTool {
+    constructor(connectorId: string);
+    // (undocumented)
+    readonly connectorId: string;
+    // (undocumented)
+    toJSON(): Record<string, unknown>;
+}
+
+// Warning: (ae-missing-release-tag) "DocumentLibrary" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export class DocumentLibrary extends MistralTool {
+    constructor(libraryIds: string[]);
+    // (undocumented)
+    readonly libraryIds: string[];
+    // (undocumented)
+    toJSON(): Record<string, unknown>;
 }
 
 // Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
@@ -76,6 +118,7 @@ export class LLM extends llm.LLM {
     // (undocumented)
     updateOptions(opts: {
         model?: MistralChatModels | string;
+        apiMode?: ApiMode | `${ApiMode}`;
         maxCompletionTokens?: number;
         temperature?: number;
         topP?: number;
@@ -92,6 +135,8 @@ export class LLM extends llm.LLM {
 export interface LLMOptions {
     // (undocumented)
     apiKey?: string;
+    // (undocumented)
+    apiMode?: ApiMode | `${ApiMode}`;
     // (undocumented)
     client?: Mistral;
     // (undocumented)
@@ -123,6 +168,8 @@ export class LLMStream extends llm.LLMStream {
         toolCtx?: llm.ToolContextLike;
         connOptions: APIConnectOptions;
         extraKwargs: Record<string, unknown>;
+        toolChoice?: llm.ToolChoice;
+        parallelToolCalls?: boolean;
     });
     // (undocumented)
     protected run(): Promise<void>;
@@ -137,6 +184,14 @@ export type MistralChatModels = 'mistral-large-latest' | 'mistral-large-2512' | 
 //
 // @public (undocumented)
 export type MistralSTTModels = 'voxtral-mini-transcribe-realtime-2602' | 'voxtral-mini-latest' | 'voxtral-mini-2602' | 'voxtral-mini-2507';
+
+// Warning: (ae-missing-release-tag) "MistralTool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export abstract class MistralTool extends llm.ProviderTool {
+    // (undocumented)
+    abstract toJSON(): Record<string, unknown>;
+}
 
 // Warning: (ae-missing-release-tag) "MistralTTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -249,9 +304,18 @@ export interface TTSOptions {
     voice?: MistralTTSVoices | string;
 }
 
+// Warning: (ae-missing-release-tag) "WebSearch" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export class WebSearch extends MistralTool {
+    constructor();
+    // (undocumented)
+    toJSON(): Record<string, unknown>;
+}
+
 // Warnings were encountered during analysis:
 //
-// src/llm.ts:192:7 - (ae-forgotten-export) The symbol "LLMOpts" needs to be exported by the entry point index.d.ts
+// src/llm.ts:225:7 - (ae-forgotten-export) The symbol "LLMOpts" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
