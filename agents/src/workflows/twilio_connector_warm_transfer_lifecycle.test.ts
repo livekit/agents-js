@@ -84,6 +84,33 @@ function setup(ringingTimeout = 5_000) {
 }
 
 describe('Twilio warm transfer with real session and activity lifecycle', () => {
+  it.each(['lost body', 'missing SID'] as const)(
+    'resumes the caller without redialing an ambiguous creation: %s',
+    async (failure) => {
+      const ctx = setup(30_000);
+      ctx.connect.mockResolvedValue(
+        new ConnectTwilioCallResponse({ connectUrl: 'wss://connector.example/stream' }),
+      );
+      const response = new Response('{}', { status: 201 });
+      if (failure === 'lost body') {
+        vi.spyOn(response, 'text').mockRejectedValue(new Error('response stream reset'));
+      }
+      ctx.fetch.mockResolvedValueOnce(response);
+      try {
+        await ctx.start();
+        expect(await ctx.outcome.await).toMatchObject({ message: 'could not dial human agent' });
+        expect(ctx.session.currentAgent).toBe(ctx.parent);
+        expect(ctx.disconnect).toHaveBeenCalledOnce();
+        expect(ctx.fetch).toHaveBeenCalledOnce();
+        expect(ctx.fetch.mock.calls[0]![1].body.get('Timeout')).toBe('30');
+        await ctx.session.close();
+      } finally {
+        ctx.controller.abort();
+        await ctx.session.close();
+      }
+    },
+  );
+
   it.each(['throw', 'reject'] as const)('resumes the caller after connector %s', async (mode) => {
     const ctx = setup();
     ctx.connect.mockImplementation(() => {

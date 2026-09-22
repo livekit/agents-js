@@ -51,8 +51,12 @@ export interface TwilioConnectorWarmTransferTaskOptions extends WarmTransferOpti
 /**
  * Dial a recipient through the LiveKit Twilio connector, brief them privately,
  * and merge them into the caller room after confirmation.
- * The recipient's published audio signals answer. Pending calls are cleaned up
- * on cancellation; answered calls follow the shared room lifecycle.
+ * The recipient's published audio signals answer. Cancellation starts bounded,
+ * best-effort cleanup of calls whose SID was received; answered calls follow the
+ * shared room lifecycle. If Twilio accepts a call but its creation response is
+ * lost or lacks a SID, the task cannot target that call for cleanup. It reports
+ * failure without retrying, and the call can ring until Twilio's timeout or be
+ * answered in the meantime. Cleanup also requires the worker to remain alive.
  * @public
  */
 export function createTwilioConnectorWarmTransferTask(
