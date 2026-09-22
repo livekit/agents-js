@@ -95,7 +95,7 @@ class Assistant extends voice.Agent {
     this.live = live;
     live.on('delegation_created', this.onDelegation);
     live.on('session_reconnected', this.cancelDelegations);
-    this.session.generateReply({
+    void this.session.generateReply({
       instructions: 'Greet the caller and ask what you can help them with.',
     });
   }

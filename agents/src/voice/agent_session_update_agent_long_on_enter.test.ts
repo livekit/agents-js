@@ -28,7 +28,7 @@ class AskNameTask extends AgentTask<null> {
   }
 
   async onEnter(): Promise<void> {
-    this.session.generateReply({ userInput: 'ask_name' });
+    void this.session.generateReply({ userInput: 'ask_name' });
   }
 }
 
@@ -66,7 +66,7 @@ class GreetingAgent extends Agent {
 
   async onEnter(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 500));
-    this.session.generateReply({ userInput: 'delayed_greeting' });
+    void this.session.generateReply({ userInput: 'delayed_greeting' });
   }
 }
 

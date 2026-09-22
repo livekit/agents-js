@@ -243,7 +243,7 @@ describe('AgentActivity - mainTask', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Interrupt while waiting for generation
-    handle.interrupt();
+    void handle.interrupt();
 
     // Let mainTask react to the interrupt, then signal exit
     await new Promise((r) => setTimeout(r, 50));
@@ -275,7 +275,7 @@ describe('AgentActivity - mainTask', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Interrupt handle A
-    handleA.interrupt();
+    void handleA.interrupt();
 
     // Wait for mainTask to move to handle B and authorize it
     await new Promise((r) => setTimeout(r, 50));
@@ -306,7 +306,7 @@ describe('AgentActivity - mainTask', () => {
     const handle = SpeechHandle.create({ allowInterruptions: true });
 
     // Interrupt before mainTask ever sees it
-    handle.interrupt();
+    void handle.interrupt();
 
     speechQueue.push([SpeechHandle.SPEECH_PRIORITY_NORMAL, 1, handle]);
     handle._markScheduled();
@@ -334,7 +334,7 @@ describe('AgentActivity - mainTask', () => {
     const behind = SpeechHandle.create({ allowInterruptions: true });
     speechQueue.push([SpeechHandle.SPEECH_PRIORITY_NORMAL, 1, protectedHandle]);
     speechQueue.push([SpeechHandle.SPEECH_PRIORITY_NORMAL, 2, behind]);
-    protectedHandle.interrupt(true);
+    void protectedHandle.interrupt(true);
 
     const activity = Object.assign(Object.create(AgentActivity.prototype), {
       cancelPreemptiveGeneration: () => {},
@@ -1682,7 +1682,7 @@ describe('AgentActivity - interruption while waiting for tools', () => {
   it('commits completed outputs when already interrupted before waiting', async () => {
     const { activity, commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
     const speechHandle = SpeechHandle.create();
-    speechHandle.interrupt();
+    void speechHandle.interrupt();
     const cancelAndWait = vi.fn(async () => {});
     const toolOutput = buildToolOutput();
 
@@ -1714,7 +1714,7 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     });
     expect(activity['_backgroundSpeeches']).toContain(speechHandle);
 
-    speechHandle.interrupt();
+    void speechHandle.interrupt();
     executionFinished.resolve();
 
     await expect(waiting).resolves.toBe(false);
@@ -1728,7 +1728,7 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     // seen these outputs, so dropping them leaves the function calls dangling.
     const { commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
     const speechHandle = SpeechHandle.create();
-    speechHandle.interrupt();
+    void speechHandle.interrupt();
     const toolOutput = buildToolOutput();
 
     const shouldContinue = await waitForToolExecution({

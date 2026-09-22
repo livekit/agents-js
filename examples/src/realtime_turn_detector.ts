@@ -38,7 +38,7 @@ export default defineAgent({
       room: ctx.room,
     });
 
-    session.say('Hello, how can I help you today?');
+    void session.say('Hello, how can I help you today?');
   },
 });
 

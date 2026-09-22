@@ -106,7 +106,7 @@ export class MeetingChatRelay {
       );
       try {
         this.session.interrupt();
-        this.session.generateReply({ userInput });
+        void this.session.generateReply({ userInput });
       } catch (error) {
         this.#logger.warn({ error }, 'meeting chat relay: generateReply failed');
       }

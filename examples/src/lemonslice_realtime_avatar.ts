@@ -64,7 +64,7 @@ export default defineAgent({
       });
       await avatar.start(session, ctx.room);
 
-      session.generateReply({
+      void session.generateReply({
         instructions: 'Greet the user briefly and confirm you are ready.',
       });
 

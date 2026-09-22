@@ -712,7 +712,7 @@ describe('Agent', () => {
       }
 
       async onEnter() {
-        this.session.generateReply({ instructions: 'dialog_greeting' });
+        void this.session.generateReply({ instructions: 'dialog_greeting' });
       }
     }
 
@@ -802,7 +802,7 @@ describe('Agent', () => {
       }
 
       async onEnter() {
-        this.session.generateReply({ instructions: 'inner_greeting' });
+        void this.session.generateReply({ instructions: 'inner_greeting' });
       }
     }
 
@@ -826,7 +826,7 @@ describe('Agent', () => {
       }
 
       async onEnter() {
-        this.session.generateReply({ instructions: 'outer_greeting' });
+        void this.session.generateReply({ instructions: 'outer_greeting' });
       }
     }
 

@@ -535,7 +535,7 @@ class RecorderAudioInput extends AudioInput {
         sourceError = e;
       } finally {
         if (sourceError) {
-          writer.abort(sourceError);
+          void writer.abort(sourceError);
           return;
         }
 
@@ -549,7 +549,7 @@ class RecorderAudioInput extends AudioInput {
       }
     };
 
-    pump();
+    void pump();
 
     return transform.readable;
   }

@@ -107,11 +107,11 @@ class MainAgent extends voice.Agent<UserData> {
 
   async onEnter(): Promise<void> {
     if (this.llm instanceof llm.RealtimeModel) {
-      this.session.generateReply({
+      void this.session.generateReply({
         userInput: `Tell user that you are main route agent, you can test the agent's ability to switch between different agents`,
       });
     } else {
-      this.session.say(
+      void this.session.say(
         `Hi, I'm a main route agent, you can test the agent's ability to switch between different agents`,
       );
     }
@@ -217,11 +217,11 @@ class TestAgent extends voice.Agent<UserData> {
 
   async onEnter(): Promise<void> {
     if (this.llm instanceof llm.RealtimeModel) {
-      this.session.generateReply({
+      void this.session.generateReply({
         userInput: `Tell user that you are voice agent with ${this.sttChoice} STT, ${this.ttsChoice} TTS, ${this.eouChoice} EOU, ${this.llmChoice} LLM`,
       });
     } else {
-      this.session.say(
+      void this.session.say(
         `Hi, I'm a voice agent with ${this.sttChoice} STT, ${this.ttsChoice} TTS, ${this.eouChoice} EOU, ${this.llmChoice} LLM. I'm ready to test your hearing & speaking abilities.`,
       );
     }
@@ -230,7 +230,7 @@ class TestAgent extends voice.Agent<UserData> {
       if (this.session.currentAgent !== this) return;
 
       this.session.interrupt();
-      this.session.generateReply({
+      void this.session.generateReply({
         userInput: 'Tell user that this test is over, going back to main agent',
       });
       this.session.updateAgent(new MainAgent());

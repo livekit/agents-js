@@ -24,7 +24,7 @@ type StoryData = {
 // Use inheritance to create agent with custom hooks
 class IntroAgent extends voice.Agent<StoryData> {
   async onEnter() {
-    this.session.generateReply({
+    void this.session.generateReply({
       instructions: '"greet the user and gather information"',
     });
   }
@@ -56,7 +56,7 @@ class IntroAgent extends voice.Agent<StoryData> {
 
 class StoryAgent extends voice.Agent<StoryData> {
   async onEnter() {
-    this.session.generateReply();
+    void this.session.generateReply();
   }
 
   static createStoryAgent(name: string, location: string) {

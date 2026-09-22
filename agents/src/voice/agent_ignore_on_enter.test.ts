@@ -107,7 +107,7 @@ class GreetingAgent extends Agent {
   }
 
   async onEnter(): Promise<void> {
-    this.session.generateReply({ userInput: 'greeting' });
+    void this.session.generateReply({ userInput: 'greeting' });
   }
 }
 

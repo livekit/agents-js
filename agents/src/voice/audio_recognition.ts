@@ -2304,7 +2304,7 @@ export class AudioRecognition {
   }
 
   detachInputAudioStream() {
-    this.deferredInputStream.detachSource();
+    void this.deferredInputStream.detachSource();
   }
 
   /**
@@ -2430,7 +2430,7 @@ export class AudioRecognition {
           // flush the stt by pushing silence
           if (audioDetached && this.sampleRate !== undefined) {
             const silenceFrame = createSilenceFrame(delayDuration, this.sampleRate);
-            this.silenceAudioWriter.write(silenceFrame);
+            void this.silenceAudioWriter.write(silenceFrame);
           }
 
           // wait for the final transcript to be available

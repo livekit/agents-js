@@ -42,7 +42,7 @@ class InfoTask extends voice.AgentTask<string> {
   }
 
   async onEnter() {
-    this.session.generateReply({ userInput: `Ask the user for their ${this.key}` });
+    void this.session.generateReply({ userInput: `Ask the user for their ${this.key}` });
   }
 }
 
@@ -173,7 +173,7 @@ export default defineAgent({
       inputOptions: { noiseCancellation: BackgroundVoiceCancellation() },
     });
 
-    session.say('Hello! I will ask you a quick question, then we can chat.');
+    void session.say('Hello! I will ask you a quick question, then we can chat.');
   },
 });
 

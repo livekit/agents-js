@@ -101,7 +101,7 @@ class FakeWebSocket extends EventEmitter {
         callback?.();
       }
     };
-    if (this.#blockAudio) this.releaseAudio.promise.then(complete);
+    if (this.#blockAudio) void this.releaseAudio.promise.then(complete);
     else if (this.sendDelayMs) setTimeout(complete, this.sendDelayMs);
     else complete();
   }

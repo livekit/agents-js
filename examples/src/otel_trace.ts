@@ -106,7 +106,7 @@ class Kelly extends voice.Agent {
 
   async onEnter() {
     logger().info('Kelly is entering the session');
-    this.session.generateReply();
+    void this.session.generateReply();
   }
 }
 
@@ -132,7 +132,7 @@ class Alloy extends voice.Agent {
 
   async onEnter() {
     logger().info('Alloy is entering the session');
-    this.session.generateReply();
+    void this.session.generateReply();
   }
 }
 

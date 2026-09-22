@@ -187,7 +187,7 @@ describe('realtime overlapping speech', () => {
       const { model, session, output, activity } = await start(true);
       try {
         activity.onStartOfSpeech(speechStart);
-        if (requested) session.generateReply();
+        if (requested) void session.generateReply();
         else model.activeSession.emit('generation_created', model.activeSession.generation(false));
         await setImmediate();
         expect(output.frames).toBeGreaterThan(0);
@@ -210,7 +210,7 @@ describe('realtime overlapping speech', () => {
       const { model, session, output, activity } = await start(overlap, turnDetection);
       try {
         activity.onStartOfSpeech(speechStart);
-        session.generateReply();
+        void session.generateReply();
         await setImmediate();
         expect(model.activeSession.asks).toBe(0);
         expect(output.frames).toBe(0);

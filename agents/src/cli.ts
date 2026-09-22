@@ -54,7 +54,7 @@ const runServer = async (args: CliArgs) => {
   if (args.room) {
     server.event.once('worker_registered', () => {
       logger.info(`connecting to room ${args.room}`);
-      server.simulateJob(args.room!, args.participantIdentity);
+      void server.simulateJob(args.room!, args.participantIdentity);
     });
   }
 
@@ -187,7 +187,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
       opts.simulation = commandOptions.simulation || opts.simulation;
-      runServer({
+      void runServer({
         opts,
         production: true,
         watch: false,
@@ -216,7 +216,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
       process.env.LIVEKIT_DEV_MODE = '1';
-      runServer({
+      void runServer({
         opts,
         production: false,
         watch: false,
@@ -239,7 +239,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
       process.env.LIVEKIT_DEV_MODE = '1';
-      runServer({
+      void runServer({
         opts,
         production: false,
         watch: false,

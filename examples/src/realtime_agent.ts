@@ -76,7 +76,7 @@ export default defineAgent({
       console.log('metrics_collected', ev);
     });
 
-    session.generateReply({
+    void session.generateReply({
       instructions: 'Describe this image.',
     });
   },

@@ -47,7 +47,7 @@ export default defineAgent({
       logger.info({ usage: session.usage }, 'Session usage summary');
     });
 
-    session.generateReply({ instructions: 'Say hello to the user.' });
+    void session.generateReply({ instructions: 'Say hello to the user.' });
   },
 });
 

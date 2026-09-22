@@ -38,7 +38,7 @@ export default defineAgent({
       usageCollector.collect(ev.metrics);
     });
 
-    session.generateReply({
+    void session.generateReply({
       instructions: 'Greet the user briefly in English and confirm you are ready.',
     });
   },

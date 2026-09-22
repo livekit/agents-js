@@ -35,7 +35,7 @@ function createInfoTask(info: string): AgentTask<string> {
       }),
     ],
     onEnter: (ctx) => {
-      ctx.session.generateReply({
+      void ctx.session.generateReply({
         userInput: `Ask the user for their ${info}`,
       });
     },

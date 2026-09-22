@@ -136,7 +136,7 @@ export default defineAgent({
       },
     });
 
-    session.say('Hello, how can I help you today?');
+    void session.say('Hello, how can I help you today?');
   },
 });
 

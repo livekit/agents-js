@@ -189,7 +189,7 @@ export abstract class SupervisedProc {
       this.#join.resolve();
     });
 
-    this.mainTask(this.proc!);
+    void this.mainTask(this.proc!);
 
     await this.#join.await;
   }

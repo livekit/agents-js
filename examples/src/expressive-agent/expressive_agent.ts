@@ -19,7 +19,7 @@ class Friend extends Agent {
   }
 
   async onEnter(): Promise<void> {
-    this.session.generateReply({ instructions: GREETING });
+    void this.session.generateReply({ instructions: GREETING });
   }
 }
 

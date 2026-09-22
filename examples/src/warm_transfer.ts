@@ -91,7 +91,7 @@ Examples on when the tool should be called:
   }
 
   async onEnter(): Promise<void> {
-    this.session.generateReply();
+    void this.session.generateReply();
   }
 }
 

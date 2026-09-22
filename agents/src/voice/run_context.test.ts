@@ -382,7 +382,7 @@ describe('RunContext filler', () => {
 
     await ctx.filler('Repeat.', { delay: 0, interval: 5 }, async () => {
       await sleep(15);
-      speechHandle.interrupt();
+      void speechHandle.interrupt();
       const countAtInterrupt = session.sayTexts.length;
       await sleep(30);
       expect(session.sayTexts).toHaveLength(countAtInterrupt);

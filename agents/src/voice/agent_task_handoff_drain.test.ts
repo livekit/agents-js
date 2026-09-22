@@ -125,7 +125,7 @@ type Fixture = ReturnType<typeof createFixture>;
 
 async function startPendingTool(f: Fixture) {
   await f.session.start({ agent: f.agent });
-  f.session.generateReply({ userInput: 'transfer', allowInterruptions: false });
+  void f.session.generateReply({ userInput: 'transfer', allowInterruptions: false });
   await f.started.await;
   await vi.waitFor(() => expect(f.agent._agentActivity!.currentSpeech).toBeUndefined());
 }
@@ -159,7 +159,7 @@ it('completes an inline task before handoff', async () => {
   expect(f.taskEntered).toHaveBeenCalledOnce();
   f.finishSwitch.resolve();
   f.finishExit.resolve();
-  f.session.generateReply({ userInput: 'switch' });
+  void f.session.generateReply({ userInput: 'switch' });
   await vi.waitFor(() => expect(f.targetEntered).toHaveBeenCalledOnce());
   expect(f.session.currentAgent).toBe(f.target);
 });
@@ -218,10 +218,10 @@ it('rejects a tool that starts after handoff drain has begun', async () => {
   });
   try {
     await f.session.start({ agent: f.agent });
-    f.session.generateReply({ userInput: 'switch' });
+    void f.session.generateReply({ userInput: 'switch' });
     await f.switchStarted.await;
     await vi.waitFor(() => expect(f.agent._agentActivity!.currentSpeech).toBeUndefined());
-    f.session.generateReply({ userInput: 'transfer', allowInterruptions: false });
+    void f.session.generateReply({ userInput: 'transfer', allowInterruptions: false });
     await generationStarted.await;
     f.finishSwitch.resolve();
     f.finishExit.resolve();
@@ -245,7 +245,7 @@ it.each([false, true])(
     const f = createFixture(shutdown ? finishTool : undefined);
     await startPendingTool(f);
     f.finishSwitch.resolve();
-    f.session.generateReply({ userInput: 'switch' });
+    void f.session.generateReply({ userInput: 'switch' });
     await f.exiting.await;
     expect(f.agent._agentActivity!.schedulingPaused).toBe(false);
     f.admission.resolve();
@@ -270,7 +270,7 @@ it.each([false, true])(
     await startPendingTool(f);
     f.finishSwitch.resolve();
     f.finishExit.resolve();
-    f.session.generateReply({ userInput: 'switch' });
+    void f.session.generateReply({ userInput: 'switch' });
     await vi.waitFor(() => expect(f.agent._agentActivity!.schedulingPaused).toBe(true));
     f.admission.resolve();
     await expectRejected(f);
@@ -292,7 +292,7 @@ it.each([false, true])(
     const f = createFixture(shutdown ? finishTool : undefined);
     const root = Agent.create({ instructions: 'root' });
     const enter = vi.spyOn(f.agent, 'onEnter').mockImplementation(async () => {
-      f.session.generateReply({ userInput: 'transfer' });
+      void f.session.generateReply({ userInput: 'transfer' });
     });
     try {
       await f.session.start({ agent: root });

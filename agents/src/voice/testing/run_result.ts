@@ -334,7 +334,7 @@ export class RunResult<T = unknown> {
     this.outputRetries -= 1;
 
     try {
-      this.session.generateReply({ instructions: this.outputRetryInstructions });
+      void this.session.generateReply({ instructions: this.outputRetryInstructions });
     } catch (error) {
       // Fall through to UnexpectedModelBehavior; surface the real failure
       // (e.g. a closing session) as the rejection's cause instead of hiding

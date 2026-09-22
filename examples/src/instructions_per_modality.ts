@@ -76,7 +76,7 @@ class SchedulingAgent extends voice.Agent {
   }
 
   async onEnter(): Promise<void> {
-    this.session.generateReply();
+    void this.session.generateReply();
   }
 }
 

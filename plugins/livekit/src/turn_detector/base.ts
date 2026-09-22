@@ -204,7 +204,7 @@ export abstract class EOUModel {
     this.loadLanguages = loadLanguages;
 
     if (loadLanguages) {
-      downloadFileToCacheDir({
+      void downloadFileToCacheDir({
         repo: HG_MODEL_REPO,
         path: 'languages.json',
         revision: MODEL_REVISIONS[modelType],

@@ -293,7 +293,7 @@ export class BehavioralTask extends voice.AgentTask<BehavioralResults, SurveyUse
       return;
     }
 
-    this.session.generateReply({
+    void this.session.generateReply({
       instructions:
         'Continue gathering missing behavioral details in a concise, natural dialogue and use save* tools.',
     });

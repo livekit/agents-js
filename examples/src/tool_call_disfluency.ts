@@ -38,7 +38,7 @@ export default defineAgent({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }, { ctx }) => {
-        ctx.session.generateReply({
+        void ctx.session.generateReply({
           userInput: 'Tell the user you are looking it up to hold on a sec.',
         });
 

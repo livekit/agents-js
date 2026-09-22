@@ -298,7 +298,7 @@ export class SpeechHandle {
       throw new Error('This generation handle does not allow interruptions');
     }
 
-    this._cancel();
+    void this._cancel();
     return this;
   }
 

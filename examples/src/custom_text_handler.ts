@@ -17,22 +17,22 @@ const customTextInputHandler = (session: voice.AgentSession, event: voice.TextIn
 
   if (message.startsWith('/')) {
     if (message === '/help') {
-      session.say('Available commands: /help, /status');
+      void session.say('Available commands: /help, /status');
       return;
     }
     if (message === '/status') {
-      session.say('Agent is running normally');
+      void session.say('Agent is running normally');
       return;
     }
   }
 
   if (['spam', 'inappropriate'].some((word) => message.toLowerCase().includes(word))) {
-    session.say("I can't respond to that type of message.");
+    void session.say("I can't respond to that type of message.");
     return;
   }
 
   session.interrupt();
-  session.generateReply({ userInput: message });
+  void session.generateReply({ userInput: message });
 };
 
 export default defineAgent({
@@ -60,7 +60,7 @@ export default defineAgent({
       },
     });
 
-    session.say('Hello, how can I help you today?');
+    void session.say('Hello, how can I help you today?');
   },
 });
 

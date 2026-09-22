@@ -157,7 +157,7 @@ export class ProcPool {
     }
 
     this.started = true;
-    this.run(this.controller.signal);
+    void this.run(this.controller.signal);
   }
 
   async run(signal: AbortSignal) {
@@ -170,7 +170,7 @@ export class ProcPool {
           .finally(() => {
             const taskIndex = this.tasks.indexOf(task);
             if (taskIndex !== -1) {
-              this.tasks.splice(taskIndex, 1);
+              void this.tasks.splice(taskIndex, 1);
             } else {
               throw new Error(`task ${task} not found in tasks`);
             }

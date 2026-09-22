@@ -87,7 +87,7 @@ describe('AgentActivity close mid-playout commit', () => {
     };
 
     await session.start({ agent: new FrameAgent() });
-    session.generateReply({ userInput: 'hello' });
+    void session.generateReply({ userInput: 'hello' });
 
     await vi.waitFor(() => expect(closePromise).toBeDefined(), { timeout: 5000 });
     await closePromise!;

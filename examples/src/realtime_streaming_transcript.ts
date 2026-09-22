@@ -44,7 +44,7 @@ export default defineAgent({
       room: ctx.room,
     });
 
-    session.generateReply({
+    void session.generateReply({
       instructions:
         'Greet the user briefly and ask them to say a long sentence so they can watch their own words appear live on screen as they speak.',
     });

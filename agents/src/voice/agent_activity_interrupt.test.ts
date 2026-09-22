@@ -150,7 +150,7 @@ describe('AgentActivity - interrupt protected queued speech', () => {
     const cleanupOwner = makeSpeech(true);
     const queuedReply = makeSpeech(true);
     const releasePauseCleanup = new Future<void>();
-    cleanupOwner.interrupt();
+    void cleanupOwner.interrupt();
     enqueue(speechQueue, queuedReply);
 
     Object.assign(activity, {

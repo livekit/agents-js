@@ -59,7 +59,7 @@ it.each(['before completion', 'during onExit', 'during resume'] as const)(
     try {
       await session.start({ agent });
       const originalActivity = agent._agentActivity!;
-      session.generateReply({ userInput: 'transfer' });
+      void session.generateReply({ userInput: 'transfer' });
       await entered.await;
       if (timing === 'before completion') closing = session.close();
       transfer.complete(failure);
@@ -132,7 +132,7 @@ it.each([1, 2])('cancels and unwinds %i pending tasks before closing the parent'
   const resume = vi.spyOn(AgentActivity.prototype, 'resume');
   try {
     await session.start({ agent });
-    session.generateReply({ userInput: 'transfer' });
+    void session.generateReply({ userInput: 'transfer' });
     await entered.await;
     await session.close();
 
@@ -199,7 +199,7 @@ it.each([
       llm: new FakeLLM([{ input: 'transfer', toolCalls: [{ name: 'transfer', args: {} }] }]),
     });
     await session.start({ agent });
-    if (owner === 'tool') session.generateReply({ userInput: 'transfer' });
+    if (owner === 'tool') void session.generateReply({ userInput: 'transfer' });
     await entered.await;
     const taskActivity = transfer._agentActivity!;
     const closeTask = vi.spyOn(taskActivity, 'close');
@@ -263,13 +263,13 @@ it.each(['success', 'failure'] as const)(
     try {
       await session.start({ agent });
       const parentActivity = agent._agentActivity!;
-      session.generateReply({ userInput: 'transfer' });
+      void session.generateReply({ userInput: 'transfer' });
       expect(await result.await).toBe(outcome === 'success' ? 'done' : failure);
       expect(session._activity).toBe(parentActivity);
       expect(parentActivity.schedulingPaused).toBe(false);
       expect(task._agentActivity).toBeUndefined();
       await vi.waitFor(() => expect(parentActivity.currentSpeech).toBeUndefined());
-      session.generateReply({ userInput: 'next turn' });
+      void session.generateReply({ userInput: 'next turn' });
       await vi.waitFor(() => expect(answered).toHaveBeenCalledOnce());
     } finally {
       await session.close();

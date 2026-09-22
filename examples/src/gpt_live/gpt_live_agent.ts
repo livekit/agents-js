@@ -60,7 +60,7 @@ class Assistant extends voice.Agent {
   }
 
   async onEnter(): Promise<void> {
-    this.session.generateReply({
+    void this.session.generateReply({
       instructions:
         'Welcome the caller back to Acme and ask whether they are calling about the delivery of order A1042.',
     });

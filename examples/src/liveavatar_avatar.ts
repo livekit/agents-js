@@ -84,7 +84,7 @@ export default defineAgent({
       logger.info({ usage: session.usage }, 'Session usage summary');
     });
 
-    session.generateReply({
+    void session.generateReply({
       instructions:
         'Greet the user, tell them this is a LiveAvatar example, and ask them to interrupt you mid-sentence.',
     });

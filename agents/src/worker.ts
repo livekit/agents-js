@@ -595,7 +595,7 @@ export class AgentServer {
       return ThrowsPromise.all(
         this.#procPool.processes.map((proc): Promise<Throws<void, Error>> => {
           if (!proc.runningJob) {
-            proc.close();
+            void proc.close();
           }
           return proc.join();
         }),
@@ -747,7 +747,7 @@ export class AgentServer {
             .finally(() => {
               const taskIndex = this.#tasks.indexOf(task);
               if (taskIndex !== -1) {
-                this.#tasks.splice(taskIndex, 1);
+                void this.#tasks.splice(taskIndex, 1);
               } else {
                 throw new Error(`task ${task} not found in tasks`);
               }
@@ -776,7 +776,7 @@ export class AgentServer {
             .finally(() => {
               const taskIndex = this.#tasks.indexOf(task);
               if (taskIndex !== -1) {
-                this.#tasks.splice(taskIndex, 1);
+                void this.#tasks.splice(taskIndex, 1);
               } else {
                 throw new Error(`task ${task} not found in tasks`);
               }
@@ -998,7 +998,7 @@ export class AgentServer {
       .finally(() => {
         const taskIndex = this.#tasks.indexOf(task);
         if (taskIndex !== -1) {
-          this.#tasks.splice(taskIndex, 1);
+          void this.#tasks.splice(taskIndex, 1);
         } else {
           throw new Error(`task ${task} not found in tasks`);
         }

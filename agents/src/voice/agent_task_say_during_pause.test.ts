@@ -62,7 +62,7 @@ describe('AgentSession.say() during an AgentTask pause', () => {
               execute: async () => {
                 // A pending speech that is not drain-blocked keeps the pause waiting,
                 // like a parallel tool reply in production.
-                this.session.say(holdStream, { allowInterruptions: false });
+                void this.session.say(holdStream, { allowInterruptions: false });
                 task = new TransferTask();
                 await task.run();
                 return 'transferred';
@@ -82,7 +82,7 @@ describe('AgentSession.say() during an AgentTask pause', () => {
     };
     await session.start({ agent });
 
-    session.generateReply({ userInput: 'go' });
+    void session.generateReply({ userInput: 'go' });
 
     // the root activity is pausing and the task activity is queued as nextActivity
     expect(

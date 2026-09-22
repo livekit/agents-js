@@ -238,7 +238,7 @@ export class RoomSessionTransport extends SessionTransport {
         });
       },
       return: (): Promise<IteratorResult<pb.AgentSessionMessage>> => {
-        this.close();
+        void this.close();
         return ThrowsPromise.resolve({
           value: undefined as unknown as pb.AgentSessionMessage,
           done: true,

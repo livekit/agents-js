@@ -179,7 +179,7 @@ describe('playout launch pause', () => {
     activity.updatePausedSpeech(speechHandle, 2000);
     audioOutput.pause();
 
-    speechHandle.interrupt();
+    void speechHandle.interrupt();
     activity.reconcilePlayoutPause(speechHandle);
 
     expect(audioOutput.pausedAt).toBeUndefined();

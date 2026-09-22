@@ -48,7 +48,7 @@ import {
 
 export const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = (sess, ev) => {
   sess.interrupt();
-  sess.generateReply({ userInput: ev.text });
+  void sess.generateReply({ userInput: ev.text });
 };
 
 export const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[] = [

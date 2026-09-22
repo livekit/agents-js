@@ -99,7 +99,7 @@ function createGetEmailTask(extraInstructions: string): AgentTask<{ emailAddress
       }),
     ],
     onEnter: (ctx) => {
-      ctx.session.generateReply({
+      void ctx.session.generateReply({
         instructions:
           'Ask the user for their email address in one short sentence, then call save_email.',
       });
@@ -156,7 +156,7 @@ function createTravelAgent() {
     if (!userEmail) {
       logger.info('Getting user email address');
       const email = await ctx.foreground(async () => {
-        ctx.session.say('We will need your email address to confirm the flight booking.');
+        void ctx.session.say('We will need your email address to confirm the flight booking.');
         return createGetEmailTask(
           'You are capturing the email address of the user for the flight booking.',
         ).run();
@@ -364,7 +364,7 @@ function createTravelAgent() {
       }),
     ],
     onEnter: (ctx) => {
-      ctx.session.generateReply({ instructions: 'Greet the user and introduce yourself.' });
+      void ctx.session.generateReply({ instructions: 'Greet the user and introduce yourself.' });
     },
   });
 }

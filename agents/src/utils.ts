@@ -380,12 +380,12 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
     if (this.#closed) {
       throw new Error('Queue is closed');
     }
-    this.#queue.put(item);
+    void this.#queue.put(item);
   }
 
   close(): void {
     this.#closed = true;
-    this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
+    void this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
   }
 
   async next(options: { signal?: AbortSignal } = {}): Promise<IteratorResult<T>> {
@@ -571,7 +571,7 @@ export class Task<T> {
         }
         this.doneCallbacks.clear();
       });
-    this.runTask();
+    void this.runTask();
   }
 
   /**

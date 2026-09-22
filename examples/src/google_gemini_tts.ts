@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 class GeminiTTSAgent extends voice.Agent {
   async onEnter() {
-    this.session.generateReply({ instructions: 'greet the user and introduce yourself' });
+    void this.session.generateReply({ instructions: 'greet the user and introduce yourself' });
   }
 }
 

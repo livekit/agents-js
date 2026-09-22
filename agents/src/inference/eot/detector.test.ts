@@ -332,7 +332,7 @@ describe('Fallback', () => {
 describe('MultiStreamOwnership', () => {
   it('multiple streams can be opened off one detector', async () => {
     let detector!: TurnDetector;
-    withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+    void withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
       detector = new TurnDetector({ version: 'v1-mini' });
     });
     // Only one stream is active at a time in production; the detector still
@@ -347,7 +347,7 @@ describe('MultiStreamOwnership', () => {
 describe('DetectorViewAfterFallback', () => {
   it('detector model + threshold follow the fallback (shared ThresholdOptions)', async () => {
     let detector!: TurnDetector;
-    withEnv(
+    void withEnv(
       {
         LIVEKIT_REMOTE_EOT_URL: 'ws://gateway',
         LIVEKIT_API_KEY: 'k',
@@ -612,7 +612,7 @@ describe('OverrideWarning', () => {
   it('warns on construction with override', () => {
     const warnSpy = vi.spyOn(log(), 'warn');
     try {
-      withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+      void withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
         new TurnDetector({ unlikelyThreshold: 0.5 });
       });
       const warned = warnSpy.mock.calls.some((c) =>
@@ -627,7 +627,7 @@ describe('OverrideWarning', () => {
   it('warns on construction with backchannel override', () => {
     const warnSpy = vi.spyOn(log(), 'warn');
     try {
-      withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+      void withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
         new TurnDetector({ backchannelThreshold: 0.7 });
       });
       const warned = warnSpy.mock.calls.some((c) =>
@@ -642,7 +642,7 @@ describe('OverrideWarning', () => {
   it('no warning without override', () => {
     const warnSpy = vi.spyOn(log(), 'warn');
     try {
-      withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+      void withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
         new TurnDetector();
       });
       const warned = warnSpy.mock.calls.some((c) =>
@@ -658,7 +658,7 @@ describe('OverrideWarning', () => {
 describe('UpdateOptions', () => {
   it('re-resolves an active cloud stream against cached server defaults', async () => {
     let detector!: TurnDetector;
-    withEnv(
+    void withEnv(
       {
         LIVEKIT_REMOTE_EOT_URL: 'ws://gateway',
         LIVEKIT_API_KEY: 'k',
@@ -687,7 +687,7 @@ describe('UpdateOptions', () => {
 
   it('local model updateOptions', async () => {
     let detector!: TurnDetector;
-    withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+    void withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
       detector = new TurnDetector();
     });
     expect(detector.model).toBe('turn-detector-v1-mini');

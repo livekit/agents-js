@@ -214,7 +214,7 @@ class SayOnEnterAgent extends FrameAgent {
         controller.close();
       },
     });
-    this.session.say('I saw your application for a Honda', { audio });
+    void this.session.say('I saw your application for a Honda', { audio });
   }
 }
 

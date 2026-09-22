@@ -189,7 +189,7 @@ describe('SpeechHandle._markDone - generation completion', () => {
 describe('SpeechHandle.interrupt - protected completed speech', () => {
   it('leaves an interrupted protected handle alone', () => {
     const handle = SpeechHandle.create({ allowInterruptions: false });
-    handle.interrupt(true);
+    void handle.interrupt(true);
 
     expect(handle.interrupt()).toBe(handle);
     expect(handle.interrupted).toBe(true);
@@ -217,7 +217,7 @@ describe('SpeechHandle interruption watchdog (#2065)', () => {
       handle._authorizeGeneration();
       const generationWait = handle._waitForGeneration();
 
-      handle.interrupt();
+      void handle.interrupt();
       expect(handle.done()).toBe(false);
 
       // A reply that unwinds slowly is allowed the whole cooperative-cancel budget before the
@@ -245,7 +245,7 @@ describe('SpeechHandle interruption watchdog (#2065)', () => {
       const cancel = vi.spyOn(task, 'cancel');
       handle._tasks.push(task);
 
-      handle.interrupt();
+      void handle.interrupt();
       handle._markDone();
       await vi.advanceTimersByTimeAsync(10_000);
 

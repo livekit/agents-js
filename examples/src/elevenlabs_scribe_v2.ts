@@ -37,7 +37,7 @@ export default defineAgent({
       room: ctx.room,
     });
 
-    session.say('Hello, how can I help you?', { allowInterruptions: false });
+    void session.say('Hello, how can I help you?', { allowInterruptions: false });
   },
 });
 

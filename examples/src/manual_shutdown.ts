@@ -44,7 +44,7 @@ export default defineAgent({
               .describe('The reason to end the call'),
           }),
           execute: async ({ reason }, { ctx }) => {
-            session.generateReply({
+            void session.generateReply({
               userInput: `You are about to end the call due to ${reason}, notify the user with one last message`,
             });
             await ctx.waitForPlayout();
@@ -80,7 +80,7 @@ export default defineAgent({
       },
     });
 
-    session.say('Hello, how can I help you today?');
+    void session.say('Hello, how can I help you today?');
   },
 });
 

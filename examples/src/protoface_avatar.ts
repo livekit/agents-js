@@ -39,7 +39,7 @@ export default defineAgent({
       },
     });
 
-    session.generateReply({ instructions: 'Say hello to the user.' });
+    void session.generateReply({ instructions: 'Say hello to the user.' });
   },
 });
 

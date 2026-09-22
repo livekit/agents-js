@@ -617,7 +617,7 @@ export class ToolExecutor {
         { callIds },
       );
 
-      session.generateReply({
+      void session.generateReply({
         instructions,
         toolChoice: 'none',
         chatCtx,

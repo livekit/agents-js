@@ -45,7 +45,7 @@ class SimpleTask extends AgentTask<null> {
     // Widen the mid-transition window (old activity paused, new activity
     // still starting) so a run completing early is deterministically caught.
     await new Promise((r) => setTimeout(r, 500));
-    this.session.generateReply({ userInput: 'task_greeting' });
+    void this.session.generateReply({ userInput: 'task_greeting' });
     taskOnEnterCompletedAt = Date.now();
   }
 }

@@ -56,7 +56,7 @@ export default defineAgent({
       );
     });
 
-    session.generateReply({
+    void session.generateReply({
       instructions: 'Greet the user briefly and confirm you are ready.',
     });
   },

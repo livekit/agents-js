@@ -67,7 +67,7 @@ export default defineAgent({
     await avatar.start(session, ctx.room);
 
     // With Realtime LLM, generateReply will synthesize audio via the model
-    session.generateReply({
+    void session.generateReply({
       instructions: 'Greet the user briefly and confirm you are ready.',
     });
   },

@@ -702,7 +702,7 @@ export function createWarmTransferTask({
         }
         transferAgentSession = result.session;
         try {
-          createWarmTransferSpeech(transferAgentSession, greetingSpeech);
+          void createWarmTransferSpeech(transferAgentSession, greetingSpeech);
         } catch (error) {
           logger.warn({ error }, 'failed to greet human agent');
         }

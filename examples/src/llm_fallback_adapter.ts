@@ -84,7 +84,9 @@ export default defineAgent({
       room: ctx.room,
     });
 
-    session.say('Hello! I am a voice agent with LLM fallback support. How can I help you today?');
+    void session.say(
+      'Hello! I am a voice agent with LLM fallback support. How can I help you today?',
+    );
 
     const participant = await ctx.waitForParticipant();
     console.log('Participant joined:', participant.identity);

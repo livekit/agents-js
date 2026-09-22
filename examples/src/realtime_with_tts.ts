@@ -54,7 +54,7 @@ export default defineAgent({
       },
     });
 
-    session.say('Hello, how can I help you today?');
+    void session.say('Hello, how can I help you today?');
 
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
       logger.debug('metrics_collected', ev);

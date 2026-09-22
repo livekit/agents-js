@@ -22,13 +22,13 @@ type UserData = {
 
 class RouterAgent extends voice.Agent<UserData> {
   async onEnter(): Promise<void> {
-    this.session.say("Hello, I'm a router agent. I can help you with your tasks.");
+    void this.session.say("Hello, I'm a router agent. I can help you with your tasks.");
   }
 }
 
 class GameAgent extends voice.Agent<UserData> {
   async onEnter(): Promise<void> {
-    this.session.generateReply({
+    void this.session.generateReply({
       userInput: 'Ask the user for a number, then check the stored number',
       toolChoice: 'none',
     });
@@ -44,7 +44,7 @@ export default defineAgent({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }, { ctx }) => {
-        ctx.session.say('Checking the weather, please wait a moment haha...');
+        void ctx.session.say('Checking the weather, please wait a moment haha...');
         return `The weather in ${location} is sunny today.`;
       },
     });
@@ -57,7 +57,7 @@ export default defineAgent({
         switchTo: z.enum(['on', 'off']).describe('The state to turn the light to'),
       }),
       execute: async ({ room, switchTo }, { ctx }) => {
-        ctx.session.generateReply({
+        void ctx.session.generateReply({
           userInput: 'Tell user wait a moment for about 10 seconds',
         });
 
