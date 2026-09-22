@@ -390,6 +390,17 @@ export class Agent<UserData = any> {
     return Agent.default.sttNode(this, audio, modelSettings);
   }
 
+  /**
+   * Whether this agent runs the default `sttNode`. The STT pipeline (and its provider
+   * connection) is handed over across an agent transition only between agents that do, since a
+   * custom node may keep referencing the old activity after it is torn down.
+   *
+   * @internal
+   */
+  _usesDefaultSttNode(): boolean {
+    return Object.getPrototypeOf(this).sttNode === Agent.prototype.sttNode;
+  }
+
   async llmNode(
     chatCtx: ChatContext,
     toolCtx: ToolContext,

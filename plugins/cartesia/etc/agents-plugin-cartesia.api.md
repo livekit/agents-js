@@ -101,6 +101,7 @@ export class TTS extends tts.TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
+    releaseConnections(): Promise<void>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
@@ -152,7 +153,7 @@ export interface TTSOptions {
 
 // Warnings were encountered during analysis:
 //
-// src/stt.ts:152:3 - (ae-forgotten-export) The symbol "STTModel" needs to be exported by the entry point index.d.ts
+// src/stt.ts:151:3 - (ae-forgotten-export) The symbol "STTModel" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

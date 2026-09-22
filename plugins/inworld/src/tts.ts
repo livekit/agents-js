@@ -394,6 +394,12 @@ export class TTS extends tts.TTS {
   async close() {
     this.#pool.close();
   }
+
+  /** Drop every pooled connection; a fresh pool reconnects on the next synthesis. */
+  override async releaseConnections(): Promise<void> {
+    this.#pool.close();
+    this.#pool = new WSConnectionPool(this.#opts.wsURL, this.#authorization);
+  }
 }
 
 class ChunkedStream extends tts.ChunkedStream {

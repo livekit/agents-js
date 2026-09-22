@@ -205,6 +205,11 @@ export class TTSv2 extends tts.TTS {
     this.#pool.prewarm();
   }
 
+  /** Drop every pooled connection; the pool reconnects on the next synthesis. */
+  override async releaseConnections(): Promise<void> {
+    await this.#pool.close();
+  }
+
   override async close(): Promise<void> {
     this.#closed = true;
     await this.#pool.close();

@@ -276,6 +276,18 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
   async close(): Promise<void> {
     return;
   }
+
+  /**
+   * Release pooled provider connections without closing the TTS.
+   *
+   * The framework calls this once an agent-owned TTS is done being used: its activity closed and
+   * the next agent does not use the same instance. A pooled connection would otherwise sit idle
+   * until the process exits. The TTS stays usable and reconnects on the next synthesis.
+   * Providers without a connection pool need not override this.
+   */
+  async releaseConnections(): Promise<void> {
+    return;
+  }
 }
 
 /**

@@ -10,15 +10,18 @@ import { AudioResampler } from '@livekit/rtc-node';
 import type { Context } from '@opentelemetry/api';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
 import { Logger } from 'pino';
 import { NoiseCancellationOptions } from '@livekit/rtc-node';
+import type OpenAI from 'openai';
 import { Participant } from '@livekit/rtc-node';
 import { ParticipantKind } from '@livekit/rtc-node';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Reasoning } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
@@ -199,6 +202,7 @@ export class TTS extends tts.TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
+    releaseConnections(): Promise<void>;
     // Warning: (ae-forgotten-export) The symbol "SynthesizeStream_2" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)

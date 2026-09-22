@@ -85,6 +85,11 @@ export class TTS extends tts.TTS {
     if (!this.isClosed) this.pool?.pool.prewarm();
   }
 
+  /** Drop every pooled connection; the pool reconnects on the next synthesis. */
+  override async releaseConnections(): Promise<void> {
+    if (!this.isClosed) await this.pool?.pool.close();
+  }
+
   synthesize(
     text: string,
     connOptions?: APIConnectOptions,

@@ -129,6 +129,7 @@ export class TTS extends tts.TTS {
     //
     // (undocumented)
     get pool(): WSConnectionPool;
+    releaseConnections(): Promise<void>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;

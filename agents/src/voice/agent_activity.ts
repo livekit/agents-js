@@ -91,7 +91,7 @@ import {
 } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import {
-  Agent,
+  type Agent,
   type AgentUpdateOptions,
   type ModelSettings,
   StopResponse,
@@ -359,6 +359,8 @@ export class AgentActivity implements RecognitionHooks {
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
+  // set while handing off: the next activity synthesizes with this activity's TTS instance
+  private _ttsSharedWithNextActivity = false;
   private _toolsetsSetup = false;
   // True only during the initial, awaited `setupToolsets()` window. While set, a toolset that
   // pushes tools synchronously from its `setup()` must NOT trigger a callback-driven
@@ -605,6 +607,8 @@ export class AgentActivity implements RecognitionHooks {
     reuseResources?: ReusableResources;
   }): Promise<void> {
     const { spanName, runOnEnter, reuseResources } = options;
+    // a resumed activity may hand off again later; decide the TTS release fresh at that point
+    this._ttsSharedWithNextActivity = false;
     const startSpan = tracer.startSpan({
       name: spanName,
       attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
@@ -826,6 +830,7 @@ export class AgentActivity implements RecognitionHooks {
 
   async _detachReusableResources(newActivity: AgentActivity): Promise<ReusableResources> {
     const resources: ReusableResources = {};
+    this._ttsSharedWithNextActivity = this.tts !== undefined && this.tts === newActivity.tts;
     try {
       // stt pipeline; only reuse with the default sttNode, a custom override may
       // access the old session/activity inside the yield loop after detach
@@ -834,8 +839,8 @@ export class AgentActivity implements RecognitionHooks {
         this.stt &&
         newActivity.stt &&
         this.stt === newActivity.stt &&
-        Object.getPrototypeOf(this.agent).sttNode === Agent.prototype.sttNode &&
-        Object.getPrototypeOf(newActivity.agent).sttNode === Agent.prototype.sttNode
+        this.agent._usesDefaultSttNode() &&
+        newActivity.agent._usesDefaultSttNode()
       ) {
         resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
       }
@@ -5250,6 +5255,7 @@ export class AgentActivity implements RecognitionHooks {
       this.cancelSpeechPauseTask = undefined;
 
       await this._closeSessionResources();
+      await this._releaseAgentTts();
       await this._toolExecutor.aclose();
 
       if (this._mainTask) {
@@ -5263,6 +5269,25 @@ export class AgentActivity implements RecognitionHooks {
       this.agent._agentActivity = undefined;
     } finally {
       unlock();
+    }
+  }
+
+  /**
+   * An agent-owned TTS is done once its activity closes: drop its pooled provider connections so
+   * they do not idle until the process exits. Skipped when the next activity synthesizes with the
+   * same instance, and never applied to the session TTS, which outlives every activity and keeps
+   * its connections warm for the next agent.
+   */
+  private async _releaseAgentTts(): Promise<void> {
+    const tts = this.tts;
+    if (!(tts instanceof TTS)) return;
+    if (this.agent._tts === undefined || this.agent._tts === null) return;
+    if (tts === this.agentSession.tts) return;
+    if (this._ttsSharedWithNextActivity) return;
+    try {
+      await tts.releaseConnections();
+    } catch (error) {
+      this.logger.warn({ error, tts: tts.label }, 'failed to release agent TTS connections');
     }
   }
 

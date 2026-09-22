@@ -203,6 +203,11 @@ export class TTS extends tts.TTS {
     this.pool.prewarm();
   }
 
+  /** Drop every pooled connection; the pool reconnects on the next synthesis. */
+  override async releaseConnections(): Promise<void> {
+    await this.pool.close();
+  }
+
   async close(): Promise<void> {
     for (const stream of this.#streams) {
       stream.close();

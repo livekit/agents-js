@@ -514,6 +514,11 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     this.pool.prewarm();
   }
 
+  /** Drop every pooled gateway connection; the pool reconnects on the next synthesis. */
+  override async releaseConnections(): Promise<void> {
+    await this.pool.close();
+  }
+
   async close() {
     for (const stream of this.streams) {
       await stream.close();

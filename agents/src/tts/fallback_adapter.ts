@@ -307,6 +307,10 @@ export class FallbackAdapter extends TTS {
     // Close all TTS instances
     await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.close()));
   }
+
+  override async releaseConnections(): Promise<void> {
+    await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.releaseConnections()));
+  }
 }
 
 class FallbackChunkedStream extends ChunkedStream {
