@@ -70,9 +70,14 @@ export class ProcPool {
   }
 
   async launchJob(info: RunningJobInfo): Promise<Throws<void, Error>> {
+    if (this.closed) {
+      throw new Error('process pool is closed');
+    }
     let proc: JobExecutor;
     if (this.procMutex) {
-      const entry = await this.warmedProcQueue.get();
+      // Stop waiting for a warmed process when the pool closes, so an awaited accept() cannot
+      // keep worker shutdown from completing.
+      const entry = await this.warmedProcQueue.get({ signal: this.controller.signal });
       proc = entry.proc;
       // Release exactly the slot that produced this warmed process.
       entry.unlock();

@@ -211,3 +211,26 @@ describe('ProcPool warmed process lock handling', () => {
     }
   });
 });
+
+describe('ProcPool launchJob during close', () => {
+  const info = { job: { id: 'job' } } as unknown as RunningJobInfo;
+
+  it('rejects a launch that is waiting for a warmed process when the pool closes', async () => {
+    const pool = createPool(1);
+    pool.started = true; // as after start(); no watch task, so nothing is ever queued
+
+    const launch = pool.launchJob(info);
+    await flushMicrotasks();
+    await pool.close();
+
+    await expect(launch).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('rejects a launch requested after the pool closed', async () => {
+    const pool = createPool(1);
+    pool.started = true;
+    await pool.close();
+
+    await expect(pool.launchJob(info)).rejects.toThrow('process pool is closed');
+  });
+});
