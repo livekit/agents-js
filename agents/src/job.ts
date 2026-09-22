@@ -570,7 +570,9 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
           p.identity,
         );
       }
-      const result = callback(this, p);
+      // Run the callback through a promise so a synchronous throw is handled like a rejection
+      // instead of escaping the room event callback.
+      const result: Promise<void> = ThrowsPromise.resolve().then(() => callback(this, p));
       void result
         .finally(() => {
           if (this.#participantTasks[p.identity!]?.result === result) {

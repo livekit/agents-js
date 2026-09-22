@@ -952,6 +952,8 @@ export class AgentServer {
           });
         } catch (e) {
           this.#logger.child({ requestId: req.id }).error(e, 'error launching job');
+          // Surface the failure to accept(); the availability response was already sent.
+          throw e;
         }
       } else {
         this.#logger.child({ requestId: req.id }).warn('pending assignment not found');
@@ -985,16 +987,22 @@ export class AgentServer {
       try {
         await this.#opts.requestFunc(req);
       } catch (e) {
+        // An accept() that timed out or failed to launch has already answered; only log it.
         this.#logger
-          .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
-          .info('jobRequestFunc failed');
-        await onReject();
+          .child({
+            job: msg.job,
+            resuming: msg.resuming,
+            agentName: this.#opts.agentName,
+            error: e,
+          })
+          .error('jobRequestFunc failed');
       }
 
       if (!answered) {
         this.#logger
           .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
-          .info('no answer was given inside the jobRequestFunc, automatically rejecting the job');
+          .warn('no answer was given inside the jobRequestFunc, automatically rejecting the job');
+        await onReject();
       }
     };
 
