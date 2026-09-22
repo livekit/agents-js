@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { SIPOutboundConfig } from '@livekit/protocol';
 import { DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
-import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient, type VideoGrant } from 'livekit-server-sdk';
 import { z } from 'zod';
 import type { LLMModels, STTModelString, TTSModelString } from '../inference/index.js';
 import { type JobContext, getJobContext } from '../job.js';
@@ -31,6 +31,7 @@ import {
 } from '../voice/background_audio.js';
 import { DEFAULT_PARTICIPANT_KINDS } from '../voice/room_io/index.js';
 import type { SpeechHandle } from '../voice/speech_handle.js';
+import { createSipRecipientDialer } from './sip_dialer.js';
 import type { InstructionParts } from './utils.js';
 
 export interface WarmTransferResult {
@@ -44,7 +45,11 @@ export interface WarmTransferResult {
  */
 export type WarmTransferSpeech = string | ((session: AgentSession) => SpeechHandle);
 
-export interface WarmTransferTaskOptions {
+/**
+ * Options shared by warm-transfer dialing transports.
+ * @public
+ */
+export interface WarmTransferOptions {
   /**
    * Signal for application cancellation, such as a consult deadline or application shutdown.
    *
@@ -52,35 +57,9 @@ export interface WarmTransferTaskOptions {
    * it can play `callerHangupInstruction` before it ends an answered consultation.
    *
    * A successful participant move wins if it completes after the signal aborts. The task stops
-   * waiting for a pending SIP request but cannot cancel it.
+   * waiting for a pending dial; provider cleanup depends on the dialing transport.
    */
   abortSignal?: AbortSignal;
-  /** The phone number or SIP URI to dial for the human agent. */
-  sipCallTo?: string;
-  /**
-   * ID of a pre-configured LiveKit SIP outbound trunk used to originate the call.
-   * Falls back to the `LIVEKIT_SIP_OUTBOUND_TRUNK` environment variable when not provided.
-   */
-  sipTrunkId?: string | null;
-  /** Low-level SIP connection config for originating calls through a custom SIP domain. */
-  sipConnection?: SIPOutboundConfig;
-  /** Optional SIP From number. Falls back to `LIVEKIT_SIP_NUMBER`. */
-  sipNumber?: string;
-  /** Headers to include on the outbound SIP call. */
-  sipHeaders?: Record<string, string>;
-  /**
-   * DTMF tones to send once the human agent's call is answered, e.g. to dial an extension or
-   * navigate an IVR menu (`'1234#'`). Insert `w` characters to pause ~0.5s each before/between
-   * digits (`'wwww1234#'` waits ~2s, useful when the destination plays a greeting before
-   * accepting input).
-   */
-  dtmf?: string | null;
-  /**
-   * How long to wait, in milliseconds, for the human agent to answer before giving up. The
-   * underlying SIP API only supports whole-second granularity, so the value is rounded to the
-   * nearest second.
-   */
-  ringingTimeout?: number | null;
   /**
    * Name of the room used to dial and brief the human agent. Defaults to
    * `${callerRoom.name}-human-agent`.
@@ -99,7 +78,7 @@ export interface WarmTransferTaskOptions {
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
-   * Speech started after the outbound SIP call is answered. A string is spoken with
+   * Speech started after the recipient answers. A string is spoken with
    * `session.say()`. A callback runs once after answer with the consultation session and must
    * return a speech handle. Omit this option to let the destination speak first. The answer signal
    * does not distinguish a person from voicemail or an IVR, so an enabled greeting can overlap
@@ -139,6 +118,50 @@ export interface WarmTransferTaskOptions {
   allowInterruptions?: boolean;
 }
 
+export interface WarmTransferTaskOptions extends WarmTransferOptions {
+  /** The phone number or SIP URI to dial for the human agent. */
+  sipCallTo?: string;
+  /**
+   * ID of a pre-configured LiveKit SIP outbound trunk used to originate the call.
+   * Falls back to the `LIVEKIT_SIP_OUTBOUND_TRUNK` environment variable when not provided.
+   */
+  sipTrunkId?: string | null;
+  /** Low-level SIP connection config for originating calls through a custom SIP domain. */
+  sipConnection?: SIPOutboundConfig;
+  /** Optional SIP From number. Falls back to `LIVEKIT_SIP_NUMBER`. */
+  sipNumber?: string;
+  /** Headers to include on the outbound SIP call. */
+  sipHeaders?: Record<string, string>;
+  /**
+   * DTMF tones to send once the human agent's call is answered, e.g. to dial an extension or
+   * navigate an IVR menu (`'1234#'`). Insert `w` characters to pause ~0.5s each before/between
+   * digits (`'wwww1234#'` waits ~2s, useful when the destination plays a greeting before
+   * accepting input).
+   */
+  dtmf?: string | null;
+  /**
+   * How long to wait, in milliseconds, for the human agent to answer before giving up. The
+   * underlying SIP API only supports whole-second granularity, so the value is rounded to the
+   * nearest second.
+   */
+  ringingTimeout?: number | null;
+}
+
+/**
+ * Dial the recipient into the connected consultation room and resolve once answered.
+ * The signal cancels a pending dial. The workflow owns room and session teardown;
+ * the dialer owns any additional provider cleanup, including late call creation.
+ * Provider cleanup must be bounded. The signal does not control an answered call.
+ * @internal
+ */
+export type DialRecipient = (options: {
+  roomName: string;
+  recipientIdentity: string;
+  room: Room;
+  connection: { url: string; apiKey?: string; apiSecret?: string };
+  signal: AbortSignal;
+}) => Promise<void>;
+
 type IoState = {
   audioInput: boolean;
   audioOutput: boolean;
@@ -157,54 +180,39 @@ type IoState = {
  *
  * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
  */
-export function createWarmTransferTask({
-  abortSignal,
-  sipCallTo,
-  sipTrunkId: rawSipTrunkId,
-  sipConnection,
-  sipNumber = process.env.LIVEKIT_SIP_NUMBER ?? '',
-  sipHeaders = {},
-  dtmf,
-  ringingTimeout,
-  roomName: rawRoomName,
-  holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
-  greetingSpeech,
-  callerHangupSpeech,
-  callerHangupInstruction,
-  instructions,
-  chatCtx,
-  turnDetection,
-  tools,
-  stt,
-  vad,
-  llm,
-  tts,
-  allowInterruptions,
-}: WarmTransferTaskOptions = {}): AgentTask<WarmTransferResult> {
-  if (!sipCallTo) {
-    throw new Error('`sipCallTo` must be set');
-  }
+export function createWarmTransferTask(
+  options: WarmTransferTaskOptions = {},
+): AgentTask<WarmTransferResult> {
+  const dialRecipient = createSipRecipientDialer(options);
+  return createTransferTask(options, 'human-agent-sip', dialRecipient);
+}
 
+/** Build the shared consultation workflow with an internal recipient dialer. @internal */
+export function createTransferTask(
+  {
+    abortSignal,
+    roomName: rawRoomName,
+    holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
+    greetingSpeech,
+    callerHangupSpeech,
+    callerHangupInstruction,
+    instructions,
+    chatCtx,
+    turnDetection,
+    tools,
+    stt,
+    vad,
+    llm,
+    tts,
+    allowInterruptions,
+  }: WarmTransferOptions,
+  recipientIdentity: string,
+  dialRecipient: DialRecipient,
+): AgentTask<WarmTransferResult> {
   if (rawRoomName !== undefined && rawRoomName.length === 0) {
     throw new Error('`roomName` must not be empty');
   }
 
-  // Resolve the SIP trunk: an explicit id wins, then a custom connection (which
-  // skips the env fallback so it isn't silently overridden), then the env var.
-  const sipTrunkId =
-    rawSipTrunkId !== undefined
-      ? rawSipTrunkId
-      : sipConnection
-        ? null
-        : process.env.LIVEKIT_SIP_OUTBOUND_TRUNK ?? null;
-
-  if (sipTrunkId === null && !sipConnection) {
-    throw new Error(
-      '`LIVEKIT_SIP_OUTBOUND_TRUNK` environment variable, `sipTrunkId`, or `sipConnection` must be set',
-    );
-  }
-
-  const humanAgentIdentity = 'human-agent-sip';
   const backgroundAudio = new BackgroundAudioPlayer();
   const logger = log();
 
@@ -327,7 +335,7 @@ export function createWarmTransferTask({
         const info = jobCtx.info;
         const rooms = new RoomServiceClient(info.url, info.apiKey, info.apiSecret);
         const removal = await waitUntilAborted(
-          rooms.removeParticipant(room.name, humanAgentIdentity),
+          rooms.removeParticipant(room.name, recipientIdentity),
           AbortSignal.timeout(CALLER_HANGUP_CLEANUP_TIMEOUT_MS),
         ).catch((error) => {
           logger.warn({ error }, 'failed to remove human agent after caller hangup');
@@ -441,7 +449,7 @@ export function createWarmTransferTask({
 
     logger.debug(
       {
-        'lk.pii.participant_identity': humanAgentIdentity,
+        'lk.pii.participant_identity': recipientIdentity,
         'lk.pii.room_name': callerRoom.name,
       },
       'moving human agent to caller room',
@@ -449,7 +457,7 @@ export function createWarmTransferTask({
 
     const info = (jobCtx ?? getJobContext()).info;
     const rooms = new RoomServiceClient(info.url, info.apiKey, info.apiSecret);
-    await rooms.moveParticipant(humanAgentRoom.name, humanAgentIdentity, callerRoom.name);
+    await rooms.moveParticipant(humanAgentRoom.name, recipientIdentity, callerRoom.name);
   };
 
   /**
@@ -527,7 +535,7 @@ export function createWarmTransferTask({
             // Delete the human agent room on shutdown so its WebSocket doesn't
             // leak across transfers.
             deleteRoomOnClose: true,
-            participantIdentity: humanAgentIdentity,
+            participantIdentity: recipientIdentity,
           },
           record: false,
         }),
@@ -537,23 +545,18 @@ export function createWarmTransferTask({
         throw new Error('dial cancelled');
       }
 
-      const sip = new SipClient(ctx.info.url);
       const dialed = await waitUntilAborted(
-        sip.createSipParticipant(
-          sipTrunkId ?? '',
-          sipCallTo,
-          humanAgentRoomName,
-          {
-            participantIdentity: humanAgentIdentity,
-            waitUntilAnswered: true,
-            fromNumber: sipNumber || undefined,
-            headers: sipHeaders,
-            dtmf: dtmf ?? undefined,
-            // SIP API takes whole seconds (BigInt coercion throws on fractional input).
-            ringingTimeout: ringingTimeout != null ? Math.round(ringingTimeout / 1000) : undefined,
+        dialRecipient({
+          roomName: humanAgentRoomName,
+          recipientIdentity,
+          room,
+          connection: {
+            url: ctx.info.url,
+            apiKey: ctx.info.apiKey,
+            apiSecret: ctx.info.apiSecret,
           },
-          sipConnection,
-        ),
+          signal,
+        }),
         signal,
       );
       if (dialed.isAborted) {
@@ -590,7 +593,7 @@ export function createWarmTransferTask({
         abortSignal?.removeEventListener('abort', onAbort);
         try {
           await mergeCalls();
-          setResult({ humanAgentIdentity });
+          setResult({ humanAgentIdentity: recipientIdentity });
         } catch (error) {
           if (abortSignal?.aborted) {
             setResult(asError(abortSignal.reason ?? new Error('warm transfer aborted')));

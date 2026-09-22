@@ -3090,7 +3090,7 @@ export const createUserTurnExceededEvent: (input: {
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTask"
 //
 // @public
-function createWarmTransferTask(input?: WarmTransferTaskOptions): AgentTask<WarmTransferResult>;
+function createWarmTransferTask(options?: WarmTransferTaskOptions): AgentTask<WarmTransferResult>;
 
 // Warning: (ae-missing-release-tag) "DataStreamAudioOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -9922,6 +9922,35 @@ export function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): P
 // @public
 export function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(promise: Promise<T>, timeoutMs: number, throwError?: () => E): Promise<Throws<T, E | IdleTimeoutError>>;
 
+// @public
+interface WarmTransferOptions {
+    abortSignal?: AbortSignal;
+    // (undocumented)
+    allowInterruptions?: boolean;
+    // @deprecated
+    callerHangupInstruction?: string | null;
+    callerHangupSpeech?: WarmTransferSpeech;
+    // (undocumented)
+    chatCtx?: ChatContext;
+    greetingSpeech?: WarmTransferSpeech;
+    holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "InstructionParts"
+    instructions?: InstructionParts | string;
+    // (undocumented)
+    llm?: LLM | RealtimeModel | LLMModels | null;
+    roomName?: string;
+    // (undocumented)
+    stt?: STT | ModelWithLanguage | null;
+    // (undocumented)
+    tools?: readonly ToolContextEntry[];
+    // (undocumented)
+    tts?: TTS | ModelWithVoice | null;
+    // (undocumented)
+    turnDetection?: TurnDetectionMode | null;
+    // (undocumented)
+    vad?: VAD | null;
+}
+
 // Warning: (ae-missing-release-tag) "WarmTransferResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -9946,39 +9975,14 @@ class WarmTransferTask extends AgentTask<WarmTransferResult> {
 // Warning: (ae-missing-release-tag) "WarmTransferTaskOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-interface WarmTransferTaskOptions {
-    abortSignal?: AbortSignal;
-    // (undocumented)
-    allowInterruptions?: boolean;
-    // @deprecated
-    callerHangupInstruction?: string | null;
-    callerHangupSpeech?: WarmTransferSpeech;
-    // (undocumented)
-    chatCtx?: ChatContext;
+interface WarmTransferTaskOptions extends WarmTransferOptions {
     dtmf?: string | null;
-    greetingSpeech?: WarmTransferSpeech;
-    holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
-    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "InstructionParts"
-    instructions?: InstructionParts | string;
-    // (undocumented)
-    llm?: LLM | RealtimeModel | LLMModels | null;
     ringingTimeout?: number | null;
-    roomName?: string;
     sipCallTo?: string;
     sipConnection?: SIPOutboundConfig;
     sipHeaders?: Record<string, string>;
     sipNumber?: string;
     sipTrunkId?: string | null;
-    // (undocumented)
-    stt?: STT | ModelWithLanguage | null;
-    // (undocumented)
-    tools?: readonly ToolContextEntry[];
-    // (undocumented)
-    tts?: TTS | ModelWithVoice | null;
-    // (undocumented)
-    turnDetection?: TurnDetectionMode | null;
-    // (undocumented)
-    vad?: VAD | null;
 }
 
 // Warning: (ae-missing-release-tag) "withInferenceTracking" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -10099,6 +10103,7 @@ declare namespace workflows {
         WarmTransferSpeech,
         WarmTransferResult,
         WarmTransferTaskOptions,
+        WarmTransferOptions,
         InstructionParts
     }
 }
@@ -10157,7 +10162,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:366:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
-// src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
+// src/utils.ts:553:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:387:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1026:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1697:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts

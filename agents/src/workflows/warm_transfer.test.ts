@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { SIPParticipantInfo } from '@livekit/protocol';
+import { SIPOutboundConfig, SIPParticipantInfo } from '@livekit/protocol';
 import { DisconnectReason, ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient } from 'livekit-server-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -150,6 +150,54 @@ describe('resolveHumanAgentRoomName', () => {
 });
 
 describe('createWarmTransferTask', () => {
+  it.each(['environment', 'connection', 'explicit trunk'] as const)(
+    'preserves SIP dial options with %s routing',
+    async (routing) => {
+      vi.stubEnv('LIVEKIT_SIP_OUTBOUND_TRUNK', 'ST_environment');
+      const connection =
+        routing === 'environment'
+          ? undefined
+          : new SIPOutboundConfig({ address: 'sip.example.test' });
+      const { createSipParticipant } = mockDial();
+      vi.spyOn(job, 'getJobContext').mockReturnValue({
+        room: createCallerRoom(),
+        info: { url: 'ws://localhost:7880' },
+      } as JobContext);
+      const { create } = createFakeTask();
+      createWarmTransferTask({
+        sipCallTo: '+15551234567',
+        sipTrunkId: routing === 'explicit trunk' ? 'ST_explicit' : undefined,
+        sipConnection: connection,
+        sipNumber: '+15557654321',
+        sipHeaders: { 'X-Transfer': 'support' },
+        dtmf: 'ww123#',
+        ringingTimeout: 25_600,
+        holdAudio: null,
+      });
+
+      await create.mock.calls[0]![0].onEnter!({} as never);
+
+      expect(createSipParticipant).toHaveBeenCalledExactlyOnceWith(
+        routing === 'environment'
+          ? 'ST_environment'
+          : routing === 'connection'
+            ? ''
+            : 'ST_explicit',
+        '+15551234567',
+        'caller-room-human-agent',
+        {
+          participantIdentity: 'human-agent-sip',
+          waitUntilAnswered: true,
+          fromNumber: '+15557654321',
+          headers: { 'X-Transfer': 'support' },
+          dtmf: 'ww123#',
+          ringingTimeout: 26,
+        },
+        connection,
+      );
+    },
+  );
+
   it('rejects an empty roomName', () => {
     expect(() =>
       createWarmTransferTask({
