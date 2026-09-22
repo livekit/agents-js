@@ -330,6 +330,7 @@ export class AgentActivity implements RecognitionHooks {
   private realtimeSession?: RealtimeSession;
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
   private turnDetectionMode?: TurnDetectionMode;
+  private rtTurnDetectionEnabled = false;
   private rtOverlappingSpeechEnabled = false;
   private logger = log();
   private _schedulingPaused = true;
@@ -473,10 +474,11 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._warnedRealtimeAudioRedaction = true;
     }
 
+    this.rtTurnDetectionEnabled = this.resolveRealtimeTurnDetectionEnabled();
     this._resolvedTurnDetection = this._resolveTurnDetection(this.turnDetection);
     this.rtOverlappingSpeechEnabled =
       this.llm instanceof RealtimeModel &&
-      this.llm.capabilities.turnDetection &&
+      this.rtTurnDetectionEnabled &&
       this.llm.capabilities.supportsOverlappingSpeech === true;
     this.turnDetectionMode =
       typeof this._resolvedTurnDetection === 'string' ? this._resolvedTurnDetection : undefined;
@@ -496,14 +498,14 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.llm instanceof RealtimeModel) {
-      if (this.llm.capabilities.turnDetection && !this.allowInterruptions) {
+      if (this.rtTurnDetectionEnabled && !this.allowInterruptions) {
         this.logger.warn(
           'the RealtimeModel uses a server-side turn detection, allowInterruptions cannot be false, ' +
             'disable turnDetection in the RealtimeModel and use VAD on the AgentSession instead',
         );
       }
 
-      if (this.turnDetectionMode === 'realtime_llm' && !this.llm.capabilities.turnDetection) {
+      if (this.turnDetectionMode === 'realtime_llm' && !this.rtTurnDetectionEnabled) {
         this.logger.warn(
           'turnDetection is set to "realtime_llm", but the LLM is not a RealtimeModel or the server-side turn detection is not supported/enabled, ignoring the turnDetection setting',
         );
@@ -520,7 +522,7 @@ export class AgentActivity implements RecognitionHooks {
       if (
         this.turnDetectionMode &&
         this.turnDetectionMode !== 'realtime_llm' &&
-        this.llm.capabilities.turnDetection
+        this.rtTurnDetectionEnabled
       ) {
         this.logger.warn(
           `turnDetection is set to "${this.turnDetectionMode}", but the LLM is a RealtimeModel and server-side turn detection enabled, ignoring the turnDetection setting`,
@@ -532,7 +534,7 @@ export class AgentActivity implements RecognitionHooks {
       // user explicitly supplied a VAD. The bundled-default VAD is treated
       // as absent here so behavior matches "no vad passed" sessions.
       if (
-        !this.llm.capabilities.turnDetection &&
+        !this.rtTurnDetectionEnabled &&
         this.vad &&
         !this.usingDefaultVad &&
         this.turnDetectionMode === undefined
@@ -636,7 +638,9 @@ export class AgentActivity implements RecognitionHooks {
         await this.realtimeSession!.interrupt();
         await this.realtimeSession!.clearAudio();
       } else {
-        this.realtimeSession = this.llm.session();
+        this.realtimeSession = this.llm.session({
+          turnDetectionDisabled: !this.rtTurnDetectionEnabled,
+        });
       }
 
       this.realtimeSpans = new Map<string, Span>();
@@ -761,8 +765,7 @@ export class AgentActivity implements RecognitionHooks {
     // canonical and an extra audio pipeline would just pay the native model
     // load for no behavioral gain. User-supplied VADs still flow through
     // (e.g. when the user wants adaptive interruption).
-    const realtimeUsesServerVad =
-      this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection === true;
+    const realtimeUsesServerVad = this.llm instanceof RealtimeModel && this.rtTurnDetectionEnabled;
     const recognitionVad = this.usingDefaultVad && realtimeUsesServerVad ? undefined : this.vad;
 
     this.audioRecognition = new AudioRecognition({
@@ -1934,7 +1937,7 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
+    if (this.llm instanceof RealtimeModel && this.rtTurnDetectionEnabled) {
       // skip speech handle interruption if server side turn detection is enabled
       return;
     }
@@ -2411,7 +2414,7 @@ export class AgentActivity implements RecognitionHooks {
       !this.stt &&
       this.turnDetection !== 'manual' &&
       this.llm instanceof RealtimeModel &&
-      !this.llm.capabilities.turnDetection &&
+      !this.rtTurnDetectionEnabled &&
       this.isInterruptionDetectionEnabled &&
       info.backchannelOverAgent
     ) {
@@ -2424,18 +2427,10 @@ export class AgentActivity implements RecognitionHooks {
     // A replying turn interrupts the paused speech, so cancel the resume that would race it.
     // The reply task returns before that for these two cases, so leave the resume armed.
     //
-    // Known divergence from Python, which tests the resolved `_rt_turn_detection_enabled`
-    // rather than the raw capability. That flag is additionally false for a model whose
-    // capabilities report `can_disable_turn_detection` when the user configured client-side
-    // turn taking. `RealtimeCapabilities` has no `canDisableTurnDetection` field here, so for
-    // a realtime model that advertises server turn detection but is running client-side turn
-    // taking, this leaves the resume armed where Python cancels it — reinstating the
-    // resume-races-the-reply bug for that configuration. Resolving it needs the new capability
-    // plus a resolved getter used at both this site and the barge-in gate above.
-    if (
-      !info.skipReply &&
-      !(this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection)
-    ) {
+    const realtimeTurnDetectionEnabled =
+      this.rtTurnDetectionEnabled ??
+      (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection);
+    if (!info.skipReply && !realtimeTurnDetectionEnabled) {
       this.cancelFalseInterruptionTimer();
     }
 
@@ -2733,7 +2728,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (
       this.llm instanceof RealtimeModel &&
-      this.llm.capabilities.turnDetection &&
+      this.rtTurnDetectionEnabled &&
       allowInterruptions === false
     ) {
       this.logger.warn(
@@ -2947,7 +2942,7 @@ export class AgentActivity implements RecognitionHooks {
     //  - generate a reply to the user input
 
     if (this.llm instanceof RealtimeModel) {
-      if (this.llm.capabilities.turnDetection) {
+      if (this.rtTurnDetectionEnabled) {
         return;
       }
       if (this.realtimeSession) {
@@ -5234,6 +5229,29 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  private resolveRealtimeTurnDetectionEnabled(): boolean {
+    if (!(this.llm instanceof RealtimeModel)) return false;
+
+    const capabilities = this.llm.capabilities;
+    if (!capabilities.turnDetection || !capabilities.canDisableTurnDetection) {
+      return capabilities.turnDetection;
+    }
+
+    const clientTurnDetection = this.turnDetection;
+    if (clientTurnDetection === 'realtime_llm') return true;
+    if (clientTurnDetection === 'manual' || clientTurnDetection === 'vad') return false;
+    if (
+      this.vad !== undefined &&
+      !this.usingDefaultVad &&
+      (clientTurnDetection instanceof BaseStreamingTurnDetector ||
+        this.agent.turnHandling?.interruption?.mode !== undefined ||
+        this.agentSession.interruptionDetection !== undefined)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
   private _resolveTurnDetection(
     turnDetection: TurnDetectionMode | undefined,
   ): TurnDetectionMode | undefined {
@@ -5245,7 +5263,7 @@ export class AgentActivity implements RecognitionHooks {
           );
           return undefined;
         }
-        if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
+        if (this.llm instanceof RealtimeModel && this.rtTurnDetectionEnabled) {
           this.logger.warn(
             'turnDetection is a TurnDetector, but the LLM is a RealtimeModel with server-side turn detection enabled, ignoring the turnDetection setting',
           );
@@ -5264,7 +5282,7 @@ export class AgentActivity implements RecognitionHooks {
     let canGatekeep: boolean;
     if (this.llm instanceof RealtimeModel) {
       // Realtime commits turns manually; barge-in withholds the commit, so no STT is needed.
-      canGatekeep = !this.llm.capabilities.turnDetection;
+      canGatekeep = !this.rtTurnDetectionEnabled;
     } else {
       // The STT pipeline gatekeeps by holding and flushing transcripts.
       canGatekeep = !!(

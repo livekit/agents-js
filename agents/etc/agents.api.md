@@ -10,6 +10,7 @@ import { Attributes } from '@opentelemetry/api';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
+import { default as default_2 } from 'ws';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
@@ -4662,11 +4663,14 @@ declare namespace inference {
         LLMStream_2 as LLMStream,
         ChatCompletionOptions,
         GatewayOptions,
-        InferenceClass,
         InferenceLLMOptions,
         LLMModels,
         XAIModels,
         ZAIModels,
+        InferenceClass,
+        RealtimeModel_2 as RealtimeModel,
+        RealtimeSession_3 as RealtimeSession,
+        RealtimeModelOptions,
         normalizeSTTFallback,
         parseSTTModelString,
         STT_2 as STT,
@@ -4693,6 +4697,7 @@ declare namespace inference {
         XaiTTSModels,
         XaiTTSOptions,
         llm_3 as llm,
+        realtime,
         stt_2 as stt,
         tts_2 as tts
     }
@@ -4713,7 +4718,7 @@ interface InferenceExecutor {
 
 // Warning: (ae-missing-release-tag) "InferenceLLMOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 interface InferenceLLMOptions {
     // (undocumented)
     apiKey: string;
@@ -5449,7 +5454,6 @@ declare namespace llm_3 {
         XAIModels,
         ChatCompletionOptions,
         LLMModels,
-        InferenceClass,
         InferenceLLMOptions,
         GatewayOptions,
         LLM_2 as LLM,
@@ -6383,12 +6387,21 @@ export type QueueAudioOutputItem = AudioFrame | AudioSegmentEnd;
 // @public
 export function readStream<T>(stream: ReadableStream_2<T>, signal?: AbortSignal): AsyncGenerator<T>;
 
+declare namespace realtime {
+    export {
+        RealtimeModelOptions,
+        RealtimeModel_2 as RealtimeModel,
+        RealtimeSession_3 as RealtimeSession
+    }
+}
+
 // Warning: (ae-missing-release-tag) "RealtimeCapabilities" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export interface RealtimeCapabilities {
     audioOutput: boolean;
     autoToolReplyGeneration: boolean;
+    canDisableTurnDetection?: boolean;
     manualFunctionCalls: boolean;
     messageTruncation: boolean;
     midSessionChatCtxUpdate?: boolean;
@@ -6424,7 +6437,29 @@ export abstract class RealtimeModel {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    abstract session(): RealtimeSession;
+    abstract session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession;
+}
+
+// Warning: (ae-forgotten-export) The symbol "RealtimeModel_3" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "RealtimeModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+class RealtimeModel_2 extends RealtimeModel_3 {
+    constructor(options: RealtimeModelOptions);
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    readonly _inferenceOptions: InferenceOptions;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession_3;
 }
 
 // Warning: (ae-missing-release-tag) "RealtimeModelError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -6466,6 +6501,46 @@ export type RealtimeModelMetrics = {
     outputTokenDetails: RealtimeModelMetricsOutputTokenDetails;
     metadata?: MetricsMetadata;
 };
+
+// Warning: (ae-missing-release-tag) "RealtimeModelOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface RealtimeModelOptions {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    // (undocumented)
+    inferenceClass?: InferenceClass;
+    // (undocumented)
+    inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
+    // (undocumented)
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+    // (undocumented)
+    maxSessionDuration?: number | null;
+    // (undocumented)
+    modalities?: api_proto.Modality[];
+    // (undocumented)
+    model: string;
+    // (undocumented)
+    provider?: string;
+    // (undocumented)
+    reasoning?: api_proto.Reasoning;
+    // (undocumented)
+    speed?: number;
+    // (undocumented)
+    toolChoice?: ToolChoice;
+    // (undocumented)
+    tracing?: api_proto.TracingConfig | null;
+    // (undocumented)
+    turnDetection?: api_proto.TurnDetectionType | null;
+    // (undocumented)
+    voice?: string;
+}
 
 // Warning: (ae-missing-release-tag) "RealtimeSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -6514,6 +6589,26 @@ export abstract class RealtimeSession extends EventEmitter {
     _updateSession(instructions?: string, chatCtx?: ChatContext, tools?: ToolContext): Promise<void>;
     // (undocumented)
     abstract updateTools(tools: ToolContext): Promise<void>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "RealtimeSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+class RealtimeSession_3 extends RealtimeSession_2 {
+    constructor(realtimeModel: RealtimeModel_2, options?: {
+        turnDetectionDisabled?: boolean;
+    });
+    // Warning: (ae-forgotten-export) The symbol "api_proto" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected createSessionUpdateEvent(): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createToolsUpdateEvent(tools: ToolContext): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createWsConn(): Promise<default_2>;
+    // (undocumented)
+    protected isFatalError(error: unknown): boolean;
 }
 
 // Warning: (ae-missing-release-tag) "RealtimeSessionReconnectedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

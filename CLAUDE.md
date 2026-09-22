@@ -106,7 +106,7 @@ Subdirectories: `room_io/` (LiveKit Room I/O), `transcription/` (word-level sync
 - **STT** (`stt/`): `SpeechStream` with automatic retry. `FallbackAdapter` for agent-side multi-provider failover. `StreamAdapter` converts non-streaming STT + VAD to streaming.
 - **TTS** (`tts/`): `SynthesizeStream`, `ChunkedStream`. `FallbackAdapter` for agent-side multi-provider failover. `StreamAdapter` for non-streaming providers.
 - **VAD** (`vad.ts`): Voice Activity Detection interface. Silero plugin is the primary implementation.
-- **Inference** (`inference/`): LiveKit Inference Gateway clients (LLM, STT, TTS) with server-side fallback support. Always use full `provider/model` format (e.g., `'openai/gpt-4o-mini'`). Also includes `interruption/` for adaptive interruption detection via ML models.
+- **Inference** (`inference/`): LiveKit Inference Gateway clients (LLM, STT, TTS, realtime) with server-side fallback support. Always use full `provider/model` format (e.g., `'openai/gpt-4o-mini'`). Also includes `interruption/` for adaptive interruption detection via ML models.
 - **Stream** (`stream/`): Composable Web Streams API primitives (`StreamChannel`, `DeferredStream`, `MultiInputStream`).
 - **IPC** (`ipc/`): Process pool for running agents in child processes. Two-way IPC: child sends inference requests back to parent.
 - **Worker** (`worker.ts`): Main process connecting to LiveKit server, receives job assignments, spawns agent processes.
