@@ -386,19 +386,19 @@ export function processBaseURL({
       url.pathname = pathStripped + (apiVersion ? '/realtime' : '/v1/realtime');
     } else if (pathStripped === '/openai/v1') {
       url.pathname = '/openai/v1/realtime';
-    } else {
-      url.pathname = pathStripped;
     }
   } else if (!url.pathname || ['', '/v1', '/openai', '/openai/v1'].includes(pathStripped)) {
     url.pathname = pathStripped + '/realtime';
-  } else {
-    url.pathname = pathStripped;
+  }
+
+  if (isAzure) {
+    // remove from endpoint URL if present
+    url.searchParams.delete('api-version');
   }
 
   const queryParams: Record<string, string> = {};
   if (isAzure && apiVersion) {
     // Legacy Azure preview: /realtime?api-version=<v>&deployment=<d>
-    url.searchParams.delete('api-version');
     queryParams['api-version'] = apiVersion;
     if (azureDeployment) {
       queryParams['deployment'] = azureDeployment;
