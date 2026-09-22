@@ -70,8 +70,8 @@ export function toResponsesTools(
   return tools.length > 0 ? tools : undefined;
 }
 
-export function logProviderToolExecutions(
-  output: ReadonlyArray<{ type: string }> | undefined,
+export function logProviderToolExecutions<T extends { type: string }>(
+  output: ReadonlyArray<T> | undefined,
   logger: { info: (obj: unknown, msg: string) => void } = log(),
 ): void {
   if (!output) return;
