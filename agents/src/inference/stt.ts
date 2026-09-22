@@ -48,7 +48,8 @@ export type AssemblyaiModels =
   | 'assemblyai/universal-streaming'
   | 'assemblyai/universal-streaming-multilingual'
   | 'assemblyai/u3-rt-pro'
-  | 'assemblyai/universal-3-5-pro';
+  | 'assemblyai/universal-3-5-pro'
+  | 'assemblyai/universal-3-6-pro';
 
 export type XaiSTTModels = 'xai/stt-1';
 
@@ -312,6 +313,7 @@ const WORD_ALIGNED_MODELS = new Set([
   'assemblyai/universal-streaming-multilingual',
   'assemblyai/u3-rt-pro',
   'assemblyai/universal-3-5-pro',
+  'assemblyai/universal-3-6-pro',
   'xai/stt-1',
   'speechmatics/enhanced',
   'speechmatics/standard',
