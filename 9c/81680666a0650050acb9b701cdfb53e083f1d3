@@ -1,0 +1,21 @@
+agents/src/workflows/twilio_connector_warm_transfer_lifecycle.test.ts
+  s_2461ceafdb7d32::t_0de736628f47b4 87-113
+agents/src/workflows/twilio_connector_warm_transfer.ts
+  s_2461ceafdb7d32::t_0de736628f47b4 54-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9c81680666a0650050acb9b701cdfb53e083f1d3",
+  "prompts": {},
+  "sessions": {
+    "s_2461ceafdb7d32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c576-2ef6-70d0-a26e-a53969369e54",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
