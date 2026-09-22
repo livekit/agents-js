@@ -19,7 +19,7 @@ import { availableParallelism } from 'node:os';
 import { extname } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { WebSocket } from 'ws';
-import { APIStatusError } from './_exceptions.js';
+import { APIStatusError, AssignmentTimeoutError } from './_exceptions.js';
 import { ATTRIBUTE_AGENT_NAME } from './constants.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
@@ -337,11 +337,15 @@ export class ServerOptions {
 }
 
 class PendingAssignment {
-  promise = new ThrowsPromise<JobAssignment, never>((resolve) => {
+  promise = new ThrowsPromise<JobAssignment, AssignmentTimeoutError>((resolve, reject) => {
     this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
+    this.reject = reject;
   });
   resolve(arg: JobAssignment) {
     arg; // useless call to counteract TypeScript E6133
+  }
+  reject(error: AssignmentTimeoutError) {
+    error;
   }
 }
 
@@ -924,9 +928,14 @@ export class AgentServer {
 
       this.#pending[req.id] = new PendingAssignment();
 
+      // Reject the pending assignment so an awaited accept() fails instead of hanging,
+      // as Python's AssignmentTimeoutError does.
       const timer = setTimeout(() => {
         this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
-        return;
+        this.#pending[req.id]?.reject(
+          new AssignmentTimeoutError(`assignment for job ${req.id} timed out`),
+        );
+        delete this.#pending[req.id];
       }, ASSIGNMENT_TIMEOUT);
       const asgn = await this.#pending[req.id]?.promise.then(async (asgn) => {
         clearTimeout(timer);

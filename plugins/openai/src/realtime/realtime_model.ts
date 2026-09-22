@@ -1471,7 +1471,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async close() {
     this.resetInputTurnState();
-    void super.close();
+    await super.close();
     this.#closed = true;
     await this.#task;
 

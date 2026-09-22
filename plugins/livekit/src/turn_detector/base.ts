@@ -209,9 +209,15 @@ export abstract class EOUModel {
         path: 'languages.json',
         revision: MODEL_REVISIONS[modelType],
         localFileOnly: true,
-      }).then((path) => {
-        this.languagesFuture.resolve(JSON.parse(readFileSync(path, 'utf8')));
-      });
+      })
+        .then((path) => {
+          this.languagesFuture.resolve(JSON.parse(readFileSync(path, 'utf8')));
+        })
+        .catch((error) => {
+          // Settle the future so language lookups fail instead of hanging, and consume the
+          // rejection.
+          this.languagesFuture.reject(error instanceof Error ? error : new Error(String(error)));
+        });
     }
   }
 
