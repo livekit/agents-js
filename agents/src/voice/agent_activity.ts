@@ -842,6 +842,13 @@ export class AgentActivity implements RecognitionHooks {
         resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
       }
 
+      // a TTS the new activity does not share keeps its pooled sockets open until job end
+      if (this.tts && this.tts !== newActivity.tts) {
+        void this.tts.release().catch((error) => {
+          this.logger.debug({ error }, 'failed to release TTS connections');
+        });
+      }
+
       // reuse the turn detector stream during a handoff whenever we can
       if (
         this.audioRecognition &&

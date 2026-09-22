@@ -273,6 +273,13 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
    */
   abstract stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream;
 
+  /**
+   * Close idle connections held for reuse. The TTS stays usable and reconnects on the next request.
+   */
+  async release(): Promise<void> {
+    return;
+  }
+
   async close(): Promise<void> {
     return;
   }

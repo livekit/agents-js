@@ -514,6 +514,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     this.pool.prewarm();
   }
 
+  async release() {
+    await this.pool.close();
+  }
+
   async close() {
     for (const stream of this.streams) {
       await stream.close();

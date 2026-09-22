@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
+import { ConnectionPool } from '../connection_pool.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
@@ -501,4 +502,25 @@ describeLiveKitInference('LiveKit Inference TTS integration', agents, async (har
       );
     });
   }
+});
+
+describe('Inference TTS release', () => {
+  it('closes idle pooled connections and reconnects on the next request', async () => {
+    const tts = makeTts();
+    let connects = 0;
+    const closed: number[] = [];
+    const pool = new ConnectionPool<number>({
+      connectCb: async () => ++connects,
+      closeCb: async (conn) => {
+        closed.push(conn);
+      },
+    });
+    tts['pool'] = pool;
+
+    pool.put(await pool.get());
+    await tts.release();
+
+    expect(closed).toEqual([1]);
+    expect(await pool.get()).toBe(2);
+  });
 });

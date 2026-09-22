@@ -23,12 +23,13 @@ type FakeActivity = {
   agent: Agent;
   audioRecognition: { detachSttPipeline: ReturnType<typeof vi.fn> } | undefined;
   stt: unknown;
+  tts: unknown;
   llm: unknown;
   tools: unknown;
   realtimeSession: unknown;
 };
 
-function createFakeActivity(agent: Agent, stt: unknown, inputStartedAt?: number) {
+function createFakeActivity(agent: Agent, stt: unknown, inputStartedAt?: number, tts?: unknown) {
   const detachedPipeline = { id: Symbol('pipeline'), inputStartedAt };
   const activity = {
     agent,
@@ -36,6 +37,7 @@ function createFakeActivity(agent: Agent, stt: unknown, inputStartedAt?: number)
       detachSttPipeline: vi.fn(async () => detachedPipeline),
     },
     stt,
+    tts,
     llm: undefined,
     tools: [],
     realtimeSession: undefined,
@@ -159,6 +161,69 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
     const resources = await detachResources(oldActivity.activity, newActivity.activity);
 
     expect(resources.sttPipeline).toBeUndefined();
+  });
+});
+
+describe('AgentActivity TTS release on handoff', () => {
+  function fakeTts() {
+    return { release: vi.fn(async () => {}) };
+  }
+
+  it('releases the old TTS when the new activity uses a different TTS instance', async () => {
+    const oldTts = fakeTts();
+    const newTts = fakeTts();
+    const oldActivity = createFakeActivity(
+      new Agent({ instructions: 'a' }),
+      undefined,
+      undefined,
+      oldTts,
+    );
+    const newActivity = createFakeActivity(
+      new Agent({ instructions: 'b' }),
+      undefined,
+      undefined,
+      newTts,
+    );
+
+    await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(oldTts.release).toHaveBeenCalledTimes(1);
+    expect(newTts.release).not.toHaveBeenCalled();
+  });
+
+  it('keeps the TTS when both activities share the same instance', async () => {
+    const sharedTts = fakeTts();
+    const oldActivity = createFakeActivity(
+      new Agent({ instructions: 'a' }),
+      undefined,
+      undefined,
+      sharedTts,
+    );
+    const newActivity = createFakeActivity(
+      new Agent({ instructions: 'b' }),
+      undefined,
+      undefined,
+      sharedTts,
+    );
+
+    await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(sharedTts.release).not.toHaveBeenCalled();
+  });
+
+  it('releases the old TTS when the new activity has none', async () => {
+    const oldTts = fakeTts();
+    const oldActivity = createFakeActivity(
+      new Agent({ instructions: 'a' }),
+      undefined,
+      undefined,
+      oldTts,
+    );
+    const newActivity = createFakeActivity(new Agent({ instructions: 'b' }));
+
+    await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(oldTts.release).toHaveBeenCalledTimes(1);
   });
 });
 
