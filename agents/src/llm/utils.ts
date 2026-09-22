@@ -260,8 +260,8 @@ export async function executeToolCall(
   toolCall: FunctionCall,
   toolCtx: ToolContext,
 ): Promise<FunctionCallOutput> {
-  const tool = toolCtx[toolCall.name]!;
-  if (!isFunctionTool(tool)) {
+  const tool = toolCtx[toolCall.name];
+  if (!tool || !isFunctionTool(tool)) {
     return FunctionCallOutput.create({
       callId: toolCall.callId,
       output: `Tool ${toolCall.name} is not a function tool`,
