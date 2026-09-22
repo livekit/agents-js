@@ -421,12 +421,6 @@ export class SpeechStream extends stt.SpeechStream {
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
 
     let hasEnded = false;
-    // `input.next({ signal })` cancels the read itself on teardown, so a sender
-    // left over from a failed attempt cannot stay parked in the queue and steal
-    // the next attempt's first frame. It also replaces racing an un-cancellable
-    // `next()` against one long-lived abort promise, which appended a reaction
-    // — and the frame it captured — to that promise per frame, for the life of
-    // the stream (nodejs/node#17469).
     const nextInput = async () => {
       try {
         return await this.input.next({ signal: abortSignal });

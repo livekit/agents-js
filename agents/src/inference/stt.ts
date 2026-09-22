@@ -950,18 +950,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           Math.floor(this.opts.sampleRate / 20), // 50ms
         );
 
-        // Manual iteration to support cancellation. `input.next({ signal })`
-        // cancels the READ when this attempt is torn down, so an abandoned read
-        // cannot stay parked in the queue and shift the next attempt's first
-        // frame off it for nobody. It also replaces racing an un-cancellable
-        // `next()` against one long-lived abort promise, which appended a
-        // reaction — and the AudioFrame it captured — to that never-settling
-        // promise per frame, for the life of the stream (nodejs/node#17469).
         const nextInput = async () => {
           try {
             return await this.input.next({ signal });
           } catch (e) {
-            if (signal.aborted) return undefined; // teardown, not a failure of this send
+            if (signal.aborted) return undefined;
             throw e;
           }
         };
@@ -998,9 +991,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       const processVAD = async (stream: VADStream, socket: WebSocket, signal: AbortSignal) => {
-        // `VADStream` has no cancellable read, so each event is raced through
-        // `waitUntilAborted`: one abort listener per call, removed on settle,
-        // instead of one shared abort promise accumulating a reaction per event.
+        // VADStream.next() does not support cancellation.
         const iterator = stream[Symbol.asyncIterator]();
         while (true) {
           const { result, isAborted } = await waitUntilAborted(iterator.next(), signal);

@@ -701,13 +701,6 @@ export class SpeechStream extends stt.SpeechStream {
     let pending = Buffer.alloc(0);
     let pacingOrigin: number | undefined;
     let sentDurationMs = 0;
-    // `input.next({ signal })` cancels the read itself on teardown, so a sender
-    // left over from a failed attempt cannot stay parked in the queue and steal
-    // the next attempt's first frame. The pacing wait below goes through
-    // `waitUntilAborted`, one abort listener per call. Both replace racing
-    // against a single long-lived abort promise, which appended a reaction —
-    // and the buffer it captured — to that promise per packet and per frame,
-    // for the life of the stream (nodejs/node#17469).
     const nextInput = async () => {
       try {
         return await this.input.next({ signal });

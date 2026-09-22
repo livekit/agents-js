@@ -441,11 +441,6 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         while (!this.closed) {
-          // One abort listener per read, removed once it settles. Racing every
-          // frame against a single long-lived abort promise appended a reaction
-          // — and the frame it captured — to that promise per frame, for the
-          // life of the stream (nodejs/node#17469). The read itself is
-          // cancelled by `attempt.signal` on teardown, see above.
           const { result, isAborted } = await waitUntilAborted(
             this.input.next({ signal: attempt.signal }),
             this.abortSignal,

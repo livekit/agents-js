@@ -1149,9 +1149,6 @@ world
 
 describe('waitUntilAborted', () => {
   it('installs one abort listener per call and removes it once the promise settles', async () => {
-    // A loop that races one item at a time against the signal must not
-    // accumulate listeners or promise reactions across iterations: that is the
-    // shape of the STT send loops, at twenty audio frames a second.
     const controller = new AbortController();
     const added = vi.spyOn(controller.signal, 'addEventListener');
     const removed = vi.spyOn(controller.signal, 'removeEventListener');
@@ -1193,8 +1190,6 @@ describe('AsyncIterableQueue.next with a signal', () => {
   });
 
   it('rejects a read whose signal is already aborted even when items are buffered, leaving them for the next reader', async () => {
-    // A sender torn down between reads must not drain the backlog the
-    // replacement sender is about to need.
     const queue = new AsyncIterableQueue<number>();
     queue.put(1);
     queue.put(2);
