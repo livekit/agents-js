@@ -897,7 +897,7 @@ function createTools() {
 
     modify_restaurant_reservation: llm.tool({
       description:
-        "Move an existing restaurant reservation to a new date/time and optionally party size. Relay the party size from this tool's return when confirming; it's how a wrong count gets caught.",
+        "Move an existing restaurant reservation to a new date/time and optionally party size. Relay the party size from this tool's return when confirming - it's how a wrong count gets caught.",
       parameters: z.object({
         last_name: z.string(),
         confirmation_code: z.string(),
@@ -910,7 +910,7 @@ function createTools() {
           .max(maxPartySize)
           .optional()
           .describe(
-            'New number of guests, ONLY when the caller states the new number. "Keep it the same" means OMIT this parameter; the reservation keeps its current size when omitted. Never fill it with a number the caller did not say.',
+            'new number of guests, ONLY when the caller states the new number. "Keep it the same" means OMIT this parameter - the reservation keeps its current size when omitted. Never fill it with a number the caller didn\'t say.',
           ),
       }),
       execute: async (
@@ -929,7 +929,7 @@ function createTools() {
         reservation.date = parseDate(new_date);
         reservation.time = new_time;
         reservation.partySize = new_party_size ?? reservation.partySize;
-        return `reservation updated to ${reservation.time} on ${formatDate(reservation.date)} for ${reservation.partySize}, code ${speakCode(reservation.code)} | confirm the new date, time, AND the party size above to the caller; if the party size is not what they expect, this is their chance to catch it`;
+        return `reservation updated to ${reservation.time} on ${formatDate(reservation.date)} for ${reservation.partySize}, code ${speakCode(reservation.code)}. | confirm the new date, time, AND the party size above to the caller - if the party size isn't what they expect, this is their chance to catch it.`;
       },
     }),
 
