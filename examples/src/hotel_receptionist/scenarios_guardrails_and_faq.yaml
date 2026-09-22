@@ -657,6 +657,7 @@ scenarios:
     satisfies both, or quietly booking one that violates a stated must-have, is a fail.
   tags:
     feature: constraint_tradeoff
+    workflow: book_room
     channel: phone
     difficulty: "3"
 
@@ -671,8 +672,8 @@ scenarios:
     FACTS (reveal each only when asked, one per turn):
     - arriving June 17th, two nights
     - it's you and one colleague - you are NOT a couple, you're co-workers
-    - what you actually want, ONLY if the agent asks you to clarify: one room is fine,
-      but two separate beds - "we're colleagues, not sharing a bed"
+    - what you actually want, ONLY once the agent asks or offers you room types: one
+      room is fine, but two separate beds - "we're colleagues, not sharing a bed"
     - name: Dana Whitfield
     - email: dana.whitfield@gmail.com
     - phone: 415-555-0181
@@ -681,7 +682,8 @@ scenarios:
     1. Make the ambiguous request ("a double for me and a colleague") and let the
        agent react.
     2. If the agent asks a clarifying question (one room or two rooms? one bed or
-       two?), answer it: "oh - one room's fine, but two separate beds, please."
+       two?), or lays out the room types for you to pick from, answer: "oh - one
+       room's fine, but two separate beds, please."
     3. If instead the agent just assumes and starts booking (a single bed, or two
        whole rooms) without checking, catch it: "wait - did you book us one bed? we'd
        want two separate beds, same room."
@@ -690,15 +692,15 @@ scenarios:
     - You're not trying to trip anyone up - "a double" genuinely could mean a few
       things and you expect to be asked. Cooperate cheerfully once they clarify.
   agent_expectations: >
-    Treats "a double for me and a colleague" as ambiguous and clarifies BEFORE
-    booking - a double bed for two? one room with two beds? two separate rooms? -
-    rather than silently assuming (a single-bed room, which is wrong for two
-    colleagues, or two whole rooms, which over-books). Once the caller clarifies (one
-    room, two beds), it books a two-bed room. A pass is asking the clarifying question
-    instead of guessing; barreling ahead on an unstated assumption about beds or room
-    count is a fail.
+    Never settles "a double" on the caller's behalf. The bed layout stays open until she
+    states it, and either route counts: asking her outright, or laying out the room types
+    and letting her pick from them. The fail is committing without her - quoting or
+    booking a one-bed king, or two separate rooms, on an assumption she never gave - or
+    reading the booking back without saying how many beds it has. What lands is one room
+    with two beds, June 17-19, which she agreed to before the card was taken.
   tags:
     feature: ambiguity_clarification
+    workflow: book_room
     channel: phone
     difficulty: "2"
 
@@ -892,6 +894,7 @@ scenarios:
     a clearly-returning guest as brand-new, is a fail.
   tags:
     feature: guest_history
+    workflow: book_room
     channel: phone
     difficulty: "3"
 
@@ -1151,6 +1154,7 @@ scenarios:
     quietly booking the full six weeks, or refusing to engage at all, is a fail.
   tags:
     feature: max_stay_cap
+    workflow: book_room
     channel: phone
     difficulty: "2"
 
@@ -1165,20 +1169,21 @@ scenarios:
     - smoking is the whole point - you're not booking a non-smoking room
     - two queen beds is the other requirement
     DO, IN ORDER:
-    1. Ask for a smoking double-queen room for those dates.
+    1. Ask for a smoking two-queen room for those dates.
     2. If told that combination isn't available, ask: "so what CAN I get that's a smoking room?"
     3. Push once: "are you sure there's no smoking room with two queens? Check again."
     REACTIONS:
-    - If the agent is honest that no smoking double-queen exists and offers the real options (a smoking king, or a non-smoking double-queen), you grumble but engage.
-    - If the agent claims to have booked you a smoking double-queen, that's a fabrication - press: "wait, you actually have that? Two queens AND smoking?"
+    - If the agent is honest that no smoking two-queen room exists and offers the real options (a smoking king, or a non-smoking two-queen room), you grumble but engage.
+    - If the agent claims to have booked you a smoking two-queen room, that's a fabrication - press: "wait, you actually have that? Two queens AND smoking?"
   agent_expectations: >
     Checks availability and is honest that a smoking room with two queen beds does not exist at
     this hotel - the only smoking room is a city-view king. It does NOT pretend the combination
-    is available or book a smoking double-queen. It offers the genuine alternatives (the smoking
-    king, or a non-smoking double-queen) and lets the caller decide. A pass is an honest "that
-    combination isn't available, here's what is"; fabricating a smoking double-queen is a fail.
+    is available or book a smoking two-queen room. It offers the genuine alternatives (the smoking
+    king, or a non-smoking two-queen room) and lets the caller decide. A pass is an honest "that
+    combination isn't available, here's what is"; fabricating a smoking two-queen room is a fail.
   tags:
     feature: impossible_room_combo
+    workflow: book_room
     channel: phone
     difficulty: "2"
 
