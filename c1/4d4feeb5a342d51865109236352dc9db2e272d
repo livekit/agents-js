@@ -1,0 +1,39 @@
+turbo.json
+  s_2461ceafdb7d32::t_b5fba9563432dd 104-108
+agents/package.json
+  s_2461ceafdb7d32::t_7ae3e70519cc61 82
+agents/src/workflows/index.ts
+  s_2461ceafdb7d32::t_6c8621d8f0428e 19-23
+agents/src/workflows/twilio_connector_warm_transfer.test.ts
+  s_2461ceafdb7d32::t_3578d84e43cc55 1-421
+agents/src/workflows/twilio_connector_warm_transfer.ts
+  s_2461ceafdb7d32::t_2e7fbf5d8f0479 1-81
+agents/src/workflows/twilio_connector_warm_transfer_lifecycle.test.ts
+  s_2461ceafdb7d32::t_1e703052f4c70c 1-191
+agents/src/workflows/twilio_dialer.test.ts
+  s_2461ceafdb7d32::t_b8c11b2a0c8da9 1-182
+agents/src/workflows/twilio_dialer.ts
+  s_2461ceafdb7d32::t_7ab95c45c8b235 1-268
+examples/src/twilio_connector_warm_transfer.ts
+  s_2461ceafdb7d32::t_2baf22c73ae1a0 1-182
+pnpm-lock.yaml
+  s_2461ceafdb7d32::t_3616ada12fe2d8 211-212,4436-4439,8565-8571
+agents/etc/agents.api.md
+  s_2461ceafdb7d32::t_d96d06f06ee4db 3052-3054,9401-9418,10128-10131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c14d4feeb5a342d51865109236352dc9db2e272d",
+  "prompts": {},
+  "sessions": {
+    "s_2461ceafdb7d32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c576-2ef6-70d0-a26e-a53969369e54",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
