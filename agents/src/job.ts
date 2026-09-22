@@ -726,6 +726,6 @@ export class JobRequest {
   async accept(name = '', identity = '', metadata = '', attributes?: { [key: string]: string }) {
     if (identity === '') identity = 'agent-' + this.id;
 
-    this.#onAccept({ name, identity, metadata, attributes });
+    await this.#onAccept({ name, identity, metadata, attributes });
   }
 }

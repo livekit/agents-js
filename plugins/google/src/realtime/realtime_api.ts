@@ -991,7 +991,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async close(): Promise<void> {
-    super.close();
+    await super.close();
     this.#closed = true;
 
     this.sessionShouldClose.set();
