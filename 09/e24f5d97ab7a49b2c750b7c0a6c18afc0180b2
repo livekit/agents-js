@@ -1,0 +1,26 @@
+agents/src/workflows/sip_dialer.ts
+  s_2461ceafdb7d32::t_9a1a267e282507 5,47,62-69,71-75
+  s_2461ceafdb7d32::t_94f0c0f0d1d2a7 4,70
+agents/src/workflows/sip_dialer.test.ts
+  s_2461ceafdb7d32::t_762084f19cd483 1-75
+  s_2461ceafdb7d32::t_fb0885ba2b3b0f 76-83
+agents/src/workflows/warm_transfer_dialer.test.ts
+  s_2461ceafdb7d32::t_f26c63f947f672 4,13,77-99,104-105
+  s_2461ceafdb7d32::t_5927265331da55 100-103,106-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09e24f5d97ab7a49b2c750b7c0a6c18afc0180b2",
+  "prompts": {},
+  "sessions": {
+    "s_2461ceafdb7d32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c576-2ef6-70d0-a26e-a53969369e54",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
