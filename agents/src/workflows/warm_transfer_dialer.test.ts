@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { SIPParticipantInfo } from '@livekit/protocol';
 import { ParticipantKind, Room } from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient } from 'livekit-server-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +10,7 @@ import { Future } from '../utils.js';
 import { Agent } from '../voice/agent.js';
 import { AgentActivity } from '../voice/agent_activity.js';
 import { AgentSession } from '../voice/agent_session.js';
+import { createSipRecipientDialer } from './sip_dialer.js';
 import { type DialRecipient, createTransferTask } from './warm_transfer.js';
 
 afterEach(() => {
@@ -72,6 +74,38 @@ function setup(dialRecipient: DialRecipient) {
 }
 
 describe('internal recipient dialing with the real session lifecycle', () => {
+  it('removes a late SIP participant after cancellation and session shutdown', async () => {
+    const pending = new Future<SIPParticipantInfo>();
+    const ctx = setup(
+      createSipRecipientDialer({ sipCallTo: '+15551234567', sipTrunkId: 'ST_test' }),
+    );
+    ctx.sip.mockReturnValue(pending.await);
+    const remove = vi.spyOn(RoomServiceClient.prototype, 'removeParticipant').mockResolvedValue();
+    try {
+      await ctx.start();
+      await vi.waitFor(() => expect(ctx.sip).toHaveBeenCalledOnce());
+      const reason = new Error('transfer cancelled');
+      ctx.controller.abort(reason);
+      expect(await ctx.outcome.await).toBe(reason);
+      expect(ctx.session.currentAgent).toBe(ctx.parent);
+      await ctx.session.close();
+      expect(pending.done).toBe(false);
+      pending.resolve(
+        new SIPParticipantInfo({
+          roomName: 'consult-room',
+          participantIdentity: 'transfer-recipient',
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(remove).toHaveBeenCalledExactlyOnceWith('consult-room', 'transfer-recipient'),
+      );
+    } finally {
+      if (!pending.done) pending.resolve(new SIPParticipantInfo());
+      ctx.controller.abort();
+      await ctx.session.close();
+    }
+  });
+
   it('uses the dialed recipient for the move and the existing result field', async () => {
     const dialRecipient = vi.fn<DialRecipient>().mockResolvedValue();
     const ctx = setup(dialRecipient);

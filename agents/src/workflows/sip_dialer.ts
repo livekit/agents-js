@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { SipClient } from 'livekit-server-sdk';
+import { RoomServiceClient, SipClient } from 'livekit-server-sdk';
+import { log } from '../log.js';
 import type { DialRecipient, WarmTransferTaskOptions } from './warm_transfer.js';
 
 /** Validate SIP configuration before the transfer starts. @internal */
@@ -43,7 +44,7 @@ export function createSipRecipientDialer({
   return async ({ roomName, recipientIdentity, connection, signal }) => {
     signal.throwIfAborted();
     const sip = new SipClient(connection.url);
-    await sip.createSipParticipant(
+    const participant = await sip.createSipParticipant(
       sipTrunkId ?? '',
       sipCallTo,
       roomName,
@@ -58,5 +59,19 @@ export function createSipRecipientDialer({
       },
       sipConnection,
     );
+    if (signal.aborted) {
+      // The workflow can finish before the non-cancellable SIP request returns.
+      const rooms = new RoomServiceClient(connection.url, connection.apiKey, connection.apiSecret, {
+        requestTimeout: 10,
+      });
+      try {
+        await rooms.removeParticipant(participant.roomName, participant.participantIdentity);
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'not_found')) {
+          log().warn({ error }, 'failed to remove SIP participant created after cancellation');
+        }
+      }
+      signal.throwIfAborted();
+    }
   };
 }
