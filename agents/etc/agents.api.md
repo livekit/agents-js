@@ -3049,6 +3049,9 @@ export function createTimedString(opts: {
 // @public (undocumented)
 export const createToolOptions: <UserData extends UnknownUserData>(toolCallId: string, userData?: UserData) => ToolOptions<UserData>;
 
+// @public
+function createTwilioConnectorWarmTransferTask(options: TwilioConnectorWarmTransferTaskOptions): AgentTask<WarmTransferResult>;
+
 // Warning: (ae-missing-release-tag) "createUserInputTranscribedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -9395,6 +9398,24 @@ class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
 // @public
 type TurnDetectorVersion = 'v1' | 'v1-mini';
 
+// @public
+class TwilioConnectorWarmTransferTask extends AgentTask<WarmTransferResult> {
+    constructor(options: TwilioConnectorWarmTransferTaskOptions);
+    // (undocumented)
+    run(): Promise<WarmTransferResult>;
+}
+
+// @public
+interface TwilioConnectorWarmTransferTaskOptions extends WarmTransferOptions {
+    originalCallerNumber?: string;
+    phoneNumber: string;
+    ringingTimeout?: number | null;
+    twilioAccountSid?: string;
+    twilioAuthToken?: string;
+    twilioCallToken?: string;
+    twilioFromNumber: string;
+}
+
 // Warning: (ae-missing-release-tag) "UnexpectedModelBehavior" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -10104,7 +10125,10 @@ declare namespace workflows {
         WarmTransferResult,
         WarmTransferTaskOptions,
         WarmTransferOptions,
-        InstructionParts
+        InstructionParts,
+        TwilioConnectorWarmTransferTask,
+        createTwilioConnectorWarmTransferTask,
+        TwilioConnectorWarmTransferTaskOptions
     }
 }
 
