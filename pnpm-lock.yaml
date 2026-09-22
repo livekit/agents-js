@@ -1228,8 +1228,8 @@ importers:
   plugins/phonic:
     dependencies:
       phonic:
-        specifier: ^0.32.22
-        version: 0.32.22
+        specifier: ^0.32.28
+        version: 0.32.28
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -4742,8 +4742,8 @@ packages:
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
 
-  phonic@0.32.22:
-    resolution: {integrity: sha512-adpg8W0ZaBwqEmNQkRrjq3DooTML/U/I6irMNtSIxZh789RLC9MRih/PXF2VQi0AefwydmsFapCOiMkABPUzSw==}
+  phonic@0.32.28:
+    resolution: {integrity: sha512-Xf2ro6ngBLoM1ngHwXzjcNd9xrKgdH8r3Owts+K1qeHBS+fp/6VEz+Pl7ABzOgpXptNIOt8HIU8Fz3XCb0uqgg==}
     engines: {node: '>=18.0.0'}
 
   picocolors@1.1.1:
@@ -8850,7 +8850,7 @@ snapshots:
 
   pathe@2.0.3: {}
 
-  phonic@0.32.22:
+  phonic@0.32.28:
     dependencies:
       ws: 8.21.3
     transitivePeerDependencies:
