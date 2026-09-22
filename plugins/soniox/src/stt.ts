@@ -17,6 +17,8 @@ import { type SonioxMessage, newProcessMessageState, processMessage } from './_i
 
 const BASE_URL = 'wss://stt-rt.soniox.com/transcribe-websocket';
 const KEEPALIVE_MESSAGE = '{"type":"keepalive"}';
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const PONG_TIMEOUT_MS = 15_000;
 // An empty frame tells Soniox to end the session: it flushes remaining tokens,
 // emits a `finished` response, then closes the connection.
 const END_OF_AUDIO_MESSAGE = Buffer.alloc(0);
@@ -227,17 +229,58 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #runWS(ws: WebSocket): Promise<void> {
     let closing = false;
+    let finished = false;
+    let reconnectError: Error | undefined;
+    const attempt = new AbortController();
     const state = newProcessMessageState();
     const options = {
       isTranslationMode: this.#opts.translation !== undefined,
       startTimeOffset: this.startTimeOffset,
     };
 
+    const requestReconnect = (reason: string, error: Error): void => {
+      if (reconnectError || ws.readyState === WebSocket.CLOSED) return;
+      reconnectError = error;
+      this.#logger.warn({ err: error }, `Soniox STT WebSocket ${reason}; requesting reconnect`);
+      attempt.abort();
+      ws.terminate();
+    };
+
     const keepalive = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(KEEPALIVE_MESSAGE);
+      if (ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(KEEPALIVE_MESSAGE, (error) => {
+          if (error) requestReconnect('keepalive write failed', error);
+        });
+      } catch (error) {
+        requestReconnect('keepalive write failed', error as Error);
       }
     }, 5000);
+
+    let pongDeadline: NodeJS.Timeout | undefined;
+    const clearPongDeadline = () => {
+      if (pongDeadline) {
+        clearTimeout(pongDeadline);
+        pongDeadline = undefined;
+      }
+    };
+    ws.on('pong', clearPongDeadline);
+    const heartbeat = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN || pongDeadline) return;
+      try {
+        ws.ping();
+      } catch (error) {
+        requestReconnect('heartbeat write failed', error as Error);
+        return;
+      }
+      pongDeadline = setTimeout(() => {
+        pongDeadline = undefined;
+        requestReconnect(
+          'heartbeat timed out',
+          new Error(`No PONG received after ${PONG_TIMEOUT_MS} milliseconds`),
+        );
+      }, PONG_TIMEOUT_MS);
+    }, HEARTBEAT_INTERVAL_MS);
 
     const listenTask = new Promise<void>((resolve, reject) => {
       ws.on('message', (msg) => {
@@ -259,18 +302,25 @@ export class SpeechStream extends stt.SpeechStream {
             return;
           }
           if (content.finished) {
+            finished = true;
             resolve();
           }
         } catch (error) {
           reject(error);
         }
       });
-      ws.once('error', (error) => reject(error));
+      ws.once('error', (error) => {
+        this.#logger.warn({ err: error }, 'Soniox STT WebSocket error');
+        attempt.abort();
+        reject(error);
+      });
       ws.once('close', (code) => {
-        if (!closing) {
-          reject(new Error(`Soniox STT WebSocket closed with code ${code}`));
-        } else {
+        if (reconnectError) {
+          reject(reconnectError);
+        } else if (closing && finished) {
           resolve();
+        } else {
+          reject(new Error(`Soniox STT WebSocket closed with code ${code}`));
         }
       });
     });
@@ -280,7 +330,7 @@ export class SpeechStream extends stt.SpeechStream {
     // connection (per Soniox protocol: an empty frame ends the session). We then
     // let `listenTask` observe that final response rather than tearing down the
     // moment the input runs dry.
-    const sendTask = this.#sendAudio(ws);
+    const sendTask = this.#sendAudio(ws, attempt.signal, requestReconnect);
     const finalize = sendTask.then(() => {
       if (this.abortSignal.aborted || ws.readyState !== WebSocket.OPEN) {
         return;
@@ -301,27 +351,55 @@ export class SpeechStream extends stt.SpeechStream {
     } finally {
       closing = true;
       clearInterval(keepalive);
+      clearInterval(heartbeat);
+      clearPongDeadline();
+      ws.off('pong', clearPongDeadline);
+      // Cancel this attempt's pending queue read before retrying. Otherwise it can
+      // consume the first audio frame intended for the replacement connection.
+      attempt.abort();
+      await sendTask.catch(() => {});
       ws.close();
     }
   }
 
-  async #sendAudio(ws: WebSocket): Promise<void> {
+  async #sendAudio(
+    ws: WebSocket,
+    attemptSignal: AbortSignal,
+    requestReconnect: (reason: string, error: Error) => void,
+  ): Promise<void> {
     const abortPromise = waitForAbort(this.abortSignal);
-    while (!this.closed) {
-      const result = await Promise.race([this.input.next(), abortPromise]);
-      if (result === undefined || result.done) {
-        break;
-      }
+    try {
+      while (!this.closed) {
+        const result = await Promise.race([
+          this.input.next({ signal: attemptSignal }),
+          abortPromise,
+        ]);
+        if (result === undefined || result.done) {
+          break;
+        }
 
-      const data = result.value;
-      if (data === SpeechStream.FLUSH_SENTINEL) {
-        continue;
+        const data = result.value;
+        if (data === SpeechStream.FLUSH_SENTINEL) {
+          continue;
+        }
+        // Send only this frame's bytes. `data.data` may be a view into a larger
+        // ArrayBuffer (non-zero byteOffset / partial span), so `.buffer` alone
+        // would transmit the wrong bytes; honor byteOffset/byteLength (mirrors
+        // Python's `frame.data.tobytes()`).
+        try {
+          ws.send(
+            Buffer.from(data.data.buffer, data.data.byteOffset, data.data.byteLength),
+            (error) => {
+              if (error) requestReconnect('audio write failed', error);
+            },
+          );
+        } catch (error) {
+          requestReconnect('audio write failed', error as Error);
+          break;
+        }
       }
-      // Send only this frame's bytes. `data.data` may be a view into a larger
-      // ArrayBuffer (non-zero byteOffset / partial span), so `.buffer` alone
-      // would transmit the wrong bytes; honor byteOffset/byteLength (mirrors
-      // Python's `frame.data.tobytes()`).
-      ws.send(Buffer.from(data.data.buffer, data.data.byteOffset, data.data.byteLength));
+    } catch (error) {
+      if (!attemptSignal.aborted) throw error;
     }
   }
 
