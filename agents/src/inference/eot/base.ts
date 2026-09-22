@@ -117,10 +117,29 @@ export abstract class BaseStreamingTurnDetector extends (EventEmitter as new () 
     return 'livekit';
   }
 
+  /** Most-recent materialized threshold map (after any cloud→local fallback
+   * rescale or server-default adoption).
+   * @deprecated No in-package callers; removed in a future major version. */
+  get thresholds(): Readonly<Record<string, number>> {
+    return this._opts.thresholds.thresholds;
+  }
+
   /** Threshold below which the detector treats the prediction as "unlikely
    * to be end-of-turn". Returns `undefined` when the language isn't covered. */
   async unlikelyThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
     return this._opts.thresholds.lookup(language);
+  }
+
+  /** Threshold above which a pause is a backchannel opportunity, or `undefined`
+   * when backchannel is disabled (server sent none, or the local mini model).
+   * @deprecated Use the same method on the stream returned by `stream()`. */
+  async backchannelThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
+    return this._opts.thresholds.lookupBackchannel(language);
+  }
+
+  /** @deprecated Use the same method on the stream returned by `stream()`. */
+  async supportsLanguage(language: LanguageCode | undefined): Promise<boolean> {
+    return this._opts.thresholds.supports(language);
   }
 
   abstract stream(): BaseStreamingTurnDetectorStream;
@@ -197,6 +216,11 @@ export class BaseStreamingTurnDetectorStream {
 
   get model(): TurnDetectorModel {
     return this._detector.model;
+  }
+
+  /** @deprecated Use `provider` on the owning detector (e.g. `TurnDetector.provider`). */
+  get provider(): string {
+    return this._detector.provider;
   }
 
   /** @internal Shared threshold resolver — the cloud transport reads it to
