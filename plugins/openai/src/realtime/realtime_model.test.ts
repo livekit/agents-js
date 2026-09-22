@@ -19,7 +19,6 @@ type RealtimeSessionInternals = {
   updateInstructions: RealtimeSession['updateInstructions'];
   responseCreatedFutures: Record<string, unknown>;
   sendEvent: ReturnType<typeof vi.fn>;
-  textModeRecoveryRetries: number;
   instructions?: string;
   _options: {
     isAzure?: boolean;
@@ -62,7 +61,6 @@ function createSessionForTest(): RealtimeSessionInternals {
   const session = Object.create(RealtimeSession.prototype) as RealtimeSessionInternals;
   session.responseCreatedFutures = {};
   session.sendEvent = vi.fn();
-  session.textModeRecoveryRetries = 0;
   session._options = {};
   return session;
 }
