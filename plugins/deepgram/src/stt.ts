@@ -18,6 +18,7 @@ import {
   stt,
   waitForAbort,
   waitForWebSocketOpen,
+  waitUntilAborted,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
@@ -438,18 +439,13 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      // waitForAbort internally sets up an abort listener on the abort signal
-      // we need to put it outside loop to avoid constant re-registration of the listener
-      const abortPromise = waitForAbort(this.abortSignal);
-
       try {
         while (!this.closed) {
-          const result = await Promise.race([
+          const { result, isAborted } = await waitUntilAborted(
             this.input.next({ signal: attempt.signal }),
-            abortPromise,
-          ]);
-
-          if (result === undefined) return; // aborted
+            this.abortSignal,
+          );
+          if (isAborted) return;
           if (result.done) {
             break;
           }
