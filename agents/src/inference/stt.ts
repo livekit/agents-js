@@ -1101,6 +1101,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       try {
         ws = await this.stt.connectWs(this.connOptions.timeoutMs);
+        // An abort that landed during connectWs has no listener yet: the socket would
+        // otherwise idle until the finalization timeout, holding a gateway concurrency slot.
+        if (this.abortController.signal.aborted) break;
         this.activeWs = ws;
         vadStream = vad?.stream() ?? null;
 
