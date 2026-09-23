@@ -483,6 +483,13 @@ export abstract class SynthesizeStream
       return;
     }
 
+    // Release any provider task that is still waiting on the failed attempt's
+    // input before installing the replay queue. Provider implementations keep
+    // the iterator they started with, so replacing this.input alone would
+    // strand that task on the old queue.
+    if (!this.input.closed) {
+      this.input.close();
+    }
     this.input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
     for (const item of this.#inputBuffer) {
       this.input.put(item);
@@ -698,13 +705,18 @@ export abstract class SynthesizeStream
     }
     this.#metricsText += text;
 
-    if (this.input.closed || this.closed) {
+    if (this.#inputEnded || this.closed) {
       // Stream was aborted/closed, silently skip
       return;
     }
 
     this.#inputBuffer.push(text);
-    this.input.put(text);
+    // An attempt may have closed its queue while it tears down after a
+    // retryable failure. Keep accepting logical stream input into the replay
+    // buffer; resetInputForRetry() will place it on the next attempt's queue.
+    if (!this.input.closed) {
+      this.input.put(text);
+    }
   }
 
   /** Flush the TTS, causing it to process all pending text */
@@ -714,26 +726,28 @@ export abstract class SynthesizeStream
       this.#metricsText = '';
     }
 
-    if (this.input.closed || this.closed) {
+    if (this.#inputEnded || this.closed) {
       // Stream was aborted/closed, silently skip
       return;
     }
 
     this.#inputBuffer.push(SynthesizeStream.FLUSH_SENTINEL);
-    this.input.put(SynthesizeStream.FLUSH_SENTINEL);
+    if (!this.input.closed) {
+      this.input.put(SynthesizeStream.FLUSH_SENTINEL);
+    }
   }
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
-    this.flush();
-
-    if (this.input.closed || this.closed) {
-      // Stream was aborted/closed, silently skip
+    if (this.#inputEnded || this.closed) {
       return;
     }
 
+    this.flush();
     this.#inputEnded = true;
-    this.input.close();
+    if (!this.input.closed) {
+      this.input.close();
+    }
   }
 
   next(): Promise<IteratorResult<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>> {

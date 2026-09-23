@@ -194,11 +194,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #logger = log();
-  #tokenizer = new tokenize.basic.SentenceTokenizer({
-    minSentenceLength: BUFFERED_WORDS_COUNT,
-  }).stream();
   #websocket: WebSocket | null = null;
-  #requestId = 0;
   label = 'resemble.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions) {
@@ -208,14 +204,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   protected async run() {
     const requestId = shortuuid();
+    const tokenizer = new tokenize.basic.SentenceTokenizer({
+      minSentenceLength: BUFFERED_WORDS_COUNT,
+    }).stream();
+    let requestCounter = 0;
     let closing = false;
     const activeRequests = new Set<number>();
 
     const sentenceStreamTask = async (ws: WebSocket) => {
       const packet = toResembleOptions(this.#opts, true);
 
-      for await (const event of this.#tokenizer) {
-        const reqId = this.#requestId++;
+      for await (const event of tokenizer) {
+        const reqId = requestCounter++;
         packet.data = event.token + ' ';
         packet.request_id = reqId;
         packet.continue = true;
@@ -230,13 +230,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const inputTask = async () => {
       for await (const data of this.input) {
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          this.#tokenizer.flush();
+          tokenizer.flush();
           continue;
         }
-        this.#tokenizer.pushText(data);
+        tokenizer.pushText(data);
       }
-      this.#tokenizer.endInput();
-      this.#tokenizer.close();
+      tokenizer.endInput();
+      tokenizer.close();
     };
 
     const recvTask = async (ws: WebSocket) => {
@@ -251,7 +251,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       };
 
       // Use promise-based message handling similar to ElevenLabs
-      while ((!closing && activeRequests.size > 0) || !this.#tokenizer.closed) {
+      while ((!closing && activeRequests.size > 0) || !tokenizer.closed) {
         try {
           await new Promise<void>((resolve, reject) => {
             ws.removeAllListeners();
@@ -280,7 +280,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                   activeRequests.delete(Number(segmentId));
 
                   // Only end the stream when all requests are complete and tokenizer is closed
-                  if (activeRequests.size === 0 && this.#tokenizer.closed) {
+                  if (activeRequests.size === 0 && tokenizer.closed) {
                     this.queue.put(SynthesizeStream.END_OF_STREAM);
                     closing = true;
                     ws.close();
@@ -323,7 +323,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
               }
               // Only reject if we haven't received all expected frames
-              if (activeRequests.size > 0 || !this.#tokenizer.closed) {
+              if (activeRequests.size > 0 || !tokenizer.closed) {
                 reject(new Error(`WebSocket closed prematurely with code ${code}: ${reason}`));
               } else {
                 resolve();
@@ -357,6 +357,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
     } catch (e) {
       throw new Error(`failed to connect to Resemble: ${e}`);
+    } finally {
+      tokenizer.close();
+      if (this.#websocket === ws) this.#websocket = null;
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
     }
   }
 
@@ -365,8 +371,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       this.#websocket.close();
       this.#websocket = null;
     }
-
-    this.#tokenizer.close();
 
     super.close();
   }
