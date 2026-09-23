@@ -115,6 +115,7 @@ interface SynthesizeContent {
 
 interface CloseContext {
   contextId: string;
+  force?: boolean;
 }
 
 interface StreamData {
@@ -343,12 +344,11 @@ class Connection {
     const context = this.#contextData.get(contextId);
     this.#inputQueue = this.#inputQueue.filter((message) => message.contextId !== contextId);
 
-    if (
-      this.#activeContexts.has(contextId) &&
-      !this.#closed &&
-      this.#ws?.readyState === WebSocket.OPEN
-    ) {
-      this.#inputQueue.push({ contextId });
+    if (!this.#closed && this.#ws?.readyState === WebSocket.OPEN) {
+      // The receive loop may already have removed a failed context from
+      // #activeContexts. Force the close onto the wire so provider-side work
+      // is cancelled even after local response routing has been detached.
+      this.#inputQueue.push({ contextId, force: true });
       this.#inputQueueResolver?.();
     }
 
@@ -429,7 +429,7 @@ class Connection {
         } else {
           // CloseContext
           const closeMsg = msg as CloseContext;
-          if (this.#activeContexts.has(closeMsg.contextId)) {
+          if (closeMsg.force || this.#activeContexts.has(closeMsg.contextId)) {
             const closePkt = {
               context_id: closeMsg.contextId,
               close_context: true,

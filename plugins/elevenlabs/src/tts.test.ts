@@ -264,6 +264,7 @@ describe('ElevenLabs TTS websocket', () => {
     const { wss, baseURL } = await startWebSocketServer();
     const contextTexts = new Map<string, string[]>();
     const failedContexts = new Set<string>();
+    const closedContexts: string[] = [];
     const audio = Buffer.alloc(4410).toString('base64');
 
     wss.on('connection', (ws) => {
@@ -274,7 +275,13 @@ describe('ElevenLabs TTS websocket', () => {
           flush?: boolean;
         };
         const contextId = message.context_id;
-        if (!contextId || message.text === undefined) return;
+        if (!contextId) return;
+        if (message.text === undefined) {
+          if ((message as { close_context?: boolean }).close_context) {
+            closedContexts.push(contextId);
+          }
+          return;
+        }
 
         const text = message.text.trim();
         if (text) {
@@ -314,6 +321,7 @@ describe('ElevenLabs TTS websocket', () => {
       expect(events).not.toHaveLength(0);
       expect(contextTexts.size).toBe(2);
       expect(new Set(contextTexts.keys()).size).toBe(2);
+      expect(closedContexts).toContain([...failedContexts][0]);
       expect([...contextTexts.values()]).toEqual([
         ['replay this complete sentence.'],
         ['replay this complete sentence.'],
