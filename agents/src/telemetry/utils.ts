@@ -35,6 +35,10 @@ export interface RecordExceptionOptions {
    * redaction setting for the current session.
    */
   redacted?: boolean;
+  /** Whether to add an exception event and attributes. Defaults to true. */
+  recordEvent?: boolean;
+  /** Whether to set the span status to error. Defaults to true. */
+  setStatus?: boolean;
 }
 
 export function recordException(
@@ -42,11 +46,23 @@ export function recordException(
   error: Error,
   options: RecordExceptionOptions = {},
 ): void {
+  const recordEvent = options.recordEvent ?? true;
+  const setStatus = options.setStatus ?? true;
+  if ((!recordEvent && !setStatus) || !span.isRecording()) return;
+
   const redacted = options.redacted ?? redactionEnabled();
 
   // `error.type` is the GenAI/HTTP conventions' low-cardinality error identifier; unlike the
   // message it never carries user data, so it is set either way
   setErrorType(span, error);
+
+  if (setStatus) {
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      message: redacted ? REDACTED_EXCEPTION_MESSAGE : error.message,
+    });
+  }
+  if (!recordEvent) return;
 
   if (redacted) {
     const attrs = {
@@ -54,20 +70,11 @@ export function recordException(
       [traceTypes.ATTR_EXCEPTION_MESSAGE]: REDACTED_EXCEPTION_MESSAGE,
     };
     span.addEvent('exception', attrs);
-    span.setStatus({
-      code: SpanStatusCode.ERROR,
-      message: REDACTED_EXCEPTION_MESSAGE,
-    });
     span.setAttributes(attrs);
     return;
   }
 
   span.recordException(error);
-  span.setStatus({
-    code: SpanStatusCode.ERROR,
-    message: error.message,
-  });
-
   // Set exception attributes for better visibility
   // (in case the exception event is not rendered by the backend)
   span.setAttributes({

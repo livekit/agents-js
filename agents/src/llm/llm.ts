@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
-import { genAI, recordException, traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, Task, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
@@ -278,9 +278,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
             this.#providerRequestIds = [];
             try {
               return await this.run();
-            } catch (error) {
-              recordException(attemptSpan, toError(error));
-              throw error;
             } finally {
               if (this.#providerRequestIds.length) {
                 attemptSpan.setAttribute(

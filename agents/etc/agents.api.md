@@ -6552,7 +6552,9 @@ function recordException(span: Span, error: Error, options?: RecordExceptionOpti
 //
 // @public (undocumented)
 interface RecordExceptionOptions {
+    recordEvent?: boolean;
     redacted?: boolean;
+    setStatus?: boolean;
 }
 
 // Warning: (ae-internal-missing-underscore) The name "recordingEnabled" should be prefixed with an underscore because the declaration is marked as @internal
@@ -7811,6 +7813,8 @@ interface StartSpanOptions {
     context?: Context;
     endOnExit?: boolean;
     name: string;
+    recordException?: boolean;
+    setStatusOnException?: boolean;
     startTime?: number;
 }
 
@@ -10157,7 +10161,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:366:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
-// src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
+// src/utils.ts:553:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:387:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1026:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1697:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts

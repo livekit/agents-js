@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { MetricsRecordingHeader } from '@livekit/protocol';
-import { ProxyTracerProvider, context as otelContext, trace } from '@opentelemetry/api';
+import {
+  ProxyTracerProvider,
+  type Span,
+  SpanStatusCode,
+  context as otelContext,
+  trace,
+} from '@opentelemetry/api';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import {
   InMemorySpanExporter,
@@ -18,6 +24,7 @@ import type { ClientRequest } from 'node:http';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TurnDetector } from '../inference/eot/detector.js';
+import { type JobContext, runWithJobContext } from '../job.js';
 import { ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { version } from '../version.js';
@@ -25,6 +32,8 @@ import { AgentSession } from '../voice/agent_session.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { PIIFilteringSpanProcessor } from './pii.js';
+import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
+import * as traceTypes from './trace_types.js';
 import {
   type CloudSpanProcessorOptions,
   describeOptionObject,
@@ -364,6 +373,100 @@ describe('DynamicTracer', () => {
     expect(outerSpan).toBeDefined();
     expect(childSpan).toBeDefined();
     expect(parentSpanId(childSpan)).toBe(outerSpan!.spanContext().spanId);
+  });
+
+  it.each(
+    [false, true].flatMap((isAsync) =>
+      [false, true].flatMap((redacted) =>
+        [false, true].flatMap((recordException) =>
+          [false, true].flatMap((setStatusOnException) =>
+            [false, true].map((endOnExit) => ({
+              isAsync,
+              redacted,
+              recordException,
+              setStatusOnException,
+              endOnExit,
+            })),
+          ),
+        ),
+      ),
+    ),
+  )('records callback failures with caller options: %o', async (options) => {
+    const failure = new Error('secret transcript');
+    const context = { _redactionEnabled: options.redacted } as unknown as JobContext;
+    let callbackSpan: Span | undefined;
+    let activeSpanMatches = false;
+
+    const invoke = () => {
+      const callback = (span: Span) => {
+        callbackSpan = span;
+        activeSpanMatches = trace.getSpan(otelContext.active()) === span;
+        throw failure;
+      };
+      return options.isAsync
+        ? tracer.startActiveSpan(async (span) => callback(span), { name: 'failure', ...options })
+        : Promise.resolve().then(() =>
+            tracer.startActiveSpanSync(callback, { name: 'failure', ...options }),
+          );
+    };
+
+    const previousSpan = trace.getSpan(otelContext.active());
+    const raised = await runWithJobContext(context, () =>
+      invoke().catch((error: unknown) => error),
+    );
+    expect(raised).toBe(failure);
+    expect(activeSpanMatches).toBe(true);
+    expect(trace.getSpan(otelContext.active())).toBe(previousSpan);
+    expect(callbackSpan?.isRecording()).toBe(!options.endOnExit);
+    if (!options.endOnExit) callbackSpan?.end();
+
+    const [span] = exporter.getFinishedSpans();
+    const events = span!.events.filter((event) => event.name === 'exception');
+    expect(events).toHaveLength(Number(options.recordException));
+    expect(span!.status.code).toBe(
+      options.setStatusOnException ? SpanStatusCode.ERROR : SpanStatusCode.UNSET,
+    );
+    const expectedMessage = options.redacted ? REDACTED_EXCEPTION_MESSAGE : failure.message;
+    expect(span!.status.message).toBe(options.setStatusOnException ? expectedMessage : undefined);
+    expect(span!.attributes[traceTypes.ATTR_ERROR_TYPE]).toBe(
+      options.recordException || options.setStatusOnException ? 'Error' : undefined,
+    );
+    if (options.recordException) {
+      expect(events[0]!.attributes?.[traceTypes.ATTR_EXCEPTION_MESSAGE]).toBe(expectedMessage);
+    }
+    if (options.redacted) {
+      expect(
+        JSON.stringify({
+          attributes: span!.attributes,
+          events: span!.events,
+          status: span!.status,
+        }),
+      ).not.toContain(failure.message);
+    }
+  });
+
+  it.each(['async', 'sync'])('does not record cancellation in the %s helper', async (kind) => {
+    const cancellation = new DOMException('cancelled', 'AbortError');
+    const invoke = () => {
+      if (kind === 'async') {
+        return tracer.startActiveSpan(async () => Promise.reject(cancellation), {
+          name: 'cancelled',
+        });
+      }
+      return Promise.resolve().then(() =>
+        tracer.startActiveSpanSync(
+          () => {
+            throw cancellation;
+          },
+          { name: 'cancelled' },
+        ),
+      );
+    };
+
+    expect(await invoke().catch((error: unknown) => error)).toBe(cancellation);
+    const [span] = exporter.getFinishedSpans();
+    expect(span!.events).toHaveLength(0);
+    expect(span!.status.code).toBe(SpanStatusCode.UNSET);
   });
 });
 
