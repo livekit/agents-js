@@ -4,7 +4,7 @@
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
-import { type ChunkedStream, SynthesizeStream, TTS } from '../tts/index.js';
+import { type ChunkedStream, FallbackAdapter, SynthesizeStream, TTS } from '../tts/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Future } from '../utils.js';
 import { Agent, AgentTask } from './agent.js';
@@ -82,6 +82,48 @@ describe('agent-owned TTS connection release', () => {
 
     await session.close();
     expect(shared.released).toBe(1);
+  });
+
+  it('releases an agent TTS displaced by updateOptions, but not the session TTS', async () => {
+    const sessionTts = new PooledTTS('session');
+    const ttsA = new PooledTTS('a');
+    const ttsB = new PooledTTS('b');
+    const session = new AgentSession({ llm: new FakeLLM(), tts: sessionTts });
+    const agent = Agent.create({ instructions: 'a', tts: ttsA });
+    onTestFinished(() => session.close());
+
+    await session.start({ agent });
+    await agent.updateOptions({ tts: ttsB });
+    expect(ttsA.released).toBe(1);
+    expect(ttsB.released).toBe(0);
+
+    // back to the session TTS: the session instance is never released
+    await agent.updateOptions({ tts: sessionTts });
+    expect(ttsB.released).toBe(1);
+    expect(sessionTts.released).toBe(0);
+
+    await session.close();
+    expect(sessionTts.released).toBe(0);
+  });
+
+  it('releases every provider behind an agent-owned FallbackAdapter', async () => {
+    const primary = new PooledTTS('primary');
+    const secondary = new PooledTTS('secondary');
+    const adapter = new FallbackAdapter({ ttsInstances: [primary, secondary] });
+    const session = new AgentSession({ llm: new FakeLLM(), tts: new PooledTTS('session') });
+    const agentA = Agent.create({ instructions: 'a', tts: adapter });
+    const agentB = Agent.create({ instructions: 'b' });
+    onTestFinished(async () => {
+      await session.close();
+      await adapter.close();
+    });
+
+    await session.start({ agent: agentA });
+    session.updateAgent(agentB);
+    await settled(() => agentB._agentActivity !== undefined && agentA._agentActivity === undefined);
+
+    expect(primary.released).toBe(1);
+    expect(secondary.released).toBe(1);
   });
 
   it('never releases the session TTS', async () => {

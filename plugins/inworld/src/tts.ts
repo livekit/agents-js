@@ -184,6 +184,9 @@ class WSConnectionPool {
   #auth: string;
   #connecting?: Promise<WebSocket>;
   #listeners: Map<string, (msg: InworldMessage) => void> = new Map();
+  // streams holding the socket, counted from acquisition (before their context listener
+  // exists) until teardown, so an idle release cannot close a socket a stream is about to use
+  #leases = 0;
   #logger = log();
 
   constructor(url: string, auth: string) {
@@ -290,6 +293,21 @@ class WSConnectionPool {
     });
   }
 
+  /** `getConnection()` plus a lease; pair with {@link releaseLease} when the stream is done. */
+  async acquire(): Promise<WebSocket> {
+    this.#leases++;
+    try {
+      return await this.getConnection();
+    } catch (e) {
+      this.#leases--;
+      throw e;
+    }
+  }
+
+  releaseLease() {
+    this.#leases = Math.max(0, this.#leases - 1);
+  }
+
   registerListener(contextId: string, cb: (msg: InworldMessage) => void) {
     this.#listeners.set(contextId, cb);
   }
@@ -305,7 +323,7 @@ class WSConnectionPool {
     }
   }
 
-  /** Close the socket only when no stream has a context registered on it. */
+  /** Close the socket only when no stream holds a lease or has a context registered on it. */
   async releaseIdle(): Promise<void> {
     if (this.#connecting) {
       try {
@@ -314,7 +332,7 @@ class WSConnectionPool {
         return; // nothing to release
       }
     }
-    if (this.#listeners.size === 0) this.close();
+    if (this.#leases === 0 && this.#listeners.size === 0) this.close();
   }
 }
 
@@ -581,7 +599,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
     this.#cumulativeTime = 0;
     this.#generationEndTime = 0;
 
-    const ws = await this.#tts.pool.getConnection();
+    const ws = await this.#tts.pool.acquire();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const tokenizerStream = this.#opts.tokenizer!.stream();
 
@@ -803,6 +821,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
     } finally {
       ws.off('close', onClose);
       this.#tts.pool.unregisterListener(this.#contextId);
+      this.#tts.pool.releaseLease();
     }
   }
 

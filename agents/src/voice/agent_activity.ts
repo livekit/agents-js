@@ -1460,6 +1460,16 @@ export class AgentActivity implements RecognitionHooks {
         }
         throw error;
       }
+
+      // the swap committed: a displaced agent-owned TTS is done with this activity
+      if (
+        options.tts !== undefined &&
+        previous.tts instanceof TTS &&
+        previous.tts !== this.tts &&
+        previous.tts !== this.agentSession.tts
+      ) {
+        await this._releaseIdleTts(previous.tts);
+      }
     } finally {
       unlock();
     }
@@ -5285,6 +5295,10 @@ export class AgentActivity implements RecognitionHooks {
     if (this.agent._tts === undefined || this.agent._tts === null) return;
     if (tts === this.agentSession.tts) return;
     if (this._ttsSharedWithNextActivity) return;
+    await this._releaseIdleTts(tts);
+  }
+
+  private async _releaseIdleTts(tts: TTS): Promise<void> {
     try {
       await tts.releaseIdleConnections();
     } catch (error) {

@@ -308,8 +308,13 @@ export class FallbackAdapter extends TTS {
     await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.close()));
   }
 
+  /** Every provider gets its release attempt; one failure surfaces after the others ran. */
   override async releaseIdleConnections(): Promise<void> {
-    await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.releaseIdleConnections()));
+    const results = await Promise.allSettled(
+      this.ttsInstances.map((tts) => tts.releaseIdleConnections()),
+    );
+    const failure = results.find((r) => r.status === 'rejected');
+    if (failure) throw failure.reason;
   }
 }
 

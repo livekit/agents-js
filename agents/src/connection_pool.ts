@@ -246,10 +246,24 @@ export class ConnectionPool<T> {
         this.connections.delete(conn);
         this.toClose.delete(conn);
       }
-      for (const conn of idle) {
-        await this._maybeCloseConnection(conn);
+      // every idle connection gets its close attempt; one failure must not strand the others.
+      // A connection whose close failed goes back on the close queue for the next drain.
+      const results = await Promise.allSettled(
+        idle.map((conn) => this._maybeCloseConnection(conn)),
+      );
+      const failures: unknown[] = [];
+      results.forEach((result, i) => {
+        if (result.status === 'rejected') {
+          this.toClose.add(idle[i]!);
+          failures.push(result.reason);
+        }
+      });
+      if (failures.length === 0) {
+        await this._drainToClose();
       }
-      await this._drainToClose();
+      if (failures.length > 0) {
+        throw failures[0];
+      }
     } finally {
       unlock();
     }

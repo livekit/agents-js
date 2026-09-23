@@ -383,6 +383,31 @@ describe('ConnectionPool', () => {
       expect(closeCb).toHaveBeenCalledTimes(1);
     });
 
+    it('closes every idle connection even when one close fails', async () => {
+      let failOnce = true;
+      const closeCb = vi.fn(async (conn: string) => {
+        if (conn === 'conn_1' && failOnce) {
+          failOnce = false;
+          throw new Error('close failed');
+        }
+      });
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const first = await pool.get();
+      const second = await pool.get();
+      pool.put(first);
+      pool.put(second);
+
+      await expect(pool.releaseIdle()).rejects.toThrow('close failed');
+
+      expect(closeCb).toHaveBeenCalledWith('conn_1');
+      expect(closeCb).toHaveBeenCalledWith('conn_2');
+      // the failed connection stays queued and is retried on the next drain
+      closeCb.mockClear();
+      await pool.close();
+      expect(closeCb).toHaveBeenCalledWith('conn_1');
+    });
+
     it('aborts a pending prewarm before it connects', async () => {
       const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (_conn: string) => {});
