@@ -973,6 +973,9 @@ export class GPTLiveSession extends llm.DuplexSession<{
     }
     if (lines.length)
       this.append('session.thinking.append', lines.join('\n'), null, { replayOnReconnect: false });
+    this.sendBackendOutputs(outputs);
+  }
+  private sendBackendOutputs(outputs: llm.FunctionCallOutput[]): void {
     for (const output of outputs) {
       this.queueEvent(
         {
