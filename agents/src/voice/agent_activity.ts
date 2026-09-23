@@ -2516,7 +2516,10 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       if (waitForUser) {
-        userActive = this.agentSession.userState !== 'listening';
+        // Only a speaking user keeps this activity busy. `away` means the user went quiet, so
+        // treating it as active spun this loop on `delay(0)` and blocked every idle waiter,
+        // including the deferred reply of a non-blocking tool (`ToolExecutor.deliverReply`).
+        userActive = this.agentSession.userState === 'speaking';
         if (userActive) {
           await delay(0, { signal });
         }
