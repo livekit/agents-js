@@ -9,7 +9,7 @@ import type { TTSMetrics } from '../metrics/base.js';
 import type { APIConnectOptions } from '../types.js';
 import { AsyncIterableQueue } from '../utils.js';
 import { ChunkedStream, SynthesizeStream, TTS } from './tts.js';
-import type { SynthesizedAudio } from './tts.js';
+import type { SynthesizedAudio, TTSError } from './tts.js';
 
 type AttemptResult = 'success' | 'retryable-error' | 'nonretryable-error' | 'pending';
 
@@ -226,6 +226,74 @@ class TestTTS extends TTS {
     throw new Error('not used');
   }
 }
+
+class RetrySynthesizeStream extends SynthesizeStream {
+  label = 'test.RetrySynthesizeStream';
+  attempts: Array<Array<string | '<flush>'>> = [];
+
+  constructor(
+    tts: TTS,
+    connOptions: APIConnectOptions,
+    private readonly emitAudioBeforeFailure = false,
+  ) {
+    super(tts, connOptions);
+  }
+
+  protected async run(): Promise<void> {
+    const input: Array<string | '<flush>'> = [];
+    for await (const item of this.input) {
+      input.push(typeof item === 'string' ? item : '<flush>');
+    }
+    this.attempts.push(input);
+
+    if (this.attempts.length === 1) {
+      if (this.emitAudioBeforeFailure) {
+        this.queue.put({
+          requestId: 'request-1',
+          segmentId: 'segment',
+          frame: audioFrame(1),
+          final: false,
+        });
+      }
+      throw new APIConnectionError({
+        message: 'connection dropped after consuming input',
+        options: { retryable: true },
+      });
+    }
+  }
+}
+
+describe('SynthesizeStream retries', () => {
+  it('replays buffered input into a fresh queue', async () => {
+    const stream = new RetrySynthesizeStream(new TestTTS(), RETRY_OPTIONS);
+    stream.pushText('hello');
+    stream.flush();
+    stream.pushText('world');
+    stream.endInput();
+
+    await consume(stream);
+
+    expect(stream.attempts).toEqual([
+      ['hello', '<flush>', 'world', '<flush>'],
+      ['hello', '<flush>', 'world', '<flush>'],
+    ]);
+  });
+
+  it('does not retry after emitting partial audio', async () => {
+    const tts = new TestTTS();
+    const errors: TTSError[] = [];
+    tts.on('error', (error) => errors.push(error));
+    const stream = new RetrySynthesizeStream(tts, RETRY_OPTIONS, true);
+    stream.pushText('hello');
+    stream.endInput();
+
+    await consume(stream);
+
+    expect(stream.attempts).toHaveLength(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.recoverable).toBe(false);
+  });
+});
 
 class RetryChunkedStream extends ChunkedStream {
   label = 'test.RetryChunkedStream';
