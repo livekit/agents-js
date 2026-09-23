@@ -2,17 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FunctionCall } from '../llm/chat_context.js';
+import { tool } from '../llm/tool_context.js';
 import type { STTError } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
 import { AgentSessionEventTypes, CloseReason, createUserInputTranscribedEvent } from './events.js';
+import { RunContext } from './run_context.js';
 import { SpeechHandle } from './speech_handle.js';
+import { ToolExecutor } from './tool_executor.js';
 
 type AgentSessionInternals = AgentSession & {
+  started: boolean;
+  closing: boolean;
   _agentState: string;
   _aecWarmupTimer: NodeJS.Timeout | null;
   _userState: string;
+  userAwayTimer: NodeJS.Timeout | null;
   _setUserAwayTimer: () => void;
 };
 
@@ -253,6 +260,135 @@ describe('AgentSession user input transcription', () => {
     session.emit(AgentSessionEventTypes.UserInputTranscribed, finalTranscript);
     expect(setTimerWhileSpeaking).not.toHaveBeenCalled();
     setTimerWhileSpeaking.mockRestore();
+  });
+});
+
+describe('AgentSession resetAwayTimer', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function startedSession(timeout: number | null = 3): AgentSessionInternals {
+    const session = new AgentSession({ vad: null, userAwayTimeout: timeout });
+    const internals = session as AgentSessionInternals;
+    internals.started = true;
+    internals._agentState = 'listening';
+    internals._userState = 'listening';
+    internals._setUserAwayTimer();
+    return internals;
+  }
+
+  it('restarts the full timeout', async () => {
+    const session = startedSession();
+    const userStates: string[] = [];
+    session.on(AgentSessionEventTypes.UserStateChanged, (event) => userStates.push(event.newState));
+
+    for (let i = 0; i < 2; i++) {
+      await vi.advanceTimersByTimeAsync(2_000);
+      session.resetAwayTimer();
+    }
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(session.userState).toBe('listening');
+    expect(userStates).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(session.userState).toBe('away');
+    expect(userStates).toEqual(['away']);
+  });
+
+  it.each(['listening', 'speaking', 'thinking'] as const)(
+    'returns an away user to listening while the agent is %s',
+    async (agentState) => {
+      const session = startedSession();
+      const transitions: [string, string][] = [];
+      session.on(AgentSessionEventTypes.UserStateChanged, (event) =>
+        transitions.push([event.oldState, event.newState]),
+      );
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(session.userState).toBe('away');
+
+      session._updateAgentState(agentState);
+      session.resetAwayTimer();
+      expect(session.userState).toBe('listening');
+      expect(transitions).toEqual([
+        ['listening', 'away'],
+        ['away', 'listening'],
+      ]);
+
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(session.userState).toBe(agentState === 'listening' ? 'away' : 'listening');
+    },
+  );
+
+  it.each([
+    ['speaking', 'listening'],
+    ['listening', 'speaking'],
+    ['listening', 'thinking'],
+  ] as const)('preserves active turns for user=%s agent=%s', async (userState, agentState) => {
+    const session = startedSession();
+    session._updateUserState(userState);
+    session._updateAgentState(agentState);
+
+    session.resetAwayTimer();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(session.userState).toBe(userState);
+    expect(session.agentState).toBe(agentState);
+
+    session._updateUserState('listening');
+    session._updateAgentState('listening');
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(session.userState).toBe('away');
+  });
+
+  it('is a no-op when away detection is disabled', async () => {
+    const session = startedSession(null);
+    session.resetAwayTimer();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(session.userState).toBe('listening');
+    expect(session.userAwayTimer).toBeNull();
+  });
+
+  it('is a no-op outside the session lifetime', () => {
+    const session = new AgentSession({ vad: null, userAwayTimeout: 3 }) as AgentSessionInternals;
+    session._agentState = 'listening';
+    session.resetAwayTimer();
+    expect(session.userAwayTimer).toBeNull();
+
+    session.started = true;
+    session._setUserAwayTimer();
+    const timer = session.userAwayTimer;
+    session.closing = true;
+    session.resetAwayTimer();
+    expect(session.userAwayTimer).toBe(timer);
+  });
+
+  it('does not restart the timeout while a tool is running', async () => {
+    const session = startedSession();
+    const executor = new ToolExecutor();
+    const releaseTool = new Future<void>();
+    const lookup = tool({
+      name: 'lookup',
+      description: 'Lookup',
+      execute: async () => {
+        await releaseTool.await;
+        return 'done';
+      },
+    });
+    const runCtx = new RunContext(
+      session,
+      SpeechHandle.create(),
+      FunctionCall.create({ callId: 'call_lookup', name: 'lookup', args: '{}' }),
+    );
+    const toolResult = executor.execute({ tool: lookup, runCtx, rawArguments: {} });
+    await vi.waitFor(() => expect(executor.hasRunningTasks).toBe(true));
+
+    session._updateAgentState('thinking');
+    session._updateAgentState('listening');
+    session.resetAwayTimer();
+    expect(session.userAwayTimer).toBeNull();
+
+    releaseTool.resolve();
+    await toolResult;
   });
 });
 

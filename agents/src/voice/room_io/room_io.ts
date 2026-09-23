@@ -269,6 +269,7 @@ export class RoomIO {
       return;
     }
     this.participantAvailableFuture = new Future<RemoteParticipant>();
+    this.agentSession._onRoomIOParticipantUnlinked();
     if (
       this.inputOptions.closeOnDisconnect &&
       participant.disconnectReason &&
@@ -286,6 +287,19 @@ export class RoomIO {
         reason: CloseReason.PARTICIPANT_DISCONNECTED,
       });
     }
+  };
+
+  private onDtmfReceived = (
+    _code: number,
+    _digit: string,
+    participant?: RemoteParticipant,
+  ): void => {
+    const linked = this.linkedParticipant;
+    if (!linked || !participant || participant.identity !== linked.identity) {
+      return;
+    }
+
+    this.agentSession.resetAwayTimer();
   };
 
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
@@ -485,13 +499,18 @@ export class RoomIO {
       return;
     }
 
-    if (this.participantIdentity !== participantIdentity) {
-      this.participantAvailableFuture = new Future<RemoteParticipant>();
+    const linked = this.linkedParticipant;
+    if (!linked || linked.identity !== participantIdentity) {
+      if (this.participantAvailableFuture.done) {
+        this.participantAvailableFuture = new Future<RemoteParticipant>();
+      }
+      this.agentSession._onRoomIOParticipantUnlinked();
 
       // check if new participant is already connected
       for (const participant of this.room.remoteParticipants.values()) {
         if (participant.identity === participantIdentity) {
           this.participantAvailableFuture.resolve(participant);
+          this.agentSession._onRoomIOParticipantLinked(participant);
           break;
         }
       }
@@ -509,6 +528,7 @@ export class RoomIO {
   unsetParticipant() {
     this.participantIdentity = null;
     this.participantAvailableFuture = new Future<RemoteParticipant>();
+    this.agentSession._onRoomIOParticipantUnlinked();
     this.audioInput?.setParticipant(null);
     this.updateTranscriptionOutput({
       output: this.userTranscriptOutput,
@@ -590,6 +610,7 @@ export class RoomIO {
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.room.on(RoomEvent.ConnectionStateChanged, this.onConnectionStateChanged);
     this.room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+    this.room.on(RoomEvent.DtmfReceived, this.onDtmfReceived);
     if (this.room.isConnected) {
       this.onConnectionStateChanged(ConnectionState.CONN_CONNECTED);
     }
@@ -620,6 +641,7 @@ export class RoomIO {
     this.room.off(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.room.off(RoomEvent.ConnectionStateChanged, this.onConnectionStateChanged);
     this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+    this.room.off(RoomEvent.DtmfReceived, this.onDtmfReceived);
     this.agentSession.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
     this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.agentSession.off(AgentSessionEventTypes.Close, this.onAgentSessionClose);
