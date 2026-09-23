@@ -31,13 +31,22 @@ export function calculateAudioDurationSeconds(frame: AudioBuffer) {
 
 /** AudioByteStream translates between LiveKit AudioFrame packets and raw byte data. */
 export class AudioByteStream {
+  static readonly #MIN_PROGRESSIVE_MS = 20;
+
   #sampleRate: number;
   #numChannels: number;
-  #bytesPerFrame: number;
+  #bytesPerSample: number;
+  #targetBytesPerFrame: number;
+  #initialBytesPerFrame: number;
+  #currentBytesPerFrame: number;
   #buf: Int8Array;
-  #logger = log();
 
-  constructor(sampleRate: number, numChannels: number, samplesPerChannel: number | null = null) {
+  constructor(
+    sampleRate: number,
+    numChannels: number,
+    samplesPerChannel: number | null = null,
+    progressive = false,
+  ) {
     this.#sampleRate = sampleRate;
     this.#numChannels = numChannels;
 
@@ -45,7 +54,16 @@ export class AudioByteStream {
       samplesPerChannel = Math.floor(sampleRate / 10); // 100ms by default
     }
 
-    this.#bytesPerFrame = numChannels * samplesPerChannel * 2; // 2 bytes per sample (Int16)
+    this.#bytesPerSample = numChannels * 2; // 2 bytes per sample (Int16)
+    this.#targetBytesPerFrame = samplesPerChannel * this.#bytesPerSample;
+    this.#initialBytesPerFrame = progressive
+      ? Math.min(
+          Math.floor((sampleRate * AudioByteStream.#MIN_PROGRESSIVE_MS) / 1000) *
+            this.#bytesPerSample,
+          this.#targetBytesPerFrame,
+        )
+      : this.#targetBytesPerFrame;
+    this.#currentBytesPerFrame = this.#initialBytesPerFrame;
     this.#buf = new Int8Array();
   }
 
@@ -56,44 +74,70 @@ export class AudioByteStream {
     this.#buf = new Int8Array([...this.#buf, ...bytes]);
 
     const frames: AudioFrame[] = [];
-    while (this.#buf.length >= this.#bytesPerFrame) {
-      const frameData = this.#buf.slice(0, this.#bytesPerFrame);
-      this.#buf = this.#buf.slice(this.#bytesPerFrame);
+    while (this.#buf.length >= this.#currentBytesPerFrame) {
+      const frameData = this.#buf.slice(0, this.#currentBytesPerFrame);
+      this.#buf = this.#buf.slice(this.#currentBytesPerFrame);
 
       frames.push(
         new AudioFrame(
           new Int16Array(frameData.buffer),
           this.#sampleRate,
           this.#numChannels,
-          frameData.length / 2,
+          frameData.length / this.#bytesPerSample,
         ),
       );
+
+      if (this.#currentBytesPerFrame < this.#targetBytesPerFrame) {
+        this.#currentBytesPerFrame = Math.min(
+          this.#currentBytesPerFrame * 2,
+          this.#targetBytesPerFrame,
+        );
+      }
     }
 
     return frames;
   }
 
+  /** Seconds of audio waiting for the next frame. */
+  get bufferedDuration(): number {
+    return this.#buf.length / this.#bytesPerSample / this.#sampleRate;
+  }
+
+  /** Emit complete samples while retaining any trailing partial sample. */
   flush(): AudioFrame[] {
     if (this.#buf.length === 0) {
       return [];
     }
 
-    if (this.#buf.length % (2 * this.#numChannels) !== 0) {
-      this.#logger.warn('AudioByteStream: incomplete frame during flush, dropping');
+    const remainder = this.#buf.length % this.#bytesPerSample;
+    const completeBytes = this.#buf.length - remainder;
+    if (completeBytes === 0) {
       return [];
     }
 
+    const frameData = this.#buf.slice(0, completeBytes);
     const frames = [
       new AudioFrame(
-        new Int16Array(this.#buf.buffer),
+        new Int16Array(frameData.buffer),
         this.#sampleRate,
         this.#numChannels,
-        this.#buf.length / 2,
+        completeBytes / this.#bytesPerSample,
       ),
     ];
 
-    this.#buf = new Int8Array(); // Clear buffer after flushing
+    this.#buf = this.#buf.slice(completeBytes);
     return frames;
+  }
+
+  /** Reset progressive frame sizing without discarding buffered audio. */
+  resetProgressive(): void {
+    this.#currentBytesPerFrame = this.#initialBytesPerFrame;
+  }
+
+  /** Discard buffered audio and reset progressive frame sizing. */
+  clear(): void {
+    this.#buf = new Int8Array();
+    this.resetProgressive();
   }
 }
 
