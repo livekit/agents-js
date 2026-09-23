@@ -35,6 +35,22 @@ export class StreamAdapter extends TTS {
     this.#tts.on('error', this.#forwardError);
   }
 
+  // a pass-through speaks whatever dialect it wraps
+  protected override markupProviderKey(): string {
+    return this.#tts.markup.providerKey;
+  }
+
+  /**
+   * StreamAdapterWrapper reads the wrapped instance's flag, so an adapter handed straight
+   * to the session has to pass this through.
+   *
+   * @internal
+   */
+  override _setExpressive(enabled: boolean): void {
+    super._setExpressive(enabled);
+    this.#tts._setExpressive(enabled);
+  }
+
   async close(): Promise<void> {
     this.#tts.off('metrics_collected', this.#forwardMetrics);
     this.#tts.off('error', this.#forwardError);
@@ -57,17 +73,34 @@ export class StreamAdapter extends TTS {
 export class StreamAdapterWrapper extends SynthesizeStream {
   #tts: TTS;
   #sentenceStream: SentenceStream;
+  #expressive: boolean;
   label: string;
 
   constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
     this.#tts = tts;
+    // Snapshot whether expressive is active now, while the framework holds it fixed for this
+    // synthesis (set synchronously before stream()). run() happens later, and the flag lives
+    // on the shared TTS, so another turn or session could flip it in between.
+    this.#expressive = tts.expressive;
     this.#sentenceStream = sentenceTokenizer.stream();
     this.label = `tts.StreamAdapterWrapper<${this.#tts.label}>`;
   }
 
+  /**
+   * Whether expressive was active when this stream was created.
+   * @internal
+   */
+  get expressive(): boolean {
+    return this.#expressive;
+  }
+
   protected async run() {
     let cumulativeDuration = 0;
+    // the framework's input path for every non-streaming TTS, and the first place whole
+    // sentences exist
+    const markup = this.#tts.markup;
+    const lowering = !!markup.providerKey && this.#expressive;
 
     const forwardInput = async () => {
       for await (const input of this.input) {
@@ -76,7 +109,7 @@ export class StreamAdapterWrapper extends SynthesizeStream {
         if (input === SynthesizeStream.FLUSH_SENTINEL) {
           this.#sentenceStream.flush();
         } else {
-          this.#sentenceStream.pushText(input);
+          this.#sentenceStream.pushText(lowering ? markup.normalize(input) : input);
         }
       }
       this.#sentenceStream.endInput();
@@ -90,9 +123,17 @@ export class StreamAdapterWrapper extends SynthesizeStream {
       for await (const ev of this.#sentenceStream) {
         if (this.abortController.signal.aborted) break;
 
+        let text = ev.token;
+        if (lowering) {
+          // re-normalize: a marker split across two input chunks isn't caught by the
+          // per-chunk pass above
+          text = markup.convert(markup.normalize(text)).trim();
+          if (!text) continue;
+        }
+
         // this will enable non-blocking synthesis of the stream of tokens
         task = Task.from(
-          (controller) => synthesize(ev.token, task, controller),
+          (controller) => synthesize(text, ev.token, task, controller),
           this.abortController,
         );
 
@@ -104,19 +145,22 @@ export class StreamAdapterWrapper extends SynthesizeStream {
     };
 
     const synthesize = async (
+      text: string,
       token: string,
       prevTask: Task<void> | undefined,
       controller: AbortController,
     ) => {
       this.markStarted();
-      const audioStream = this.#tts.synthesize(token, this.connOptions, this.abortSignal);
+      const audioStream = this.#tts.synthesize(text, this.connOptions, this.abortSignal);
 
       // wait for previous audio transcription to complete before starting
       // to queuing audio frames of the current token
       await prevTask?.result;
       if (controller.signal.aborted) return;
 
-      // Create a TimedString with the sentence text and current cumulative duration
+      // Create a TimedString with the sentence text and current cumulative duration. The
+      // transcript keeps the text as written: the sinks strip markup themselves, and the
+      // lowered form carries provider-native spellings (e.g. an emphasized word in caps)
       const timedString = createTimedString({
         text: token,
         startTime: cumulativeDuration,

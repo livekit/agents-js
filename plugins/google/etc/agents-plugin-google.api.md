@@ -204,7 +204,7 @@ export abstract class GeminiTool extends llm.ProviderTool {
 // Warning: (ae-missing-release-tag) "GeminiTTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type GeminiTTSModels = 'gemini-3.1-flash-tts-preview' | 'gemini-2.5-flash-tts' | 'gemini-2.5-flash-lite-preview-tts' | 'gemini-2.5-pro-tts';
+export type GeminiTTSModels = 'gemini-3.8-flash-tts' | 'gemini-3.8-flash-lite-tts' | 'gemini-3.1-flash-tts-preview' | 'gemini-2.5-flash-tts' | 'gemini-2.5-flash-lite-preview-tts' | 'gemini-2.5-pro-tts';
 
 // Warning: (ae-missing-release-tag) "GeminiVoices" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -493,6 +493,8 @@ class TTS_3 extends tts_2.TTS {
     // (undocumented)
     label: string;
     // (undocumented)
+    protected markupProviderKey(): string;
+    // (undocumented)
     get opts(): TTSOptions_2;
     // (undocumented)
     stream(): tts_2.SynthesizeStream;
@@ -502,6 +504,7 @@ class TTS_3 extends tts_2.TTS {
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream_2;
     updateOptions(opts: {
         voiceName?: GeminiVoices | string;
+        speaker?: string;
     }): void;
 }
 
@@ -519,6 +522,8 @@ interface TTSOptions_2 {
     model: GeminiTTSModels | string;
     // (undocumented)
     project?: string;
+    speaker?: string;
+    speakers?: Record<string, GeminiVoices | string>;
     // (undocumented)
     vertexai: boolean;
     // (undocumented)
@@ -569,7 +574,7 @@ type Voice = 'Achernar' | 'Achird' | 'Algenib' | 'Algieba' | 'Alnilam' | 'Aoede'
 // Warnings were encountered during analysis:
 //
 // src/aiplatform_llm.ts:176:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
-// src/realtime/realtime_api.ts:288:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_api.ts:303:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
