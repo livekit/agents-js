@@ -1731,6 +1731,11 @@ const ATTR_USER_INPUT = "lk.pii.user_input";
 // @public (undocumented)
 const ATTR_USER_TRANSCRIPT = "lk.pii.user_transcript";
 
+// Warning: (ae-missing-release-tag) "ATTR_USER_TURN_START_ESTIMATED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_USER_TURN_START_ESTIMATED = "lk.user_turn.start_estimated";
+
 // Warning: (ae-missing-release-tag) "ATTRIBUTE_REDACTION_ENABLED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -2308,6 +2313,11 @@ export class CancellablePromise<T, E extends Error = Error> {
     // (undocumented)
     then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null, onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null): Promise<TResult1 | TResult2>;
 }
+
+// Warning: (ae-missing-release-tag) "captureContentEnabled" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+function captureContentEnabled(): boolean;
 
 // Warning: (ae-missing-release-tag) "CartesiaModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -4431,6 +4441,7 @@ const GEN_AI_PROVIDER_NAMES: ReadonlySet<string>;
 declare namespace genAI {
     export {
         setCaptureContent,
+        captureContentEnabled,
         withInferenceTracking,
         markInferenceSpanRecorded,
         toSystemInstructions,
@@ -8867,7 +8878,7 @@ export function toStream<T>(iterable: AsyncIterable<T>): ReadableStream_2<T>;
 // Warning: (ae-missing-release-tag) "toSystemInstructions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-function toSystemInstructions(chatCtx: ChatContext): MessagePart[];
+function toSystemInstructions(source: ChatContext | string): MessagePart[];
 
 // Warning: (ae-missing-release-tag) "toToolContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-missing-release-tag) "toToolContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -8937,6 +8948,7 @@ declare namespace traceTypes {
         ATTR_EOU_DETECTION_DELAY,
         ATTR_USER_TRANSCRIPT,
         ATTR_TRANSCRIPT_CONFIDENCE,
+        ATTR_USER_TURN_START_ESTIMATED,
         ATTR_TRANSCRIPTION_DELAY,
         ATTR_END_OF_TURN_DELAY,
         ATTR_AMD_CATEGORY,

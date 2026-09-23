@@ -51,6 +51,16 @@ export function setCaptureContent(enabled: boolean): void {
   captureContent = enabled;
 }
 
+/**
+ * Whether GenAI message content is recorded right now.
+ *
+ * A caller that records a request and its response at two different moments reads this once,
+ * so turning capture on in between cannot leave a response on a span with no request beside it.
+ */
+export function captureContentEnabled(): boolean {
+  return captureContent;
+}
+
 // ---------------------------------------------------------------------------
 // message models
 // ---------------------------------------------------------------------------
@@ -168,11 +178,16 @@ function itemsOf(chatCtx: ChatContext | undefined): readonly ChatItem[] {
  *
  * LiveKit carries an agent's instructions as `system`/`developer` messages in the chat
  * context, but they originate from the agent definition rather than from the conversation,
- * so they are reported as instructions rather than history.
+ * so they are reported as instructions rather than history. A realtime model takes them out
+ * of band instead, so that path passes the string.
  */
-export function toSystemInstructions(chatCtx: ChatContext): MessagePart[] {
+export function toSystemInstructions(source: ChatContext | string): MessagePart[] {
+  if (typeof source === 'string') {
+    return source ? [textPart(source)] : [];
+  }
+
   const parts: MessagePart[] = [];
-  for (const item of itemsOf(chatCtx)) {
+  for (const item of itemsOf(source)) {
     if (item.type === 'message' && (item.role === 'system' || item.role === 'developer')) {
       const text = item.rawTextContent;
       if (text !== undefined) parts.push(textPart(text));

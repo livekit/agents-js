@@ -1755,6 +1755,14 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession.amd?.onTranscript(ev.transcript);
       }
 
+      if (!this.stt && this.audioRecognition) {
+        this.audioRecognition.onRealtimeUserTranscript({
+          transcript: ev.transcript,
+          confidence: ev.confidence,
+          turnStartedAt: ev.turnStartedAt,
+        });
+      }
+
       const turnStartedAt = ev.turnStartedAt;
 
       const userMetrics: MetricsReport = {};
@@ -4035,6 +4043,7 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
     addToChatCtx: boolean = true,
+    turnInput: { instructions?: string; userInput?: string } = {},
   ): Promise<void> {
     return tracer.startActiveSpan(
       async (span) => {
@@ -4047,6 +4056,8 @@ export class AgentActivity implements RecognitionHooks {
             modelSettings,
             replyAbortController,
             addToChatCtx,
+            instructions: turnInput.instructions,
+            userInput: turnInput.userInput,
             span,
             inferenceSpan,
           });
@@ -4067,6 +4078,8 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings,
     replyAbortController,
     addToChatCtx,
+    instructions,
+    userInput,
     span,
     inferenceSpan,
   }: {
@@ -4075,6 +4088,8 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings;
     replyAbortController: AbortController;
     addToChatCtx: boolean;
+    instructions?: string;
+    userInput?: string;
     span: Span;
     inferenceSpan: Span;
   }): Promise<void> {
@@ -4082,6 +4097,12 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle._agentTurnContext = otelContext.active();
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
+    if (instructions !== undefined) {
+      span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, instructions);
+    }
+    if (userInput !== undefined) {
+      span.setAttribute(traceTypes.ATTR_USER_INPUT, userInput);
+    }
 
     const localParticipant = this.agentSession._roomIO?.localParticipant;
     if (localParticipant) {
@@ -4127,6 +4148,23 @@ export class AgentActivity implements RecognitionHooks {
       ? this.agentSession.output.transcription
       : null;
     const toolCtx = realtimeSession.tools;
+
+    // enabling capture later must not emit a response with no request beside it
+    const recordContent = inferenceSpan.isRecording() && genAI.captureContentEnabled();
+    if (recordContent) {
+      const systemInstructions = genAI.toSystemInstructions(
+        renderInstructions(this.agent.instructions),
+      );
+      if (instructions) {
+        // this turn's own instructions reached the provider with the response request
+        systemInstructions.push(...genAI.toSystemInstructions(instructions));
+      }
+      genAI.setContentAttributes(inferenceSpan, {
+        systemInstructions,
+        inputMessages: genAI.toInputMessages(this.agent._chatCtx),
+        toolDefinitions: genAI.toToolDefinitions(toolCtx.flatten()),
+      });
+    }
 
     const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
     if (speechHandle.allowInterruptions && !this.rtOverlappingSpeechEnabled) {
@@ -4393,6 +4431,15 @@ export class AgentActivity implements RecognitionHooks {
 
       if (traceTextParts.length > 0) {
         span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, traceTextParts.join('\n'));
+      }
+      if (recordContent) {
+        genAI.setContentAttributes(inferenceSpan, {
+          outputMessages: genAI.toOutputMessages({
+            text: traceTextParts.join('\n'),
+            functionCalls: toolCalls,
+            finishReason: genAI.finishReasonFor({ functionCalls: toolCalls }),
+          }),
+        });
       }
     };
 
@@ -4897,12 +4944,13 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       const generateReplyAbortController = new AbortController();
-      const generationPromise = this.realtimeSession.generateReply(
+      const renderedInstructions =
         instructions !== undefined
           ? renderInstructions(instructions, speechHandle.inputDetails.modality)
-          : undefined,
-        { signal: generateReplyAbortController.signal },
-      );
+          : undefined;
+      const generationPromise = this.realtimeSession.generateReply(renderedInstructions, {
+        signal: generateReplyAbortController.signal,
+      });
       void generationPromise.catch(() => undefined);
 
       await speechHandle.waitIfNotInterrupted([generationPromise]);
@@ -4917,6 +4965,8 @@ export class AgentActivity implements RecognitionHooks {
         generationEvent,
         { toolChoice },
         abortController,
+        true,
+        { instructions: renderedInstructions, userInput },
       );
     } finally {
       // reset toolChoice value

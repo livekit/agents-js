@@ -87,6 +87,8 @@ export const ATTR_EOU_FROM_CACHE = 'lk.eou.from_cache';
 export const ATTR_EOU_DETECTION_DELAY = 'lk.eou.detection_delay';
 export const ATTR_USER_TRANSCRIPT = 'lk.pii.user_transcript';
 export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
+/** True when the span's start is where the transcript arrived, not where the speech began. */
+export const ATTR_USER_TURN_START_ESTIMATED = 'lk.user_turn.start_estimated';
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';
 export const ATTR_END_OF_TURN_DELAY = 'lk.end_of_turn_delay';
 
