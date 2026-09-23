@@ -313,7 +313,7 @@ describe('ChatMessage text content', () => {
     'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
     '<expr type="prosody" label="whisper">keep it secret</expr>';
   const mixedClean =
-    ' Press [Enter] to see <b>bold</b>, ' +
+    'Press [Enter] to see <b>bold</b>, ' +
     'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
     'keep it secret';
 

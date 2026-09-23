@@ -7772,7 +7772,16 @@ function speedUpFakeUserSpeech(speech: FakeUserSpeech, factor: number): FakeUser
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "dropBracketCues"
 //
 // @public
-function splitAllMarkup(text: string): [string, ExpressiveTag[]];
+function splitAllMarkup(text: string, options?: {
+    atLineStart?: boolean;
+    atTextEnd?: boolean;
+}): [string, ExpressiveTag[]];
+
+// Warning: (ae-missing-release-tag) "splitExprMarkup" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "splitAllMarkup"
+//
+// @public
+function splitExprMarkup(text: string): [string, ExpressiveTag[]];
 
 // Warning: (ae-missing-release-tag) "splitWords" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -7866,17 +7875,25 @@ class StreamAdapter extends STT {
 //
 // @public (undocumented)
 class StreamAdapter_2 extends TTS {
-    constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer);
+    constructor(tts: TTS, sentenceTokenizer?: SentenceTokenizer);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
     label: string;
+    // (undocumented)
+    protected markupProviderKey(): string;
+    // @internal
+    _setExpressive(enabled: boolean): void;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
     }): StreamAdapterWrapper_2;
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
+    // @internal
+    _tokenizerFor(options: {
+        lowering: boolean;
+    }): SentenceTokenizer;
 }
 
 // Warning: (ae-missing-release-tag) "StreamAdapterWrapper" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -7899,6 +7916,8 @@ class StreamAdapterWrapper extends SpeechStream {
 // @public (undocumented)
 class StreamAdapterWrapper_2 extends SynthesizeStream {
     constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions);
+    // @internal
+    get expressive(): boolean;
     // (undocumented)
     label: string;
     // (undocumented)
@@ -7940,7 +7959,7 @@ export const streamingEndpointingOptions: {
 function stripAllMarkup(text: string): string;
 
 // Warning: (ae-missing-release-tag) "stripExprMarkup" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "stripAllMarkup"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "splitExprMarkup"
 //
 // @public
 function stripExprMarkup(text: string): string;
@@ -9104,6 +9123,7 @@ declare namespace tts {
         normalizeMarkup,
         sentenceTokenizer,
         splitAllMarkup,
+        splitExprMarkup,
         steeringInstructions,
         stripAllMarkup,
         stripExprMarkup,
@@ -10157,7 +10177,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:366:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
-// src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
+// src/utils.ts:553:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:387:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1026:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1697:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
