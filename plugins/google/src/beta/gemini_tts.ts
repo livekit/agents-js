@@ -260,6 +260,7 @@ export class TTS extends tts.TTS {
 
 export class ChunkedStream extends tts.ChunkedStream {
   #tts: TTS;
+  #opts: TTSOptions;
   label = 'google.gemini.ChunkedStream';
 
   constructor(
@@ -270,13 +271,17 @@ export class ChunkedStream extends tts.ChunkedStream {
   ) {
     super(inputText, tts, connOptions, abortSignal);
     this.#tts = tts;
+    // Snapshot the options now: run() starts on a later tick and runs again on every retry,
+    // so reading the shared options there would let a later updateOptions() (a speaker
+    // switch) change an utterance that was already created.
+    this.#opts = snapshotOptions(tts.opts);
   }
 
   protected async run() {
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#tts.sampleRate, this.#tts.numChannels);
 
-    const opts = this.#tts.opts;
+    const opts = this.#opts;
     const config: types.GenerateContentConfig = {
       responseModalities: ['AUDIO'],
       speechConfig: speechConfig(opts),
@@ -327,7 +332,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       };
 
       const responseStream = await this.#tts.client.models.generateContentStream({
-        model: this.#tts.opts.model,
+        model: opts.model,
         contents,
         config,
       });
@@ -418,7 +423,7 @@ export class ChunkedStream extends tts.ChunkedStream {
    * the inline tags out too.
    */
   #styledParts(instructions: string): Record<string, unknown>[] | undefined {
-    const opts = this.#tts.opts;
+    const opts = this.#opts;
     if (!stylesPerPart(opts.model)) {
       return undefined;
     }
@@ -493,6 +498,19 @@ export class ChunkedStream extends tts.ChunkedStream {
       }
     }
   }
+}
+
+/** A copy of `opts` that later option updates can't reach, nested tables included. */
+function snapshotOptions(opts: TTSOptions): TTSOptions {
+  return {
+    ...opts,
+    speakers: opts.speakers ? { ...opts.speakers } : undefined,
+    customPronunciations: opts.customPronunciations
+      ? {
+          pronunciations: opts.customPronunciations.pronunciations.map((p) => ({ ...p })),
+        }
+      : undefined,
+  };
 }
 
 /** One voice, or a speaker-to-voice table when the TTS was given `speakers`. */

@@ -315,6 +315,25 @@ describe('Google Gemini TTS multi-speaker', () => {
     ]);
   });
 
+  it('keeps the speaker an utterance was created with', async () => {
+    // run() starts on a later tick (and again on retry), so a speaker switch made after
+    // synthesize() must not reach an utterance that already exists
+    const geminiTts = new TTS({
+      apiKey: 'k',
+      model: 'gemini-3.8-flash-tts',
+      speakers,
+      speaker: 'Sienna',
+    });
+    const stream = geminiTts.synthesize('Sienna?');
+    geminiTts.updateOptions({ speaker: 'Comanchero' });
+    for await (const _frame of stream) {
+      // drain
+    }
+    expect(sentContents()).toEqual([
+      { role: 'user', parts: [{ text: '"Sienna?"', speech_metadata: { speaker: 'Sienna' } }] },
+    ]);
+  });
+
   it('sends speaker and style together', async () => {
     await synthesize(
       new TTS({ apiKey: 'k', model: 'gemini-3.8-flash-lite-tts', speakers, speaker: 'Sienna' }),
