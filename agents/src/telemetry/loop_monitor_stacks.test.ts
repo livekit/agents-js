@@ -221,6 +221,29 @@ describe('BlockedSpanTracker', () => {
     session.end();
   });
 
+  it('keeps a blocking RPC when its span ends before the late heartbeat', async () => {
+    vi.useFakeTimers();
+    const T = 3_000_000;
+    vi.setSystemTime(T);
+    const tracker = new BlockedSpanTracker();
+    const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
+    const t = provider.getTracer('test');
+    const session = t.startSpan('agent_session');
+    const sessionCtx = trace.setSpan(ROOT_CONTEXT, session);
+    const audioWait = t.startSpan('wait_for_audio_track', {}, sessionCtx);
+    vi.setSystemTime(T + 15);
+    const rpc = t.startSpan('rpc_handler', {}, sessionCtx);
+    vi.setSystemTime(T + 620);
+    rpc.end(); // the synchronous RPC returns before the next heartbeat runs
+    vi.setSystemTime(T + 800);
+
+    expect(tracker.blockedSpan(T + 20, T + 720, new Set(), 20)).toBe(rpc);
+
+    audioWait.end();
+    session.end();
+    await provider.shutdown();
+  });
+
   it('ignores a span created after the window, whatever its start time claims', () => {
     const tracker = new BlockedSpanTracker();
     const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
