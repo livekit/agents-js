@@ -195,6 +195,9 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private readonly backendRunningResponses = new Map<string | null, Set<string>>();
   private readonly backendOpenCalls = new Set<string>();
   private backendResponsePending = false;
+  // every call the backend made on this connection; a call outside it was made on an earlier
+  // connection, which the current backend never saw
+  private readonly backendConnectionCalls = new Set<string>();
   private readonly delegationIds = new Set<string>();
   private readonly bstream = new AudioByteStream(SAMPLE_RATE, 1, SAMPLE_RATE / 10);
   private inputResampler?: AudioResampler;
@@ -387,6 +390,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
                 this.backendRunningResponses.clear();
                 this.backendOpenCalls.clear();
                 this.backendResponsePending = false;
+                this.backendConnectionCalls.clear();
                 this.delegationIds.clear();
                 this.usageSeconds = 0;
                 this._sessionId = undefined;
@@ -479,6 +483,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
             this.opts.connOptions.timeoutMs,
           );
           this.wsSend(ws, this.sessionStartEvent());
+          if (this.opts.delegation === 'responses') this.replayOwedResults();
         })
         .catch((error: Error) => done.resolve(error));
     });
@@ -695,6 +700,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
           calls = this.backendOpenCalls;
         }
         calls.add(item.call_id);
+        this.backendConnectionCalls.add(item.call_id);
         const call = new llm.FunctionCall({
           id: item.id ?? shortuuid('fc_'),
           callId: item.call_id,
@@ -952,7 +958,10 @@ export class GPTLiveSession extends llm.DuplexSession<{
   async _appendItems(items: llm.ChatItem[]): Promise<void> {
     this.history.insert(items);
     if (!this.sessionStartSent) return;
+    // a result for a call made on an earlier connection goes back paired with its call, so the
+    // backend continues from it
     const outputs: llm.FunctionCallOutput[] = [];
+    const replayedCalls: llm.FunctionCall[] = [];
     const lines: string[] = [];
     for (const item of items) {
       if (item.type === 'message' && (item.role === 'system' || item.role === 'developer')) {
@@ -966,6 +975,13 @@ export class GPTLiveSession extends llm.DuplexSession<{
           [...this.backendRunningResponses.values()].some((calls) => calls.has(item.callId)))
       ) {
         outputs.push(item);
+      } else if (
+        item.type === 'function_call_output' &&
+        !this.backendConnectionCalls.has(item.callId) &&
+        this.findCall(item.callId)
+      ) {
+        replayedCalls.push(this.findCall(item.callId)!);
+        outputs.push(item);
       } else {
         const rendered = renderItem(item);
         if (rendered) lines.push(`${rendered[0]}: ${rendered[1]}`);
@@ -973,9 +989,27 @@ export class GPTLiveSession extends llm.DuplexSession<{
     }
     if (lines.length)
       this.append('session.thinking.append', lines.join('\n'), null, { replayOnReconnect: false });
-    this.sendBackendOutputs(outputs);
+    this.sendBackendOutputs(outputs, replayedCalls);
   }
-  private sendBackendOutputs(outputs: llm.FunctionCallOutput[]): void {
+  private sendBackendOutputs(
+    outputs: llm.FunctionCallOutput[],
+    replayedCalls: llm.FunctionCall[],
+  ): void {
+    for (const call of replayedCalls) {
+      this.queueEvent(
+        {
+          type: 'response.item.create',
+          event_id: shortuuid('tool_call_'),
+          item: {
+            type: 'function_call',
+            call_id: call.callId,
+            name: call.name,
+            arguments: call.args,
+          },
+        } satisfies ClientEvent,
+        false,
+      );
+    }
     for (const output of outputs) {
       this.queueEvent(
         {
@@ -992,6 +1026,30 @@ export class GPTLiveSession extends llm.DuplexSession<{
       this.backendResponsePending = true;
       this.maybeContinueResponse();
     }
+  }
+  private replayOwedResults(): void {
+    // a result the conversation has not moved past is owed a continuation, but startup history
+    // only reaches the voice model: the backend needs it paired with its call. speech or a call
+    // still waiting on its own result means the model already acted on what preceded
+    const owed: llm.FunctionCallOutput[] = [];
+    for (const item of [...this.history.items].reverse()) {
+      if (item.type === 'message' && item.role === 'assistant') break;
+      if (item.type === 'function_call' && !owed.some((o) => o.callId === item.callId)) break;
+      if (item.type === 'function_call_output') owed.unshift(item);
+    }
+    const pairs = owed.flatMap((output) => {
+      const call = this.findCall(output.callId);
+      return call ? [{ call, output }] : [];
+    });
+    this.sendBackendOutputs(
+      pairs.map((p) => p.output),
+      pairs.map((p) => p.call),
+    );
+  }
+  private findCall(callId: string): llm.FunctionCall | undefined {
+    for (const item of this.history.items)
+      if (item.type === 'function_call' && item.callId === callId) return item;
+    return undefined;
   }
   /** Prompt an immediate spoken reply to instructions or the newest typed user message. */
   _generateReply(instructions?: string): void {
