@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
@@ -122,10 +122,15 @@ class MockTTS extends TTS {
 }
 
 describe('TTS FallbackAdapter', () => {
+  const unhandledRejections: unknown[] = [];
+
   beforeAll(() => {
     initializeLogger({ pretty: false });
-    // Suppress unhandled rejections from background tasks inside SynthesizeStream
-    process.on('unhandledRejection', () => {});
+    process.on('unhandledRejection', (reason) => unhandledRejections.push(reason));
+  });
+
+  beforeEach(() => {
+    unhandledRejections.length = 0;
   });
 
   it('should fall back to the next TTS when the primary stream fails before any pushText', async () => {
@@ -478,10 +483,12 @@ describe('TTS FallbackAdapter', () => {
     expect(tts.listeners('metrics_collected')).toEqual([onMetrics]);
   });
 
-  it('falls back from a failing non-streaming instance', async () => {
-    // A non-streaming instance reaches the streaming path through a
-    // StreamAdapter, so its failures arrive by a different route than a
-    // streaming instance's.
+  it('falls back from a failing non-streaming instance without leaking a rejection', async () => {
+    // A non-streaming instance is synthesized through a StreamAdapter, which
+    // re-emits the instance's errors onto itself with nothing listening —
+    // Node turns that into a synchronous throw inside the child's emitError.
+    // Both that throw and the APIError it displaces come from ChunkedStream's
+    // detached main task, so neither may escape as an unhandled rejection.
     const primary = new MockTTS('primary', SAMPLE_RATE, false);
     primary.shouldFail = true;
     const secondary = new MockTTS('secondary');
@@ -514,6 +521,7 @@ describe('TTS FallbackAdapter', () => {
 
     expect(frameCount).toBeGreaterThan(0);
     expect(adapterErrors).toEqual([]);
+    expect(unhandledRejections).toEqual([]);
 
     stream.close();
     await adapter.close();
