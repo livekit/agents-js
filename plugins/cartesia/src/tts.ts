@@ -241,9 +241,9 @@ export class TTS extends tts.TTS {
     this.#pool.prewarm();
   }
 
-  /** Drop every pooled connection; the pool reconnects on the next synthesis. */
-  override async releaseConnections(): Promise<void> {
-    await this.#pool.close();
+  /** Drop idle pooled connections; in-flight syntheses keep theirs. */
+  override async releaseIdleConnections(): Promise<void> {
+    await this.#pool.releaseIdle();
   }
 
   override async close(): Promise<void> {

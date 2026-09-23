@@ -308,8 +308,8 @@ export class FallbackAdapter extends TTS {
     await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.close()));
   }
 
-  override async releaseConnections(): Promise<void> {
-    await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.releaseConnections()));
+  override async releaseIdleConnections(): Promise<void> {
+    await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.releaseIdleConnections()));
   }
 }
 

@@ -32,7 +32,7 @@ class PooledTTS extends TTS {
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
     return new FakeSynthesizeStream(this, options?.connOptions ?? DEFAULT_API_CONNECT_OPTIONS);
   }
-  override async releaseConnections(): Promise<void> {
+  override async releaseIdleConnections(): Promise<void> {
     this.released++;
   }
 }

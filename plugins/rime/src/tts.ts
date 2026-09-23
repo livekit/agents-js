@@ -85,9 +85,12 @@ export class TTS extends tts.TTS {
     if (!this.isClosed) this.pool?.pool.prewarm();
   }
 
-  /** Drop every pooled connection; the pool reconnects on the next synthesis. */
-  override async releaseConnections(): Promise<void> {
-    if (!this.isClosed) await this.pool?.pool.close();
+  /**
+   * Retire the current pool so its idle connections close, and start a fresh one for later
+   * synthesis. Active streams keep the retired pool until they finish (see `replacePool`).
+   */
+  override async releaseIdleConnections(): Promise<void> {
+    if (!this.isClosed) this.replacePool();
   }
 
   synthesize(

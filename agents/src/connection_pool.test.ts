@@ -363,6 +363,54 @@ describe('ConnectionPool', () => {
     });
   });
 
+  describe('releaseIdle', () => {
+    it('closes idle connections and leaves checked-out ones alone', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      const idle = await pool.get();
+      pool.put(idle);
+
+      await pool.releaseIdle();
+
+      expect(closeCb).toHaveBeenCalledTimes(1);
+      expect(closeCb).toHaveBeenCalledWith(idle);
+
+      // the in-flight connection is returned and reused as usual
+      pool.put(inUse);
+      expect(await pool.get()).toBe(inUse);
+      expect(closeCb).toHaveBeenCalledTimes(1);
+    });
+
+    it('aborts a pending prewarm before it connects', async () => {
+      const connectCb = makeConnectCb();
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb, closeCb });
+
+      pool.prewarm();
+      await pool.releaseIdle();
+
+      expect(connectCb).not.toHaveBeenCalled();
+      expect(closeCb).not.toHaveBeenCalled();
+      // the pool is still usable
+      expect(await pool.get()).toBe('conn_1');
+    });
+
+    it('closes a prewarmed idle connection and stays usable', async () => {
+      const connectCb = makeConnectCb();
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb, closeCb });
+
+      pool.prewarm();
+      await vi.waitFor(() => expect(connectCb).toHaveBeenCalledTimes(1));
+      await pool.releaseIdle();
+
+      expect(closeCb).toHaveBeenCalledWith('conn_1');
+      expect(await pool.get()).toBe('conn_2');
+    });
+  });
+
   describe('close', () => {
     it('should close all connections', async () => {
       const connectCb = makeConnectCb();

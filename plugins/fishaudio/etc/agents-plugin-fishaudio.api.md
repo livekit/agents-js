@@ -54,7 +54,7 @@ export class TTS extends tts.TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
-    releaseConnections(): Promise<void>;
+    releaseIdleConnections(): Promise<void>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;

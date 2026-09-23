@@ -503,7 +503,7 @@ describeLiveKitInference('LiveKit Inference TTS integration', agents, async (har
   }
 });
 
-describe('Inference TTS releaseConnections', () => {
+describe('Inference TTS releaseIdleConnections', () => {
   it('closes pooled sockets and reconnects on the next use', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
@@ -520,7 +520,7 @@ describe('Inference TTS releaseConnections', () => {
       tts.prewarm();
       await vi.waitFor(() => expect(opened).toHaveLength(1));
 
-      await tts.releaseConnections();
+      await tts.releaseIdleConnections();
       await vi.waitFor(() => expect(closed).toHaveLength(1));
       expect(closed[0]).not.toBe(1006);
 

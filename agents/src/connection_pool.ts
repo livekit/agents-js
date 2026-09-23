@@ -224,6 +224,38 @@ export class ConnectionPool<T> {
   }
 
   /**
+   * Close every idle connection and abort a pending prewarm.
+   *
+   * Checked-out connections are left alone: their requests finish and return them to the pool as
+   * usual. Use this to drop connections that would otherwise sit idle without disturbing in-flight
+   * work, for example when the agent that owned them is done. The pool stays usable.
+   */
+  async releaseIdle(): Promise<void> {
+    if (this.prewarmController) {
+      this.prewarmController.abort();
+      this.prewarmController = undefined;
+    }
+
+    // the lock serializes with an in-flight prewarm, so its connection lands in `available`
+    // before we look
+    const unlock = await this.connectLock.lock();
+    try {
+      const idle = Array.from(this.available);
+      this.available.clear();
+      for (const conn of idle) {
+        this.connections.delete(conn);
+        this.toClose.delete(conn);
+      }
+      for (const conn of idle) {
+        await this._maybeCloseConnection(conn);
+      }
+      await this._drainToClose();
+    } finally {
+      unlock();
+    }
+  }
+
+  /**
    * Initiate prewarming of the connection pool without blocking.
    *
    * This method starts a background task that creates a new connection if none exist.

@@ -304,6 +304,18 @@ class WSConnectionPool {
       this.#ws = undefined;
     }
   }
+
+  /** Close the socket only when no stream has a context registered on it. */
+  async releaseIdle(): Promise<void> {
+    if (this.#connecting) {
+      try {
+        await this.#connecting;
+      } catch {
+        return; // nothing to release
+      }
+    }
+    if (this.#listeners.size === 0) this.close();
+  }
 }
 
 export class TTS extends tts.TTS {
@@ -395,10 +407,9 @@ export class TTS extends tts.TTS {
     this.#pool.close();
   }
 
-  /** Drop every pooled connection; a fresh pool reconnects on the next synthesis. */
-  override async releaseConnections(): Promise<void> {
-    this.#pool.close();
-    this.#pool = new WSConnectionPool(this.#opts.wsURL, this.#authorization);
+  /** Close the shared socket if no synthesis is using it; it reconnects on the next one. */
+  override async releaseIdleConnections(): Promise<void> {
+    await this.#pool.releaseIdle();
   }
 }
 

@@ -5273,10 +5273,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   /**
-   * An agent-owned TTS is done once its activity closes: drop its pooled provider connections so
-   * they do not idle until the process exits. Skipped when the next activity synthesizes with the
-   * same instance, and never applied to the session TTS, which outlives every activity and keeps
-   * its connections warm for the next agent.
+   * An agent-owned TTS is done once its activity closes: drop its idle pooled provider connections
+   * so they do not linger until the process exits. Skipped when the next activity synthesizes with
+   * the same instance, and never applied to the session TTS, which outlives every activity and
+   * keeps its connections warm for the next agent. Only idle connections go, so a synthesis still
+   * running elsewhere on a shared instance is unaffected.
    */
   private async _releaseAgentTts(): Promise<void> {
     const tts = this.tts;
@@ -5285,7 +5286,7 @@ export class AgentActivity implements RecognitionHooks {
     if (tts === this.agentSession.tts) return;
     if (this._ttsSharedWithNextActivity) return;
     try {
-      await tts.releaseConnections();
+      await tts.releaseIdleConnections();
     } catch (error) {
       this.logger.warn({ error, tts: tts.label }, 'failed to release agent TTS connections');
     }
