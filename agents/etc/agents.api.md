@@ -7875,7 +7875,7 @@ class StreamAdapter extends STT {
 //
 // @public (undocumented)
 class StreamAdapter_2 extends TTS {
-    constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer);
+    constructor(tts: TTS, sentenceTokenizer?: SentenceTokenizer);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
@@ -7890,6 +7890,10 @@ class StreamAdapter_2 extends TTS {
     }): StreamAdapterWrapper_2;
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
+    // @internal
+    _tokenizerFor(options: {
+        lowering: boolean;
+    }): SentenceTokenizer;
 }
 
 // Warning: (ae-missing-release-tag) "StreamAdapterWrapper" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { TTS as InferenceTTS } from '../inference/tts.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
+import type { SentenceTokenizer } from '../tokenize/tokenizer.js';
 import { StreamAdapter } from '../tts/stream_adapter.js';
 import { TTS } from '../tts/tts.js';
 import { Agent } from './agent.js';
@@ -147,6 +148,43 @@ describe('expressive needs a TTS the framework can lower for', () => {
       expect(wrapped.expressive).toBe(false);
     } finally {
       stream.close();
+      await adapter.close();
+    }
+  });
+});
+
+describe('StreamAdapter tokenizer while lowering', () => {
+  it('tokenizes xml-aware while lowering', async () => {
+    // a marker split across two tokens would be lowered as two halves. Labels are
+    // free-form English and may contain a period, which an unguarded sentence tokenizer
+    // treats as a boundary. The framework passes an xml-aware tokenizer when it builds the
+    // adapter; a caller using the default has to get one too.
+    const marked = '<expr type="expression" label="Calm. Steady"/> All set.';
+    const tokens = async (tokenizer: SentenceTokenizer): Promise<string[]> => {
+      const stream = tokenizer.stream();
+      stream.pushText(marked);
+      stream.endInput();
+      const out: string[] = [];
+      for await (const ev of stream) out.push(ev.token);
+      stream.close();
+      return out;
+    };
+
+    const adapter = new StreamAdapter(new DeclaringTTS(false));
+    try {
+      expect(await tokens(adapter._tokenizerFor({ lowering: true }))).toEqual([marked]);
+      // the default splits it mid-tag, which is why lowering needs its own
+      expect(await tokens(adapter._tokenizerFor({ lowering: false }))).not.toEqual([marked]);
+      // one tokenizer, reused across syntheses
+      expect(adapter._tokenizerFor({ lowering: true })).toBe(
+        adapter._tokenizerFor({ lowering: true }),
+      );
+
+      const mine = new BasicSentenceTokenizer();
+      const explicit = new StreamAdapter(new DeclaringTTS(false), mine);
+      expect(explicit._tokenizerFor({ lowering: true })).toBe(mine); // never second-guessed
+      await explicit.close();
+    } finally {
       await adapter.close();
     }
   });

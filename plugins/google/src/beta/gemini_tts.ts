@@ -431,6 +431,9 @@ export class ChunkedStream extends tts.ChunkedStream {
     const markup = this.#tts.markup;
     // the stream adapter has already lowered; a direct synthesize() call has not
     const text = markup.convert(markup.normalize(this.inputText));
+    // whatever `convert` lowered only exists here, so these parts are the only copy of it
+    // — handing back undefined would send the raw input, markers and all
+    const lowered = text !== this.inputText;
     // slice at each marker, keeping it at the head of its span so the shared splitter reads
     // the label off it
     const bounds = [
@@ -466,9 +469,10 @@ export class ChunkedStream extends tts.ChunkedStream {
     }
 
     // a span with no direction is still a part: dropping the whole request over it would
-    // send the raw text, markers and all, for Gemini to read out. Only hand back undefined
-    // when nothing has to travel out of band at all.
-    if (!parts.length || !(strippedAMarker || parts.some((p) => 'speech_metadata' in p))) {
+    // send the raw text for Gemini to read out. Only hand back undefined when the input
+    // carried no markup at all, where the plain prompt says the same thing.
+    const carriesMarkup = lowered || strippedAMarker;
+    if (!parts.length || !(carriesMarkup || parts.some((p) => 'speech_metadata' in p))) {
       return undefined;
     }
     return parts;
@@ -529,7 +533,8 @@ function speechConfig(opts: TTSOptions): types.SpeechConfig {
 }
 
 function assertKnownSpeaker(speaker: string, speakers: Record<string, string>): void {
-  if (!(speaker in speakers)) {
+  // own keys only: `in` also sees inherited members, so "toString" would pass
+  if (!Object.hasOwn(speakers, speaker)) {
     throw new Error(
       `speaker '${speaker}' is not one of the configured speakers: ` +
         Object.keys(speakers).sort().join(', '),

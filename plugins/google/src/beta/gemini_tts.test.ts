@@ -248,6 +248,28 @@ describe('Google Gemini TTS expressive markup', () => {
   });
 });
 
+describe('Google Gemini TTS lowered markup', () => {
+  beforeEach(() => {
+    generateContentStream.mockReset();
+    generateContentStream.mockImplementation(async function* () {
+      yield buildResponseChunk(Buffer.alloc(4800));
+    });
+  });
+
+  it.each([
+    ['Hello <expr type="sound" label="laugh"/> there.', '"Hello <laugh> there."'],
+    ['Hello <expr type="break" label="300ms"/> there.', '"Hello <short pause> there."'],
+    ['Say <expr type="prosody" label="emphasis">this</expr> now.', '"Say THIS now."'],
+  ])('sends lowered markup even without a style: %s', async (written, spoken) => {
+    // conversion happens here, so these parts are the only copy of its result. A direct
+    // synthesize() gets text the stream adapter never lowered; falling back to the plain
+    // prompt would send the raw input and let Gemini read the markup out loud
+    await synthesize(new TTS({ apiKey: 'k', model: 'gemini-3.8-flash-tts' }), written);
+    // no style to carry, so no speech_metadata — but the lowered words still travel
+    expect(sentContents()).toEqual([{ role: 'user', parts: [{ text: spoken }] }]);
+  });
+});
+
 describe('Google Gemini TTS multi-speaker', () => {
   const speakers = { Sienna: 'Kore', Comanchero: 'Puck' };
 
@@ -278,6 +300,10 @@ describe('Google Gemini TTS multi-speaker', () => {
     }
 
     expect(() => new TTS({ apiKey: 'k', model, speakers, speaker: 'Nobody' })).toThrow(
+      'not one of the configured speakers',
+    );
+    // only configured names count, not members every object inherits
+    expect(() => new TTS({ apiKey: 'k', model, speakers, speaker: 'toString' })).toThrow(
       'not one of the configured speakers',
     );
 

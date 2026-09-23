@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TTSMetrics } from '../metrics/base.js';
-import type { SentenceStream, SentenceTokenizer } from '../tokenize/index.js';
+import { type SentenceStream, type SentenceTokenizer, basic } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Task } from '../utils.js';
@@ -14,6 +14,8 @@ import { SynthesizeStream, TTS } from './tts.js';
 export class StreamAdapter extends TTS {
   #tts: TTS;
   #sentenceTokenizer: SentenceTokenizer;
+  #explicitTokenizer: boolean;
+  #markupTokenizer?: SentenceTokenizer;
   label: string;
 
   #forwardMetrics = (metrics: TTSMetrics) => {
@@ -24,10 +26,11 @@ export class StreamAdapter extends TTS {
     this.emit('error', error);
   };
 
-  constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer) {
+  constructor(tts: TTS, sentenceTokenizer?: SentenceTokenizer) {
     super(tts.sampleRate, tts.numChannels, { streaming: true, alignedTranscript: true });
     this.#tts = tts;
-    this.#sentenceTokenizer = sentenceTokenizer;
+    this.#explicitTokenizer = sentenceTokenizer !== undefined;
+    this.#sentenceTokenizer = sentenceTokenizer ?? new basic.SentenceTokenizer();
     this.label = this.#tts.label;
     this.label = `tts.StreamAdapter<${this.#tts.label}>`;
 
@@ -51,6 +54,26 @@ export class StreamAdapter extends TTS {
     this.#tts._setExpressive(enabled);
   }
 
+  /**
+   * The sentence tokenizer for one synthesis.
+   *
+   * A marker must never be split across two tokens — the sentence-level lowering in
+   * `StreamAdapterWrapper` would see half a tag and send the halves on as words. A
+   * label is free-form English and may well contain a period, so an unguarded tokenizer
+   * really does split them. The framework passes an xml-aware tokenizer when it builds the
+   * adapter itself; a caller relying on the default gets one here, and only while markup is
+   * actually flowing, so a plain turn never pays the stray-`<` stall.
+   *
+   * @internal
+   */
+  _tokenizerFor(options: { lowering: boolean }): SentenceTokenizer {
+    if (!options.lowering || this.#explicitTokenizer) {
+      return this.#sentenceTokenizer;
+    }
+    this.#markupTokenizer ??= new basic.SentenceTokenizer({ xmlAware: true });
+    return this.#markupTokenizer;
+  }
+
   async close(): Promise<void> {
     this.#tts.off('metrics_collected', this.#forwardMetrics);
     this.#tts.off('error', this.#forwardError);
@@ -66,7 +89,13 @@ export class StreamAdapter extends TTS {
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): StreamAdapterWrapper {
-    return new StreamAdapterWrapper(this.#tts, this.#sentenceTokenizer, options?.connOptions);
+    // decided now, alongside the wrapper's own snapshot of the expressive flag
+    const lowering = !!this.#tts.markup.providerKey && this.#tts.expressive;
+    return new StreamAdapterWrapper(
+      this.#tts,
+      this._tokenizerFor({ lowering }),
+      options?.connOptions,
+    );
   }
 }
 
