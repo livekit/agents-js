@@ -5264,8 +5264,12 @@ export class AgentActivity implements RecognitionHooks {
       await this.cancelSpeechPause({ interrupt: false });
       this.cancelSpeechPauseTask = undefined;
 
-      await this._closeSessionResources();
-      await this._releaseAgentTts();
+      try {
+        await this._closeSessionResources();
+      } finally {
+        // a provider that fails to close must not leave the agent's pooled connections warm
+        await this._releaseAgentTts();
+      }
       await this._toolExecutor.aclose();
 
       if (this._mainTask) {
