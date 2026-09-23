@@ -141,6 +141,18 @@ export type TTSCallbacks = {
   ['error']: (error: TTSError) => void;
 };
 
+/** Internal queue hook used to observe output synchronously at the producer boundary. */
+class ObservedAsyncIterableQueue<T> extends AsyncIterableQueue<T> {
+  constructor(private readonly onPut: (item: T) => void) {
+    super();
+  }
+
+  override put(item: T): void {
+    super.put(item);
+    this.onPut(item);
+  }
+}
+
 /**
  * Time at which text was first sent to the TTS provider, captured on both
  * clocks used for TTFB accounting: `time` on the `performance.now()` scale
@@ -298,9 +310,13 @@ export abstract class SynthesizeStream
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   static readonly END_OF_STREAM = Symbol('END_OF_STREAM');
   protected input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<
+  protected queue = new ObservedAsyncIterableQueue<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
-  >();
+  >((item) => {
+    if (item !== SynthesizeStream.END_OF_STREAM) {
+      this.#attemptAudioPushed = true;
+    }
+  });
   protected output = new AsyncIterableQueue<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >();
@@ -329,6 +345,9 @@ export abstract class SynthesizeStream
   #currentAttemptSpan?: Span;
   #startedTime?: number;
   #startedHrTime?: bigint;
+  #attemptAudioPushed = false;
+  #inputBuffer: Array<string | typeof SynthesizeStream.FLUSH_SENTINEL> = [];
+  #inputEnded = false;
 
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
@@ -384,6 +403,7 @@ export abstract class SynthesizeStream
     });
 
     for (let i = 0; i < this.connOptions.maxRetry + 1; i++) {
+      this.#attemptAudioPushed = false;
       try {
         return await tracer.startActiveSpan(
           async (attemptSpan) => {
@@ -414,9 +434,17 @@ export abstract class SynthesizeStream
               message: `failed to generate TTS completion after ${this.connOptions.maxRetry + 1} attempts`,
               options: { retryable: false },
             });
+          } else if (this.#attemptAudioPushed) {
+            this.emitError({ error, recoverable: false });
+            this.logger.warn(
+              { tts: this.#tts.label, attempt: i + 1, error },
+              'failed to synthesize speech after emitting audio, not retrying',
+            );
+            throw error;
           } else {
             // Don't emit error event for recoverable errors during retry loop
             // to avoid ERR_UNHANDLED_ERROR or premature session termination
+            this.resetInputForRetry();
             this.logger.warn(
               { tts: this.#tts.label, attempt: i + 1, error },
               `failed to synthesize speech, retrying in ${retryInterval}ms`,
@@ -448,6 +476,20 @@ export abstract class SynthesizeStream
       error,
       recoverable,
     });
+  }
+
+  private resetInputForRetry() {
+    if (this.closed) {
+      return;
+    }
+
+    this.input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
+    for (const item of this.#inputBuffer) {
+      this.input.put(item);
+    }
+    if (this.#inputEnded) {
+      this.input.close();
+    }
   }
 
   /**
@@ -661,6 +703,7 @@ export abstract class SynthesizeStream
       return;
     }
 
+    this.#inputBuffer.push(text);
     this.input.put(text);
   }
 
@@ -676,6 +719,7 @@ export abstract class SynthesizeStream
       return;
     }
 
+    this.#inputBuffer.push(SynthesizeStream.FLUSH_SENTINEL);
     this.input.put(SynthesizeStream.FLUSH_SENTINEL);
   }
 
@@ -688,6 +732,7 @@ export abstract class SynthesizeStream
       return;
     }
 
+    this.#inputEnded = true;
     this.input.close();
   }
 
