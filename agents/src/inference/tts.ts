@@ -611,6 +611,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
   }
 
   protected async run(): Promise<void> {
+    this.heldTokens = [];
     let closing = false;
     let lastFrame: AudioFrame | undefined;
     // Timestamps are delivered in their own WS message; buffer them and attach

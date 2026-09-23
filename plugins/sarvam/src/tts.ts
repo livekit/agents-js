@@ -458,14 +458,12 @@ export class ChunkedStream extends tts.ChunkedStream {
 
 export class SynthesizeStream extends tts.SynthesizeStream {
   private opts: ResolvedTTSOptions;
-  private tokenizer: tokenize.SentenceStream;
   #logger = log();
   label = 'sarvam.SynthesizeStream';
 
   constructor(tts: TTS, opts: ResolvedTTSOptions) {
     super(tts);
     this.opts = opts;
-    this.tokenizer = opts.sentenceTokenizer.stream();
   }
 
   private async closeWebSocket(ws: WebSocket): Promise<void> {
@@ -506,6 +504,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   protected async run() {
     const requestId = shortuuid();
     const segmentId = shortuuid();
+    const tokenizer = this.opts.sentenceTokenizer.stream();
 
     // Build WS URL: wss://api.sarvam.ai/text-to-speech/ws?model=...&send_completion_event=true
     const wsBaseUrl = this.opts.baseURL.replace(/^http/, 'ws');
@@ -549,17 +548,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const inputTask = async () => {
       for await (const data of this.input) {
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          this.tokenizer.flush();
+          tokenizer.flush();
           continue;
         }
-        this.tokenizer.pushText(data);
+        tokenizer.pushText(data);
       }
-      this.tokenizer.endInput();
-      this.tokenizer.close();
+      tokenizer.endInput();
+      tokenizer.close();
     };
 
     const sendTask = async () => {
-      for await (const event of this.tokenizer) {
+      for await (const event of tokenizer) {
         if (this.abortController.signal.aborted) break;
 
         const text = event.token;
@@ -638,15 +637,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         ws.on('close', () => {
           if (!finalReceived) {
-            for (const frame of bstream.flush()) {
-              sendLastFrame(false);
-              lastFrame = frame;
-            }
-            sendLastFrame(true);
-
-            if (!this.queue.closed) {
-              this.queue.put(SynthesizeStream.END_OF_STREAM);
-            }
+            reject(new APIConnectionError({ message: 'Sarvam TTS WebSocket closed unexpectedly' }));
+            return;
           }
           resolve();
         });
@@ -661,13 +653,22 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
     };
 
+    const tasks = [inputTask(), sendTask(), recvTask()];
     try {
-      await Promise.all([inputTask(), sendTask(), recvTask()]);
+      await Promise.all(tasks);
     } catch (e) {
+      if (!this.input.closed) this.input.close();
+      tokenizer.close();
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      await Promise.allSettled(tasks);
+
       if (this.abortController.signal.aborted) return;
       const msg = e instanceof Error ? e.message : String(e);
       throw new APIConnectionError({ message: `Sarvam TTS streaming failed: ${msg}` });
     } finally {
+      tokenizer.close();
       await this.closeWebSocket(ws);
     }
   }
