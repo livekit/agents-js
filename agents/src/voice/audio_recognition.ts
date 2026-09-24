@@ -1272,10 +1272,11 @@ export class AudioRecognition {
     // the interim is more likely noise the provider retracted, so it is left alone.
     const emptyFinal =
       ev.type === SpeechEventType.FINAL_TRANSCRIPT ? ev.alternatives?.[0] : undefined;
-    // The latest of the two, unless the preflight is only an increment of the segment: then the
-    // interim, which carries the whole segment.
+    // The latest of the two, unless the preflight is only an increment of the segment and an
+    // interim carries the whole segment. Increments add up, so without an interim they are the
+    // segment's text so far.
     const pendingText =
-      this.preflightIsLatest && !this.lastPreflightIncremental
+      this.preflightIsLatest && (!this.lastPreflightIncremental || !this.lastInterimText)
         ? this.lastPreflightText
         : this.lastInterimText;
     if (
@@ -1412,8 +1413,12 @@ export class AudioRecognition {
         this.audioPreflightTranscript =
           `${this.audioTranscript} ${preflightTranscript}`.trimStart();
         this.audioInterimTranscript = preflightTranscript;
-        this.lastPreflightText = preflightTranscript;
-        this.lastPreflightIncremental = ev.incremental === true;
+        const incremental = ev.incremental === true;
+        this.lastPreflightText =
+          incremental && this.lastPreflightIncremental && this.lastPreflightText
+            ? `${this.lastPreflightText} ${preflightTranscript}`
+            : preflightTranscript;
+        this.lastPreflightIncremental = incremental;
         this.preflightIsLatest = true;
 
         if (useSTTSpeakingTime) {

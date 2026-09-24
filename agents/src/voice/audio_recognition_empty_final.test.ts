@@ -318,6 +318,33 @@ describe('AudioRecognition with an empty final transcript', () => {
     },
   );
 
+  it.each([
+    { name: 'one chunk', chunks: ['Pick up'] },
+    { name: 'chunks that add up', chunks: ['Pick', 'up'] },
+  ])('promotes incremental preflights when no interim came ($name)', async ({ chunks }) => {
+    // the AssemblyAI plugin emits an interim only when a Turn has words, but a preflight
+    // whenever it has an utterance
+    const { ar, hooks, stt, vadPush, vad } = await startRecognition();
+    try {
+      await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
+      for (const chunk of chunks) {
+        await stt({
+          ...transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, chunk),
+          incremental: true,
+        });
+      }
+      await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(hooks.onEndOfTurn).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(hooks.onEndOfTurn).mock.calls[0]![0].newTranscript).toBe('Pick up');
+    } finally {
+      await closeRecognition(ar, vad);
+    }
+  });
+
   it('promotes a full-segment preflight that drops leading words of the interim', async () => {
     const { ar, hooks, stt, vadPush, vad } = await startRecognition();
     try {
