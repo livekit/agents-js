@@ -1,0 +1,21 @@
+agents/src/voice/audio_recognition_interruption.test.ts
+  s_460a57d3a2bf17::t_c3a734401a0f8f 196-215
+agents/src/voice/audio_recognition.ts
+  s_460a57d3a2bf17::t_c3a734401a0f8f 1001-1002
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "01d702a91d506a9c8214b4abdcdca0a73a148d88",
+  "prompts": {},
+  "sessions": {
+    "s_460a57d3a2bf17": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d36d-7c5d-7b61-80a3-73dfe1370fbc",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
