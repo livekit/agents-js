@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentServer, ServerOptions } from './worker.js';
+import { AgentServer, ServerOptions, deploymentFromEnv } from './worker.js';
 
 vi.mock('./inference/_warmup.js', () => ({
   _getLocalInferenceModule: () => undefined,
@@ -114,5 +114,19 @@ describe('ServerOptions agentName from livekit.toml', () => {
     expect(new ServerOptions({ agent: 'test-agent.js', production: true }).agentName).toBe('');
     writeFileSync('livekit.toml', '[agent\nname = ');
     expect(new ServerOptions({ agent: 'test-agent.js', production: true }).agentName).toBe('');
+  });
+});
+
+describe('deploymentFromEnv', () => {
+  it('reads LIVEKIT_AGENT_DEPLOYMENT', () => {
+    expect(deploymentFromEnv({ LIVEKIT_AGENT_DEPLOYMENT: 'dev-1234' })).toBe('dev-1234');
+  });
+
+  it('treats production as the default deployment', () => {
+    expect(deploymentFromEnv({ LIVEKIT_AGENT_DEPLOYMENT: 'production' })).toBe('');
+  });
+
+  it('defaults to empty when unset', () => {
+    expect(deploymentFromEnv({})).toBe('');
   });
 });
