@@ -1,0 +1,19 @@
+.changeset/warm-transfer-recipient-dialing.md
+  s_2461ceafdb7d32::t_797188c56615ca 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8f4ce6ecf5121d086fdcf345afa05b4f3364eb1",
+  "prompts": {},
+  "sessions": {
+    "s_2461ceafdb7d32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c576-2ef6-70d0-a26e-a53969369e54",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
