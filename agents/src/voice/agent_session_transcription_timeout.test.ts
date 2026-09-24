@@ -257,7 +257,7 @@ describe('AgentSession commitInterimOnEmptyFinal with chunked preflights', () =>
   it('commits the whole interim, not the chunk, for an STT that sends incremental preflights', async () => {
     const vad = new ScriptedVAD();
     const stt = new FakeSTT({
-      capabilities: { streaming: true, interimResults: true, incrementalPreflight: true },
+      capabilities: { streaming: true, interimResults: true },
       fakeUserSpeeches: [
         {
           startTime: 0,
@@ -265,6 +265,7 @@ describe('AgentSession commitInterimOnEmptyFinal with chunked preflights', () =>
           transcript: 'pick up',
           sttDelay: 200,
           preflightTranscript: 'up',
+          preflightIncremental: true,
           finalTranscript: '',
         },
       ],

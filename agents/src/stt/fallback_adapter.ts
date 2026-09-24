@@ -146,7 +146,6 @@ export class FallbackAdapter extends STT {
       alignedTranscript,
       keyterms: wrapped.some((s) => !!s.capabilities.keyterms),
       chatContext: wrapped.some((s) => !!s.capabilities.chatContext),
-      incrementalPreflight: wrapped.some((s) => !!s.capabilities.incrementalPreflight),
     });
 
     this.sttInstances = wrapped;

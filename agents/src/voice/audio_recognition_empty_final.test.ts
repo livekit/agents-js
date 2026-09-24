@@ -226,20 +226,14 @@ describe('AudioRecognition with an empty final transcript', () => {
     }
   });
 
-  it('promotes the interim over a chunked preflight when the STT sends chunks', async () => {
+  it('promotes the interim over an incremental preflight', async () => {
     // AssemblyAI's plugin sends the turn's words as the interim and only the words since the
-    // last preflight as the preflight; its first chunk starts where the interim starts.
-    const { ar, hooks, stt, vadPush, vad } = await startRecognition({
-      getSttCapabilities: () => ({
-        streaming: true,
-        interimResults: true,
-        incrementalPreflight: true,
-      }),
-    });
+    // last preflight as the preflight, and marks those preflights incremental.
+    const { ar, hooks, stt, vadPush, vad } = await startRecognition();
     try {
       await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
       await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'Pick up'));
-      await stt(transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'up'));
+      await stt({ ...transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'up'), incremental: true });
       await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
       await vi.advanceTimersByTimeAsync(1_000);
       await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
@@ -337,6 +331,31 @@ describe('AudioRecognition with an empty final transcript', () => {
       await vi.advanceTimersByTimeAsync(2_000);
       expect(hooks.onEndOfTurn).toHaveBeenCalledTimes(1);
       expect(vi.mocked(hooks.onEndOfTurn).mock.calls[0]![0].newTranscript).toBe('pick up');
+    } finally {
+      await closeRecognition(ar, vad);
+    }
+  });
+
+  it("does not carry the replaced STT's interim into the new STT's empty final", async () => {
+    const { ar, hooks, stt, vadPush, vad } = await startRecognition();
+    try {
+      await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
+      await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'yes'));
+
+      let nextController!: ReadableStreamDefaultController<SpeechEvent | string>;
+      const nextNode: STTNode = async () =>
+        new ReadableStream<SpeechEvent | string>({
+          start(controller) {
+            nextController = controller;
+          },
+        });
+      await ar.updateStt(nextNode, { resetContext: true });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
+      nextController.enqueue(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
     } finally {
       await closeRecognition(ar, vad);
     }

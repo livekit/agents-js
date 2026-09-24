@@ -119,6 +119,11 @@ export interface SpeechEvent {
   speechEndTime?: number;
   requestId?: string;
   recognitionUsage?: RecognitionUsage;
+  /**
+   * For `PREFLIGHT_TRANSCRIPT`: the transcript carries only the words since the previous
+   * preflight instead of the whole segment so far.
+   */
+  incremental?: boolean;
 }
 
 /**
@@ -143,11 +148,6 @@ export interface STTCapabilities {
   keyterms?: boolean;
   /** Whether the STT can natively consume conversation context (see STT._pushConversationItem) */
   chatContext?: boolean;
-  /**
-   * Whether a preflight transcript carries only the words since the previous preflight instead
-   * of the whole segment so far.
-   */
-  incrementalPreflight?: boolean;
 }
 
 export interface STTError {

@@ -37,7 +37,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
-import { type STTCapabilities, type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import type { Future } from '../utils.js';
@@ -306,8 +306,6 @@ export interface AudioRecognitionOptions {
   transcriptionTimeout?: number | null;
   /** See `AgentSessionOptions.commitInterimOnEmptyFinal`. */
   commitInterimOnEmptyFinal?: boolean;
-  /** Getter for the active STT's capabilities; the STT can change during the session. */
-  getSttCapabilities?: () => STTCapabilities | undefined;
 }
 
 /**
@@ -365,10 +363,11 @@ export class AudioRecognition {
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
   private audioInterimTranscript = '';
-  // Latest interim and preflight texts of the open segment, and which arrived last, for an
-  // empty final to fall back on.
+  // Latest interim and preflight texts of the open segment, which arrived last, and whether the
+  // preflight was incremental, for an empty final to fall back on.
   private lastInterimText = '';
   private lastPreflightText = '';
+  private lastPreflightIncremental = false;
   private preflightIsLatest = false;
   private audioPreflightTranscript = '';
   private finalTranscriptConfidence: number[] = [];
@@ -381,7 +380,6 @@ export class AudioRecognition {
   private vadSpeechStarted = false;
   private transcriptionTimeout?: number;
   private commitInterimOnEmptyFinal: boolean;
-  private getSttCapabilities?: () => STTCapabilities | undefined;
   private transcriptionTimeoutTimer?: ReturnType<typeof setTimeout>;
   private turnSpeechDuration = 0;
   private turnTranscriptReceived = false;
@@ -472,7 +470,6 @@ export class AudioRecognition {
     this.getLinkedParticipant = opts.getLinkedParticipant;
     this.transcriptionTimeout = opts.transcriptionTimeout ?? undefined;
     this.commitInterimOnEmptyFinal = opts.commitInterimOnEmptyFinal ?? false;
-    this.getSttCapabilities = opts.getSttCapabilities;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.interruptionDetection = opts.interruptionDetection;
@@ -736,6 +733,8 @@ export class AudioRecognition {
         this.transcriptBuffer = [];
         this.ignoreUserTranscriptUntil = undefined;
       }
+      // the replaced STT's segment ends with its stream
+      this.resetPendingSegment();
 
       await this.stopSttTasks();
       await this.sttPipeline?.close();
@@ -1273,10 +1272,10 @@ export class AudioRecognition {
     // the interim is more likely noise the provider retracted, so it is left alone.
     const emptyFinal =
       ev.type === SpeechEventType.FINAL_TRANSCRIPT ? ev.alternatives?.[0] : undefined;
-    // The latest of the two, unless the STT's preflights are increments of the segment: then
-    // the interim, which carries the whole segment.
+    // The latest of the two, unless the preflight is only an increment of the segment: then the
+    // interim, which carries the whole segment.
     const pendingText =
-      this.preflightIsLatest && !this.getSttCapabilities?.()?.incrementalPreflight
+      this.preflightIsLatest && !this.lastPreflightIncremental
         ? this.lastPreflightText
         : this.lastInterimText;
     if (
@@ -1414,6 +1413,7 @@ export class AudioRecognition {
           `${this.audioTranscript} ${preflightTranscript}`.trimStart();
         this.audioInterimTranscript = preflightTranscript;
         this.lastPreflightText = preflightTranscript;
+        this.lastPreflightIncremental = ev.incremental === true;
         this.preflightIsLatest = true;
 
         if (useSTTSpeakingTime) {
@@ -2588,6 +2588,7 @@ export class AudioRecognition {
   private resetPendingSegment(): void {
     this.lastInterimText = '';
     this.lastPreflightText = '';
+    this.lastPreflightIncremental = false;
     this.preflightIsLatest = false;
   }
 

@@ -41,6 +41,8 @@ export interface FakeUserSpeech {
   finalTranscript?: string;
   /** Preflight transcript sent right after the interim. */
   preflightTranscript?: string;
+  /** Marks the preflight as carrying only the words since the previous preflight. */
+  preflightIncremental?: boolean;
 }
 
 /** Scale every timing field by `factor` — useful for speeding up tests. */
@@ -112,7 +114,6 @@ export class FakeSTT extends STT {
       interimResults: opts.capabilities?.interimResults ?? false,
       diarization: opts.capabilities?.diarization ?? false,
       alignedTranscript: opts.capabilities?.alignedTranscript ?? false,
-      incrementalPreflight: opts.capabilities?.incrementalPreflight ?? false,
     });
     this.label = opts.label ?? 'fake-stt';
     this._fakeException = opts.fakeException ?? null;
@@ -331,6 +332,7 @@ export class FakeRecognizeStream extends SpeechStream {
       if (speech.preflightTranscript !== undefined) {
         this.queue.put({
           type: SpeechEventType.PREFLIGHT_TRANSCRIPT,
+          ...(speech.preflightIncremental ? { incremental: true } : {}),
           alternatives: [
             {
               text: speech.preflightTranscript,

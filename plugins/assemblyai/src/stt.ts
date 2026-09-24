@@ -265,7 +265,6 @@ export class STT extends stt.STT {
       interimResults: true,
       alignedTranscript: 'word',
       keyterms: true,
-      incrementalPreflight: true,
       chatContext: (opts.agentContextCarryover ?? true) && supportsCarryover,
     });
 
@@ -760,6 +759,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       this.queue.put({
         type: stt.SpeechEventType.PREFLIGHT_TRANSCRIPT,
+        incremental: true,
         alternatives: [
           {
             language,

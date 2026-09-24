@@ -178,6 +178,46 @@ describe('AssemblyAI STT metadata', () => {
     }
   });
 
+  it('marks preflight transcripts as incremental', async () => {
+    // `utterance` carries only the words since the previous preflight
+    const { wss, baseUrl } = await startWebSocketServer();
+    let connected = false;
+    wss.on('connection', (ws) => {
+      connected = true;
+      ws.on('message', () => {
+        ws.send(
+          JSON.stringify(
+            turnMessage({ transcript: 'hello', utterance: 'hello', end_of_turn: true }),
+          ),
+        );
+      });
+    });
+
+    try {
+      const stream = new STT({ apiKey: 'test-key', baseUrl }).stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      await waitUntil(() => connected);
+      stream.pushFrame(makeFrame());
+      stream.endInput();
+
+      const events = await collectUntilEnd(stream);
+      stream.close();
+
+      expect(
+        events
+          .filter((event) => event.alternatives?.[0])
+          .map((event) => [event.type, event.incremental]),
+      ).toEqual([
+        [sttLib.SpeechEventType.INTERIM_TRANSCRIPT, undefined],
+        [sttLib.SpeechEventType.PREFLIGHT_TRANSCRIPT, true],
+        [sttLib.SpeechEventType.FINAL_TRANSCRIPT, undefined],
+      ]);
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('surfaces end-of-turn confidence on interim metadata', async () => {
     const transcript = await collectTranscript(
       turnMessage({ end_of_turn_confidence: 0.55 }),

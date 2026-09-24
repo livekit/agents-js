@@ -123,20 +123,6 @@ describe('FallbackAdapter', () => {
     expect(adapter.capabilities.streaming).toBe(true);
   });
 
-  it('reports incremental preflights when any instance sends them', () => {
-    const chunked = new FakeSTT({
-      label: 'chunked',
-      capabilities: { streaming: true, interimResults: true, incrementalPreflight: true },
-    });
-    const whole = new FakeSTT({ label: 'whole' });
-    expect(
-      new FallbackAdapter({ sttInstances: [whole, chunked] }).capabilities.incrementalPreflight,
-    ).toBe(true);
-    expect(new FallbackAdapter({ sttInstances: [whole] }).capabilities.incrementalPreflight).toBe(
-      false,
-    );
-  });
-
   it('_recognize falls through to the next instance on error', async () => {
     const primary = new FakeSTT({
       label: 'primary',
