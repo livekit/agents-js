@@ -1,0 +1,27 @@
+examples/src/connectors/connectors.test.ts
+  s_2461ceafdb7d32::t_9a5a07162e1eac 1-141
+examples/src/connectors/twilio_connector.ts
+  s_2461ceafdb7d32::t_6df16e095d749a 23,168
+examples/src/twilio_connector_warm_transfer.ts
+  s_2461ceafdb7d32::t_6df16e095d749a 74-75
+examples/src/connectors/whatsapp_connector.ts
+  s_2461ceafdb7d32::t_6df16e095d749a 211,236-245,252,294
+agents/src/workflows/twilio_connector_warm_transfer_lifecycle.test.ts
+  s_2461ceafdb7d32::t_d91a8919fe5d2d 6,9,259-288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "887a5d11f19e3a855ffae5d8cebf9a12b66b6718",
+  "prompts": {},
+  "sessions": {
+    "s_2461ceafdb7d32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c576-2ef6-70d0-a26e-a53969369e54",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
