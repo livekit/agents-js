@@ -50,6 +50,12 @@ const PROJECT_TYPE = 'nodejs';
 // worker that omits it is treated as legacy and registered without its deployment.
 const WORKER_PROTOCOL_VERSION = 1;
 
+/** @internal The server keys worker pools by the raw value; production is `''`. */
+export function deploymentFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  const deployment = env.LIVEKIT_AGENT_DEPLOYMENT || '';
+  return deployment === 'production' ? '' : deployment;
+}
+
 let localEotRunnerRegistered = false;
 /**
  * Register the local audio-EOT inference runner so it runs in the shared
@@ -358,7 +364,7 @@ export class AgentServer {
   #opts: ServerOptions;
   #procPool: ProcPool;
 
-  #deployment = process.env.LIVEKIT_AGENT_DEPLOYMENT || '';
+  #deployment = deploymentFromEnv();
   #id = 'unregistered';
   #closed = true;
   #draining = false;
