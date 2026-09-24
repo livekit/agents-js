@@ -104,34 +104,45 @@ function intersection<T>(set1: Set<T>, set2: Set<T>): Set<T> {
   return new Set([...set1].filter((item) => set2.has(item)));
 }
 
+/**
+ * Convert system or developer messages after the initial preamble to another role.
+ *
+ * Messages preserve their position for providers that only accept a leading system message.
+ *
+ * @public
+ */
 export function convertMidConversationInstructions(
   chatCtx: ChatContext,
   role: 'user' | 'assistant' = 'user',
   template: string = 'New instructions received. Apply them carefully: {instructions}',
 ): ChatContext {
-  let firstSystemSeen = false;
+  let preambleAllowed = true;
   const items: ChatItem[] = [];
 
   for (const item of chatCtx.items) {
-    if (
-      item.type === 'message' &&
-      (item.role === 'system' || item.role === 'developer') &&
-      firstSystemSeen &&
-      item.rawTextContent
-    ) {
-      items.push(
-        ChatMessage.create({
-          role,
-          content: template.replace('{instructions}', item.rawTextContent),
-          id: item.id,
-          createdAt: item.createdAt,
-        }),
-      );
+    if (item.type === 'message' && (item.role === 'system' || item.role === 'developer')) {
+      if (preambleAllowed) {
+        preambleAllowed = false;
+        items.push(item);
+      } else if (item.rawTextContent) {
+        items.push(
+          ChatMessage.create({
+            role,
+            content: template.replace('{instructions}', item.rawTextContent),
+            id: item.id,
+            createdAt: item.createdAt,
+          }),
+        );
+      }
       continue;
     }
 
-    if (item.type === 'message' && (item.role === 'system' || item.role === 'developer')) {
-      firstSystemSeen = true;
+    if (
+      item.type === 'message' ||
+      item.type === 'function_call' ||
+      item.type === 'function_call_output'
+    ) {
+      preambleAllowed = false;
     }
     items.push(item);
   }

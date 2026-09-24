@@ -31,6 +31,12 @@ export interface BasetenLLMOptions {
   user?: string;
   toolChoice?: 'none' | 'auto' | 'required' | { type: 'function'; function: { name: string } };
   parallelToolCalls?: boolean;
+  /**
+   * Whether to rewrite system messages after the preamble as
+   * `<instructions>`-wrapped user messages. Defaults to `true` only for
+   * `Qwen/Qwen3.8-27B`.
+   */
+  inlineMidConversationInstructions?: boolean;
 }
 
 /**
