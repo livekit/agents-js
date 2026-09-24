@@ -1,0 +1,21 @@
+plugins/deepgram/src/stt.ts
+  s_703d3972857b4c::t_76c2bdbdbd56f4 467-469
+.changeset/deepgram-remove-energy-filter.md
+  s_703d3972857b4c::t_6846796cc1c319 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "16b051cb2aae60ce745c9e6a3561a6fe52f1df3e",
+  "prompts": {},
+  "sessions": {
+    "s_703d3972857b4c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d3fc-7f3a-7102-9671-3985def76ac0",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
