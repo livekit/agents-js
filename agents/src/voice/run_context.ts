@@ -60,6 +60,10 @@ export class RunContext<UserData = UnknownUserData> {
   private _firstUpdateFuture?: Future<unknown>;
   private _updates: Array<[FunctionCall, FunctionCallOutput]> = [];
   private _fillerSchedulers: FillerScheduler<UserData>[] = [];
+  /**
+   * @param activity - Owning activity supplied by the framework to resume paused speech when
+   * interruptions are disabled. Omit this parameter when constructing a context manually.
+   */
   constructor(
     public readonly session: AgentSession<UserData>,
     public readonly speechHandle: SpeechHandle,
