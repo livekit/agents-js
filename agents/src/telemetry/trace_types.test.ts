@@ -143,6 +143,7 @@ const SAFE_KEYS = new Set([
   'lk.function_tool.id',
   'lk.function_tool.name',
   'lk.function_tool.is_error',
+  'lk.function_tool.cancelled',
   // TTS metadata
   'lk.tts.streaming',
   'lk.tts.label',

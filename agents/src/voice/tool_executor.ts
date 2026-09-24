@@ -228,6 +228,9 @@ export class ToolExecutor {
       const attachment = runCtx._attachExecutor(this, firstUpdateFuture);
 
       const controller = new AbortController();
+      controller.signal.addEventListener('abort', () =>
+        log().debug({ function: functionName, callId }, 'tool cancelled'),
+      );
       const abort = () => {
         queueMicrotask(() => {
           controller.abort();

@@ -1431,7 +1431,10 @@ export function performToolExecutions({
         let toolOutput: ToolExecutionOutput | undefined;
         try {
           const { result, isAborted } = await _waitForToolExecutionResult(toolExecTask, signal);
-          if (isAborted) return;
+          if (isAborted) {
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_CANCELLED, true);
+            return;
+          }
           toolOutput = createToolOutput({
             toolCall,
             output: result,

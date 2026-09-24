@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ChatContext, FunctionCall } from '../llm/chat_context.js';
 import { ToolFlag, tool } from '../llm/tool_context.js';
+import { log } from '../log.js';
 import { Future } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { RunContext } from './run_context.js';
@@ -348,6 +349,25 @@ describe('ToolExecutor', () => {
       new Promise((_, reject) => setTimeout(() => reject(new Error('tool never stopped')), 1000)),
     ]);
     expect(stopped.done).toBe(true);
+  });
+
+  it('logs a cancelled tool', async () => {
+    const debug = vi.spyOn(log(), 'debug');
+    const executor = new ToolExecutor();
+    const { runCtx } = buildRunContext('logged_cancel');
+
+    await executor.execute({
+      tool: abortableTool('logged_cancel', new Future<void>(), new Future<void>()),
+      runCtx,
+      rawArguments: {},
+    });
+    await executor.cancel(runCtx.functionCall.callId);
+
+    expect(debug).toHaveBeenCalledWith(
+      { function: 'logged_cancel', callId: 'call_logged_cancel' },
+      'tool cancelled',
+    );
+    debug.mockRestore();
   });
 
   it('drain (handoff) aborts cancellable tools so an abortable execute() stops', async () => {
