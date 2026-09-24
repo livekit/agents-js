@@ -120,8 +120,8 @@ export interface SpeechEvent {
   requestId?: string;
   recognitionUsage?: RecognitionUsage;
   /**
-   * For `PREFLIGHT_TRANSCRIPT`: the transcript carries only the words since the previous
-   * preflight instead of the whole segment so far.
+   * For `PREFLIGHT_TRANSCRIPT`: the transcript may cover only part of the segment, such as the
+   * words since the previous preflight. An interim of the same segment supersedes it.
    */
   incremental?: boolean;
 }
