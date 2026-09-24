@@ -1,0 +1,19 @@
+.changeset/twilio-connector-warm-transfer.md
+  s_2461ceafdb7d32::t_c9f51cf43a9ee6 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65dce55b20df17359844a391b4f611bc951de13a",
+  "prompts": {},
+  "sessions": {
+    "s_2461ceafdb7d32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c576-2ef6-70d0-a26e-a53969369e54",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
