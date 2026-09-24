@@ -361,9 +361,11 @@ export class AudioRecognition {
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
   private audioInterimTranscript = '';
-  // Latest INTERIM_TRANSCRIPT text. Some providers send preflights as chunks of the segment
-  // (the AssemblyAI plugin), so a preflight overwrites audioInterimTranscript but not this.
-  private cumulativeInterimTranscript = '';
+  // Latest interim and preflight texts of the open segment, for an empty final to fall back
+  // on. Providers disagree on preflights: most send the whole segment, the AssemblyAI plugin
+  // only the words since its last preflight. The longer of the two covers the segment.
+  private lastInterimText = '';
+  private lastPreflightText = '';
   private audioPreflightTranscript = '';
   private finalTranscriptConfidence: number[] = [];
   private lastSpeakingTime: number | undefined;
@@ -1263,17 +1265,21 @@ export class AudioRecognition {
     // the interim is more likely noise the provider retracted, so it is left alone.
     const emptyFinal =
       ev.type === SpeechEventType.FINAL_TRANSCRIPT ? ev.alternatives?.[0] : undefined;
+    const pendingText =
+      this.lastPreflightText.length >= this.lastInterimText.length
+        ? this.lastPreflightText
+        : this.lastInterimText;
     if (
       emptyFinal !== undefined &&
       !emptyFinal.text &&
-      this.cumulativeInterimTranscript &&
+      pendingText &&
       this.speechStartTime !== undefined
     ) {
       this.logger.debug(
-        { 'lk.pii.transcript': this.cumulativeInterimTranscript },
+        { 'lk.pii.transcript': pendingText },
         'stt final transcript was empty, using the buffered interim transcript',
       );
-      ev = { ...ev, alternatives: [{ ...emptyFinal, text: this.cumulativeInterimTranscript }] };
+      ev = { ...ev, alternatives: [{ ...emptyFinal, text: pendingText }] };
       this.markTurnTranscribed();
     }
 
@@ -1333,7 +1339,8 @@ export class AudioRecognition {
         this.finalTranscriptConfidence.push(confidence);
         const transcriptChanged = this.audioTranscript !== this.audioPreflightTranscript;
         this.audioInterimTranscript = '';
-        this.cumulativeInterimTranscript = '';
+        this.lastInterimText = '';
+        this.lastPreflightText = '';
         this.audioPreflightTranscript = '';
 
         if (useSTTSpeakingTime) {
@@ -1395,6 +1402,7 @@ export class AudioRecognition {
         this.audioPreflightTranscript =
           `${this.audioTranscript} ${preflightTranscript}`.trimStart();
         this.audioInterimTranscript = preflightTranscript;
+        this.lastPreflightText = preflightTranscript;
 
         if (useSTTSpeakingTime) {
           this.lastSpeakingTime = sttLastSpeakingTime;
@@ -1431,7 +1439,7 @@ export class AudioRecognition {
           this.vad !== undefined || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
         );
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
-        this.cumulativeInterimTranscript = this.audioInterimTranscript;
+        this.lastInterimText = this.audioInterimTranscript;
         break;
       case SpeechEventType.START_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
@@ -2366,7 +2374,8 @@ export class AudioRecognition {
   clearUserTurn() {
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
-    this.cumulativeInterimTranscript = '';
+    this.lastInterimText = '';
+    this.lastPreflightText = '';
     this.audioPreflightTranscript = '';
     this.finalTranscriptConfidence = [];
     this.lastFinalTranscriptTime = 0;
@@ -2468,7 +2477,8 @@ export class AudioRecognition {
           this.audioTranscript = `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
         }
         this.audioInterimTranscript = '';
-        this.cumulativeInterimTranscript = '';
+        this.lastInterimText = '';
+        this.lastPreflightText = '';
 
         const chatCtx = this.hooks.retrieveChatCtx();
         this.logger.debug('running EOU detection on commitUserTurn');
