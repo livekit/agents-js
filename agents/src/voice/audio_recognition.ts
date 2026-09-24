@@ -170,20 +170,30 @@ interface UserTurnTracker {
   startedAt?: number;
 }
 
+/** Backoff before recreating the STT stream after its retry budget is exhausted. */
+const STT_RECONNECT_INTERVAL_MS = 500;
+
 export class STTPipeline {
   static readonly PUMP_TASK_CANCEL_TIMEOUT = 5000;
 
   private sttNode: STTNode;
+  private isClosing: () => boolean;
   private _audioChannel: StreamChannel<AudioFrame> = createStreamChannel();
   private _eventChannel: StreamChannel<SpeechEvent> = createStreamChannel();
   private _pumpTask: Task<void>;
   /** Wall-clock anchor for this stream, used for STT-derived turn metrics. */
   inputStartedAt?: number;
 
-  constructor(sttNode: STTNode) {
+  constructor(sttNode: STTNode, opts: { isClosing?: () => boolean } = {}) {
     this.sttNode = sttNode;
+    // a closing session must not recreate provider connections that are torn down at once
+    this.isClosing = opts.isClosing ?? (() => false);
     this._pumpTask = Task.from(({ signal }) => this.sttPump(signal));
-    this._pumpTask.addDoneCallback(() => this._eventChannel.close());
+    this._pumpTask.addDoneCallback(() => {
+      this._eventChannel.close().catch((error) => {
+        log().error(error, 'Error closing STT event channel');
+      });
+    });
   }
 
   get audioChannel() {
@@ -194,20 +204,46 @@ export class STTPipeline {
     return this._eventChannel;
   }
 
-  private async sttPump(signal: AbortSignal): Promise<void> {
-    const node = await this.sttNode(this._audioChannel.stream(), {});
-    if (node === null) return;
+  /**
+   * The pipeline outlives the agent that created it (reused across handoff); a recreated
+   * stream must come from the active agent's node, not the torn-down previous one.
+   */
+  rebindNode(sttNode: STTNode) {
+    this.sttNode = sttNode;
+  }
 
-    try {
-      for await (const value of readStream(node, signal)) {
-        if (typeof value === 'string') {
-          throw new Error(`STT node must yield SpeechEvent, got: ${typeof value}`);
+  /**
+   * Owns the STT stream lifecycle. On a connection failure the long-lived stream is recreated
+   * after a backoff; the session's unrecoverable-error tolerance is what ends it.
+   */
+  private async sttPump(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      const node = await this.sttNode(this._audioChannel.stream(), {});
+      if (node === null) return;
+
+      try {
+        for await (const value of readStream(node, signal)) {
+          if (typeof value === 'string') {
+            throw new Error(`STT node must yield SpeechEvent, got: ${typeof value}`);
+          }
+          value.createdAt ??= Date.now();
+          await this._eventChannel.write(value);
         }
-        value.createdAt ??= Date.now();
-        await this._eventChannel.write(value);
+        // node ended without error (audio input closed): stop
+        return;
+      } catch (e) {
+        // only a connection failure is retried (it was emitted and counted by the session);
+        // any other error propagates and stops the pump
+        if (!isAPIError(e)) throw e;
+        if (this.isClosing()) return;
+        log().warn({ err: e }, 'STT stream ended on an unrecoverable error, recreating');
+      } finally {
+        await node.cancel().catch(() => {});
       }
-    } finally {
-      await node.cancel().catch(() => {});
+
+      await delay(STT_RECONNECT_INTERVAL_MS, { signal }).catch(() => {});
+      // the session may have started closing during the backoff
+      if (this.isClosing()) return;
     }
   }
 
@@ -234,6 +270,8 @@ export interface AudioRecognitionOptions {
   recognitionHooks: RecognitionHooks;
   /** Speech-to-text node. */
   stt?: STTNode;
+  /** Whether the owning session is closing; a closing session does not recreate its STT stream. */
+  isClosing?: () => boolean;
   /** Voice activity detection. */
   vad?: VAD;
   /** Turn detector for end-of-turn prediction. Accepts text-based detectors
@@ -288,6 +326,7 @@ export interface ParticipantLike {
 export class AudioRecognition {
   private hooks: RecognitionHooks;
   private stt?: STTNode;
+  private isClosing?: () => boolean;
   private sttPipeline?: STTPipeline;
   private vad?: VAD;
   private turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
@@ -407,6 +446,7 @@ export class AudioRecognition {
   constructor(opts: AudioRecognitionOptions) {
     this.hooks = opts.recognitionHooks;
     this.stt = opts.stt;
+    this.isClosing = opts.isClosing;
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
     this.checkVadSilenceRequirement();
@@ -760,18 +800,6 @@ export class AudioRecognition {
     // text-only and don't carry a stream.
     if (this.turnDetector instanceof BaseStreamingTurnDetector || this.turnDetector === undefined) {
       this.updateTurnDetector(this.turnDetector, { stream: options?.turnDetectorStream });
-    }
-  }
-
-  async stop() {
-    await this.sttConsumerTask?.cancelAndWait();
-    await this.sttForwardTask?.cancelAndWait();
-    await this.vadTask?.cancelAndWait();
-    await this.interruptionTask?.cancelAndWait();
-    if (this.turnDetectorStream !== undefined) {
-      const stream = this.turnDetectorStream;
-      this.turnDetectorStream = undefined;
-      await stream.aclose().catch(() => undefined);
     }
   }
 
@@ -1364,10 +1392,7 @@ export class AudioRecognition {
           const span = this.ensureUserTurnSpan();
           const ctx = this.userTurnContext(span);
           if (this.speaking) {
-            this.endpointing.onEndOfSpeech(
-              speechEndTime,
-              this.interruptionDetected === false && this.isAgentSpeaking,
-            );
+            this.endpointing.onEndOfSpeech(speechEndTime, this.interruptionDetected);
           }
           otelContext.with(ctx, () => {
             this.hooks.onEndOfSpeech({
@@ -1886,7 +1911,8 @@ export class AudioRecognition {
   private startSttTasks(reusePipeline?: STTPipeline) {
     if (!this.stt) return;
 
-    this.sttPipeline = reusePipeline ?? new STTPipeline(this.stt);
+    reusePipeline?.rebindNode(this.stt);
+    this.sttPipeline = reusePipeline ?? new STTPipeline(this.stt, { isClosing: this.isClosing });
 
     this.transcriptBuffer = [];
     this.sttOwnershipTransferred = false;
@@ -2041,10 +2067,7 @@ export class AudioRecognition {
               const span = this.ensureUserTurnSpan();
               const ctx = this.userTurnContext(span);
               if (this.speaking) {
-                this.endpointing.onEndOfSpeech(
-                  endTime,
-                  this.interruptionDetected === false && this.isAgentSpeaking,
-                );
+                this.endpointing.onEndOfSpeech(endTime, this.interruptionDetected);
               }
               otelContext.with(ctx, () => this.hooks.onEndOfSpeech(ev));
             }
@@ -2111,7 +2134,7 @@ export class AudioRecognition {
 
       const cleanup = async () => {
         try {
-          signal.removeEventListener('abort', cleanup);
+          signal.removeEventListener('abort', onAbort);
           eventReader.releaseLock();
           await stream.close();
         } catch (e) {
@@ -2119,7 +2142,10 @@ export class AudioRecognition {
         }
       };
 
-      signal.addEventListener('abort', cleanup, { once: true });
+      const onAbort = () => {
+        void cleanup();
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
 
       let forwardTask: Promise<void> | undefined;
 

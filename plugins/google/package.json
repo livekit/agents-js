@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-google",
-  "version": "1.7.1",
+  "version": "1.9.0",
   "description": "Google Gemini plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -40,7 +40,8 @@
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.58.12",
     "tsup": "^8.3.5",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "zod": "^3.25.76 || ^4.1.8"
   },
   "dependencies": {
     "@google/genai": "^2.13.0",

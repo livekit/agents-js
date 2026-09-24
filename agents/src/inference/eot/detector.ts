@@ -142,6 +142,29 @@ export class TurnDetector extends BaseStreamingTurnDetector {
     return this._model;
   }
 
+  /**
+   * What the session report shows for this detector (`telemetry.DescribesOptions`): the model
+   * and where it runs, plus the threshold overrides when the user set any. Server-calibrated
+   * defaults are not repeated here; credentials and endpoints never.
+   */
+  describeOptions(): Readonly<Record<string, unknown>> {
+    const options: Record<string, unknown> = {
+      model: this.model,
+      provider: this.provider,
+      sampleRate: this._opts.sampleRate,
+      // a `v1` detector always degrades to the local model on cloud failure; there is no
+      // `localFallback` opt-out on this side yet
+      localFallback: true,
+    };
+    if (this._opts.thresholds.overrides !== undefined) {
+      options.thresholdOverrides = this._opts.thresholds.overrides;
+    }
+    if (this._opts.thresholds.backchannelOverrides !== undefined) {
+      options.backchannelThresholdOverrides = this._opts.thresholds.backchannelOverrides;
+    }
+    return options;
+  }
+
   /** @internal Written by the active stream on cloud→local fallback. */
   _setModel(model: TurnDetectorModel): void {
     this._model = model;

@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
+import type { STTError } from '../stt/stt.js';
+import { Future } from '../utils.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
-import { AgentSessionEventTypes, createUserInputTranscribedEvent } from './events.js';
+import { AgentSessionEventTypes, CloseReason, createUserInputTranscribedEvent } from './events.js';
 import { SpeechHandle } from './speech_handle.js';
 
 type AgentSessionInternals = AgentSession & {
@@ -13,6 +15,46 @@ type AgentSessionInternals = AgentSession & {
   _userState: string;
   _setUserAwayTimer: () => void;
 };
+
+type AgentSessionCloseInternals = {
+  started: boolean;
+  closingTask: Promise<void> | null;
+  sessionHost?: { close: () => Promise<void> };
+};
+
+describe('AgentSession close', () => {
+  it('waits for an internal close already in progress', async () => {
+    const session = new AgentSession({ vad: null });
+    const internals = session as unknown as AgentSessionCloseInternals;
+    const closeStarted = new Future<void>();
+    const finishClose = new Future<void>();
+    const closeSessionHost = vi.fn(async () => {
+      closeStarted.resolve();
+      await finishClose.await;
+    });
+    internals.started = true;
+    internals.sessionHost = { close: closeSessionHost };
+
+    session._closeSoon({ reason: CloseReason.PARTICIPANT_DISCONNECTED });
+    await closeStarted.await;
+
+    const firstClose = internals.closingTask!;
+    let secondCloseSettled = false;
+    const secondClose = session.close().finally(() => {
+      secondCloseSettled = true;
+    });
+
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(secondCloseSettled).toBe(false);
+    } finally {
+      finishClose.resolve();
+      await Promise.allSettled([firstClose, secondClose]);
+    }
+
+    expect(closeSessionHost).toHaveBeenCalledOnce();
+  });
+});
 
 describe('AgentSession AEC warmup', () => {
   it.each([
@@ -211,5 +253,58 @@ describe('AgentSession user input transcription', () => {
     session.emit(AgentSessionEventTypes.UserInputTranscribed, finalTranscript);
     expect(setTimerWhileSpeaking).not.toHaveBeenCalled();
     setTimerWhileSpeaking.mockRestore();
+  });
+});
+
+describe('AgentSession STT error tolerance', () => {
+  function sttError(): STTError {
+    return {
+      type: 'stt_error',
+      timestamp: Date.now(),
+      label: 'test',
+      error: new Error('stt unavailable'),
+      recoverable: false,
+    };
+  }
+
+  type Internals = AgentSessionCloseInternals & { sttErrorCounts: number };
+
+  it('tolerates unrecoverable STT errors up to maxUnrecoverableErrors, like LLM and TTS', async () => {
+    const session = new AgentSession({ vad: null, connOptions: { maxUnrecoverableErrors: 1 } });
+    const internals = session as unknown as Internals;
+
+    session._onError(sttError());
+    expect(internals.closingTask).toBeNull();
+    expect(internals.sttErrorCounts).toBe(1);
+
+    session._onError(sttError());
+    expect(internals.closingTask).not.toBeNull();
+    await internals.closingTask;
+  });
+
+  it('resets the STT error count on a real user transcript', async () => {
+    const session = new AgentSession({ vad: null, connOptions: { maxUnrecoverableErrors: 1 } });
+    const internals = session as unknown as Internals;
+
+    session._onError(sttError());
+    expect(internals.sttErrorCounts).toBe(1);
+
+    session.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({ transcript: 'hello', isFinal: true }),
+    );
+    expect(internals.sttErrorCounts).toBe(0);
+
+    // an empty placeholder transcript is not a recovery
+    session._onError(sttError());
+    session.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({ transcript: '', isFinal: false }),
+    );
+    expect(internals.sttErrorCounts).toBe(1);
+
+    session._onError(sttError());
+    expect(internals.closingTask).not.toBeNull();
+    await internals.closingTask;
   });
 });

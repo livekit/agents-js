@@ -140,6 +140,16 @@ describe('performLLMInference response telemetry', () => {
     }
 
     expectFunctionCallTelemetry(span);
+
+    // this node produced the response itself, without an LLMStream, so there is no nested
+    // `llm_request` span and the node span carries the convention's attributes
+    expect(span.attributes['gen_ai.operation.name']).toBe('chat');
+    expect(span.attributes['gen_ai.response.finish_reasons']).toEqual(['tool_call']);
+    // the chat context is empty here, so only the output side has content to record
+    expect(JSON.parse(span.attributes['gen_ai.output.messages'] as string)[0].parts).toEqual([
+      { type: 'text', content: 'partial response' },
+      expect.objectContaining({ type: 'tool_call', name: 'lookup_weather' }),
+    ]);
   });
 
   it('records accumulated response telemetry when the stream aborts', async () => {

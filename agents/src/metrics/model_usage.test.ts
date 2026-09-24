@@ -352,6 +352,7 @@ describe('model_usage', () => {
           cancelled: false,
           inputTokens: 500,
           outputTokens: 300,
+          reasoningTokens: 40,
           totalTokens: 800,
           tokensPerSecond: 10,
           sessionDurationMs: 5000,
@@ -397,6 +398,7 @@ describe('model_usage', () => {
         expect(llmUsage.outputTokens).toBe(300);
         expect(llmUsage.outputTextTokens).toBe(200);
         expect(llmUsage.outputAudioTokens).toBe(100);
+        expect(llmUsage.outputReasoningTokens).toBe(40);
         expect(llmUsage.sessionDurationMs).toBe(5000);
       });
     });

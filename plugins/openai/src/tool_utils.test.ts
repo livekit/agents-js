@@ -8,6 +8,36 @@ import { toResponsesTools } from './tool_utils.js';
 import { CodeInterpreter, FileSearch, WebSearch } from './tools.js';
 
 describe('toResponsesTools', () => {
+  it('sorts function tools before provider tools without making optional parameters strict', () => {
+    const makeTool = (name: string) =>
+      llm.tool({
+        name,
+        description: 'Look up weather',
+        parameters: z.object({ city: z.string().optional() }),
+        execute: async () => 'sunny',
+      });
+
+    expect(
+      toResponsesTools(
+        new llm.ToolContext([makeTool('zulu'), new WebSearch(), makeTool('alpha')]),
+        false,
+      ),
+    ).toEqual([
+      ...['alpha', 'zulu'].map((name) => ({
+        type: 'function',
+        name,
+        description: 'Look up weather',
+        parameters: {
+          $schema: 'http://json-schema.org/draft-07/schema#',
+          type: 'object',
+          properties: { city: { type: 'string' } },
+          additionalProperties: false,
+        },
+      })),
+      { type: 'web_search', search_context_size: 'medium' },
+    ]);
+  });
+
   it('serializes function tools', () => {
     const fn = llm.tool({
       name: 'lookup_weather',

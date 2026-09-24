@@ -23,6 +23,7 @@ async function startWebSocketServer() {
 }
 
 async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
+  for (const client of wss.clients) client.close();
   await new Promise<void>((resolve) => wss.close(() => resolve()));
 }
 
@@ -42,6 +43,53 @@ async function collectUntilEnd(stream: sttLib.SpeechStream): Promise<sttLib.Spee
     if (event.type === sttLib.SpeechEventType.END_OF_SPEECH) break;
   }
   return events;
+}
+
+function turnMessage(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    type: 'Turn',
+    words: [{ text: 'hello', start: 0, end: 480, confidence: 0.9 }],
+    end_of_turn: false,
+    transcript: '',
+    ...overrides,
+  };
+}
+
+async function collectTranscript(
+  message: Record<string, unknown>,
+  eventType: sttLib.SpeechEventType,
+): Promise<sttLib.SpeechData> {
+  const { wss, baseUrl } = await startWebSocketServer();
+  let connected = false;
+  let sent = false;
+  const stream = new STT({ apiKey: 'test-key', baseUrl }).stream({
+    connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+  });
+
+  wss.on('connection', (ws) => {
+    connected = true;
+    ws.on('message', () => {
+      if (sent) return;
+      sent = true;
+      ws.send(JSON.stringify(message));
+    });
+  });
+
+  try {
+    await waitUntil(() => connected);
+    stream.pushFrame(makeFrame());
+
+    for await (const event of stream) {
+      if (event.type === eventType && event.alternatives?.[0]) {
+        return event.alternatives[0];
+      }
+    }
+
+    throw new Error(`stream ended before ${eventType} was emitted`);
+  } finally {
+    stream.close();
+    await closeWebSocketServer(wss);
+  }
 }
 
 describe('AssemblyAI STT metadata', () => {
@@ -128,5 +176,51 @@ describe('AssemblyAI STT metadata', () => {
     } finally {
       await closeWebSocketServer(wss);
     }
+  });
+
+  it('surfaces end-of-turn confidence on interim metadata', async () => {
+    const transcript = await collectTranscript(
+      turnMessage({ end_of_turn_confidence: 0.55 }),
+      sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+    );
+
+    expect(transcript.metadata).toEqual({
+      assemblyai: { endOfTurnConfidence: 0.55 },
+    });
+  });
+
+  it('surfaces end-of-turn confidence on final metadata', async () => {
+    const transcript = await collectTranscript(
+      turnMessage({
+        end_of_turn: true,
+        transcript: 'hello',
+        end_of_turn_confidence: 1,
+      }),
+      sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+    );
+
+    expect(transcript.metadata).toEqual({
+      assemblyai: { endOfTurnConfidence: 1 },
+    });
+  });
+
+  it('surfaces zero end-of-turn confidence', async () => {
+    const transcript = await collectTranscript(
+      turnMessage({ end_of_turn_confidence: 0 }),
+      sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+    );
+
+    expect(transcript.metadata).toEqual({
+      assemblyai: { endOfTurnConfidence: 0 },
+    });
+  });
+
+  it('leaves metadata unset when end-of-turn confidence is absent', async () => {
+    const transcript = await collectTranscript(
+      turnMessage(),
+      sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+    );
+
+    expect(transcript.metadata).toBeUndefined();
   });
 });
