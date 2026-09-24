@@ -109,6 +109,7 @@ function setup(ringingTimeout = 5_000) {
     start,
     answer,
     greeted,
+    deleteRoom: ctx.deleteRoom,
   };
 }
 
@@ -279,6 +280,7 @@ describe('Twilio warm transfer with real session and activity lifecycle', () => 
         'human-agent-connector',
         'caller-room',
       );
+      await vi.waitFor(() => expect(ctx.deleteRoom).toHaveBeenCalledWith('consult-room'));
       expect(ctx.session.currentAgent).toBe(ctx.parent);
       expect(ctx.fetch).toHaveBeenCalledOnce();
     } finally {

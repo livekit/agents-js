@@ -70,7 +70,7 @@ async function startWhatsApp() {
 
 describe('connector examples', () => {
   it.each(['USER_INITIATED', 'BUSINESS_INITIATED'])(
-    'orders termination after pending connection: %s',
+    'terminates promptly and cleans up a late connection: %s',
     async (direction) => {
       const pending = deferred<never>();
       const accept = vi
@@ -87,9 +87,9 @@ describe('connector examples', () => {
         await post('call-1', 'connect', direction);
         expect(direction === 'USER_INITIATED' ? accept : connect).toHaveBeenCalledOnce();
         await post('call-1', 'terminate', direction);
-        expect(disconnect).not.toHaveBeenCalled();
+        expect(disconnect).toHaveBeenCalledOnce();
         pending.resolve({ roomName: 'call-room' } as never);
-        await vi.waitFor(() => expect(disconnect).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(disconnect).toHaveBeenCalledTimes(2));
         expect(disconnect.mock.calls[0]![0]).toBe('call-1');
       } finally {
         pending.resolve({ roomName: 'call-room' } as never);

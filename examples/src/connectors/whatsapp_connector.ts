@@ -233,8 +233,14 @@ function handleWebhook(raw: Buffer, tasks: Map<string, Promise<void>>): void {
       // Prefer the number ID the event arrived on; multi-number apps get several.
       const phoneNumberId = value.metadata?.phone_number_id || WHATSAPP_PHONE_NUMBER_ID;
       for (const call of value.calls ?? []) {
-        // A termination must wait for this call's pending accept or connect.
-        const previous = tasks.get(call.id) ?? Promise.resolve();
+        let previous = tasks.get(call.id) ?? Promise.resolve();
+        if (call.event === 'terminate' && tasks.has(call.id)) {
+          // End an existing call now, then repeat cleanup if acceptance completes late.
+          previous = Promise.all([
+            previous,
+            runLogged(handleCallEvent(call, phoneNumberId), `call termination ${call.id}`),
+          ]).then(() => {});
+        }
         const task = runLogged(
           previous.then(() => handleCallEvent(call, phoneNumberId)),
           `call event ${call.id}`,
