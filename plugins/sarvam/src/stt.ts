@@ -5,7 +5,6 @@ import {
   type APIConnectOptions,
   type AudioBuffer,
   AudioByteStream,
-  AudioEnergyFilter,
   Future,
   Task,
   log,
@@ -549,7 +548,6 @@ export class STT extends stt.STT {
 
 export class SpeechStream extends stt.SpeechStream {
   #opts: ResolvedSTTOptions;
-  #audioEnergyFilter: AudioEnergyFilter;
   #logger = log();
   #speaking = false;
   #resetWS = new Future();
@@ -560,7 +558,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(sttInstance, SAMPLE_RATE, connOptions);
     this.#opts = opts;
     this.closed = false;
-    this.#audioEnergyFilter = new AudioEnergyFilter();
   }
 
   updateOptions(opts: Partial<STTOptions>) {
@@ -652,10 +649,8 @@ export class SpeechStream extends stt.SpeechStream {
       ws.send(JSON.stringify({ type: 'config', prompt: this.#opts.prompt }));
     }
 
-    // No keepalive — Sarvam rejects messages without 'audio' field, and sending
-    // silent audio could confuse server-side VAD. On idle timeout (~20s), the
-    // server closes the connection and the outer retry loop in run() reconnects.
-    // This matches the Python SDK's approach.
+    // No keepalive messages: if input stops and the server closes the connection,
+    // the retry loop in run() reconnects.
 
     const wsMonitor = Task.from(async (controller) => {
       const closed = new Promise<void>((_, reject) => {
@@ -700,24 +695,22 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           for (const frame of frames) {
-            if (this.#audioEnergyFilter.pushFrame(frame)) {
-              // Sarvam expects base64-encoded PCM in a JSON message
-              const pcmBuffer = Buffer.from(
-                frame.data.buffer,
-                frame.data.byteOffset,
-                frame.data.byteLength,
-              );
-              const base64Audio = pcmBuffer.toString('base64');
-              ws.send(
-                JSON.stringify({
-                  audio: {
-                    data: base64Audio,
-                    encoding: 'audio/wav',
-                    sample_rate: SAMPLE_RATE,
-                  },
-                }),
-              );
-            }
+            // Sarvam expects base64-encoded PCM in a JSON message
+            const pcmBuffer = Buffer.from(
+              frame.data.buffer,
+              frame.data.byteOffset,
+              frame.data.byteLength,
+            );
+            const base64Audio = pcmBuffer.toString('base64');
+            ws.send(
+              JSON.stringify({
+                audio: {
+                  data: base64Audio,
+                  encoding: 'audio/wav',
+                  sample_rate: SAMPLE_RATE,
+                },
+              }),
+            );
           }
 
           // Send flush message on FLUSH_SENTINEL (VAD end of speech)
