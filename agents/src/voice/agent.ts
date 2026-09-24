@@ -531,6 +531,9 @@ export class Agent<UserData = any> {
             for await (const event of stream) {
               controller.enqueue(event);
             }
+            // the retry loop swallows its own failure; surface it so the STT pipeline can
+            // tell an exhausted stream from a closed audio input
+            if (stream.terminalError) throw stream.terminalError;
             controller.close();
           } finally {
             // Always clean up the STT stream, whether it ends naturally or is cancelled
@@ -616,7 +619,7 @@ export class Agent<UserData = any> {
           // markup only exists in the stream when expressive is active. Python also
           // passes retain_format here, but that predates expressive mode and is a
           // separate gap — turning it on would change tokenization for every
-          // non-streaming TTS plugin, none of which can be expressive today.
+          // non-streaming TTS plugin.
           new BasicSentenceTokenizer({ xmlAware: expressiveActive }),
         );
       }

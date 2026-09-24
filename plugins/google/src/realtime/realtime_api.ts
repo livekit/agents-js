@@ -67,6 +67,21 @@ function needsReplyPlaceholder(model: string): boolean {
   return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
 }
 
+/**
+ * The SDK rejects an empty `turns` array ("contents are required"), so a
+ * content event carrying no turns is sent as a bare `turnComplete`. That is
+ * how a reply is requested on models that take no placeholder user turn.
+ */
+export function toClientContentParams({
+  turns,
+  turnComplete,
+}: types.LiveClientContent): types.LiveSendClientContentParameters {
+  return {
+    ...(turns && turns.length > 0 ? { turns } : {}),
+    turnComplete: turnComplete ?? true,
+  };
+}
+
 function validateModelAPIMatch(model: string, vertexai: boolean): void {
   if (vertexai && KNOWN_GEMINI_API_MODELS.has(model)) {
     throw new Error(
@@ -1162,7 +1177,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         switch (msg.type) {
           case 'content':
-            const { turns, turnComplete } = msg.value;
             if (LK_GOOGLE_DEBUG) {
               this.#logger.debug(
                 {
@@ -1172,10 +1186,7 @@ export class RealtimeSession extends llm.RealtimeSession {
                 'sent Gemini Live client event',
               );
             }
-            await session.sendClientContent({
-              turns,
-              turnComplete: turnComplete ?? true,
-            });
+            await session.sendClientContent(toClientContentParams(msg.value));
             break;
           case 'tool_response':
             const { functionResponses } = msg.value;
@@ -1470,13 +1481,15 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private emitError(error: Error, recoverable: boolean): void {
-    this.emit('error', {
+    const event: llm.RealtimeModelError = {
+      type: 'realtime_model_error',
       timestamp: Date.now(),
       // TODO(brian): add label to realtime model
       label: 'google_realtime',
       error,
       recoverable,
-    });
+    };
+    this.emit('error', event);
   }
 
   private buildConnectConfig(): types.LiveConnectConfig {
@@ -1485,6 +1498,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       toolCtx: this._tools,
       geminiTools: this.options.geminiTools,
       toolBehavior: this.options.toolBehavior,
+      useParametersJsonSchema: false,
     });
 
     const config: types.LiveConnectConfig = {
@@ -1851,6 +1865,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     const inputTokens = usage.promptTokenCount || 0;
     const outputTokens = usage.responseTokenCount || 0;
     const totalTokens = usage.totalTokenCount || 0;
+    // Gemini reports thinking tokens as a subset of responseTokenCount, so they are surfaced
+    // alongside outputTokens rather than added to it. Keep the field absent when the provider
+    // omitted it: a reported 0 and a missing count bill differently.
+    const reasoningTokens = usage.thoughtsTokenCount ?? undefined;
 
     const realtimeMetrics = {
       type: 'realtime_model_metrics',
@@ -1862,6 +1880,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       label: 'google_realtime',
       inputTokens,
       outputTokens,
+      reasoningTokens,
       totalTokens,
       tokensPerSecond: durationMs > 0 ? outputTokens / (durationMs / 1000) : 0,
       inputTokenDetails: {

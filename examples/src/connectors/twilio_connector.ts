@@ -20,7 +20,7 @@ import {
   RoomAgentDispatch,
   TwirpError,
 } from 'livekit-server-sdk';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { parseArgs } from 'node:util';
 
@@ -165,7 +165,7 @@ async function dial(toNumber: string): Promise<void> {
     process.exit(1);
   }
 
-  const roomName = `call-out-${Math.floor(Date.now() / 1000)}`;
+  const roomName = `call-out-${randomUUID()}`;
   let connectUrl: string;
   try {
     const result = await connector.connectTwilioCall({

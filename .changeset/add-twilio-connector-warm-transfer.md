@@ -1,5 +1,5 @@
 ---
-'@livekit/agents': minor
+'@livekit/agents': patch
 ---
 
-add TwilioConnectorWarmTransferTask
+Add TwilioConnectorWarmTransferTask with bounded, best-effort cleanup after cancellation or an unanswered call.

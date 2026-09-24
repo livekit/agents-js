@@ -31,6 +31,13 @@ export interface CompletionUsage {
   promptCachedTokens: number;
   /** Tokens used to write to the prompt cache. */
   cacheCreationTokens?: number;
+  /**
+   * Completion tokens spent on hidden reasoning.
+   *
+   * Already counted in `completionTokens`; do not add it to totals. Not all providers break
+   * reasoning out separately, and it is 0 when they don't.
+   */
+  reasoningTokens?: number;
   totalTokens: number;
   /** The service tier used for processing (e.g. 'default', 'priority', 'flex'). */
   serviceTier?: string;
@@ -385,6 +392,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       promptTokens: usage?.promptTokens || 0,
       promptCachedTokens: usage?.promptCachedTokens || 0,
       cacheCreationTokens: usage?.cacheCreationTokens || 0,
+      reasoningTokens: usage?.reasoningTokens || 0,
       totalTokens: usage?.totalTokens || 0,
       tokensPerSecond: (() => {
         if (durationMs <= 0) {

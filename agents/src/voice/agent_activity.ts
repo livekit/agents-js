@@ -72,6 +72,7 @@ import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { genAI, recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
+import { StreamAdapter as TTSStreamAdapter } from '../tts/stream_adapter.js';
 import { TTS, type TTSError } from '../tts/tts.js';
 import { isFlushSentinel } from '../types.js';
 import {
@@ -769,6 +770,7 @@ export class AgentActivity implements RecognitionHooks {
       recognitionHooks: this,
       // Disable stt node if stt is not provided
       stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
+      isClosing: () => this.agentSession._closing,
       vad: recognitionVad,
       turnDetector:
         typeof this._resolvedTurnDetection === 'string' ? undefined : this._resolvedTurnDetection,
@@ -1101,15 +1103,17 @@ export class AgentActivity implements RecognitionHooks {
    * Expressive mode requires three things, checked cheapest-first because this runs once
    * per speech segment:
    * - the session opted in.
-   * - the inference gateway TTS ({@link inference.TTS}): the markup normalization/conversion
-   *   and expressive chunking run there, so direct provider plugins would receive
-   *   unconverted markup.
-   * - a TTS that actually declares a markup dialect: gateway providers without one (e.g.
-   *   `rime`, `deepgram`) get no markup instructions, so no tags can appear in the stream
-   *   — leaving it "active" would enable xml-aware chunking with nothing to chunk and
-   *   re-introduce the stray-`<` streaming stall. Asked via `markup.supported` rather than
-   *   by rendering `llmInstructions()` and testing it for `undefined`: the blocks are
-   *   several kilobytes, and every ordinary session would build and discard one per turn.
+   * - a TTS that declares a markup dialect. Without one no markers can appear, and
+   *   xml-aware chunking would re-introduce the stray-`<` streaming stall for nothing.
+   *   Asked via `markup.supported` rather than by rendering `llmInstructions()` and
+   *   testing it for `undefined`: the blocks are several kilobytes, and every ordinary
+   *   session would build and discard one per turn.
+   * - something to *lower* those markers, or the TTS speaks them aloud. Guaranteed only
+   *   where the framework owns the input path: the gateway TTS's own stream
+   *   ({@link inference.TTS}), and the `tts.StreamAdapter` wrapping every non-streaming
+   *   TTS. A natively streaming plugin owns its own input task — several declare a dialect
+   *   today without lowering anything. A `StreamAdapter` handed in directly is streaming
+   *   only at its surface; inside it is that same lowering path, so it is exempt.
    *
    * @internal
    */
@@ -1121,7 +1125,12 @@ export class AgentActivity implements RecognitionHooks {
       return undefined;
     }
 
-    if (!(this.tts instanceof InferenceTTS) || !this.tts.markup.supported) {
+    if (
+      !this.tts ||
+      !this.tts.markup.supported ||
+      (this.tts.capabilities.streaming &&
+        !(this.tts instanceof InferenceTTS || this.tts instanceof TTSStreamAdapter))
+    ) {
       return undefined;
     }
     // speechSteering renders per-provider delivery guidelines on top of the

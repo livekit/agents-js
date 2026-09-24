@@ -228,6 +228,9 @@ importers:
       sharp:
         specifier: 0.35.4
         version: 0.35.4(@types/node@22.19.1)
+      smol-toml:
+        specifier: ^1.8.0
+        version: 1.8.0
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -834,6 +837,9 @@ importers:
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
+      zod:
+        specifier: ^3.25.76 || ^4.1.8
+        version: 4.3.6
 
   plugins/hume:
     devDependencies:
@@ -1222,8 +1228,8 @@ importers:
   plugins/phonic:
     dependencies:
       phonic:
-        specifier: ^0.32.22
-        version: 0.32.22
+        specifier: ^0.32.28
+        version: 0.32.28
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1299,6 +1305,15 @@ importers:
 
   plugins/rime:
     dependencies:
+      '@bufbuild/protobuf':
+        specifier: ^2.14.1
+        version: 2.14.1
+      '@livekit/av':
+        specifier: ^10.0.0
+        version: 10.0.0
+      '@rimelabs/api':
+        specifier: 0.0.1
+        version: 0.0.1
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -1655,6 +1670,9 @@ packages:
 
   '@bufbuild/protobuf@1.10.1':
     resolution: {integrity: sha512-wJ8ReQbHxsAfXhrf9ixl0aYbZorRuOWpBNzm8pL8ftmSxQx/wnJD5Eg861NwJU/czy2VXFIebCeZnZrI9rktIQ==}
+
+  '@bufbuild/protobuf@2.14.1':
+    resolution: {integrity: sha512-agRJn3+EJDUe8AvxTx/LnHA/GErvLE62pSaSk7+MwFOtOv8eWBu/qCq2qoZjBjVZ3C2aiFJCveuSs17KMkYGOw==}
 
   '@changesets/apply-release-plan@7.1.0':
     resolution: {integrity: sha512-yq8ML3YS7koKQ/9bk1PqO0HMzApIFNwjlwCnwFEXMzNe8NpzeeYYKCmnhWJGkN8g7E51MnWaSbqRcTcdIxUgnQ==}
@@ -2677,6 +2695,9 @@ packages:
 
   '@protobufjs/utf8@1.1.1':
     resolution: {integrity: sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg==}
+
+  '@rimelabs/api@0.0.1':
+    resolution: {integrity: sha512-U8cHW3aRyzDWFU9ww4qZFOJyIH+2p7zQBkWwmpcKoOsrdUmsi6qVXVGohipbOxUCmX+qaGGtd/g8MD6LVwTpTg==}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     resolution: {integrity: sha512-6o7ZLZK+BeenkZCFNDXqpbjw9bD6nuWonvS/lwQJp7NoVVxm6p3qE7qQ5jGuBjiFsgvqjD8mZAU5oWxTmbOeOg==}
@@ -4728,8 +4749,8 @@ packages:
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
 
-  phonic@0.32.22:
-    resolution: {integrity: sha512-adpg8W0ZaBwqEmNQkRrjq3DooTML/U/I6irMNtSIxZh789RLC9MRih/PXF2VQi0AefwydmsFapCOiMkABPUzSw==}
+  phonic@0.32.28:
+    resolution: {integrity: sha512-Xf2ro6ngBLoM1ngHwXzjcNd9xrKgdH8r3Owts+K1qeHBS+fp/6VEz+Pl7ABzOgpXptNIOt8HIU8Fz3XCb0uqgg==}
     engines: {node: '>=18.0.0'}
 
   picocolors@1.1.1:
@@ -5032,6 +5053,10 @@ packages:
   slash@3.0.0:
     resolution: {integrity: sha512-g9Q1haeby36OSStwb4ntCGGGaKsaVSjQ68fBxoQcutl5fS1vuY18H3wSt3jFyFtrkx+Kz0V1G85A4MyAdDMi2Q==}
     engines: {node: '>=8'}
+
+  smol-toml@1.8.0:
+    resolution: {integrity: sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ==}
+    engines: {node: '>= 18'}
 
   sonic-boom@3.8.1:
     resolution: {integrity: sha512-y4Z8LCDBuum+PBP3lSV7RHrXscqksve/bi0as7mhwVnBW+/wUqKT/2Kb7um8yqcFy0duYbbPxzt89Zy2nOCaxg==}
@@ -5631,6 +5656,8 @@ snapshots:
   '@bcoe/v8-coverage@1.0.2': {}
 
   '@bufbuild/protobuf@1.10.1': {}
+
+  '@bufbuild/protobuf@2.14.1': {}
 
   '@changesets/apply-release-plan@7.1.0':
     dependencies:
@@ -6597,6 +6624,10 @@ snapshots:
   '@protobufjs/pool@1.1.0': {}
 
   '@protobufjs/utf8@1.1.1': {}
+
+  '@rimelabs/api@0.0.1':
+    dependencies:
+      '@bufbuild/protobuf': 2.14.1
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     optional: true
@@ -8836,7 +8867,7 @@ snapshots:
 
   pathe@2.0.3: {}
 
-  phonic@0.32.22:
+  phonic@0.32.28:
     dependencies:
       ws: 8.21.3
     transitivePeerDependencies:
@@ -9259,6 +9290,8 @@ snapshots:
   signal-exit@4.1.0: {}
 
   slash@3.0.0: {}
+
+  smol-toml@1.8.0: {}
 
   sonic-boom@3.8.1:
     dependencies:

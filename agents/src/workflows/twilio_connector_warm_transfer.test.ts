@@ -170,7 +170,7 @@ describe('Twilio connector CallToken forwarding', () => {
       'https://api.twilio.com/2010-04-01/Accounts/AC_test_account/Calls/CA_test_transfer.json',
     );
     expect(Object.fromEntries(new URLSearchParams(request.body.toString()))).toEqual({
-      Status: 'canceled',
+      Status: 'completed',
     });
     expectDialFailure(ctx, 'human agent did not answer');
   });
@@ -185,7 +185,7 @@ describe('Twilio connector CallToken forwarding', () => {
 
     expect(ctx.fetch).toHaveBeenCalledTimes(2);
     // The cancel failure is logged without a body, SID or number, and swallowed.
-    expect(ctx.logWarn).toHaveBeenCalledWith({ status: 500 }, 'failed to cancel Twilio call');
+    expect(ctx.logWarn).toHaveBeenCalledWith({ status: 500 }, 'Twilio call cleanup failed');
     expect(ctx.logWarn).toHaveBeenCalledOnce();
     expectDialFailure(ctx, 'human agent did not answer');
   });
@@ -196,9 +196,7 @@ describe('Twilio connector CallToken forwarding', () => {
       .mockImplementationOnce(responds('{"sid":"CA_test_transfer"}'))
       .mockRejectedValueOnce(new Error(`request failed: ${CALL_TOKEN} ${CALLER_NUMBER}`));
     await ctx.enter();
-    expect(ctx.logWarn).toHaveBeenCalledExactlyOnceWith(
-      'failed to cancel Twilio call: request failed',
-    );
+    expect(ctx.logWarn).toHaveBeenCalledExactlyOnceWith('Twilio call cleanup request failed');
     expect(JSON.stringify(ctx.logWarn.mock.calls)).not.toContain(CALL_TOKEN);
     expect(JSON.stringify(ctx.logWarn.mock.calls)).not.toContain(CALLER_NUMBER);
     expectDialFailure(ctx, 'human agent did not answer');
@@ -291,7 +289,7 @@ describe('Twilio caller-ID fallback', () => {
     expect(fetch.mock.calls[2]![0]).toContain('/Calls/CA_fallback.json');
     expect(
       Object.fromEntries(new URLSearchParams(fetch.mock.calls[2]![1].body.toString())),
-    ).toEqual({ Status: 'canceled' });
+    ).toEqual({ Status: 'completed' });
   });
 
   it('requires original caller when a token is supplied', () => {
@@ -359,7 +357,7 @@ describe('Twilio dial cancellation', () => {
       expect(fetch.mock.calls[cancelIndex]![0]).toContain('/Calls/CA_aborted.json');
       expect(
         Object.fromEntries(new URLSearchParams(fetch.mock.calls[cancelIndex]![1].body.toString())),
-      ).toEqual({ Status: 'canceled' });
+      ).toEqual({ Status: 'completed' });
     },
   );
 

@@ -118,6 +118,7 @@ export interface STTHTTPSession {
 export interface STTOptions {
     // (undocumented)
     apiKey?: string;
+    audioChunkDuration?: number;
     // (undocumented)
     baseURL?: string;
     // (undocumented)

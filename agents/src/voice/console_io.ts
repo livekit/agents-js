@@ -119,9 +119,17 @@ export class TcpAudioOutput extends AudioOutput {
     }
   }
 
+  // flush/clearBuffer are synchronous and nobody awaits a control message, so a
+  // send that fails on a closed transport is logged rather than left to reject
+  private sendControl(msg: pb.AgentSessionMessage): void {
+    this.transport.sendMessage(msg).catch((e) => {
+      log().debug({ error: e }, 'failed to send console control message');
+    });
+  }
+
   override flush(): void {
     super.flush();
-    void this.transport.sendMessage(
+    this.sendControl(
       new pb.AgentSessionMessage({
         message: {
           case: 'audioPlaybackFlush',
@@ -146,7 +154,7 @@ export class TcpAudioOutput extends AudioOutput {
   }
 
   override clearBuffer(): void {
-    void this.transport.sendMessage(
+    this.sendControl(
       new pb.AgentSessionMessage({
         message: {
           case: 'audioPlaybackClear',

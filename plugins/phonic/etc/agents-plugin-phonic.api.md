@@ -92,6 +92,7 @@ class RealtimeModel extends llm.RealtimeModel {
         noInputPokeSec?: number;
         noInputPokeText?: string;
         noInputEndConversationSec?: number;
+        phonicModel?: 'phonic_v0_5' | 'phonic_v1' | 'phonic_v1_1';
         websocketTimeoutSec?: number;
         intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
         isWelcomeMessageInterruptible?: boolean;
@@ -193,6 +194,8 @@ interface RealtimeModelOptions {
     onConversationCreated?: (conversationId: string) => void;
     // (undocumented)
     phonicAgent?: string;
+    // (undocumented)
+    phonicModel?: 'phonic_v0_5' | 'phonic_v1' | 'phonic_v1_1';
     // (undocumented)
     phonicTools?: string[];
     // (undocumented)

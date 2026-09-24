@@ -5,9 +5,11 @@ packages:
 
 minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
+  # Explicitly approved Rime protocol release.
+  - '@rimelabs/api@0.0.1'
   - '@livekit/*'
-  # Responses API tool definition type
-  - phonic@0.32.21
+  # phonic_model realtime config option
+  - phonic@0.32.28
   # Renovate security update: vite@7.3.2 || 7.3.5
   - vite@7.3.2 || 7.3.5
   # Renovate security update: ws@8.20.1
