@@ -1,0 +1,725 @@
+examples/src/connectors/twilio_connector.ts
+  s_2461ceafdb7d32::t_000da46fa46067 139,146,149
+examples/src/connectors/whatsapp_connector.ts
+  s_2461ceafdb7d32::t_71c2d25427e47a 246-249,274-279
+.changeset/assemblyai-universal-3-6-pro-inference.md
+  s_2461ceafdb7d32::t_f179bab1d945b7 5
+.changeset/deepgram-flux-tts-v2.md
+  s_2461ceafdb7d32::t_7a35eea7f5ab73 5
+.changeset/deepgram-stt-socket-liveness.md
+  s_2461ceafdb7d32::t_35e11a22bb69a0 1-5
+.changeset/elevenlabs-configurable-stt-chunks.md
+  s_2461ceafdb7d32::t_98849fa36aad3e 5
+.changeset/fresh-timers-shutdown.md
+  s_2461ceafdb7d32::t_53c8c0f293714d 5
+.changeset/gemini-live-empty-turns.md
+  s_2461ceafdb7d32::t_e67354f536d67b 1-5
+.changeset/gemini-live-error-event-type.md
+  s_2461ceafdb7d32::t_95939efea45ef5 1-5
+.changeset/gemini-live-property-ordering.md
+  s_2461ceafdb7d32::t_7a1e130f29221c 1-5
+.changeset/gemini-live-reasoning-tokens.md
+  s_2461ceafdb7d32::t_eb1404c803092f 1-8
+.changeset/gemini-tts-3-8-expressive.md
+  s_2461ceafdb7d32::t_029d8881f187fb 1-6
+.changeset/google-function-parameters-schema.md
+  s_2461ceafdb7d32::t_3551b5cf5f869e 2,5
+.changeset/heavy-zebras-shout.md
+  s_2461ceafdb7d32::t_cdfa8e94a5b72c 2,5
+.changeset/openai-realtime-custom-base-url.md
+  s_2461ceafdb7d32::t_bd18d2bbea84a3 1-5
+.changeset/quiet-tools-smile.md
+  s_2461ceafdb7d32::t_9773efb540f308 1-5
+.changeset/rime-websocket-v1.md
+  s_2461ceafdb7d32::t_a54cb693744c6b 1-14
+.changeset/session-transport-send-failures.md
+  s_2461ceafdb7d32::t_fc79b052ca6b9b 1-5
+.changeset/stt-abort-during-connect.md
+  s_2461ceafdb7d32::t_4a09d07e58311a 5
+.changeset/stt-empty-interim-finalize.md
+  s_2461ceafdb7d32::t_faf9d22d61ca91 5
+.changeset/stt-retry-budget-consecutive.md
+  s_2461ceafdb7d32::t_eed80e8d779c95 5
+.changeset/stt-send-loop-abort-race-leak.md
+  s_2461ceafdb7d32::t_dd15906beb0dcb 1-8
+.changeset/stt-session-recovers-unrecoverable-errors.md
+  s_2461ceafdb7d32::t_280fbb2e095759 1-5
+.changeset/surface-assemblyai-turn-confidence.md
+  s_2461ceafdb7d32::t_dd179b185ee226 1-5
+.changeset/toml-agent-name-fallback.md
+  s_2461ceafdb7d32::t_5b8c31fe4d459f 5
+.eslintrc.cjs
+  s_2461ceafdb7d32::t_d6ec01b06f114f 1-8,10-11,13-15,17-22,24-26,28-32,34-46
+.github/workflows/build.yml
+  s_2461ceafdb7d32::t_67e8c6481d7061 17,23,44
+.github/workflows/release-gate.yml
+  s_2461ceafdb7d32::t_1ba2a8ac1d4a7f 1-69
+.github/workflows/test.yml
+  s_2461ceafdb7d32::t_2dadb1eefb3498 28
+CLAUDE.md
+  s_2461ceafdb7d32::t_d60492d9157bcf 133,146-147
+CONTRIBUTING.md
+  s_2461ceafdb7d32::t_58879266b33cd9 55-67,71
+REUSE.toml
+  s_2461ceafdb7d32::t_abd361a1283c80 30
+REVIEW.md
+  s_2461ceafdb7d32::t_bcabc8bbe261e0 11-25,31-33,35-56,59-62,68
+agents/CHANGELOG.md
+  s_2461ceafdb7d32::t_a9e208a3324aa7 3-128
+agents/etc/agents.api.md
+  s_2461ceafdb7d32::t_82f06988657120 16,78-93,121,266,270,408,509-510,555,585-586,589,733,802-803,806-807,829,890,897,1018,1169-1233,1299-1303,1349-1378,1384-1394,1397-1401,1409-1503,1539-1563,1838-1854,1894-1895,1908,2138,2185-2201,2612-2625,2837,2887-2891,3216-3220,3252-3261,3318-3322,3337-3449,3487,3552-3561,3657-3662,3665,3702-3736,4141-4148,4172-4183,4432-4515,4558-4562,4742-4749,4829,4854,5118,5332-5344,5495,5527,5668-5725,5740-5749,5802-5811,6024-6034,6156-6167,6172,6187,6201-6219,6247-6255,6323-6329,6417,6473-6474,6479,6542-6546,6590-6594,6687-6691,7006,7100,7159,7278-7348,7359,7367,7376-7393,7419,7427,7434-7443,7505-7509,7723-7724,7761,7792-7801,7808-7826,7849-7853,7895,7901-7904,7910-7913,7936-7937,7979,8420-8421,8425,8431,8433-8435,8438,8445,8451,8633-8637,8724-8735,8884-8892,8903-8907,8917-8921,8930,8994-9006,9009-9014,9017-9049,9055,9061,9143,9314,9332,9342,9467,9788,10046-10050,10219,10223-10236
+agents/package.json
+  s_2461ceafdb7d32::t_88f028264f1df4 3,65,71,88-89
+agents/src/cli.ts
+  s_2461ceafdb7d32::t_9f09960aa20be6 61,79-84,87,100-105,266
+agents/src/console.ts
+  s_2461ceafdb7d32::t_48bcffc07d1d1b 11-17,66,71,73,177,180-187,189-190
+agents/src/generator.test.ts
+  s_2461ceafdb7d32::t_3cb558431f6409 32-43
+agents/src/generator.ts
+  s_2461ceafdb7d32::t_a8334c87fa3e99 9-13,17-29
+agents/src/inference/api_protos.ts
+  s_2461ceafdb7d32::t_bfbf502d6c1092 207-213
+agents/src/inference/eot/detector.ts
+  s_2461ceafdb7d32::t_016589e477a74f 145-167
+agents/src/inference/interruption/interruption_speech_boundary.test.ts
+  s_2461ceafdb7d32::t_10e9904645c50e 1-146
+agents/src/inference/interruption/ws_transport.ts
+  s_2461ceafdb7d32::t_528edf533206a8 283-293,347-357
+agents/src/inference/llm.test.ts
+  s_2461ceafdb7d32::t_f9211cd10b4da0 6,66,68-71,403-414
+agents/src/inference/llm.ts
+  s_2461ceafdb7d32::t_7eb190b5f816a0 491-493,547
+agents/src/inference/stt.test.ts
+  s_2461ceafdb7d32::t_b9a7d100899fb2 4-8,446-448,612-1210,1218-1225
+agents/src/inference/stt.ts
+  s_2461ceafdb7d32::t_854f81baac12fb 7,20-28,59-60,324,433-435,735,830-836,841-854,856-894,908-924,934-935,938-940,945,959-964,966-969,973-990,992-996,1000,1002-1008,1045,1049-1056,1071,1073-1089,1104-1106
+agents/src/inference/test_utils.ts
+  s_2461ceafdb7d32::t_ceade7207ac02d 16
+agents/src/inference/tts.test.ts
+  s_2461ceafdb7d32::t_efd65031cfa5bc 4-5,7,37-71,98,134,137,142,145,152,157,164,169,193,198,233-234,243,246,276,282,387,392,450,454,465
+agents/src/inference/tts.ts
+  s_2461ceafdb7d32::t_28d7e62fe5ee64 171-179,216,472
+agents/src/inference/utils.test.ts
+  s_2461ceafdb7d32::t_6d097890782a14 1-100
+agents/src/inference/utils.ts
+  s_2461ceafdb7d32::t_0d1f679fe472fb 6,61,88-90,117-118,120-131,145
+agents/src/inference/vad.ts
+  s_2461ceafdb7d32::t_d417ec8f965f7b 337
+agents/src/ipc/inference_proc_executor.ts
+  s_2461ceafdb7d32::t_ed64795782c7ed 13,35-36,39
+agents/src/ipc/job_executor.ts
+  s_2461ceafdb7d32::t_651f594e5f1226 15
+agents/src/ipc/job_proc_executor.ts
+  s_2461ceafdb7d32::t_0cdf3531e664da 13,26-34
+agents/src/ipc/job_proc_lazy_main.ts
+  s_2461ceafdb7d32::t_9765b1fa560f01 6,11-25,27,29-30,36-40,125-126,135,144,164-167,171,178-180,187-193,197-202,204-209,211-219,258,264,270,276,302-306,315-316,323,325,328,336-341
+agents/src/ipc/message.ts
+  s_2461ceafdb7d32::t_6dfe70956cf724 15,38-45,56
+agents/src/ipc/proc_pool.test.ts
+  s_2461ceafdb7d32::t_ca783657da19b0 26-37,45-73,78,97,110,128,153-164,184
+agents/src/ipc/proc_pool.ts
+  s_2461ceafdb7d32::t_c64b1104817edc 12-22,27,41-50,57,79-89,92,98-108,123,186,189,191-192
+agents/src/ipc/supervised_proc.test.ts
+  s_2461ceafdb7d32::t_4f5d4ef6e1117f 4,6,11-26,145-359,392,435,468,534-543
+agents/src/ipc/supervised_proc.ts
+  s_2461ceafdb7d32::t_da32c6ed6e5be3 48-50,53-54,84-85,107,111,123-125,138-143,160-167,169-170,178,181,205,218,252,264,266,268-272,274,276-281,283-298,300-341,343
+agents/src/job.test.ts
+  s_2461ceafdb7d32::t_5f27004fb4c138 6,9,12,17,24-28,245-270,377-472
+agents/src/job.ts
+  s_2461ceafdb7d32::t_655d38c1e9182d 21,24-25,40-66,269-289,508,512,517,552,609-610,620-623,627
+agents/src/job_lifecycle.test.ts
+  s_2461ceafdb7d32::t_62cbb527372da5 1-377
+agents/src/job_lifecycle.ts
+  s_2461ceafdb7d32::t_d20ee19af50f5a 1-136
+agents/src/llm/chat_context.test.ts
+  s_2461ceafdb7d32::t_c668e5843a123a 6,10,316,1635-1662
+agents/src/llm/chat_context.ts
+  s_2461ceafdb7d32::t_90bfffb7b2f09c 720
+agents/src/llm/duplex.ts
+  s_2461ceafdb7d32::t_d5ec9af302159c 1-223
+agents/src/llm/duplex.type.test.ts
+  s_2461ceafdb7d32::t_82e29d361abae2 1-52
+agents/src/llm/duplex_adapter.test.ts
+  s_2461ceafdb7d32::t_e160f45b5d4fc7 1-1111
+agents/src/llm/duplex_adapter.ts
+  s_2461ceafdb7d32::t_72df9900e6dba0 1-587
+agents/src/llm/index.ts
+  s_2461ceafdb7d32::t_a6e787141ef33d 37-54
+agents/src/llm/llm.ts
+  s_2461ceafdb7d32::t_dcdab237cc06cc 10,34-40,227-231,236,244-262,269,327-328,332,350-352,369-374,395,412-430
+agents/src/llm/realtime.ts
+  s_2461ceafdb7d32::t_93d325d5cb2bc6 51-52,92-93
+agents/src/log.test.ts
+  s_2461ceafdb7d32::t_204cdb245f56b3 87,108,135,196
+agents/src/metrics/base.ts
+  s_2461ceafdb7d32::t_997e22d612c631 38-44,174-177,194-201
+agents/src/metrics/model_usage.test.ts
+  s_2461ceafdb7d32::t_ceac2a5df1326b 355,401
+agents/src/metrics/model_usage.ts
+  s_2461ceafdb7d32::t_db90fff76bd66c 44-45,168,253-254,273-274
+agents/src/metrics/utils.ts
+  s_2461ceafdb7d32::t_7dee0990b389d4 21,32
+agents/src/stt/fallback_adapter.test.ts
+  s_2461ceafdb7d32::t_1ff4cd754b694b 317-392
+agents/src/stt/fallback_adapter.ts
+  s_2461ceafdb7d32::t_dea0528779605e 29-30,74-77,160-161,235,238,241,243,246,248-251,253-256,260-263,297-300,326-327,331,347-348,372-373,376-412,414,418-419,421,423,427,431-442,444,447-451,455-459,463,465,468-490,494,512,526-529,533-534,536,543-546,548-555,557-565,568-571,573-607,610-619,621-625,627-633,636,639-650
+agents/src/stt/fallback_adapter_lifecycle.test.ts
+  s_2461ceafdb7d32::t_d299b0bb3d5a84 1-647
+agents/src/stt/stt.test.ts
+  s_2461ceafdb7d32::t_92f3c9246263f2 103-154,190-204,219
+agents/src/stt/stt.ts
+  s_2461ceafdb7d32::t_6de82445d4843d 318,343,346,348,352-354,368-372,388-391,501-505,581-585
+agents/src/telemetry/gen_ai.test.ts
+  s_2461ceafdb7d32::t_76b695f8d0fdf4 1-250
+agents/src/telemetry/gen_ai.ts
+  s_2461ceafdb7d32::t_7889b50014e8f7 1-543
+agents/src/telemetry/index.ts
+  s_2461ceafdb7d32::t_2c5a34ce050dae 5-10,15,23,26-28,32,39,47
+agents/src/telemetry/logging.ts
+  s_2461ceafdb7d32::t_632b3a149be243 7-13,55-84
+agents/src/telemetry/loop_monitor.test.ts
+  s_2461ceafdb7d32::t_423d2878bca6e1 1-520
+agents/src/telemetry/loop_monitor.ts
+  s_2461ceafdb7d32::t_ccf81032a39005 1-543
+agents/src/telemetry/observability_endpoint.test.ts
+  s_2461ceafdb7d32::t_957f7ccd38ac6a 1-51
+agents/src/telemetry/observability_endpoint.ts
+  s_2461ceafdb7d32::t_1a0051ee8f0e98 5,7-10,12-21,24-28,30-31,34
+agents/src/telemetry/observability_endpoint.type.test.ts
+  s_2461ceafdb7d32::t_f2701e171f320e 1-21
+agents/src/telemetry/otel_http_exporter.test.ts
+  s_2461ceafdb7d32::t_9f484492276f10 31,80-90
+agents/src/telemetry/otel_http_exporter.ts
+  s_2461ceafdb7d32::t_1b6c474af8b8db 13,16-17,32,42-52,62,73,86,99,110
+agents/src/telemetry/otel_metrics.test.ts
+  s_2461ceafdb7d32::t_b34169b0c11c78 1-71
+agents/src/telemetry/otel_metrics.ts
+  s_2461ceafdb7d32::t_9a48f577c8281e 1-36
+agents/src/telemetry/pii.test.ts
+  s_2461ceafdb7d32::t_90a1da849e79fe 4-5,7-47,49-54,56,59-60,63-65,67-70,72-77,80-82,84-88,90-92,94-100,103-106,108-110,112-117,119-137,140-142,145-153,157-171,174,176-179,183-185,187
+agents/src/telemetry/pii.ts
+  s_2461ceafdb7d32::t_77d7f560750f69 1-110
+agents/src/telemetry/pino_otel_transport.test.ts
+  s_2461ceafdb7d32::t_e6b9d24fd656ef 1-79
+agents/src/telemetry/pino_otel_transport.ts
+  s_2461ceafdb7d32::t_deb9f744d82940 14-15,28,38-48,114,127,134,136,180-188,203,209-212,214-225,264,276-277,303-305
+agents/src/telemetry/rate_limiter.ts
+  s_2461ceafdb7d32::t_d6fb814e28bebc 1,5-23,26-29
+agents/src/telemetry/recording_disabled.test.ts
+  s_2461ceafdb7d32::t_2c7800a3909e33 8,10,43-44,60,70,72-80,201,220,240,269,274,291
+agents/src/telemetry/recording_upload.test.ts
+  s_2461ceafdb7d32::t_fc7ca3722625a4 1-276
+agents/src/telemetry/recording_upload.ts
+  s_2461ceafdb7d32::t_86c255d6b30de2 1-301
+agents/src/telemetry/redaction.ts
+  s_2461ceafdb7d32::t_68f5545a9cba2e 4-11,14-151
+agents/src/telemetry/session_context.ts
+  s_2461ceafdb7d32::t_397bcb79ce5459 1-27
+agents/src/telemetry/trace_types.test.ts
+  s_2461ceafdb7d32::t_3e653ace21ad0e 9,166-179,215-241,256-257,265-267,272-277,279-281
+agents/src/telemetry/trace_types.ts
+  s_2461ceafdb7d32::t_0477d2c46e7d66 119-151,154-163,166-344,348-349,355,363-366
+agents/src/telemetry/traces.otel2.type.test.ts
+  s_2461ceafdb7d32::t_908ea245dcb218 13,75,112,168,174-177
+agents/src/telemetry/traces.test.ts
+  s_2461ceafdb7d32::t_10f2f8787ebb64 15-17,20,22,24,27,30-32,39-268,298,303,321-323,501,510-514,516,524,542,548-551,563,590,614-619,622,635,677,719,732-762,769,798,812-846,909,927,945,963,978,996
+agents/src/telemetry/traces.ts
+  s_2461ceafdb7d32::t_95e76c5da4d5c0 14,26-30,43,53-54,56,58-59,61,76-90,293-397,427-436,490-491,508,512-521,524-525,581-597,599,618-619,624-627,656,666,690-699,709-725,727-845,850,852-860,873,991,993,995,998-999,1002-1031,1045-1046,1048
+agents/src/telemetry/upload_gate.ts
+  s_2461ceafdb7d32::t_86d9a0f0a08c2a 5,8,11,112-114,125-144,146-149
+agents/src/telemetry/utils.test.ts
+  s_2461ceafdb7d32::t_cd54bb10b3a999 8,10,15,17,42-43,71-72,77
+agents/src/telemetry/utils.ts
+  s_2461ceafdb7d32::t_5dd2b8e8012534 4,8-9,14-29,45-50,81-84,86-87,95-107
+agents/src/tokenize/xml_markup.test.ts
+  s_2461ceafdb7d32::t_e53cdef31a0207 56-57,66,117
+agents/src/tts/index.ts
+  s_2461ceafdb7d32::t_ef5b8fab43af69 30
+agents/src/tts/markup_utils.ts
+  s_2461ceafdb7d32::t_1e5047d97d6964 99-142,175-177,183,185,210-212,216,235-248,250-251,262
+agents/src/tts/provider_format.test.ts
+  s_2461ceafdb7d32::t_d9b4fd9a093d38 223,232-233,281-285,332,349-357,423,766-964
+agents/src/tts/provider_format.ts
+  s_2461ceafdb7d32::t_7042f269aa4f8e 19,27,33,253-304,697-800,807,900-908,962-965,1092-1093,1151-1154,1159,1161-1174,1176-1192,1194-1221,1223-1225,1228,1352,1398-1400,1414-1417,1449-1455,1457-1460,1468-1487,1496,1498-1500,1502-1507,1509,1542-1544,1556-1560,1566-1571,1573,1575,1577-1579,1581-1587,1749-1751
+agents/src/tts/stream_adapter.ts
+  s_2461ceafdb7d32::t_fa9a0173a6bff4 6,17-18,29,32-33,41-76,92-98,105,111-114,119-126,129-132,141,155-162,165,177,183,190-192
+agents/src/tts/tts.ts
+  s_2461ceafdb7d32::t_abb65bdce322e2 354,373-375
+agents/src/types.ts
+  s_2461ceafdb7d32::t_a8737f36970a59 95
+agents/src/utils.test.ts
+  s_2461ceafdb7d32::t_3ae2b494675366 13,24,1149-1204
+agents/src/utils.ts
+  s_2461ceafdb7d32::t_b5c1ec9aa9876d 155-156,160,1053-1055
+agents/src/voice/agent.ts
+  s_2461ceafdb7d32::t_657da7907434cc 16-17,37,154-156,158,172,280-281,311-319,430,449-450,534-536,622,697,700-702,715,722-726,778,788,891-893,910-911
+agents/src/voice/agent_activity.ts
+  s_2461ceafdb7d32::t_dc2fce99e5ea28 31,73,75,334,457-464,478-481,615-621,670-683,773,1072,1106-1116,1128-1133,1677-1693,1716-1717,1778,2339-2343,3304,3754,3960,3998-4008,4020-4021,4032-4033,4048-4064,4079,4087,4110-4121,4123,4140,4457,4856,5009-5017,5137-5139,5142,5168-5176,5351,5638-5645
+agents/src/voice/agent_activity_interrupted_commit.test.ts
+  s_2461ceafdb7d32::t_fcc22a70010e27 20,23,40-75,209-220,242-279,317-345
+agents/src/voice/agent_activity_preemptive_pause_deadlock.test.ts
+  s_2461ceafdb7d32::t_30a5d5ad7f1b7e 168,170,182-183,198
+agents/src/voice/agent_activity_speech_task_abort.test.ts
+  s_2461ceafdb7d32::t_d4e84d5f2ef1dd 1-72
+agents/src/voice/agent_session.test.ts
+  s_2461ceafdb7d32::t_a96bb7b3db4931 6-7,9,19-58,258-310
+agents/src/voice/agent_session.ts
+  s_2461ceafdb7d32::t_5f63bc53a6b969 13,50-56,64,80,144,294,541,581-582,588-590,666-676,737-738,764-767,979-982,1033-1035,1037-1039,1082-1084,1088-1100,1281-1285,1290,1514,1559,1561,1563,1567,1570,1676-1677,1714-1719,1940-1964,1966-1970,2000-2001,2006-2008,2012-2031,2034,2040,2042,2045,2049,2065,2070,2089,2094
+agents/src/voice/agent_session_handoff.test.ts
+  s_2461ceafdb7d32::t_a73b417de1fb03 64,99,137,201,235
+agents/src/voice/agent_task_close.test.ts
+  s_2461ceafdb7d32::t_2d6f3fe88e3fab 1-297
+agents/src/voice/agent_task_handoff_drain.test.ts
+  s_2461ceafdb7d32::t_09c1e01bfac31f 1-410
+agents/src/voice/amd.test.ts
+  s_2461ceafdb7d32::t_733b7c6d86ca63 91-113,116,172-198,548,557-560,572-658,898-921,930,941-993
+agents/src/voice/amd.ts
+  s_2461ceafdb7d32::t_130ea7431373b8 63,68,74,79,328,419-420,429-433,505-509,736-737,794-796,822,836-841,945-950,1083,1088-1093,1140,1142,1163,1165
+agents/src/voice/amd_session_close.test.ts
+  s_2461ceafdb7d32::t_5d7ac28bb2591a 1-234
+agents/src/voice/audio_recognition.ts
+  s_2461ceafdb7d32::t_0f896f656bc456 170-172,177,184,186-187,189-193,204-215,217-219,221-226,228-237,239-242,269-270,323,441,1448,1966-1967,2123,2188,2196-2199
+agents/src/voice/audio_recognition_endpointing.test.ts
+  s_2461ceafdb7d32::t_fe1865a1d6a3d4 4,7,29,35-39,59-88
+agents/src/voice/audio_recognition_stt_recovery.test.ts
+  s_2461ceafdb7d32::t_428f499588b390 1-93
+agents/src/voice/console_io.ts
+  s_2461ceafdb7d32::t_d73a070c12d2c7 122-129,132,157
+agents/src/voice/events.ts
+  s_2461ceafdb7d32::t_0b1ba38bfefaff 41
+agents/src/voice/expressive_toggle.test.ts
+  s_2461ceafdb7d32::t_4df6d37628c20f 6-9,71-191
+agents/src/voice/generation.ts
+  s_2461ceafdb7d32::t_74544c60fb5f6f 34,634-638,647-661,748-750,774-805,817-821,1046,1082,1248,1258-1259,1420-1426,1449-1452,1474
+agents/src/voice/generation_telemetry.test.ts
+  s_2461ceafdb7d32::t_d29f3af83ed673 143-152
+agents/src/voice/generation_tts_timeout.test.ts
+  s_2461ceafdb7d32::t_f69161bfb6863d 35-48,52-78
+agents/src/voice/index.ts
+  s_2461ceafdb7d32::t_8c4dcff419803a 59
+agents/src/voice/io.ts
+  s_2461ceafdb7d32::t_bddcdcdd55c5e8 120,148-150,213-222,309-322
+agents/src/voice/realtime_message_metrics.test.ts
+  s_2461ceafdb7d32::t_0d029ea36123e4 18,44,93-97,172-210
+agents/src/voice/realtime_overlapping_speech.test.ts
+  s_2461ceafdb7d32::t_ebde16364676a8 1-248
+agents/src/voice/recorder_io/recorder_io.test.ts
+  s_2461ceafdb7d32::t_bbb4ed228ab4e4 5,10,18,417-419,429-469,521-522,560-561,563-577,580-581,585-586,588,836-838,849-850,855-857,868-870,1118-1488
+agents/src/voice/recorder_io/recorder_io.ts
+  s_2461ceafdb7d32::t_cd6197988ca545 25-30,34-37,41-49,55-174,181,187,196-200,230,238,281-283,286-291,295,310-314,319-321,325-326,330,332,346,350,352,361-366,369,408,410-411,417-420,427,430,432-434,438-439,441-443,446-447,449-450,462-474,487,489-493,497,505,514-516,573-574,590-594,599,608,612,619-622,624-625,627-629,633-634,636-641,748-749,751,755-758,760-767,771-774,776-779,781,784-790,793-794,817,819-822,845
+agents/src/voice/remote_session.test.ts
+  s_2461ceafdb7d32::t_d97f7d1a8f01db 5,15,21,26,267-352
+agents/src/voice/remote_session.ts
+  s_2461ceafdb7d32::t_430a3be1e3931a 162-167,183,309-311,665-674,1268,1270-1275,1279
+agents/src/voice/room_io/_input.test.ts
+  s_2461ceafdb7d32::t_b4c4acc7496a85 4-13,20,27,39,45,54-58,61,65-66,71,74-77,83,86,92,96-245
+agents/src/voice/room_io/_input.ts
+  s_2461ceafdb7d32::t_2043b86fdb576b 29,31-36,38,63,157-166,169-235,248,251,255,259-284,299-303,305,308
+agents/src/voice/room_io/_output.test.ts
+  s_2461ceafdb7d32::t_97b68edcbb532b 5,12,605-804
+agents/src/voice/room_io/_output.ts
+  s_2461ceafdb7d32::t_dba5d177cacb35 522-527,560-577,616-621,634-638,641,663-669,671-673,676
+agents/src/voice/room_io/room_io.test.ts
+  s_2461ceafdb7d32::t_374d3cd3ee9ce0 9,105-148
+agents/src/voice/room_io/room_io.ts
+  s_2461ceafdb7d32::t_2d004eb33413d0 337,339-345
+agents/src/voice/speech_handle.test.ts
+  s_2461ceafdb7d32::t_6e46f2c6834f68 215
+agents/src/voice/transcription/synchronizer.test.ts
+  s_2461ceafdb7d32::t_e773e1d1860119 7-13,236-237,244-269
+agents/src/voice/transcription/synchronizer.ts
+  s_2461ceafdb7d32::t_f82ce2c3c3bcf3 317-320
+agents/src/voice/turn_config/endpointing.test.ts
+  s_2461ceafdb7d32::t_3da370bb73a047 70,79,85-106,118,163-379
+agents/src/voice/turn_config/endpointing.ts
+  s_2461ceafdb7d32::t_be93bda93c2fa5 94,109,156-167,170,175,178,192-193,237-241
+agents/src/worker.test.ts
+  s_2461ceafdb7d32::t_660b0272014759 4-7,36-118
+agents/src/worker.ts
+  s_2461ceafdb7d32::t_ffa1fceb8eba67 17,20,33,35-39,160-174,192-195,223,256-259,267-269,273-275,302,319-321,375,427-436,488-493,496,949-954,959-964,1017-1018
+agents/src/workflows/warm_transfer.test.ts
+  s_2461ceafdb7d32::t_6bc52a39c78eee 548
+agents/src/workflows/warm_transfer.ts
+  s_2461ceafdb7d32::t_e22ad7d0485d8b 330-334
+examples/src/basic_agent.ts
+  s_2461ceafdb7d32::t_a9c18d7c035d8b 62
+examples/src/basic_agent_task.ts
+  s_2461ceafdb7d32::t_a0275b0b3a97b4 23
+examples/src/basic_task_group.ts
+  s_2461ceafdb7d32::t_36e903c88e2aae 18
+examples/src/gpt_live/README.md
+  s_2461ceafdb7d32::t_9e442790eef776 1-73
+examples/src/gpt_live/client_delegation.ts
+  s_2461ceafdb7d32::t_cf7673eefa2138 1-160
+examples/src/gpt_live/gpt_live_agent.ts
+  s_2461ceafdb7d32::t_ce8bbdc14e2c01 1-88
+examples/src/phonic_realtime_agent.ts
+  s_2461ceafdb7d32::t_94ed67036cea18 53,62-64
+examples/src/warm_transfer.ts
+  s_2461ceafdb7d32::t_dd1e6277ecd358 65,150-151
+package.json
+  s_2461ceafdb7d32::t_f28edf22be9965 17-18
+plugins/anam/CHANGELOG.md
+  s_2461ceafdb7d32::t_545e1ec49f0511 3-25
+plugins/anam/etc/agents-plugin-anam.api.md
+  s_2461ceafdb7d32::t_a418791c97ea70 29,43
+plugins/anam/package.json
+  s_2461ceafdb7d32::t_baa19a195fc355 3
+plugins/anam/src/api.ts
+  s_2461ceafdb7d32::t_48345b6d817dd3 122,173
+plugins/anam/src/avatar.ts
+  s_2461ceafdb7d32::t_d000523a7c3ef7 121,123
+plugins/anthropic/CHANGELOG.md
+  s_2461ceafdb7d32::t_0d29b9b2fca156 3-23
+plugins/anthropic/etc/agents-plugin-anthropic.api.md
+  s_2461ceafdb7d32::t_8774658b990922 27
+plugins/anthropic/package.json
+  s_2461ceafdb7d32::t_6c5ceea2d4fe04 3
+plugins/assemblyai/CHANGELOG.md
+  s_2461ceafdb7d32::t_7ad15e1597aa35 3-29
+plugins/assemblyai/etc/agents-plugin-assemblyai.api.md
+  s_2461ceafdb7d32::t_15bcaf52f37edc 75,88,98,101
+plugins/assemblyai/package.json
+  s_2461ceafdb7d32::t_a4427eab8399bf 3
+plugins/assemblyai/src/models.ts
+  s_2461ceafdb7d32::t_1cda946502a203 11
+plugins/assemblyai/src/stt-metadata.test.ts
+  s_2461ceafdb7d32::t_28d7d8f6d96a16 26,48-94,180-225
+plugins/assemblyai/src/stt-options.test.ts
+  s_2461ceafdb7d32::t_21640c95695f74 1-334
+plugins/assemblyai/src/stt.test.ts
+  s_2461ceafdb7d32::t_fd9889d35c1776 53-161
+plugins/assemblyai/src/stt.ts
+  s_2461ceafdb7d32::t_3be48b99b0f967 15,27-47,53-108,144-149,165,179-182,211-212,215-217,249-254,268,277,304,342,345-347,395,402,409-414,486-487,496-499
+plugins/azure/CHANGELOG.md
+  s_2461ceafdb7d32::t_49fea3710d7fdb 3-23
+plugins/azure/package.json
+  s_2461ceafdb7d32::t_9aeda7deb21fa6 3
+plugins/baseten/CHANGELOG.md
+  s_2461ceafdb7d32::t_3e9fac3f2cc742 3-23
+plugins/baseten/etc/agents-plugin-baseten.api.md
+  s_2461ceafdb7d32::t_ed7f122bd4ac96 28
+plugins/baseten/package.json
+  s_2461ceafdb7d32::t_a87d688e9e9026 3
+plugins/bey/CHANGELOG.md
+  s_2461ceafdb7d32::t_4770faadefa072 3-25
+plugins/bey/etc/agents-plugin-bey.api.md
+  s_2461ceafdb7d32::t_36728a6ad5f7e2 29
+plugins/bey/package.json
+  s_2461ceafdb7d32::t_51df6a11442883 3
+plugins/bey/src/avatar.ts
+  s_2461ceafdb7d32::t_3318e9c7359ea6 12-13,23-24,211-236
+plugins/cartesia/CHANGELOG.md
+  s_2461ceafdb7d32::t_feeecc8625b86c 3-25
+plugins/cartesia/package.json
+  s_2461ceafdb7d32::t_7ed25e31a28f86 3
+plugins/cartesia/src/stt.ts
+  s_2461ceafdb7d32::t_2dbec8813fe8ce 424-431,434
+plugins/cartesia/src/tts.test.ts
+  s_2461ceafdb7d32::t_bfb5db92bfc4ff 34,190-245
+plugins/cartesia/src/tts.ts
+  s_2461ceafdb7d32::t_5338d724e65787 555-558
+plugins/cerebras/CHANGELOG.md
+  s_2461ceafdb7d32::t_a8ba10e0b00110 3-26
+plugins/cerebras/etc/agents-plugin-cerebras.api.md
+  s_2461ceafdb7d32::t_c3728ee09437fe 28
+plugins/cerebras/package.json
+  s_2461ceafdb7d32::t_ca0f7c67b4a882 3
+plugins/deepgram/CHANGELOG.md
+  s_2461ceafdb7d32::t_d4fcbb60750ed3 3-27
+plugins/deepgram/README.md
+  s_2461ceafdb7d32::t_0784503b0141df 12-14
+plugins/deepgram/etc/agents-plugin-deepgram.api.md
+  s_2461ceafdb7d32::t_26b60cacfa5f27 30-40,46-55,226-236,298-336
+plugins/deepgram/package.json
+  s_2461ceafdb7d32::t_6ef78dddcf12cb 3
+plugins/deepgram/src/_utils.test.ts
+  s_2461ceafdb7d32::t_86d0825a4daac0 1-134
+plugins/deepgram/src/_utils.ts
+  s_2461ceafdb7d32::t_d8f99960bfd91c 4,52-108
+plugins/deepgram/src/index.ts
+  s_2461ceafdb7d32::t_d5705d116d41c1 9
+plugins/deepgram/src/models.ts
+  s_2461ceafdb7d32::t_e54f76dc92de69 146-152
+plugins/deepgram/src/stt.ts
+  s_2461ceafdb7d32::t_cb16e16b3423ec 21,25,389-393,404-410,444-448,482-484,487-489,607-624
+plugins/deepgram/src/stt_v2.ts
+  s_2461ceafdb7d32::t_90c419e7044b0d 20,277-282,339-340,343-344,362-388,390,394,398,413-417,435-458,461
+plugins/deepgram/src/tts_v2.test.ts
+  s_2461ceafdb7d32::t_91f37dbb8c2195 1-233
+plugins/deepgram/src/tts_v2.ts
+  s_2461ceafdb7d32::t_8aa17d4725eec6 1-684
+plugins/did/CHANGELOG.md
+  s_2461ceafdb7d32::t_45505f16169445 3-23
+plugins/did/etc/agents-plugin-did.api.md
+  s_2461ceafdb7d32::t_a8d98190688196 29
+plugins/did/package.json
+  s_2461ceafdb7d32::t_e4ea6014ece1cd 3
+plugins/elevenlabs/CHANGELOG.md
+  s_2461ceafdb7d32::t_5f1bd154ebfdf0 3-31
+plugins/elevenlabs/README.md
+  s_2461ceafdb7d32::t_9b7101fd46f5a5 6
+plugins/elevenlabs/etc/agents-plugin-elevenlabs.api.md
+  s_2461ceafdb7d32::t_67446607b41944 63,96,121,128,142
+plugins/elevenlabs/package.json
+  s_2461ceafdb7d32::t_82deefc808cc5a 3
+plugins/elevenlabs/src/stt.test.ts
+  s_2461ceafdb7d32::t_ab93e435ce8230 4,10,12,82,96,116-154,240-410,440,451,509,640,646,697,756-864
+plugins/elevenlabs/src/stt.ts
+  s_2461ceafdb7d32::t_939f06d36cdd3f 18,58-63,76-87,100,103-104,244-248,279-294,315,320-321,523,538-549,561,617,637-642,652-661,688-691,822,845,862-869,930,942,967,987-990
+plugins/fishaudio/CHANGELOG.md
+  s_2461ceafdb7d32::t_aa772f530cb731 3-23
+plugins/fishaudio/package.json
+  s_2461ceafdb7d32::t_8bb40fb57be7dc 3
+plugins/google/CHANGELOG.md
+  s_2461ceafdb7d32::t_6feabb9580609a 3-27
+plugins/google/etc/agents-plugin-google.api.md
+  s_2461ceafdb7d32::t_be68d961ecfd88 17,38,207,251,496-497,507,525-526,577
+plugins/google/package.json
+  s_2461ceafdb7d32::t_b8ec7f8f1cddf1 3,43-44
+plugins/google/src/beta/gemini_tts.test.ts
+  s_2461ceafdb7d32::t_827c50f3fa24f5 4,7,51-376
+plugins/google/src/beta/gemini_tts.ts
+  s_2461ceafdb7d32::t_8b04e27779eada 58-79,88-97,133-134,167-187,194-197,199-200,216-221,235,239-245,263,274-277,284,287,292,295-306,309-311,335,405-480,507-544
+plugins/google/src/llm.ts
+  s_2461ceafdb7d32::t_a7872943123365 33-40,218-230,356-357,360-361,368-372
+plugins/google/src/llm_request.test.ts
+  s_2461ceafdb7d32::t_644c56d4e2d91f 5-10,339-451
+plugins/google/src/models.ts
+  s_2461ceafdb7d32::t_28db4fd0bcc0e9 94-95
+plugins/google/src/realtime/api_proto.ts
+  s_2461ceafdb7d32::t_1bd4127c87ef62 22-23
+plugins/google/src/realtime/realtime_api.test.ts
+  s_2461ceafdb7d32::t_9103f045754d47 4,8,254-300,302-318,320,323-329
+plugins/google/src/realtime/realtime_api.ts
+  s_2461ceafdb7d32::t_6e2b262bfddbfb 52-100,393,402-403,712-714,913-918,1103,1189,1484-1485,1491-1492,1501,1868-1871,1883
+plugins/google/src/utils.test.ts
+  s_2461ceafdb7d32::t_5fd2eb6e081cbf 4,6-16,18-21,24-27,29-30,32-48,50,53-62,65-86,88-92,94-114,117-118,120-123
+plugins/google/src/utils.ts
+  s_2461ceafdb7d32::t_d7a8453285c8c7 84,142-145,157,160-166,177,183,189
+plugins/hume/CHANGELOG.md
+  s_2461ceafdb7d32::t_a84514a48546d4 3-23
+plugins/hume/package.json
+  s_2461ceafdb7d32::t_2994e79cef886c 3
+plugins/inworld/CHANGELOG.md
+  s_2461ceafdb7d32::t_d43a7ebc5ed6bd 3-23
+plugins/inworld/package.json
+  s_2461ceafdb7d32::t_0efae21bf35364 3
+plugins/krisp/CHANGELOG.md
+  s_2461ceafdb7d32::t_a5c697c6c8a3ba 3-23
+plugins/krisp/package.json
+  s_2461ceafdb7d32::t_18ccccd5c68e88 3
+plugins/lemonslice/CHANGELOG.md
+  s_2461ceafdb7d32::t_bdcbfac0416375 3-23
+plugins/lemonslice/etc/agents-plugin-lemonslice.api.md
+  s_2461ceafdb7d32::t_8b9a37389cc815 29
+plugins/lemonslice/package.json
+  s_2461ceafdb7d32::t_e92b5c821dee58 3
+plugins/liveavatar/CHANGELOG.md
+  s_2461ceafdb7d32::t_513884fb0eb7c7 3-23
+plugins/liveavatar/etc/agents-plugin-liveavatar.api.md
+  s_2461ceafdb7d32::t_6df0d85a21d756 29
+plugins/liveavatar/package.json
+  s_2461ceafdb7d32::t_54e49fdd970456 3
+plugins/livekit/CHANGELOG.md
+  s_2461ceafdb7d32::t_8b1672028831b6 3-23
+plugins/livekit/etc/agents-plugin-livekit.api.md
+  s_2461ceafdb7d32::t_857689d4af3d24 27
+plugins/livekit/package.json
+  s_2461ceafdb7d32::t_0bb98df8f09d99 3
+plugins/meta/CHANGELOG.md
+  s_2461ceafdb7d32::t_e14be6bfe6260a 1-21
+plugins/meta/README.md
+  s_2461ceafdb7d32::t_1ef2b8c962a422 1-47
+plugins/meta/etc/agents-plugin-meta.api.md
+  s_2461ceafdb7d32::t_f832bffc4ee2f1 1,7-20,22-36,39,42-44,47-84
+plugins/meta/package.json
+  s_2461ceafdb7d32::t_4afc8e5fca1036 2-4,32,37-46,51,56
+plugins/meta/src/index.ts
+  s_2461ceafdb7d32::t_dfedeb15aa5018 1,6-7,9,12,19
+plugins/meta/src/log.ts
+  s_2461ceafdb7d32::t_d98deaa7712b74 1,6
+plugins/meta/src/stt.test.ts
+  s_2461ceafdb7d32::t_8cb10747cbd17a 1-782
+plugins/meta/src/stt.ts
+  s_2461ceafdb7d32::t_38131c76dbff3a 1-980
+plugins/meta/tsconfig.json
+  s_2461ceafdb7d32::t_e1497515051068 10
+plugins/meta/tsup.config.ts
+  s_2461ceafdb7d32::t_01ec8b069f3399 1-3,9
+plugins/minimax/CHANGELOG.md
+  s_2461ceafdb7d32::t_820304a458ae11 3-23
+plugins/minimax/package.json
+  s_2461ceafdb7d32::t_7a971993ebe47e 3
+plugins/mistral/CHANGELOG.md
+  s_2461ceafdb7d32::t_4af85b4b31654d 3-26
+plugins/mistral/package.json
+  s_2461ceafdb7d32::t_4e5254773b1879 3
+plugins/mistralai/CHANGELOG.md
+  s_2461ceafdb7d32::t_b4b90915cbc810 3-26
+plugins/mistralai/etc/agents-plugin-mistralai.api.md
+  s_2461ceafdb7d32::t_9c30204745c701 27
+plugins/mistralai/package.json
+  s_2461ceafdb7d32::t_8aae916bb45121 3
+plugins/neuphonic/CHANGELOG.md
+  s_2461ceafdb7d32::t_0a756bcbb4efe8 3-23
+plugins/neuphonic/package.json
+  s_2461ceafdb7d32::t_9731acc2c0d0c4 3
+plugins/openai/CHANGELOG.md
+  s_2461ceafdb7d32::t_2e0cb1f9c69cae 3-31
+plugins/openai/etc/agents-plugin-openai.api.md
+  s_2461ceafdb7d32::t_c0709777eb1aaa 14,25,30,138-162,166,380-390,402-415,500-583,698-713,1102,1110,1167,1198,1206-1212,1397,1665-1723,1792-1810,1821-1872,1876,1883-1904,1972
+plugins/openai/package.json
+  s_2461ceafdb7d32::t_47a298ad46df8f 3
+plugins/openai/src/realtime/gpt_live_model.test.ts
+  s_2461ceafdb7d32::t_072c71f7f0c819 1-1509
+plugins/openai/src/realtime/gpt_live_model.ts
+  s_2461ceafdb7d32::t_944a62071dd25a 1-1040
+plugins/openai/src/realtime/gpt_live_types.ts
+  s_2461ceafdb7d32::t_e275e0837ab232 1-140
+plugins/openai/src/realtime/index.ts
+  s_2461ceafdb7d32::t_8a068a5fe2a0a3 6-7
+plugins/openai/src/realtime/realtime_model.test.ts
+  s_2461ceafdb7d32::t_410b9706761bdb 1255-1266
+plugins/openai/src/realtime/realtime_model.ts
+  s_2461ceafdb7d32::t_1e83ffc76b4a47 399,407-421,433,438-440
+plugins/openai/src/tool_utils.test.ts
+  s_2461ceafdb7d32::t_66d5c243a26b29 11-40
+plugins/openai/src/tool_utils.ts
+  s_2461ceafdb7d32::t_0c472ea967ac4e 8-9,11-12,15,29,31-34,36-46
+plugins/perplexity/CHANGELOG.md
+  s_2461ceafdb7d32::t_0ad136ff96d746 3-26
+plugins/perplexity/etc/agents-plugin-perplexity.api.md
+  s_2461ceafdb7d32::t_49dd1728e1085f 28
+plugins/perplexity/package.json
+  s_2461ceafdb7d32::t_ed3cb0242f9918 3
+plugins/phonic/CHANGELOG.md
+  s_2461ceafdb7d32::t_c2078b3c490321 3-31
+plugins/phonic/README.md
+  s_2461ceafdb7d32::t_b8138ed0d0d7d0 62-75,85,112,139,143
+plugins/phonic/etc/agents-plugin-phonic.api.md
+  s_2461ceafdb7d32::t_8d4354d78b4567 27,36-40,64-65,95,118-121,133,198-199,223-227,235
+plugins/phonic/package.json
+  s_2461ceafdb7d32::t_aa8200ba228920 3,44
+plugins/phonic/src/realtime/index.ts
+  s_2461ceafdb7d32::t_0cf4e9a3a51623 8-9
+plugins/phonic/src/realtime/realtime_model.ts
+  s_2461ceafdb7d32::t_a8a6fc4958183e 56,69,82-91,110,116-135,140-142,235-239,245,288-291,381,394,419-436,459,473,489,646,649,706-714,716-718,738-802,918-920,1129-1130,1251,1291
+plugins/phonic/src/realtime/tool_definitions.test.ts
+  s_2461ceafdb7d32::t_65b2d0f86cde41 1-41
+plugins/protoface/CHANGELOG.md
+  s_2461ceafdb7d32::t_88e2bc7f318abc 3-23
+plugins/protoface/etc/agents-plugin-protoface.api.md
+  s_2461ceafdb7d32::t_d60c37f6b9f690 29
+plugins/protoface/package.json
+  s_2461ceafdb7d32::t_83c2a320273250 3
+plugins/resemble/CHANGELOG.md
+  s_2461ceafdb7d32::t_28dd71aed688d6 3-23
+plugins/resemble/package.json
+  s_2461ceafdb7d32::t_161a25705ae486 3
+plugins/rime/CHANGELOG.md
+  s_2461ceafdb7d32::t_40e7e1ce197721 3-23
+plugins/rime/README.md
+  s_2461ceafdb7d32::t_7a48efffdcf6e9 6,17-100
+plugins/rime/etc/agents-plugin-rime.api.md
+  s_2461ceafdb7d32::t_834732c6565fcd 18,30-34,39-43,47-48,50,59-60,65-66,69-70,73-74,76,83,90,94-95,137-139,142-146
+plugins/rime/package.json
+  s_2461ceafdb7d32::t_b921850bbfb866 3,48-50
+plugins/rime/src/audio.ts
+  s_2461ceafdb7d32::t_bbb7251878d182 1-111
+plugins/rime/src/connection.ts
+  s_2461ceafdb7d32::t_63ea7dfcb5f853 1-353
+plugins/rime/src/legacy.test.ts
+  s_2461ceafdb7d32::t_33433bcf023332 1-132
+plugins/rime/src/options.test.ts
+  s_2461ceafdb7d32::t_e11238c2bd2e07 1-160
+plugins/rime/src/options.ts
+  s_2461ceafdb7d32::t_3ec7e0e0b2db60 1-329
+plugins/rime/src/stream.ts
+  s_2461ceafdb7d32::t_cb986ba082078b 1-438
+plugins/rime/src/stream_tts.ts
+  s_2461ceafdb7d32::t_e7b231832a3e76 1-36
+plugins/rime/src/tts.test.ts
+  s_2461ceafdb7d32::t_74571feb4d1c9f 4,38-154,199
+plugins/rime/src/tts.ts
+  s_2461ceafdb7d32::t_842c4b280ee50c 1,10,15-27,31-34,38-41,43,45,48-51,54,58-72,74-79,81-85,93-94,98-114,121-122,124-125,130-133,137,139-160,164-165,167-192,194-202,205-212,215-219,221,224-226,228-231,233-241
+plugins/rime/src/websocket.test.ts
+  s_2461ceafdb7d32::t_501d20003d7006 1-839
+plugins/runway/CHANGELOG.md
+  s_2461ceafdb7d32::t_010d1e854de0e4 3-23
+plugins/runway/etc/agents-plugin-runway.api.md
+  s_2461ceafdb7d32::t_dac392d3d2cd6f 29
+plugins/runway/package.json
+  s_2461ceafdb7d32::t_59c02ce5e6f1c5 3
+plugins/sarvam/CHANGELOG.md
+  s_2461ceafdb7d32::t_98f49951b74c8d 3-23
+plugins/sarvam/package.json
+  s_2461ceafdb7d32::t_cf5de6456cc1de 3
+plugins/silero/CHANGELOG.md
+  s_2461ceafdb7d32::t_585059cb9c7d92 3-27
+plugins/silero/package.json
+  s_2461ceafdb7d32::t_168dc51d0d2838 3
+plugins/silero/src/vad.test.ts
+  s_2461ceafdb7d32::t_61cdeccc58529f 9,16,120-141
+plugins/silero/src/vad.ts
+  s_2461ceafdb7d32::t_8019e81f077937 142-143,292,429-435
+plugins/soniox/CHANGELOG.md
+  s_2461ceafdb7d32::t_3af05cc6a3548e 3-23
+plugins/soniox/package.json
+  s_2461ceafdb7d32::t_94b552f2ff3556 3
+plugins/tavus/CHANGELOG.md
+  s_2461ceafdb7d32::t_28abc5fde75e12 3-25
+plugins/tavus/etc/agents-plugin-tavus.api.md
+  s_2461ceafdb7d32::t_cc2ed783fba4b2 29
+plugins/tavus/package.json
+  s_2461ceafdb7d32::t_86e3c8a371494f 3
+plugins/tavus/src/api.test.ts
+  s_2461ceafdb7d32::t_3968013d9ff432 103,109-118,121-129
+plugins/tavus/src/api.ts
+  s_2461ceafdb7d32::t_74e53bdef8e0f1 19-20,124,134-138,140,147,152
+plugins/test/CHANGELOG.md
+  s_2461ceafdb7d32::t_3bab25daf98194 3-23
+plugins/test/package.json
+  s_2461ceafdb7d32::t_3f48cb57067d03 3
+plugins/test/src/stt.ts
+  s_2461ceafdb7d32::t_3471a0ac9066b2 28-46,56,60-65,71-77,84-91,94-95,98,100-115,143-150
+plugins/trugen/CHANGELOG.md
+  s_2461ceafdb7d32::t_e95bc04124e021 3-23
+plugins/trugen/etc/agents-plugin-trugen.api.md
+  s_2461ceafdb7d32::t_b7173e27eb057c 29
+plugins/trugen/package.json
+  s_2461ceafdb7d32::t_215af9d1245a1f 3
+plugins/xai/CHANGELOG.md
+  s_2461ceafdb7d32::t_a3d3703793f80a 3-28
+plugins/xai/etc/agents-plugin-xai.api.md
+  s_2461ceafdb7d32::t_1d3027317bcd26 26
+plugins/xai/package.json
+  s_2461ceafdb7d32::t_ab6f7dcbfea4d7 3
+pnpm-lock.yaml
+  s_2461ceafdb7d32::t_a02fe503a6b6cb 159-161,177-179,229-233,840-842,1023-1047,1231-1232,1308-1316,1674-1676,2110-2111,2116-2117,2122-2123,2127-2128,2132-2133,2137-2138,2143-2144,2149-2150,2155-2156,2161-2162,2167-2168,2173-2174,2179-2180,2185-2186,2192-2193,2199-2200,2206-2207,2213-2214,2220-2221,2227-2228,2234-2235,2241-2242,2245-2246,2250-2251,2256-2257,2262-2263,2576-2587,2699-2701,4752-4753,5022-5023,5057-5060,5660-5661,5676,5685,5716,5742,6019,6037,6039,6042,6044,6047,6049,6052,6055,6058,6061,6064,6067,6070,6073,6076,6079,6082,6084,6087,6089,6092,6094,6097,6099,6102,6104,6107,6109,6112,6114,6117,6119,6122,6127,6129,6132,6135,6138,6487-6505,6628-6631,6913,7321,7822,8870,9202,9208-9232,9235,9241-9265,9294-9295
+pnpm-workspace.yaml
+  s_2461ceafdb7d32::t_9a09769f4147f5 8-9,11-12,27-28
+tsconfig.eslint.json
+  s_2461ceafdb7d32::t_4d83c8147053b9 1-8
+turbo.json
+  s_2461ceafdb7d32::t_ea7a7b786ea02d 47,60,84,129-131
+vitest.config.ts
+  s_2461ceafdb7d32::t_424944ba55a171 18-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36ff9cc1d1e3879944be3da12e5051b1add662a6",
+  "prompts": {},
+  "sessions": {
+    "s_2461ceafdb7d32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c576-2ef6-70d0-a26e-a53969369e54",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
