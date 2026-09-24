@@ -998,6 +998,8 @@ export class AudioRecognition {
               this.agentSpeechStartedAt < event.speechEndTime)
           : event.createdAt < trimStart;
       if (!shouldTrim) {
+        // Match Python: retain the provider-ordered suffix. Without utterance IDs, filtering
+        // later events can split speech boundaries from transcripts, even for backchannels.
         break;
       }
       this.transcriptBuffer.shift();

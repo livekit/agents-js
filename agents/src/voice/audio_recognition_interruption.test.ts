@@ -193,6 +193,26 @@ describe('AudioRecognition adaptive transcript gate', () => {
     expect(recognition.processSTTEvent).not.toHaveBeenCalled();
   });
 
+  it('retains the provider-ordered suffix after a delayed pre-agent transcript', () => {
+    const recognition = createRecognition();
+    recognition.agentSpeechStartedAt = 8_000;
+    recognition.backchannelBoundary = [0, 1_000];
+    recognition.transcriptGateActive = true;
+    const events: SpeechEvent[] = [
+      transcript('prior speech', { createdAt: 8_500, speechEndTime: 7_500 }),
+      { type: SpeechEventType.START_OF_SPEECH, createdAt: 8_600 },
+      transcript('backchannel', { createdAt: 9_500, speechEndTime: 8_500 }),
+      { type: SpeechEventType.END_OF_SPEECH, createdAt: 9_600 },
+    ];
+    recognition.transcriptBuffer = [...events];
+    recognition.processSTTEvent = vi.fn();
+
+    recognition.flushHeldTranscripts(10_000);
+
+    expect(recognition.processSTTEvent.mock.calls.map(([event]) => event)).toEqual(events);
+    expect(recognition.transcriptBuffer).toEqual([]);
+  });
+
   it('flushes held events in provider order', () => {
     const recognition = createRecognition();
     const events: SpeechEvent[] = [
