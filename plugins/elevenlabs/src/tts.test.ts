@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { DEFAULT_API_CONNECT_OPTIONS, tts } from '@livekit/agents';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
@@ -257,5 +258,78 @@ describe('ElevenLabs TTS websocket', () => {
     });
 
     expect(events.length).toBeGreaterThan(0);
+  });
+
+  it('replays complete input with a fresh context after a retryable failure', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const contextTexts = new Map<string, string[]>();
+    const failedContexts = new Set<string>();
+    const closedContexts: string[] = [];
+    const audio = Buffer.alloc(4410).toString('base64');
+
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString()) as {
+          context_id?: string;
+          text?: string;
+          flush?: boolean;
+        };
+        const contextId = message.context_id;
+        if (!contextId) return;
+        if (message.text === undefined) {
+          if ((message as { close_context?: boolean }).close_context) {
+            closedContexts.push(contextId);
+          }
+          return;
+        }
+
+        const text = message.text.trim();
+        if (text) {
+          const texts = contextTexts.get(contextId) ?? [];
+          texts.push(text);
+          contextTexts.set(contextId, texts);
+        }
+
+        if (message.text !== '' || !message.flush) return;
+        if (failedContexts.size === 0) {
+          failedContexts.add(contextId);
+          ws.send(JSON.stringify({ context_id: contextId, error: 'temporary provider failure' }));
+          return;
+        }
+
+        ws.send(JSON.stringify({ context_id: contextId, audio, isFinal: true }));
+      });
+    });
+
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+    const stream = elevenlabs.stream({
+      connOptions: {
+        ...DEFAULT_API_CONNECT_OPTIONS,
+        maxRetry: 1,
+        retryIntervalMs: 0,
+      },
+    });
+    const events: tts.SynthesizedAudio[] = [];
+
+    try {
+      stream.pushText('replay this complete sentence.');
+      stream.endInput();
+      for await (const event of stream) {
+        if (event !== tts.SynthesizeStream.END_OF_STREAM) events.push(event);
+      }
+
+      expect(events).not.toHaveLength(0);
+      expect(contextTexts.size).toBe(2);
+      expect(new Set(contextTexts.keys()).size).toBe(2);
+      expect(closedContexts).toContain([...failedContexts][0]);
+      expect([...contextTexts.values()]).toEqual([
+        ['replay this complete sentence.'],
+        ['replay this complete sentence.'],
+      ]);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
   });
 });

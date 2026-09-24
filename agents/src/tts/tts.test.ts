@@ -9,7 +9,7 @@ import type { TTSMetrics } from '../metrics/base.js';
 import type { APIConnectOptions } from '../types.js';
 import { AsyncIterableQueue } from '../utils.js';
 import { ChunkedStream, SynthesizeStream, TTS } from './tts.js';
-import type { SynthesizedAudio } from './tts.js';
+import type { SynthesizedAudio, TTSError } from './tts.js';
 
 type AttemptResult = 'success' | 'retryable-error' | 'nonretryable-error' | 'pending';
 
@@ -226,6 +226,114 @@ class TestTTS extends TTS {
     throw new Error('not used');
   }
 }
+
+class RetrySynthesizeStream extends SynthesizeStream {
+  label = 'test.RetrySynthesizeStream';
+  attempts: Array<Array<string | '<flush>'>> = [];
+
+  constructor(
+    tts: TTS,
+    connOptions: APIConnectOptions,
+    private readonly emitAudioBeforeFailure = false,
+  ) {
+    super(tts, connOptions);
+  }
+
+  protected async run(): Promise<void> {
+    const input: Array<string | '<flush>'> = [];
+    for await (const item of this.input) {
+      input.push(typeof item === 'string' ? item : '<flush>');
+    }
+    this.attempts.push(input);
+
+    if (this.attempts.length === 1) {
+      if (this.emitAudioBeforeFailure) {
+        this.queue.put({
+          requestId: 'request-1',
+          segmentId: 'segment',
+          frame: audioFrame(1),
+          final: false,
+        });
+      }
+      throw new APIConnectionError({
+        message: 'connection dropped after consuming input',
+        options: { retryable: true },
+      });
+    }
+  }
+}
+
+class MidInputRetrySynthesizeStream extends SynthesizeStream {
+  label = 'test.MidInputRetrySynthesizeStream';
+  attempts: Array<Array<string | '<flush>'>> = [];
+  firstInputConsumed: Promise<void>;
+  #resolveFirstInputConsumed!: () => void;
+
+  constructor(tts: TTS, connOptions: APIConnectOptions) {
+    super(tts, connOptions);
+    this.firstInputConsumed = new Promise((resolve) => {
+      this.#resolveFirstInputConsumed = resolve;
+    });
+  }
+
+  protected async run(): Promise<void> {
+    const attempt: Array<string | '<flush>'> = [];
+    this.attempts.push(attempt);
+
+    for await (const item of this.input) {
+      attempt.push(typeof item === 'string' ? item : '<flush>');
+      if (this.attempts.length === 1) {
+        this.#resolveFirstInputConsumed();
+        throw new APIConnectionError({ message: 'connection dropped while input was open' });
+      }
+    }
+  }
+}
+
+describe('SynthesizeStream retries', () => {
+  it('replays buffered input into a fresh queue', async () => {
+    const stream = new RetrySynthesizeStream(new TestTTS(), RETRY_OPTIONS);
+    stream.pushText('hello');
+    stream.flush();
+    stream.pushText('world');
+    stream.endInput();
+
+    await consume(stream);
+
+    expect(stream.attempts).toEqual([
+      ['hello', '<flush>', 'world', '<flush>'],
+      ['hello', '<flush>', 'world', '<flush>'],
+    ]);
+  });
+
+  it('keeps accepting input while a failed attempt is replaced', async () => {
+    const stream = new MidInputRetrySynthesizeStream(new TestTTS(), RETRY_OPTIONS);
+    const outputTask = consume(stream);
+    stream.pushText('hello');
+
+    await stream.firstInputConsumed;
+    stream.pushText('world');
+    stream.endInput();
+    await outputTask;
+
+    expect(stream.attempts).toEqual([['hello'], ['hello', 'world', '<flush>']]);
+  });
+
+  it('does not retry after emitting partial audio', async () => {
+    const tts = new TestTTS();
+    const errors: TTSError[] = [];
+    tts.on('error', (error) => errors.push(error));
+    const stream = new RetrySynthesizeStream(tts, RETRY_OPTIONS, true);
+    stream.pushText('hello');
+    stream.endInput();
+
+    await consume(stream);
+
+    expect(stream.attempts).toHaveLength(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.recoverable).toBe(false);
+  });
+});
 
 class RetryChunkedStream extends ChunkedStream {
   label = 'test.RetryChunkedStream';

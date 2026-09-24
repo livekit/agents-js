@@ -68,13 +68,22 @@ async function waitFor<T>(promise: Promise<T>, timeoutMs = 1000): Promise<T> {
 function serveCartesia(
   wss: WebSocketServer,
   onStop?: (ws: WebSocket, contextId: string, connectionNumber: number) => boolean,
-): { connectionCount: () => number } {
+): { connectionCount: () => number; transcripts: () => string[][] } {
   let connectionCount = 0;
+  const transcripts: string[][] = [];
   wss.on('connection', (ws) => {
     connectionCount++;
     const connectionNumber = connectionCount;
+    transcripts[connectionNumber - 1] = [];
     ws.on('message', (raw) => {
-      const message = JSON.parse(raw.toString()) as { context_id: string; continue?: boolean };
+      const message = JSON.parse(raw.toString()) as {
+        context_id: string;
+        continue?: boolean;
+        transcript?: string;
+      };
+      if (message.transcript?.trim()) {
+        transcripts[connectionNumber - 1]!.push(message.transcript.trim());
+      }
       if (message.continue !== false) return; // only reply once the turn is closed
       const contextId = message.context_id;
       if (onStop && !onStop(ws, contextId, connectionNumber)) return;
@@ -93,7 +102,7 @@ function serveCartesia(
       );
     });
   });
-  return { connectionCount: () => connectionCount };
+  return { connectionCount: () => connectionCount, transcripts: () => transcripts };
 }
 
 async function synthesizeTurn(
@@ -281,6 +290,44 @@ describe('Cartesia streaming pool', () => {
       ).toHaveLength(0);
       expect(await synthesizeTurn(cartesia, 'recovery turn.')).not.toHaveLength(0);
       expect(server.connectionCount()).toBe(2);
+    } finally {
+      await cartesia.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('replays complete input with fresh provider state after a retryable failure', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const server = serveCartesia(wss, (ws, contextId, connectionNumber) => {
+      if (connectionNumber === 1) {
+        ws.send(
+          JSON.stringify({
+            type: 'error',
+            done: false,
+            error: 'temporary provider failure',
+            status_code: 500,
+            context_id: contextId,
+          }),
+        );
+        return false;
+      }
+      return true;
+    });
+
+    const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const events = await synthesizeTurn(cartesia, 'replay this complete sentence.', {
+        ...DEFAULT_API_CONNECT_OPTIONS,
+        maxRetry: 1,
+        retryIntervalMs: 0,
+      });
+
+      expect(events).not.toHaveLength(0);
+      expect(server.connectionCount()).toBe(2);
+      expect(server.transcripts()).toEqual([
+        ['replay this complete sentence.'],
+        ['replay this complete sentence.'],
+      ]);
     } finally {
       await cartesia.close();
       await closeWebSocketServer(wss);

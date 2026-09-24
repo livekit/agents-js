@@ -115,6 +115,7 @@ interface SynthesizeContent {
 
 interface CloseContext {
   contextId: string;
+  force?: boolean;
 }
 
 interface StreamData {
@@ -339,6 +340,22 @@ class Connection {
     this.#inputQueueResolver?.();
   }
 
+  cancelContext(contextId: string, error: Error): void {
+    const context = this.#contextData.get(contextId);
+    this.#inputQueue = this.#inputQueue.filter((message) => message.contextId !== contextId);
+
+    if (!this.#closed && this.#ws?.readyState === WebSocket.OPEN) {
+      // The receive loop may already have removed a failed context from
+      // #activeContexts. Force the close onto the wire so provider-side work
+      // is cancelled even after local response routing has been detached.
+      this.#inputQueue.push({ contextId, force: true });
+      this.#inputQueueResolver?.();
+    }
+
+    context?.waiter.reject(error);
+    this.#cleanupContext(contextId);
+  }
+
   async #sendLoop(): Promise<void> {
     try {
       while (!this.#closed) {
@@ -412,7 +429,7 @@ class Connection {
         } else {
           // CloseContext
           const closeMsg = msg as CloseContext;
-          if (this.#activeContexts.has(closeMsg.contextId)) {
+          if (closeMsg.force || this.#activeContexts.has(closeMsg.contextId)) {
             const closePkt = {
               context_id: closeMsg.contextId,
               close_context: true,
@@ -936,7 +953,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #tts: TTS;
   #opts: ResolvedTTSOptions;
   #contextId: string;
-  #sentTokenizerStream: tokenize.SentenceStream | tokenize.WordStream;
   #logger = log();
   #audioQueue: Buffer[] = [];
   #timedTranscriptQueue: TimedString[] = [];
@@ -949,7 +965,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     this.#tts = tts;
     this.#opts = opts;
     this.#contextId = shortuuid();
-    this.#sentTokenizerStream = this.#opts.wordTokenizer.stream();
   }
 
   get contextId(): string {
@@ -973,8 +988,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   protected async run(): Promise<void> {
+    this.#contextId = shortuuid();
+    this.#audioQueue.length = 0;
+    this.#timedTranscriptQueue.length = 0;
+    this.#streamDone = false;
+
     const requestId = this.#contextId;
     const segmentId = this.#contextId;
+    const sentTokenizerStream = this.#opts.wordTokenizer.stream();
     const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
 
     let connection: Connection;
@@ -1022,12 +1043,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       for await (const data of this.input) {
         if (this.abortController.signal.aborted) break;
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          this.#sentTokenizerStream.flush();
+          sentTokenizerStream.flush();
           continue;
         }
-        this.#sentTokenizerStream.pushText(data);
+        sentTokenizerStream.pushText(data);
       }
-      this.#sentTokenizerStream.endInput();
+      sentTokenizerStream.endInput();
     };
 
     const sentenceStreamTask = async () => {
@@ -1036,7 +1057,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       let xmlContent: string[] = [];
 
-      for await (const data of this.#sentTokenizerStream) {
+      for await (const data of sentTokenizerStream) {
         if (this.abortController.signal.aborted) break;
 
         let text = data.token;
@@ -1134,9 +1155,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       sendLastFrame(true);
     };
 
+    const tasks = [inputTask(), sentenceStreamTask(), audioProcessTask(), waiterPromise];
     try {
-      await Promise.all([inputTask(), sentenceStreamTask(), audioProcessTask(), waiterPromise]);
+      await Promise.all(tasks);
     } catch (e) {
+      if (!this.input.closed) this.input.close();
+      sentTokenizerStream.close();
+      this.#streamDone = true;
+      connection.cancelContext(this.#contextId, e instanceof Error ? e : new Error(String(e)));
+      await Promise.allSettled(tasks);
+
       // If aborted, this is a normal termination - don't throw
       if (this.abortController.signal.aborted) {
         return;
@@ -1151,6 +1179,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       throw new APIStatusError({ message: 'Could not synthesize' });
     } finally {
       closeContext(true);
+      sentTokenizerStream.close();
       // Clean up abort listener
       this.abortController.signal.removeEventListener('abort', abortHandler);
     }
@@ -1161,7 +1190,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     this.#audioQueue.length = 0;
     this.#timedTranscriptQueue.length = 0;
     this.#streamDone = true;
-    this.#sentTokenizerStream.close();
     super.close();
   }
 }

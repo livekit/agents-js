@@ -301,8 +301,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #connection?: Connection;
   #streamId = '';
   #cancelled = false;
-  #inputCache: Array<string | typeof SynthesizeStream.FLUSH_SENTINEL> = [];
-  #inputConsumed = false;
   label = 'soniox.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
@@ -392,27 +390,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   async #sendInput(attemptState: { cancelled: boolean }): Promise<void> {
-    if (this.#inputConsumed) {
-      for (const data of this.#inputCache) {
-        if (this.#cancelled || attemptState.cancelled || this.#connection === undefined) {
-          break;
-        }
-        this.#sendInputItem(data);
-      }
-      if (!this.#cancelled && !attemptState.cancelled && this.#connection !== undefined) {
-        this.#connection.sendText(this.#streamId, '', true);
-      }
-      return;
-    }
-
     for await (const data of this.input) {
-      this.#inputCache.push(data);
       if (this.#cancelled || attemptState.cancelled || this.#connection === undefined) {
         break;
       }
       this.#sendInputItem(data);
     }
-    this.#inputConsumed = true;
 
     if (!this.#cancelled && !attemptState.cancelled && this.#connection !== undefined) {
       this.#connection.sendText(this.#streamId, '', true);
