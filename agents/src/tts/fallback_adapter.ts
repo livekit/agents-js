@@ -10,7 +10,13 @@ import { basic } from '../tokenize/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Task, cancelAndWait } from '../utils.js';
 import { StreamAdapter } from './stream_adapter.js';
-import { ChunkedStream, SynthesizeStream, TTS, type TTSCapabilities } from './tts.js';
+import {
+  ChunkedStream,
+  SynthesizeStream,
+  TTS,
+  type TTSCapabilities,
+  type TTSError,
+} from './tts.js';
 
 /**
  * Internal status tracking for each TTS instance.
@@ -50,6 +56,29 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
 };
 
 const FORWARD_POLL_MS = 10;
+
+/**
+ * Records the last error `tts` reports until `stop()` is called.
+ *
+ * A failing stream reports its provider's error on the TTS `error` event and
+ * then ends, without throwing from iteration — so an attempt that only
+ * iterates it can tell that no audio arrived, but not why.
+ */
+function recordProviderError(tts: TTS) {
+  let error: Error | undefined;
+  const record = (ev: TTSError) => {
+    error = ev.error;
+  };
+  tts.on('error', record);
+  return {
+    get error() {
+      return error;
+    },
+    stop() {
+      tts.off('error', record);
+    },
+  };
+}
 
 /**
  * Agent Fallback Adapter for TTS. Manages multiple TTS instances, providing automatic fallback between providers.
@@ -131,7 +160,8 @@ export class FallbackAdapter extends TTS {
    * is exactly what this adapter exists to survive. Recovery probes make that
    * fatal in practice — they re-fail every `recoveryDelayMs` for as long as a
    * provider is down. A listener is still attached so a child's `emit('error')`
-   * never throws `ERR_UNHANDLED_ERROR`.
+   * never throws `ERR_UNHANDLED_ERROR`; logging is left to the attempt that
+   * failed, which alone knows whether it was failing over or probing.
    *
    * Terminal failure still reaches the session: once every instance has failed,
    * this adapter's own stream throws `APIConnectionError` and the base class
@@ -194,6 +224,7 @@ export class FallbackAdapter extends TTS {
       return;
     }
     status.recoveringTask = Task.from(async (controller) => {
+      const provider = recordProviderError(tts);
       try {
         const testStream = tts.synthesize(
           'Hello world, this is a recovery test.',
@@ -222,13 +253,18 @@ export class FallbackAdapter extends TTS {
         if (controller.signal.aborted) {
           return;
         }
-        this._logger.debug({ tts: tts.label, error }, 'TTS recovery failed, will retry');
+        this._logger.debug(
+          { tts: tts.label, error: provider.error ?? error },
+          'TTS recovery failed, will retry',
+        );
         // Retry recovery after delay (matches Python's retry behavior)
         const timeoutId = setTimeout(() => {
           this._recoveryTimeouts.delete(index);
           this.tryRecovery(index);
         }, this.recoveryDelayMs);
         this._recoveryTimeouts.set(index, timeoutId);
+      } finally {
+        provider.stop();
       }
     });
   }
@@ -341,6 +377,7 @@ class FallbackChunkedStream extends ChunkedStream {
         continue;
       }
       const resampler = this.adapter.createResamplerForTTS(i);
+      const provider = recordProviderError(tts);
 
       try {
         this._logger.debug({ tts: tts.label }, 'attempting TTS synthesis');
@@ -400,12 +437,16 @@ class FallbackChunkedStream extends ChunkedStream {
         return;
       } catch (error) {
         if (error instanceof APIError || error instanceof APIConnectionError) {
-          this._logger.warn({ tts: tts.label, error }, 'TTS failed, switching to next instance');
+          this._logger.warn(
+            { tts: tts.label, error: provider.error ?? error },
+            'TTS failed, switching to next instance',
+          );
           this.adapter.markUnAvailable(i);
         } else {
           throw error;
         }
       } finally {
+        provider.stop();
         resampler?.close();
       }
     }
@@ -467,6 +508,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         continue;
       }
       const resampler = this.adapter.createResamplerForTTS(i);
+      const provider = recordProviderError(originalTts);
 
       // ttfb measures the fallback adapter as a whole: anchor on the first
       // time a sentence was handed to any underlying TTS — even one that
@@ -615,7 +657,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
 
         if (error instanceof APIError || error instanceof APIConnectionError) {
           this._logger.warn(
-            { tts: originalTts.label, error },
+            { tts: originalTts.label, error: provider.error ?? error },
             'TTS failed, switching to next instance',
           );
           this.adapter.markUnAvailable(i);
@@ -626,6 +668,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         // the stream may have received text and failed before emitting audio;
         // its started time must still anchor the fallback's ttfb
         captureStartedTime();
+        provider.stop();
         resampler?.close();
       }
     }

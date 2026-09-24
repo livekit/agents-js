@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError, APIStatusError } from '../_exceptions.js';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TTS_STARTED_TIME } from '../types.js';
 import { FallbackAdapter } from './fallback_adapter.js';
@@ -131,6 +131,10 @@ describe('TTS FallbackAdapter', () => {
 
   beforeEach(() => {
     unhandledRejections.length = 0;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('should fall back to the next TTS when the primary stream fails before any pushText', async () => {
@@ -524,6 +528,74 @@ describe('TTS FallbackAdapter', () => {
     expect(unhandledRejections).toEqual([]);
 
     stream.close();
+    await adapter.close();
+  });
+
+  it("logs the provider's own error when a stream fails over and when recovery fails", async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const debug = vi.spyOn(log(), 'debug');
+    const unauthorized = new APIStatusError({
+      message: 'payment required',
+      options: { statusCode: 401 },
+    });
+    const primary = new MockTTS('primary');
+    primary.shouldFail = true;
+    primary.failWith = unauthorized;
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, new MockTTS('secondary')],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello world');
+          controller.close();
+        },
+      }),
+    );
+    for await (const event of stream) {
+      if (event === SynthesizeStream.END_OF_STREAM) break;
+    }
+
+    const logged = { tts: 'primary', error: unauthorized };
+    expect(warn).toHaveBeenCalledWith(logged, 'TTS failed, switching to next instance');
+    await vi.waitFor(() =>
+      expect(debug).toHaveBeenCalledWith(logged, 'TTS recovery failed, will retry'),
+    );
+
+    stream.close();
+    await adapter.close();
+  });
+
+  it("logs the provider's own error when chunked synthesis fails over", async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const unauthorized = new APIStatusError({
+      message: 'payment required',
+      options: { statusCode: 401 },
+    });
+    const primary = new MockTTS('primary');
+    primary.shouldFail = true;
+    primary.failWith = unauthorized;
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, new MockTTS('secondary')],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    let frameCount = 0;
+    for await (const _event of adapter.synthesize('hello world')) {
+      frameCount++;
+    }
+
+    expect(frameCount).toBeGreaterThan(0);
+    expect(warn).toHaveBeenCalledWith(
+      { tts: 'primary', error: unauthorized },
+      'TTS failed, switching to next instance',
+    );
+
     await adapter.close();
   });
 });
