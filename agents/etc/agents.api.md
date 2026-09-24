@@ -7901,6 +7901,8 @@ class StreamAdapterWrapper extends SpeechStream {
 // @public (undocumented)
 class StreamAdapterWrapper_2 extends SynthesizeStream {
     constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions);
+    // @internal
+    get error(): Error | undefined;
     // (undocumented)
     label: string;
     // (undocumented)

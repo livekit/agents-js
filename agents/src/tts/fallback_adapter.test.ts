@@ -547,44 +547,47 @@ describe('TTS FallbackAdapter', () => {
     await adapter.close();
   });
 
-  it("logs the provider's own error when a stream fails over and when recovery fails", async () => {
-    const warn = vi.spyOn(log(), 'warn');
-    const debug = vi.spyOn(log(), 'debug');
-    const unauthorized = new APIStatusError({
-      message: 'payment required',
-      options: { statusCode: 401 },
-    });
-    const primary = new MockTTS('primary');
-    primary.shouldFail = true;
-    primary.failWith = unauthorized;
-    const adapter = new FallbackAdapter({
-      ttsInstances: [primary, new MockTTS('secondary')],
-      maxRetryPerTTS: 0,
-      recoveryDelayMs: 60_000,
-    });
+  it.each([true, false])(
+    "logs the provider's own error when a stream fails over and when recovery fails (streaming: %s)",
+    async (streaming) => {
+      const warn = vi.spyOn(log(), 'warn');
+      const debug = vi.spyOn(log(), 'debug');
+      const unauthorized = new APIStatusError({
+        message: 'payment required',
+        options: { statusCode: 401 },
+      });
+      const primary = new MockTTS('primary', SAMPLE_RATE, streaming);
+      primary.shouldFail = true;
+      primary.failWith = unauthorized;
+      const adapter = new FallbackAdapter({
+        ttsInstances: [primary, new MockTTS('secondary')],
+        maxRetryPerTTS: 0,
+        recoveryDelayMs: 60_000,
+      });
 
-    const stream = adapter.stream();
-    stream.updateInputStream(
-      new ReadableStream<string>({
-        start(controller) {
-          controller.enqueue('hello world');
-          controller.close();
-        },
-      }),
-    );
-    for await (const event of stream) {
-      if (event === SynthesizeStream.END_OF_STREAM) break;
-    }
+      const stream = adapter.stream();
+      stream.updateInputStream(
+        new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue('hello world.');
+            controller.close();
+          },
+        }),
+      );
+      for await (const event of stream) {
+        if (event === SynthesizeStream.END_OF_STREAM) break;
+      }
 
-    const logged = { tts: 'primary', error: unauthorized };
-    expect(warn).toHaveBeenCalledWith(logged, 'TTS failed, switching to next instance');
-    await vi.waitFor(() =>
-      expect(debug).toHaveBeenCalledWith(logged, 'TTS recovery failed, will retry'),
-    );
+      const logged = { tts: 'primary', error: unauthorized };
+      expect(warn).toHaveBeenCalledWith(logged, 'TTS failed, switching to next instance');
+      await vi.waitFor(() =>
+        expect(debug).toHaveBeenCalledWith(logged, 'TTS recovery failed, will retry'),
+      );
 
-    stream.close();
-    await adapter.close();
-  });
+      stream.close();
+      await adapter.close();
+    },
+  );
 
   it("logs the provider's own error when chunked synthesis fails over", async () => {
     const warn = vi.spyOn(log(), 'warn');

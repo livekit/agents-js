@@ -57,6 +57,7 @@ export class StreamAdapter extends TTS {
 export class StreamAdapterWrapper extends SynthesizeStream {
   #tts: TTS;
   #sentenceStream: SentenceStream;
+  #sentenceError?: Error;
   label: string;
 
   constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions) {
@@ -64,6 +65,16 @@ export class StreamAdapterWrapper extends SynthesizeStream {
     this.#tts = tts;
     this.#sentenceStream = sentenceTokenizer.stream();
     this.label = `tts.StreamAdapterWrapper<${this.#tts.label}>`;
+  }
+
+  /**
+   * Falls back to the first error a sentence failed with: a failed sentence is
+   * skipped rather than failing this stream, so a consumer that receives no
+   * audio would otherwise never learn why.
+   * @internal
+   */
+  override get error(): Error | undefined {
+    return super.error ?? this.#sentenceError;
   }
 
   protected async run() {
@@ -138,6 +149,7 @@ export class StreamAdapterWrapper extends SynthesizeStream {
 
         this.queue.put(audio);
       }
+      this.#sentenceError ??= audioStream.error;
     };
 
     await ThrowsPromise.all([forwardInput(), synthesizeSentenceStream()]);
