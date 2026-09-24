@@ -16,3 +16,8 @@ export {
   type WarmTransferOptions,
 } from './warm_transfer.js';
 export type { InstructionParts } from './utils.js';
+export {
+  TwilioConnectorWarmTransferTask,
+  createTwilioConnectorWarmTransferTask,
+  type TwilioConnectorWarmTransferTaskOptions,
+} from './twilio_connector_warm_transfer.js';
