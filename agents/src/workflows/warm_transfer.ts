@@ -876,6 +876,10 @@ export interface TwilioConnectorWarmTransferTaskOptions
  * with TwiML that streams it into that session, and the dial resolves once the
  * connector publishes the answered human agent's audio.
  *
+ * Cancellation starts bounded, best-effort cleanup without waiting for Twilio.
+ * Cleanup requires a returned call SID and a running worker. If Twilio accepts
+ * the call but its creation response is lost, the task cannot cancel that call.
+ *
  * This is the functional core; {@link TwilioConnectorWarmTransferTask} is a
  * thin class wrapper over it.
  */
@@ -904,6 +908,7 @@ export function createTwilioConnectorWarmTransferTask(
     // the human agent joins through a connector, not SIP
     humanAgentIdentity: 'human-agent-connector',
     originateHumanAgent: async ({ roomName, identity, room, jobCtx, signal }) => {
+      signal.throwIfAborted();
       const info = jobCtx.info;
       const connector = new ConnectorClient(info.url, info.apiKey, info.apiSecret);
       const { connectUrl } = await connector.connectTwilioCall({
@@ -911,6 +916,7 @@ export function createTwilioConnectorWarmTransferTask(
         roomName,
         participantIdentity: identity,
       });
+      signal.throwIfAborted();
 
       const twiml = `<Response><Connect><Stream url=${escapeXmlAttribute(connectUrl)}/></Connect></Response>`;
       const callSid = await createTwilioCall(auth, {
@@ -920,10 +926,12 @@ export function createTwilioConnectorWarmTransferTask(
       });
 
       try {
+        signal.throwIfAborted();
         await waitForConnectorAnswer({ room, identity, ringingTimeout, signal });
+        signal.throwIfAborted();
       } catch (error) {
-        // We gave up waiting; cancel the still-ringing call so it doesn't linger.
-        await cancelTwilioCall(auth, callSid).catch(() => {});
+        // Keep provider cleanup independent of caller resumption and session shutdown.
+        void cancelTwilioCall(auth, callSid);
         throw error;
       }
     },
@@ -1008,13 +1016,19 @@ interface TwilioRestAuth {
   authToken: string;
 }
 
-const twilioRequest = (auth: TwilioRestAuth, path: string, form: Record<string, string>) =>
+const twilioRequest = (
+  auth: TwilioRestAuth,
+  path: string,
+  form: Record<string, string>,
+  signal?: AbortSignal,
+) =>
   fetch(`${TWILIO_API_BASE}/Accounts/${encodeURIComponent(auth.accountSid)}${path}`, {
     method: 'POST',
     headers: {
       Authorization: `Basic ${Buffer.from(`${auth.accountSid}:${auth.authToken}`).toString('base64')}`,
     },
     body: new URLSearchParams(form),
+    signal,
   });
 
 /** Place the human agent call with the Twilio REST API; returns the call SID. */
@@ -1034,9 +1048,21 @@ async function createTwilioCall(
   return (JSON.parse(body) as { sid: string }).sid;
 }
 
-/** Cancel a still-ringing Twilio call. */
+/** End a call even if it was answered while cancellation was in flight. */
 async function cancelTwilioCall(auth: TwilioRestAuth, callSid: string): Promise<void> {
-  await twilioRequest(auth, `/Calls/${encodeURIComponent(callSid)}.json`, { Status: 'canceled' });
+  try {
+    const response = await twilioRequest(
+      auth,
+      `/Calls/${encodeURIComponent(callSid)}.json`,
+      { Status: 'completed' },
+      AbortSignal.timeout(10_000),
+    );
+    if (!response.ok) {
+      log().warn({ status: response.status }, 'Twilio call cleanup failed');
+    }
+  } catch {
+    log().warn('Twilio call cleanup request failed');
+  }
 }
 
 /** XML-escape a value and wrap it in double quotes for use as an attribute. */
