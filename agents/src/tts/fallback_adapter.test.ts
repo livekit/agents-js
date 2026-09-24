@@ -95,6 +95,22 @@ class MockChunkedStream extends ChunkedStream {
   }
 }
 
+/** A chunked stream that runs `script` and never produces audio. */
+class ScriptedChunkedStream extends ChunkedStream {
+  label = 'scripted.ChunkedStream';
+  constructor(
+    tts: TTS,
+    text: string,
+    connOptions: APIConnectOptions | undefined,
+    private script: () => Promise<void>,
+  ) {
+    super(text, tts, connOptions);
+  }
+  protected async run(): Promise<void> {
+    await this.script();
+  }
+}
+
 class MockTTS extends TTS {
   label: string;
   shouldFail = false;
@@ -595,6 +611,46 @@ describe('TTS FallbackAdapter', () => {
       { tts: 'primary', error: unauthorized },
       'TTS failed, switching to next instance',
     );
+
+    await adapter.close();
+  });
+
+  it("does not log another request's provider error for a silent failure", async () => {
+    // Two requests share the primary: B's attempt fails with a 401 while A's
+    // produces no audio and reports nothing. The TTS `error` event is shared,
+    // so A must be logged with its own no-audio failure, not B's 401.
+    const warn = vi.spyOn(log(), 'warn');
+    const unauthorized = new APIStatusError({
+      message: 'payment required',
+      options: { statusCode: 401 },
+    });
+    const primary = new MockTTS('primary');
+    const bFailed = new Promise<void>((resolve) => primary.once('error', () => resolve()));
+    primary.synthesize = (text, connOptions) =>
+      new ScriptedChunkedStream(primary, text, connOptions, async () => {
+        if (text === 'b') throw unauthorized;
+        await bFailed;
+      });
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, new MockTTS('secondary')],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    const drain = async (text: string) => {
+      for await (const _event of adapter.synthesize(text)) {
+        // served by the secondary
+      }
+    };
+    await Promise.all([drain('a'), drain('b')]);
+
+    const loggedErrors = warn.mock.calls
+      .filter(([, msg]) => msg === 'TTS failed, switching to next instance')
+      .map(([fields]) => (fields as { error: Error }).error.message);
+    expect(loggedErrors.sort()).toEqual([
+      'TTS synthesis completed but no audio was received',
+      'payment required',
+    ]);
 
     await adapter.close();
   });
