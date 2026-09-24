@@ -8,6 +8,8 @@ import type {
   OverlappingSpeechEvent,
 } from '../inference/interruption/types.js';
 import { type RealtimeCapabilities, RealtimeModel, type RealtimeSession } from '../llm/realtime.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { FakeSTT } from '../stt/testing/fake_stt.js';
 import type { VADStream } from '../vad.js';
 import { VAD as BaseVAD } from '../vad.js';
 import { Agent } from './agent.js';
@@ -865,28 +867,64 @@ describe('AudioRecognition realtime adaptive backchannel verdicts', () => {
     expect(sent).toEqual([]);
   });
 
-  it('does not reopen overlap while replaying transcripts for a positive verdict', () => {
-    const { recognition, sent } = recognitionWithInterruptionStream();
-    const internals = recognition as any;
-    internals.isAgentSpeaking = true;
-    internals.agentSpeechStartedAt = 9_000;
-    internals.overlapInCurrentTurn = true;
-    internals.overlapOpen = true;
-    internals.transcriptGateActive = true;
-    internals.transcriptBuffer = [{ createdAt: 9_500 }];
-    internals.processSTTEvent = vi.fn();
-
-    const event = overlapEvent({
-      isInterruption: true,
-      detectedAt: 10_000,
-      overlapStartedAt: 9_000,
+  it('does not reopen overlap while replaying transcripts for a positive verdict', async () => {
+    const session = new AgentSession({
+      llm: new FakeLLM([]),
+      stt: new FakeSTT(),
+      vad: new FakeVAD(),
+      turnHandling: {
+        turnDetection: 'stt',
+        interruption: { mode: 'adaptive' },
+      },
     });
-    internals.applyOverlapSpeechEvent(event);
+    const activity = makeActivity(session);
+    const recognition = new AudioRecognition({
+      recognitionHooks: activity,
+      turnDetectionMode: 'stt',
+    });
+    setActivityProp(activity, 'audioRecognition', recognition);
+    setActivityProp(activity, 'isInterruptionDetectionEnabled', true);
+    setActivityProp(recognition, 'isInterruptionEnabled', true);
+    activity.interruptionByAudioActivityEnabled = false;
 
-    expect(internals.overlapOpen).toBe(false);
-    expect(internals.transcriptGateActive).toBe(false);
-    expect(internals.processSTTEvent).toHaveBeenCalledOnce();
-    expect(sent).toEqual([]);
+    const sent: InterruptionSentinel[] = [];
+    setActivityProp(
+      recognition,
+      'trySendInterruptionSentinel',
+      async (item: InterruptionSentinel | InterruptionSentinel[]) => {
+        sent.push(...(Array.isArray(item) ? item : [item]));
+        return true;
+      },
+    );
+    const speechStarted = vi.spyOn(activity, 'onStartOfSpeech');
+    const input = recognition as unknown as {
+      onSTTEvent: (event: SpeechEvent) => Promise<void>;
+    };
+
+    try {
+      await recognition.onStartOfAgentSpeech(9_000);
+      await recognition.onStartOfOverlapSpeech(0, 9_500);
+      await input.onSTTEvent({ type: SpeechEventType.START_OF_SPEECH, createdAt: 9_500 });
+      expect(speechStarted).not.toHaveBeenCalled();
+
+      activity.onOverlapSpeech(
+        overlapEvent({
+          isInterruption: true,
+          detectedAt: 10_000,
+          overlapStartedAt: 9_500,
+        }),
+      );
+
+      expect(speechStarted).toHaveBeenCalledOnce();
+      expect(session.userState).toBe('speaking');
+      expect(sent.map((item) => item.type)).toEqual([
+        'agent-speech-started',
+        'overlap-speech-started',
+      ]);
+    } finally {
+      speechStarted.mockRestore();
+      await recognition.close();
+    }
   });
   it('still tears down inference at the real end of agent speech', async () => {
     const { recognition, sent } = recognitionWithInterruptionStream();

@@ -122,7 +122,7 @@ describe('AudioRecognition transcription timeout', () => {
 
     expect(internals.transcriptionTimeoutTimer).toBeUndefined();
     expect(internals.turnTranscriptReceived).toBe(true);
-    expect(internals.transcriptBuffer).toEqual([event]);
+    expect(internals.transcriptBuffer).toEqual([{ ...event, createdAt: 10_000 }]);
     expect(hooks.onFinalTranscript).not.toHaveBeenCalled();
     expect(hooks.onTranscriptionTimeout).not.toHaveBeenCalled();
 

@@ -5241,6 +5241,14 @@ export class AgentActivity implements RecognitionHooks {
     return undefined;
   }
 
+  /** @internal */
+  _disallowInterruptions(speechHandle: SpeechHandle): void {
+    speechHandle.allowInterruptions = false;
+    if (this.pausedSpeech?.handle === speechHandle) {
+      this.reconcilePlayoutPause(speechHandle);
+    }
+  }
+
   private updatePausedSpeech(speechHandle: SpeechHandle, timeout: number): void {
     if (this.pausedSpeech && this.pausedSpeech.handle === speechHandle) {
       this.pausedSpeech.timeout = timeout;

@@ -64,6 +64,7 @@ export class RunContext<UserData = UnknownUserData> {
     public readonly session: AgentSession<UserData>,
     public readonly speechHandle: SpeechHandle,
     public readonly functionCall: FunctionCall,
+    private readonly activity?: AgentActivity,
   ) {
     this.initialStepIdx = speechHandle.numSteps - 1;
   }
@@ -87,8 +88,13 @@ export class RunContext<UserData = UnknownUserData> {
     return this._updates;
   }
 
+  /** Disable interruptions and release an active false-interruption pause for this speech. */
   disallowInterruptions(): void {
-    this.speechHandle.allowInterruptions = false;
+    if (this.activity) {
+      this.activity._disallowInterruptions(this.speechHandle);
+    } else {
+      this.speechHandle.allowInterruptions = false;
+    }
   }
 
   /**

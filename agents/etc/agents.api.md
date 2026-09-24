@@ -6105,7 +6105,7 @@ class RunAssert {
 //
 // @public (undocumented)
 export class RunContext<UserData = UnknownUserData> {
-    constructor(session: AgentSession<UserData>, speechHandle: SpeechHandle, functionCall: FunctionCall);
+    constructor(session: AgentSession<UserData>, speechHandle: SpeechHandle, functionCall: FunctionCall, activity?: AgentActivity | undefined);
     // Warning: (ae-forgotten-export) The symbol "AttachedToolExecutor" needs to be exported by the entry point index.d.ts
     // Warning: (ae-incompatible-release-tags) The symbol "_attachExecutor" is marked as @public, but its signature references "Future" which is marked as @internal
     // Warning: (ae-incompatible-release-tags) The symbol "_attachExecutor" is marked as @public, but its signature references "Future" which is marked as @internal
@@ -6114,7 +6114,6 @@ export class RunContext<UserData = UnknownUserData> {
     _attachExecutor(executor: AttachedToolExecutor<UserData>, firstUpdateFuture: Future<unknown>): object;
     // (undocumented)
     _detachExecutor(attachment: object): void;
-    // (undocumented)
     disallowInterruptions(): void;
     // (undocumented)
     _drainPendingReply(): Promise<void>;

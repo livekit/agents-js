@@ -72,6 +72,8 @@ const EOU_MAX_HISTORY_TURNS = 6;
 const MIN_LANGUAGE_DETECTION_LENGTH = 5;
 const NON_SPECIFIC_LANGUAGE_CODES = new Set(['auto', 'multi']);
 
+type TimedSpeechEvent = SpeechEvent & { createdAt: number };
+
 export interface EndOfTurnInfo {
   /** The new transcript text from the user's speech. */
   newTranscript: string;
@@ -380,7 +382,7 @@ export class AudioRecognition {
 
   // interruption detection
   private interruptionDetection?: AdaptiveInterruptionDetector;
-  private transcriptBuffer: SpeechEvent[];
+  private transcriptBuffer: TimedSpeechEvent[];
   private transcriptGateActive = false;
   private isInterruptionEnabled: boolean;
   private isAgentSpeaking: boolean;
@@ -851,7 +853,7 @@ export class AudioRecognition {
    *
    * This can occur while the generation remains active, such as when playout is paused.
    */
-  onEndOfAgentSpeech(endedAt: number): Promise<void> {
+  async onEndOfAgentSpeech(endedAt: number): Promise<void> {
     this.cancelBackchannelBoundary();
 
     const wasAgentSpeaking = this.isAgentSpeaking;
@@ -865,7 +867,7 @@ export class AudioRecognition {
       this.flushHeldTranscripts();
       this.overlapOpen = false;
       this.agentSpeechStartedAt = undefined;
-      return Promise.resolve();
+      return;
     }
 
     const sentinels: InterruptionSentinel[] = [];
@@ -886,14 +888,7 @@ export class AudioRecognition {
 
     this.agentSpeechStartedAt = undefined;
 
-    return this.finishEndOfAgentSpeech(detectorReset);
-  }
-
-  private async finishEndOfAgentSpeech(detectorReset: Promise<boolean>): Promise<void> {
-    const inputOpen = await detectorReset;
-    if (!inputOpen) {
-      this.overlapOpen = false;
-    }
+    await detectorReset;
   }
 
   /** Start interruption inference when agent is speaking and overlap speech starts. */
@@ -1001,7 +996,7 @@ export class AudioRecognition {
           ? event.speechEndTime < trimStart &&
             (this.agentSpeechStartedAt === undefined ||
               this.agentSpeechStartedAt < event.speechEndTime)
-          : (event.createdAt ?? Number.NEGATIVE_INFINITY) < trimStart;
+          : event.createdAt < trimStart;
       if (!shouldTrim) {
         break;
       }
@@ -1111,8 +1106,11 @@ export class AudioRecognition {
     return trace.setSpan(base, span);
   }
 
-  private async onSTTEvent(ev: SpeechEvent) {
-    ev.createdAt ??= Date.now();
+  private async onSTTEvent(input: SpeechEvent) {
+    let ev: TimedSpeechEvent = {
+      ...input,
+      createdAt: input.createdAt ?? Date.now(),
+    };
 
     const firstAlternative = ev.alternatives?.[0];
     if (
