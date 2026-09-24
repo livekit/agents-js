@@ -9,7 +9,9 @@ The Agents Framework is designed for building realtime, programmable
 participants that run on servers. Use it to create conversational, multi-modal
 voice agents that can see, hear, and understand.
 
-This package contains the Deepgram plugin, which allows for speech recognition.
+This package contains the Deepgram plugin, which allows for speech recognition
+(Nova via `STT`, Flux via `STTv2`) and voice synthesis (Aura via `TTS`, Flux TTS
+via `TTSv2`). Both Flux TTS paths emit `linear16` audio only.
 Refer to the [documentation](https://docs.livekit.io/agents/overview/) for
 information on how to use it, or browse the [API
 reference](https://docs.livekit.io/agents-js/modules/plugins_agents_plugin_deepgram.html).

@@ -10,7 +10,7 @@ import {
   type RemoteParticipant,
   type Room,
 } from '@livekit/rtc-node';
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { context as otelContext, trace } from '@opentelemetry/api';
@@ -47,7 +47,13 @@ import type {
   ToolContextEntry,
   ToolContextLike,
 } from '../llm/index.js';
-import { ToolContext, toToolContext } from '../llm/index.js';
+import {
+  DuplexModel,
+  DuplexRealtimeAdapter,
+  ToolContext,
+  ToolError,
+  toToolContext,
+} from '../llm/index.js';
 import { LLM as BaseLLM } from '../llm/llm.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -55,7 +61,7 @@ import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metri
 import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
-import { traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, traceTypes, tracer } from '../telemetry/index.js';
 import {
   DEFAULT_SPEECH_STEERING_OPTIONS,
   type SpeechSteeringOptions,
@@ -71,7 +77,7 @@ import {
 } from '../types.js';
 import { Event, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
-import type { Agent } from './agent.js';
+import { type Agent, AgentTask } from './agent.js';
 import {
   AgentActivity,
   type ReusableResources,
@@ -135,6 +141,7 @@ import { setParticipantSpanAttributes } from './utils.js';
 
 const SIP_RULE_ID_ATTR = 'sip.ruleID';
 const DEFAULT_AEC_WARMUP_DURATION = 3000;
+const LOOP_STALL_EVENT = 'event_loop_blocked';
 
 export interface AgentSessionUsage {
   /** List of usage summaries, one per model/provider combination. */
@@ -284,7 +291,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * one as absent). Pass `null` to opt out entirely.
    */
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
@@ -531,6 +538,7 @@ export class AgentSession<
   private _output: AgentOutput;
 
   private closing = false;
+  private closingController = new AbortController();
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
   private idleHolds = 0;
@@ -570,12 +578,16 @@ export class AgentSession<
   // Connection options for STT, LLM, and TTS
   private _connOptions: ResolvedSessionConnectOptions;
 
-  // Unrecoverable error counts, reset after agent speaking
+  // Unrecoverable error counts; stt resets on a user transcript, llm/tts on agent speaking
+  private sttErrorCounts = 0;
   private llmErrorCounts = 0;
   private ttsErrorCounts = 0;
 
   private sessionSpan?: Span;
   private agentSpeakingSpan?: Span;
+  private loopStallCount = 0;
+  private loopStallTotal = 0;
+  private loopStallMax = 0;
 
   private _interruptionDetection?: InterruptionOptions['mode'];
 
@@ -651,6 +663,17 @@ export class AgentSession<
     return this.closing;
   }
 
+  /**
+   * Aborted when shutdown starts, before the activity drains or Agent.onExit() runs.
+   * Use this signal to release work that activity teardown can await.
+   * The Close event fires after activity teardown and cannot release those waits.
+   * The signal stays aborted after close; read it again when starting a new run.
+   * @internal
+   */
+  get _closingSignal(): AbortSignal {
+    return this.closingController.signal;
+  }
+
   /** @internal - Current run state for testing */
   _globalRunState?: RunResult;
 
@@ -711,6 +734,8 @@ export class AgentSession<
 
     if (typeof llm === 'string') {
       this.llm = InferenceLLM.fromModelString(llm);
+    } else if (llm instanceof DuplexModel) {
+      this.llm = new DuplexRealtimeAdapter(llm);
     } else {
       this.llm = llm;
     }
@@ -736,6 +761,10 @@ export class AgentSession<
       configuredTurnDetection === null
         ? undefined
         : configuredTurnDetection ?? new InferenceTurnDetector();
+    // The session report serializes `sessionOptions`, so record the effective detector there
+    // (Python keeps the eager default in `AgentSessionOptions.turn_handling` the same way).
+    resolvedSessionOptions.turnHandling.turnDetection =
+      configuredTurnDetection === null ? null : this.turnDetection;
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
     this._toolCtx = toToolContext(tools) ?? ToolContext.empty<UserData>();
@@ -947,7 +976,10 @@ export class AgentSession<
     // Initial start does not wait on onEnter
     tasks.push(this._updateActivity(this.agent, { waitOnEnter: false }));
 
-    await ThrowsPromise.allSettled(tasks);
+    const startupResults = await ThrowsPromise.allSettled(tasks);
+    for (const result of startupResults) {
+      if (result.status === 'rejected') throw result.reason;
+    }
 
     if (this.sessionHost) {
       await this.sessionHost.start();
@@ -998,7 +1030,13 @@ export class AgentSession<
     }
 
     this.closing = false;
+    if (this.closingController.signal.aborted) {
+      this.closingController = new AbortController();
+    }
     this._usageCollector = new ModelUsageCollector();
+    this.loopStallCount = 0;
+    this.loopStallTotal = 0;
+    this.loopStallMax = 0;
 
     const ctx = getJobContext(false);
 
@@ -1041,16 +1079,25 @@ export class AgentSession<
     this.sessionSpan = tracer.startSpan({
       name: 'agent_session',
     });
+    // the session is the convention's workflow: agent turns (`invoke_agent`), inference
+    // (`chat`) and tool spans (`execute_tool`) nest underneath it
+    genAI.setWorkflowAttributes(this.sessionSpan, { name: 'agent_session' });
 
     this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 
-    await this._startImpl({
-      agent,
-      room,
-      inputOptions,
-      outputOptions,
-      span: this.sessionSpan,
-    });
+    try {
+      await this._startImpl({
+        agent,
+        room,
+        inputOptions,
+        outputOptions,
+        span: this.sessionSpan,
+      });
+    } catch (error) {
+      this._closeSoon({ reason: CloseReason.ERROR });
+      await this.closingTask;
+      throw error;
+    }
   }
 
   updateAgent(agent: Agent): void {
@@ -1231,12 +1278,16 @@ export class AgentSession<
     this.activity.pauseReplyAuthorization();
   }
 
-  resumeReplyAuthorization(): void {
+  /**
+   * Resume automatic replies after pauseReplyAuthorization().
+   * @throws Error if the session is not running.
+   */
+  resumeReplyAuthorization(): Throws<void, Error> {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
 
-    this.activity.resumeReplyAuthorization();
+    return this.activity.resumeReplyAuthorization();
   }
 
   updateOptions(options: AgentSessionUpdateOptions = {}): void {
@@ -1460,6 +1511,7 @@ export class AgentSession<
               newActivity: this.nextActivity,
             });
           } else {
+            prevActivityObj.blockNewTurns();
             reusableResources = await prevActivityObj.drain({
               newActivity: this.nextActivity,
             });
@@ -1504,17 +1556,18 @@ export class AgentSession<
           'Agent handoff inserted into chat context',
         );
 
+        const activity = this.activity!;
         if (newActivity === 'start') {
-          await this.activity!.start({ reuseResources: reusableResources });
+          await activity.start({ reuseResources: reusableResources });
         } else {
-          await this.activity!.resume({ reuseResources: reusableResources });
+          await activity.resume({ reuseResources: reusableResources });
         }
         reusableResources = undefined;
 
-        onEnterTask = this.activity!._onEnterTask;
+        onEnterTask = activity._onEnterTask;
 
         if (this._input.audio) {
-          this.activity!.attachAudioInput(this._input.audio.stream);
+          activity.attachAudioInput(this._input.audio.stream);
         }
       } catch (error) {
         // JS safeguard: session cleanup owns the detached resources until the next activity
@@ -1620,7 +1673,8 @@ export class AgentSession<
   }
 
   async close(): Promise<void> {
-    await this.closeImpl(CloseReason.USER_INITIATED);
+    this._closeSoon({ reason: CloseReason.USER_INITIATED });
+    await this.closingTask;
   }
 
   shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): void {
@@ -1657,7 +1711,12 @@ export class AgentSession<
     }
 
     // Track error counts per type to implement max_unrecoverable_errors logic
-    if (error.type === 'llm_error') {
+    if (error.type === 'stt_error') {
+      this.sttErrorCounts += 1;
+      if (this.sttErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
+        return;
+      }
+    } else if (error.type === 'llm_error') {
       this.llmErrorCounts += 1;
       if (this.llmErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
         return;
@@ -1878,7 +1937,37 @@ export class AgentSession<
     }
   }
 
+  /** @internal */
+  _recordLoopStall(durationInS: number, timestampMs: number, cause: string): void {
+    const span = this.sessionSpan;
+    if (!span?.isRecording()) {
+      return;
+    }
+
+    this.loopStallCount += 1;
+    this.loopStallTotal += durationInS;
+    this.loopStallMax = Math.max(this.loopStallMax, durationInS);
+    span.addEvent(
+      LOOP_STALL_EVENT,
+      {
+        [traceTypes.ATTR_BLOCKING_DURATION]: durationInS,
+        [traceTypes.ATTR_BLOCKING_CAUSE]: cause,
+      },
+      timestampMs,
+    );
+    span.setAttributes({
+      [traceTypes.ATTR_BLOCKING_COUNT]: this.loopStallCount,
+      [traceTypes.ATTR_BLOCKING_TOTAL_DURATION]: this.loopStallTotal,
+      [traceTypes.ATTR_BLOCKING_MAX_DURATION]: this.loopStallMax,
+    });
+  }
+
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
+    if (ev.transcript) {
+      // a transcript means stt recovered; reset its error tolerance
+      this.sttErrorCounts = 0;
+    }
+    if (this.closing) return;
     if (ev.isFinal && this._userState !== 'speaking') {
       if (this._userState === 'away') {
         this.logger.debug('User returned from away state due to speech input');
@@ -1908,34 +1997,56 @@ export class AgentSession<
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
-    if (!this.started) {
+    const wasStarted = this.started;
+    if (!wasStarted && !this.activity && !this.sessionSpan) {
       return;
     }
 
     this.closing = true;
+    // Set closingTask before listeners can call close() again.
+    await Promise.resolve();
+    this.closingController.abort();
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
-    this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
-    if (this.activity) {
+    let activity = this.activity;
+    // Let inline tasks finish their handoffs before closing the resumed parent.
+    while (wasStarted && activity?.agent instanceof AgentTask) {
+      const task = activity.agent;
+      activity.interrupt({ force: true });
+      if (!task.done) {
+        task.complete(new ToolError(`AgentTask ${task.id} is cancelled`));
+      }
+      await task._waitForInactive();
+      // A concurrent updateAgent can prevent the task from resuming its parent.
+      // In that case its activity still needs the normal exit and close sequence.
+      if (task._agentActivity === activity) {
+        await activity.drain();
+        await activity.close();
+      }
+      if (!task._oldAgent) break;
+      activity = task._oldAgent._agentActivity;
+    }
+
+    if (wasStarted && activity) {
       if (!drain) {
         try {
-          await this.activity.interrupt({ force: true }).await;
+          await activity.interrupt({ force: true }).await;
         } catch (error) {
           this.logger.warn({ error }, 'Error interrupting activity');
         }
       }
 
-      await this.activity.drain();
+      await activity.drain();
       // wait any uninterruptible speech to finish
-      await this.activity.currentSpeech?.waitForPlayout();
+      await activity.currentSpeech?.waitForPlayout();
 
       if (reason !== CloseReason.ERROR) {
-        this.activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
+        activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
       }
 
       try {
-        this.activity.detachAudioInput();
+        activity.detachAudioInput();
       } catch (error) {
         // Ignore detach errors during cleanup - source may not have been set
       }
@@ -1951,11 +2062,12 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await this.activity?.close();
+    await activity?.close();
     this.activity = undefined;
 
     const sessionToolsets = this._toolCtx.toolsets;
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
+    this._sessionToolsetsSetup = false;
 
     if (this.sessionSpan) {
       this.sessionSpan.end();
@@ -1974,11 +2086,12 @@ export class AgentSession<
 
     this.started = false;
 
-    this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
+    if (wasStarted) this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
 
     this._userState = 'listening';
     this._agentState = 'initializing';
     this.rootSpanContext = undefined;
+    this.sttErrorCounts = 0;
     this.llmErrorCounts = 0;
     this.ttsErrorCounts = 0;
 

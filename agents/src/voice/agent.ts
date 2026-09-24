@@ -13,6 +13,8 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import { type Instructions, ReadonlyChatContext } from '../llm/chat_context.js';
+import { DuplexModel, type DuplexSession } from '../llm/duplex.js';
+import { DuplexRealtimeAdapter, DuplexRealtimeSession } from '../llm/duplex_adapter.js';
 import type { ChatMessage, FunctionCall } from '../llm/index.js';
 import {
   type ChatChunk,
@@ -32,7 +34,7 @@ import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/i
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
-import { Future, Task, toStream } from '../utils.js';
+import { Event, Future, Task, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, ExpressiveOptions, TurnDetectionMode } from './agent_session.js';
@@ -149,11 +151,11 @@ export interface AgentUpdateOptions {
   /**
    * New LLM model. Pass `null` to disable the agent LLM and override any session LLM.
    *
-   * A {@link RealtimeModel} can only be set while the agent is not running: swapping to or
-   * from one on a running agent throws, because it replaces the whole pipeline rather than
-   * one model. Use `AgentSession.updateAgent()` for that.
+   * A {@link RealtimeModel} or {@link DuplexModel} can only be set while the agent is stopped.
+   * Swapping to or from one while running throws because it replaces the whole pipeline.
+   * Use `AgentSession.updateAgent()` for that.
    */
-  llm?: LLM | RealtimeModel | LLMModels | null;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
   /** New TTS model. Pass `null` to disable the agent TTS and override any session TTS. */
   tts?: TTS | TTSModelString | null;
   /** Expressive TTS delivery. Pass `false` to override and disable the session setting. */
@@ -167,7 +169,7 @@ export interface AgentOptions<UserData> {
   tools?: ToolContextLike<UserData>;
   stt?: STT | STTModelString | null;
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels | null;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
   tts?: TTS | TTSModelString | null;
   /** Expressive TTS delivery. When set, overrides the session value for this agent. */
   expressive?: boolean | ExpressiveOptions;
@@ -275,6 +277,8 @@ export class Agent<UserData = any> {
 
     if (typeof llm === 'string') {
       this._llm = InferenceLLM.fromModelString(llm);
+    } else if (llm instanceof DuplexModel) {
+      this._llm = new DuplexRealtimeAdapter(llm);
     } else {
       this._llm = llm;
     }
@@ -302,6 +306,15 @@ export class Agent<UserData = any> {
 
   get llm(): LLM | RealtimeModel | undefined {
     return this._llm ?? undefined;
+  }
+
+  /** The running duplex provider session, for provider-specific APIs. */
+  get duplexSession(): DuplexSession {
+    const session = this.getActivityOrThrow().realtimeLLMSession;
+    if (!(session instanceof DuplexRealtimeSession)) {
+      throw new Error('no duplex session, this agent is not running a DuplexModel');
+    }
+    return session.duplexSession;
   }
 
   get tts(): TTS | undefined {
@@ -414,7 +427,7 @@ export class Agent<UserData = any> {
       return;
     }
 
-    this._agentActivity.updateChatCtx(chatCtx);
+    await this._agentActivity.updateChatCtx(chatCtx);
   }
 
   async updateInstructions(instructions: string | Instructions): Promise<void> {
@@ -433,6 +446,8 @@ export class Agent<UserData = any> {
     }
     if (typeof resolved.llm === 'string') {
       resolved.llm = InferenceLLM.fromModelString(resolved.llm);
+    } else if (resolved.llm instanceof DuplexModel) {
+      resolved.llm = new DuplexRealtimeAdapter(resolved.llm);
     }
     if (typeof resolved.tts === 'string') {
       resolved.tts = InferenceTTS.fromModelString(resolved.tts);
@@ -516,6 +531,9 @@ export class Agent<UserData = any> {
             for await (const event of stream) {
               controller.enqueue(event);
             }
+            // the retry loop swallows its own failure; surface it so the STT pipeline can
+            // tell an exhausted stream from a closed audio input
+            if (stream.terminalError) throw stream.terminalError;
             controller.close();
           } finally {
             // Always clean up the STT stream, whether it ends naturally or is cancelled
@@ -601,7 +619,7 @@ export class Agent<UserData = any> {
           // markup only exists in the stream when expressive is active. Python also
           // passes retain_format here, but that predates expressive mode and is a
           // separate gap — turning it on would change tokenization for every
-          // non-streaming TTS plugin, none of which can be expressive today.
+          // non-streaming TTS plugin.
           new BasicSentenceTokenizer({ xmlAware: expressiveActive }),
         );
       }
@@ -676,7 +694,11 @@ export interface AgentTaskOptions<UserData = any> extends AgentOptions<UserData>
 export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData> {
   private started = false;
   private future = new Future<ResultT>();
+  private readonly inactive = new Event();
   private _preserveFunctionCallHistory: boolean;
+
+  /** @internal */
+  _oldAgent?: Agent;
 
   #logger = log();
 
@@ -690,10 +712,16 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     const { preserveFunctionCallHistory = false, ...rest } = options;
     super(rest);
     this._preserveFunctionCallHistory = preserveFunctionCallHistory;
+    this.inactive.set();
   }
 
   get done(): boolean {
     return this.future.done;
+  }
+
+  /** @internal */
+  async _waitForInactive(): Promise<void> {
+    await this.inactive.wait();
   }
 
   complete(result: ResultT | Error): void {
@@ -747,6 +775,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     const ownerIsNonBlocking =
       taskInfo.functionCall?.extra.__livekit_agents_tool_non_blocking === true;
     const oldAgent = oldActivity.agent;
+    this._oldAgent = oldAgent;
     const session = oldActivity.agentSession;
 
     const blockedTasks: Task<any>[] = [currentTask];
@@ -756,6 +785,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       blockedTasks.push(onEnterTask);
     }
 
+    this.inactive.clear();
     try {
       return await oldActivity._withInlineTaskSlot({
         speechHandle,
@@ -858,7 +888,9 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
                 `${this.constructor.name} completed, but the agent has changed in the meantime. ` +
                   `Ignoring handoff to the previous agent, likely due to AgentSession.updateAgent being invoked.`,
               );
-              await oldActivity.close();
+              // Shutdown closes the parent after this task returns. Closing it here
+              // would wait for the tool that is currently awaiting this task.
+              if (!session._closing) await oldActivity.close();
             } else {
               const mergedChatCtx = oldAgent._chatCtx.merge(this._chatCtx, {
                 excludeFunctionCall: !this._preserveFunctionCallHistory,
@@ -875,8 +907,8 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
           }
         },
       });
-    } catch (error) {
-      throw error;
+    } finally {
+      this.inactive.set();
     }
   }
 }

@@ -56,6 +56,7 @@ export {
   AudioOutput,
   type AudioOutputCapabilities,
   type PlaybackFinishedEvent,
+  type PlaybackProgressedEvent,
   type PlaybackStartedEvent,
   type TimedString,
   createTimedString,

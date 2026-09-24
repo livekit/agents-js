@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
+import { encodeChatItem } from '../proto.js';
 import { INSTRUCTIONS_MESSAGE_ID, applyInstructionsModality } from '../voice/generation.js';
 import { FakeLLM } from '../voice/testing/fake_llm.js';
 import {
+  AgentConfigUpdate,
   type AudioContent,
   ChatContext,
   type ChatItem,
@@ -311,7 +313,7 @@ describe('ChatMessage text content', () => {
     'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
     '<expr type="prosody" label="whisper">keep it secret</expr>';
   const mixedClean =
-    ' Press [Enter] to see <b>bold</b>, ' +
+    'Press [Enter] to see <b>bold</b>, ' +
     'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
     'keep it secret';
 
@@ -1628,5 +1630,33 @@ describe('ChatContext.copy with toolCtx filter', () => {
 
     const filtered = ctx.copy({ toolCtx: new ToolContext([provider]) });
     expect(filtered.items.map((i) => ('name' in i ? i.name : ''))).toEqual(['code_runner']);
+  });
+});
+
+describe('AgentConfigUpdate.toJSON', () => {
+  it('renders Instructions to the same string as the proto encoder', () => {
+    const instructions = new Instructions({ audio: 'keep it short', text: 'use markdown' });
+    const item = new AgentConfigUpdate({ id: 'item_acu', instructions, createdAt: 1 });
+
+    const json = item.toJSON() as { instructions: unknown };
+    expect(json.instructions).toBe('keep it short');
+
+    const encoded = encodeChatItem(item);
+    expect(encoded.item.case).toBe('agentConfigUpdate');
+    if (encoded.item.case === 'agentConfigUpdate') {
+      expect(encoded.item.value.instructions).toBe(json.instructions);
+    }
+  });
+
+  it('passes a plain string through and omits an unset field', () => {
+    const withString = new AgentConfigUpdate({ instructions: 'be nice' }).toJSON() as {
+      instructions?: unknown;
+    };
+    expect(withString.instructions).toBe('be nice');
+
+    const withoutInstructions = new AgentConfigUpdate({ toolsAdded: ['x'] }).toJSON() as {
+      instructions?: unknown;
+    };
+    expect(withoutInstructions).not.toHaveProperty('instructions');
   });
 });

@@ -243,7 +243,10 @@ function handleWebhook(raw: Buffer, tasks: Set<Promise<void>>): void {
 
 function serve(verify: boolean): void {
   const tasks = new Set<Promise<void>>();
-  const server = http.createServer(async (req, res) => {
+  const handleRequest = async (
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (req.method === 'GET' && url.pathname === '/whatsapp/webhook') {
       handleVerification(url.searchParams, res);
@@ -268,6 +271,12 @@ function serve(verify: boolean): void {
     } else {
       res.writeHead(404).end();
     }
+  };
+  const server = http.createServer((req, res) => {
+    void handleRequest(req, res).catch((err: unknown) => {
+      console.error('Failed to handle webhook:', err);
+      if (!res.headersSent) res.writeHead(500).end();
+    });
   });
 
   // The server stops accepting requests, then in-flight call handling

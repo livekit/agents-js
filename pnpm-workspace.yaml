@@ -5,9 +5,11 @@ packages:
 
 minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
+  # Explicitly approved Rime protocol release.
+  - '@rimelabs/api@0.0.1'
   - '@livekit/*'
-  # choose_not_to_respond respond_after_sec built-in tool config
-  - phonic@0.32.15
+  # phonic_model realtime config option
+  - phonic@0.32.28
   # Renovate security update: vite@7.3.2 || 7.3.5
   - vite@7.3.2 || 7.3.5
   # Renovate security update: ws@8.20.1
@@ -22,6 +24,8 @@ minimumReleaseAgeExclude:
   - brace-expansion@5.0.8
   # Renovate security update: js-yaml@4.3.1
   - js-yaml@4.3.1
+  # Renovate security update: sharp@0.35.4
+  - sharp@0.35.4
 
 catalog:
   '@livekit/rtc-node': ^0.13.34

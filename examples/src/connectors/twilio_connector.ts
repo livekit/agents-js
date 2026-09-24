@@ -136,19 +136,17 @@ async function handleVoiceWebhook(
 
 function serve(verify: boolean): void {
   http
-    .createServer(async (req, res) => {
+    .createServer((req, res) => {
       const path = new URL(req.url ?? '/', 'http://localhost').pathname;
       if (req.method !== 'POST' || path !== '/twilio/voice') {
         res.writeHead(404).end();
         return;
       }
 
-      try {
-        await handleVoiceWebhook(req, res, verify);
-      } catch (err) {
+      void handleVoiceWebhook(req, res, verify).catch((err: unknown) => {
         console.error('Failed to handle webhook:', err);
         if (!res.headersSent) res.writeHead(500).end();
-      }
+      });
     })
     .listen(PORT, () => console.log(`Twilio webhook server listening on port ${PORT}`));
 }

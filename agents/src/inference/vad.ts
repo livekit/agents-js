@@ -334,7 +334,7 @@ class InferenceVADStream extends BaseVADStream {
         if (inferenceDuration > SLOW_INFERENCE_THRESHOLD_MS) {
           this._logger.warn(
             { extraInferenceTimeMs: extraInferenceTime },
-            'VAD slower than realtime',
+            'VAD inference is slower than realtime',
           );
         }
 

@@ -6,13 +6,14 @@ import {
   type VADEvent,
   VADEventType,
   type VADStream,
+  log,
   mergeFrames,
 } from '@livekit/agents';
 import { VAD_WINDOW_SAMPLES, createVad } from '@livekit/local-inference';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { OnnxModel, newInferenceSession } from './onnx_model.js';
 import { VAD } from './vad.js';
 
@@ -115,6 +116,28 @@ async function drainSpeechSegment(
     }
   }
 }
+
+describe('Silero VADStream inference errors', () => {
+  it('closes the output when inference fails', async () => {
+    const error = new Error('inference failed');
+    const vad = await VAD.load();
+    const stream = vad.stream();
+    const runSpy = vi.spyOn(OnnxModel.prototype, 'run').mockRejectedValueOnce(error);
+    const closeSpy = vi.spyOn(stream, 'close');
+    const errorSpy = vi.spyOn(log(), 'error');
+
+    try {
+      stream.pushFrame(new AudioFrame(new Int16Array(512), TARGET_SAMPLE_RATE, 1, 512));
+      await expect(stream.next()).resolves.toEqual({ done: true, value: undefined });
+      expect(errorSpy).toHaveBeenCalledWith(error, 'Error in VAD inference task');
+    } finally {
+      if (!closeSpy.mock.calls.length) stream.close();
+      runSpy.mockRestore();
+      closeSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+});
 
 describe('Silero VADStream flush reset', () => {
   it(
