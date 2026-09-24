@@ -1,0 +1,249 @@
+.changeset/add-twilio-connector-warm-transfer.md
+  s_2461ceafdb7d32::t_9cb838baa2b9f0 2,5
+.changeset/assemblyai-universal-3-6-pro-inference.md
+  s_2461ceafdb7d32::t_d70faf532b137b 1-5
+.changeset/deepgram-flux-tts-v2.md
+  s_2461ceafdb7d32::t_ceee4ac50ad9a8 1-5
+.changeset/deepgram-stt-socket-liveness.md
+  s_2461ceafdb7d32::t_db9b8893faa016 1-5
+.changeset/elevenlabs-configurable-stt-chunks.md
+  s_2461ceafdb7d32::t_eb8ccb141c0969 1-5
+.changeset/fresh-timers-shutdown.md
+  s_2461ceafdb7d32::t_6f4690d5b5295a 1-5
+.changeset/gemini-live-empty-turns.md
+  s_2461ceafdb7d32::t_3d14e981d3ad5c 1-5
+.changeset/gemini-live-error-event-type.md
+  s_2461ceafdb7d32::t_699eaf5c17cfb1 1-5
+.changeset/gemini-live-property-ordering.md
+  s_2461ceafdb7d32::t_bf9506c425afb1 1-5
+.changeset/gemini-live-reasoning-tokens.md
+  s_2461ceafdb7d32::t_a621ad8fe6a5c6 1-8
+.changeset/gemini-tts-3-8-expressive.md
+  s_2461ceafdb7d32::t_edcfdce6e7641d 1-6
+.changeset/google-function-parameters-schema.md
+  s_2461ceafdb7d32::t_5ae742d23ebc92 1-5
+.changeset/heavy-zebras-shout.md
+  s_2461ceafdb7d32::t_c9feedfaed2ef2 1-5
+.changeset/openai-realtime-custom-base-url.md
+  s_2461ceafdb7d32::t_ffb46bfb29fa0c 1-5
+.changeset/quiet-tools-smile.md
+  s_2461ceafdb7d32::t_cfedfd4f7f1354 1-5
+.changeset/rime-websocket-v1.md
+  s_2461ceafdb7d32::t_bdcc6d5e264f91 1-14
+.changeset/session-transport-send-failures.md
+  s_2461ceafdb7d32::t_82dbee1a35b194 1-5
+.changeset/stt-abort-during-connect.md
+  s_2461ceafdb7d32::t_a863f8923670f5 1-5
+.changeset/stt-empty-interim-finalize.md
+  s_2461ceafdb7d32::t_4adff0754a56d4 1-5
+.changeset/stt-retry-budget-consecutive.md
+  s_2461ceafdb7d32::t_0636a7bea68c89 1-5
+.changeset/stt-send-loop-abort-race-leak.md
+  s_2461ceafdb7d32::t_99aeee592c39b8 1-8
+.changeset/stt-session-recovers-unrecoverable-errors.md
+  s_2461ceafdb7d32::t_31e346c06290ea 1-5
+.changeset/surface-assemblyai-turn-confidence.md
+  s_2461ceafdb7d32::t_3dc588d67c5ca1 1-5
+.changeset/toml-agent-name-fallback.md
+  s_2461ceafdb7d32::t_87a65033dc9055 1-5
+agents/etc/agents.api.md
+  s_2461ceafdb7d32::t_5ee27dfa263b03 1018,2837,5495,5527,6479,7761,7792-7801,7895,7901-7904,7910-7913,7936-7937,7979,9143,10225-10228,10230-10233
+agents/package.json
+  s_2461ceafdb7d32::t_8443f596e8a751 89
+agents/src/inference/llm.ts
+  s_2461ceafdb7d32::t_b6deae36cb2119 547
+agents/src/inference/stt.test.ts
+  s_2461ceafdb7d32::t_1abc3fc653167e 446-448,707-746,962-1058
+agents/src/inference/stt.ts
+  s_2461ceafdb7d32::t_0a8a641d88f6f9 20-28,59-60,324,911-914,917-918,959-964,966-969,973-990,992-996,1000,1002-1008,1104-1106
+agents/src/ipc/job_proc_lazy_main.ts
+  s_2461ceafdb7d32::t_2c83caacff288d 38,144,328
+agents/src/job.ts
+  s_2461ceafdb7d32::t_4eeb4f411532ce 552
+agents/src/llm/chat_context.test.ts
+  s_2461ceafdb7d32::t_13b564366b2b5f 316
+agents/src/llm/llm.ts
+  s_2461ceafdb7d32::t_1448c6073188aa 34-40,395
+agents/src/metrics/base.ts
+  s_2461ceafdb7d32::t_f5930eca8d1350 38-44,194-201
+agents/src/metrics/model_usage.test.ts
+  s_2461ceafdb7d32::t_7721b4a350a4fc 355,401
+agents/src/metrics/model_usage.ts
+  s_2461ceafdb7d32::t_479efa50305268 44-45,168,253-254,273-274
+agents/src/metrics/utils.ts
+  s_2461ceafdb7d32::t_ed3f1c6ddb0e7c 21,32
+agents/src/stt/stt.test.ts
+  s_2461ceafdb7d32::t_91e4c4e5cb432d 103-154,190-204,219
+agents/src/stt/stt.ts
+  s_2461ceafdb7d32::t_1d05eb2aa9aa77 318,346,348,368-372,388-391,503,581-585
+agents/src/telemetry/gen_ai.ts
+  s_2461ceafdb7d32::t_42787ab1b6aa4c 440-444
+agents/src/tokenize/xml_markup.test.ts
+  s_2461ceafdb7d32::t_2172adcb81e831 56-57,66,117
+agents/src/tts/index.ts
+  s_2461ceafdb7d32::t_4cb4f2170a1d2d 30
+agents/src/tts/markup_utils.ts
+  s_2461ceafdb7d32::t_3bcda81eeb3313 99-142,175-177,183,185,210-212,216,235-248,250-251,262
+agents/src/tts/provider_format.test.ts
+  s_2461ceafdb7d32::t_77e2240c16ff8d 223,232-233,281-285,332,349-357,423,766-964
+agents/src/tts/provider_format.ts
+  s_2461ceafdb7d32::t_5aee803cf43d52 19,27,33,253-304,697-800,807,900-908,962-965,1092-1093,1151-1154,1159,1161-1174,1176-1192,1194-1221,1223-1225,1228,1352,1398-1400,1414-1417,1449-1455,1457-1460,1468-1487,1496,1498-1500,1502-1507,1509,1542-1544,1556-1560,1566-1571,1573,1575,1577-1579,1581-1587,1749-1751
+agents/src/tts/stream_adapter.ts
+  s_2461ceafdb7d32::t_b478392f9d9f6a 6,17-18,29,32-33,41-76,92-98,105,111-114,119-126,129-132,141,155-162,165,177,183,190-192
+agents/src/types.ts
+  s_2461ceafdb7d32::t_6cecd64f5ed844 95
+agents/src/utils.test.ts
+  s_2461ceafdb7d32::t_56f8f6725d88fd 13,24,1149-1204
+agents/src/utils.ts
+  s_2461ceafdb7d32::t_1d1f17baae8049 155-156,160,1053-1055
+agents/src/voice/agent.ts
+  s_2461ceafdb7d32::t_ba674eb7017bc5 534-536,622
+agents/src/voice/agent_activity.ts
+  s_2461ceafdb7d32::t_a03d8981e50d51 75,773,1106-1116,1128-1133
+agents/src/voice/agent_session.test.ts
+  s_2461ceafdb7d32::t_dcf442a8c2e535 6,258-310
+agents/src/voice/agent_session.ts
+  s_2461ceafdb7d32::t_5efdae6f4cd402 581-582,1714-1719,1966-1969,2094
+agents/src/voice/audio_recognition.ts
+  s_2461ceafdb7d32::t_02efb274ef14a5 170-172,177,184,186-187,204-210,212-226,228-237,239-242,269-270,323,441,1966-1967
+agents/src/voice/audio_recognition_stt_recovery.test.ts
+  s_2461ceafdb7d32::t_b5a4775a83c670 1-93
+agents/src/voice/console_io.ts
+  s_2461ceafdb7d32::t_536725cf8bc63f 122-129,132,157
+agents/src/voice/expressive_toggle.test.ts
+  s_2461ceafdb7d32::t_0f18c6ef19610f 6-9,71-191
+agents/src/voice/remote_session.test.ts
+  s_2461ceafdb7d32::t_2a0002c716cb0c 5,15,21,26,267-352
+agents/src/voice/remote_session.ts
+  s_2461ceafdb7d32::t_743be74eafa32d 162-167,183,309-311,665-674,1268,1270-1275,1279
+agents/src/worker.test.ts
+  s_2461ceafdb7d32::t_033d796a8cfd92 4-7,66-118
+agents/src/worker.ts
+  s_2461ceafdb7d32::t_03b0148967429f 17,20,160-174,267-269,273-275,319-321,488-493
+agents/src/workflows/twilio_connector_warm_transfer.test.ts
+  s_2461ceafdb7d32::t_df344853b33724 173,188,199,292,360
+agents/src/workflows/twilio_connector_warm_transfer_lifecycle.test.ts
+  s_2461ceafdb7d32::t_0a0519334349ed 5-6,9-10,15,24,28,30,62,64-67,75,93-115,119-160,193-233,240-243,246-265,270-344
+agents/src/workflows/warm_transfer.ts
+  s_2461ceafdb7d32::t_0e71841e926475 897-900,934,942,970,972,974-975,1060-1065,1072,1110,1113-1121,1123
+examples/src/connectors/connectors.test.ts
+  s_2461ceafdb7d32::t_3325edb0c91cb2 1-141
+examples/src/connectors/twilio_connector.ts
+  s_2461ceafdb7d32::t_647ffbc86a2686 23,168
+examples/src/connectors/whatsapp_connector.ts
+  s_2461ceafdb7d32::t_b5163fa6f25634 211,236-251,258,300
+examples/src/twilio_connector_warm_transfer.ts
+  s_2461ceafdb7d32::t_71d9957156d263 74-75
+plugins/assemblyai/src/stt-metadata.test.ts
+  s_2461ceafdb7d32::t_28a375126137e7 26,48-94,180-225
+plugins/assemblyai/src/stt.ts
+  s_2461ceafdb7d32::t_2bc0da0e6e4ea0 144-149
+plugins/cartesia/src/stt.ts
+  s_2461ceafdb7d32::t_63ab89a9d263e4 424-431,434
+plugins/deepgram/README.md
+  s_2461ceafdb7d32::t_e9adaef8056207 12-14
+plugins/deepgram/etc/agents-plugin-deepgram.api.md
+  s_2461ceafdb7d32::t_9750c4525e38a9 30-40,46-55,226-236,298-336
+plugins/deepgram/src/_utils.test.ts
+  s_2461ceafdb7d32::t_a0c70b5adc9876 1-134
+plugins/deepgram/src/_utils.ts
+  s_2461ceafdb7d32::t_425a00042867d6 4,52-108
+plugins/deepgram/src/index.ts
+  s_2461ceafdb7d32::t_e771f3dd819139 9
+plugins/deepgram/src/models.ts
+  s_2461ceafdb7d32::t_2073a1d8b23a0f 146-152
+plugins/deepgram/src/stt.ts
+  s_2461ceafdb7d32::t_ddc1b51b9aa5ec 21,25,389-393,404-410,444-448,482-484,487-489,607-624
+plugins/deepgram/src/stt_v2.ts
+  s_2461ceafdb7d32::t_105bf1e1784118 20,277-282,339-340,343-344,362-388,390,394,398,413-417,435-458,461
+plugins/deepgram/src/tts_v2.test.ts
+  s_2461ceafdb7d32::t_09fd4e290e3541 1-233
+plugins/deepgram/src/tts_v2.ts
+  s_2461ceafdb7d32::t_09c96a72c14472 1-684
+plugins/elevenlabs/README.md
+  s_2461ceafdb7d32::t_a89f885fda34da 6
+plugins/elevenlabs/etc/agents-plugin-elevenlabs.api.md
+  s_2461ceafdb7d32::t_d2ef1ce2137e56 121
+plugins/elevenlabs/src/stt.test.ts
+  s_2461ceafdb7d32::t_e5485ea110ee28 372-410,756-864
+plugins/elevenlabs/src/stt.ts
+  s_2461ceafdb7d32::t_9fd7aad4cbe206 58-63,100,244-248,315,688-691,930
+plugins/google/etc/agents-plugin-google.api.md
+  s_2461ceafdb7d32::t_cb4500e6dfdde4 207,496-497,507,525-526,577
+plugins/google/package.json
+  s_2461ceafdb7d32::t_34d4eaab2bb770 43-44
+plugins/google/src/beta/gemini_tts.test.ts
+  s_2461ceafdb7d32::t_9797c1ad32ad60 4,7,51-376
+plugins/google/src/beta/gemini_tts.ts
+  s_2461ceafdb7d32::t_911d62eaf3ce3c 58-79,88-97,133-134,167-187,194-197,199-200,216-221,235,239-245,263,274-277,284,287,292,295-306,309-311,335,405-480,507-544
+plugins/google/src/models.ts
+  s_2461ceafdb7d32::t_1b67b02409b7d2 94-95
+plugins/google/src/realtime/realtime_api.test.ts
+  s_2461ceafdb7d32::t_27ac8073194256 4,8,253-331
+plugins/google/src/realtime/realtime_api.ts
+  s_2461ceafdb7d32::t_a7cb3284806558 70-84,1189,1484-1485,1491-1492,1501,1868-1871,1883
+plugins/google/src/utils.test.ts
+  s_2461ceafdb7d32::t_8a3bd51097af14 1-125
+plugins/google/src/utils.ts
+  s_2461ceafdb7d32::t_948faecbf80796 84,142-145,157,160-166,177,183,189
+plugins/meta/src/stt.ts
+  s_2461ceafdb7d32::t_d3304f71b68ce2 14,704-711,718-722,737
+plugins/openai/src/realtime/gpt_live_model.ts
+  s_2461ceafdb7d32::t_a479c2ce32cf20 742
+plugins/openai/src/realtime/realtime_model.test.ts
+  s_2461ceafdb7d32::t_d886fbde9c9397 1255-1266
+plugins/openai/src/realtime/realtime_model.ts
+  s_2461ceafdb7d32::t_9a0b20627d0230 399,407-421,433,438-440
+plugins/phonic/etc/agents-plugin-phonic.api.md
+  s_2461ceafdb7d32::t_1bc33ccd22a2c7 95,198-199
+plugins/phonic/package.json
+  s_2461ceafdb7d32::t_101e5bef32457e 44
+plugins/phonic/src/realtime/realtime_model.ts
+  s_2461ceafdb7d32::t_ade8886f65c289 56,235-239,245,381,1251
+plugins/rime/README.md
+  s_2461ceafdb7d32::t_8da233dbbc6b0f 6,17-100
+plugins/rime/etc/agents-plugin-rime.api.md
+  s_2461ceafdb7d32::t_66e2a7d097762d 18,30-34,39-43,47-48,50,59-60,65-66,69-70,73-74,76,83,90,94-95,137-139,142-146
+plugins/rime/package.json
+  s_2461ceafdb7d32::t_6f1dadbd30ca22 48-50
+plugins/rime/src/audio.ts
+  s_2461ceafdb7d32::t_1f6061da0a08a0 1-111
+plugins/rime/src/connection.ts
+  s_2461ceafdb7d32::t_09a1e49d7511b2 1-353
+plugins/rime/src/legacy.test.ts
+  s_2461ceafdb7d32::t_9164c2a0dbdef1 1-132
+plugins/rime/src/options.test.ts
+  s_2461ceafdb7d32::t_cb61bacfc20cc0 1-160
+plugins/rime/src/options.ts
+  s_2461ceafdb7d32::t_4fcd6e1b5919a4 1-329
+plugins/rime/src/stream.ts
+  s_2461ceafdb7d32::t_7b4f40cc05d2c3 1-438
+plugins/rime/src/stream_tts.ts
+  s_2461ceafdb7d32::t_bb3692f1477f71 1-36
+plugins/rime/src/tts.test.ts
+  s_2461ceafdb7d32::t_102b117dafe97e 4,38-154,199
+plugins/rime/src/tts.ts
+  s_2461ceafdb7d32::t_9da83dcc095063 1,10,15-27,31-34,38-41,43,45,48-51,54,58-72,74-79,81-85,93-94,98-114,121-122,124-125,130-133,137,139-160,164-165,167-192,194-202,205-212,215-219,221,224-226,228-231,233-241
+plugins/rime/src/websocket.test.ts
+  s_2461ceafdb7d32::t_54e7fccee920c2 1-839
+pnpm-lock.yaml
+  s_2461ceafdb7d32::t_32a7e43639f676 231-233,840-842,1231-1232,1308-1316,1674-1676,2699-2701,4752-4753,5057-5060,5660-5661,6628-6631,8870,9294-9295
+pnpm-workspace.yaml
+  s_2461ceafdb7d32::t_c88685a105a531 8-9,11-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f733705af230d8a521f82eeb9c6411ee9d276c2f",
+  "prompts": {},
+  "sessions": {
+    "s_2461ceafdb7d32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c576-2ef6-70d0-a26e-a53969369e54",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
