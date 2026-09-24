@@ -1321,6 +1321,11 @@ const ATTR_EXCEPTION_TYPE = "exception.type";
 // @public (undocumented)
 const ATTR_FUNCTION_TOOL_ARGS = "lk.pii.function_tool.arguments";
 
+// Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_CANCELLED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+const ATTR_FUNCTION_TOOL_CANCELLED = "lk.function_tool.cancelled";
+
 // Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -8966,6 +8971,7 @@ declare namespace traceTypes {
         ATTR_FUNCTION_TOOL_ARGS,
         ATTR_FUNCTION_TOOL_IS_ERROR,
         ATTR_FUNCTION_TOOL_OUTPUT,
+        ATTR_FUNCTION_TOOL_CANCELLED,
         ATTR_TTS_INPUT_TEXT,
         ATTR_TTS_STREAMING,
         ATTR_TTS_LABEL,

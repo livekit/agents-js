@@ -8,16 +8,23 @@ import {
 } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ReadableStream } from 'node:stream/web';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext, FunctionCall } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
-import { ToolContext } from '../llm/tool_context.js';
-import { initializeLogger } from '../log.js';
+import { ToolContext, tool } from '../llm/tool_context.js';
+import { initializeLogger, log } from '../log.js';
 import { setTracerProvider, traceTypes } from '../telemetry/index.js';
 import { isFlushSentinel } from '../types.js';
+import { Future } from '../utils.js';
 import type { ModelSettings } from './agent.js';
-import { type _LLMGenerationData, performLLMInference } from './generation.js';
+import type { AgentSession } from './agent_session.js';
+import {
+  type _LLMGenerationData,
+  performLLMInference,
+  performToolExecutions,
+} from './generation.js';
 import type { LLMNode } from './io.js';
+import type { SpeechHandle } from './speech_handle.js';
 
 function setupInMemoryTracing() {
   const exporter = new InMemorySpanExporter();
@@ -201,5 +208,61 @@ describe('performLLMInference response telemetry', () => {
     }
 
     expectFunctionCallTelemetry(span);
+  });
+});
+
+describe('performToolExecutions tool telemetry', () => {
+  let provider: NodeTracerProvider;
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await provider?.shutdown();
+  });
+
+  it('marks the function_tool span cancelled when the reply is aborted mid-execution', async () => {
+    const { exporter, provider: testProvider } = setupInMemoryTracing();
+    provider = testProvider;
+    const debug = vi.spyOn(log(), 'debug');
+
+    const started = new Future<void>();
+    const connectToCaller = tool({
+      name: 'connect_to_caller',
+      description: 'Runs until its reply is aborted.',
+      execute: async (_, { abortSignal }) => {
+        started.resolve();
+        await new Promise((resolve) => abortSignal.addEventListener('abort', resolve));
+        return 'connected';
+      },
+    });
+    const replyAbortController = new AbortController();
+    const [execTask] = performToolExecutions({
+      session: {} as AgentSession,
+      speechHandle: { id: 'speech_cancelled' } as SpeechHandle,
+      toolCtx: new ToolContext([connectToCaller]),
+      toolCallStream: new ReadableStream<FunctionCall>({
+        start(controller) {
+          controller.enqueue(
+            FunctionCall.create({
+              callId: 'call_cancelled',
+              name: 'connect_to_caller',
+              args: '{}',
+            }),
+          );
+          controller.close();
+        },
+      }),
+      controller: replyAbortController,
+    });
+
+    await started.await;
+    replyAbortController.abort();
+    await execTask.result;
+
+    const span = spanByName(exporter.getFinishedSpans(), 'function_tool');
+    expect(span?.attributes[traceTypes.ATTR_FUNCTION_TOOL_CANCELLED]).toBe(true);
+    expect(debug).toHaveBeenCalledWith(
+      { function: 'connect_to_caller', callId: 'call_cancelled' },
+      'tool cancelled',
+    );
   });
 });

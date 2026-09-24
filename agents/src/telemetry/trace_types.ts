@@ -65,6 +65,7 @@ export const ATTR_FUNCTION_TOOL_NAME = 'lk.function_tool.name';
 export const ATTR_FUNCTION_TOOL_ARGS = 'lk.pii.function_tool.arguments';
 export const ATTR_FUNCTION_TOOL_IS_ERROR = 'lk.function_tool.is_error';
 export const ATTR_FUNCTION_TOOL_OUTPUT = 'lk.pii.function_tool.output';
+export const ATTR_FUNCTION_TOOL_CANCELLED = 'lk.function_tool.cancelled';
 
 // tts node
 export const ATTR_TTS_INPUT_TEXT = 'lk.pii.input_text';
