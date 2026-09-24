@@ -71,8 +71,8 @@ Examples on when the tool should be called:
                 twilioAccountSid: TWILIO_ACCOUNT_SID,
                 twilioAuthToken: TWILIO_AUTH_TOKEN,
                 chatCtx: ctx.session.history,
-                // Give up if the supervisor doesn't pick up within 25s with
-                // `ringingTimeout: 25000` (default: 30s).
+                // The default answer timeout is 30s. Set `ringingTimeout: 25000`
+                // to use 25s instead.
                 instructions: { extra: SUMMARY_INSTRUCTIONS },
                 greetingSpeech: (session) => session.generateReply({ toolChoice: 'none' }),
               }).run();

@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ConnectTwilioCallResponse } from '@livekit/protocol';
 import { ParticipantKind, Room, RoomEvent, TrackKind } from '@livekit/rtc-node';
-import { AccessToken, ConnectorClient } from 'livekit-server-sdk';
+import { AccessToken, ConnectorClient, RoomServiceClient } from 'livekit-server-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type JobContext, runWithJobContextAsync } from '../job.js';
+import type { FunctionTool } from '../llm/index.js';
 import { log } from '../log.js';
 import { Future } from '../utils.js';
 import { Agent } from '../voice/agent.js';
@@ -250,6 +251,36 @@ describe('Twilio warm transfer with real session and activity lifecycle', () => 
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(ctx.fetch).toHaveBeenCalledOnce();
       expect(ctx.outcome.done).toBe(false);
+    } finally {
+      await ctx.session.close();
+    }
+  });
+
+  it('moves the answered recipient and completes the transfer', async () => {
+    const ctx = setup();
+    ctx.connect.mockResolvedValue(
+      new ConnectTwilioCallResponse({ connectUrl: 'wss://connector.example/stream' }),
+    );
+    const move = vi
+      .spyOn(RoomServiceClient.prototype, 'moveParticipant')
+      .mockResolvedValue({} as never);
+    try {
+      await ctx.start();
+      await vi.waitFor(() => expect(ctx.fetch).toHaveBeenCalledOnce());
+      ctx.answer();
+      await ctx.greeted.await;
+      const connect = (ctx.task.toolCtx.tools as FunctionTool[]).find(
+        (tool) => tool.name === 'connect_to_caller',
+      )!;
+      await connect.execute({}, {} as never);
+      expect(await ctx.outcome.await).toEqual({ humanAgentIdentity: 'human-agent-connector' });
+      expect(move).toHaveBeenCalledExactlyOnceWith(
+        'consult-room',
+        'human-agent-connector',
+        'caller-room',
+      );
+      expect(ctx.session.currentAgent).toBe(ctx.parent);
+      expect(ctx.fetch).toHaveBeenCalledOnce();
     } finally {
       await ctx.session.close();
     }

@@ -208,7 +208,7 @@ async function runLogged(promise: Promise<void>, description: string): Promise<v
 }
 
 /** Meta requires a fast 200, so call handling runs in the background. */
-function handleWebhook(raw: Buffer, tasks: Set<Promise<void>>): void {
+function handleWebhook(raw: Buffer, tasks: Map<string, Promise<void>>): void {
   let webhook: WebhookBody;
   try {
     webhook = JSON.parse(raw.toString()) as WebhookBody;
@@ -233,16 +233,23 @@ function handleWebhook(raw: Buffer, tasks: Set<Promise<void>>): void {
       // Prefer the number ID the event arrived on; multi-number apps get several.
       const phoneNumberId = value.metadata?.phone_number_id || WHATSAPP_PHONE_NUMBER_ID;
       for (const call of value.calls ?? []) {
-        const task = runLogged(handleCallEvent(call, phoneNumberId), `call event ${call.id}`);
-        tasks.add(task);
-        void task.finally(() => tasks.delete(task));
+        // A termination must wait for this call's pending accept or connect.
+        const previous = tasks.get(call.id) ?? Promise.resolve();
+        const task = runLogged(
+          previous.then(() => handleCallEvent(call, phoneNumberId)),
+          `call event ${call.id}`,
+        );
+        tasks.set(call.id, task);
+        void task.then(() => {
+          if (tasks.get(call.id) === task) tasks.delete(call.id);
+        });
       }
     }
   }
 }
 
 function serve(verify: boolean): void {
-  const tasks = new Set<Promise<void>>();
+  const tasks = new Map<string, Promise<void>>();
   const handleRequest = async (
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -284,7 +291,7 @@ function serve(verify: boolean): void {
   // so there is nothing else to close.
   const shutdown = async (): Promise<void> => {
     server.close();
-    await Promise.allSettled(tasks);
+    await Promise.allSettled(tasks.values());
     process.exit(0);
   };
   process.once('SIGINT', () => void shutdown());
