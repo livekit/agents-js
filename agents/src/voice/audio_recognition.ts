@@ -37,7 +37,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
-import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { type STTCapabilities, type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import type { Future } from '../utils.js';
@@ -306,6 +306,8 @@ export interface AudioRecognitionOptions {
   transcriptionTimeout?: number | null;
   /** See `AgentSessionOptions.commitInterimOnEmptyFinal`. */
   commitInterimOnEmptyFinal?: boolean;
+  /** Getter for the active STT's capabilities; the STT can change during the session. */
+  getSttCapabilities?: () => STTCapabilities | undefined;
 }
 
 /**
@@ -319,18 +321,6 @@ export interface ParticipantLike {
 }
 
 // TODO add ability to update stt/vad/interruption-detection
-/** Whether `text` ends with the words of `tail`, ignoring case and punctuation. */
-function endsWithWords(text: string, tail: string): boolean {
-  const normalize = (value: string) =>
-    value
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, ' ')
-      .trim();
-  const words = normalize(text);
-  const tailWords = normalize(tail);
-  return tailWords !== '' && (words === tailWords || words.endsWith(` ${tailWords}`));
-}
-
 export class AudioRecognition {
   private hooks: RecognitionHooks;
   private stt?: STTNode;
@@ -375,12 +365,10 @@ export class AudioRecognition {
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
   private audioInterimTranscript = '';
-  // Latest interim and preflight of the open segment (text and start time), and which arrived
-  // last, for an empty final to fall back on.
+  // Latest interim and preflight texts of the open segment, and which arrived last, for an
+  // empty final to fall back on.
   private lastInterimText = '';
-  private lastInterimStart = 0;
   private lastPreflightText = '';
-  private lastPreflightStart = 0;
   private preflightIsLatest = false;
   private audioPreflightTranscript = '';
   private finalTranscriptConfidence: number[] = [];
@@ -393,6 +381,7 @@ export class AudioRecognition {
   private vadSpeechStarted = false;
   private transcriptionTimeout?: number;
   private commitInterimOnEmptyFinal: boolean;
+  private getSttCapabilities?: () => STTCapabilities | undefined;
   private transcriptionTimeoutTimer?: ReturnType<typeof setTimeout>;
   private turnSpeechDuration = 0;
   private turnTranscriptReceived = false;
@@ -483,6 +472,7 @@ export class AudioRecognition {
     this.getLinkedParticipant = opts.getLinkedParticipant;
     this.transcriptionTimeout = opts.transcriptionTimeout ?? undefined;
     this.commitInterimOnEmptyFinal = opts.commitInterimOnEmptyFinal ?? false;
+    this.getSttCapabilities = opts.getSttCapabilities;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.interruptionDetection = opts.interruptionDetection;
@@ -1283,14 +1273,12 @@ export class AudioRecognition {
     // the interim is more likely noise the provider retracted, so it is left alone.
     const emptyFinal =
       ev.type === SpeechEventType.FINAL_TRANSCRIPT ? ev.alternatives?.[0] : undefined;
-    // The latest of the two, unless it is a preflight that repeats the tail of the interim and
-    // starts after it: most providers send a preflight as the whole segment, but the AssemblyAI
-    // plugin sends only the words since its last preflight.
-    const preflightIsChunk =
-      this.lastPreflightStart > this.lastInterimStart &&
-      endsWithWords(this.lastInterimText, this.lastPreflightText);
+    // The latest of the two, unless the STT's preflights are increments of the segment: then
+    // the interim, which carries the whole segment.
     const pendingText =
-      this.preflightIsLatest && !preflightIsChunk ? this.lastPreflightText : this.lastInterimText;
+      this.preflightIsLatest && !this.getSttCapabilities?.()?.incrementalPreflight
+        ? this.lastPreflightText
+        : this.lastInterimText;
     if (
       this.commitInterimOnEmptyFinal &&
       emptyFinal !== undefined &&
@@ -1426,7 +1414,6 @@ export class AudioRecognition {
           `${this.audioTranscript} ${preflightTranscript}`.trimStart();
         this.audioInterimTranscript = preflightTranscript;
         this.lastPreflightText = preflightTranscript;
-        this.lastPreflightStart = ev.alternatives?.[0]?.startTime ?? 0;
         this.preflightIsLatest = true;
 
         if (useSTTSpeakingTime) {
@@ -1465,7 +1452,6 @@ export class AudioRecognition {
         );
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         this.lastInterimText = this.audioInterimTranscript;
-        this.lastInterimStart = ev.alternatives?.[0]?.startTime ?? 0;
         this.preflightIsLatest = false;
         break;
       case SpeechEventType.START_OF_SPEECH:
@@ -2601,9 +2587,7 @@ export class AudioRecognition {
 
   private resetPendingSegment(): void {
     this.lastInterimText = '';
-    this.lastInterimStart = 0;
     this.lastPreflightText = '';
-    this.lastPreflightStart = 0;
     this.preflightIsLatest = false;
   }
 

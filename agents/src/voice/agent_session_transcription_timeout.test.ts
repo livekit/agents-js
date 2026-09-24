@@ -250,3 +250,59 @@ describe('AgentSession commitInterimOnEmptyFinal', () => {
     expect(finals.map((ev) => ev.transcript)).toEqual(['pick up']);
   }, 30_000);
 });
+
+describe('AgentSession commitInterimOnEmptyFinal with chunked preflights', () => {
+  initializeLogger({ pretty: false, level: 'silent' });
+
+  it('commits the whole interim, not the chunk, for an STT that sends incremental preflights', async () => {
+    const vad = new ScriptedVAD();
+    const stt = new FakeSTT({
+      capabilities: { streaming: true, interimResults: true, incrementalPreflight: true },
+      fakeUserSpeeches: [
+        {
+          startTime: 0,
+          endTime: 200,
+          transcript: 'pick up',
+          sttDelay: 200,
+          preflightTranscript: 'up',
+          finalTranscript: '',
+        },
+      ],
+    });
+
+    const session = new AgentSession({
+      stt,
+      vad,
+      llm: new FakeLLM(),
+      commitInterimOnEmptyFinal: true,
+      turnHandling: { turnDetection: 'vad', interruption: { mode: 'vad' } },
+    });
+
+    const finals: UserInputTranscribedEvent[] = [];
+    session.on(AgentSessionEventTypes.UserInputTranscribed, (ev) => {
+      if (ev.isFinal) finals.push(ev);
+    });
+
+    const audioInput = new ScriptedAudioInput();
+    session.input.audio = audioInput;
+    await session.start({ agent: new Agent({ instructions: 'You are a helpful assistant.' }) });
+
+    const pump = setInterval(() => audioInput.push(silenceFrame(50)), 50);
+    try {
+      await waitFor(() => vad.streams.length > 0, 5_000, 'the VAD stream to open');
+      const stream = vad.streams[0]!;
+      stream.emitEvent(vadEvent(VADEventType.START_OF_SPEECH));
+      await sleep(SPEECH_DURATION_MS);
+      stream.emitEvent(
+        vadEvent(VADEventType.END_OF_SPEECH, { speechDuration: SPEECH_DURATION_MS }),
+      );
+
+      await waitFor(() => finals.length > 0, 10_000, 'the final user transcript');
+    } finally {
+      clearInterval(pump);
+      await session.close().catch(() => {});
+    }
+
+    expect(finals.map((ev) => ev.transcript)).toEqual(['pick up']);
+  }, 30_000);
+});

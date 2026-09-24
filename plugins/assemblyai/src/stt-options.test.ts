@@ -53,6 +53,11 @@ async function withProvider(
 }
 
 describe('AssemblyAI streaming configuration', () => {
+  it('reports preflights as increments of the turn', () => {
+    // `utterance` carries only the words since the previous preflight
+    expect(new STT({ apiKey: 'test-key' }).capabilities.incrementalPreflight).toBe(true);
+  });
+
   it('preserves omitted provider defaults', async () => {
     await withProvider({}, async (_provider, query) => {
       expect(query.has('continuous_partials')).toBe(false);

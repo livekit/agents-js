@@ -89,10 +89,10 @@ function vadEvent(type: VADEventType, options: Partial<VADEvent> = {}): VADEvent
   };
 }
 
-function transcript(type: SpeechEventType, text: string, startTime = 0): SpeechEvent {
+function transcript(type: SpeechEventType, text: string): SpeechEvent {
   return {
     type,
-    alternatives: [{ language: 'en', text, startTime, endTime: startTime, confidence: 1 }],
+    alternatives: [{ language: 'en', text, startTime: 0, endTime: 0, confidence: 1 }],
   };
 }
 
@@ -226,14 +226,20 @@ describe('AudioRecognition with an empty final transcript', () => {
     }
   });
 
-  it('promotes the cumulative interim, not a chunked preflight, when the final is empty', async () => {
+  it('promotes the interim over a chunked preflight when the STT sends chunks', async () => {
     // AssemblyAI's plugin sends the turn's words as the interim and only the words since the
-    // last preflight as the preflight.
-    const { ar, hooks, stt, vadPush, vad } = await startRecognition();
+    // last preflight as the preflight; its first chunk starts where the interim starts.
+    const { ar, hooks, stt, vadPush, vad } = await startRecognition({
+      getSttCapabilities: () => ({
+        streaming: true,
+        interimResults: true,
+        incrementalPreflight: true,
+      }),
+    });
     try {
       await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
       await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'Pick up'));
-      await stt(transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'up', 0.3));
+      await stt(transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'up'));
       await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
       await vi.advanceTimersByTimeAsync(1_000);
       await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));

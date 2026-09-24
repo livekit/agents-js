@@ -265,6 +265,7 @@ export class STT extends stt.STT {
       interimResults: true,
       alignedTranscript: 'word',
       keyterms: true,
+      incrementalPreflight: true,
       chatContext: (opts.agentContextCarryover ?? true) && supportsCarryover,
     });
 

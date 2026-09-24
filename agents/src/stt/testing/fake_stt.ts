@@ -39,6 +39,8 @@ export interface FakeUserSpeech {
   final?: boolean;
   /** Text of the final result when it differs from `transcript` (`''` sends an empty final). */
   finalTranscript?: string;
+  /** Preflight transcript sent right after the interim. */
+  preflightTranscript?: string;
 }
 
 /** Scale every timing field by `factor` — useful for speeding up tests. */
@@ -110,6 +112,7 @@ export class FakeSTT extends STT {
       interimResults: opts.capabilities?.interimResults ?? false,
       diarization: opts.capabilities?.diarization ?? false,
       alignedTranscript: opts.capabilities?.alignedTranscript ?? false,
+      incrementalPreflight: opts.capabilities?.incrementalPreflight ?? false,
     });
     this.label = opts.label ?? 'fake-stt';
     this._fakeException = opts.fakeException ?? null;
@@ -325,6 +328,20 @@ export class FakeRecognizeStream extends SpeechStream {
       if (elapsed() < interimAt) await delay(interimAt - elapsed());
       const interim = speech.transcript.split(/\s+/).slice(0, 2).join(' ');
       this.sendFakeTranscript(interim, false);
+      if (speech.preflightTranscript !== undefined) {
+        this.queue.put({
+          type: SpeechEventType.PREFLIGHT_TRANSCRIPT,
+          alternatives: [
+            {
+              text: speech.preflightTranscript,
+              language: asLanguageCode(''),
+              startTime: 0,
+              endTime: 0,
+              confidence: 1,
+            },
+          ],
+        });
+      }
 
       const finalAt = speech.endTime + speech.sttDelay;
       if (elapsed() < finalAt) await delay(finalAt - elapsed());
