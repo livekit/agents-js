@@ -304,6 +304,8 @@ export interface AudioRecognitionOptions {
   shouldDiscardAudioForStt?: (frame: AudioFrame) => boolean;
   /** User transcription timeout in milliseconds. `null` or `undefined` disables it. */
   transcriptionTimeout?: number | null;
+  /** See `AgentSessionOptions.commitInterimOnEmptyFinal`. */
+  commitInterimOnEmptyFinal?: boolean;
 }
 
 /**
@@ -388,6 +390,7 @@ export class AudioRecognition {
   private activeUserSpeakingSpan?: Span;
   private vadSpeechStarted = false;
   private transcriptionTimeout?: number;
+  private commitInterimOnEmptyFinal: boolean;
   private transcriptionTimeoutTimer?: ReturnType<typeof setTimeout>;
   private turnSpeechDuration = 0;
   private turnTranscriptReceived = false;
@@ -477,6 +480,7 @@ export class AudioRecognition {
     this.sttProvider = opts.sttProvider;
     this.getLinkedParticipant = opts.getLinkedParticipant;
     this.transcriptionTimeout = opts.transcriptionTimeout ?? undefined;
+    this.commitInterimOnEmptyFinal = opts.commitInterimOnEmptyFinal ?? false;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.interruptionDetection = opts.interruptionDetection;
@@ -1285,6 +1289,7 @@ export class AudioRecognition {
         ? this.lastPreflightText
         : this.lastInterimText;
     if (
+      this.commitInterimOnEmptyFinal &&
       emptyFinal !== undefined &&
       !emptyFinal.text &&
       pendingText &&

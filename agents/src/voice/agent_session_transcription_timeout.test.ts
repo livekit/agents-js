@@ -21,7 +21,11 @@ import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { VAD, type VADEvent, VADEventType, VADStream } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
-import { AgentSessionEventTypes, type UserTranscriptionTimeoutEvent } from './events.js';
+import {
+  AgentSessionEventTypes,
+  type UserInputTranscribedEvent,
+  type UserTranscriptionTimeoutEvent,
+} from './events.js';
 import { AudioInput } from './io.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
@@ -195,5 +199,54 @@ describe('AgentSession user transcription timeout event', () => {
     expect(Number.isFinite(event.createdAt)).toBe(true);
     expect(event.createdAt).toBeGreaterThanOrEqual(event.vadSpeechStartedAt + TIMEOUT_MS);
     expect(event.createdAt).toBeLessThanOrEqual(Date.now());
+  }, 30_000);
+});
+
+describe('AgentSession commitInterimOnEmptyFinal', () => {
+  initializeLogger({ pretty: false, level: 'silent' });
+
+  it('turns the interim into the final user transcript when the final comes back empty', async () => {
+    const vad = new ScriptedVAD();
+    const stt = new FakeSTT({
+      capabilities: { streaming: true, interimResults: true },
+      fakeUserSpeeches: [
+        { startTime: 0, endTime: 200, transcript: 'pick up', sttDelay: 200, finalTranscript: '' },
+      ],
+    });
+
+    const session = new AgentSession({
+      stt,
+      vad,
+      llm: new FakeLLM(),
+      commitInterimOnEmptyFinal: true,
+      turnHandling: { turnDetection: 'vad', interruption: { mode: 'vad' } },
+    });
+
+    const finals: UserInputTranscribedEvent[] = [];
+    session.on(AgentSessionEventTypes.UserInputTranscribed, (ev) => {
+      if (ev.isFinal) finals.push(ev);
+    });
+
+    const audioInput = new ScriptedAudioInput();
+    session.input.audio = audioInput;
+    await session.start({ agent: new Agent({ instructions: 'You are a helpful assistant.' }) });
+
+    const pump = setInterval(() => audioInput.push(silenceFrame(50)), 50);
+    try {
+      await waitFor(() => vad.streams.length > 0, 5_000, 'the VAD stream to open');
+      const stream = vad.streams[0]!;
+      stream.emitEvent(vadEvent(VADEventType.START_OF_SPEECH));
+      await sleep(SPEECH_DURATION_MS);
+      stream.emitEvent(
+        vadEvent(VADEventType.END_OF_SPEECH, { speechDuration: SPEECH_DURATION_MS }),
+      );
+
+      await waitFor(() => finals.length > 0, 10_000, 'the final user transcript');
+    } finally {
+      clearInterval(pump);
+      await session.close().catch(() => {});
+    }
+
+    expect(finals.map((ev) => ev.transcript)).toEqual(['pick up']);
   }, 30_000);
 });

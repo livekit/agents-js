@@ -216,6 +216,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   maxToolSteps: number;
   userAwayTimeout: number | null;
   transcriptionTimeout: number | null;
+  commitInterimOnEmptyFinal: boolean;
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
   ttsTextTransforms: readonly TextTransform[] | null;
@@ -227,6 +228,7 @@ export const defaultAgentSessionOptions = {
   maxToolSteps: 3,
   userAwayTimeout: 15.0,
   transcriptionTimeout: null,
+  commitInterimOnEmptyFinal: false,
   aecWarmupDuration: 3000,
   ttsReadIdleTimeout: 10_000,
   forwardAudioIdleTimeout: 10_000,
@@ -327,6 +329,16 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * @defaultValue null
    */
   transcriptionTimeout?: number | null;
+
+  /**
+   * When the STT ends a segment with an empty final transcript after VAD heard speech, use the
+   * segment's buffered interim or preflight text as the final so the user turn can commit. Some
+   * providers do this on short replies, which otherwise leaves the turn open until the user
+   * speaks again. The cost is that words the provider deliberately retracted, such as
+   * background speech, can reach the conversation. Requires VAD.
+   * @defaultValue false
+   */
+  commitInterimOnEmptyFinal?: boolean;
 
   /**
    * Duration in milliseconds for AEC (Acoustic Echo Cancellation) warmup, during which

@@ -24,6 +24,7 @@ const defaultSessionOptions = {
   maxToolSteps: 3,
   userAwayTimeout: 15.0,
   transcriptionTimeout: null,
+  commitInterimOnEmptyFinal: false,
   aecWarmupDuration: 3000,
   ttsReadIdleTimeout: 10_000,
   forwardAudioIdleTimeout: 10_000,

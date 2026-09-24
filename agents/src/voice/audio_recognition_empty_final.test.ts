@@ -146,6 +146,7 @@ describe('AudioRecognition with an empty final transcript', () => {
       sttModel: 'stt-model',
       sttProvider: 'stt-provider',
       getLinkedParticipant: () => ({ sid: 'p1', identity: 'bob', kind: ParticipantKind.AGENT }),
+      commitInterimOnEmptyFinal: true,
       ...options,
     });
 
@@ -183,6 +184,24 @@ describe('AudioRecognition with an empty final transcript', () => {
       await vi.advanceTimersByTimeAsync(2_000);
       expect(hooks.onEndOfTurn).toHaveBeenCalledTimes(1);
       expect(vi.mocked(hooks.onEndOfTurn).mock.calls[0]![0].newTranscript).toBe('Pick up.');
+    } finally {
+      await closeRecognition(ar, vad);
+    }
+  });
+
+  it('leaves the turn open on an empty final unless commitInterimOnEmptyFinal is set', async () => {
+    const { ar, hooks, stt, vadPush, vad } = await startRecognition({
+      commitInterimOnEmptyFinal: undefined,
+    });
+    try {
+      await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
+      await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'Pick up.'));
+      await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
     } finally {
       await closeRecognition(ar, vad);
     }

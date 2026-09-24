@@ -786,6 +786,7 @@ export class AgentActivity implements RecognitionHooks {
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
       shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
       transcriptionTimeout: this.agentSession.sessionOptions.transcriptionTimeout,
+      commitInterimOnEmptyFinal: this.agentSession.sessionOptions.commitInterimOnEmptyFinal,
     });
 
     const sttPipeline = reuseResources?.sttPipeline;

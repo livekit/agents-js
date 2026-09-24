@@ -37,6 +37,8 @@ export interface FakeUserSpeech {
   transcript: string;
   sttDelay: number;
   final?: boolean;
+  /** Text of the final result when it differs from `transcript` (`''` sends an empty final). */
+  finalTranscript?: string;
 }
 
 /** Scale every timing field by `factor` — useful for speeding up tests. */
@@ -327,7 +329,7 @@ export class FakeRecognizeStream extends SpeechStream {
       const finalAt = speech.endTime + speech.sttDelay;
       if (elapsed() < finalAt) await delay(finalAt - elapsed());
       if (speech.final === false) continue;
-      this.sendFakeTranscript(speech.transcript, true);
+      this.sendFakeTranscript(speech.finalTranscript ?? speech.transcript, true);
     }
 
     this._fakeStt._markFakeUserSpeechesDone();
