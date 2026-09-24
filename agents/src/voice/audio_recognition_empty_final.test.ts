@@ -337,31 +337,39 @@ describe('AudioRecognition with an empty final transcript', () => {
   );
 
   it.each([
-    { name: 'one chunk', chunks: ['Pick up'] },
-    { name: 'chunks that add up', chunks: ['Pick', 'up'] },
-  ])('promotes incremental preflights when no interim came ($name)', async ({ chunks }) => {
-    // the AssemblyAI plugin emits an interim only when a Turn has words, but a preflight
-    // whenever it has an utterance
-    const { ar, hooks, stt, vadPush, vad } = await startRecognition();
-    try {
-      await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
-      for (const chunk of chunks) {
+    // AssemblyAI documents `utterance` as the whole turn's finalized transcript
+    { name: 'no interim', interims: [] as string[], latest: 'Pick up' },
+    { name: 'an empty interim between them', interims: [''], latest: 'up' },
+  ])(
+    'promotes the latest incremental preflight verbatim with $name',
+    async ({ interims, latest }) => {
+      // preflight text is promoted as the event carried it, never joined to an earlier one
+      const { ar, hooks, stt, vadPush, vad } = await startRecognition();
+      try {
+        await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
         await stt({
-          ...transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, chunk),
+          ...transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'Pick'),
           incremental: true,
         });
-      }
-      await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
-      await vi.advanceTimersByTimeAsync(1_000);
-      await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+        for (const interim of interims) {
+          await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, interim));
+        }
+        await stt({
+          ...transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, latest),
+          incremental: true,
+        });
+        await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
+        await vi.advanceTimersByTimeAsync(1_000);
+        await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
 
-      await vi.advanceTimersByTimeAsync(2_000);
-      expect(hooks.onEndOfTurn).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(hooks.onEndOfTurn).mock.calls[0]![0].newTranscript).toBe('Pick up');
-    } finally {
-      await closeRecognition(ar, vad);
-    }
-  });
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(hooks.onEndOfTurn).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(hooks.onEndOfTurn).mock.calls[0]![0].newTranscript).toBe(latest);
+      } finally {
+        await closeRecognition(ar, vad);
+      }
+    },
+  );
 
   it('promotes a full-segment preflight that drops leading words of the interim', async () => {
     const { ar, hooks, stt, vadPush, vad } = await startRecognition();
