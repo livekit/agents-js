@@ -1,0 +1,24 @@
+plugins/sarvam/src/stt_streaming.test.ts
+  s_703d3972857b4c::t_327a551924db64 7,13,17,25
+  s_703d3972857b4c::t_40bd7beab544d4 1-6,8-12,14-16,18-24,26-67
+plugins/sarvam/src/stt.ts
+  s_703d3972857b4c::t_3c98410552d26e 652-653,698-713
+.changeset/sarvam-remove-energy-filter.md
+  s_703d3972857b4c::t_3c98410552d26e 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "daaca4d147392e9ef4dc0cd918acc6d0358228be",
+  "prompts": {},
+  "sessions": {
+    "s_703d3972857b4c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d3fc-7f3a-7102-9671-3985def76ac0",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
