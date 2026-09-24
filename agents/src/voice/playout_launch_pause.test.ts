@@ -9,6 +9,7 @@ import { Event } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
+import type { AgentState } from './events.js';
 import { performAudioForwarding, performToolExecutions } from './generation.js';
 import { AudioOutput } from './io.js';
 import { RunContext } from './run_context.js';
@@ -46,14 +47,14 @@ class PausableAudioOutput extends AudioOutput {
 }
 
 type TestActivity = {
-  pausedSpeech?: { handle: SpeechHandle; agentState: 'thinking'; timeout: number };
+  pausedSpeech?: { handle: SpeechHandle; agentState: AgentState; timeout: number };
   falseInterruptionTimer?: NodeJS.Timeout;
   falseInterruptionPending: boolean;
   cancelSpeechPauseTask?: Promise<void>;
   userSilenceEvent: Event;
   audioRecognition?: undefined;
   agentSession: {
-    agentState: 'thinking';
+    agentState: AgentState;
     sessionOptions: {
       turnHandling: {
         interruption: { resumeFalseInterruption: boolean; falseInterruptionTimeout: number };
@@ -134,6 +135,70 @@ describe('playout launch pause', () => {
     expect(audioOutput.pausedAt).toBeDefined();
     expect(resume).not.toHaveBeenCalled();
   });
+
+  function pausedSpeakingActivity() {
+    const [activity, audioOutput] = testActivity();
+    const speechHandle = SpeechHandle.create();
+    activity.agentSession.agentState = 'speaking';
+    activity.updatePausedSpeech(speechHandle, 2000);
+    activity.agentSession.agentState = 'listening';
+    audioOutput.pause();
+    const onStartOfAgentSpeech = vi.fn(async () => {});
+    const disableVadInterruptionSoon = vi.fn();
+    const stateLease = { activity, speechHandle };
+    const session = Object.assign(activity.agentSession, {
+      _activity: activity as object,
+      _updateAgentState: vi.fn((state: AgentState) => {
+        activity.agentSession.agentState = state;
+      }),
+    });
+    const internals = Object.assign(activity, {
+      _currentSpeech: speechHandle,
+      activeAgentStateLease: stateLease,
+      isInterruptionDetectionEnabled: true,
+      disableVadInterruptionSoon,
+    });
+    Object.assign(activity, { audioRecognition: { onStartOfAgentSpeech } });
+    return { activity, audioOutput, speechHandle, session, internals, onStartOfAgentSpeech };
+  }
+
+  it('restores speaking state before resuming a tool-owned pause', () => {
+    const { activity, audioOutput, speechHandle, session, onStartOfAgentSpeech } =
+      pausedSpeakingActivity();
+    vi.spyOn(audioOutput, 'resume').mockImplementation(() => {
+      expect(session.agentState).toBe('speaking');
+      expect(onStartOfAgentSpeech).toHaveBeenCalledOnce();
+    });
+
+    runContext(activity, speechHandle).disallowInterruptions();
+
+    expect(session._updateAgentState).toHaveBeenCalledWith('speaking', {
+      otelContext: speechHandle._agentTurnContext,
+    });
+    expect(onStartOfAgentSpeech).toHaveBeenCalledWith(expect.any(Number));
+    expect(activity.pausedSpeech).toBeUndefined();
+  });
+
+  it.each(['activity', 'speech', 'lease', 'done', 'audio'] as const)(
+    'does not restore paused state after losing %s ownership or availability',
+    (reason) => {
+      const { activity, speechHandle, session, internals, onStartOfAgentSpeech } =
+        pausedSpeakingActivity();
+      if (reason === 'activity') session._activity = {};
+      if (reason === 'speech') internals._currentSpeech = SpeechHandle.create();
+      if (reason === 'lease') {
+        internals.activeAgentStateLease = { activity, speechHandle: SpeechHandle.create() };
+      }
+      if (reason === 'done') vi.spyOn(speechHandle, 'done').mockReturnValue(true);
+      if (reason === 'audio') session.output.audioEnabled = false;
+
+      runContext(activity, speechHandle).disallowInterruptions();
+
+      expect(session.agentState).toBe('listening');
+      expect(session._updateAgentState).not.toHaveBeenCalled();
+      expect(onStartOfAgentSpeech).not.toHaveBeenCalled();
+    },
+  );
 
   it('tool execution releases the owning activity pause', async () => {
     const [activity, audioOutput] = testActivity();

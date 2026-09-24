@@ -956,6 +956,8 @@ export class AudioRecognition {
       this.backchannelBoundaryActive ||
       startedInBoundary
     ) {
+      // Keep VAD/STT in control for this agent-speech interval: its transcript can arrive
+      // after VAD reports the end of user speech.
       this.hooks.interruptionByAudioActivityEnabled = true;
       this.flushHeldTranscripts();
       return undefined;
@@ -1188,6 +1190,8 @@ export class AudioRecognition {
     if (ev.type === SpeechEventType.FINAL_TRANSCRIPT && ev.alternatives?.[0]?.text) {
       this.markTurnTranscribed();
       if (this.isAgentSpeaking && !this.transcriptGateActive) {
+        // An ungated final may be delayed or precede VAD overlap detection. Preserve it
+        // and use audio activity for the rest of this agent-speech interval.
         this.hooks.interruptionByAudioActivityEnabled = true;
       }
     }

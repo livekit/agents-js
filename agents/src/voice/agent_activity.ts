@@ -5354,9 +5354,17 @@ export class AgentActivity implements RecognitionHooks {
   /** @internal */
   _disallowInterruptions(speechHandle: SpeechHandle): void {
     speechHandle.allowInterruptions = false;
-    if (this.pausedSpeech?.handle === speechHandle) {
-      this.reconcilePlayoutPause(speechHandle);
+    const pausedSpeech = this.pausedSpeech;
+    if (!pausedSpeech || pausedSpeech.handle !== speechHandle) return;
+
+    if (
+      !speechHandle.done() &&
+      this.agentSession.output.audioEnabled &&
+      this.agentSession.output.audio
+    ) {
+      this.restorePausedSpeechState(pausedSpeech);
     }
+    this.reconcilePlayoutPause(speechHandle);
   }
 
   private updatePausedSpeech(speechHandle: SpeechHandle, timeout: number): void {
@@ -5420,6 +5428,26 @@ export class AgentActivity implements RecognitionHooks {
     this.falseInterruptionPending = false;
   }
 
+  private restorePausedSpeechState(pausedSpeech: PausedSpeechInfo): void {
+    const stateLease = this.activeAgentStateLease;
+    if (
+      this._currentSpeech !== pausedSpeech.handle ||
+      stateLease?.speechHandle !== pausedSpeech.handle ||
+      !this.updateAgentState(stateLease, pausedSpeech.agentState, {
+        otelContext: pausedSpeech.handle._agentTurnContext,
+      })
+    ) {
+      return;
+    }
+
+    if (this.audioRecognition && pausedSpeech.agentState === 'speaking') {
+      this.audioRecognition.onStartOfAgentSpeech(Date.now());
+    }
+    if (this.isInterruptionDetectionEnabled) {
+      this.disableVadInterruptionSoon();
+    }
+  }
+
   private startFalseInterruptionTimer(timeout: number): void {
     this.cancelFalseInterruptionTimer();
 
@@ -5444,20 +5472,7 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession._activity === this &&
         this._currentSpeech === this.pausedSpeech.handle
       ) {
-        const stateLease = this.activeAgentStateLease;
-        const canRestoreAgentState =
-          stateLease?.speechHandle === this.pausedSpeech.handle &&
-          this.updateAgentState(stateLease, this.pausedSpeech.agentState, {
-            otelContext: this.pausedSpeech.handle._agentTurnContext,
-          });
-        if (canRestoreAgentState) {
-          if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
-            this.audioRecognition.onStartOfAgentSpeech(Date.now());
-          }
-          if (this.isInterruptionDetectionEnabled) {
-            this.disableVadInterruptionSoon();
-          }
-        }
+        this.restorePausedSpeechState(this.pausedSpeech);
         audioOutput.resume();
         resumed = true;
         this.logger.debug({ timeout }, 'resumed false interrupted speech');
