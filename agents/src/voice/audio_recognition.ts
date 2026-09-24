@@ -361,6 +361,9 @@ export class AudioRecognition {
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
   private audioInterimTranscript = '';
+  // Latest INTERIM_TRANSCRIPT text. Some providers send preflights as chunks of the segment
+  // (the AssemblyAI plugin), so a preflight overwrites audioInterimTranscript but not this.
+  private cumulativeInterimTranscript = '';
   private audioPreflightTranscript = '';
   private finalTranscriptConfidence: number[] = [];
   private lastSpeakingTime: number | undefined;
@@ -1263,14 +1266,14 @@ export class AudioRecognition {
     if (
       emptyFinal !== undefined &&
       !emptyFinal.text &&
-      this.audioInterimTranscript &&
+      this.cumulativeInterimTranscript &&
       this.speechStartTime !== undefined
     ) {
       this.logger.debug(
-        { 'lk.pii.transcript': this.audioInterimTranscript },
+        { 'lk.pii.transcript': this.cumulativeInterimTranscript },
         'stt final transcript was empty, using the buffered interim transcript',
       );
-      ev = { ...ev, alternatives: [{ ...emptyFinal, text: this.audioInterimTranscript }] };
+      ev = { ...ev, alternatives: [{ ...emptyFinal, text: this.cumulativeInterimTranscript }] };
       this.markTurnTranscribed();
     }
 
@@ -1330,6 +1333,7 @@ export class AudioRecognition {
         this.finalTranscriptConfidence.push(confidence);
         const transcriptChanged = this.audioTranscript !== this.audioPreflightTranscript;
         this.audioInterimTranscript = '';
+        this.cumulativeInterimTranscript = '';
         this.audioPreflightTranscript = '';
 
         if (useSTTSpeakingTime) {
@@ -1427,6 +1431,7 @@ export class AudioRecognition {
           this.vad !== undefined || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
         );
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
+        this.cumulativeInterimTranscript = this.audioInterimTranscript;
         break;
       case SpeechEventType.START_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
@@ -2361,6 +2366,7 @@ export class AudioRecognition {
   clearUserTurn() {
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
+    this.cumulativeInterimTranscript = '';
     this.audioPreflightTranscript = '';
     this.finalTranscriptConfidence = [];
     this.lastFinalTranscriptTime = 0;
@@ -2462,6 +2468,7 @@ export class AudioRecognition {
           this.audioTranscript = `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
         }
         this.audioInterimTranscript = '';
+        this.cumulativeInterimTranscript = '';
 
         const chatCtx = this.hooks.retrieveChatCtx();
         this.logger.debug('running EOU detection on commitUserTurn');

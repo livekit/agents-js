@@ -207,6 +207,26 @@ describe('AudioRecognition with an empty final transcript', () => {
     }
   });
 
+  it('promotes the cumulative interim, not a chunked preflight, when the final is empty', async () => {
+    // AssemblyAI's plugin sends the turn's words as the interim and only the words since the
+    // last preflight as the preflight.
+    const { ar, hooks, stt, vadPush, vad } = await startRecognition();
+    try {
+      await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
+      await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'Pick up'));
+      await stt(transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'up'));
+      await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(hooks.onEndOfTurn).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(hooks.onEndOfTurn).mock.calls[0]![0].newTranscript).toBe('Pick up');
+    } finally {
+      await closeRecognition(ar, vad);
+    }
+  });
+
   it('counts the promoted interim as the turn transcript for the transcription timeout', async () => {
     // An unlikely end-of-turn holds the commit for maxEndpointingDelay, past the timeout.
     const { ar, hooks, stt, vadPush, vad } = await startRecognition({
