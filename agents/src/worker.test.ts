@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { JobType, ServerMessage, WorkerMessage } from '@livekit/protocol';
+import { once } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { WebSocketServer } from 'ws';
+import { AssignmentTimeoutError } from './_exceptions.js';
+import { ProcPool } from './ipc/proc_pool.js';
 import { AgentServer, ServerOptions } from './worker.js';
 
 vi.mock('./inference/_warmup.js', () => ({
@@ -114,5 +120,156 @@ describe('ServerOptions agentName from livekit.toml', () => {
     expect(new ServerOptions({ agent: 'test-agent.js', production: true }).agentName).toBe('');
     writeFileSync('livekit.toml', '[agent\nname = ');
     expect(new ServerOptions({ agent: 'test-agent.js', production: true }).agentName).toBe('');
+  });
+});
+
+// A fake LiveKit server: answers the worker's register, then drives one availability request.
+async function startFakeServer(
+  onWorkerMessage: (msg: WorkerMessage, reply: (m: ServerMessage) => void) => void,
+) {
+  const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(wss, 'listening');
+  wss.on('connection', (socket) => {
+    const reply = (m: ServerMessage) => socket.send(m.toBinary());
+    socket.on('message', (data) => {
+      const msg = WorkerMessage.fromBinary(new Uint8Array(data as Buffer));
+      // Like the real server, answer the worker's register before anything else.
+      if (msg.message.case === 'register') {
+        reply(
+          new ServerMessage({
+            message: {
+              case: 'register',
+              value: {
+                workerId: 'W_test',
+                serverInfo: { version: 'test', protocol: 1, region: 'test' },
+              },
+            },
+          }),
+        );
+      }
+      onWorkerMessage(msg, reply);
+    });
+  });
+  const port = (wss.address() as AddressInfo).port;
+  return {
+    url: `ws://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const client of wss.clients) client.terminate();
+        wss.close(() => resolve());
+      }),
+  };
+}
+
+const JOB_REQUEST = new ServerMessage({
+  message: {
+    case: 'availability',
+    value: {
+      job: { id: 'AJ_test', type: JobType.JT_ROOM, room: { name: 'room', sid: 'RM_test' } },
+    },
+  },
+});
+
+function availabilityAnswers(messages: WorkerMessage[]) {
+  return messages
+    .filter((m) => m.message.case === 'availability')
+    .map((m) => (m.message.value as { available: boolean }).available);
+}
+
+describe('AgentServer job acceptance', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function runAcceptScenario(opts: { sendAssignment: boolean; waitMs: number }) {
+    const received: WorkerMessage[] = [];
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+
+    const fake = await startFakeServer((msg, reply) => {
+      received.push(msg);
+      if (msg.message.case === 'register') {
+        reply(JOB_REQUEST);
+      } else if (
+        msg.message.case === 'availability' &&
+        msg.message.value.available &&
+        opts.sendAssignment
+      ) {
+        reply(
+          new ServerMessage({
+            message: {
+              case: 'assignment',
+              value: { job: { id: 'AJ_test' }, url: 'ws://127.0.0.1:1', token: 'token' },
+            },
+          }),
+        );
+      }
+    });
+
+    // Records how the user's accept() call settled; the default request function is `await req.accept()`.
+    let acceptOutcome: 'pending' | 'resolved' | Error = 'pending';
+    const server = new AgentServer(
+      new ServerOptions({
+        agent: 'test-agent.js',
+        wsURL: fake.url,
+        apiKey: 'devkey',
+        apiSecret: 'devsecret',
+        maxRetry: 0,
+        numIdleProcesses: 0,
+        simulation: true,
+        requestFunc: async (req) => {
+          try {
+            await req.accept();
+            acceptOutcome = 'resolved';
+          } catch (error) {
+            acceptOutcome = error as Error;
+            // rethrow like the default request function (`await req.accept()`) does
+            throw error;
+          }
+        },
+      }),
+    );
+    const run = server.run().catch(() => undefined);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, opts.waitMs));
+      return { received, unhandled, acceptOutcome };
+    } finally {
+      await server.close();
+      await fake.close();
+      await run;
+      process.off('unhandledRejection', onUnhandled);
+    }
+  }
+
+  it('sends one availability answer when the assignment times out', async () => {
+    // ASSIGNMENT_TIMEOUT is 7.5s; accept() now rejects with AssignmentTimeoutError instead of hanging,
+    // and the request task must not answer a second time.
+    const { received, unhandled, acceptOutcome } = await runAcceptScenario({
+      sendAssignment: false,
+      waitMs: 8_500,
+    });
+
+    expect(acceptOutcome).toBeInstanceOf(AssignmentTimeoutError);
+    expect(availabilityAnswers(received)).toEqual([true]);
+    expect(unhandled).toEqual([]);
+  }, 20_000);
+
+  it('sends one availability answer when the job fails to launch', async () => {
+    const launchJob = vi
+      .spyOn(ProcPool.prototype, 'launchJob')
+      .mockRejectedValue(new Error('launch failed'));
+
+    const { received, unhandled, acceptOutcome } = await runAcceptScenario({
+      sendAssignment: true,
+      waitMs: 500,
+    });
+
+    expect(launchJob).toHaveBeenCalledOnce();
+    // accept() must not report success for a job that never launched
+    expect(acceptOutcome).toBeInstanceOf(Error);
+    expect((acceptOutcome as Error).message).toBe('launch failed');
+    expect(availabilityAnswers(received)).toEqual([true]);
+    expect(unhandled).toEqual([]);
   });
 });

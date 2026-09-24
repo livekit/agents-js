@@ -439,7 +439,7 @@ class Connection {
     const onMessage = (rawData: Buffer) => {
       try {
         const parsed = JSON.parse(rawData.toString());
-        messageChannel.write(parsed);
+        void messageChannel.write(parsed);
       } catch (e) {
         this.#logger.warn({ error: e }, 'failed to parse WebSocket message');
       }
@@ -447,19 +447,19 @@ class Connection {
 
     const onClose = (code: number) => {
       if (!this.#closed && this.#contextData.size > 0) {
-        messageChannel.abort(
+        void messageChannel.abort(
           new APIStatusError({
             message: 'ElevenLabs websocket connection closed unexpectedly',
             options: { statusCode: code },
           }),
         );
       } else {
-        messageChannel.close();
+        void messageChannel.close();
       }
     };
 
     const onError = (error: Error) => {
-      messageChannel.abort(error);
+      void messageChannel.abort(error);
     };
 
     this.#ws.on('message', onMessage);

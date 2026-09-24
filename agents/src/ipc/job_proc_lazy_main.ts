@@ -64,14 +64,13 @@ type JobTask = {
 };
 
 class PendingInference {
+  // assigned by the promise executor below; this is how JavaScript lets you resolve promises externally
+  resolve!: (arg: { requestId: string; data: unknown; error?: Error }) => void;
   promise = new ThrowsPromise<{ requestId: string; data: unknown; error?: Error }, never>(
     (resolve) => {
-      this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
+      this.resolve = resolve;
     },
   );
-  resolve(arg: { requestId: string; data: unknown; error?: Error }) {
-    arg; // useless call to counteract TypeScript E6133
-  }
 }
 
 class InfClient implements InferenceExecutor {

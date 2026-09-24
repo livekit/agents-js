@@ -849,7 +849,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private sendClientEvent(event: api_proto.ClientEvents) {
-    this.messageChannel.put(event);
+    void this.messageChannel.put(event);
   }
 
   async generateReply(
@@ -991,7 +991,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async close(): Promise<void> {
-    super.close();
+    await super.close();
     this.#closed = true;
 
     this.sessionShouldClose.set();
@@ -1040,7 +1040,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             onopen: () => sessionOpened.set(),
             onmessage: (message: types.LiveServerMessage) => {
               if (connected.session) {
-                this.onReceiveMessage(connected.session, message);
+                void this.onReceiveMessage(connected.session, message);
               }
             },
             // onerror is called for network-level errors (connection refused, DNS failure, TLS errors).
@@ -1468,15 +1468,15 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     if (this.options.outputAudioTranscription === undefined) {
       // close the text data of transcription synchronizer
-      targetGen.textChannel.write('');
+      void targetGen.textChannel.write('');
     }
 
-    targetGen.textChannel.close();
-    targetGen.audioChannel.close();
+    void targetGen.textChannel.close();
+    void targetGen.audioChannel.close();
     if (!keepFunctionChannelOpen) {
-      targetGen.functionChannel.close();
+      void targetGen.functionChannel.close();
     }
-    targetGen.messageChannel.close();
+    void targetGen.messageChannel.close();
     targetGen._done = true;
   }
 
@@ -1567,7 +1567,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // close functionChannel of previous generation if still open (no toolCall arrived)
     if (previousGen && previousHadOpenFunctionChannel) {
-      previousGen.functionChannel.close();
+      void previousGen.functionChannel.close();
     }
 
     if (previousGen && !previousGen._done) {
@@ -1595,7 +1595,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // Close audio stream if audio output is not supported by the model
     if (!this._realtimeModel.capabilities.audioOutput) {
-      this.currentGeneration.audioChannel.close();
+      void this.currentGeneration.audioChannel.close();
     }
 
     // Determine modalities based on the model's audio_output capability
@@ -1603,7 +1603,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       ? ['audio', 'text']
       : ['text'];
 
-    this.currentGeneration.messageChannel.write({
+    void this.currentGeneration.messageChannel.write({
       messageId: responseId,
       textStream: this.currentGeneration.textChannel.stream(),
       audioStream: this.currentGeneration.audioChannel.stream(),
@@ -1669,7 +1669,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         if (part.text && forwardModelText) {
           gen.outputText += part.text;
-          gen.textChannel.write(part.text);
+          void gen.textChannel.write(part.text);
         }
 
         if (part.inlineData) {
@@ -1697,7 +1697,7 @@ export class RealtimeSession extends llm.RealtimeSession {
               int16Array.length / OUTPUT_AUDIO_CHANNELS,
             );
 
-            gen.audioChannel.write(audioFrame);
+            void gen.audioChannel.write(audioFrame);
           } catch (error) {
             this.#logger.error('Error processing audio data:', error);
           }
@@ -1727,7 +1727,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     ) {
       const text = serverContent.outputTranscription.text;
       gen.outputText += text;
-      gen.textChannel.write(text);
+      void gen.textChannel.write(text);
     }
 
     if (serverContent.generationComplete || serverContent.turnComplete) {
@@ -1806,7 +1806,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           this.toolCallStatuses.set(callId, status);
         }
       }
-      gen.functionChannel.write(
+      void gen.functionChannel.write(
         llm.FunctionCall.create({
           callId,
           name: fc.name,

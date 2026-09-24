@@ -143,7 +143,7 @@ export function audioFramesFromFile(
   const onClose = () => {
     logger.debug('Audio file playback aborted');
 
-    channel.close();
+    void channel.close();
     if (commandRunning) {
       commandRunning = false;
       command.kill('SIGKILL');
@@ -172,17 +172,17 @@ export function audioFramesFromFile(
 
     const frames = audioStream.write(arrayBuffer);
     for (const frame of frames) {
-      channel.write(frame);
+      void channel.write(frame);
     }
   });
 
   outputStream.on('end', () => {
     const frames = audioStream.flush();
     for (const frame of frames) {
-      channel.write(frame);
+      void channel.write(frame);
     }
     commandRunning = false;
-    channel.close();
+    void channel.close();
   });
 
   outputStream.on('error', (err: Error) => {

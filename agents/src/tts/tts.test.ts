@@ -353,3 +353,38 @@ describe('ChunkedStream', () => {
     await metricsCollected;
   });
 });
+
+class FailingChunkedStream extends ChunkedStream {
+  label = 'test.FailingChunkedStream';
+
+  protected async run(): Promise<void> {
+    throw new Error('synthesis failed');
+  }
+}
+
+describe('ChunkedStream failure', () => {
+  it('reports through the error event without an unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const tts = new TestTTS();
+      const errorEvent = new Promise<{ error: Error }>((resolve) => tts.once('error', resolve));
+      const stream = new FailingChunkedStream('text', tts, RETRY_OPTIONS);
+
+      const received = await errorEvent;
+      expect(received.error.message).toBe('synthesis failed');
+
+      const frames = [];
+      for await (const audio of stream) {
+        frames.push(audio);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(frames).toEqual([]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+});

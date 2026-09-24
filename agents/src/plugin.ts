@@ -30,7 +30,7 @@ export abstract class Plugin {
     Plugin.emitter.emit(PluginEventTypes.PluginRegistered, plugin);
   }
 
-  downloadFiles() {}
+  downloadFiles(): void | Promise<void> {}
 
   get package(): string {
     return this.#package;

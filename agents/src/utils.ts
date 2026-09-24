@@ -28,7 +28,7 @@ import { log } from './log.js';
  * Recursively expands all nested properties of a type,
  * resolving aliases so as to inspect the real shape in IDE.
  */
-// eslint-disable-next-line @typescript-eslint/ban-types
+// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 export type Expand<T> = T extends Function
   ? T
   : T extends object
@@ -380,12 +380,12 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
     if (this.#closed) {
       throw new Error('Queue is closed');
     }
-    this.#queue.put(item);
+    void this.#queue.put(item);
   }
 
   close(): void {
     this.#closed = true;
-    this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
+    void this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
   }
 
   async next(options: { signal?: AbortSignal } = {}): Promise<IteratorResult<T>> {
@@ -567,15 +567,11 @@ export class Task<T> {
       )
       .finally(() => {
         for (const callback of this.doneCallbacks) {
-          try {
-            callback();
-          } catch (error) {
-            this.#logger.error({ error }, 'Task done callback failed');
-          }
+          this.runDoneCallback(callback);
         }
         this.doneCallbacks.clear();
       });
-    this.runTask();
+    void this.runTask();
   }
 
   /**
@@ -719,7 +715,7 @@ export class Task<T> {
 
   addDoneCallback(callback: () => void) {
     if (this.done) {
-      queueMicrotask(callback);
+      queueMicrotask(() => this.runDoneCallback(callback));
       return;
     }
     this.doneCallbacks.add(callback);
@@ -727,6 +723,14 @@ export class Task<T> {
 
   removeDoneCallback(callback: () => void) {
     this.doneCallbacks.delete(callback);
+  }
+
+  private runDoneCallback(callback: () => void) {
+    try {
+      callback();
+    } catch (error) {
+      this.#logger.error({ error }, 'Task done callback failed');
+    }
   }
 }
 

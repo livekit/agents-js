@@ -519,7 +519,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   sendEvent(command: api_proto.ClientEvent): void {
-    this.messageChannel.put(command);
+    void this.messageChannel.put(command);
   }
 
   private createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
@@ -1063,15 +1063,15 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!this.currentGeneration) return;
 
     for (const gen of this.currentGeneration.messages.values()) {
-      gen.textChannel.close();
-      gen.audioChannel.close();
+      void gen.textChannel.close();
+      void gen.audioChannel.close();
       if (!gen.modalities.done) {
         gen.modalities.resolve(this._options.modalities);
       }
     }
     this.currentGeneration.messages.clear();
-    this.currentGeneration.messageChannel.close();
-    this.currentGeneration.functionChannel.close();
+    void this.currentGeneration.messageChannel.close();
+    void this.currentGeneration.functionChannel.close();
     if (!this.currentGeneration._doneFut.done) {
       this.currentGeneration._doneFut.resolve();
     }
@@ -1481,7 +1481,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async close() {
     this.resetInputTurnState();
-    super.close();
+    await super.close();
     this.#closed = true;
     await this.#task;
 
@@ -1614,11 +1614,11 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // If audioOutput is not supported, close audio channel immediately
     if (!this.oaiRealtimeModel.capabilities.audioOutput) {
-      itemGeneration.audioChannel.close();
+      void itemGeneration.audioChannel.close();
       modalitiesFut.resolve(['text']);
     }
 
-    this.currentGeneration.messageChannel.write({
+    void this.currentGeneration.messageChannel.write({
       messageId: itemId,
       textStream: itemGeneration.textChannel.stream(),
       audioStream: itemGeneration.audioChannel.stream(),
@@ -1833,7 +1833,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.currentGeneration._firstTokenTimestamp = Date.now();
     }
 
-    itemGeneration.textChannel.write(event.delta);
+    void itemGeneration.textChannel.write(event.delta);
     itemGeneration.audioTranscript += event.delta;
   }
 
@@ -1866,7 +1866,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!itemGeneration) {
       throw new Error('itemGeneration is not set');
     } else {
-      itemGeneration.textChannel.write(delta);
+      void itemGeneration.textChannel.write(delta);
       itemGeneration.audioTranscript += event.delta;
     }
   }
@@ -1898,7 +1898,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       bytes[i] = binaryString.charCodeAt(i);
     }
 
-    itemGeneration.audioChannel.write(
+    void itemGeneration.audioChannel.write(
       new AudioFrame(
         new Int16Array(bytes.buffer),
         api_proto.SAMPLE_RATE,
@@ -1941,7 +1941,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (!item.call_id || !item.name || !item.arguments) {
         throw new Error('item is not a function call');
       }
-      this.currentGeneration.functionChannel.write(
+      void this.currentGeneration.functionChannel.write(
         llm.FunctionCall.create({
           callId: item.call_id,
           name: item.name,
@@ -1954,8 +1954,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         return;
       }
       // text response doesn't have itemGeneration
-      itemGeneration.textChannel.close();
-      itemGeneration.audioChannel.close();
+      void itemGeneration.textChannel.close();
+      void itemGeneration.audioChannel.close();
       if (!itemGeneration.modalities.done) {
         // In case message modalities is not set, this shouldn't happen
         itemGeneration.modalities.resolve(this._options.modalities);
@@ -1986,15 +1986,15 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
 
     for (const generation of this.currentGeneration.messages.values()) {
-      generation.textChannel.close();
-      generation.audioChannel.close();
+      void generation.textChannel.close();
+      void generation.audioChannel.close();
       if (!generation.modalities.done) {
         generation.modalities.resolve(this._options.modalities);
       }
     }
 
-    this.currentGeneration.functionChannel.close();
-    this.currentGeneration.messageChannel.close();
+    void this.currentGeneration.functionChannel.close();
+    void this.currentGeneration.messageChannel.close();
 
     for (const itemId of this.currentGeneration.messages.keys()) {
       const remoteItem = this.remoteChatCtx.get(itemId);

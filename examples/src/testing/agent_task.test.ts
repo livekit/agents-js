@@ -193,7 +193,7 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
       expect(taskResult.role.toLowerCase()).toMatch(/frontend/);
 
       result = await runAndWait(session, 'What is my name and role?');
-      result.expect
+      await result.expect
         .nextEvent()
         .isMessage({ role: 'assistant' })
         .judge(llmModel, { intent: 'should answer name as Sam and role as frontend engineer' });
@@ -256,7 +256,7 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
       result.expect.containsFunctionCallOutput({
         isError: false,
       });
-      result.expect.containsMessage({ role: 'assistant' }).judge(llmModel, {
+      await result.expect.containsMessage({ role: 'assistant' }).judge(llmModel, {
         intent: 'should answer email captured, not necessarily need to state the email address',
       });
 
@@ -329,7 +329,7 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
     const session = await startSession(new ParentAgent(), { llm: llmModel });
     const triggerRun = await runAndWait(session, 'Please run the intro task.');
     triggerRun.expect.containsFunctionCall({ name: 'collectIntroWithTask' });
-    triggerRun.expect.containsMessage({ role: 'assistant' }).judge(llmModel, {
+    await triggerRun.expect.containsMessage({ role: 'assistant' }).judge(llmModel, {
       intent: 'Ask the user for name and intro',
     });
 

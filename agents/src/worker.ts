@@ -19,7 +19,7 @@ import { availableParallelism } from 'node:os';
 import { extname } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { WebSocket } from 'ws';
-import { APIStatusError } from './_exceptions.js';
+import { APIStatusError, AssignmentTimeoutError } from './_exceptions.js';
 import { ATTRIBUTE_AGENT_NAME } from './constants.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
@@ -337,12 +337,13 @@ export class ServerOptions {
 }
 
 class PendingAssignment {
-  promise = new ThrowsPromise<JobAssignment, never>((resolve) => {
-    this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
+  // assigned by the promise executor below; this is how JavaScript lets you settle promises externally
+  resolve!: (arg: JobAssignment) => void;
+  reject!: (error: AssignmentTimeoutError) => void;
+  promise = new ThrowsPromise<JobAssignment, AssignmentTimeoutError>((resolve, reject) => {
+    this.resolve = resolve;
+    this.reject = reject;
   });
-  resolve(arg: JobAssignment) {
-    arg; // useless call to counteract TypeScript E6133
-  }
 }
 
 /**
@@ -595,7 +596,7 @@ export class AgentServer {
       return ThrowsPromise.all(
         this.#procPool.processes.map((proc): Promise<Throws<void, Error>> => {
           if (!proc.runningJob) {
-            proc.close();
+            void proc.close();
           }
           return proc.join();
         }),
@@ -743,14 +744,18 @@ export class AgentServer {
           if (!msg.message.value.job) return;
           const task = this.#availability(msg.message.value);
           this.#tasks.push(task);
-          task.finally(() => {
-            const taskIndex = this.#tasks.indexOf(task);
-            if (taskIndex !== -1) {
-              this.#tasks.splice(taskIndex, 1);
-            } else {
-              throw new Error(`task ${task} not found in tasks`);
-            }
-          });
+          void task
+            .finally(() => {
+              const taskIndex = this.#tasks.indexOf(task);
+              if (taskIndex !== -1) {
+                void this.#tasks.splice(taskIndex, 1);
+              } else {
+                throw new Error(`task ${task} not found in tasks`);
+              }
+            })
+            .catch((error) => {
+              this.#logger.error({ error }, 'error handling availability request');
+            });
           break;
         }
         case 'assignment': {
@@ -768,14 +773,18 @@ export class AgentServer {
         case 'termination': {
           const task = this.#termination(msg.message.value);
           this.#tasks.push(task);
-          task.finally(() => {
-            const taskIndex = this.#tasks.indexOf(task);
-            if (taskIndex !== -1) {
-              this.#tasks.splice(taskIndex, 1);
-            } else {
-              throw new Error(`task ${task} not found in tasks`);
-            }
-          });
+          void task
+            .finally(() => {
+              const taskIndex = this.#tasks.indexOf(task);
+              if (taskIndex !== -1) {
+                void this.#tasks.splice(taskIndex, 1);
+              } else {
+                throw new Error(`task ${task} not found in tasks`);
+              }
+            })
+            .catch((error) => {
+              this.#logger.error({ error }, 'error handling job termination');
+            });
           break;
         }
       }
@@ -916,9 +925,14 @@ export class AgentServer {
 
       this.#pending[req.id] = new PendingAssignment();
 
+      // Reject the pending assignment so an awaited accept() fails instead of hanging,
+      // as Python's AssignmentTimeoutError does.
       const timer = setTimeout(() => {
         this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
-        return;
+        this.#pending[req.id]?.reject(
+          new AssignmentTimeoutError(`assignment for job ${req.id} timed out`),
+        );
+        delete this.#pending[req.id];
       }, ASSIGNMENT_TIMEOUT);
       const asgn = await this.#pending[req.id]?.promise.then(async (asgn) => {
         clearTimeout(timer);
@@ -938,6 +952,8 @@ export class AgentServer {
           });
         } catch (e) {
           this.#logger.child({ requestId: req.id }).error(e, 'error launching job');
+          // Surface the failure to accept(); the availability response was already sent.
+          throw e;
         }
       } else {
         this.#logger.child({ requestId: req.id }).warn('pending assignment not found');
@@ -971,29 +987,39 @@ export class AgentServer {
       try {
         await this.#opts.requestFunc(req);
       } catch (e) {
+        // An accept() that timed out or failed to launch has already answered; only log it.
         this.#logger
-          .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
-          .info('jobRequestFunc failed');
-        await onReject();
+          .child({
+            job: msg.job,
+            resuming: msg.resuming,
+            agentName: this.#opts.agentName,
+            error: e,
+          })
+          .error('jobRequestFunc failed');
       }
 
       if (!answered) {
         this.#logger
           .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
-          .info('no answer was given inside the jobRequestFunc, automatically rejecting the job');
+          .warn('no answer was given inside the jobRequestFunc, automatically rejecting the job');
+        await onReject();
       }
     };
 
     const task = jobRequestTask();
     this.#tasks.push(task);
-    task.finally(() => {
-      const taskIndex = this.#tasks.indexOf(task);
-      if (taskIndex !== -1) {
-        this.#tasks.splice(taskIndex, 1);
-      } else {
-        throw new Error(`task ${task} not found in tasks`);
-      }
-    });
+    void task
+      .finally(() => {
+        const taskIndex = this.#tasks.indexOf(task);
+        if (taskIndex !== -1) {
+          void this.#tasks.splice(taskIndex, 1);
+        } else {
+          throw new Error(`task ${task} not found in tasks`);
+        }
+      })
+      .catch((error) => {
+        this.#logger.error({ error }, 'error handling job request');
+      });
   }
 
   async #termination(msg: JobTermination) {

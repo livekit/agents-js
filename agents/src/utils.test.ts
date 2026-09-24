@@ -1202,3 +1202,49 @@ describe('AsyncIterableQueue.next with a signal', () => {
     await expect(queue.next()).resolves.toEqual({ value: 2, done: false });
   });
 });
+
+describe('Task.addDoneCallback', () => {
+  it('runs a callback added after the task is done and contains its error', async () => {
+    const uncaught: unknown[] = [];
+    const onUncaught = (error: unknown) => uncaught.push(error);
+    process.on('uncaughtException', onUncaught);
+    try {
+      const task = Task.from(async () => 'done');
+      await task.result;
+
+      let called = false;
+      task.addDoneCallback(() => {
+        called = true;
+        throw new Error('late done callback failed');
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(called).toBe(true);
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
+  });
+
+  it('does not leave an unhandled rejection when the task fails', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const task = Task.from(async () => {
+        throw new Error('task failed');
+      });
+      let called = false;
+      task.addDoneCallback(() => {
+        called = true;
+      });
+      await task.result.catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(called).toBe(true);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+});

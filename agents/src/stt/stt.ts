@@ -333,8 +333,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this._connOptions = connectionOptions;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.neededSampleRate = sampleRate;
-    this.monitorMetrics();
-    this.pumpInput();
+    void this.monitorMetrics();
+    void this.pumpInput();
 
     // this is a hack to immitate asyncio.create_task so that mainTask
     // is run **after** the constructor has finished. Otherwise we get
@@ -519,7 +519,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   detachInputStream() {
-    this.deferredInputStream.detachSource();
+    void this.deferredInputStream.detachSource();
   }
 
   /** Push an audio frame to the STT */

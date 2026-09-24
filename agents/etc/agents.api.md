@@ -6284,7 +6284,7 @@ abstract class Plugin_2 {
         package: string;
     });
     // (undocumented)
-    downloadFiles(): void;
+    downloadFiles(): void | Promise<void>;
     // (undocumented)
     static emitter: EventEmitter<PluginEventMap>;
     // (undocumented)

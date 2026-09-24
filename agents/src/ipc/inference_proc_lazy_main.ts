@@ -113,7 +113,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
             });
           break;
         case 'inferenceRequest':
-          handleInferenceRequest(msg.value);
+          void handleInferenceRequest(msg.value);
       }
     };
 

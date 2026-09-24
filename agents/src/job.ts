@@ -570,12 +570,21 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
           p.identity,
         );
       }
-      const result = callback(this, p);
-      result.finally(() => {
-        if (this.#participantTasks[p.identity!]?.result === result) {
-          delete this.#participantTasks[p.identity!];
-        }
-      });
+      // Run the callback through a promise so a synchronous throw is handled like a rejection
+      // instead of escaping the room event callback.
+      const result: Promise<void> = ThrowsPromise.resolve().then(() => callback(this, p));
+      void result
+        .finally(() => {
+          if (this.#participantTasks[p.identity!]?.result === result) {
+            delete this.#participantTasks[p.identity!];
+          }
+        })
+        .catch((error) => {
+          this.#logger.error(
+            { error, 'lk.pii.participant_identity': p.identity },
+            'error in participant entrypoint',
+          );
+        });
       this.#participantTasks[p.identity!] = { callback, result };
     }
   }
@@ -719,6 +728,6 @@ export class JobRequest {
   async accept(name = '', identity = '', metadata = '', attributes?: { [key: string]: string }) {
     if (identity === '') identity = 'agent-' + this.id;
 
-    this.#onAccept({ name, identity, metadata, attributes });
+    await this.#onAccept({ name, identity, metadata, attributes });
   }
 }

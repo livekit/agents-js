@@ -130,8 +130,8 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.metricsStream = metricsStream;
     this.outputReader = outputStream.getReader();
 
-    this.pumpDeferredStream();
-    this.monitorMetrics();
+    void this.pumpDeferredStream();
+    void this.monitorMetrics();
   }
 
   /**
@@ -207,7 +207,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     }
 
     try {
-      this.outputWriter.write(event);
+      void this.outputWriter.write(event);
       return true;
     } catch (e) {
       throw e;
@@ -219,7 +219,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   detachInputStream() {
-    this.deferredInputStream.detachSource();
+    void this.deferredInputStream.detachSource();
   }
 
   /** @deprecated Use `updateInputStream` instead */
@@ -231,7 +231,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.inputWriter.write(frame);
+    void this.inputWriter.write(frame);
   }
 
   /**
@@ -247,7 +247,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.inputWriter.write(VADStream.FLUSH_SENTINEL);
+    void this.inputWriter.write(VADStream.FLUSH_SENTINEL);
   }
 
   endInput() {
@@ -258,7 +258,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       throw new Error('Stream is closed');
     }
     this.inputClosed = true;
-    this.input.writable.close();
+    void this.input.writable.close();
   }
 
   async next(): Promise<IteratorResult<VADEvent>> {
@@ -272,8 +272,8 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
 
   close() {
     this.outputWriter.releaseLock();
-    this.outputReader.cancel();
-    this.output.writable.close();
+    void this.outputReader.cancel();
+    void this.output.writable.close();
     this.closed = true;
   }
 

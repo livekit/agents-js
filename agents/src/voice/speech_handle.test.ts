@@ -275,3 +275,52 @@ describe('SpeechHandle.exception', () => {
     expect(handle.exception()).toBe(error);
   });
 });
+
+describe('SpeechHandle.addDoneCallback', () => {
+  it('runs the remaining callbacks when one throws, without an unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const handle = SpeechHandle.create();
+      const calls: string[] = [];
+      handle.addDoneCallback(() => {
+        calls.push('first');
+        throw new Error('done callback failed');
+      });
+      handle.addDoneCallback(() => {
+        calls.push('second');
+      });
+
+      handle._markDone();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(calls).toEqual(['first', 'second']);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('contains a throwing callback added after the handle is done', async () => {
+    const uncaught: unknown[] = [];
+    const onUncaught = (error: unknown) => uncaught.push(error);
+    process.on('uncaughtException', onUncaught);
+    try {
+      const handle = SpeechHandle.create();
+      handle._markDone();
+
+      let called = false;
+      handle.addDoneCallback(() => {
+        called = true;
+        throw new Error('late done callback failed');
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(called).toBe(true);
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
+  });
+});

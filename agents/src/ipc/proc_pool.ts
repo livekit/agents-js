@@ -4,6 +4,7 @@
 import { MultiMutex, Mutex } from '@livekit/mutex';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { RunningJobInfo } from '../job.js';
+import { log } from '../log.js';
 import { Queue } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
@@ -69,9 +70,14 @@ export class ProcPool {
   }
 
   async launchJob(info: RunningJobInfo): Promise<Throws<void, Error>> {
+    if (this.closed) {
+      throw new Error('process pool is closed');
+    }
     let proc: JobExecutor;
     if (this.procMutex) {
-      const entry = await this.warmedProcQueue.get();
+      // Stop waiting for a warmed process when the pool closes, so an awaited accept() cannot
+      // keep worker shutdown from completing.
+      const entry = await this.warmedProcQueue.get({ signal: this.controller.signal });
       proc = entry.proc;
       // Release exactly the slot that produced this warmed process.
       entry.unlock();
@@ -156,7 +162,7 @@ export class ProcPool {
     }
 
     this.started = true;
-    this.run(this.controller.signal);
+    void this.run(this.controller.signal);
   }
 
   async run(signal: AbortSignal) {
@@ -165,14 +171,18 @@ export class ProcPool {
         const procUnlock = await this.procMutex.lock();
         const task = this.procWatchTask(procUnlock);
         this.tasks.push(task);
-        task.finally(() => {
-          const taskIndex = this.tasks.indexOf(task);
-          if (taskIndex !== -1) {
-            this.tasks.splice(taskIndex, 1);
-          } else {
-            throw new Error(`task ${task} not found in tasks`);
-          }
-        });
+        void task
+          .finally(() => {
+            const taskIndex = this.tasks.indexOf(task);
+            if (taskIndex !== -1) {
+              void this.tasks.splice(taskIndex, 1);
+            } else {
+              throw new Error(`task ${task} not found in tasks`);
+            }
+          })
+          .catch((error) => {
+            log().error({ error }, 'error in process watch task');
+          });
       }
     }
   }

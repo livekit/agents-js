@@ -147,7 +147,6 @@ type STTEventMessage =
 
 export type STTOptions = {
   apiKey: string;
-  // eslint-disable-next-line @typescript-eslint/ban-types
   model: STTModel | (string & {});
   sampleRate: number;
   baseUrl: string;

@@ -95,9 +95,9 @@ describe('StreamChannel', () => {
     const testNumbers = Array.from({ length: 100 }, (_, i) => i);
 
     for (const num of testNumbers) {
-      channel.write(num);
+      void channel.write(num);
     }
-    channel.close();
+    void channel.close();
 
     const results: number[] = [];
     let result = await reader.read();

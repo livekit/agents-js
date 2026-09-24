@@ -108,7 +108,7 @@ export class DataStreamAudioOutput extends AudioOutput {
       this.roomConnectedFuture.resolve(undefined);
     }
 
-    onRoomConnected();
+    void onRoomConnected();
   }
 
   private async _start(_abortSignal: AbortSignal) {
@@ -202,8 +202,13 @@ export class DataStreamAudioOutput extends AudioOutput {
       return;
     }
 
-    this.streamWriter.close().finally(() => {
-      this.streamWriter = undefined;
+    // Close the stream to mark the end of the segment. Clear the field synchronously, as
+    // Python does, so the next frame opens a fresh writer and this close cannot clear a
+    // writer that a later segment has since opened.
+    const writer = this.streamWriter;
+    this.streamWriter = undefined;
+    void writer.close().catch((error) => {
+      this.#logger.warn({ error }, 'failed to close avatar audio stream');
     });
 
     this.firstFrameEmitted = false;
@@ -212,7 +217,7 @@ export class DataStreamAudioOutput extends AudioOutput {
   clearBuffer(): void {
     if (!this.started) return;
 
-    this.room.localParticipant!.performRpc({
+    void this.room.localParticipant!.performRpc({
       destinationIdentity: this.destinationIdentity,
       method: RPC_CLEAR_BUFFER,
       payload: '',

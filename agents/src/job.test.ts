@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { RoomEvent } from '@livekit/rtc-node';
-import type { Room } from '@livekit/rtc-node';
+import type { RemoteParticipant, Room } from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { JobContext, type JobProcess, type RunningJobInfo } from './job.js';
@@ -468,5 +468,72 @@ describe('JobContext observability URL', () => {
     const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
     await ctx.initRecording(tracesOn);
     expect(setupCloudTracerMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobContext participant entrypoints', () => {
+  it('logs a failing participant entrypoint instead of leaving an unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      // JobContext logs through a child logger created in its constructor.
+      const childLogger = log().child({});
+      const childSpy = vi.spyOn(log(), 'child').mockReturnValue(childLogger);
+      const errorSpy = vi.spyOn(childLogger, 'error').mockImplementation(() => undefined);
+      const ctx = createJobContext();
+      const error = new Error('participant entrypoint failed');
+      const entrypoint = vi.fn(async () => {
+        throw error;
+      });
+      ctx.addParticipantEntrypoint(entrypoint);
+
+      ctx.onParticipantConnected({ identity: 'participant' } as unknown as RemoteParticipant);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(entrypoint).toHaveBeenCalledOnce();
+      expect(unhandled).toEqual([]);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ error }),
+        'error in participant entrypoint',
+      );
+      childSpy.mockRestore();
+      errorSpy.mockRestore();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+});
+
+describe('JobContext participant entrypoints that throw synchronously', () => {
+  it('logs the error instead of letting it escape the room event callback', async () => {
+    const uncaught: unknown[] = [];
+    const onUncaught = (error: unknown) => uncaught.push(error);
+    process.on('uncaughtException', onUncaught);
+    try {
+      const childLogger = log().child({});
+      const childSpy = vi.spyOn(log(), 'child').mockReturnValue(childLogger);
+      const errorSpy = vi.spyOn(childLogger, 'error').mockImplementation(() => undefined);
+      const ctx = createJobContext();
+      const error = new Error('participant entrypoint threw before its first await');
+      const entrypoint = vi.fn((): Promise<void> => {
+        throw error;
+      });
+      ctx.addParticipantEntrypoint(entrypoint);
+
+      ctx.onParticipantConnected({ identity: 'participant' } as unknown as RemoteParticipant);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(entrypoint).toHaveBeenCalledOnce();
+      expect(uncaught).toEqual([]);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ error }),
+        'error in participant entrypoint',
+      );
+      childSpy.mockRestore();
+      errorSpy.mockRestore();
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
   });
 });

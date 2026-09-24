@@ -101,6 +101,7 @@ export interface InputTranscriptionCompleted {
   turnStartedAt?: number;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface RealtimeSessionReconnectedEvent {}
 
 export abstract class RealtimeModel {
