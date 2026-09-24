@@ -145,6 +145,36 @@ describe('Deepgram empty final results', () => {
     }
   });
 
+  it.each([
+    { name: 'an empty interim retracts the words', boundary: results('', { isFinal: false }) },
+    {
+      name: 'UtteranceEnd closes the utterance',
+      boundary: JSON.stringify({ type: 'UtteranceEnd', channel: [0, 1], last_word_end: 0.2 }),
+    },
+  ])('drops an empty final after $name', async ({ boundary }) => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    playScripts(wss, [
+      [
+        results('Yep.', { isFinal: false }),
+        boundary,
+        results('', { isFinal: true, speechFinal: true }),
+        results('done', { isFinal: true }),
+      ],
+    ]);
+
+    const stream = new STT({ apiKey: 'test-key', baseUrl }).stream();
+    stream.pushFrame(makeFrame());
+    try {
+      const seen = await collectTranscripts(stream);
+      expect(seen.filter(([type]) => type === FINAL_TRANSCRIPT)).toEqual([
+        [FINAL_TRANSCRIPT, 'done'],
+      ]);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it("does not retract the previous connection's interim", async () => {
     const { wss, baseUrl } = await startWebSocketServer();
     const connections = playScripts(wss, [
