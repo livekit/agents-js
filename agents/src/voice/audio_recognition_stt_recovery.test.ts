@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { STTPipeline } from './audio_recognition.js';
+import { STTPipeline, STT_STREAM_RECREATED } from './audio_recognition.js';
 import type { STTNode } from './io.js';
 
 const finalTranscript: SpeechEvent = {
@@ -45,8 +45,9 @@ describe('STTPipeline recovery after an exhausted retry budget', () => {
     const pipeline = new STTPipeline(sttNode);
     const reader = pipeline.eventChannel.stream().getReader();
     try {
-      const { value } = await reader.read();
-      expect(value).toEqual(finalTranscript);
+      // the marker tells the consumer that later events come from a new provider stream
+      expect((await reader.read()).value).toBe(STT_STREAM_RECREATED);
+      expect((await reader.read()).value).toEqual(finalTranscript);
       expect(calls).toBe(2);
     } finally {
       reader.releaseLock();

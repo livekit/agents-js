@@ -4,6 +4,8 @@
 import { ParticipantKind } from '@livekit/rtc-node';
 import { ReadableStream, type ReadableStreamDefaultController } from 'node:stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { APIConnectionError } from '../_exceptions.js';
+import type { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
@@ -89,6 +91,18 @@ function vadEvent(type: VADEventType, options: Partial<VADEvent> = {}): VADEvent
   };
 }
 
+// An interruption detector that never reaches a verdict, so transcripts stay held for the
+// whole agent turn.
+const silentInterruptionDetector = {
+  label: 'silent-interruption-detector',
+  createStream: () => ({
+    stream: () => new ReadableStream(),
+    pushFrame: async () => {},
+    close: async () => {},
+  }),
+  emitError: () => {},
+} as unknown as AdaptiveInterruptionDetector;
+
 function transcript(type: SpeechEventType, text: string): SpeechEvent {
   return {
     type,
@@ -159,11 +173,15 @@ describe('AudioRecognition with an empty final transcript', () => {
       sttController.enqueue(ev);
       await vi.advanceTimersByTimeAsync(0);
     };
+    const sttFail = async (error: Error) => {
+      sttController.error(error);
+      await vi.advanceTimersByTimeAsync(0);
+    };
     const vadPush = async (ev: VADEvent) => {
       vad.vadStream.push(ev);
       await vi.advanceTimersByTimeAsync(0);
     };
-    return { ar, hooks, stt, vadPush, vad };
+    return { ar, hooks, stt, sttFail, vadPush, vad };
   }
 
   async function closeRecognition(ar: AudioRecognition, vad: ScriptedVAD) {
@@ -381,6 +399,81 @@ describe('AudioRecognition with an empty final transcript', () => {
 
       await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
       nextController.enqueue(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+    } finally {
+      await closeRecognition(ar, vad);
+    }
+  });
+
+  it("does not carry a failed stream's interim into the recreated stream's empty final", async () => {
+    const { ar, hooks, stt, sttFail, vadPush, vad } = await startRecognition();
+    try {
+      await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
+      await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'yes'));
+      // the pipeline recreates the provider stream after its reconnect backoff
+      await sttFail(new APIConnectionError({ message: 'retry budget exhausted' }));
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
+      await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+    } finally {
+      await closeRecognition(ar, vad);
+    }
+  });
+
+  it('keeps the recreated stream boundary behind transcripts held during agent speech', async () => {
+    const { ar, hooks, stt, sttFail, vadPush, vad } = await startRecognition({
+      interruptionDetection: silentInterruptionDetector,
+    });
+    try {
+      const agentSpeechStartedAt = Date.now();
+      await ar.onStartOfAgentSpeech(agentSpeechStartedAt);
+      await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
+      await stt({
+        type: SpeechEventType.INTERIM_TRANSCRIPT,
+        alternatives: [
+          { language: 'en', text: 'yes', startTime: 0.1, endTime: 0.5, confidence: 1 },
+        ],
+      });
+      await sttFail(new APIConnectionError({ message: 'retry budget exhausted' }));
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      // an empty ignore window releases the held interim, then the stream boundary
+      await ar.onEndOfAgentSpeech(agentSpeechStartedAt);
+      await vi.advanceTimersByTimeAsync(0);
+      await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
+      await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(hooks.onInterimTranscript).toHaveBeenCalled();
+      expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+    } finally {
+      await closeRecognition(ar, vad);
+    }
+  });
+
+  it('ends the failed stream segment when the held transcripts are dropped', async () => {
+    const { ar, hooks, stt, sttFail, vadPush, vad } = await startRecognition({
+      interruptionDetection: silentInterruptionDetector,
+    });
+    try {
+      await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
+      await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'yes'));
+      await ar.onStartOfAgentSpeech(Date.now());
+      await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'yes please'));
+      await sttFail(new APIConnectionError({ message: 'retry budget exhausted' }));
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      // held transcripts without timestamps are dropped instead of released
+      await ar.onEndOfAgentSpeech(Date.now());
+      await vi.advanceTimersByTimeAsync(0);
+      await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
+      await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+
       await vi.advanceTimersByTimeAsync(2_000);
       expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
     } finally {

@@ -170,13 +170,20 @@ interface UserTurnTracker {
 /** Backoff before recreating the STT stream after its retry budget is exhausted. */
 const STT_RECONNECT_INTERVAL_MS = 500;
 
+/**
+ * Sent on an {@link STTPipeline}'s event channel between the events of a failed provider stream
+ * and those of the stream that replaces it.
+ */
+export const STT_STREAM_RECREATED = Symbol('STT_STREAM_RECREATED');
+
 export class STTPipeline {
   static readonly PUMP_TASK_CANCEL_TIMEOUT = 5000;
 
   private sttNode: STTNode;
   private isClosing: () => boolean;
   private _audioChannel: StreamChannel<AudioFrame> = createStreamChannel();
-  private _eventChannel: StreamChannel<SpeechEvent> = createStreamChannel();
+  private _eventChannel: StreamChannel<SpeechEvent | typeof STT_STREAM_RECREATED> =
+    createStreamChannel();
   private _pumpTask: Task<void>;
   /** Wall-clock anchor for this stream, used with STT-relative timestamps. */
   inputStartedAt?: number;
@@ -240,6 +247,7 @@ export class STTPipeline {
       await delay(STT_RECONNECT_INTERVAL_MS, { signal }).catch(() => {});
       // the session may have started closing during the backoff
       if (this.isClosing()) return;
+      await this._eventChannel.write(STT_STREAM_RECREATED);
     }
   }
 
@@ -424,7 +432,7 @@ export class AudioRecognition {
   // interruption detection
   private interruptionDetection?: AdaptiveInterruptionDetector;
   private ignoreUserTranscriptUntil?: number;
-  private transcriptBuffer: SpeechEvent[];
+  private transcriptBuffer: Array<SpeechEvent | typeof STT_STREAM_RECREATED>;
   private isInterruptionEnabled: boolean;
   private isAgentSpeaking: boolean;
   private agentSpeechStartedAt?: number;
@@ -1027,6 +1035,7 @@ export class AudioRecognition {
 
     for (let i = 0; i < this.transcriptBuffer.length; i++) {
       const ev = this.transcriptBuffer[i];
+      if (ev === STT_STREAM_RECREATED) continue;
       if (!ev || !ev.alternatives || ev.alternatives.length === 0) {
         emitFromIndex = Math.min(emitFromIndex ?? i, i);
         continue;
@@ -1059,6 +1068,10 @@ export class AudioRecognition {
     this.resetInterruptionDetection();
 
     for (const event of eventsToEmit) {
+      if (event === STT_STREAM_RECREATED) {
+        await this.onSTTEvent(event);
+        continue;
+      }
       let addedDelay = 0;
       const firstAlternative = event.alternatives?.[0];
       if (
@@ -1084,6 +1097,10 @@ export class AudioRecognition {
   }
 
   private resetInterruptionDetection(): void {
+    // a boundary dropped with the held events still ends the failed stream's segment
+    if (this.transcriptBuffer.includes(STT_STREAM_RECREATED)) {
+      this.resetPendingSegment();
+    }
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;
     // Keep the anchor while a newer agent-speech cycle is active, so a stale flush
@@ -1212,7 +1229,17 @@ export class AudioRecognition {
     return trace.setSpan(base, span);
   }
 
-  private async onSTTEvent(ev: SpeechEvent) {
+  private async onSTTEvent(ev: SpeechEvent | typeof STT_STREAM_RECREATED) {
+    if (ev === STT_STREAM_RECREATED) {
+      // held events are replayed through here, so the boundary waits in line behind them
+      if (this.transcriptBuffer.length > 0) {
+        this.transcriptBuffer.push(ev);
+      } else {
+        this.resetPendingSegment();
+      }
+      return;
+    }
+
     // Collect provider-known STT ids for this user turn. The actual attribute is
     // written once when the user_turn span ends (see _endUserTurnSpan), to avoid
     // ordering issues with span creation.
