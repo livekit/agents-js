@@ -329,6 +329,7 @@ export abstract class SynthesizeStream
   #currentAttemptSpan?: Span;
   #startedTime?: number;
   #startedHrTime?: bigint;
+  #error?: Error;
 
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
@@ -441,6 +442,7 @@ export abstract class SynthesizeStream
     });
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    this.#error = error;
     this.#tts.emit('error', {
       type: 'tts_error',
       timestamp: Date.now(),
@@ -503,6 +505,16 @@ export abstract class SynthesizeStream
       return undefined;
     }
     return { time: this.#startedTime, hrTime: this.#startedHrTime };
+  }
+
+  /**
+   * The error this stream failed with, if it failed. Iterating a failed stream
+   * just ends, and the TTS `error` event doesn't say which stream failed —
+   * this does.
+   * @internal
+   */
+  get error(): Error | undefined {
+    return this.#error;
   }
 
   // NOTE(AJS-37): The implementation below uses an AsyncIterableQueue (`this.input`)
@@ -736,6 +748,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   #inputTokens = 0;
   #outputTokens = 0;
   #startedTime: number;
+  #error?: Error;
   #metricsQueue = new AsyncIterableQueue<SynthesizedAudio>();
 
   protected abortController = new AbortController();
@@ -761,7 +774,12 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    ThrowsPromise.resolve().then(() => this.mainTask().finally(() => this.#metricsQueue.close()));
+    ThrowsPromise.resolve().then(() =>
+      this.mainTask()
+        .finally(() => this.#metricsQueue.close())
+        // already surfaced via emitError; swallow to avoid unhandled rejection.
+        .catch(() => {}),
+    );
   }
 
   private drainAttemptQueue(attemptQueue: AsyncIterableQueue<SynthesizedAudio>): Promise<void> {
@@ -846,6 +864,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    this.#error = error;
     this.#tts.emit('error', {
       type: 'tts_error',
       timestamp: Date.now(),
@@ -863,6 +882,16 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
 
   get abortSignal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  /**
+   * The error this stream failed with, if it failed. Iterating a failed stream
+   * just ends, and the TTS `error` event doesn't say which stream failed —
+   * this does.
+   * @internal
+   */
+  get error(): Error | undefined {
+    return this.#error;
   }
 
   /**

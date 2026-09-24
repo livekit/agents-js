@@ -103,6 +103,7 @@ export class StreamAdapterWrapper extends SynthesizeStream {
   #tts: TTS;
   #sentenceStream: SentenceStream;
   #expressive: boolean;
+  #sentenceError?: Error;
   label: string;
 
   constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions) {
@@ -122,6 +123,16 @@ export class StreamAdapterWrapper extends SynthesizeStream {
    */
   get expressive(): boolean {
     return this.#expressive;
+  }
+
+  /**
+   * Falls back to the first error a sentence failed with. A failed sentence is
+   * skipped rather than failing this stream, so without this a consumer would
+   * never learn that part of the speech is missing, or why.
+   * @internal
+   */
+  override get error(): Error | undefined {
+    return super.error ?? this.#sentenceError;
   }
 
   protected async run() {
@@ -211,6 +222,7 @@ export class StreamAdapterWrapper extends SynthesizeStream {
 
         this.queue.put(audio);
       }
+      this.#sentenceError ??= audioStream.error;
     };
 
     await ThrowsPromise.all([forwardInput(), synthesizeSentenceStream()]);
