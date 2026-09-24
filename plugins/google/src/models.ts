@@ -91,6 +91,8 @@ export type SpeechLanguages =
 export type Gender = 'male' | 'female' | 'neutral';
 
 export type GeminiTTSModels =
+  | 'gemini-3.8-flash-tts'
+  | 'gemini-3.8-flash-lite-tts'
   | 'gemini-3.1-flash-tts-preview'
   | 'gemini-2.5-flash-tts'
   | 'gemini-2.5-flash-lite-preview-tts'

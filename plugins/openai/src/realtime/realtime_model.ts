@@ -396,9 +396,7 @@ export function processBaseURL({
   azureDeployment?: string;
   apiVersion?: string;
 }): string {
-  // Azure GA (no apiVersion) uses /v1/realtime; legacy preview uses /realtime
-  const realtimePath = isAzure && !apiVersion ? 'v1/realtime' : 'realtime';
-  const url = new URL([baseURL, realtimePath].join('/'));
+  const url = new URL(baseURL);
 
   if (url.protocol === 'https:') {
     url.protocol = 'wss:';
@@ -406,11 +404,21 @@ export function processBaseURL({
     url.protocol = 'ws:';
   }
 
-  // ensure "/realtime" is added if the path is empty OR "/v1"
-  if (!url.pathname || ['', '/v1', '/openai'].includes(url.pathname.replace(/\/$/, ''))) {
-    url.pathname = url.pathname.replace(/\/$/, '') + '/realtime';
-  } else {
-    url.pathname = url.pathname.replace(/\/$/, '');
+  const pathStripped = url.pathname.replace(/\/$/, '');
+  if (isAzure) {
+    if (['', '/openai'].includes(pathStripped)) {
+      // Azure GA (no apiVersion) uses /v1/realtime; legacy preview uses /realtime.
+      url.pathname = pathStripped + (apiVersion ? '/realtime' : '/v1/realtime');
+    } else if (pathStripped === '/openai/v1') {
+      url.pathname = '/openai/v1/realtime';
+    }
+  } else if (!url.pathname || ['', '/v1', '/openai', '/openai/v1'].includes(pathStripped)) {
+    url.pathname = pathStripped + '/realtime';
+  }
+
+  if (isAzure) {
+    // remove from endpoint URL if present
+    url.searchParams.delete('api-version');
   }
 
   const queryParams: Record<string, string> = {};
@@ -422,12 +430,14 @@ export function processBaseURL({
     }
   } else if (isAzure) {
     // GA Azure: /v1/realtime?model=<deployment>
-    if (azureDeployment) {
+    if (!url.searchParams.has('model') && azureDeployment) {
       queryParams['model'] = azureDeployment;
     }
   } else {
     // Standard OpenAI: /realtime?model=<model>
-    queryParams['model'] = model;
+    if (!url.searchParams.has('model')) {
+      queryParams['model'] = model;
+    }
   }
 
   for (const [key, value] of Object.entries(queryParams)) {

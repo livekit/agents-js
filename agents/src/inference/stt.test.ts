@@ -704,6 +704,46 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
+  it('closes the socket when the stream is closed while connecting', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    server.on('connection', (socket) => {
+      // The server sees the upgrade before the client's `open` fires, so this
+      // lands while connectWs is still pending.
+      stream.close();
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        messageTypes.push((JSON.parse(raw.toString()) as { type: string }).type);
+      });
+    });
+
+    try {
+      const closedInTime = await Promise.race([
+        socketClosed.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000)),
+      ]);
+
+      expect(closedInTime).toBe(true);
+      expect(messageTypes).toEqual(['session.create', 'session.close']);
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('finishes when session.closed follows input end', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
