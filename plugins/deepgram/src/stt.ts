@@ -492,6 +492,8 @@ export class SpeechStream extends stt.SpeechStream {
     };
 
     const listenTask = Task.from(async (controller) => {
+      // this connection sent an interim with words that no final has closed yet
+      let interimPending = false;
       const putMessage = (message: stt.SpeechEvent) => {
         if (!this.queue.closed) {
           try {
@@ -556,6 +558,19 @@ export class SpeechStream extends stt.SpeechStream {
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
                   }
+                } else if (isFinal && interimPending && alternatives[0]) {
+                  // The segment closed without the words its interim carried. Passing the
+                  // empty final on lets the session decide whether to keep them
+                  // (commitInterimOnEmptyFinal).
+                  putMessage({
+                    type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+                    alternatives: [alternatives[0], ...alternatives.slice(1)],
+                  });
+                }
+                if (isFinal) {
+                  interimPending = false;
+                } else if (alternatives[0]?.text) {
+                  interimPending = true;
                 }
 
                 // if we receive an endpoint, only end the speech if
