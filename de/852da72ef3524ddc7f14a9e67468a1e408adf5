@@ -1,0 +1,19 @@
+agents/src/voice/run_context.ts
+  s_460a57d3a2bf17::t_b6485886691e66 63-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de852da72ef3524ddc7f14a9e67468a1e408adf5",
+  "prompts": {},
+  "sessions": {
+    "s_460a57d3a2bf17": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d36d-7c5d-7b61-80a3-73dfe1370fbc",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
