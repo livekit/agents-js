@@ -3090,7 +3090,7 @@ export const createUserTurnExceededEvent: (input: {
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTask"
 //
 // @public
-function createWarmTransferTask(input?: WarmTransferTaskOptions): AgentTask<WarmTransferResult>;
+function createWarmTransferTask(options?: WarmTransferTaskOptions): AgentTask<WarmTransferResult>;
 
 // Warning: (ae-missing-release-tag) "DataStreamAudioOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -9942,6 +9942,35 @@ export function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): P
 // @public
 export function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(promise: Promise<T>, timeoutMs: number, throwError?: () => E): Promise<Throws<T, E | IdleTimeoutError>>;
 
+// @public
+interface WarmTransferOptions {
+    abortSignal?: AbortSignal;
+    // (undocumented)
+    allowInterruptions?: boolean;
+    // @deprecated
+    callerHangupInstruction?: string | null;
+    callerHangupSpeech?: WarmTransferSpeech;
+    // (undocumented)
+    chatCtx?: ChatContext;
+    greetingSpeech?: WarmTransferSpeech;
+    holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "InstructionParts"
+    instructions?: InstructionParts | string;
+    // (undocumented)
+    llm?: LLM | RealtimeModel | LLMModels | null;
+    roomName?: string;
+    // (undocumented)
+    stt?: STT | ModelWithLanguage | null;
+    // (undocumented)
+    tools?: readonly ToolContextEntry[];
+    // (undocumented)
+    tts?: TTS | ModelWithVoice | null;
+    // (undocumented)
+    turnDetection?: TurnDetectionMode | null;
+    // (undocumented)
+    vad?: VAD | null;
+}
+
 // Warning: (ae-missing-release-tag) "WarmTransferResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -9966,39 +9995,14 @@ class WarmTransferTask extends AgentTask<WarmTransferResult> {
 // Warning: (ae-missing-release-tag) "WarmTransferTaskOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-interface WarmTransferTaskOptions {
-    abortSignal?: AbortSignal;
-    // (undocumented)
-    allowInterruptions?: boolean;
-    // @deprecated
-    callerHangupInstruction?: string | null;
-    callerHangupSpeech?: WarmTransferSpeech;
-    // (undocumented)
-    chatCtx?: ChatContext;
+interface WarmTransferTaskOptions extends WarmTransferOptions {
     dtmf?: string | null;
-    greetingSpeech?: WarmTransferSpeech;
-    holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
-    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "InstructionParts"
-    instructions?: InstructionParts | string;
-    // (undocumented)
-    llm?: LLM | RealtimeModel | LLMModels | null;
     ringingTimeout?: number | null;
-    roomName?: string;
     sipCallTo?: string;
     sipConnection?: SIPOutboundConfig;
     sipHeaders?: Record<string, string>;
     sipNumber?: string;
     sipTrunkId?: string | null;
-    // (undocumented)
-    stt?: STT | ModelWithLanguage | null;
-    // (undocumented)
-    tools?: readonly ToolContextEntry[];
-    // (undocumented)
-    tts?: TTS | ModelWithVoice | null;
-    // (undocumented)
-    turnDetection?: TurnDetectionMode | null;
-    // (undocumented)
-    vad?: VAD | null;
 }
 
 // Warning: (ae-missing-release-tag) "withInferenceTracking" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -10119,6 +10123,7 @@ declare namespace workflows {
         WarmTransferSpeech,
         WarmTransferResult,
         WarmTransferTaskOptions,
+        WarmTransferOptions,
         InstructionParts
     }
 }

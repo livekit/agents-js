@@ -13,5 +13,6 @@ export {
   type WarmTransferSpeech,
   type WarmTransferResult,
   type WarmTransferTaskOptions,
+  type WarmTransferOptions,
 } from './warm_transfer.js';
 export type { InstructionParts } from './utils.js';
