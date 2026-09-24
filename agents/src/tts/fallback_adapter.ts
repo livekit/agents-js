@@ -209,8 +209,11 @@ export class FallbackAdapter extends TTS {
         for await (const _ of testStream) {
           audioReceived = true;
         }
+        if (testStream.error) {
+          throw testStream.error;
+        }
         if (!audioReceived) {
-          throw testStream.error ?? new Error('Recovery test completed but no audio was received');
+          throw new Error('Recovery test completed but no audio was received');
         }
 
         status.available = true;
@@ -400,7 +403,14 @@ class FallbackChunkedStream extends ChunkedStream {
           });
         }
 
-        this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
+        if (stream.error) {
+          this._logger.error(
+            { tts: tts.label, error: stream.error },
+            'TTS failed after audio pushed, cannot fallback mid-utterance',
+          );
+        } else {
+          this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
+        }
         return;
       } catch (error) {
         if (error instanceof APIError || error instanceof APIConnectionError) {
@@ -610,8 +620,15 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           });
         }
 
+        if (stream.error) {
+          this._logger.error(
+            { tts: originalTts.label, error: stream.error },
+            'TTS failed after audio pushed, cannot fallback mid-utterance',
+          );
+        } else {
+          this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
+        }
         this.queue.put(SynthesizeStream.END_OF_STREAM);
-        this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
         await readInputLLMStream.catch(() => {});
         return;
       } catch (error) {

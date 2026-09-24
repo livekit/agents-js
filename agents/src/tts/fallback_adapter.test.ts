@@ -4,11 +4,13 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { APIError, APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIError, APIStatusError } from '../_exceptions.js';
 import { initializeLogger, log } from '../log.js';
+import { basic } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TTS_STARTED_TIME } from '../types.js';
 import { FallbackAdapter } from './fallback_adapter.js';
+import { StreamAdapter } from './stream_adapter.js';
 import { ChunkedStream, SynthesizeStream, TTS, type TTSError } from './tts.js';
 
 const SAMPLE_RATE = 24000;
@@ -49,6 +51,20 @@ class MockSynthesizeStream extends SynthesizeStream {
         }
         throw this.mockTts.failWith ?? new APIError('mock TTS failed after receiving input');
       }
+      if (this.mockTts.failAfterAudio) {
+        for await (const data of this.input) {
+          if (this.abortController.signal.aborted) break;
+          if (data === SynthesizeStream.FLUSH_SENTINEL) continue;
+          this.queue.put({
+            requestId: 'mock-req',
+            segmentId: 'mock-seg',
+            frame: new AudioFrame(new Int16Array(160), this.mockTts.sampleRate, 1, 160),
+            final: false,
+          });
+          break;
+        }
+        throw this.mockTts.failWith ?? new APIError('mock TTS failed after emitting audio');
+      }
       // Throw immediately, before any pushText has been called.
       // This is the scenario that previously deadlocked the FallbackAdapter:
       // the inner stream's mainTask finishes before forwardBufferToTTS gets
@@ -83,7 +99,7 @@ class MockChunkedStream extends ChunkedStream {
     super(text, mockTts, connOptions);
   }
   protected async run(): Promise<void> {
-    if (this.shouldFail) {
+    if (this.shouldFail && !this.mockTts.failAfterAudio) {
       throw this.mockTts.failWith ?? new APIError('mock TTS failed immediately');
     }
     this.queue.put({
@@ -92,6 +108,9 @@ class MockChunkedStream extends ChunkedStream {
       frame: new AudioFrame(new Int16Array(160), this.mockTts.sampleRate, 1, 160),
       final: true,
     });
+    if (this.shouldFail) {
+      throw this.mockTts.failWith ?? new APIError('mock TTS failed after emitting audio');
+    }
   }
 }
 
@@ -116,6 +135,8 @@ class MockTTS extends TTS {
   shouldFail = false;
   /** When failing, first consume a token (and mark started) before throwing. */
   failAfterInput = false;
+  /** When failing, first emit one frame of audio before throwing. */
+  failAfterAudio = false;
   /** The error raised when failing; defaults to a generic retryable APIError. */
   failWith?: APIError;
   /** Simulated latency between receiving text and sending it to the provider. */
@@ -654,6 +675,109 @@ describe('TTS FallbackAdapter', () => {
       'TTS synthesis completed but no audio was received',
       'payment required',
     ]);
+
+    await adapter.close();
+  });
+
+  it("doesn't report a skipped sentence's error once another sentence delivered audio", async () => {
+    const tts = new MockTTS('primary', SAMPLE_RATE, false);
+    tts.failWith = new APIStatusError({
+      message: 'payment required',
+      options: { statusCode: 401 },
+    });
+    tts.synthesize = (text, connOptions) =>
+      new MockChunkedStream(tts, text, text.includes('first'), connOptions);
+    const adapter = new StreamAdapter(tts, new basic.SentenceTokenizer());
+    adapter.on('error', () => {});
+
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('The first sentence fails to synthesize. ');
+          controller.enqueue('The second sentence comes through fine.');
+          controller.close();
+        },
+      }),
+    );
+    let frameCount = 0;
+    for await (const event of stream) {
+      if (event === SynthesizeStream.END_OF_STREAM) break;
+      frameCount++;
+    }
+
+    expect(frameCount).toBeGreaterThan(0);
+    expect(stream.error).toBeUndefined();
+
+    await adapter.close();
+  });
+
+  it.each(['stream', 'synthesize'] as const)(
+    'logs a provider error that cuts off audio it cannot fall back from (%s)',
+    async (mode) => {
+      const logError = vi.spyOn(log(), 'error');
+      const dropped = new APIConnectionError({ message: 'socket closed mid-utterance' });
+      const primary = new MockTTS('primary');
+      primary.shouldFail = true;
+      primary.failAfterAudio = true;
+      primary.failWith = dropped;
+      const adapter = new FallbackAdapter({
+        ttsInstances: [primary, new MockTTS('secondary')],
+        maxRetryPerTTS: 0,
+        recoveryDelayMs: 60_000,
+      });
+
+      let frameCount = 0;
+      if (mode === 'stream') {
+        const stream = adapter.stream();
+        stream.updateInputStream(
+          new ReadableStream<string>({
+            start(controller) {
+              controller.enqueue('hello world');
+              controller.close();
+            },
+          }),
+        );
+        for await (const event of stream) {
+          if (event === SynthesizeStream.END_OF_STREAM) break;
+          frameCount++;
+        }
+      } else {
+        for await (const _event of adapter.synthesize('hello world')) {
+          frameCount++;
+        }
+      }
+
+      expect(frameCount).toBeGreaterThan(0);
+      expect(logError).toHaveBeenCalledWith(
+        { tts: 'primary', error: dropped },
+        'TTS failed after audio pushed, cannot fallback mid-utterance',
+      );
+
+      await adapter.close();
+    },
+  );
+
+  it('does not count a recovery probe that errors after some audio as recovered', async () => {
+    const debug = vi.spyOn(log(), 'debug');
+    const dropped = new APIConnectionError({ message: 'socket closed mid-utterance' });
+    const primary = new MockTTS('primary');
+    primary.shouldFail = true;
+    primary.failAfterAudio = true;
+    primary.failWith = dropped;
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, new MockTTS('secondary')],
+      recoveryDelayMs: 60_000,
+    });
+
+    adapter.markUnAvailable(0);
+    await vi.waitFor(() =>
+      expect(debug).toHaveBeenCalledWith(
+        { tts: 'primary', error: dropped },
+        'TTS recovery failed, will retry',
+      ),
+    );
+    expect(adapter.status[0]!.available).toBe(false);
 
     await adapter.close();
   });
