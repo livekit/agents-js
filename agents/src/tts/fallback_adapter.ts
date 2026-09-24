@@ -134,9 +134,9 @@ export class FallbackAdapter extends TTS {
    * never throws `ERR_UNHANDLED_ERROR`; logging is left to the attempt that
    * failed, which alone knows whether it was failing over or probing.
    *
-   * Terminal failure still reaches the session: once every instance has failed,
-   * this adapter's own stream throws `APIConnectionError` and the base class
-   * emits that here.
+   * What the adapter can't recover from still reaches the session, as this
+   * adapter's own error: every instance failing, or a failure after audio went
+   * out, which another instance can't take over without replaying it.
    */
   private readonly absorbChildError = () => {};
 
@@ -345,8 +345,12 @@ class FallbackChunkedStream extends ChunkedStream {
         continue;
       }
       const resampler = this.adapter.createResamplerForTTS(i);
-      // why the stream ended without audio, if its provider reported it
+      // why the stream failed, if its provider reported it
       let providerError: Error | undefined;
+      // Tracks whether the inner stream yielded any real audio frames.
+      // A phantom `AudioResampler.flush()` frame (observed on rtc-node
+      // 0.13.25) could otherwise mask a silent failure as a success.
+      let sawRawAudio = false;
 
       try {
         this._logger.debug({ tts: tts.label }, 'attempting TTS synthesis');
@@ -355,10 +359,6 @@ class FallbackChunkedStream extends ChunkedStream {
           maxRetry: this.adapter.maxRetryPerTTS,
         };
         const stream = tts.synthesize(this.inputText, connOptions, this.abortSignal);
-        // Tracks whether the inner stream yielded any real audio frames.
-        // A phantom `AudioResampler.flush()` frame (observed on rtc-node
-        // 0.13.25) could otherwise mask a silent failure as a success.
-        let sawRawAudio = false;
         for await (const audio of stream) {
           if (this.abortController.signal.aborted) {
             stream.close();
@@ -403,16 +403,27 @@ class FallbackChunkedStream extends ChunkedStream {
           });
         }
 
+        // Audio already went out, so another instance would replay it: fail
+        // without retrying instead, so the session learns speech was lost.
         if (stream.error) {
-          this._logger.error(
-            { tts: tts.label, error: stream.error },
-            'TTS failed after audio pushed, cannot fallback mid-utterance',
-          );
-        } else {
-          this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
+          providerError = stream.error;
+          throw new APIConnectionError({
+            message: 'TTS synthesis failed after audio was received',
+            options: { retryable: false },
+          });
         }
+
+        this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
         return;
       } catch (error) {
+        if (sawRawAudio) {
+          this._logger.error(
+            { tts: tts.label, error: providerError ?? error },
+            'TTS failed after audio pushed, cannot fallback mid-utterance',
+          );
+          throw error;
+        }
+
         if (error instanceof APIError || error instanceof APIConnectionError) {
           this._logger.warn(
             { tts: tts.label, error: providerError ?? error },
@@ -473,7 +484,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     })();
 
     for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
-      const tts = this.adapter.getStreamingInstance(i);
       const originalTts = this.adapter.ttsInstances[i]!;
       const status = this.adapter.status[i]!;
       let lastRequestId: string = '';
@@ -483,8 +493,9 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         this.adapter.markUnAvailable(i);
         continue;
       }
+      const tts = this.adapter.getStreamingInstance(i);
       const resampler = this.adapter.createResamplerForTTS(i);
-      // why the stream ended without audio, if its provider reported it
+      // why the stream failed, if its provider reported it
       let providerError: Error | undefined;
 
       // ttfb measures the fallback adapter as a whole: anchor on the first
@@ -620,21 +631,24 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           });
         }
 
+        // Audio already went out, so another instance would replay it: fail
+        // without retrying instead, so the session learns speech was lost.
         if (stream.error) {
-          this._logger.error(
-            { tts: originalTts.label, error: stream.error },
-            'TTS failed after audio pushed, cannot fallback mid-utterance',
-          );
-        } else {
-          this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
+          providerError = stream.error;
+          throw new APIConnectionError({
+            message: 'TTS stream failed after audio was received',
+            options: { retryable: false },
+          });
         }
+
         this.queue.put(SynthesizeStream.END_OF_STREAM);
+        this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
         await readInputLLMStream.catch(() => {});
         return;
       } catch (error) {
         if (this.audioPushed) {
           this._logger.error(
-            { tts: originalTts.label },
+            { tts: originalTts.label, error: providerError ?? error },
             'TTS failed after audio pushed, cannot fallback mid-utterance',
           );
           throw error;
@@ -654,6 +668,10 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         // its started time must still anchor the fallback's ttfb
         captureStartedTime();
         resampler?.close();
+        // a non-streaming instance gets a StreamAdapter for this attempt only
+        if (tts !== originalTts) {
+          await tts.close();
+        }
       }
     }
     await readInputLLMStream.catch(() => {});

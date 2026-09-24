@@ -679,7 +679,7 @@ describe('TTS FallbackAdapter', () => {
     await adapter.close();
   });
 
-  it("doesn't report a skipped sentence's error once another sentence delivered audio", async () => {
+  it("reports a skipped sentence's error even when other sentences delivered audio", async () => {
     const tts = new MockTTS('primary', SAMPLE_RATE, false);
     tts.failWith = new APIStatusError({
       message: 'payment required',
@@ -707,17 +707,21 @@ describe('TTS FallbackAdapter', () => {
     }
 
     expect(frameCount).toBeGreaterThan(0);
-    expect(stream.error).toBeUndefined();
+    expect(stream.error).toBe(tts.failWith);
 
     await adapter.close();
   });
 
-  it.each(['stream', 'synthesize'] as const)(
-    'logs a provider error that cuts off audio it cannot fall back from (%s)',
-    async (mode) => {
+  it.each([
+    ['stream', true],
+    ['stream', false],
+    ['synthesize', true],
+  ] as const)(
+    'reports a provider failure that cuts off delivered audio, without replaying it (%s, streaming: %s)',
+    async (mode, streaming) => {
       const logError = vi.spyOn(log(), 'error');
       const dropped = new APIConnectionError({ message: 'socket closed mid-utterance' });
-      const primary = new MockTTS('primary');
+      const primary = new MockTTS('primary', SAMPLE_RATE, streaming);
       primary.shouldFail = true;
       primary.failAfterAudio = true;
       primary.failWith = dropped;
@@ -726,6 +730,8 @@ describe('TTS FallbackAdapter', () => {
         maxRetryPerTTS: 0,
         recoveryDelayMs: 60_000,
       });
+      const adapterErrors: TTSError[] = [];
+      adapter.on('error', (error) => adapterErrors.push(error));
 
       let frameCount = 0;
       if (mode === 'stream') {
@@ -733,7 +739,7 @@ describe('TTS FallbackAdapter', () => {
         stream.updateInputStream(
           new ReadableStream<string>({
             start(controller) {
-              controller.enqueue('hello world');
+              controller.enqueue('hello world.');
               controller.close();
             },
           }),
@@ -743,16 +749,18 @@ describe('TTS FallbackAdapter', () => {
           frameCount++;
         }
       } else {
-        for await (const _event of adapter.synthesize('hello world')) {
+        for await (const _event of adapter.synthesize('hello world.')) {
           frameCount++;
         }
       }
 
-      expect(frameCount).toBeGreaterThan(0);
+      // only the primary's frame: the secondary must not replay the utterance
+      expect(frameCount).toBe(1);
       expect(logError).toHaveBeenCalledWith(
         { tts: 'primary', error: dropped },
         'TTS failed after audio pushed, cannot fallback mid-utterance',
       );
+      expect(adapterErrors.map((e) => e.recoverable)).toEqual([false]);
 
       await adapter.close();
     },
@@ -780,5 +788,38 @@ describe('TTS FallbackAdapter', () => {
     expect(adapter.status[0]!.available).toBe(false);
 
     await adapter.close();
+  });
+
+  it('unsubscribes the StreamAdapter around a non-streaming instance after each attempt', async () => {
+    // one failover, then two utterances that skip the downed primary
+    const primary = new MockTTS('primary', SAMPLE_RATE, false);
+    primary.shouldFail = true;
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, new MockTTS('secondary')],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    for (let i = 0; i < 3; i++) {
+      const stream = adapter.stream();
+      stream.updateInputStream(
+        new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue('hello world.');
+            controller.close();
+          },
+        }),
+      );
+      for await (const event of stream) {
+        if (event === SynthesizeStream.END_OF_STREAM) break;
+      }
+      stream.close();
+    }
+    await adapter.close();
+
+    await vi.waitFor(() => {
+      expect(primary.listenerCount('error')).toBe(0);
+      expect(primary.listenerCount('metrics_collected')).toBe(0);
+    });
   });
 });

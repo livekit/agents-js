@@ -104,7 +104,6 @@ export class StreamAdapterWrapper extends SynthesizeStream {
   #sentenceStream: SentenceStream;
   #expressive: boolean;
   #sentenceError?: Error;
-  #deliveredAudio = false;
   label: string;
 
   constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions) {
@@ -127,14 +126,13 @@ export class StreamAdapterWrapper extends SynthesizeStream {
   }
 
   /**
-   * Falls back to the first error a sentence failed with when no sentence
-   * delivered audio: a failed sentence is skipped rather than failing this
-   * stream, so a consumer that receives nothing would otherwise never learn
-   * why. A stream that delivered audio didn't fail, whatever it skipped.
+   * Falls back to the first error a sentence failed with. A failed sentence is
+   * skipped rather than failing this stream, so without this a consumer would
+   * never learn that part of the speech is missing, or why.
    * @internal
    */
   override get error(): Error | undefined {
-    return super.error ?? (this.#deliveredAudio ? undefined : this.#sentenceError);
+    return super.error ?? this.#sentenceError;
   }
 
   protected async run() {
@@ -223,7 +221,6 @@ export class StreamAdapterWrapper extends SynthesizeStream {
         cumulativeDuration += frameDuration;
 
         this.queue.put(audio);
-        this.#deliveredAudio = true;
       }
       this.#sentenceError ??= audioStream.error;
     };
