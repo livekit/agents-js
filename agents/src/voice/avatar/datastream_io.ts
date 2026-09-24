@@ -202,9 +202,14 @@ export class DataStreamAudioOutput extends AudioOutput {
       return;
     }
 
-    this.streamWriter.close().finally(() => {
-      this.streamWriter = undefined;
-    });
+    void this.streamWriter
+      .close()
+      .finally(() => {
+        this.streamWriter = undefined;
+      })
+      .catch((error) => {
+        this.#logger.warn({ error }, 'failed to close avatar audio stream');
+      });
 
     this.firstFrameEmitted = false;
   }
