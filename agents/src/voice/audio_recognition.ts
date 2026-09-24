@@ -317,6 +317,18 @@ export interface ParticipantLike {
 }
 
 // TODO add ability to update stt/vad/interruption-detection
+/** Whether `text` ends with the words of `tail`, ignoring case and punctuation. */
+function endsWithWords(text: string, tail: string): boolean {
+  const normalize = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim();
+  const words = normalize(text);
+  const tailWords = normalize(tail);
+  return tailWords !== '' && (words === tailWords || words.endsWith(` ${tailWords}`));
+}
+
 export class AudioRecognition {
   private hooks: RecognitionHooks;
   private stt?: STTNode;
@@ -361,11 +373,11 @@ export class AudioRecognition {
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
   private audioInterimTranscript = '';
-  // Latest interim and preflight texts of the open segment, for an empty final to fall back
-  // on. Providers disagree on preflights: most send the whole segment, the AssemblyAI plugin
-  // only the words since its last preflight. The longer of the two covers the segment.
+  // Latest interim and preflight texts of the open segment, and which arrived last, for an
+  // empty final to fall back on.
   private lastInterimText = '';
   private lastPreflightText = '';
+  private preflightIsLatest = false;
   private audioPreflightTranscript = '';
   private finalTranscriptConfidence: number[] = [];
   private lastSpeakingTime: number | undefined;
@@ -1265,8 +1277,11 @@ export class AudioRecognition {
     // the interim is more likely noise the provider retracted, so it is left alone.
     const emptyFinal =
       ev.type === SpeechEventType.FINAL_TRANSCRIPT ? ev.alternatives?.[0] : undefined;
+    // The latest of the two, unless it is a preflight repeating the tail of the interim before
+    // it: most providers send a preflight as the whole segment, but the AssemblyAI plugin sends
+    // only the words since its last preflight.
     const pendingText =
-      this.lastPreflightText.length >= this.lastInterimText.length
+      this.preflightIsLatest && !endsWithWords(this.lastInterimText, this.lastPreflightText)
         ? this.lastPreflightText
         : this.lastInterimText;
     if (
@@ -1341,6 +1356,7 @@ export class AudioRecognition {
         this.audioInterimTranscript = '';
         this.lastInterimText = '';
         this.lastPreflightText = '';
+        this.preflightIsLatest = false;
         this.audioPreflightTranscript = '';
 
         if (useSTTSpeakingTime) {
@@ -1403,6 +1419,7 @@ export class AudioRecognition {
           `${this.audioTranscript} ${preflightTranscript}`.trimStart();
         this.audioInterimTranscript = preflightTranscript;
         this.lastPreflightText = preflightTranscript;
+        this.preflightIsLatest = true;
 
         if (useSTTSpeakingTime) {
           this.lastSpeakingTime = sttLastSpeakingTime;
@@ -1440,6 +1457,7 @@ export class AudioRecognition {
         );
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         this.lastInterimText = this.audioInterimTranscript;
+        this.preflightIsLatest = false;
         break;
       case SpeechEventType.START_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
@@ -2376,6 +2394,7 @@ export class AudioRecognition {
     this.audioInterimTranscript = '';
     this.lastInterimText = '';
     this.lastPreflightText = '';
+    this.preflightIsLatest = false;
     this.audioPreflightTranscript = '';
     this.finalTranscriptConfidence = [];
     this.lastFinalTranscriptTime = 0;
@@ -2479,6 +2498,7 @@ export class AudioRecognition {
         this.audioInterimTranscript = '';
         this.lastInterimText = '';
         this.lastPreflightText = '';
+        this.preflightIsLatest = false;
 
         const chatCtx = this.hooks.retrieveChatCtx();
         this.logger.debug('running EOU detection on commitUserTurn');
