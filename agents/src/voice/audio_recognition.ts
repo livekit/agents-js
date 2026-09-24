@@ -1254,6 +1254,26 @@ export class AudioRecognition {
       }
     }
 
+    // Providers can close a segment with an empty final after its interim already carried
+    // the words (seen on short replies with AssemblyAI and Deepgram). Nothing else will
+    // finalize that interim, so it stands in for the final. Without VAD speech in the turn,
+    // the interim is more likely noise the provider retracted, so it is left alone.
+    const emptyFinal =
+      ev.type === SpeechEventType.FINAL_TRANSCRIPT ? ev.alternatives?.[0] : undefined;
+    if (
+      emptyFinal !== undefined &&
+      !emptyFinal.text &&
+      this.audioInterimTranscript &&
+      this.speechStartTime !== undefined
+    ) {
+      this.logger.debug(
+        { 'lk.pii.transcript': this.audioInterimTranscript },
+        'stt final transcript was empty, using the buffered interim transcript',
+      );
+      ev = { ...ev, alternatives: [{ ...emptyFinal, text: this.audioInterimTranscript }] };
+      this.markTurnTranscribed();
+    }
+
     const firstAlternative = ev.alternatives?.[0];
     const inputStartedAt = this.inputStartedAt;
     const hasSTTEndTime =
