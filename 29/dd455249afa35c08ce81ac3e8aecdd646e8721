@@ -1,0 +1,36 @@
+agents/src/voice/playout_launch_pause.test.ts
+  s_460a57d3a2bf17::t_3ab355dce2ff80 7,12,136-173
+  s_460a57d3a2bf17::t_2723516e636b84 14,94-135,174-201
+agents/etc/agents.api.md
+  s_460a57d3a2bf17::t_3e021b91beada3 6108
+agents/src/voice/audio_recognition_transcription_timeout.test.ts
+  s_460a57d3a2bf17::t_0da9cdc7b8811e 125
+agents/src/voice/run_context.ts
+  s_460a57d3a2bf17::t_bb2a842b5dd002 67,91,93-97
+agents/src/voice/audio_recognition.ts
+  s_460a57d3a2bf17::t_c0f55b3cc3ccc0 75-76,385,856,870,891,999,1109-1113
+.changeset/fuzzy-dogs-interrupt.md
+  s_460a57d3a2bf17::t_3ab355dce2ff80 6
+agents/src/voice/realtime_adaptive_interruption.test.ts
+  s_460a57d3a2bf17::t_5e4b87cfa81e4a 11-12,870-883,885-902,904-927
+agents/src/voice/generation.ts
+  s_460a57d3a2bf17::t_bb2a842b5dd002 1440
+agents/src/voice/agent_activity.ts
+  s_460a57d3a2bf17::t_bb2a842b5dd002 5244-5251
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29dd455249afa35c08ce81ac3e8aecdd646e8721",
+  "prompts": {},
+  "sessions": {
+    "s_460a57d3a2bf17": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d36d-7c5d-7b61-80a3-73dfe1370fbc",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
