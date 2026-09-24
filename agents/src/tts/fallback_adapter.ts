@@ -9,7 +9,13 @@ import { basic } from '../tokenize/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Task, cancelAndWait } from '../utils.js';
 import { StreamAdapter } from './stream_adapter.js';
-import { ChunkedStream, SynthesizeStream, TTS, type TTSCapabilities } from './tts.js';
+import {
+  ChunkedStream,
+  SynthesizeStream,
+  TTS,
+  type TTSCapabilities,
+  type TTSError,
+} from './tts.js';
 
 /**
  * Internal status tracking for each TTS instance.
@@ -90,6 +96,7 @@ export class FallbackAdapter extends TTS {
   private _status: TTSStatus[] = [];
   private _logger = log();
   private _recoveryTimeouts: Map<number, NodeJS.Timeout> = new Map();
+  private _errorSinks: { tts: TTS; listener: (error: TTSError) => void }[] = [];
 
   label: string = `tts.FallbackAdapter`;
 
@@ -121,13 +128,18 @@ export class FallbackAdapter extends TTS {
   }
 
   private setupEventForwarding(): void {
+    // Child errors are handled by the fallback streams below. Keep a listener
+    // attached because Node treats listenerless `error` events as exceptions,
+    // but do not forward them: consumers could treat a provider failure as
+    // terminal before the adapter switches providers. If every provider fails,
+    // the adapter's own stream emits the terminal error instead.
     this.ttsInstances.forEach((tts) => {
       tts.on('metrics_collected', (metrics) => {
         this.emit('metrics_collected', metrics);
       });
-      tts.on('error', (error) => {
-        this.emit('error', error);
-      });
+      const errorSink: (error: TTSError) => void = () => {};
+      this._errorSinks.push({ tts, listener: errorSink });
+      tts.on('error', errorSink);
     });
   }
 
@@ -281,8 +293,11 @@ export class FallbackAdapter extends TTS {
     // Remove event listeners
     for (const tts of this.ttsInstances) {
       tts.removeAllListeners('metrics_collected');
-      tts.removeAllListeners('error');
     }
+    for (const { tts, listener } of this._errorSinks) {
+      tts.off('error', listener);
+    }
+    this._errorSinks = [];
 
     // Close all TTS instances
     await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.close()));
@@ -440,7 +455,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     })();
 
     for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
-      const tts = this.adapter.getStreamingInstance(i);
       const originalTts = this.adapter.ttsInstances[i]!;
       const status = this.adapter.status[i]!;
       let lastRequestId: string = '';
@@ -450,15 +464,26 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         this.adapter.markUnAvailable(i);
         continue;
       }
-      const resampler = this.adapter.createResamplerForTTS(i);
+      const tts = this.adapter.getStreamingInstance(i);
+      const isTransientStreamAdapter = tts !== originalTts;
+      const transientErrorSink: ((error: TTSError) => void) | undefined = isTransientStreamAdapter
+        ? () => {}
+        : undefined;
+      if (transientErrorSink) {
+        // StreamAdapter forwards errors from its wrapped TTS onto itself.
+        // Keep that transient emitter safe while fallback handles the failure.
+        tts.on('error', transientErrorSink);
+      }
 
       // ttfb measures the fallback adapter as a whole: anchor on the first
       // time a sentence was handed to any underlying TTS — even one that
       // failed before emitting audio — and never overwrite it when falling
       // back to another TTS (markStarted only takes effect once).
       let captureStartedTime: () => void = () => {};
+      let resampler: AudioResampler | null = null;
 
       try {
+        resampler = this.adapter.createResamplerForTTS(i);
         this._logger.debug({ tts: originalTts.label }, 'attempting TTS stream');
 
         const connOptions: APIConnectOptions = {
@@ -611,6 +636,10 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         // its started time must still anchor the fallback's ttfb
         captureStartedTime();
         resampler?.close();
+        if (transientErrorSink) {
+          tts.off('error', transientErrorSink);
+          await tts.close();
+        }
       }
     }
     await readInputLLMStream.catch(() => {});
