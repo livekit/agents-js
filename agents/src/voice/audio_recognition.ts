@@ -375,10 +375,12 @@ export class AudioRecognition {
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
   private audioInterimTranscript = '';
-  // Latest interim and preflight texts of the open segment, and which arrived last, for an
-  // empty final to fall back on.
+  // Latest interim and preflight of the open segment (text and start time), and which arrived
+  // last, for an empty final to fall back on.
   private lastInterimText = '';
+  private lastInterimStart = 0;
   private lastPreflightText = '';
+  private lastPreflightStart = 0;
   private preflightIsLatest = false;
   private audioPreflightTranscript = '';
   private finalTranscriptConfidence: number[] = [];
@@ -1281,13 +1283,14 @@ export class AudioRecognition {
     // the interim is more likely noise the provider retracted, so it is left alone.
     const emptyFinal =
       ev.type === SpeechEventType.FINAL_TRANSCRIPT ? ev.alternatives?.[0] : undefined;
-    // The latest of the two, unless it is a preflight repeating the tail of the interim before
-    // it: most providers send a preflight as the whole segment, but the AssemblyAI plugin sends
-    // only the words since its last preflight.
+    // The latest of the two, unless it is a preflight that repeats the tail of the interim and
+    // starts after it: most providers send a preflight as the whole segment, but the AssemblyAI
+    // plugin sends only the words since its last preflight.
+    const preflightIsChunk =
+      this.lastPreflightStart > this.lastInterimStart &&
+      endsWithWords(this.lastInterimText, this.lastPreflightText);
     const pendingText =
-      this.preflightIsLatest && !endsWithWords(this.lastInterimText, this.lastPreflightText)
-        ? this.lastPreflightText
-        : this.lastInterimText;
+      this.preflightIsLatest && !preflightIsChunk ? this.lastPreflightText : this.lastInterimText;
     if (
       this.commitInterimOnEmptyFinal &&
       emptyFinal !== undefined &&
@@ -1337,6 +1340,7 @@ export class AudioRecognition {
 
         if (!transcript) {
           // stt final transcript received but no transcript
+          this.resetPendingSegment();
           return;
         }
 
@@ -1359,9 +1363,7 @@ export class AudioRecognition {
         this.finalTranscriptConfidence.push(confidence);
         const transcriptChanged = this.audioTranscript !== this.audioPreflightTranscript;
         this.audioInterimTranscript = '';
-        this.lastInterimText = '';
-        this.lastPreflightText = '';
-        this.preflightIsLatest = false;
+        this.resetPendingSegment();
         this.audioPreflightTranscript = '';
 
         if (useSTTSpeakingTime) {
@@ -1424,6 +1426,7 @@ export class AudioRecognition {
           `${this.audioTranscript} ${preflightTranscript}`.trimStart();
         this.audioInterimTranscript = preflightTranscript;
         this.lastPreflightText = preflightTranscript;
+        this.lastPreflightStart = ev.alternatives?.[0]?.startTime ?? 0;
         this.preflightIsLatest = true;
 
         if (useSTTSpeakingTime) {
@@ -1462,6 +1465,7 @@ export class AudioRecognition {
         );
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         this.lastInterimText = this.audioInterimTranscript;
+        this.lastInterimStart = ev.alternatives?.[0]?.startTime ?? 0;
         this.preflightIsLatest = false;
         break;
       case SpeechEventType.START_OF_SPEECH:
@@ -2397,9 +2401,7 @@ export class AudioRecognition {
   clearUserTurn() {
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
-    this.lastInterimText = '';
-    this.lastPreflightText = '';
-    this.preflightIsLatest = false;
+    this.resetPendingSegment();
     this.audioPreflightTranscript = '';
     this.finalTranscriptConfidence = [];
     this.lastFinalTranscriptTime = 0;
@@ -2501,9 +2503,7 @@ export class AudioRecognition {
           this.audioTranscript = `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
         }
         this.audioInterimTranscript = '';
-        this.lastInterimText = '';
-        this.lastPreflightText = '';
-        this.preflightIsLatest = false;
+        this.resetPendingSegment();
 
         const chatCtx = this.hooks.retrieveChatCtx();
         this.logger.debug('running EOU detection on commitUserTurn');
@@ -2597,6 +2597,14 @@ export class AudioRecognition {
     // A speech segment may never produce a transcript or committed turn. End
     // its span after all recognition tasks stop so it is still exported.
     this._endUserTurnSpan();
+  }
+
+  private resetPendingSegment(): void {
+    this.lastInterimText = '';
+    this.lastInterimStart = 0;
+    this.lastPreflightText = '';
+    this.lastPreflightStart = 0;
+    this.preflightIsLatest = false;
   }
 
   private cancelTranscriptionTimeout(): void {

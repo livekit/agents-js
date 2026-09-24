@@ -89,10 +89,10 @@ function vadEvent(type: VADEventType, options: Partial<VADEvent> = {}): VADEvent
   };
 }
 
-function transcript(type: SpeechEventType, text: string): SpeechEvent {
+function transcript(type: SpeechEventType, text: string, startTime = 0): SpeechEvent {
   return {
     type,
-    alternatives: [{ language: 'en', text, startTime: 0, endTime: 0, confidence: 1 }],
+    alternatives: [{ language: 'en', text, startTime, endTime: startTime, confidence: 1 }],
   };
 }
 
@@ -233,7 +233,7 @@ describe('AudioRecognition with an empty final transcript', () => {
     try {
       await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
       await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'Pick up'));
-      await stt(transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'up'));
+      await stt(transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'up', 0.3));
       await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
       await vi.advanceTimersByTimeAsync(1_000);
       await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
@@ -317,6 +317,42 @@ describe('AudioRecognition with an empty final transcript', () => {
       }
     },
   );
+
+  it('promotes a full-segment preflight that drops leading words of the interim', async () => {
+    const { ar, hooks, stt, vadPush, vad } = await startRecognition();
+    try {
+      await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
+      await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'I said pick up'));
+      await stt(transcript(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'pick up'));
+      await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(hooks.onEndOfTurn).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(hooks.onEndOfTurn).mock.calls[0]![0].newTranscript).toBe('pick up');
+    } finally {
+      await closeRecognition(ar, vad);
+    }
+  });
+
+  it('does not carry an earlier segment into a later empty final', async () => {
+    // the first segment closes with an empty final before VAD hears anything
+    const { ar, hooks, stt, vadPush, vad } = await startRecognition();
+    try {
+      await stt(transcript(SpeechEventType.INTERIM_TRANSCRIPT, 'uh'));
+      await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+      await vadPush(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
+      await vadPush(vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 500 }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await stt(transcript(SpeechEventType.FINAL_TRANSCRIPT, ''));
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+    } finally {
+      await closeRecognition(ar, vad);
+    }
+  });
 
   it('counts the promoted interim as the turn transcript for the transcription timeout', async () => {
     // An unlikely end-of-turn holds the commit for maxEndpointingDelay, past the timeout.
