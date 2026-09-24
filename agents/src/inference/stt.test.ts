@@ -1149,6 +1149,52 @@ describe('Inference STT connection lifecycle', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  it('does not retry an error the gateway marks not retryable', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type !== 'session.create') return;
+        socket.send(
+          JSON.stringify({
+            type: 'error',
+            code: 2004,
+            message: 'language th not supported by model: deepgram/nova-3',
+            retryable: false,
+          }),
+        );
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const errors: Error[] = [];
+    stt.on('error', ({ error }) => errors.push(error));
+    const stream = stt.stream();
+
+    try {
+      for await (const _ of stream) {
+        /* drain */
+      }
+
+      expect(connectionCount).toBe(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toBeInstanceOf(APIStatusError);
+      expect(errors[0]).toMatchObject({ statusCode: 2004, retryable: false });
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
 
 describe('Inference STT errors', () => {
