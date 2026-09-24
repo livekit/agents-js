@@ -1,0 +1,26 @@
+agents/src/voice/audio_recognition.ts
+  s_460a57d3a2bf17::t_7d23ec090cb4fd 959-960,1193-1194
+agents/src/voice/playout_launch_pause.test.ts
+  s_460a57d3a2bf17::t_23e2e5b93f170c 12,50,57,139-201
+  s_460a57d3a2bf17::t_d970d22ea6a439 202
+agents/src/voice/agent_activity.ts
+  s_460a57d3a2bf17::t_caba0a33434c9f 5357-5365,5367,5431-5450,5475
+.changeset/fuzzy-dogs-interrupt.md
+  s_460a57d3a2bf17::t_7d23ec090cb4fd 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bfaafe681c6a66ed16fd1f512ed52d0f9142ce77",
+  "prompts": {},
+  "sessions": {
+    "s_460a57d3a2bf17": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d36d-7c5d-7b61-80a3-73dfe1370fbc",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
