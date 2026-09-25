@@ -367,6 +367,20 @@ function recordUserTurnStages(span: Span, userMetrics: MetricsReport): void {
   }
 }
 
+/**
+ * The STT identity for the user_turn span. Plugins that leave the base getters at their
+ * `unknown` default are named by their label instead (its `<provider>-<model>` prefix for the
+ * provider), and the provider is normalized to the GenAI registry spelling like every other
+ * `gen_ai.provider.name` the framework writes.
+ */
+function sttIdentity(stt: STT | undefined): { model?: string; provider?: string } {
+  if (!stt) return {};
+  const label = stt.label;
+  const model = stt.model !== 'unknown' ? stt.model : label;
+  const rawProvider = stt.provider !== 'unknown' ? stt.provider : label.split('-', 1)[0];
+  return { model, provider: traceTypes.genAIProviderName(rawProvider) ?? rawProvider };
+}
+
 /** Stamp how long the speech sat in the queue on its agent_turn span, in seconds. */
 function recordQueueWait(speechHandle: SpeechHandle): void {
   const queueWait = speechHandle._queueWait();
@@ -871,6 +885,8 @@ export class AgentActivity implements RecognitionHooks {
       this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection === true;
     const recognitionVad = this.usingDefaultVad && realtimeUsesServerVad ? undefined : this.vad;
 
+    // as python passes them (a fallback adapter reports the instance expected to serve next)
+    const sttIdent = sttIdentity(this.stt);
     this.audioRecognition = new AudioRecognition({
       recognitionHooks: this,
       // Disable stt node if stt is not provided
@@ -886,10 +902,8 @@ export class AgentActivity implements RecognitionHooks {
       endpointing: createEndpointing(this.endpointingOpts),
       userTurnLimit: this.agentSession.sessionOptions.turnHandling.userTurnLimit,
       rootSpanContext: this.agentSession.rootSpanContext,
-      // the model and provider, as python passes them (a fallback adapter reports the instance
-      // expected to serve next); the label is a class name, not a model
-      sttModel: this.stt?.model,
-      sttProvider: this.stt?.provider,
+      sttModel: sttIdent.model,
+      sttProvider: sttIdent.provider,
       sttAlignedTranscript: Boolean(this.stt?.capabilities.alignedTranscript),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
       shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
@@ -1399,8 +1413,7 @@ export class AgentActivity implements RecognitionHooks {
             await this.audioRecognition.updateStt(
               this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
               {
-                model: resolvedStt?.model,
-                provider: resolvedStt?.provider,
+                ...sttIdentity(resolvedStt),
                 alignedTranscript: Boolean(resolvedStt?.capabilities.alignedTranscript),
                 resetContext: true,
               },
@@ -1499,8 +1512,7 @@ export class AgentActivity implements RecognitionHooks {
             await this.audioRecognition?.updateStt(
               previous.resolvedStt ? (...args) => this.agent.sttNode(...args) : undefined,
               {
-                model: previous.resolvedStt?.model,
-                provider: previous.resolvedStt?.provider,
+                ...sttIdentity(previous.resolvedStt),
                 alignedTranscript: Boolean(previous.resolvedStt?.capabilities.alignedTranscript),
                 resetContext: true,
               },
@@ -4220,20 +4232,30 @@ export class AgentActivity implements RecognitionHooks {
     _previousUserMetrics?: MetricsReport,
   ): Promise<void> =>
     tracer.startActiveSpan(
-      async (span) => (
-        this.recordAgentTurn(span),
-        this._pipelineReplyTaskImpl({
-          stateLease,
-          chatCtx,
-          toolCtx,
-          modelSettings,
-          replyAbortController,
-          instructions,
-          newMessage,
-          span,
-          _previousUserMetrics,
-        })
-      ),
+      async (span) => {
+        this.recordAgentTurn(span);
+        try {
+          await this._pipelineReplyTaskImpl({
+            stateLease,
+            chatCtx,
+            toolCtx,
+            modelSettings,
+            replyAbortController,
+            instructions,
+            newMessage,
+            span,
+            _previousUserMetrics,
+          });
+        } finally {
+          // an interruption while the tools run makes the task return early: the verdict is
+          // stamped here, whichever way the task left
+          span.setAttribute(
+            traceTypes.ATTR_SPEECH_INTERRUPTED,
+            stateLease.speechHandle.interrupted,
+          );
+          recordInterruption(stateLease.speechHandle);
+        }
+      },
       {
         name: 'agent_turn',
         context: this.agentSession.rootSpanContext,

@@ -235,6 +235,15 @@ class FallbackLLMStream extends LLMStream {
     return this.servedLlm?.model ?? this.adapter.model;
   }
 
+  protected override get responseProvider(): string {
+    return this.servedLlm?.provider ?? this.adapter.provider;
+  }
+
+  /** The provider request nested under this stream owns the `chat` operation. */
+  protected override get genAIOperationName(): string | undefined {
+    return undefined;
+  }
+
   /**
    * The instance that served: on the current (attempt) span, and as the response side of the
    * adapter's request span and the caller's (llm_node). Request-side attributes named the

@@ -256,6 +256,20 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     return this.#llm.model;
   }
 
+  /** The provider named on the response side and in the usage metrics (see {@link responseModel}). */
+  protected get responseProvider(): string {
+    return this.#llm.provider;
+  }
+
+  /**
+   * The convention's operation for the request span: `chat` for a provider request. An adapter
+   * that delegates to another stream has none, or a backend counting inference spans would see
+   * two calls for one.
+   */
+  protected get genAIOperationName(): string | undefined {
+    return traceTypes.GenAIOperationName.CHAT;
+  }
+
   protected get llmRequestSpan(): Span | undefined {
     return this.#llmRequestSpan;
   }
@@ -263,7 +277,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   /** The GenAI inference span's request side, per the OTel GenAI conventions. */
   private recordGenAIRequest(span: Span) {
     genAI.setRequestAttributes(span, {
-      operation: traceTypes.GenAIOperationName.CHAT,
+      operation: this.genAIOperationName,
       provider: this.#llm.provider,
       model: this.#llm.model,
       stream: true,
@@ -414,8 +428,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         return (usage?.completionTokens || 0) / (durationMs / 1000);
       })(),
       metadata: {
-        modelProvider: this.#llm.provider,
-        modelName: this.#llm.model,
+        modelProvider: this.responseProvider,
+        modelName: this.responseModel,
       },
     };
 

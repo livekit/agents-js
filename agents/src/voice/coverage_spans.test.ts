@@ -19,17 +19,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
 import { ChatContext } from '../llm/chat_context.js';
 import { FallbackAdapter } from '../llm/fallback_adapter.js';
-import { LLM, LLMStream } from '../llm/llm.js';
-import type { ToolChoice, ToolContextLike } from '../llm/tool_context.js';
+import { type ChatChunk, LLM, LLMStream } from '../llm/llm.js';
+import { type ToolChoice, ToolContext, type ToolContextLike, tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
 import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { delay } from '../utils.js';
+import { Future, delay } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, VADStream } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
-import { AudioInput, AudioOutput } from './io.js';
+import { performLLMInference } from './generation.js';
+import { AudioInput, AudioOutput, type LLMNode } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
@@ -317,6 +318,69 @@ describe.sequential('coverage spans', () => {
     }
   });
 
+  it('records an interruption that lands while the tools are running', async () => {
+    // the reply task returns early when its speech is interrupted while it waits for the
+    // tools, past the point where it stamped the verdict: the turn must still say so
+    const TRANSCRIPT = 'Look it up.';
+    const toolStarted = new Future<void>();
+    const release = new Future<void>();
+    const agent = new Agent({
+      instructions: 'test',
+      tools: {
+        lookup: tool({
+          description: 'a slow lookup',
+          execute: async () => {
+            toolStarted.resolve();
+            await release.await;
+            return 'found';
+          },
+        }),
+      },
+    });
+    const vad = new ScriptedVAD();
+    const stt = new FakeSTT({
+      capabilities: { streaming: true, interimResults: true },
+      fakeUserSpeeches: [{ startTime: 0, endTime: 200, transcript: TRANSCRIPT, sttDelay: 100 }],
+    });
+    const llm = new FakeLLM([{ input: TRANSCRIPT, toolCalls: [{ name: 'lookup', args: {} }] }]);
+    const session = new AgentSession({
+      vad,
+      stt,
+      llm,
+      turnHandling: { turnDetection: 'vad', endpointing: { minDelay: 100, maxDelay: 100 } },
+    });
+    const audioInput = new ScriptedAudioInput();
+    session.input.audio = audioInput;
+    session.output.audio = new PacedOutput();
+    await session.start({ agent });
+    try {
+      audioInput.push(20);
+      await delay(20);
+      vad.startOfSpeech();
+      await delay(200);
+      vad.endOfSpeech();
+      await toolStarted.await;
+      session.interrupt();
+      release.resolve();
+      await waitFor(
+        () =>
+          spansNamed(exporter, 'agent_turn').some(
+            (span) => span.attributes[traceTypes.ATTR_SPEECH_INTERRUPTED] !== undefined,
+          ),
+        10_000,
+        'the interrupted turn to end',
+      );
+    } finally {
+      await session.close();
+    }
+
+    const turn = spansNamed(exporter, 'agent_turn').find(
+      (span) => span.attributes[traceTypes.ATTR_SPEECH_INTERRUPTED] !== undefined,
+    )!;
+    expect(turn.attributes[traceTypes.ATTR_SPEECH_INTERRUPTED]).toBe(true);
+    expect(turn.attributes[traceTypes.ATTR_INTERRUPTION_SOURCE]).toBeTypeOf('string');
+  });
+
   it('a committed user turn interrupts the queued replies for the same reason', async () => {
     // the turn interrupts the reply that is playing and the ones queued behind it: all of
     // them name user_turn, not the programmatic default the queue sweep used to fall back to
@@ -434,16 +498,10 @@ describe.sequential('coverage spans', () => {
     }
   }
 
-  it('names the STT model and provider on user_turn, as python does', async () => {
-    // the label is a class name (`stt.FallbackAdapter`, `fake-stt`): the span carries the
-    // model and provider the STT reports, which for a fallback adapter is the instance expected
-    // to serve next
+  /** One user turn through `stt`, returning its user_turn span. */
+  async function userTurnWith(stt: FakeSTT): Promise<ReadableSpan> {
     const TRANSCRIPT = 'Hello';
     const vad = new ScriptedVAD();
-    const stt = new NamedSTT({
-      capabilities: { streaming: true, interimResults: true },
-      fakeUserSpeeches: [{ startTime: 0, endTime: 200, transcript: TRANSCRIPT, sttDelay: 100 }],
-    });
     const llm = new FakeLLM([{ input: TRANSCRIPT, content: 'Hi there' }]);
     const session = new AgentSession({
       vad,
@@ -473,12 +531,47 @@ describe.sequential('coverage spans', () => {
       await session.close();
     }
 
-    const turn = spansNamed(exporter, 'user_turn').find(
+    return spansNamed(exporter, 'user_turn').find(
       (span) => span.attributes[traceTypes.ATTR_USER_TRANSCRIPT] === TRANSCRIPT,
     )!;
+  }
+
+  const speeches = {
+    capabilities: { streaming: true, interimResults: true },
+    fakeUserSpeeches: [{ startTime: 0, endTime: 200, transcript: 'Hello', sttDelay: 100 }],
+  };
+
+  it('names the STT model and provider on user_turn, as python does', async () => {
+    // the label is a class name (`stt.FallbackAdapter`, `fake-stt`): the span carries the
+    // model and provider the STT reports, which for a fallback adapter is the instance expected
+    // to serve next
+    const stt = new NamedSTT(speeches);
+    const turn = await userTurnWith(stt);
     expect(turn.attributes[traceTypes.ATTR_GEN_AI_REQUEST_MODEL]).toBe('fake-model');
     expect(turn.attributes[traceTypes.ATTR_GEN_AI_PROVIDER_NAME]).toBe('fake-provider');
     expect(turn.attributes[traceTypes.ATTR_GEN_AI_REQUEST_MODEL]).not.toBe(stt.label);
+  });
+
+  it('falls back to the label for an STT that does not report its identity', async () => {
+    // a plugin that leaves the base getters at `unknown` is still named: by its label, whose
+    // `<provider>-<model>` prefix stands in for the provider
+    const stt = new FakeSTT({ ...speeches, label: 'sarvam-saarika' });
+    const turn = await userTurnWith(stt);
+    expect(turn.attributes[traceTypes.ATTR_GEN_AI_REQUEST_MODEL]).toBe('sarvam-saarika');
+    expect(turn.attributes[traceTypes.ATTR_GEN_AI_PROVIDER_NAME]).toBe('sarvam');
+  });
+
+  it('normalizes the STT provider to the GenAI registry spelling', async () => {
+    class DisplayNamedSTT extends FakeSTT {
+      override get model(): string {
+        return 'whisper-1';
+      }
+      override get provider(): string {
+        return 'OpenAI';
+      }
+    }
+    const turn = await userTurnWith(new DisplayNamedSTT(speeches));
+    expect(turn.attributes[traceTypes.ATTR_GEN_AI_PROVIDER_NAME]).toBe('openai');
   });
 
   // -- agent handoff --
@@ -707,11 +800,60 @@ describe.sequential('coverage spans', () => {
     expect(request!.attributes[traceTypes.ATTR_GEN_AI_REQUEST_MODEL]).toBe(primary.model);
     expect(request!.attributes[traceTypes.ATTR_GEN_AI_RESPONSE_MODEL]).toBe(secondary.model);
     expect(request!.attributes[traceTypes.ATTR_GEN_AI_PROVIDER_NAME]).toBe('openai');
+    // the adapter delegates: only the instance's own request under the run is the `chat`, so
+    // a backend counting inference spans sees one call
+    expect(request!.attributes[traceTypes.ATTR_GEN_AI_OPERATION_NAME]).toBeUndefined();
+    const served = spansNamed(exporter, 'llm_request').find(
+      (span) => span.parentSpanContext?.spanId === run.spanContext().spanId,
+    );
+    expect(served?.attributes[traceTypes.ATTR_GEN_AI_OPERATION_NAME]).toBe('chat');
     // the caller's span gets the same response side, per request
     const caller = only(exporter, 'caller');
     expect(caller.attributes[traceTypes.ATTR_GEN_AI_RESPONSE_MODEL]).toBe(secondary.model);
     // and the adapter itself now reports who serves next
     expect(adapter.model).toBe(secondary.model);
     expect(adapter.provider).toBe(secondary.provider);
+  });
+
+  it('keeps the configured model and names the serving provider on llm_node after a failover', async () => {
+    // the node span records its configured identity when the request is made, so the serving
+    // provider a failover stamps afterwards is not overwritten when the node completes
+    const primary = new FailingLLM();
+    const secondary = new ServingLLM([{ input: 'hi', content: 'hello' }]);
+    const adapter = new FallbackAdapter({ llms: [primary, secondary], attemptTimeout: 1 });
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hi' });
+    const node: LLMNode = async (ctx, tools) => {
+      const stream = adapter.chat({ chatCtx: ctx, toolCtx: tools });
+      return new ReadableStream<ChatChunk | string>({
+        async start(controller) {
+          for await (const chunk of stream) controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+    };
+    const [task, data] = performLLMInference(
+      node,
+      chatCtx,
+      ToolContext.empty(),
+      {},
+      new AbortController(),
+      adapter.model,
+      adapter.provider,
+    );
+    const reader = data.textStream.getReader();
+    let text = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (typeof value === 'string') text += value;
+    }
+    await task.result;
+    expect(text).toBe('hello');
+
+    const nodeSpan = only(exporter, 'llm_node');
+    expect(nodeSpan.attributes[traceTypes.ATTR_GEN_AI_REQUEST_MODEL]).toBe(primary.model);
+    expect(nodeSpan.attributes[traceTypes.ATTR_GEN_AI_PROVIDER_NAME]).toBe('openai');
+    expect(nodeSpan.attributes[traceTypes.ATTR_GEN_AI_RESPONSE_MODEL]).toBe(secondary.model);
   });
 });
