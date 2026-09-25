@@ -273,7 +273,43 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
    */
   abstract stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream;
 
+  /**
+   * Open the provider connection ahead of the first synthesis, so it does not pay for the
+   * handshake. Best effort and non-blocking. Called by the framework when an agent starts or
+   * resumes. Providers without a persistent connection need not override this.
+   */
+  prewarm(): void {
+    return;
+  }
+
   async close(): Promise<void> {
+    return;
+  }
+
+  /**
+   * The providers this TTS delegates to, for an adapter that wraps others. The framework counts
+   * its users on the wrapped providers as well, so a provider shared between an adapter and a
+   * direct user is released only when both are done.
+   *
+   * @internal
+   */
+  get _wrappedTts(): readonly TTS[] {
+    return [];
+  }
+
+  /**
+   * Release idle pooled provider connections without closing the TTS.
+   *
+   * The framework calls this once nothing uses the TTS any more: every activity and session that
+   * uses an instance counts as a user, and the last one to close, or an `Agent.updateOptions`
+   * that swaps the instance out, triggers the release. Those connections would otherwise sit idle
+   * until the process exits.
+   * Nothing in flight is interrupted: an in-flight synthesis keeps its connection, which then
+   * closes when it finishes instead of rejoining the pool. The TTS stays usable and reconnects
+   * on the next synthesis.
+   * Providers without a connection pool need not override this.
+   */
+  async releaseIdleConnections(): Promise<void> {
     return;
   }
 }

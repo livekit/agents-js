@@ -118,6 +118,7 @@ import {
   type KeytermsOptions,
   resolveKeytermsOptions,
 } from './keyterm_detection.js';
+import { releaseTts, retainTts } from './model_refs.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
@@ -1085,6 +1086,8 @@ export class AgentSession<
 
     this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 
+    // retained inside the guarded start: a failure below schedules close(), which releases it
+    retainTts(this.tts);
     try {
       await this._startImpl({
         agent,
@@ -2064,6 +2067,9 @@ export class AgentSession<
 
     await activity?.close();
     this.activity = undefined;
+
+    // the session's own use of its TTS is over; other sessions sharing it keep it alive
+    await releaseTts(this.tts);
 
     const sessionToolsets = this._toolCtx.toolsets;
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));

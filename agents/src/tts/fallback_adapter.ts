@@ -307,6 +307,19 @@ export class FallbackAdapter extends TTS {
     // Close all TTS instances
     await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.close()));
   }
+
+  override get _wrappedTts(): readonly TTS[] {
+    return this.ttsInstances;
+  }
+
+  /** Every provider gets its release attempt; one failure surfaces after the others ran. */
+  override async releaseIdleConnections(): Promise<void> {
+    const results = await Promise.allSettled(
+      this.ttsInstances.map((tts) => tts.releaseIdleConnections()),
+    );
+    const failure = results.find((r) => r.status === 'rejected');
+    if (failure) throw failure.reason;
+  }
 }
 
 class FallbackChunkedStream extends ChunkedStream {

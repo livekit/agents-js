@@ -91,7 +91,7 @@ import {
 } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import {
-  Agent,
+  type Agent,
   type AgentUpdateOptions,
   type ModelSettings,
   StopResponse,
@@ -154,6 +154,7 @@ import {
   updateInstructions,
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
+import { releaseTts, retainTts } from './model_refs.js';
 import { type InputDetails, REPLY_TASK_CANCEL_TIMEOUT, SpeechHandle } from './speech_handle.js';
 import {
   ToolExecutor,
@@ -435,6 +436,8 @@ export class AgentActivity implements RecognitionHooks {
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
     this.agentSession = agentSession;
+    // counted from construction, which precedes the previous activity's close during a handoff
+    retainTts(this.tts);
 
     /**
      * Custom comparator to prioritize speech handles with higher priority
@@ -572,10 +575,6 @@ export class AgentActivity implements RecognitionHooks {
   async start(options?: { reuseResources?: ReusableResources }): Promise<void> {
     const unlock = await this.lock.lock();
     try {
-      if (this.llm instanceof LLM) {
-        this.llm.prewarm();
-      }
-
       await this._startSession({
         spanName: 'start_agent_activity',
         runOnEnter: true,
@@ -605,6 +604,7 @@ export class AgentActivity implements RecognitionHooks {
     reuseResources?: ReusableResources;
   }): Promise<void> {
     const { spanName, runOnEnter, reuseResources } = options;
+    this._prewarmModels();
     const startSpan = tracer.startSpan({
       name: spanName,
       attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
@@ -834,8 +834,8 @@ export class AgentActivity implements RecognitionHooks {
         this.stt &&
         newActivity.stt &&
         this.stt === newActivity.stt &&
-        Object.getPrototypeOf(this.agent).sttNode === Agent.prototype.sttNode &&
-        Object.getPrototypeOf(newActivity.agent).sttNode === Agent.prototype.sttNode
+        this.agent._usesDefaultSttNode() &&
+        newActivity.agent._usesDefaultSttNode()
       ) {
         resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
       }
@@ -1280,8 +1280,7 @@ export class AgentActivity implements RecognitionHooks {
         nextLlm.prewarm();
       }
       if (options.tts !== undefined && nextTts instanceof TTS) {
-        const maybePrewarm = nextTts as TTS & { prewarm?: () => void };
-        maybePrewarm.prewarm?.();
+        nextTts.prewarm();
       }
 
       try {
@@ -1454,6 +1453,12 @@ export class AgentActivity implements RecognitionHooks {
           );
         }
         throw error;
+      }
+
+      // the swap committed: this activity now uses the new TTS instead of the previous one
+      if (options.tts !== undefined && previous.resolvedTts !== this.tts) {
+        retainTts(this.tts);
+        await releaseTts(previous.resolvedTts);
       }
     } finally {
       unlock();
@@ -5249,7 +5254,12 @@ export class AgentActivity implements RecognitionHooks {
       await this.cancelSpeechPause({ interrupt: false });
       this.cancelSpeechPauseTask = undefined;
 
-      await this._closeSessionResources();
+      try {
+        await this._closeSessionResources();
+      } finally {
+        // this activity's use of its TTS is over; release even when a provider failed to close
+        await releaseTts(this.tts);
+      }
       await this._toolExecutor.aclose();
 
       if (this._mainTask) {
@@ -5263,6 +5273,22 @@ export class AgentActivity implements RecognitionHooks {
       this.agent._agentActivity = undefined;
     } finally {
       unlock();
+    }
+  }
+
+  /**
+   * Open provider connections while onEnter and the first inference run, so the first reply does
+   * not pay for them. Mirrors python `_start_session`; runs on start and on resume, since a
+   * released agent TTS reconnects here.
+   */
+  private _prewarmModels(): void {
+    for (const model of [this.llm, this.stt, this.tts]) {
+      if (!(model instanceof LLM || model instanceof STT || model instanceof TTS)) continue;
+      try {
+        model.prewarm();
+      } catch (error) {
+        this.logger.warn({ error, model: model.label }, 'model prewarm failed');
+      }
     }
   }
 
