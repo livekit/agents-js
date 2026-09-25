@@ -662,10 +662,18 @@ export async function flushCloudTraces(): Promise<void> {
   const provider = tracer.getProvider() as TracerProvider & {
     forceFlush?: () => Promise<void>;
   };
-  await provider.forceFlush?.();
-  // the batch processor's flush stops at its own batches: the gate's release uploads and the
-  // exporter's other in-flight requests are waited for here
-  await preparedCloud?.gate.forceFlush();
+  const prepared = preparedCloud;
+  // three independent queues, each drained whatever the others do: the active provider; the
+  // prepared provider when the entrypoint installed its own (job_entrypoint still sits in the
+  // prepared batch queue); and the gate, whose release uploads and other in-flight requests
+  // a batch processor's flush does not wait for. The first failure surfaces once all ran.
+  const results = await Promise.allSettled([
+    provider.forceFlush?.(),
+    prepared && prepared.provider !== provider ? prepared.provider.forceFlush() : undefined,
+    prepared?.gate.forceFlush(),
+  ]);
+  const failure = results.find((r) => r.status === 'rejected');
+  if (failure) throw failure.reason;
 }
 
 /**

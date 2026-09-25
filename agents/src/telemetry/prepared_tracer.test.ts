@@ -24,6 +24,7 @@ import * as traceTypes from './trace_types.js';
 import {
   _resetPreparedCloudTracer,
   discardPreparedCloudTracer,
+  flushCloudTraces,
   prepareCloudTracer,
   setTracerProvider,
   setupCloudTracer,
@@ -245,6 +246,30 @@ describe('prepared cloud tracer', () => {
     await flush();
     expect(seen.map((span) => span.name)).toEqual(['job_entrypoint', 'agent_turn']);
     expect(seen[1]!.attributes['lk.simulation.enabled']).toBe(true);
+  });
+
+  it('flushes the prepared provider and the gate even when the active provider fails', async () => {
+    // the entrypoint installed its own provider: job_entrypoint still sits in the prepared
+    // provider's batch queue, and the gate's release uploads are its own queue. Neither may be
+    // skipped because the active provider's flush rejects
+    cloudExports();
+    await prepareCloudTracer({
+      roomId: 'RM_1',
+      jobId: 'AJ_1',
+      observabilityUrl: 'https://example.livekit.cloud',
+    });
+    const prepared = tracer.getProvider() as NodeTracerProvider;
+    const preparedFlush = vi.spyOn(prepared, 'forceFlush').mockResolvedValue();
+    const gateFlush = vi.spyOn(JobSpanGateExporter.prototype, 'forceFlush').mockResolvedValue();
+
+    const user = new NodeTracerProvider();
+    vi.spyOn(user, 'forceFlush').mockRejectedValue(new Error('user provider flush failed'));
+    setTracerProvider(user);
+
+    await expect(flushCloudTraces()).rejects.toThrow('user provider flush failed');
+    expect(preparedFlush).toHaveBeenCalledTimes(1);
+    expect(gateFlush).toHaveBeenCalledTimes(1);
+    await user.shutdown();
   });
 
   it('drops the held spans of a job that never registers, or registers without traces', async () => {

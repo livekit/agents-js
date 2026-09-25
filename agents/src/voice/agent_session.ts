@@ -2194,14 +2194,32 @@ export class AgentSession<
 
         this.started = false;
 
-        if (wasStarted) this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
-
-        await this.sessionHost?.close();
-        this.sessionHost = undefined;
-
+        // each step runs whatever the previous one did: a throwing Close listener must not
+        // leave the transports open. The first failure is rethrown once all three ran
+        const failures: unknown[] = [];
+        if (wasStarted) {
+          try {
+            this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
+          } catch (e) {
+            failures.push(e);
+          }
+        }
+        try {
+          await this.sessionHost?.close();
+        } catch (e) {
+          failures.push(e);
+        } finally {
+          this.sessionHost = undefined;
+        }
         // close room io after the close event is emitted
-        await this._roomIO?.close();
-        this._roomIO = undefined;
+        try {
+          await this._roomIO?.close();
+        } catch (e) {
+          failures.push(e);
+        } finally {
+          this._roomIO = undefined;
+        }
+        if (failures.length) throw failures[0];
       });
     } finally {
       // the session is closed whatever the teardown raised

@@ -54,6 +54,28 @@ describe('AgentSession close', () => {
 
     expect(closeSessionHost).toHaveBeenCalledOnce();
   });
+
+  it('closes the transports even when a Close listener throws, then rethrows', async () => {
+    const session = new AgentSession({ vad: null });
+    const internals = session as unknown as AgentSessionCloseInternals & {
+      _roomIO?: { close: () => Promise<void> };
+    };
+    const closeSessionHost = vi.fn(async () => {});
+    const closeRoomIO = vi.fn(async () => {});
+    internals.started = true;
+    internals.sessionHost = { close: closeSessionHost };
+    internals._roomIO = { close: closeRoomIO };
+    session.on(AgentSessionEventTypes.Close, () => {
+      throw new Error('listener exploded');
+    });
+
+    await expect(session.close()).rejects.toThrow('listener exploded');
+
+    expect(closeSessionHost).toHaveBeenCalledOnce();
+    expect(closeRoomIO).toHaveBeenCalledOnce();
+    expect(internals.sessionHost).toBeUndefined();
+    expect(internals._roomIO).toBeUndefined();
+  });
 });
 
 describe('AgentSession AEC warmup', () => {
