@@ -118,7 +118,7 @@ import {
   type KeytermsOptions,
   resolveKeytermsOptions,
 } from './keyterm_detection.js';
-import { markFrameworkOwned, releaseIfFrameworkOwned } from './model_ownership.js';
+import { releaseTts, retainTts } from './model_refs.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
@@ -728,13 +728,13 @@ export class AgentSession<
     }
 
     if (typeof stt === 'string') {
-      this.stt = markFrameworkOwned(InferenceSTT.fromModelString(stt));
+      this.stt = InferenceSTT.fromModelString(stt);
     } else {
       this.stt = stt;
     }
 
     if (typeof llm === 'string') {
-      this.llm = markFrameworkOwned(InferenceLLM.fromModelString(llm));
+      this.llm = InferenceLLM.fromModelString(llm);
     } else if (llm instanceof DuplexModel) {
       this.llm = new DuplexRealtimeAdapter(llm);
     } else {
@@ -747,7 +747,7 @@ export class AgentSession<
     }
 
     if (typeof tts === 'string') {
-      this.tts = markFrameworkOwned(InferenceTTS.fromModelString(tts));
+      this.tts = InferenceTTS.fromModelString(tts);
     } else {
       this.tts = tts;
     }
@@ -1031,6 +1031,7 @@ export class AgentSession<
     }
 
     this.closing = false;
+    retainTts(this.tts);
     if (this.closingController.signal.aborted) {
       this.closingController = new AbortController();
     }
@@ -2066,8 +2067,8 @@ export class AgentSession<
     await activity?.close();
     this.activity = undefined;
 
-    // nothing synthesizes on the session TTS after the last activity closed
-    await releaseIfFrameworkOwned(this.tts);
+    // the session's own use of its TTS is over; other sessions sharing it keep it alive
+    await releaseTts(this.tts);
 
     const sessionToolsets = this._toolCtx.toolsets;
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));

@@ -154,7 +154,7 @@ import {
   updateInstructions,
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
-import { releaseIfFrameworkOwned } from './model_ownership.js';
+import { releaseTts, retainTts } from './model_refs.js';
 import { type InputDetails, REPLY_TASK_CANCEL_TIMEOUT, SpeechHandle } from './speech_handle.js';
 import {
   ToolExecutor,
@@ -436,6 +436,8 @@ export class AgentActivity implements RecognitionHooks {
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
     this.agentSession = agentSession;
+    // counted from construction, which precedes the previous activity's close during a handoff
+    retainTts(this.tts);
 
     /**
      * Custom comparator to prioritize speech handles with higher priority
@@ -1453,9 +1455,10 @@ export class AgentActivity implements RecognitionHooks {
         throw error;
       }
 
-      // the swap committed: a displaced framework-built TTS has no other user
-      if (options.tts !== undefined && previous.tts !== this.tts) {
-        await releaseIfFrameworkOwned(previous.tts);
+      // the swap committed: this activity now uses the new TTS instead of the previous one
+      if (options.tts !== undefined && previous.resolvedTts !== this.tts) {
+        retainTts(this.tts);
+        await releaseTts(previous.resolvedTts);
       }
     } finally {
       unlock();
@@ -5254,9 +5257,8 @@ export class AgentActivity implements RecognitionHooks {
       try {
         await this._closeSessionResources();
       } finally {
-        // the agent's own TTS (never the session's) has no further user; release it even when a
-        // provider failed to close above
-        await releaseIfFrameworkOwned(this.agent._tts);
+        // this activity's use of its TTS is over; release even when a provider failed to close
+        await releaseTts(this.tts);
       }
       await this._toolExecutor.aclose();
 

@@ -289,10 +289,10 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
   /**
    * Release idle pooled provider connections without closing the TTS.
    *
-   * The framework calls this on a TTS it built from a model string once it is done with it: when
-   * the agent's activity closes, when `Agent.updateOptions` replaces it, and when the session
-   * closes. Those connections would otherwise sit idle until the process exits. A TTS instance you
-   * constructed is never released automatically; call this yourself to drop its idle connections.
+   * The framework calls this once nothing uses the TTS any more: every activity and session that
+   * uses an instance counts as a user, and the last one to close, or an `Agent.updateOptions`
+   * that swaps the instance out, triggers the release. Those connections would otherwise sit idle
+   * until the process exits.
    * Nothing in flight is interrupted: an in-flight synthesis keeps its connection, which then
    * closes when it finishes instead of rejoining the pool. The TTS stays usable and reconnects
    * on the next synthesis.

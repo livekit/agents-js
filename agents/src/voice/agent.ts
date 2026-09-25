@@ -46,7 +46,6 @@ import {
 } from './agent_v2.js';
 import type { UserTurnExceededEvent } from './events.js';
 import type { TimedString } from './io.js';
-import { markFrameworkOwned } from './model_ownership.js';
 import type { SpeechHandle } from './speech_handle.js';
 import type { ToolHandlingOptions } from './tool_executor.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
@@ -271,13 +270,13 @@ export class Agent<UserData = any> {
     this._vad = vad;
 
     if (typeof stt === 'string') {
-      this._stt = markFrameworkOwned(InferenceSTT.fromModelString(stt));
+      this._stt = InferenceSTT.fromModelString(stt);
     } else {
       this._stt = stt;
     }
 
     if (typeof llm === 'string') {
-      this._llm = markFrameworkOwned(InferenceLLM.fromModelString(llm));
+      this._llm = InferenceLLM.fromModelString(llm);
     } else if (llm instanceof DuplexModel) {
       this._llm = new DuplexRealtimeAdapter(llm);
     } else {
@@ -285,7 +284,7 @@ export class Agent<UserData = any> {
     }
 
     if (typeof tts === 'string') {
-      this._tts = markFrameworkOwned(InferenceTTS.fromModelString(tts));
+      this._tts = InferenceTTS.fromModelString(tts);
     } else {
       this._tts = tts;
     }
@@ -454,15 +453,15 @@ export class Agent<UserData = any> {
   async updateOptions(options: AgentUpdateOptions = {}): Promise<void> {
     const resolved: AgentUpdateOptions = { ...options };
     if (typeof resolved.stt === 'string') {
-      resolved.stt = markFrameworkOwned(InferenceSTT.fromModelString(resolved.stt));
+      resolved.stt = InferenceSTT.fromModelString(resolved.stt);
     }
     if (typeof resolved.llm === 'string') {
-      resolved.llm = markFrameworkOwned(InferenceLLM.fromModelString(resolved.llm));
+      resolved.llm = InferenceLLM.fromModelString(resolved.llm);
     } else if (resolved.llm instanceof DuplexModel) {
       resolved.llm = new DuplexRealtimeAdapter(resolved.llm);
     }
     if (typeof resolved.tts === 'string') {
-      resolved.tts = markFrameworkOwned(InferenceTTS.fromModelString(resolved.tts));
+      resolved.tts = InferenceTTS.fromModelString(resolved.tts);
     }
 
     if (!this._agentActivity) {
