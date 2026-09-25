@@ -1,0 +1,28 @@
+examples/src/basic_agent.ts
+  s_460a57d3a2bf17::t_7b8cc10dd487df 18,22,45-48,108
+  s_460a57d3a2bf17::t_7452ac552092f2 51
+agents/src/voice/realtime_overlapping_speech.test.ts
+  s_460a57d3a2bf17::t_d709709b15d9a0 223-233
+  s_460a57d3a2bf17::t_a0e5ad12b013d7 12,15,168-222,234-235,251-259
+  s_460a57d3a2bf17::t_d5d186c953fd21 236-250
+.changeset/fuzzy-dogs-interrupt.md
+  s_460a57d3a2bf17::t_3dbb05a2e2163a 8
+agents/src/voice/agent_activity.ts
+  s_460a57d3a2bf17::t_c554250e6f12e7 4186-4188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "883389f06191811d6a2827aaa5e5b27604a3412d",
+  "prompts": {},
+  "sessions": {
+    "s_460a57d3a2bf17": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d36d-7c5d-7b61-80a3-73dfe1370fbc",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
