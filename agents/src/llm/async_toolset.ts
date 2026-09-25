@@ -14,7 +14,7 @@ export class AsyncToolset extends Toolset {
   readonly _executor = new ToolExecutor({ owningActivity: null });
   private readonly asyncToolOptionsOverride?: ToolHandlingOptions['asyncOptions'];
 
-  private constructor({ id, tools, toolHandling }: AsyncToolsetCreateOptions) {
+  protected constructor({ id, tools, toolHandling }: AsyncToolsetCreateOptions) {
     super({ id, tools });
     this.asyncToolOptionsOverride = toolHandling?.asyncOptions;
   }

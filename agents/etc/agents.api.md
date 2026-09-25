@@ -1088,6 +1088,7 @@ export interface AsyncToolOptions {
 //
 // @public (undocumented)
 export class AsyncToolset extends Toolset {
+    protected constructor(input: AsyncToolsetCreateOptions);
     // (undocumented)
     aclose(): Promise<void>;
     // (undocumented)
@@ -5402,7 +5403,22 @@ declare namespace llm {
         SerializedImage,
         FallbackAdapter,
         AvailabilityChangedEvent,
-        FallbackAdapterOptions
+        FallbackAdapterOptions,
+        MCPServer,
+        MCPServerHTTP,
+        MCPServerStdio,
+        MCPToolset,
+        MCPHTTPTransportType,
+        MCPServerHTTPOptions,
+        MCPServerOptions,
+        MCPServerStdioOptions,
+        MCPToolCallResult,
+        MCPToolContent,
+        MCPToolDescriptor,
+        MCPToolResultContext,
+        MCPToolResultResolver,
+        MCPToolOptions,
+        MCPToolsetOptions
     }
 }
 
@@ -5753,6 +5769,201 @@ const MAX_SPANS_PER_MINUTE = 6;
 //
 // @public
 function maxInputLen(provider: string): number | undefined;
+
+// Warning: (ae-missing-release-tag) "MCPHTTPTransportType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type MCPHTTPTransportType = 'sse' | 'streamable_http';
+
+// Warning: (ae-missing-release-tag) "MCPServer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export abstract class MCPServer {
+    constructor(options?: MCPServerOptions);
+    // (undocumented)
+    aclose(): Promise<void>;
+    // (undocumented)
+    protected abstract createTransport(): Promise<unknown>;
+    // (undocumented)
+    protected filterTools(tools: readonly MCPToolDescriptor[]): readonly MCPToolDescriptor[];
+    // @internal
+    get _hasBoundedRequests(): boolean;
+    // (undocumented)
+    initialize(): Promise<void>;
+    // (undocumented)
+    get initialized(): boolean;
+    // (undocumented)
+    invalidateCache(): void;
+    // (undocumented)
+    listTools(options?: Record<string, MCPToolOptions>): Promise<FunctionTool[]>;
+    // (undocumented)
+    protected logger: Logger;
+    // (undocumented)
+    protected notifyToolsChanged(): Promise<void>;
+    // (undocumented)
+    onToolsChanged(listener: () => void | Promise<void>): () => void;
+}
+
+// Warning: (ae-missing-release-tag) "MCPServerHTTP" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export class MCPServerHTTP extends MCPServer {
+    constructor(options: MCPServerHTTPOptions);
+    // (undocumented)
+    protected createTransport(): Promise<unknown>;
+    // (undocumented)
+    protected filterTools(tools: readonly MCPToolDescriptor[]): readonly MCPToolDescriptor[];
+    // (undocumented)
+    readonly transportType: MCPHTTPTransportType;
+    // (undocumented)
+    readonly url: string;
+}
+
+// Warning: (ae-missing-release-tag) "MCPServerHTTPOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export interface MCPServerHTTPOptions extends MCPServerOptions {
+    // (undocumented)
+    allowedTools?: string[];
+    allowInsecureHttp?: boolean;
+    // (undocumented)
+    headers?: Record<string, string>;
+    // (undocumented)
+    transportType?: MCPHTTPTransportType;
+    // (undocumented)
+    url: string;
+}
+
+// Warning: (ae-missing-release-tag) "MCPServerOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export interface MCPServerOptions {
+    // (undocumented)
+    clientSessionTimeout?: number | null;
+    // (undocumented)
+    toolResultResolver?: MCPToolResultResolver;
+}
+
+// Warning: (ae-missing-release-tag) "MCPServerStdio" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export class MCPServerStdio extends MCPServer {
+    constructor(options: MCPServerStdioOptions);
+    // (undocumented)
+    readonly args: string[];
+    // (undocumented)
+    readonly command: string;
+    // (undocumented)
+    protected createTransport(): Promise<unknown>;
+    // (undocumented)
+    readonly cwd?: string;
+    // (undocumented)
+    readonly env?: Record<string, string>;
+}
+
+// Warning: (ae-missing-release-tag) "MCPServerStdioOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export interface MCPServerStdioOptions extends MCPServerOptions {
+    // (undocumented)
+    args?: string[];
+    // (undocumented)
+    command: string;
+    // (undocumented)
+    cwd?: string;
+    // (undocumented)
+    env?: Record<string, string>;
+}
+
+// Warning: (ae-missing-release-tag) "MCPToolCallResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export interface MCPToolCallResult {
+    // (undocumented)
+    [key: string]: unknown;
+    // (undocumented)
+    content: MCPToolContent[];
+    // (undocumented)
+    isError?: boolean;
+    // (undocumented)
+    structuredContent?: unknown;
+}
+
+// Warning: (ae-missing-release-tag) "MCPToolContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type MCPToolContent = {
+    type: string;
+    [key: string]: unknown;
+};
+
+// Warning: (ae-missing-release-tag) "MCPToolDescriptor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export interface MCPToolDescriptor {
+    // (undocumented)
+    description?: string;
+    // (undocumented)
+    inputSchema: Record<string, unknown>;
+    // (undocumented)
+    _meta?: Record<string, unknown>;
+    // (undocumented)
+    name: string;
+}
+
+// Warning: (ae-missing-release-tag) "MCPToolOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export interface MCPToolOptions {
+    // (undocumented)
+    flags?: number;
+    // (undocumented)
+    onDuplicate?: DuplicateMode;
+    // (undocumented)
+    reportProgress?: boolean;
+}
+
+// Warning: (ae-missing-release-tag) "MCPToolResultContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export interface MCPToolResultContext {
+    // (undocumented)
+    arguments: JSONObject;
+    // (undocumented)
+    result: MCPToolCallResult;
+    // (undocumented)
+    toolName: string;
+}
+
+// Warning: (ae-missing-release-tag) "MCPToolResultResolver" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type MCPToolResultResolver = (ctx: MCPToolResultContext) => unknown | Promise<unknown>;
+
+// Warning: (ae-missing-release-tag) "MCPToolset" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export class MCPToolset extends AsyncToolset {
+    constructor(input: MCPToolsetOptions);
+    // (undocumented)
+    aclose(): Promise<void>;
+    // (undocumented)
+    setup(ctx: ToolsetContext): Promise<void>;
+}
+
+// Warning: (ae-missing-release-tag) "MCPToolsetOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export interface MCPToolsetOptions {
+    // (undocumented)
+    id: string;
+    // (undocumented)
+    mcpServer: MCPServer;
+    // (undocumented)
+    toolHandling?: AsyncToolsetCreateOptions['toolHandling'];
+    // (undocumented)
+    toolOptions?: Record<string, MCPToolOptions>;
+}
 
 // Warning: (ae-missing-release-tag) "mergeFrames" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioFrame"
