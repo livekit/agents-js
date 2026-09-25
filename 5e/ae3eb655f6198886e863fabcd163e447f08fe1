@@ -1,0 +1,19 @@
+examples/src/Dockerfile-example
+  s_68d5dda11e1300::t_f87344a72b20c7 73,75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5eae3eb655f6198886e863fabcd163e447f08fe1",
+  "prompts": {},
+  "sessions": {
+    "s_68d5dda11e1300": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d902-3988-7d11-8172-213a6f05ae68",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
