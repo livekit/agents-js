@@ -3,6 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 27-38 lines
+
+/** Supported MiniMax LLM models. */
+export type ChatModels =
+  | 'MiniMax-M3'
+  | 'MiniMax-M2.7'
+  | 'MiniMax-M2.7-highspeed'
+  | 'MiniMax-M2.5'
+  | 'MiniMax-M2.1';
+
 /** Supported MiniMax TTS models. */
 export type TTSModel =
   | 'speech-2.8-hd'
