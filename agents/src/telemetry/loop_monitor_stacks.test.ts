@@ -221,6 +221,29 @@ describe('BlockedSpanTracker', () => {
     session.end();
   });
 
+  it('confines the parent to the trace of the fallback context', () => {
+    // a background HTTP request of the application, open in its own trace, was created after
+    // the tool: newest by timing, but not a candidate for the job's stall
+    vi.useFakeTimers();
+    const T = 4_000_000;
+    vi.setSystemTime(T);
+    const tracker = new BlockedSpanTracker({ retention: 60_000 });
+    const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
+    const t = provider.getTracer('test');
+    const session = t.startSpan('agent_session');
+    const sessionCtx = trace.setSpan(ROOT_CONTEXT, session);
+    const tool = t.startSpan('function_tool', {}, sessionCtx);
+    vi.setSystemTime(T + 10);
+    const http = t.startSpan('http.request'); // a root of its own: another trace
+    vi.setSystemTime(T + 100);
+    expect(tracker.blockedSpan(T + 50, T + 80, new Set())).toBe(http);
+    const ctx = tracker.blockedContext(T + 50, T + 80, new Set(), sessionCtx);
+    expect(trace.getSpan(ctx!)).toBe(tool);
+    http.end();
+    tool.end();
+    session.end();
+  });
+
   it('keeps a blocking RPC when its span ends before the late heartbeat', async () => {
     vi.useFakeTimers();
     const T = 3_000_000;

@@ -59,17 +59,26 @@ export class BlockedSpanTracker implements SpanProcessor {
    * timing at both ends. The late heartbeat can run well after the blocking call and its span
    * ended, so requiring a span to cover the report's end would discard the actual blocker.
    *
+   * Only spans of `traceId` qualify when given: the processor sees every span of the provider,
+   * and a span of an unrelated trace (an application's own HTTP request, say) that happened to
+   * be open must not pull the stall out of the job's trace.
+   *
    * Among the spans that qualify, the innermost of one ancestry is the answer. When two
    * operations of the same kind were both in flight (two tools, two RPC handlers), timing alone
    * cannot say which one blocked: the answer is then their nearest common ancestor, or nothing,
    * rather than a guess at one of them. Operations of different kinds overlap all the time (a
-   * user turn is open while an RPC handler runs) and the newest of them is the one that blocked.
+   * user turn is open while an RPC handler runs, an audio wait while an RPC blocks) and the
+   * newest of them is taken to be the one that blocked. That is a guess too: a tool awaiting
+   * I/O can resume and block while a newer RPC handler is itself awaiting I/O, and the RPC gets
+   * the blame. The alternative, their common ancestor, would file every stall during a wait
+   * under the session, so the guess is kept.
    */
   blockedSpan(
     startedAt: number,
     endedAt: number,
     exclude: ReadonlySet<string>,
     slack = 2,
+    traceId?: string,
   ): Span | undefined {
     const opened = startedAt + slack;
     const closed = Math.min(endedAt - slack, startedAt + slack);
@@ -77,6 +86,7 @@ export class BlockedSpanTracker implements SpanProcessor {
     const consider = (entry: { span: Span; createdAt: number }) => {
       if (entry.createdAt > opened) return;
       if (exclude.has(spanName(entry.span))) return;
+      if (traceId !== undefined && entry.span.spanContext().traceId !== traceId) return;
       candidates.set(entry.span.spanContext().spanId, entry);
     };
     for (const entry of this.#open.values()) consider(entry);
@@ -119,7 +129,10 @@ export class BlockedSpanTracker implements SpanProcessor {
     return candidates.get(shared)!.span;
   }
 
-  /** The context carrying {@link blockedSpan}, or undefined. */
+  /**
+   * The context carrying {@link blockedSpan}, or undefined. Candidates are confined to `base`'s
+   * trace (the session's or the job's) when it carries one.
+   */
   blockedContext(
     startedAt: number,
     endedAt: number,
@@ -127,7 +140,8 @@ export class BlockedSpanTracker implements SpanProcessor {
     base: Context,
     slack = 2,
   ): Context | undefined {
-    const span = this.blockedSpan(startedAt, endedAt, exclude, slack);
+    const traceId = trace.getSpanContext(base)?.traceId;
+    const span = this.blockedSpan(startedAt, endedAt, exclude, slack, traceId);
     return span ? trace.setSpan(base, span) : undefined;
   }
 

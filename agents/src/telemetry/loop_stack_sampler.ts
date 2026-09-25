@@ -137,12 +137,17 @@ async function enable() {
   s.on('Debugger.paused', (event) => {
     if (pausing) {
       pausing.resolve(event.params);
-    } else {
-      // a debugger statement in user code, which only pauses because this session enabled
-      // the domain: resume, as it would have been a no-op without it. Breakpoints of a real
-      // debugger never reach here: the monitor disables sampling as soon as one attaches
-      s.post('Debugger.resume', () => undefined);
+      return;
     }
+    if (inspector.url() !== undefined) {
+      // a real debugger attached and paused before the monitor's next heartbeat could notice
+      // it: the pause is its, not ours to resume. Get out of its way now
+      void disable();
+      return;
+    }
+    // a debugger statement in user code, which only pauses because this session enabled the
+    // domain: resume, as it would have been a no-op without it
+    s.post('Debugger.resume', () => undefined);
   });
   const from = Date.now();
   session = s;
