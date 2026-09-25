@@ -4183,6 +4183,9 @@ export class AgentActivity implements RecognitionHooks {
       if (this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech(startedAt);
       }
+      if (this.isInterruptionDetectionEnabled) {
+        this.disableVadInterruptionSoon();
+      }
     };
 
     interface MessageOutput extends ForwardOutput {
