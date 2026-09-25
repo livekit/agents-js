@@ -2581,6 +2581,36 @@ export class AudioRecognition {
     this.hooks.onTranscriptionTimeout(this.turnSpeechDuration, this.userTurnStart);
   }
 
+  /**
+   * Put a realtime model's own transcript on a `user_turn` span.
+   *
+   * No VAD or STT event opens a span for a server-detected turn, so one opened here is
+   * back-dated to `turnStartedAt` and closed at once; one a VAD opened is left to it.
+   */
+  onRealtimeUserTranscript({
+    transcript,
+    confidence,
+    turnStartedAt,
+  }: {
+    transcript: string;
+    confidence?: number;
+    turnStartedAt?: number;
+  }): void {
+    const alreadyOpen = this.userTurnSpan !== undefined && this.userTurnSpan.isRecording();
+    const span = this.ensureUserTurnSpan(turnStartedAt);
+    span.setAttribute(traceTypes.ATTR_USER_TRANSCRIPT, transcript);
+    if (confidence !== undefined) {
+      span.setAttribute(traceTypes.ATTR_TRANSCRIPT_CONFIDENCE, confidence);
+    }
+    if (turnStartedAt === undefined) {
+      // the provider gave no turn start, so the span's duration is not the speech duration
+      span.setAttribute(traceTypes.ATTR_USER_TURN_START_ESTIMATED, true);
+    }
+    if (!alreadyOpen) {
+      this._endUserTurnSpan();
+    }
+  }
+
   private _endUserTurnSpan(info?: {
     transcript: string;
     confidence: number;
