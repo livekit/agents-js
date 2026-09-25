@@ -2542,8 +2542,10 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const oldTask = this._userTurnCompletedTask;
-    // the user turn ends after onUserTurnCompleted (see endAdoptedUserTurnSpan)
-    info.userTurnSpanAdopted = info.userTurnSpan !== undefined;
+    // the user turn ends after onUserTurnCompleted (see endAdoptedUserTurnSpan). A skipped
+    // reply returns at once, before recognition has stamped the transcript and timings on
+    // the span, so that turn is left for recognition to end
+    info.userTurnSpanAdopted = info.userTurnSpan !== undefined && !info.skipReply;
     this._userTurnCompletedTask = this.createSpeechTask({
       taskFn: () => this.userTurnCompleted(info, oldTask),
       name: 'AgentActivity.userTurnCompleted',
@@ -3273,7 +3275,6 @@ export class AgentActivity implements RecognitionHooks {
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
     const { speechHandle } = stateLease;
-    speechHandle._agentTurnContext = otelContext.active();
 
     speechHandleStorage.enterWith(speechHandle);
 
@@ -3480,7 +3481,8 @@ export class AgentActivity implements RecognitionHooks {
     _previousUserMetrics?: MetricsReport;
   }): Promise<void> => {
     const { speechHandle } = stateLease;
-    speechHandle._agentTurnContext = otelContext.active();
+    // the turn's context is built from its span, never from whatever is current here
+    speechHandle._agentTurnContext = trace.setSpan(otelContext.active(), span);
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
     if (instructions) {
@@ -4206,7 +4208,8 @@ export class AgentActivity implements RecognitionHooks {
     inferenceSpan: Span;
   }): Promise<void> {
     const { speechHandle } = stateLease;
-    speechHandle._agentTurnContext = otelContext.active();
+    // the turn's context is built from its span, never from whatever is current here
+    speechHandle._agentTurnContext = trace.setSpan(otelContext.active(), span);
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
 

@@ -2691,12 +2691,15 @@ export class AudioRecognition {
 
   /** The wait owns the `eou_detection` span's end so it can close it early. */
   private releaseEouDetectionSpan(span: Span): void {
-    if (this.eouDetectionSpan === span) {
+    const isCurrent = this.eouDetectionSpan === span;
+    if (isCurrent) {
       this.eouDetectionSpan = undefined;
     }
     if (span.isRecording()) {
-      this.eouWaitFloor = Date.now();
-      span.end(this.eouWaitFloor);
+      const endedAt = Date.now();
+      // only the turn's own prediction moves the floor: a stale one ending late must not
+      if (isCurrent) this.eouWaitFloor = endedAt;
+      span.end(endedAt);
     }
   }
 

@@ -30,6 +30,7 @@ import { Future, delay } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, VADStream } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
+import type { AMD } from './amd.js';
 import {
   AudioRecognition,
   type RecognitionHooks,
@@ -403,6 +404,31 @@ describe.sequential('eou_wait span', () => {
       }
     });
 
+    it('lets only the current eou_detection move the wait floor', async () => {
+      // a detection superseded by a re-armed trigger may resolve after the newer one: it is
+      // ended, but the floor the wait is measured against belongs to the current prediction
+      const { ar } = await makeRecognition({ minDelay: 10 });
+      try {
+        const t = provider.getTracer('test');
+        const stale = t.startSpan('eou_detection');
+        const current = t.startSpan('eou_detection');
+        ar['eouDetectionSpan'] = current;
+        ar['eouWaitFloor'] = undefined;
+
+        ar['releaseEouDetectionSpan'](stale);
+        expect(ar['eouWaitFloor']).toBeUndefined();
+        expect(ar['eouDetectionSpan']).toBe(current);
+        expect(stale.isRecording()).toBe(false);
+
+        ar['releaseEouDetectionSpan'](current);
+        expect(ar['eouWaitFloor']).toBeTypeOf('number');
+        expect(ar['eouDetectionSpan']).toBeUndefined();
+        expect(current.isRecording()).toBe(false);
+      } finally {
+        await ar.close();
+      }
+    });
+
     it('drops an open wait when turn detection switches to manual', async () => {
       const { ar } = await makeRecognition({ minDelay: 1000 });
       try {
@@ -510,7 +536,14 @@ describe.sequential('eou_wait span', () => {
      * later, the hook runs, and the fake LLM's reply plays out. Returns once the reply's turn
      * carries its end-to-end latency, then closes the session.
      */
-    async function runOneTurn(agent: HookAgent, configure?: (session: AgentSession) => void) {
+    async function runOneTurn(
+      agent: HookAgent,
+      configure?: (session: AgentSession) => void,
+      until: () => boolean = () =>
+        spansNamed(exporter, 'agent_turn').some(
+          (span) => traceTypes.ATTR_E2E_LATENCY in span.attributes,
+        ),
+    ) {
       const vad = new ScriptedVAD();
       const stt = new FakeSTT({
         capabilities: { streaming: true, interimResults: true },
@@ -537,14 +570,7 @@ describe.sequential('eou_wait span', () => {
         vad.startOfSpeech(0);
         await delay(200);
         vad.endOfSpeech();
-        await waitFor(
-          () =>
-            spansNamed(exporter, 'agent_turn').some(
-              (span) => traceTypes.ATTR_E2E_LATENCY in span.attributes,
-            ),
-          10_000,
-          'the reply to play',
-        );
+        await waitFor(until, 10_000, 'the turn to complete');
       } finally {
         await session.close();
       }
@@ -620,6 +646,33 @@ describe.sequential('eou_wait span', () => {
       expect(hook.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
       expect(endMs(userTurn)).toBeGreaterThanOrEqual(endMs(wait) - CLOCK_SLACK_MS);
       expect(endMs(userTurn)).toBeGreaterThanOrEqual(endMs(hook) - CLOCK_SLACK_MS);
+    });
+
+    it('leaves a skipped turn for recognition to end, transcript included', async () => {
+      // AMD taking over the turn skips the reply: the activity's completion task returns at
+      // once, so it must not adopt the span, or it would end it before recognition stamps it
+      const hook = vi.fn(async () => {});
+      await runOneTurn(
+        new HookAgent(hook),
+        (session) =>
+          session._setAmd({
+            onUserSpeechStarted: () => {},
+            onUserSpeechEnded: () => {},
+            onTranscript: () => {},
+            onEndOfTurn: () => true,
+          } as unknown as AMD),
+        () => spansNamed(exporter, 'user_turn').length > 0,
+      );
+
+      const userTurn = only(exporter, 'user_turn');
+      expect(userTurn.attributes[traceTypes.ATTR_USER_TRANSCRIPT]).toBe(TRANSCRIPT);
+      expect(userTurn.attributes[traceTypes.ATTR_TRANSCRIPTION_DELAY]).toBeTypeOf('number');
+      expect(only(exporter, 'eou_wait').attributes[traceTypes.ATTR_EOU_OUTCOME]).toBe('committed');
+      expect(hook).not.toHaveBeenCalled();
+      // a preemptive attempt may have opened a turn, but no reply played
+      for (const turn of spansNamed(exporter, 'agent_turn')) {
+        expect(turn.attributes[traceTypes.ATTR_E2E_LATENCY]).toBeUndefined();
+      }
     });
 
     it('honours session-only redaction for a hook exception', async () => {
