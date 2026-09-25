@@ -1,0 +1,88 @@
+agents/src/voice/audio_recognition_handoff.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 21-22,124-126
+agents/src/voice/realtime_adaptive_interruption.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 5,11-12,93,101-126,142,158,160,167,175,185-187,191-192,195,228-514,599-604,610,613-614,620,623,630-635,641,644,651-653,657,660,679-680,703-704,721,725-762,765,771,778,786,793,823,833,838-840,862,870-928
+agents/src/voice/agent.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 1016,1019-1020,1032,1045,1057-1098
+  s_88c1149a8d7516::t_e9329a0b1bc5ed 1099
+agents/src/voice/run_context.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 63-66,71,95,97-101
+agents/src/voice/audio_recognition_stt_recovery.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 37-38,44,51-53
+agents/etc/agents.api.md
+  s_88c1149a8d7516::t_5ebc5a41bbe931 6883,7557,8986,10239
+  s_88c1149a8d7516::t_d1d41cffe6af24 1689-1693
+.changeset/fuzzy-dogs-interrupt.md
+  s_88c1149a8d7516::t_5ebc5a41bbe931 1-8
+agents/src/voice/realtime_overlapping_speech.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 12,15,168-259
+agents/src/voice/agent_activity.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 460-464,481,856-860
+agents/src/stt/stt.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 85-108,248-270
+  s_88c1149a8d7516::t_ce713822d13af6 271
+agents/src/voice/audio_recognition_span.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 58-59,125-126,222-223,297-298,400-401
+agents/src/voice/audio_recognition_interruption.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 5,13-14,28,31,34-36,39-63,67-75,78-88,92-96,99-110,112,114,117-126,128-130,133-142,144-147,150-159,161-163,166-258,260-262,265-335,337-346,348-361,364-387,390-445
+agents/src/stt/stream_adapter.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 112
+agents/src/voice/audio_recognition_endpointing.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 13-14,52
+agents/src/voice/turn_config/interruption.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 52-53
+agents/src/stt/stream_adapter.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 1-106
+agents/src/voice/audio_recognition_close.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 22-23
+agents/src/voice/audio_recognition_backchannel.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 16-17,40-46,257-260,269-270,272-273,276-278
+agents/src/voice/audio_recognition_push_audio.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 15-16
+examples/src/Dockerfile-example
+  s_88c1149a8d7516::t_5ebc5a41bbe931 73,75
+agents/src/voice/playout_launch_pause.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 7,12-13,15,50,57,95-266
+agents/src/telemetry/trace_types.ts
+  s_88c1149a8d7516::t_1f9d19dd00b9fb 90-91
+agents/src/voice/audio_recognition_turn_detection.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 80-81
+agents/src/voice/audio_recognition_transcription_timeout.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 20,28,35-36,113-114,117,125,128-132
+agents/src/voice/audio_recognition.ts
+  s_88c1149a8d7516::t_c98474a5e93831 1146-1151,1153-1155,1164
+  s_88c1149a8d7516::t_1f9d19dd00b9fb 1572-1575
+  s_88c1149a8d7516::t_5ebc5a41bbe931 75-76,149-150,184,229,305-306,363,429-430,434,474,596-600,728-733,744-746,771,812,858,889,894,896-897,900-902,908,915-924,953-970,975,1017-1037,1040,1042,1044-1046,1048-1054,1058-1060,1062-1063,1066-1070,1072,1074-1078,1170-1183,1215-1219,1222-1225,1228-1231,1478,1490-1494,2030,2107,2149,2220,2279
+agents/src/voice/audio_recognition_stt_events.test.ts
+  s_88c1149a8d7516::t_ec27f2a5dd04ad 14,17-18,20,25,27,30,45-46,59-64,103,108,116-118,132,135-136,140-187,195,215
+agents/src/voice/audio_recognition_vad_reset.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 33-34
+agents/src/stt/stt.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 122-123,218,459
+agents/src/voice/audio_recognition_duplicate_commit.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 69-70
+agents/src/voice/generation.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 1501
+agents/src/inference/interruption/interruption_failover.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 30,344,359-417
+agents/src/voice/audio_recognition_eou.test.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 53-54
+agents/src/voice/agent_activity.ts
+  s_88c1149a8d7516::t_5ebc5a41bbe931 371-372,782,910-919,1307,1407,1857-1861,1946-1965,1977,2017,2031,2036,2045-2046,2050-2053,2055-2064,2937,3348,3878,3926,3931,4186-4188,4523,4541,4564,4571-4572,5301-5302,5357-5372,5434-5453,5478,5595,5598-5599,5604,5619,5628
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bf5abc880c012b8380d5b97a1f58af110acc0607",
+  "prompts": {},
+  "sessions": {
+    "s_88c1149a8d7516": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0da98-0b2b-70e1-bbfc-cc1d8cb2c749",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
