@@ -11,7 +11,7 @@ import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
-import { recordException, traceTypes, tracer } from '../telemetry/index.js';
+import { traceTypes, tracer } from '../telemetry/index.js';
 import {
   type APIConnectOptions,
   DEFAULT_API_CONNECT_OPTIONS,
@@ -393,9 +393,6 @@ export abstract class SynthesizeStream
             this.#currentAttemptSpan = attemptSpan;
             try {
               return await this.run();
-            } catch (error) {
-              recordException(attemptSpan, toError(error));
-              throw error;
             } finally {
               this.#currentAttemptSpan = undefined;
             }
@@ -808,12 +805,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
         const result = await tracer.startActiveSpan(
           async (attemptSpan) => {
             attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
-            try {
-              return await this.run();
-            } catch (error) {
-              recordException(attemptSpan, toError(error));
-              throw error;
-            }
+            return await this.run();
           },
           { name: 'tts_request_run' },
         );
