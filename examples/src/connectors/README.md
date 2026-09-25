@@ -78,6 +78,43 @@ Calls then reach a support agent that escalates to a supervisor when asked, with
 
 Warm transfer on WhatsApp connector calls is not supported yet.
 
+### Preserve an inbound Twilio caller's number
+
+Capture `From` and `CallToken` from the validated inbound Twilio voice webhook.
+Keep them together in server-side state keyed by the inbound `CallSid`, and retrieve
+them for the specific call requesting a transfer:
+
+```ts
+await new TwilioConnectorWarmTransferTask({
+  phoneNumber: supervisorNumber,
+  twilioFromNumber: agentPhoneNumber,
+  originalCallerNumber: inboundFrom,
+  twilioCallToken: inboundCallToken,
+  chatCtx: this.chatCtx,
+}).run();
+```
+
+The optional `twilioCallToken` is passed unchanged to Twilio's Calls API as
+`CallToken`. The SDK does not add it to the connector request or TwiML. Keep the
+token out of prompts, chat history, logs, and participant attributes.
+
+`twilioFromNumber` is the agent/business Twilio number or verified caller ID.
+`originalCallerNumber` must match the original incoming call's `From`; the token
+does not authorize an arbitrary caller ID. Supplying a nonempty `twilioCallToken`
+requires `originalCallerNumber`. Without a token (or with an empty token), the task
+uses the business number, even when the original caller number is available.
+
+If Twilio explicitly rejects the preservation attempt with HTTP 400 and
+[error 21210 (unverified From)](https://www.twilio.com/docs/api/errors/21210) or
+[error 21212 (invalid From)](https://www.twilio.com/docs/api/errors/21212) — the
+latter covers withheld or anonymous inbound caller IDs — the task retries once
+from the business number without the token. Other errors,
+including network timeouts and failures after call creation, are not retried to
+avoid duplicate calls. A failed fallback is propagated to the transfer workflow.
+
+The [Twilio Calls API](https://www.twilio.com/docs/voice/api/call-resource#create-a-call)
+supports CallToken directly, so this workflow does not require a Twilio conference.
+
 ## Connectors and SIP
 
 Connectors are one of two telephony paths. SIP trunking (see [`../telephony_amd.ts`](../telephony_amd.ts)) stays the recommended path when you are starting fresh: it works with any provider and LiveKit manages routing with dispatch rules. Use the connector when your call logic already lives in Twilio, or for WhatsApp, which has no phone number to trunk.

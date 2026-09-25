@@ -67,6 +67,8 @@ function setup(ringingTimeout = 5_000) {
     },
     phoneNumber: '+15555550103',
     twilioFromNumber: '+15555550102',
+    originalCallerNumber: '+15555550101',
+    twilioCallToken: 'test-call-token',
     twilioAccountSid: 'AC_test',
     twilioAuthToken: 'test-auth',
     abortSignal: controller.signal,
@@ -188,36 +190,45 @@ describe('Twilio warm transfer with real session and activity lifecycle', () => 
     }
   });
 
-  it('allows session shutdown before a pending Twilio creation resolves and cancels the late call', async () => {
-    const ctx = setup();
-    const entered = new Future<void>();
-    const response = new Future<Response>();
-    ctx.connect.mockResolvedValue(
-      new ConnectTwilioCallResponse({ connectUrl: 'wss://connector.example/stream' }),
-    );
-    ctx.fetch.mockImplementationOnce(() => {
-      entered.resolve();
-      return response.await;
-    });
-    try {
-      await ctx.start();
-      await entered.await;
-      expect(ctx.task._agentActivity).toBeInstanceOf(AgentActivity);
-      ctx.controller.abort(new Error('shutdown'));
-      expect(await ctx.outcome.await).toBeInstanceOf(Error);
-      await ctx.session.close();
-      expect(response.done).toBe(false);
-      expect(ctx.disconnect).toHaveBeenCalledOnce();
-      response.resolve(new Response('{"sid":"CA_late"}'));
-      await vi.waitFor(() => expect(ctx.fetch).toHaveBeenCalledTimes(2));
-      expect(ctx.fetch.mock.calls[1]![0]).toContain('/Calls/CA_late.json');
-      expect(Object.fromEntries(ctx.fetch.mock.calls[1]![1].body)).toEqual({ Status: 'completed' });
-    } finally {
-      if (!response.done) response.resolve(new Response('{"sid":"CA_late"}'));
-      ctx.controller.abort();
-      await ctx.session.close();
-    }
-  });
+  it.each([false, true])(
+    'closes before creation resolves and cleans up the late call; fallback=%s',
+    async (fallback) => {
+      const ctx = setup();
+      const entered = new Future<void>();
+      const response = new Future<Response>();
+      ctx.connect.mockResolvedValue(
+        new ConnectTwilioCallResponse({ connectUrl: 'wss://connector.example/stream' }),
+      );
+      if (fallback) {
+        ctx.fetch.mockResolvedValueOnce(new Response('{"code":21210}', { status: 400 }));
+      }
+      ctx.fetch.mockImplementationOnce(() => {
+        entered.resolve();
+        return response.await;
+      });
+      try {
+        await ctx.start();
+        await entered.await;
+        expect(ctx.task._agentActivity).toBeInstanceOf(AgentActivity);
+        ctx.controller.abort(new Error('shutdown'));
+        expect(await ctx.outcome.await).toBeInstanceOf(Error);
+        await ctx.session.close();
+        expect(response.done).toBe(false);
+        expect(ctx.disconnect).toHaveBeenCalledOnce();
+        response.resolve(new Response('{"sid":"CA_late"}'));
+        const cancelIndex = fallback ? 2 : 1;
+        await vi.waitFor(() => expect(ctx.fetch).toHaveBeenCalledTimes(cancelIndex + 1));
+        expect(ctx.fetch.mock.calls[cancelIndex]![0]).toContain('/Calls/CA_late.json');
+        expect(Object.fromEntries(ctx.fetch.mock.calls[cancelIndex]![1].body)).toEqual({
+          Status: 'completed',
+        });
+      } finally {
+        if (!response.done) response.resolve(new Response('{"sid":"CA_late"}'));
+        ctx.controller.abort();
+        await ctx.session.close();
+      }
+    },
+  );
 
   it('cleans up when answer and cancellation arrive in the same turn', async () => {
     const ctx = setup();
