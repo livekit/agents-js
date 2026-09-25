@@ -1686,6 +1686,11 @@ const ATTR_SPEECH_INTERRUPTED = "lk.interrupted";
 // @public (undocumented)
 const ATTR_START_TIME = "lk.start_time";
 
+// Warning: (ae-missing-release-tag) "ATTR_STT_EVENTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+const ATTR_STT_EVENTS = "lk.stt.events";
+
 // Warning: (ae-missing-release-tag) "ATTR_TOOL_SETS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -6875,7 +6880,7 @@ class RunAssert {
 //
 // @public (undocumented)
 export class RunContext<UserData = UnknownUserData> {
-    constructor(session: AgentSession<UserData>, speechHandle: SpeechHandle, functionCall: FunctionCall);
+    constructor(session: AgentSession<UserData>, speechHandle: SpeechHandle, functionCall: FunctionCall, activity?: AgentActivity | undefined);
     // Warning: (ae-forgotten-export) The symbol "AttachedToolExecutor" needs to be exported by the entry point index.d.ts
     // Warning: (ae-incompatible-release-tags) The symbol "_attachExecutor" is marked as @public, but its signature references "Future" which is marked as @internal
     // Warning: (ae-incompatible-release-tags) The symbol "_attachExecutor" is marked as @public, but its signature references "Future" which is marked as @internal
@@ -6884,7 +6889,6 @@ export class RunContext<UserData = UnknownUserData> {
     _attachExecutor(executor: AttachedToolExecutor<UserData>, firstUpdateFuture: Future<unknown>): object;
     // (undocumented)
     _detachExecutor(attachment: object): void;
-    // (undocumented)
     disallowInterruptions(): void;
     // (undocumented)
     _drainPendingReply(): Promise<void>;
@@ -7550,6 +7554,7 @@ interface SpeechData {
 interface SpeechEvent {
     // (undocumented)
     alternatives?: [SpeechData, ...SpeechData[]];
+    createdAt?: number;
     // (undocumented)
     recognitionUsage?: RecognitionUsage;
     // (undocumented)
@@ -8978,6 +8983,7 @@ declare namespace traceTypes {
         ATTR_EOU_FROM_CACHE,
         ATTR_EOU_DETECTION_DELAY,
         ATTR_USER_TRANSCRIPT,
+        ATTR_STT_EVENTS,
         ATTR_TRANSCRIPT_CONFIDENCE,
         ATTR_TRANSCRIPTION_DELAY,
         ATTR_END_OF_TURN_DELAY,
@@ -10230,7 +10236,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:366:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/stt/stt.ts:369:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:553:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:387:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1026:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts

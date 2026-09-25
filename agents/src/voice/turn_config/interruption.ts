@@ -49,7 +49,8 @@ export interface InterruptionOptions {
    * pass through.
    *
    * Pass a single number to use the same value for both the start and end boundaries, or a
-   * `[start, end]` tuple to configure them separately.
+   * `[start, end]` tuple to configure them separately. The end value preserves transcripts
+   * received near the end of agent speech.
    *
    * `null` disables.
    *

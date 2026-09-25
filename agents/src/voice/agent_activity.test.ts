@@ -457,6 +457,11 @@ describe('AgentActivity - mainTask', () => {
   it('does not end paused agent speech twice when cancelling it', async () => {
     const handle = SpeechHandle.create({ allowInterruptions: true });
     handle._authorizeGeneration();
+    const onEndOfAgentSpeech = (
+      AgentActivity.prototype as unknown as {
+        onEndOfAgentSpeech: (endedAt: number) => Promise<void>;
+      }
+    ).onEndOfAgentSpeech;
 
     const fakeActivity = {
       cancelSpeechPauseTask: undefined,
@@ -473,6 +478,7 @@ describe('AgentActivity - mainTask', () => {
       audioRecognition: {
         onEndOfAgentSpeech: vi.fn(async () => {}),
       },
+      onEndOfAgentSpeech,
       agentSession: {
         sessionOptions: {
           turnHandling: {
@@ -847,6 +853,11 @@ describe('AgentActivity - speech completion', () => {
       _currentSpeech: speechHandle,
       activeAgentStateLease: undefined as unknown,
       audioRecognition,
+      onEndOfAgentSpeech: (
+        AgentActivity.prototype as unknown as {
+          onEndOfAgentSpeech: (endedAt: number) => Promise<void>;
+        }
+      ).onEndOfAgentSpeech,
       agentSession: {
         get _activity() {
           return fakeActivity;

@@ -87,8 +87,8 @@ export const ATTR_EOU_FROM_CACHE = 'lk.eou.from_cache';
 export const ATTR_EOU_DETECTION_DELAY = 'lk.eou.detection_delay';
 export const ATTR_USER_TRANSCRIPT = 'lk.pii.user_transcript';
 /** JSON list of transcript events on user_turn, in arrival order. Each entry has
- * received_at (Unix milliseconds), type, and transcript_length (Unicode code points
- * in the first alternative). */
+ * received_at (SpeechEvent.createdAt, Unix milliseconds), type, and transcript_length
+ * (Unicode code points in the first alternative). */
 export const ATTR_STT_EVENTS = 'lk.stt.events';
 export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';
