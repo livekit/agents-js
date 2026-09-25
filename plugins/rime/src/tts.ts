@@ -55,7 +55,8 @@ export class TTS extends tts.TTS {
     return 'Rime';
   }
 
-  private replacePool() {
+  /** Resolves once the previous pool closed, or right away if streams still hold it. */
+  private replacePool(): Promise<void> | undefined {
     if (!this.opts.useWebsocket) return;
     const previous = this.pool;
     const pool = new RimePool(
@@ -67,7 +68,7 @@ export class TTS extends tts.TTS {
     this.pool = pool;
     this.pools.add(this.pool);
     connectionPools.set(this, this.pool);
-    previous?.retire();
+    return previous?.retire();
   }
 
   updateOptions(opts: Partial<TTSOptions>) {
@@ -90,7 +91,7 @@ export class TTS extends tts.TTS {
    * synthesis. Active streams keep the retired pool until they finish (see `replacePool`).
    */
   override async releaseIdleConnections(): Promise<void> {
-    if (!this.isClosed) this.replacePool();
+    if (!this.isClosed) await this.replacePool();
   }
 
   synthesize(

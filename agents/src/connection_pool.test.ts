@@ -384,6 +384,27 @@ describe('ConnectionPool', () => {
       expect(await pool.get()).toBe('conn_3');
     });
 
+    it('keeps a returned connection queued when its close fails, without an unhandled rejection', async () => {
+      let failOnce = true;
+      const closeCb = vi.fn(async (_conn: string) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error('close failed');
+        }
+      });
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      await pool.releaseIdle();
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledTimes(1));
+
+      // the failed close is retried by the next drain
+      await pool.close();
+      expect(closeCb).toHaveBeenCalledTimes(2);
+      expect(closeCb).toHaveBeenLastCalledWith(inUse);
+    });
+
     it('closes a released checked-out connection that is removed instead of returned', async () => {
       const closeCb = vi.fn(async (_conn: string) => {});
       const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });

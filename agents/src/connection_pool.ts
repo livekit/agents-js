@@ -213,6 +213,10 @@ export class ConnectionPool<T> {
         if (!this.toClose.has(conn)) return;
         await this._maybeCloseConnection(conn);
         this.toClose.delete(conn);
+      } catch (error) {
+        // nobody awaits this; a failed close stays queued for the next drain instead of
+        // surfacing as an unhandled rejection
+        log().warn({ exceptionType: safeErrorType(error) }, 'failed to close pooled connection');
       } finally {
         unlock();
       }
