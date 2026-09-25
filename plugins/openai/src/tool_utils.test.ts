@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { llm } from '@livekit/agents';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { toResponsesTools } from './tool_utils.js';
-import { CodeInterpreter, FileSearch, WebSearch } from './tools.js';
+import { logProviderToolExecutions, toResponsesTools } from './tool_utils.js';
+import { CodeInterpreter, FileSearch, OpenAITool, WebSearch } from './tools.js';
 
 describe('toResponsesTools', () => {
   it('sorts function tools before provider tools without making optional parameters strict', () => {
@@ -104,11 +104,75 @@ describe('toResponsesTools', () => {
     ]);
   });
 
-  it('ignores non-OpenAI provider tools', () => {
-    class OtherProviderTool extends llm.ProviderTool {}
+  it('ignores non-OpenAI provider tools by default', () => {
+    class OtherProviderTool extends llm.ProviderTool {
+      toToolConfig() {
+        return { type: 'web_search' };
+      }
+    }
 
     expect(
       toResponsesTools(new llm.ToolContext([new OtherProviderTool({ id: 'other' })]), false),
     ).toBeUndefined();
+  });
+
+  it('serializes provider tools matching providerToolType', () => {
+    class XAITool extends llm.ProviderTool {
+      toToolConfig() {
+        return { type: 'web_search', allowed_domains: ['x.com'] };
+      }
+    }
+
+    expect(
+      toResponsesTools(
+        new llm.ToolContext([new XAITool({ id: 'xai_web_search' })]),
+        false,
+        XAITool,
+      ),
+    ).toEqual([{ type: 'web_search', allowed_domains: ['x.com'] }]);
+  });
+
+  it('still serializes OpenAI tools when providerToolType is OpenAITool', () => {
+    expect(toResponsesTools(new llm.ToolContext([new WebSearch()]), false, OpenAITool)).toEqual([
+      { type: 'web_search', search_context_size: 'medium' },
+    ]);
+  });
+});
+
+describe('logProviderToolExecutions', () => {
+  it('logs only server-side provider tool items', () => {
+    const info = vi.fn();
+    logProviderToolExecutions(
+      [
+        { type: 'message' },
+        { type: 'reasoning' },
+        { type: 'function_call' },
+        { type: 'function_call_output' },
+        { type: 'web_search_call', id: 'ws_1' },
+        { type: 'custom_tool_call', name: 'x_keyword_search' },
+      ],
+      { info },
+    );
+
+    expect(info).toHaveBeenCalledTimes(2);
+    expect(info).toHaveBeenNthCalledWith(
+      1,
+      { tool_type: 'web_search_call', result: { type: 'web_search_call', id: 'ws_1' } },
+      'provider tool executed',
+    );
+    expect(info).toHaveBeenNthCalledWith(
+      2,
+      {
+        tool_type: 'custom_tool_call',
+        result: { type: 'custom_tool_call', name: 'x_keyword_search' },
+      },
+      'provider tool executed',
+    );
+  });
+
+  it('no-ops on missing output', () => {
+    const info = vi.fn();
+    logProviderToolExecutions(undefined, { info });
+    expect(info).not.toHaveBeenCalled();
   });
 });
