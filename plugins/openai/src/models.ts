@@ -91,6 +91,10 @@ export type TelnyxChatModels =
 
 export type CerebrasChatModels = 'gpt-oss-120b' | 'zai-glm-4.7' | 'gemma-4-31b';
 
+export type UrunChatModels = 'qwen3.8-27b:nvfp4' | 'agents-a1:fp8' | 'diffusiongemma-26b:bf16';
+
+export type UrunSTTModels = 'nemotron-3.5-asr:fp16';
+
 export type PerplexityChatModels =
   | 'llama-3.1-sonar-small-128k-online'
   | 'llama-3.1-sonar-small-128k-chat'
