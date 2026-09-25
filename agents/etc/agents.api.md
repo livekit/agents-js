@@ -180,6 +180,8 @@ export class Agent<UserData = any> {
     updateOptions(options?: AgentUpdateOptions): Promise<void>;
     // (undocumented)
     updateTools(tools: ToolContextLike<UserData>): Promise<void>;
+    // @internal
+    _usesDefaultSttNode(): boolean;
     // (undocumented)
     get useTtsAlignedTranscript(): boolean | undefined;
     // (undocumented)
@@ -2868,6 +2870,7 @@ export class ConnectionPool<T> {
     invalidate(): void;
     prewarm(): void;
     put(conn: T): void;
+    releaseIdle(): Promise<void>;
     remove(conn: T): void;
     withConnection<R>(fn: (conn: T) => Promise<R>, options?: {
         timeout?: number;
@@ -4064,6 +4067,7 @@ class FallbackAdapter_3 extends TTS {
     markUnAvailable(index: number): void;
     readonly maxRetryPerTTS: number;
     readonly recoveryDelayMs: number;
+    releaseIdleConnections(): Promise<void>;
     // Warning: (ae-forgotten-export) The symbol "TTSStatus" needs to be exported by the entry point index.d.ts
     get status(): TTSStatus[];
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SynthesizeStream"
@@ -4073,6 +4077,8 @@ class FallbackAdapter_3 extends TTS {
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "ChunkedStream"
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
     readonly ttsInstances: TTS[];
+    // (undocumented)
+    get _wrappedTts(): readonly TTS[];
 }
 
 // Warning: (ae-missing-release-tag) "FallbackAdapterOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -7901,6 +7907,8 @@ class StreamAdapter_2 extends TTS {
     label: string;
     // (undocumented)
     protected markupProviderKey(): string;
+    // (undocumented)
+    releaseIdleConnections(): Promise<void>;
     // @internal
     _setExpressive(enabled: boolean): void;
     // (undocumented)
@@ -7913,6 +7921,8 @@ class StreamAdapter_2 extends TTS {
     _tokenizerFor(options: {
         lowering: boolean;
     }): SentenceTokenizer;
+    // (undocumented)
+    get _wrappedTts(): readonly TTS[];
 }
 
 // Warning: (ae-missing-release-tag) "StreamAdapterWrapper" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -7997,6 +8007,7 @@ abstract class STT extends STT_base {
     // (undocumented)
     abstract label: string;
     get model(): string;
+    prewarm(): void;
     get provider(): string;
     // @internal
     _pushConversationItem(_ev: ConversationItemAddedEvent): void;
@@ -9107,7 +9118,9 @@ abstract class TTS extends TTS_base {
     protected markupProviderKey(): string;
     get model(): string;
     get numChannels(): number;
+    prewarm(): void;
     get provider(): string;
+    releaseIdleConnections(): Promise<void>;
     get sampleRate(): number;
     // @internal
     _setExpressive(enabled: boolean): void;
@@ -9117,6 +9130,8 @@ abstract class TTS extends TTS_base {
     }): SynthesizeStream;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "ChunkedStream"
     abstract synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
+    // @internal
+    get _wrappedTts(): readonly TTS[];
 }
 
 declare namespace tts {
@@ -9199,6 +9214,7 @@ class TTS_2<TModel extends TTSModels> extends TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
+    releaseIdleConnections(): Promise<void>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
@@ -10230,13 +10246,13 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:369:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:553:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:387:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1026:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1697:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1697:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1697:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:388:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1027:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1700:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1700:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1700:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
