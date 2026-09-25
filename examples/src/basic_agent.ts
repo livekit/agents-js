@@ -15,11 +15,12 @@ import {
   tool,
 } from '@livekit/agents';
 import * as krisp from '@livekit/agents-plugin-krisp';
-import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-// The default VAD lazy-loads on first stream.
+// No prewarm hook needed: the local EOT model runs in the shared inference
+// process (loaded once per host), and the silero VAD (~2MB, in-process)
+// lazy-loads on first stream.
 export default defineAgent({
   entry: async (ctx: JobContext) => {
     const agent = Agent.create({
@@ -42,13 +43,28 @@ export default defineAgent({
     const logger = log();
 
     const session = new AgentSession({
-      llm: new openai.realtime.RealtimeModel({
-        model: 'gpt-realtime',
-        // LiveKit must own turn commits for adaptive interruption to work.
-        turnDetection: null,
+      // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
+      // See all available models at https://docs.livekit.io/agents/models/stt/
+      stt: new inference.STT({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        fallback: ['assemblyai/universal-streaming', 'cartesia/ink-whisper'],
       }),
+      // A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
+      // See all available models at https://docs.livekit.io/agents/models/llm/
+      // llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
+      // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+        fallback: [{ model: 'rime/coda', voice: 'luna' }],
+      }),
+      ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
-        turnDetection: new inference.TurnDetector(),
+        // turn detection defaults to the audio inference.TurnDetector when unset.
+        // See https://docs.livekit.io/agents/build/turns
         interruption: {
           // Enable false-interruption auto-resume behavior.
           resumeFalseInterruption: true,
@@ -62,7 +78,22 @@ export default defineAgent({
           minDelay: 300,
           maxDelay: 3000,
         },
+        // Preemptive generation speculatively starts LLM inference while the user is still
+        // speaking to reduce time-to-first-token. See PreemptiveGenerationOptions for all
+        // tunables (enabled, preemptiveTts, maxSpeechDuration, maxRetries).
+        preemptiveGeneration: {
+          enabled: true,
+        },
       },
+      // automatically detect keyterms and apply them to the STT per user turn
+      keytermsOptions: {
+        keyterms: ['LiveKit'],
+        keytermDetection: {
+          enabled: true,
+          turnInterval: 1, // increase to reduce LLM API calls
+        },
+      },
+      useTtsAlignedTranscript: true,
       aecWarmupDuration: 3000,
       connOptions: {
         // Example of overriding the default connection options for the LLM/TTS/STT
@@ -105,7 +136,7 @@ export default defineAgent({
       },
     });
 
-    session.generateReply({ instructions: 'Greet the user and offer your assistance.' });
+    session.say('Hello, how can I help you today?');
   },
 });
 
