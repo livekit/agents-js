@@ -127,6 +127,11 @@ type PendingUpdate = {
 
 const runningTasks = new WeakMap<AgentSession<any>, Map<string, RunningTask>>();
 
+/** @internal */
+export function hasRunningTasks<UserData>(session: AgentSession<UserData>): boolean {
+  return (runningTasks.get(session)?.size ?? 0) > 0;
+}
+
 export const getRunningTasksTool = tool({
   name: 'lk_agents_get_running_tasks',
   description: 'Get the list of running tool calls that are cancellable.',

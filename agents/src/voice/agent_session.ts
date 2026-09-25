@@ -127,6 +127,7 @@ import { type RunOutputOptions, RunResult } from './testing/run_result.js';
 import {
   type AsyncToolOptions,
   type ToolHandlingOptions,
+  hasRunningTasks,
   resolveAsyncToolOptions,
 } from './tool_executor.js';
 import type { TextTransform } from './transcription/text_transforms.js';
@@ -1686,6 +1687,29 @@ export class AgentSession<
     });
   }
 
+  /** Reset the user-away timeout after external user activity.
+   *
+   * RoomIO calls this automatically for incoming DTMF from its linked participant.
+   * If the user is away, they return to listening. The full timeout restarts only
+   * while both the user and agent are listening.
+   */
+  resetAwayTimer(): void {
+    if (
+      !this.started ||
+      this.closing ||
+      this.sessionOptions.userAwayTimeout === null ||
+      this.sessionOptions.userAwayTimeout === undefined
+    ) {
+      return;
+    }
+
+    if (this._userState === 'away') {
+      this._updateUserState('listening');
+    } else if (this._userState === 'listening' && this._agentState === 'listening') {
+      this._setUserAwayTimer();
+    }
+  }
+
   /** @internal */
   _closeSoon({
     reason,
@@ -1890,7 +1914,11 @@ export class AgentSession<
       return;
     }
 
-    if (this._roomIO && !this._roomIO.isParticipantAvailable) {
+    if (hasRunningTasks(this)) {
+      return;
+    }
+
+    if (this._roomIO && !this._roomIO.linkedParticipant) {
       return;
     }
 
@@ -1922,6 +1950,8 @@ export class AgentSession<
 
   /** @internal */
   _onRoomIOParticipantLinked(participant: RemoteParticipant): void {
+    this.resetAwayTimer();
+
     if (this._aecWarmupDurationExplicit) {
       return;
     }
@@ -1935,6 +1965,11 @@ export class AgentSession<
       clearTimeout(this._aecWarmupTimer);
       this._aecWarmupTimer = null;
     }
+  }
+
+  /** @internal */
+  _onRoomIOParticipantUnlinked(): void {
+    this._cancelUserAwayTimer();
   }
 
   /** @internal */

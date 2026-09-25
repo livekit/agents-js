@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame } from '@livekit/rtc-node';
+import {
+  AudioFrame,
+  ConnectionState,
+  ParticipantKind,
+  type RemoteParticipant,
+  RoomEvent,
+} from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as jobModule from '../../job.js';
@@ -65,6 +71,8 @@ function createFakeRoom() {
       emitter.off(event, listener);
       return emitter;
     }),
+    emit: (event: string | symbol, ...args: unknown[]) => emitter.emit(event, ...args),
+    listenerCount: (event: string | symbol) => emitter.listenerCount(event),
     registerTextStreamHandler: vi.fn(),
     unregisterTextStreamHandler: vi.fn(),
   };
@@ -79,6 +87,9 @@ type FakeSession = {
   off: ReturnType<typeof vi.fn>;
   emit: (event: string | symbol, value: unknown) => boolean;
   _closeSoon: ReturnType<typeof vi.fn>;
+  _onRoomIOParticipantLinked: ReturnType<typeof vi.fn>;
+  _onRoomIOParticipantUnlinked: ReturnType<typeof vi.fn>;
+  resetAwayTimer: ReturnType<typeof vi.fn>;
 };
 
 function createFakeSession(llm?: RealtimeModel): FakeSession {
@@ -99,8 +110,196 @@ function createFakeSession(llm?: RealtimeModel): FakeSession {
     }),
     emit: (event: string | symbol, value: unknown) => emitter.emit(event, value),
     _closeSoon: vi.fn(),
+    _onRoomIOParticipantLinked: vi.fn(),
+    _onRoomIOParticipantUnlinked: vi.fn(),
+    resetAwayTimer: vi.fn(),
   };
 }
+
+function createParticipant(identity: string): RemoteParticipant {
+  return {
+    identity,
+    attributes: {},
+    info: { kind: ParticipantKind.SIP },
+  } as RemoteParticipant;
+}
+
+describe('RoomIO DTMF activity', () => {
+  it.each(['linked', 'other', 'unattributed'] as const)(
+    'resets away only for the linked participant when input is %s',
+    async (eventSource) => {
+      const room = createFakeRoom();
+      const session = createFakeSession();
+      const caller = createParticipant('caller');
+      const other = createParticipant('other');
+      const roomIO = new RoomIO({
+        agentSession: session as unknown as RoomIOArgs['agentSession'],
+        room: room as unknown as RoomIOArgs['room'],
+        inputOptions: { audioEnabled: false, textEnabled: false },
+        outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+      });
+
+      roomIO.start();
+      room.emit(RoomEvent.ParticipantConnected, caller);
+      expect(room.listenerCount(RoomEvent.DtmfReceived)).toBe(1);
+
+      const sender =
+        eventSource === 'linked' ? caller : eventSource === 'other' ? other : undefined;
+      room.emit(RoomEvent.DtmfReceived, 1, '1', sender);
+      expect(session.resetAwayTimer).toHaveBeenCalledTimes(eventSource === 'linked' ? 1 : 0);
+
+      roomIO.unsetParticipant();
+      room.emit(RoomEvent.DtmfReceived, 1, '1', caller);
+      expect(session.resetAwayTimer).toHaveBeenCalledTimes(eventSource === 'linked' ? 1 : 0);
+
+      await roomIO.close();
+      expect(room.listenerCount(RoomEvent.DtmfReceived)).toBe(0);
+    },
+  );
+
+  it.each(['disconnect', 'unset', 'switch'] as const)(
+    'pauses away detection on participant %s and restarts it on linking',
+    async (reason) => {
+      const room = createFakeRoom();
+      const session = createFakeSession();
+      const caller = createParticipant('caller');
+      const replacement = createParticipant('replacement');
+      room.remoteParticipants.set(caller.identity, caller);
+      const roomIO = new RoomIO({
+        agentSession: session as unknown as RoomIOArgs['agentSession'],
+        room: room as unknown as RoomIOArgs['room'],
+        participant: caller.identity,
+        inputOptions: { audioEnabled: false, textEnabled: false, closeOnDisconnect: false },
+        outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+      });
+      roomIO.start();
+      roomIO.setParticipant(caller.identity);
+      session._onRoomIOParticipantLinked.mockClear();
+      session._onRoomIOParticipantUnlinked.mockClear();
+
+      if (reason === 'disconnect') {
+        room.emit(RoomEvent.ParticipantDisconnected, caller);
+      } else if (reason === 'unset') {
+        roomIO.unsetParticipant();
+      } else {
+        roomIO.setParticipant(replacement.identity);
+      }
+      expect(roomIO.linkedParticipant).toBeUndefined();
+      expect(session._onRoomIOParticipantUnlinked).toHaveBeenCalledOnce();
+
+      const nextParticipant = reason === 'disconnect' ? caller : replacement;
+      room.remoteParticipants.set(nextParticipant.identity, nextParticipant);
+      room.emit(RoomEvent.ParticipantConnected, nextParticipant);
+      expect(roomIO.linkedParticipant).toBe(nextParticipant);
+      expect(session._onRoomIOParticipantLinked).toHaveBeenCalledWith(nextParticipant);
+      await roomIO.close();
+    },
+  );
+
+  it.each(['before_join', 'reselect_same', 'reselect_other'] as const)(
+    'waits without a linked participant for %s and restarts after selection',
+    async (reason) => {
+      const room = createFakeRoom();
+      const session = createFakeSession();
+      const caller = createParticipant('caller');
+      const replacement = createParticipant('replacement');
+      if (reason !== 'before_join') room.remoteParticipants.set(caller.identity, caller);
+      if (reason === 'reselect_other') {
+        room.remoteParticipants.set(replacement.identity, replacement);
+      }
+      const roomIO = new RoomIO({
+        agentSession: session as unknown as RoomIOArgs['agentSession'],
+        room: room as unknown as RoomIOArgs['room'],
+        participant: caller.identity,
+        inputOptions: { audioEnabled: false, textEnabled: false },
+        outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+      });
+      roomIO.start();
+      roomIO.setParticipant(caller.identity);
+
+      if (reason === 'before_join') {
+        expect(roomIO.linkedParticipant).toBeUndefined();
+        room.remoteParticipants.set(caller.identity, caller);
+        room.emit(RoomEvent.ParticipantConnected, caller);
+        expect(roomIO.linkedParticipant).toBe(caller);
+      } else {
+        roomIO.unsetParticipant();
+        expect(roomIO.linkedParticipant).toBeUndefined();
+        const nextParticipant = reason === 'reselect_same' ? caller : replacement;
+        roomIO.setParticipant(nextParticipant.identity);
+        expect(roomIO.linkedParticipant).toBe(nextParticipant);
+        expect(session._onRoomIOParticipantLinked).toHaveBeenLastCalledWith(nextParticipant);
+      }
+
+      await roomIO.close();
+    },
+  );
+
+  it.each([null, 'waiting-caller'] as const)(
+    'setParticipant wakes the initial waiter from %s',
+    async (initialIdentity) => {
+      const room = createFakeRoom();
+      const session = createFakeSession();
+      const caller = createParticipant('caller');
+      const roomIO = new RoomIO({
+        agentSession: session as unknown as RoomIOArgs['agentSession'],
+        room: room as unknown as RoomIOArgs['room'],
+        participant: initialIdentity,
+        inputOptions: { audioEnabled: false, textEnabled: false },
+        outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+      });
+      roomIO.start();
+      room.isConnected = true;
+      room.emit(RoomEvent.ConnectionStateChanged, ConnectionState.CONN_CONNECTED);
+      room.remoteParticipants.set(caller.identity, caller);
+
+      roomIO.setParticipant(caller.identity);
+      await vi.waitFor(() => expect(roomIO.linkedParticipant).toBe(caller));
+      await roomIO.close();
+    },
+  );
+
+  it.each([true, false])(
+    'follows a participant switch when replacementConnected=%s',
+    async (replacementConnected) => {
+      const room = createFakeRoom();
+      const session = createFakeSession();
+      const caller = createParticipant('caller');
+      const replacement = createParticipant('replacement');
+      room.remoteParticipants.set(caller.identity, caller);
+      if (replacementConnected) room.remoteParticipants.set(replacement.identity, replacement);
+      const roomIO = new RoomIO({
+        agentSession: session as unknown as RoomIOArgs['agentSession'],
+        room: room as unknown as RoomIOArgs['room'],
+        participant: caller.identity,
+        inputOptions: { audioEnabled: false, textEnabled: false },
+        outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+      });
+      roomIO.start();
+      roomIO.setParticipant(caller.identity);
+      session.resetAwayTimer.mockClear();
+
+      roomIO.setParticipant(replacement.identity);
+      room.emit(RoomEvent.DtmfReceived, 1, '1', caller);
+      expect(session.resetAwayTimer).not.toHaveBeenCalled();
+
+      if (!replacementConnected) {
+        room.emit(RoomEvent.DtmfReceived, 2, '2', replacement);
+        expect(session.resetAwayTimer).not.toHaveBeenCalled();
+        room.remoteParticipants.set(replacement.identity, replacement);
+        room.emit(RoomEvent.ParticipantConnected, replacement);
+      }
+      expect(roomIO.linkedParticipant).toBe(replacement);
+      room.emit(RoomEvent.DtmfReceived, 2, '2', replacement);
+      expect(session.resetAwayTimer).toHaveBeenCalledOnce();
+      room.emit(RoomEvent.DtmfReceived, 1, '1', caller);
+      expect(session.resetAwayTimer).toHaveBeenCalledOnce();
+
+      await roomIO.close();
+      expect(room.listenerCount(RoomEvent.DtmfReceived)).toBe(0);
+    },
+  );
+});
 
 describe('RoomIO agent state attributes', () => {
   it('handles a failed update and publishes later state changes', async () => {
