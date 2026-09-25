@@ -1030,6 +1030,7 @@ interface AssemblyAIOptions {
     max_turn_silence?: number;
     min_end_of_turn_silence_when_confident?: number;
     mode?: 'min_latency' | 'balanced' | 'max_accuracy';
+    previous_context_n_turns?: number;
     speaker_labels?: boolean;
     voice_focus?: 'near-field' | 'far-field';
     voice_focus_threshold?: number;
@@ -8071,6 +8072,8 @@ class STT_2<TModel extends STTModels> extends STT {
     get model(): string;
     // (undocumented)
     get provider(): string;
+    // (undocumented)
+    _pushConversationItem(ev: ConversationItemAddedEvent): void;
     // (undocumented)
     protected _recognize(_: AudioBuffer_2): Promise<SpeechEvent>;
     // @internal

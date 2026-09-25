@@ -7,6 +7,7 @@ import type { WebSocket } from 'ws';
 import { APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
+import { ChatMessage } from '../llm/index.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import {
@@ -27,6 +28,7 @@ import {
   waitUntilAborted,
 } from '../utils.js';
 import { type VAD, VADEventType, type VADStream } from '../vad.js';
+import type { ConversationItemAddedEvent } from '../voice/events.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type SttServerEvent,
@@ -144,8 +146,10 @@ export interface AssemblyAIOptions {
   keyterms_prompt?: string[];
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
-  /** Context to bias recognition. Only supported with u3-rt-pro. Max 1500 chars. */
+  /** Context to bias recognition. Only supported with U3 Pro models. Max 1750 chars. */
   agent_context?: string;
+  /** Prior turns carried as context; 0 disables carryover. Only supported with U3 Pro models. */
+  previous_context_n_turns?: number;
   /** Isolate the primary voice. Only supported with u3-rt-pro. */
   voice_focus?: 'near-field' | 'far-field';
   /** Background suppression strength. Only supported with u3-rt-pro. */
@@ -253,6 +257,19 @@ function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): b
     if (!value) return false;
     return !(typeof value === 'string' && value.toLowerCase() === 'none');
   });
+}
+
+// AssemblyAI U3 Pro models accept `agent_context`, so assistant replies can be carried over.
+const ASSEMBLYAI_CARRYOVER_MODELS = new Set([
+  'assemblyai/u3-rt-pro',
+  'assemblyai/universal-3-5-pro',
+  'assemblyai/universal-3-6-pro',
+]);
+
+const ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS = 1750;
+
+function supportsChatContext(model: string | undefined): boolean {
+  return model !== undefined && ASSEMBLYAI_CARRYOVER_MODELS.has(model);
 }
 
 /**
@@ -499,6 +516,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       alignedTranscript,
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
       keyterms: keytermsExtraForModel(initialModel) !== undefined,
+      chatContext: supportsChatContext(initialModel),
     });
 
     const {
@@ -612,6 +630,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       ];
       this.updateCapabilities({
         keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
+        chatContext: supportsChatContext(this.opts.model),
         alignedTranscript: alignmentModels.every(alignedTranscriptForModel) ? 'word' : false,
       });
     }
@@ -666,6 +685,22 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       } else {
         stream.updateOptions({ modelOptions: keytermExtra as STTOptions<TModel> });
       }
+    }
+  }
+
+  override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    const chatItem = ev.item;
+    if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
+      // count code points, not UTF-16 units, to match the provider's character limit
+      const chars = Array.from(chatItem.textContent);
+      if (chars.length > ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS) {
+        this.#logger.debug(
+          { fromChars: chars.length, toChars: ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS },
+          'truncating agent_context carryover',
+        );
+      }
+      const agentContext = chars.slice(-ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS).join('');
+      this.updateOptions({ modelOptions: { agent_context: agentContext } as STTOptions<TModel> });
     }
   }
 
