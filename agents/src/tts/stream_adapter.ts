@@ -80,6 +80,10 @@ export class StreamAdapter extends TTS {
     await super.close();
   }
 
+  override get _wrappedTts(): readonly TTS[] {
+    return [this.#tts];
+  }
+
   override async releaseIdleConnections(): Promise<void> {
     await this.#tts.releaseIdleConnections();
   }

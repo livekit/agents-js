@@ -232,12 +232,9 @@ export class ConnectionPool<T> {
     for (const conn of this.connections.keys()) {
       this.toClose.add(conn);
     }
-    for (const conn of this.retired) {
-      this.toClose.add(conn);
-    }
     this.connections.clear();
     this.available.clear();
-    this.retired.clear();
+    // retired connections are still in use; they close on their own return
   }
 
   /**
@@ -393,6 +390,10 @@ export class ConnectionPool<T> {
     }
 
     this.invalidate();
+    for (const conn of this.retired) {
+      this.toClose.add(conn);
+    }
+    this.retired.clear();
     await this._drainToClose();
   }
 }

@@ -132,6 +132,28 @@ describe('TTS connection release', () => {
     expect(secondary.released).toBe(1);
   });
 
+  it('keeps a provider shared between a FallbackAdapter and a direct user until both are done', async () => {
+    const cartesia = new PooledTTS('cartesia');
+    const deepgram = new PooledTTS('deepgram');
+    const adapter = new FallbackAdapter({ ttsInstances: [cartesia, deepgram] });
+    const withAdapter = new AgentSession({ llm: new FakeLLM(), tts: adapter });
+    const direct = new AgentSession({ llm: new FakeLLM(), tts: cartesia });
+    onTestFinished(async () => {
+      await withAdapter.close();
+      await direct.close();
+      await adapter.close();
+    });
+
+    await withAdapter.start({ agent: Agent.create({ instructions: 'a' }) });
+    await direct.start({ agent: Agent.create({ instructions: 'b' }) });
+    await withAdapter.close();
+    expect(deepgram.released).toBe(1);
+    expect(cartesia.released).toBe(0);
+
+    await direct.close();
+    expect(cartesia.released).toBe(1);
+  });
+
   it('releases a TTS displaced by updateOptions', async () => {
     const first = new PooledTTS('first');
     const second = new PooledTTS('second');

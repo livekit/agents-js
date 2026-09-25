@@ -308,6 +308,10 @@ export class FallbackAdapter extends TTS {
     await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.close()));
   }
 
+  override get _wrappedTts(): readonly TTS[] {
+    return this.ttsInstances;
+  }
+
   /** Every provider gets its release attempt; one failure surfaces after the others ran. */
   override async releaseIdleConnections(): Promise<void> {
     const results = await Promise.allSettled(

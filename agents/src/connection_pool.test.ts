@@ -405,6 +405,20 @@ describe('ConnectionPool', () => {
       expect(closeCb).toHaveBeenLastCalledWith(inUse);
     });
 
+    it('does not let invalidate close a retired connection that is still in use', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      await pool.releaseIdle();
+      pool.invalidate();
+      await pool.get(); // drains the close queue
+      expect(closeCb).not.toHaveBeenCalledWith(inUse);
+
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+    });
+
     it('closes a released checked-out connection that is removed instead of returned', async () => {
       const closeCb = vi.fn(async (_conn: string) => {});
       const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });

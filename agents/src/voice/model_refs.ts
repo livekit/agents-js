@@ -14,20 +14,30 @@ import type { TTS } from '../tts/tts.js';
  */
 const users = new WeakMap<TTS, number>();
 
-/** @internal */
+// tests hand the session duck-typed TTS objects that lack the base-class getter
+function wrappedTts(tts: TTS): readonly TTS[] {
+  return tts._wrappedTts ?? [];
+}
+
+/** @internal Counts the instance and, through an adapter, each provider it wraps. */
 export function retainTts(tts: TTS | undefined): void {
-  if (tts) users.set(tts, (users.get(tts) ?? 0) + 1);
+  if (!tts) return;
+  users.set(tts, (users.get(tts) ?? 0) + 1);
+  for (const wrapped of wrappedTts(tts)) retainTts(wrapped);
 }
 
 /** @internal Never throws: a failed release is worth a warning, not a failed teardown. */
 export async function releaseTts(tts: TTS | undefined): Promise<void> {
   if (!tts) return;
+  for (const wrapped of wrappedTts(tts)) await releaseTts(wrapped);
   const remaining = (users.get(tts) ?? 1) - 1;
   if (remaining > 0) {
     users.set(tts, remaining);
     return;
   }
   users.delete(tts);
+  // an adapter holds no connections of its own; its providers were released above by count
+  if (wrappedTts(tts).length > 0) return;
   try {
     await tts.releaseIdleConnections();
   } catch (error) {

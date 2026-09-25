@@ -1031,7 +1031,6 @@ export class AgentSession<
     }
 
     this.closing = false;
-    retainTts(this.tts);
     if (this.closingController.signal.aborted) {
       this.closingController = new AbortController();
     }
@@ -1087,6 +1086,8 @@ export class AgentSession<
 
     this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 
+    // retained inside the guarded start: a failure below schedules close(), which releases it
+    retainTts(this.tts);
     try {
       await this._startImpl({
         agent,

@@ -287,6 +287,17 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
   }
 
   /**
+   * The providers this TTS delegates to, for an adapter that wraps others. The framework counts
+   * its users on the wrapped providers as well, so a provider shared between an adapter and a
+   * direct user is released only when both are done.
+   *
+   * @internal
+   */
+  get _wrappedTts(): readonly TTS[] {
+    return [];
+  }
+
+  /**
    * Release idle pooled provider connections without closing the TTS.
    *
    * The framework calls this once nothing uses the TTS any more: every activity and session that
