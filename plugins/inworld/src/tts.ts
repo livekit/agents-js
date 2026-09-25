@@ -184,9 +184,6 @@ class WSConnectionPool {
   #auth: string;
   #connecting?: Promise<WebSocket>;
   #listeners: Map<string, (msg: InworldMessage) => void> = new Map();
-  // streams holding the socket, counted from acquisition (before their context listener
-  // exists) until teardown, so an idle release cannot close a socket a stream is about to use
-  #leases = 0;
   #logger = log();
 
   constructor(url: string, auth: string) {
@@ -293,21 +290,6 @@ class WSConnectionPool {
     });
   }
 
-  /** `getConnection()` plus a lease; pair with {@link releaseLease} when the stream is done. */
-  async acquire(): Promise<WebSocket> {
-    this.#leases++;
-    try {
-      return await this.getConnection();
-    } catch (e) {
-      this.#leases--;
-      throw e;
-    }
-  }
-
-  releaseLease() {
-    this.#leases = Math.max(0, this.#leases - 1);
-  }
-
   registerListener(contextId: string, cb: (msg: InworldMessage) => void) {
     this.#listeners.set(contextId, cb);
   }
@@ -321,18 +303,6 @@ class WSConnectionPool {
       this.#ws.close();
       this.#ws = undefined;
     }
-  }
-
-  /** Close the socket only when no stream holds a lease or has a context registered on it. */
-  async releaseIdle(): Promise<void> {
-    if (this.#connecting) {
-      try {
-        await this.#connecting;
-      } catch {
-        return; // nothing to release
-      }
-    }
-    if (this.#leases === 0 && this.#listeners.size === 0) this.close();
   }
 }
 
@@ -423,11 +393,6 @@ export class TTS extends tts.TTS {
 
   async close() {
     this.#pool.close();
-  }
-
-  /** Close the shared socket if no synthesis is using it; it reconnects on the next one. */
-  override async releaseIdleConnections(): Promise<void> {
-    await this.#pool.releaseIdle();
   }
 }
 
@@ -600,9 +565,9 @@ class SynthesizeStream extends tts.SynthesizeStream {
     this.#generationEndTime = 0;
 
     // one pool object for the whole stream: `updateOptions` can swap the TTS pool mid-synthesis,
-    // and the lease and listener must be released on the pool that holds them
+    // and the listener must be removed from the pool that holds it
     const pool = this.#tts.pool;
-    const ws = await pool.acquire();
+    const ws = await pool.getConnection();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const tokenizerStream = this.#opts.tokenizer!.stream();
 
@@ -824,7 +789,6 @@ class SynthesizeStream extends tts.SynthesizeStream {
     } finally {
       ws.off('close', onClose);
       pool.unregisterListener(this.#contextId);
-      pool.releaseLease();
     }
   }
 

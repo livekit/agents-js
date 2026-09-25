@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
 import { type ChunkedStream, FallbackAdapter, SynthesizeStream, TTS } from '../tts/index.js';
@@ -9,6 +9,7 @@ import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js
 import { Future } from '../utils.js';
 import { Agent, AgentTask } from './agent.js';
 import { AgentSession } from './agent_session.js';
+import { isFrameworkOwned, markFrameworkOwned } from './model_ownership.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -18,10 +19,11 @@ class FakeSynthesizeStream extends SynthesizeStream {
   protected async run(): Promise<void> {}
 }
 
-/** Counts how often the framework asked it to drop pooled connections. */
+/** Counts the framework's prewarm and release calls. */
 class PooledTTS extends TTS {
   label: string;
   released = 0;
+  prewarmed = 0;
   constructor(label: string) {
     super(24000, 1, { streaming: true });
     this.label = label;
@@ -32,9 +34,17 @@ class PooledTTS extends TTS {
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
     return new FakeSynthesizeStream(this, options?.connOptions ?? DEFAULT_API_CONNECT_OPTIONS);
   }
+  override prewarm(): void {
+    this.prewarmed++;
+  }
   override async releaseIdleConnections(): Promise<void> {
     this.released++;
   }
+}
+
+/** A TTS the framework would have built from a model string. */
+function ownedTTS(label: string): PooledTTS {
+  return markFrameworkOwned(new PooledTTS(label));
 }
 
 async function settled(fn: () => boolean, timeoutMs = 2_000): Promise<void> {
@@ -45,105 +55,103 @@ async function settled(fn: () => boolean, timeoutMs = 2_000): Promise<void> {
   }
 }
 
-describe('agent-owned TTS connection release', () => {
-  it('releases an agent TTS on handoff to an agent with a different TTS, and the last one on close', async () => {
-    const sessionTts = new PooledTTS('session');
-    const ttsA = new PooledTTS('a');
-    const ttsB = new PooledTTS('b');
+async function handoff(session: AgentSession, from: Agent, to: Agent): Promise<void> {
+  session.updateAgent(to);
+  await settled(() => to._agentActivity !== undefined && from._agentActivity === undefined);
+}
+
+describe('framework-owned model marking', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('marks models built from a string and leaves user instances alone', () => {
+    vi.stubEnv('LIVEKIT_API_KEY', 'key');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'secret');
+    const fromString = Agent.create({ instructions: 'a', tts: 'cartesia/sonic-3' });
+    const userTts = new PooledTTS('user');
+    const fromInstance = Agent.create({ instructions: 'b', tts: userTts });
+
+    expect(isFrameworkOwned(fromString.tts!)).toBe(true);
+    expect(isFrameworkOwned(fromInstance.tts!)).toBe(false);
+    expect(isFrameworkOwned(userTts)).toBe(false);
+  });
+});
+
+describe('TTS connection release', () => {
+  it('releases a framework-owned agent TTS on handoff and the session TTS only on close', async () => {
+    const sessionTts = ownedTTS('session');
+    const ttsA = ownedTTS('a');
+    const ttsB = ownedTTS('b');
     const session = new AgentSession({ llm: new FakeLLM(), tts: sessionTts });
     const agentA = Agent.create({ instructions: 'a', tts: ttsA });
     const agentB = Agent.create({ instructions: 'b', tts: ttsB });
+    const agentC = Agent.create({ instructions: 'c' }); // uses the session TTS
     onTestFinished(() => session.close());
 
     await session.start({ agent: agentA });
-    session.updateAgent(agentB);
-    await settled(() => agentB._agentActivity !== undefined && agentA._agentActivity === undefined);
-
+    await handoff(session, agentA, agentB);
     expect(ttsA.released).toBe(1);
     expect(ttsB.released).toBe(0);
+
+    await handoff(session, agentB, agentC);
+    expect(ttsB.released).toBe(1);
     expect(sessionTts.released).toBe(0);
 
     await session.close();
+    expect(sessionTts.released).toBe(1);
+    expect(ttsA.released).toBe(1);
     expect(ttsB.released).toBe(1);
-    expect(sessionTts.released).toBe(0);
   });
 
-  it('keeps an agent TTS when the next agent uses the same instance', async () => {
+  it('never releases a user-constructed TTS, shared or not', async () => {
+    const sessionTts = new PooledTTS('session');
     const shared = new PooledTTS('shared');
-    const session = new AgentSession({ llm: new FakeLLM() });
+    const adapter = new FallbackAdapter({
+      ttsInstances: [new PooledTTS('primary'), new PooledTTS('secondary')],
+    });
+    const session = new AgentSession({ llm: new FakeLLM(), tts: sessionTts });
     const agentA = Agent.create({ instructions: 'a', tts: shared });
     const agentB = Agent.create({ instructions: 'b', tts: shared });
-    onTestFinished(() => session.close());
-
-    await session.start({ agent: agentA });
-    session.updateAgent(agentB);
-    await settled(() => agentB._agentActivity !== undefined && agentA._agentActivity === undefined);
-    expect(shared.released).toBe(0);
-
-    await session.close();
-    expect(shared.released).toBe(1);
-  });
-
-  it('releases an agent TTS displaced by updateOptions, but not the session TTS', async () => {
-    const sessionTts = new PooledTTS('session');
-    const ttsA = new PooledTTS('a');
-    const ttsB = new PooledTTS('b');
-    const session = new AgentSession({ llm: new FakeLLM(), tts: sessionTts });
-    const agent = Agent.create({ instructions: 'a', tts: ttsA });
-    onTestFinished(() => session.close());
-
-    await session.start({ agent });
-    await agent.updateOptions({ tts: ttsB });
-    expect(ttsA.released).toBe(1);
-    expect(ttsB.released).toBe(0);
-
-    // back to the session TTS: the session instance is never released
-    await agent.updateOptions({ tts: sessionTts });
-    expect(ttsB.released).toBe(1);
-    expect(sessionTts.released).toBe(0);
-
-    await session.close();
-    expect(sessionTts.released).toBe(0);
-  });
-
-  it('releases every provider behind an agent-owned FallbackAdapter', async () => {
-    const primary = new PooledTTS('primary');
-    const secondary = new PooledTTS('secondary');
-    const adapter = new FallbackAdapter({ ttsInstances: [primary, secondary] });
-    const session = new AgentSession({ llm: new FakeLLM(), tts: new PooledTTS('session') });
-    const agentA = Agent.create({ instructions: 'a', tts: adapter });
-    const agentB = Agent.create({ instructions: 'b' });
+    const agentC = Agent.create({ instructions: 'c', tts: adapter });
     onTestFinished(async () => {
       await session.close();
       await adapter.close();
     });
 
     await session.start({ agent: agentA });
-    session.updateAgent(agentB);
-    await settled(() => agentB._agentActivity !== undefined && agentA._agentActivity === undefined);
-
-    expect(primary.released).toBe(1);
-    expect(secondary.released).toBe(1);
-  });
-
-  it('never releases the session TTS', async () => {
-    const sessionTts = new PooledTTS('session');
-    const session = new AgentSession({ llm: new FakeLLM(), tts: sessionTts });
-    const agentA = Agent.create({ instructions: 'a' });
-    const agentB = Agent.create({ instructions: 'b' });
-    onTestFinished(() => session.close());
-
-    await session.start({ agent: agentA });
-    session.updateAgent(agentB);
-    await settled(() => agentB._agentActivity !== undefined && agentA._agentActivity === undefined);
+    await handoff(session, agentA, agentB);
+    await handoff(session, agentB, agentC);
     await session.close();
 
+    expect(shared.released).toBe(0);
     expect(sessionTts.released).toBe(0);
+    for (const child of adapter.ttsInstances as PooledTTS[]) {
+      expect(child.released).toBe(0);
+    }
+  });
+
+  it('releases a framework-owned TTS displaced by updateOptions', async () => {
+    const owned = ownedTTS('owned');
+    const replacement = ownedTTS('replacement');
+    const user = new PooledTTS('user');
+    const session = new AgentSession({ llm: new FakeLLM(), tts: new PooledTTS('session') });
+    const agent = Agent.create({ instructions: 'a', tts: owned });
+    onTestFinished(() => session.close());
+
+    await session.start({ agent });
+    await agent.updateOptions({ tts: replacement });
+    expect(owned.released).toBe(1);
+    expect(replacement.released).toBe(0);
+
+    await agent.updateOptions({ tts: user });
+    expect(replacement.released).toBe(1);
+
+    await agent.updateOptions({ tts: ownedTTS('final') });
+    expect(user.released).toBe(0);
   });
 
   it('releases a task TTS when the task completes, not the paused parent TTS', async () => {
-    const parentTts = new PooledTTS('parent');
-    const taskTts = new PooledTTS('task');
+    const parentTts = ownedTTS('parent');
+    const taskTts = ownedTTS('task');
     const taskDone = new Future<void>();
     const task = AgentTask.create<string>({
       instructions: 'task',
@@ -169,14 +177,31 @@ describe('agent-owned TTS connection release', () => {
     onTestFinished(() => session.close());
 
     await session.start({ agent });
+    expect(parentTts.prewarmed).toBe(1);
     session.generateReply({ userInput: 'transfer', allowInterruptions: false });
     await taskDone.await;
     await settled(() => task._agentActivity === undefined && agent._agentActivity !== undefined);
 
     expect(taskTts.released).toBe(1);
     expect(parentTts.released).toBe(0);
+    // the resumed parent warms its models again
+    expect(parentTts.prewarmed).toBe(2);
 
     await session.close();
     expect(parentTts.released).toBe(1);
+  });
+
+  it('prewarms the TTS when an activity starts', async () => {
+    const sessionTts = new PooledTTS('session');
+    const ttsB = new PooledTTS('b');
+    const session = new AgentSession({ llm: new FakeLLM(), tts: sessionTts });
+    const agentA = Agent.create({ instructions: 'a' });
+    const agentB = Agent.create({ instructions: 'b', tts: ttsB });
+    onTestFinished(() => session.close());
+
+    await session.start({ agent: agentA });
+    expect(sessionTts.prewarmed).toBe(1);
+    await handoff(session, agentA, agentB);
+    expect(ttsB.prewarmed).toBe(1);
   });
 });

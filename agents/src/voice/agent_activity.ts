@@ -154,6 +154,7 @@ import {
   updateInstructions,
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
+import { releaseIfFrameworkOwned } from './model_ownership.js';
 import { type InputDetails, REPLY_TASK_CANCEL_TIMEOUT, SpeechHandle } from './speech_handle.js';
 import {
   ToolExecutor,
@@ -359,8 +360,6 @@ export class AgentActivity implements RecognitionHooks {
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
-  // set while handing off: the next activity synthesizes with this activity's TTS instance
-  private _ttsSharedWithNextActivity = false;
   private _toolsetsSetup = false;
   // True only during the initial, awaited `setupToolsets()` window. While set, a toolset that
   // pushes tools synchronously from its `setup()` must NOT trigger a callback-driven
@@ -574,10 +573,6 @@ export class AgentActivity implements RecognitionHooks {
   async start(options?: { reuseResources?: ReusableResources }): Promise<void> {
     const unlock = await this.lock.lock();
     try {
-      if (this.llm instanceof LLM) {
-        this.llm.prewarm();
-      }
-
       await this._startSession({
         spanName: 'start_agent_activity',
         runOnEnter: true,
@@ -607,8 +602,7 @@ export class AgentActivity implements RecognitionHooks {
     reuseResources?: ReusableResources;
   }): Promise<void> {
     const { spanName, runOnEnter, reuseResources } = options;
-    // a resumed activity may hand off again later; decide the TTS release fresh at that point
-    this._ttsSharedWithNextActivity = false;
+    this._prewarmModels();
     const startSpan = tracer.startSpan({
       name: spanName,
       attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
@@ -830,7 +824,6 @@ export class AgentActivity implements RecognitionHooks {
 
   async _detachReusableResources(newActivity: AgentActivity): Promise<ReusableResources> {
     const resources: ReusableResources = {};
-    this._ttsSharedWithNextActivity = this.tts !== undefined && this.tts === newActivity.tts;
     try {
       // stt pipeline; only reuse with the default sttNode, a custom override may
       // access the old session/activity inside the yield loop after detach
@@ -1285,8 +1278,7 @@ export class AgentActivity implements RecognitionHooks {
         nextLlm.prewarm();
       }
       if (options.tts !== undefined && nextTts instanceof TTS) {
-        const maybePrewarm = nextTts as TTS & { prewarm?: () => void };
-        maybePrewarm.prewarm?.();
+        nextTts.prewarm();
       }
 
       try {
@@ -1461,14 +1453,9 @@ export class AgentActivity implements RecognitionHooks {
         throw error;
       }
 
-      // the swap committed: a displaced agent-owned TTS is done with this activity
-      if (
-        options.tts !== undefined &&
-        previous.tts instanceof TTS &&
-        previous.tts !== this.tts &&
-        previous.tts !== this.agentSession.tts
-      ) {
-        await this._releaseIdleTts(previous.tts);
+      // the swap committed: a displaced framework-built TTS has no other user
+      if (options.tts !== undefined && previous.tts !== this.tts) {
+        await releaseIfFrameworkOwned(previous.tts);
       }
     } finally {
       unlock();
@@ -5267,8 +5254,9 @@ export class AgentActivity implements RecognitionHooks {
       try {
         await this._closeSessionResources();
       } finally {
-        // a provider that fails to close must not leave the agent's pooled connections warm
-        await this._releaseAgentTts();
+        // the agent's own TTS (never the session's) has no further user; release it even when a
+        // provider failed to close above
+        await releaseIfFrameworkOwned(this.agent._tts);
       }
       await this._toolExecutor.aclose();
 
@@ -5287,26 +5275,18 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   /**
-   * An agent-owned TTS is done once its activity closes: drop its idle pooled provider connections
-   * so they do not linger until the process exits. Skipped when the next activity synthesizes with
-   * the same instance, and never applied to the session TTS, which outlives every activity and
-   * keeps its connections warm for the next agent. Only idle connections go, so a synthesis still
-   * running elsewhere on a shared instance is unaffected.
+   * Open provider connections while onEnter and the first inference run, so the first reply does
+   * not pay for them. Mirrors python `_start_session`; runs on start and on resume, since a
+   * released agent TTS reconnects here.
    */
-  private async _releaseAgentTts(): Promise<void> {
-    const tts = this.tts;
-    if (!(tts instanceof TTS)) return;
-    if (this.agent._tts === undefined || this.agent._tts === null) return;
-    if (tts === this.agentSession.tts) return;
-    if (this._ttsSharedWithNextActivity) return;
-    await this._releaseIdleTts(tts);
-  }
-
-  private async _releaseIdleTts(tts: TTS): Promise<void> {
-    try {
-      await tts.releaseIdleConnections();
-    } catch (error) {
-      this.logger.warn({ error, tts: tts.label }, 'failed to release agent TTS connections');
+  private _prewarmModels(): void {
+    for (const model of [this.llm, this.stt, this.tts]) {
+      if (!(model instanceof LLM || model instanceof STT || model instanceof TTS)) continue;
+      try {
+        model.prewarm();
+      } catch (error) {
+        this.logger.warn({ error, model: model.label }, 'model prewarm failed');
+      }
     }
   }
 
