@@ -293,8 +293,9 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
    * the agent's activity closes, when `Agent.updateOptions` replaces it, and when the session
    * closes. Those connections would otherwise sit idle until the process exits. A TTS instance you
    * constructed is never released automatically; call this yourself to drop its idle connections.
-   * Only idle connections close: an in-flight synthesis keeps its connection and returns it to
-   * the pool when it finishes. The TTS stays usable and reconnects on the next synthesis.
+   * Nothing in flight is interrupted: an in-flight synthesis keeps its connection, which then
+   * closes when it finishes instead of rejoining the pool. The TTS stays usable and reconnects
+   * on the next synthesis.
    * Providers without a connection pool need not override this.
    */
   async releaseIdleConnections(): Promise<void> {

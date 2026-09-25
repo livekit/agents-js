@@ -24,8 +24,9 @@ export function isFrameworkOwned(model: object): boolean {
 }
 
 /**
- * Drop the idle pooled connections of a framework-owned TTS the framework is done with; a
- * user-constructed instance is left alone. Idle-only, so an in-flight synthesis is unaffected.
+ * Release the pooled connections of a framework-owned TTS the framework is done with; a
+ * user-constructed instance is left alone. Nothing in flight is interrupted: an in-flight
+ * synthesis finishes and its connection then closes instead of rejoining the pool.
  * Never throws: a failed release is worth a warning, not a failed teardown.
  *
  * @internal

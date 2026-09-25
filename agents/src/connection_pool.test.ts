@@ -364,7 +364,7 @@ describe('ConnectionPool', () => {
   });
 
   describe('releaseIdle', () => {
-    it('closes idle connections and leaves checked-out ones alone', async () => {
+    it('closes idle connections now and checked-out ones when they return', async () => {
       const closeCb = vi.fn(async (_conn: string) => {});
       const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
 
@@ -374,13 +374,25 @@ describe('ConnectionPool', () => {
 
       await pool.releaseIdle();
 
+      // only the idle connection closed; the in-flight one is untouched
       expect(closeCb).toHaveBeenCalledTimes(1);
       expect(closeCb).toHaveBeenCalledWith(idle);
 
-      // the in-flight connection is returned and reused as usual
+      // once returned it closes instead of rejoining the pool, and the next get connects fresh
       pool.put(inUse);
-      expect(await pool.get()).toBe(inUse);
-      expect(closeCb).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+      expect(await pool.get()).toBe('conn_3');
+    });
+
+    it('closes a released checked-out connection that is removed instead of returned', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      await pool.releaseIdle();
+      pool.remove(inUse);
+
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
     });
 
     it('closes every idle connection even when one close fails', async () => {

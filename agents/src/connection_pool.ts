@@ -72,6 +72,8 @@ export class ConnectionPool<T> {
   private readonly available: Set<T> = new Set();
   // Connections queued for closing
   private readonly toClose: Set<T> = new Set();
+  // Checked-out connections released by releaseIdle(): they close on return instead of rejoining
+  private readonly retired: Set<T> = new Set();
   // Mutex for connection operations
   private readonly connectLock = new Mutex();
   // Prewarm task reference
@@ -177,9 +179,12 @@ export class ConnectionPool<T> {
    * @param conn - The connection to make available
    */
   put(conn: T): void {
+    if (this.retired.delete(conn)) {
+      this._closeInBackground(conn);
+      return;
+    }
     if (this.connections.has(conn)) {
       this.available.add(conn);
-      return;
     }
   }
 
@@ -192,22 +197,26 @@ export class ConnectionPool<T> {
    */
   remove(conn: T): void {
     this.available.delete(conn);
-    if (this.connections.has(conn)) {
-      this.toClose.add(conn);
-      this.connections.delete(conn);
-      // Important for Node websockets: if we just "mark to close later" but remove listeners,
-      // the ws library can buffer incoming frames in memory. Close ASAP in background.
-      void (async () => {
-        const unlock = await this.connectLock.lock();
-        try {
-          if (!this.toClose.has(conn)) return;
-          await this._maybeCloseConnection(conn);
-          this.toClose.delete(conn);
-        } finally {
-          unlock();
-        }
-      })();
+    const retired = this.retired.delete(conn);
+    if (this.connections.delete(conn) || retired) {
+      this._closeInBackground(conn);
     }
+  }
+
+  // Important for Node websockets: if we just "mark to close later" but remove listeners,
+  // the ws library can buffer incoming frames in memory. Close ASAP in background.
+  private _closeInBackground(conn: T): void {
+    this.toClose.add(conn);
+    void (async () => {
+      const unlock = await this.connectLock.lock();
+      try {
+        if (!this.toClose.has(conn)) return;
+        await this._maybeCloseConnection(conn);
+        this.toClose.delete(conn);
+      } finally {
+        unlock();
+      }
+    })();
   }
 
   /**
@@ -219,16 +228,22 @@ export class ConnectionPool<T> {
     for (const conn of this.connections.keys()) {
       this.toClose.add(conn);
     }
+    for (const conn of this.retired) {
+      this.toClose.add(conn);
+    }
     this.connections.clear();
     this.available.clear();
+    this.retired.clear();
   }
 
   /**
-   * Close every idle connection and abort a pending prewarm.
+   * Release every current connection without interrupting in-flight work, and abort a pending
+   * prewarm.
    *
-   * Checked-out connections are left alone: their requests finish and return them to the pool as
-   * usual. Use this to drop connections that would otherwise sit idle without disturbing in-flight
-   * work, for example when the agent that owned them is done. The pool stays usable.
+   * Idle connections close now. A checked-out connection finishes its request and then closes on
+   * return instead of rejoining the pool. Use this when the pool's owner is done with it, for
+   * example an agent that handed off. The pool stays usable: the next `get()` or `prewarm()`
+   * connects fresh rather than reviving a released connection.
    */
   async releaseIdle(): Promise<void> {
     if (this.prewarmController) {
@@ -246,6 +261,11 @@ export class ConnectionPool<T> {
         this.connections.delete(conn);
         this.toClose.delete(conn);
       }
+      // whatever is still checked out closes when it comes back
+      for (const conn of this.connections.keys()) {
+        this.retired.add(conn);
+      }
+      this.connections.clear();
       // every idle connection gets its close attempt; one failure must not strand the others.
       // A connection whose close failed goes back on the close queue for the next drain.
       const results = await Promise.allSettled(

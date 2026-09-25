@@ -367,7 +367,7 @@ export class TTS extends tts.TTS {
     this.#pool.prewarm();
   }
 
-  /** Drop idle pooled connections; in-flight syntheses keep theirs. */
+  /** Release pooled connections; an in-flight synthesis keeps its until it finishes. */
   override async releaseIdleConnections(): Promise<void> {
     await this.#pool.releaseIdle();
   }
