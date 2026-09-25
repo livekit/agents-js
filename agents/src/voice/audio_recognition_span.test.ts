@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ParticipantKind } from '@livekit/rtc-node';
-import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
+import { ROOT_CONTEXT, type Span, context as otelContext, trace } from '@opentelemetry/api';
 import {
   InMemorySpanExporter,
   type ReadableSpan,
@@ -510,6 +510,49 @@ describe('AudioRecognition user_turn span', () => {
       throw new Error('expected user_speaking span');
     }
     expect(userSpeaking.parentSpanContext?.spanId).toBe(sessionSpan.spanContext().spanId);
+  });
+
+  it('clamps a backdated user_speaking end to its start', () => {
+    setupInMemoryTracing();
+    const fakeSession = createFakeSession();
+    const startedAt = Date.now();
+
+    AgentSession.prototype._updateUserState.call(fakeSession, 'speaking', {
+      lastSpeakingTime: startedAt,
+    });
+    const sdkSpan = fakeSession._userSpeakingSpan;
+    const end = vi.fn();
+    fakeSession._userSpeakingSpan = { end } as unknown as Span;
+    AgentSession.prototype._updateUserState.call(fakeSession, 'listening', {
+      lastSpeakingTime: startedAt - 550,
+    });
+
+    expect(end).toHaveBeenCalledWith(startedAt);
+    sdkSpan?.end();
+  });
+
+  it('keeps a user_speaking end after its start', () => {
+    const { exporter } = setupInMemoryTracing();
+    const fakeSession = createFakeSession();
+    const startedAt = Date.now();
+
+    AgentSession.prototype._updateUserState.call(fakeSession, 'speaking', {
+      lastSpeakingTime: startedAt,
+    });
+    AgentSession.prototype._updateUserState.call(fakeSession, 'listening', {
+      lastSpeakingTime: startedAt + 1_250,
+    });
+
+    const userSpeaking = spanByName(exporter.getFinishedSpans(), 'user_speaking');
+    expect(userSpeaking).toBeTruthy();
+    if (!userSpeaking) {
+      throw new Error('expected user_speaking span');
+    }
+    const durationNs =
+      (userSpeaking.endTime[0] - userSpeaking.startTime[0]) * 1e9 +
+      userSpeaking.endTime[1] -
+      userSpeaking.startTime[1];
+    expect(durationNs).toBe(1.25e9);
   });
 
   it('does not mark a normal user_speaking span as a non-interruption', async () => {
