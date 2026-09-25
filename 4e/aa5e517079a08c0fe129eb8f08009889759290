@@ -1,0 +1,19 @@
+examples/src/basic_agent.ts
+  s_460a57d3a2bf17::t_b5554998564948 21-23,46-51,53-64,66-67,81-94,96,139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4eaa5e517079a08c0fe129eb8f08009889759290",
+  "prompts": {},
+  "sessions": {
+    "s_460a57d3a2bf17": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d36d-7c5d-7b61-80a3-73dfe1370fbc",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
