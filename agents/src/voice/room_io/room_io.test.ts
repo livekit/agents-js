@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, DisconnectReason, RoomEvent } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as jobModule from '../../job.js';
@@ -520,5 +520,84 @@ describe('RoomIO deleteRoomOnClose', () => {
     await vi.advanceTimersByTimeAsync(1);
     await closePromise;
     expect(closed).toBe(true);
+  });
+});
+
+describe('RoomIO job shutdown on participant disconnect', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function setup(options: { closeOnDisconnect?: boolean; primary?: boolean } = {}) {
+    const shutdown = vi.fn();
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    vi.spyOn(jobModule, 'getJobContext').mockReturnValue({
+      shutdown,
+      _primaryAgentSession: options.primary === false ? {} : session,
+    } as unknown as ReturnType<typeof jobModule.getJobContext>);
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: {
+        audioEnabled: false,
+        textEnabled: false,
+        participantIdentity: 'user',
+        ...(options.closeOnDisconnect !== undefined
+          ? { closeOnDisconnect: options.closeOnDisconnect }
+          : {}),
+      },
+      outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+    });
+    roomIO.start();
+    const participantLeft = () => {
+      const listener = room.on.mock.calls.find(
+        ([event]) => event === RoomEvent.ParticipantDisconnected,
+      )?.[1] as (participant: unknown) => void;
+      listener({ identity: 'user', disconnectReason: DisconnectReason.CLIENT_INITIATED });
+    };
+    return { shutdown, session, roomIO, participantLeft };
+  }
+
+  it('ends the job once the session closed because its participant left', async () => {
+    const { shutdown, session, roomIO, participantLeft } = setup();
+    participantLeft();
+    expect(session._closeSoon).toHaveBeenCalledWith({
+      reason: CloseReason.PARTICIPANT_DISCONNECTED,
+    });
+    expect(shutdown).not.toHaveBeenCalled(); // not before the session and the room io are down
+
+    session.emit(
+      AgentSessionEventTypes.Close,
+      createCloseEvent(CloseReason.PARTICIPANT_DISCONNECTED, null),
+    );
+    await roomIO.close();
+    expect(shutdown).toHaveBeenCalledExactlyOnceWith('participant disconnected');
+  });
+
+  it('is opted out with closeOnDisconnect=false, like the close itself', async () => {
+    const { shutdown, session, roomIO, participantLeft } = setup({ closeOnDisconnect: false });
+    participantLeft();
+    expect(session._closeSoon).not.toHaveBeenCalled();
+    await roomIO.close();
+    expect(shutdown).not.toHaveBeenCalled();
+  });
+
+  it('leaves the job alone when the session closed for another reason', async () => {
+    const { shutdown, session, roomIO } = setup();
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+    await roomIO.close();
+    expect(shutdown).not.toHaveBeenCalled();
+  });
+
+  it('does not let a secondary session end the job', async () => {
+    const { shutdown, session, roomIO, participantLeft } = setup({ primary: false });
+    participantLeft();
+    session.emit(
+      AgentSessionEventTypes.Close,
+      createCloseEvent(CloseReason.PARTICIPANT_DISCONNECTED, null),
+    );
+    await roomIO.close();
+    expect(shutdown).not.toHaveBeenCalled();
   });
 });
