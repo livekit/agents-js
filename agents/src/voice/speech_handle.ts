@@ -271,6 +271,14 @@ export class SpeechHandle {
     return `${this._generationBaseId ?? this._id}_${this._generationStep}`;
   }
 
+  /**
+   * @internal The speech id the turn is filed under: the root speech's when this handle
+   * continues its turn (a realtime tool reply runs on a new handle), else its own.
+   */
+  get _turnSpeechId(): string {
+    return this._generationBaseId ?? this._id;
+  }
+
   /** @internal The id of the generation before the current one; undefined on the first. */
   get _parentGenerationId(): string | undefined {
     const step = this._generationStep;
@@ -673,8 +681,9 @@ export class SpeechHandle {
       );
     }
     if (!span.isRecording()) return;
-    if (error instanceof Error) {
-      recordException(span, error);
+    if (error !== undefined) {
+      // a thrown string or object is a failure too: the turn must not read as a success
+      recordException(span, error instanceof Error ? error : new Error(String(error)));
     }
     span.end();
   }

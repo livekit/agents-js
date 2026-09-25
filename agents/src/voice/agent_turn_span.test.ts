@@ -347,6 +347,9 @@ describe.sequential('agent_turn span', () => {
     const [turn] = turns;
     const attrs = turn!.attributes;
     expect(attrs[traceTypes.ATTR_SPEECH_ID]).toBe(speech.id);
+    // what the reply's own step stamps on the turn: the tool call's id, not the new handle's
+    expect(reply!._turnSpeechId).toBe(speech.id);
+    expect(speech._turnSpeechId).toBe(speech.id);
     expect(attrs[traceTypes.ATTR_GENERATION_COUNT]).toBe(2);
     expect(attrs[traceTypes.ATTR_AGENT_TURN_ID]).toBe(`${speech.id}_2`);
     const generations = turn!.events.filter((event) => event.name === 'generation');
@@ -364,12 +367,16 @@ describe.sequential('agent_turn span', () => {
     continueToolReplyTurn(reply!, reply!);
   });
 
-  it('a task failure fails the turn and surfaces on the handle', async () => {
+  it.each([
+    ['an Error', new Error('provider unavailable')],
+    ['a string', 'provider unavailable'],
+  ])('a task failure fails the turn and surfaces on the handle (%s)', async (_kind, failure) => {
     // an LLM node that throws rejects the speech task; the turn ends with the error and the
-    // handle reports it, instead of an unremarkable success
+    // handle reports it, instead of an unremarkable success. A thrown value that is not an
+    // Error is a failure all the same
     class BrokenAgent extends WeatherAgent {
       override async llmNode(): Promise<never> {
-        throw new Error('provider unavailable');
+        throw failure;
       }
     }
     const llm = new FakeLLM([{ input: 'Hello', content: 'Hi there' }]);
@@ -384,13 +391,24 @@ describe.sequential('agent_turn span', () => {
       await session.close();
     }
 
-    expect(speech!.exception()).toBeInstanceOf(Error);
-    expect((speech!.exception() as Error).message).toBe('provider unavailable');
+    expect(speech!.exception()).toBe(failure);
     const [turn] = spansNamed(exporter, 'agent_turn');
     expect(turn!.status.code).toBe(SpanStatusCode.ERROR);
     expect(
       turn!.events.find((event) => event.name === 'exception')?.attributes?.['exception.message'],
     ).toBe('provider unavailable');
+  });
+
+  it('a failure that is not an Error still fails the turn', async () => {
+    const handle = SpeechHandle.create({ allowInterruptions: true });
+    await withAgentTurn(handle, { rootContext: undefined, agentLabel: 'a' }, async () => {});
+    handle._markDone('llm down');
+
+    const [turn] = spansNamed(exporter, 'agent_turn');
+    expect(turn!.status.code).toBe(SpanStatusCode.ERROR);
+    expect(
+      turn!.events.find((event) => event.name === 'exception')?.attributes?.['exception.message'],
+    ).toBe('llm down');
   });
 
   it('an LLM failure stored on the handle fails the turn', async () => {

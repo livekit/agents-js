@@ -431,7 +431,7 @@ export async function withAgentTurn<T>(
     span = tracer.startSpan({
       name: 'agent_turn',
       context: options.rootContext,
-      attributes: { [traceTypes.ATTR_SPEECH_ID]: speechHandle.id },
+      attributes: { [traceTypes.ATTR_SPEECH_ID]: speechHandle._turnSpeechId },
     });
     // an agent turn is the convention's `invoke_agent`: the framework running the agent
     // in-process, with the inference and tool spans nested underneath
@@ -3707,7 +3707,8 @@ export class AgentActivity implements RecognitionHooks {
   }): Promise<void> => {
     const { speechHandle } = stateLease;
 
-    span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
+    // the turn's id, not this step's handle: a tool reply on a new handle continues its parent
+    span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle._turnSpeechId);
     if (instructions) {
       span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, renderInstructions(instructions));
     }
@@ -4439,7 +4440,8 @@ export class AgentActivity implements RecognitionHooks {
   }): Promise<void> {
     const { speechHandle } = stateLease;
 
-    span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
+    // the turn's id, not this step's handle: a tool reply on a new handle continues its parent
+    span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle._turnSpeechId);
 
     const localParticipant = this.agentSession._roomIO?.localParticipant;
     if (localParticipant) {
