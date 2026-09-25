@@ -53,11 +53,11 @@ export class BlockedSpanTracker implements SpanProcessor {
   }
 
   /**
-   * The span that was current across `[startedAt, endedAt]` (epoch ms): created before the
-   * window opened and still open, or ended no earlier than the window closed. Spans of the given
-   * names are skipped (the stall span itself). `slack` widens both ends: the block's start is
-   * known to within a heartbeat, and its end is the late heartbeat's run, a little after the
-   * blocking call returned and the span it was in ended.
+   * The span that was current when the loop began blocking within `[startedAt, endedAt]` (epoch
+   * ms): created before the window opened and still open, or ended after its first heartbeat.
+   * Spans of the given names are skipped (the stall span itself). `slack` accounts for heartbeat
+   * timing at both ends. The late heartbeat can run well after the blocking call and its span
+   * ended, so requiring a span to cover the report's end would discard the actual blocker.
    *
    * Among the spans that qualify, the innermost of one ancestry is the answer. When two
    * operations of the same kind were both in flight (two tools, two RPC handlers), timing alone
@@ -72,7 +72,7 @@ export class BlockedSpanTracker implements SpanProcessor {
     slack = 2,
   ): Span | undefined {
     const opened = startedAt + slack;
-    const closed = endedAt - slack;
+    const closed = Math.min(endedAt - slack, startedAt + slack);
     const candidates = new Map<string, { span: Span; createdAt: number }>();
     const consider = (entry: { span: Span; createdAt: number }) => {
       if (entry.createdAt > opened) return;
