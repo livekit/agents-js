@@ -382,6 +382,11 @@ export class AudioRecognition {
   // `user_turn` span when it ends so we can correlate traces with the
   // provider's logs for debugging.
   private sttRequestIds: string[] = [];
+  private sttEvents: Array<{
+    received_at: number;
+    type: 'interim_transcript' | 'preflight_transcript' | 'final_transcript';
+    transcript_length: number;
+  }> = [];
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
@@ -996,7 +1001,7 @@ export class AudioRecognition {
       const eventsToEmit = [...this.transcriptBuffer];
       this.resetInterruptionDetection();
       for (const event of eventsToEmit) {
-        await this.onSTTEvent(event);
+        await this.onSTTEvent(event, false);
       }
       return;
     }
@@ -1067,7 +1072,7 @@ export class AudioRecognition {
         { event: event.type, cooldown, addedDelay },
         're-emitting held user transcript',
       );
-      await this.onSTTEvent(event);
+      await this.onSTTEvent(event, false);
     }
   }
 
@@ -1200,7 +1205,26 @@ export class AudioRecognition {
     return trace.setSpan(base, span);
   }
 
-  private async onSTTEvent(ev: SpeechEvent) {
+  private async onSTTEvent(ev: SpeechEvent, recordMetadata = true) {
+    if (
+      recordMetadata &&
+      (ev.type === SpeechEventType.INTERIM_TRANSCRIPT ||
+        ev.type === SpeechEventType.PREFLIGHT_TRANSCRIPT ||
+        ev.type === SpeechEventType.FINAL_TRANSCRIPT)
+    ) {
+      const type =
+        ev.type === SpeechEventType.INTERIM_TRANSCRIPT
+          ? 'interim_transcript'
+          : ev.type === SpeechEventType.PREFLIGHT_TRANSCRIPT
+            ? 'preflight_transcript'
+            : 'final_transcript';
+      this.sttEvents.push({
+        received_at: Date.now(),
+        type,
+        transcript_length: Array.from(ev.alternatives?.[0]?.text ?? '').length,
+      });
+    }
+
     // Collect provider-known STT ids for this user turn. The actual attribute is
     // written once when the user_turn span ends (see _endUserTurnSpan), to avoid
     // ordering issues with span creation.
@@ -2587,6 +2611,9 @@ export class AudioRecognition {
     transcriptionDelay: number;
     endOfUtteranceDelay: number;
   }): void {
+    if (this.sttEvents.length && !this.userTurnSpan) {
+      this.ensureUserTurnSpan(this.sttEvents[0]!.received_at);
+    }
     if (this.userTurnSpan && info) {
       this.userTurnSpan.setAttributes({
         [traceTypes.ATTR_USER_TRANSCRIPT]: info.transcript,
@@ -2598,12 +2625,21 @@ export class AudioRecognition {
         this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
       }
     }
+    this.stampSttEvents();
     if (this.userTurnSpan?.isRecording()) {
       this.userTurnSpan.end();
     }
     this.userTurnSpan = undefined;
     this.userTurnStart = undefined;
     this.sttRequestIds = [];
+  }
+
+  private stampSttEvents(): void {
+    const events = this.sttEvents;
+    this.sttEvents = [];
+    if (events.length && this.userTurnSpan?.isRecording()) {
+      this.userTurnSpan.setAttribute(traceTypes.ATTR_STT_EVENTS, JSON.stringify(events));
+    }
   }
 
   private get vadBaseTurnDetection() {
