@@ -419,6 +419,25 @@ describe('ConnectionPool', () => {
       await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
     });
 
+    it('does not close a connection invalidated mid-request, even when released afterwards', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      const idle = await pool.get();
+      pool.put(idle);
+
+      pool.invalidate(); // settings changed while inUse is still serving a request
+      await pool.releaseIdle(); // drains the close queue
+      expect(closeCb).toHaveBeenCalledTimes(1);
+      expect(closeCb).toHaveBeenCalledWith(idle);
+
+      // the request finishes: its connection closes on return and the next get connects fresh
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+      expect(await pool.get()).toBe('conn_3');
+    });
+
     it('closes a released checked-out connection that is removed instead of returned', async () => {
       const closeCb = vi.fn(async (_conn: string) => {});
       const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });

@@ -224,17 +224,22 @@ export class ConnectionPool<T> {
   }
 
   /**
-   * Clear all existing connections.
+   * Drop every current connection so the next checkout connects fresh, for example after the
+   * connection settings changed.
    *
-   * Marks all current connections to be closed during the next drain cycle.
+   * Idle connections close on the next drain. A checked-out connection is still serving a
+   * request, so it is retired instead: it finishes and then closes on return.
    */
   invalidate(): void {
     for (const conn of this.connections.keys()) {
-      this.toClose.add(conn);
+      if (this.available.has(conn)) {
+        this.toClose.add(conn);
+      } else {
+        this.retired.add(conn);
+      }
     }
     this.connections.clear();
     this.available.clear();
-    // retired connections are still in use; they close on their own return
   }
 
   /**
