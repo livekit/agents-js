@@ -34,19 +34,23 @@ describe('STTPipeline recovery after an exhausted retry budget', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
   it('recreates the STT stream after a connection failure and keeps delivering events', async () => {
+    const startedAt = Date.now();
+    const event = { ...finalTranscript };
     let calls = 0;
     const sttNode: STTNode = async () => {
       calls += 1;
       return calls === 1
         ? erroring(new APIConnectionError({ message: 'retry budget exhausted' }))
-        : yielding(finalTranscript);
+        : yielding(event);
     };
 
     const pipeline = new STTPipeline(sttNode);
     const reader = pipeline.eventChannel.stream().getReader();
     try {
       const { value } = await reader.read();
-      expect(value).toEqual(finalTranscript);
+      expect(value).toMatchObject(finalTranscript);
+      expect(value?.createdAt).toBeGreaterThanOrEqual(startedAt);
+      expect(value?.createdAt).toBeLessThanOrEqual(Date.now());
       expect(calls).toBe(2);
     } finally {
       reader.releaseLock();
