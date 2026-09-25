@@ -1777,9 +1777,11 @@ export { AudioBuffer_2 as AudioBuffer }
 //
 // @public
 export class AudioByteStream {
-    constructor(sampleRate: number, numChannels: number, samplesPerChannel?: number | null);
-    // (undocumented)
+    constructor(sampleRate: number, numChannels: number, samplesPerChannel?: number | null, progressive?: boolean);
+    get bufferedDuration(): number;
+    clear(): void;
     flush(): AudioFrame[];
+    resetProgressive(): void;
     // (undocumented)
     write(data: ArrayBufferLike | ArrayBufferView): AudioFrame[];
 }
