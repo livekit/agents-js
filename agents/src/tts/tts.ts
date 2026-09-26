@@ -413,6 +413,25 @@ export abstract class SynthesizeStream
     });
   }
 
+  /** The `tts_request` span of this stream, once the main task has opened it. */
+  /**
+   * The model named in the usage metrics: the TTS's own by default; a fallback adapter's stream
+   * reports the instance that actually served, which the adapter's own getters cannot tell once
+   * a failed instance recovered while the request was still running.
+   */
+  protected get responseModel(): string {
+    return this.#tts.model;
+  }
+
+  /** The provider named in the usage metrics; see `responseModel`. */
+  protected get responseProvider(): string {
+    return this.#tts.provider;
+  }
+
+  protected get ttsRequestSpan(): Span | undefined {
+    return this.#ttsRequestSpan;
+  }
+
   private _mainTaskImpl = async (span: Span) => {
     this.#ttsRequestSpan = span;
     span.setAttributes({
@@ -622,8 +641,8 @@ export abstract class SynthesizeStream
           outputTokens: this.#outputTokens,
           streamed: true,
           metadata: {
-            modelProvider: this.#tts.provider,
-            modelName: this.#tts.model,
+            modelProvider: this.responseProvider,
+            modelName: this.responseModel,
           },
         };
         if (this.#ttsRequestSpan) {
@@ -828,6 +847,25 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     });
   }
 
+  /** The `tts_request` span of this stream, once the main task has opened it. */
+  /**
+   * The model named in the usage metrics: the TTS's own by default; a fallback adapter's stream
+   * reports the instance that actually served, which the adapter's own getters cannot tell once
+   * a failed instance recovered while the request was still running.
+   */
+  protected get responseModel(): string {
+    return this.#tts.model;
+  }
+
+  /** The provider named in the usage metrics; see `responseModel`. */
+  protected get responseProvider(): string {
+    return this.#tts.provider;
+  }
+
+  protected get ttsRequestSpan(): Span | undefined {
+    return this.#ttsRequestSpan;
+  }
+
   private _mainTaskImpl = async (span: Span) => {
     this.#ttsRequestSpan = span;
     span.setAttributes({
@@ -974,8 +1012,8 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       outputTokens: this.#outputTokens,
       streamed: false,
       metadata: {
-        modelProvider: this.#tts.provider,
-        modelName: this.#tts.model,
+        modelProvider: this.responseProvider,
+        modelName: this.responseModel,
       },
     };
 

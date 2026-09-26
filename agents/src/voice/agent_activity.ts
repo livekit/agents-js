@@ -162,7 +162,12 @@ import {
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { releaseTts, retainTts } from './model_refs.js';
-import { type InputDetails, REPLY_TASK_CANCEL_TIMEOUT, SpeechHandle } from './speech_handle.js';
+import {
+  type InputDetails,
+  type InterruptionSource,
+  REPLY_TASK_CANCEL_TIMEOUT,
+  SpeechHandle,
+} from './speech_handle.js';
 import {
   ToolExecutor,
   cancelTaskTool,
@@ -362,6 +367,20 @@ function recordUserTurnStages(span: Span, userMetrics: MetricsReport): void {
   }
 }
 
+/**
+ * The STT identity for the user_turn span. Plugins that leave the base getters at their
+ * `unknown` default are named by their label instead (its `<provider>-<model>` prefix for the
+ * provider), and the provider is normalized to the GenAI registry spelling like every other
+ * `gen_ai.provider.name` the framework writes.
+ */
+function sttIdentity(stt: STT | undefined): { model?: string; provider?: string } {
+  if (!stt) return {};
+  const label = stt.label;
+  const model = stt.model !== 'unknown' ? stt.model : label;
+  const rawProvider = stt.provider !== 'unknown' ? stt.provider : label.split('-', 1)[0];
+  return { model, provider: traceTypes.genAIProviderName(rawProvider) ?? rawProvider };
+}
+
 /** Stamp how long the speech sat in the queue on its agent_turn span, in seconds. */
 function recordQueueWait(speechHandle: SpeechHandle): void {
   const queueWait = speechHandle._queueWait();
@@ -371,6 +390,20 @@ function recordQueueWait(speechHandle: SpeechHandle): void {
   trace
     .getSpan(speechHandle._agentTurnContext)
     ?.setAttribute(traceTypes.ATTR_SPEECH_QUEUE_WAIT, queueWait / 1000);
+}
+
+/**
+ * Name what interrupted the speech on its agent_turn span. No-op while the speech plays on.
+ * Module-level: tests drive the reply tasks with stand-in activities.
+ */
+function recordInterruption(speechHandle: SpeechHandle): void {
+  if (!speechHandle.interrupted || speechHandle._agentTurnContext === undefined) {
+    return;
+  }
+  trace.getSpan(speechHandle._agentTurnContext)?.setAttributes({
+    [traceTypes.ATTR_SPEECH_INTERRUPTED]: true,
+    [traceTypes.ATTR_INTERRUPTION_SOURCE]: speechHandle._interruptSource ?? 'programmatic',
+  });
 }
 
 export class AgentActivity implements RecognitionHooks {
@@ -641,13 +674,18 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  async resume(options?: { reuseResources?: ReusableResources }): Promise<void> {
+  async resume(options?: {
+    reuseResources?: ReusableResources;
+    /** Parent for `resume_agent_activity`: a handoff span; else the session. */
+    traceContext?: Context;
+  }): Promise<void> {
     const unlock = await this.lock.lock();
     try {
       await this._startSession({
         spanName: 'resume_agent_activity',
         runOnEnter: false,
         reuseResources: options?.reuseResources,
+        traceContext: options?.traceContext,
       });
     } finally {
       unlock();
@@ -847,6 +885,8 @@ export class AgentActivity implements RecognitionHooks {
       this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection === true;
     const recognitionVad = this.usingDefaultVad && realtimeUsesServerVad ? undefined : this.vad;
 
+    // as python passes them (a fallback adapter reports the instance expected to serve next)
+    const sttIdent = sttIdentity(this.stt);
     this.audioRecognition = new AudioRecognition({
       recognitionHooks: this,
       // Disable stt node if stt is not provided
@@ -862,8 +902,9 @@ export class AgentActivity implements RecognitionHooks {
       endpointing: createEndpointing(this.endpointingOpts),
       userTurnLimit: this.agentSession.sessionOptions.turnHandling.userTurnLimit,
       rootSpanContext: this.agentSession.rootSpanContext,
-      sttModel: this.stt?.label,
-      sttProvider: this.getSttProvider(),
+      sttModel: sttIdent.model,
+      sttProvider: sttIdent.provider,
+      sttIdentity: () => sttIdentity(this.stt),
       sttAlignedTranscript: Boolean(this.stt?.capabilities.alignedTranscript),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
       shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
@@ -1024,17 +1065,6 @@ export class AgentActivity implements RecognitionHooks {
       return undefined;
     }
     return this.agent._stt !== undefined ? this.agent._stt ?? undefined : this.agentSession.stt;
-  }
-
-  private getSttProvider(): string | undefined {
-    const label = this.stt?.label;
-    if (!label) {
-      return undefined;
-    }
-
-    // Heuristic: most labels look like "<provider>-<model>"
-    const [provider] = label.split('-', 1);
-    return provider || label;
   }
 
   get llm(): LLM | RealtimeModel | undefined {
@@ -1384,8 +1414,8 @@ export class AgentActivity implements RecognitionHooks {
             await this.audioRecognition.updateStt(
               this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
               {
-                model: resolvedStt?.model,
-                provider: resolvedStt?.provider,
+                ...sttIdentity(resolvedStt),
+                identity: () => sttIdentity(resolvedStt),
                 alignedTranscript: Boolean(resolvedStt?.capabilities.alignedTranscript),
                 resetContext: true,
               },
@@ -1484,8 +1514,8 @@ export class AgentActivity implements RecognitionHooks {
             await this.audioRecognition?.updateStt(
               previous.resolvedStt ? (...args) => this.agent.sttNode(...args) : undefined,
               {
-                model: previous.resolvedStt?.model,
-                provider: previous.resolvedStt?.provider,
+                ...sttIdentity(previous.resolvedStt),
+                identity: () => sttIdentity(previous.resolvedStt),
                 alignedTranscript: Boolean(previous.resolvedStt?.capabilities.alignedTranscript),
                 resetContext: true,
               },
@@ -1815,7 +1845,8 @@ export class AgentActivity implements RecognitionHooks {
     // this.interrupt() is going to raise when allow_interruptions is False,
     // llm.InputSpeechStartedEvent is only fired by the server when the turn_detection is enabled.
     try {
-      this.interrupt();
+      // the server's own speech detection: a barge-in, like the VAD path
+      this.interrupt({ source: 'audio_activity' });
     } catch (error) {
       this.logger.error(
         'RealtimeAPI input_speech_started, but current speech is not interruptable, this should never happen!',
@@ -2128,7 +2159,7 @@ export class AgentActivity implements RecognitionHooks {
           'speech interrupted by audio activity',
         );
         this.realtimeSession?.interrupt();
-        this._currentSpeech.interrupt();
+        this._currentSpeech.interrupt(false, 'audio_activity');
       }
     } else if (this._currentSpeech === undefined || !this._currentSpeech.interrupted) {
       this.pendingInterruption = undefined;
@@ -2266,7 +2297,8 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    this.cancelPreemptiveGeneration();
+    // more of the user's turn arrived: the attempt answered a transcript that is now stale
+    this.cancelPreemptiveGeneration('user_turn');
 
     if (
       info.startedSpeakingAt !== undefined &&
@@ -2392,24 +2424,30 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private cancelPreemptiveGeneration(): void {
+  private cancelPreemptiveGeneration(source?: InterruptionSource): void {
     if (this._preemptiveGeneration !== undefined) {
-      this._preemptiveGeneration.speechHandle._cancel();
+      this._preemptiveGeneration.speechHandle._cancel(source);
       this._preemptiveGeneration = undefined;
     }
   }
 
-  private _interruptBackgroundSpeeches(force: boolean): SpeechHandle[] {
+  private _interruptBackgroundSpeeches(
+    force: boolean,
+    source: InterruptionSource = 'programmatic',
+  ): SpeechHandle[] {
     const interrupted: SpeechHandle[] = [];
     for (const speech of this._backgroundSpeeches) {
       if (force || speech.allowInterruptions) {
-        interrupted.push(speech.interrupt(force));
+        interrupted.push(speech.interrupt(force, source));
       }
     }
     return interrupted;
   }
 
-  private interruptQueuedSpeeches(force: boolean): void {
+  private interruptQueuedSpeeches(
+    force: boolean,
+    source: InterruptionSource = 'programmatic',
+  ): void {
     // Heap iteration pops in playout order. Walk a clone so retained speeches stay queued and
     // interrupted ones remain for mainTask to drain.
     for (const [, , speech] of this.speechQueue.clone()) {
@@ -2423,7 +2461,7 @@ export class AgentActivity implements RecognitionHooks {
         break;
       }
 
-      speech.interrupt(force);
+      speech.interrupt(force, source);
     }
   }
 
@@ -2972,25 +3010,25 @@ export class AgentActivity implements RecognitionHooks {
    * Interrupt the current speech generation and any queued speeches.
    *
    * A queued speech that disallows interruptions keeps playing, along with the ones behind it,
-   * unless `force` is set.
+   * unless `force` is set. `source` names the cause on the speeches' `agent_turn` spans.
    *
    * @returns A future that completes when the interruption is fully processed.
    * @throws Error if the speech currently playing disallows interruptions and `force` is false.
    */
-  interrupt(options: { force?: boolean } = {}): Future<void> {
-    const { force = false } = options;
-    this.cancelPreemptiveGeneration();
+  interrupt(options: { force?: boolean; source?: InterruptionSource } = {}): Future<void> {
+    const { force = false, source = 'programmatic' } = options;
+    this.cancelPreemptiveGeneration(source);
 
     const future = new Future<void>();
     const currentSpeech = this._currentSpeech;
 
-    this._interruptBackgroundSpeeches(force);
+    this._interruptBackgroundSpeeches(force, source);
 
-    currentSpeech?.interrupt(force);
+    currentSpeech?.interrupt(force, source);
 
     this.realtimeSession?.interrupt();
 
-    this.interruptQueuedSpeeches(force);
+    this.interruptQueuedSpeeches(force, source);
 
     if (force) {
       // Force-interrupt (used during shutdown): cancel all speech tasks so they
@@ -3126,7 +3164,8 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    this.interruptQueuedSpeeches(false);
+    // the committed turn is why the queued replies go too: same cause as the current one below
+    this.interruptQueuedSpeeches(false, 'user_turn');
 
     if (currentSpeech) {
       await this.cancelSpeechPause();
@@ -3138,7 +3177,7 @@ export class AgentActivity implements RecognitionHooks {
         'speech interrupted, new user turn detected',
       );
 
-      activeSpeech.interrupt();
+      activeSpeech.interrupt(false, 'user_turn');
       this.realtimeSession?.interrupt();
     }
 
@@ -3267,7 +3306,7 @@ export class AgentActivity implements RecognitionHooks {
         this.logger.warn(
           'preemptive generation invalidated after `onUserTurnCompleted` because the transcript, chat context, tools, or tool choice changed',
         );
-        preemptive.speechHandle._cancel();
+        preemptive.speechHandle._cancel('user_turn');
       }
 
       this._preemptiveGeneration = undefined;
@@ -3327,6 +3366,7 @@ export class AgentActivity implements RecognitionHooks {
     recordQueueWait(speechHandle);
 
     if (speechHandle.interrupted) {
+      recordInterruption(speechHandle);
       return;
     }
 
@@ -3427,8 +3467,11 @@ export class AgentActivity implements RecognitionHooks {
     try {
       await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
+      let playbackEv: PlaybackFinishedEvent | undefined;
       if (audioOutput) {
-        await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
+        const playout = audioOutput.waitForPlayout();
+        await speechHandle.waitIfNotInterrupted([playout]);
+        if (!speechHandle.interrupted) playbackEv = await playout;
       }
 
       if (speechHandle.interrupted) {
@@ -3436,7 +3479,20 @@ export class AgentActivity implements RecognitionHooks {
         await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
         if (audioOutput) {
           audioOutput.clearBuffer();
-          await audioOutput.waitForPlayout();
+          playbackEv = await audioOutput.waitForPlayout();
+        }
+      }
+
+      recordInterruption(speechHandle);
+      if (speechHandle.interrupted && audioOutput && audioOut && playbackEv) {
+        // waitForPlayout returns the previous segment's event when this speech never reached
+        // the output: only a segment of its own counts as played
+        const playedOwnFrame =
+          audioOutput.capturedPlayoutSegments > audioOut.capturedSegmentsBefore;
+        if (playedOwnFrame) {
+          trace
+            .getSpan(speechHandle._agentTurnContext ?? otelContext.active())
+            ?.setAttribute(traceTypes.ATTR_PLAYOUT_POSITION, playbackEv.playbackPosition);
         }
       }
 
@@ -3711,6 +3767,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (speechHandle.interrupted) {
+      recordInterruption(speechHandle);
       replyAbortController.abort();
       await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
       return;
@@ -3967,6 +4024,13 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     span.setAttribute(traceTypes.ATTR_SPEECH_INTERRUPTED, speechHandle.interrupted);
+    recordInterruption(speechHandle);
+    if (speechHandle.interrupted && segmentOutputs.length) {
+      span.setAttribute(
+        traceTypes.ATTR_PLAYOUT_POSITION,
+        segmentOutputs.reduce((total, out) => total + out.playbackPositionInS, 0),
+      );
+    }
     let hasSpeechMessage = false;
 
     if (speechHandle.interrupted) {
@@ -4171,20 +4235,30 @@ export class AgentActivity implements RecognitionHooks {
     _previousUserMetrics?: MetricsReport,
   ): Promise<void> =>
     tracer.startActiveSpan(
-      async (span) => (
-        this.recordAgentTurn(span),
-        this._pipelineReplyTaskImpl({
-          stateLease,
-          chatCtx,
-          toolCtx,
-          modelSettings,
-          replyAbortController,
-          instructions,
-          newMessage,
-          span,
-          _previousUserMetrics,
-        })
-      ),
+      async (span) => {
+        this.recordAgentTurn(span);
+        try {
+          await this._pipelineReplyTaskImpl({
+            stateLease,
+            chatCtx,
+            toolCtx,
+            modelSettings,
+            replyAbortController,
+            instructions,
+            newMessage,
+            span,
+            _previousUserMetrics,
+          });
+        } finally {
+          // an interruption while the tools run makes the task return early: the verdict is
+          // stamped here, whichever way the task left
+          span.setAttribute(
+            traceTypes.ATTR_SPEECH_INTERRUPTED,
+            stateLease.speechHandle.interrupted,
+          );
+          recordInterruption(stateLease.speechHandle);
+        }
+      },
       {
         name: 'agent_turn',
         context: this.agentSession.rootSpanContext,
@@ -4300,6 +4374,7 @@ export class AgentActivity implements RecognitionHooks {
     recordQueueWait(speechHandle);
 
     if (speechHandle.interrupted) {
+      recordInterruption(speechHandle);
       return;
     }
 
@@ -4627,6 +4702,7 @@ export class AgentActivity implements RecognitionHooks {
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
     if (speechHandle.interrupted) {
+      recordInterruption(speechHandle);
       this.logger.debug(
         { speech_id: speechHandle.id },
         'Aborting all realtime generation tasks due to interruption',
@@ -4686,6 +4762,8 @@ export class AgentActivity implements RecognitionHooks {
     } finally {
       this._backgroundSpeeches.delete(speechHandle);
     }
+    // the tools may have run past a barge-in: the turn names what cut it short
+    recordInterruption(speechHandle);
 
     if (toolOutput.output.length > 0) {
       if (this.updateAgentState(stateLease, 'thinking') && !endedAgentSpeechBeforeTool) {
@@ -5711,7 +5789,8 @@ export class AgentActivity implements RecognitionHooks {
       !this.pausedSpeech.handle.interrupted &&
       this.pausedSpeech.handle.allowInterruptions
     ) {
-      this.pausedSpeech.handle.interrupt();
+      // a final transcript or a committed turn ended the pause
+      this.pausedSpeech.handle.interrupt(false, 'user_turn');
       // ensure the generation is done — but only if a generation
       // was actually started. Must be raced against interrupt: an interrupted
       // paused speech may never mark its generation done, and an un-raced

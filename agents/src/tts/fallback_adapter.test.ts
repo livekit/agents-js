@@ -2,13 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import { context as otelContext, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ReadableStream } from 'node:stream/web';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIError, APIStatusError } from '../_exceptions.js';
 import { initializeLogger, log } from '../log.js';
+import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import { basic } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TTS_STARTED_TIME } from '../types.js';
+import { delay } from '../utils.js';
 import { FallbackAdapter } from './fallback_adapter.js';
 import { StreamAdapter } from './stream_adapter.js';
 import { ChunkedStream, SynthesizeStream, TTS, type TTSError } from './tts.js';
@@ -821,5 +826,136 @@ describe('TTS FallbackAdapter', () => {
       expect(primary.listenerCount('error')).toBe(0);
       expect(primary.listenerCount('metrics_collected')).toBe(0);
     });
+  });
+
+  it('names the instance that served in the usage metrics, not the one preferred next', async () => {
+    class IdentifiedTTS extends MockTTS {
+      constructor(
+        label: string,
+        private readonly _model: string,
+        private readonly _provider: string,
+      ) {
+        super(label);
+      }
+      override get model(): string {
+        return this._model;
+      }
+      override get provider(): string {
+        return this._provider;
+      }
+    }
+    const primary = new IdentifiedTTS('primary', 'primary-model', 'primary');
+    primary.shouldFail = true;
+    const secondary = new IdentifiedTTS('secondary', 'secondary-model', 'secondary');
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, secondary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+    const metrics: Array<{
+      label: string;
+      metadata?: { modelName?: string; modelProvider?: string };
+    }> = [];
+    adapter.on('metrics_collected', (m) => metrics.push(m));
+
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello world');
+          controller.close();
+        },
+      }),
+    );
+    for await (const event of stream) {
+      if (event === SynthesizeStream.END_OF_STREAM) break;
+    }
+    // the primary is preferred again as soon as its probe succeeds; the request the secondary
+    // served must still say so
+    adapter.status[0]!.available = true;
+    await delay(20);
+
+    const own = metrics.filter((m) => m.label === adapter.label);
+    expect(own.length).toBeGreaterThan(0);
+    for (const m of own) {
+      expect(m.metadata?.modelName).toBe('secondary-model');
+      expect(m.metadata?.modelProvider).toBe('secondary');
+    }
+    stream.close();
+    await adapter.close();
+  });
+
+  it('attributes partial chunked audio to the instance the caller heard', async () => {
+    // chunked synthesis that fails after emitting audio cannot fall back (the audio was heard);
+    // the request and caller spans still name the instance that produced it
+    const exporter = new InMemorySpanExporter();
+    const provider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    provider.register();
+    const previous = tracer.getProvider();
+    setTracerProvider(provider);
+    try {
+      const primary = new MockTTS('primary');
+      primary.shouldFail = true;
+      primary.failAfterAudio = true;
+      const adapter = new FallbackAdapter({
+        ttsInstances: [primary, new MockTTS('secondary')],
+        maxRetryPerTTS: 0,
+        recoveryDelayMs: 60_000,
+      });
+      await tracer.startActiveSpan(
+        async () => {
+          const stream = adapter.synthesize('hello world');
+          try {
+            for await (const _frame of stream) {
+              // drain
+            }
+          } catch {
+            // the partial failure is reported to the caller
+          }
+        },
+        { name: 'caller' },
+      );
+      await adapter.close();
+      const caller = exporter.getFinishedSpans().find((span) => span.name === 'caller');
+      expect(caller?.attributes[traceTypes.ATTR_GEN_AI_RESPONSE_MODEL]).toBe(primary.model);
+    } finally {
+      setTracerProvider(previous);
+      await provider.shutdown();
+      trace.disable();
+      otelContext.disable();
+    }
+  });
+
+  it('reports the model and provider of the instance that serves next', () => {
+    class IdentifiedTTS extends MockTTS {
+      constructor(
+        label: string,
+        private readonly _model: string,
+        private readonly _provider: string,
+      ) {
+        super(label);
+      }
+      override get model(): string {
+        return this._model;
+      }
+      override get provider(): string {
+        return this._provider;
+      }
+    }
+    const primary = new IdentifiedTTS('primary', 'primary-model', 'primary');
+    const fallback = new IdentifiedTTS('fallback', 'fallback-model', 'fallback');
+    const adapter = new FallbackAdapter({ ttsInstances: [primary, fallback] });
+    expect(adapter.model).toBe('primary-model');
+    expect(adapter.provider).toBe('primary');
+    expect(adapter.label).toContain('FallbackAdapter');
+    adapter.status[0]!.available = false;
+    expect(adapter.model).toBe('fallback-model');
+    expect(adapter.provider).toBe('fallback');
+    // once the primary recovers (its recovery task flips it back to available) the next request
+    // goes to it first, so that is what model and provider report
+    adapter.status[0]!.available = true;
+    expect(adapter.model).toBe('primary-model');
   });
 });

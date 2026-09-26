@@ -89,6 +89,13 @@ export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
  *
  * @public
  */
+/**
+ * Why a speech was interrupted, for the `agent_turn` trace: the user started talking over it
+ * (`audio_activity`), a committed user turn preempted it (`user_turn`), or code did
+ * (`programmatic`: `session.interrupt()`, a tool, teardown).
+ */
+export type InterruptionSource = 'audio_activity' | 'user_turn' | 'programmatic';
+
 export class SpeechHandleCircularWaitError extends Error {
   constructor(functionCallName: string) {
     super(dedent`
@@ -149,6 +156,8 @@ export class SpeechHandle {
   _scheduledAt?: number;
   /** @internal - when generation was first authorized, for the queue-wait attribute */
   _authorizedAt?: number;
+  /** @internal - the first interrupt's cause, for the agent_turn trace */
+  _interruptSource?: InterruptionSource;
 
   /** @internal - used by AgentTask/RunResult final output plumbing */
   _maybeRunFinalOutput?: unknown;
@@ -289,11 +298,15 @@ export class SpeechHandle {
   /**
    * Interrupt the current speech generation.
    *
+   * @param force - Interrupt even if this speech disallows interruptions.
+   * @param source - Why, for the `agent_turn` trace (see {@link InterruptionSource}). The first
+   *   interruption's cause is the one recorded.
+   *
    * @throws Error If this speech handle is still running and does not allow interruptions.
    *
    * @returns The same speech handle that was interrupted.
    */
-  interrupt(force: boolean = false): SpeechHandle {
+  interrupt(force: boolean = false, source: InterruptionSource = 'programmatic'): SpeechHandle {
     if (this.interrupted || this.done()) {
       // Already cancelled or finished: nothing to interrupt, and protection is moot.
       return this;
@@ -303,6 +316,7 @@ export class SpeechHandle {
       throw new Error('This generation handle does not allow interruptions');
     }
 
+    this._interruptSource = source; // first interrupt only: later calls return above
     this._cancel();
     return this;
   }
@@ -394,13 +408,19 @@ export class SpeechHandle {
     this.doneCallbacks.delete(callback);
   }
 
-  /** @internal */
-  _cancel(): SpeechHandle {
+  /**
+   * @internal
+   * @param source - Why, for the `agent_turn` trace: a preemptive attempt superseded by more of
+   *   the user's turn is `user_turn`, one dropped by a barge-in `audio_activity`; a cancel with
+   *   no cause (teardown, a pause) reads as programmatic. The first cause named stands.
+   */
+  _cancel(source?: InterruptionSource): SpeechHandle {
     if (this.done()) {
       return this;
     }
 
     if (!this.interruptFut.done) {
+      if (source !== undefined) this._interruptSource = source;
       this.interruptFut.resolve();
       this.startInterruptTimeout();
     }

@@ -550,12 +550,10 @@ describe('FallbackSpeechStream (streaming path)', () => {
 });
 
 describe('FallbackAdapter dynamic model/provider getters', () => {
-  // The OTel `gen_ai.request.model` / `gen_ai.provider.name` attributes on
-  // the `user_turn` span are refreshed on every STT event by
-  // `audio_recognition.refreshUserTurnSttAttributes`. Without dynamic
-  // getters that reflect the active child, those attributes are frozen at
-  // the static wrapper labels (`FallbackAdapter` / `livekit`) regardless
-  // of which provider actually transcribed, so a mid-turn fallover is
+  // The OTel `gen_ai.request.model` / `gen_ai.provider.name` attributes on the `user_turn`
+  // span read these when the turn opens and when it ends. Without dynamic getters that
+  // reflect the child serving, those attributes would name the wrapper (`FallbackAdapter` /
+  // `livekit`) regardless of which provider actually transcribed, so a fallover would be
   // invisible in traces.
 
   class IdentifiedFakeSTT extends FakeSTT {
@@ -574,11 +572,39 @@ describe('FallbackAdapter dynamic model/provider getters', () => {
     }
   }
 
-  it('returns wrapper defaults before any STT is active', () => {
+  it('reports the primary before any traffic', () => {
+    // model and provider follow the instance that serves next, so spans and metrics name the
+    // model that will answer rather than the adapter; the label stays the adapter's own
     const a = new IdentifiedFakeSTT({ label: 'a', model: 'a-model', provider: 'a-provider' });
     const adapter = new FallbackAdapter({ sttInstances: [a] });
-    expect(adapter.model).toBe('FallbackAdapter');
-    expect(adapter.provider).toBe('livekit');
+    expect(adapter.model).toBe('a-model');
+    expect(adapter.provider).toBe('a-provider');
+    expect(adapter.label).toContain('FallbackAdapter');
+  });
+
+  it('follows availability: a recovered primary is reported again before it serves', () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+    });
+    const fallback = new IdentifiedFakeSTT({
+      label: 'fallback',
+      model: 'fallback-model',
+      provider: 'fallback-provider',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+    adapter.status[0]!.available = false;
+    expect(adapter.model).toBe('fallback-model');
+    expect(adapter.provider).toBe('fallback-provider');
+    // once the primary recovers (its recovery task flips it back to available) the next request
+    // goes to it first, so that is what model and provider report
+    adapter.status[0]!.available = true;
+    expect(adapter.model).toBe('primary-model');
+    // all down: they are all retried, primary first
+    adapter.status[0]!.available = false;
+    adapter.status[1]!.available = false;
+    expect(adapter.model).toBe('primary-model');
   });
 
   it('reflects the active child after a successful recognize()', async () => {
@@ -617,6 +643,75 @@ describe('FallbackAdapter dynamic model/provider getters', () => {
 
     expect(adapter.model).toBe('fallback-model');
     expect(adapter.provider).toBe('fallback-provider');
+  });
+
+  it('keeps naming the child serving the stream after the primary recovers', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+    });
+    const fallback = new IdentifiedFakeSTT({
+      label: 'fallback',
+      model: 'fallback-model',
+      provider: 'fallback-provider',
+      fakeTranscript: 'hello world',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+    adapter.status[0]!.available = false;
+
+    const stream = adapter.stream();
+    expect(adapter.model).toBe('fallback-model');
+    stream.pushFrame(emptyAudioFrame());
+    stream.endInput();
+    let events = 0;
+    for await (const ev of stream) {
+      if (ev.type !== SpeechEventType.FINAL_TRANSCRIPT) continue;
+      events += 1;
+      // a recovery probe finds the primary back while the fallback still serves this stream:
+      // the transcript in flight is the fallback's
+      adapter.status[0]!.available = true;
+      expect(adapter.model).toBe('fallback-model');
+      expect(adapter.provider).toBe('fallback-provider');
+    }
+    expect(events).toBeGreaterThan(0);
+    // the stream over, the next request goes to the recovered primary
+    expect(adapter.model).toBe('primary-model');
+  });
+
+  it('a stream ending does not clear what a newer stream elected', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+      fakeTranscript: 'hello',
+    });
+    const fallback = new IdentifiedFakeSTT({
+      label: 'fallback',
+      model: 'fallback-model',
+      provider: 'fallback-provider',
+      fakeTranscript: 'hello',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+    adapter.status[0]!.available = false;
+    const older = adapter.stream();
+    older.pushFrame(emptyAudioFrame());
+    expect(adapter.model).toBe('fallback-model');
+    // the primary recovers and a second stream elects it while the first still runs
+    adapter.status[0]!.available = true;
+    const newer = adapter.stream();
+    newer.pushFrame(emptyAudioFrame());
+    expect(adapter.model).toBe('primary-model');
+    older.endInput();
+    for await (const _ of older) {
+      /* drain */
+    }
+    expect(adapter.model).toBe('primary-model');
+    newer.endInput();
+    for await (const _ of newer) {
+      /* drain */
+    }
+    expect(adapter.model).toBe('primary-model');
   });
 
   it('reflects the active child once streaming events flow', async () => {

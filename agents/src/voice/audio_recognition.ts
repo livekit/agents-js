@@ -310,6 +310,11 @@ export interface AudioRecognitionOptions {
   sttModel?: string;
   /** STT provider name for tracing */
   sttProvider?: string;
+  /**
+   * The STT identity read when a user turn is stamped, over the static names above: a fallback
+   * adapter that failed over mid-session then names the instance serving, not the one at start.
+   */
+  sttIdentity?: () => { model?: string; provider?: string };
   /** Whether the active STT provides transcript alignment timestamps. */
   sttAlignedTranscript?: boolean;
   /** Getter for linked participant for span attribution */
@@ -368,6 +373,7 @@ export class AudioRecognition {
   private rootSpanContext?: Context;
   private sttModel?: string;
   private sttProvider?: string;
+  private sttIdentity?: () => { model?: string; provider?: string };
   private sttAlignedTranscript: boolean;
   private getLinkedParticipant?: () => ParticipantLike | undefined;
 
@@ -484,6 +490,7 @@ export class AudioRecognition {
     this.rootSpanContext = opts.rootSpanContext;
     this.sttModel = opts.sttModel;
     this.sttProvider = opts.sttProvider;
+    this.sttIdentity = opts.sttIdentity;
     this.sttAlignedTranscript = opts.sttAlignedTranscript ?? false;
     this.getLinkedParticipant = opts.getLinkedParticipant;
     this.transcriptionTimeout = opts.transcriptionTimeout ?? undefined;
@@ -754,6 +761,7 @@ export class AudioRecognition {
     options: {
       model?: string;
       provider?: string;
+      identity?: () => { model?: string; provider?: string };
       alignedTranscript?: boolean;
       resetContext?: boolean;
     } = {},
@@ -766,6 +774,9 @@ export class AudioRecognition {
       }
       if (Object.hasOwn(options, 'provider')) {
         this.sttProvider = options.provider;
+      }
+      if (Object.hasOwn(options, 'identity')) {
+        this.sttIdentity = options.identity;
       }
       if (Object.hasOwn(options, 'alignedTranscript')) {
         this.sttAlignedTranscript = options.alignedTranscript ?? false;
@@ -1154,14 +1165,16 @@ export class AudioRecognition {
       setParticipantSpanAttributes(this.userTurnSpan, participant);
     }
 
-    if (this.sttModel) {
-      this.userTurnSpan.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.sttModel);
-    }
-    if (this.sttProvider) {
-      this.userTurnSpan.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, this.sttProvider);
-    }
+    this.stampSttIdentity(this.userTurnSpan);
 
     return this.userTurnSpan;
+  }
+
+  /** Name the STT on a user turn; read live, so a failover during the turn shows through. */
+  private stampSttIdentity(span: Span): void {
+    const { model = this.sttModel, provider = this.sttProvider } = this.sttIdentity?.() ?? {};
+    if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+    if (provider) span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
   }
 
   private userTurnContext(span: Span): Context {
@@ -2643,6 +2656,8 @@ export class AudioRecognition {
     // opened after the decided one is a later bounce's to decide
     if (decided === undefined || this.eouWaitSpan === decided.wait) this.endEouWaitSpan('dropped');
     if (this.userTurnSpan && info) {
+      // the instance that transcribed the turn, after any failover during it
+      this.stampSttIdentity(this.userTurnSpan);
       this.userTurnSpan.setAttributes({
         [traceTypes.ATTR_USER_TRANSCRIPT]: info.transcript,
         [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: info.confidence,

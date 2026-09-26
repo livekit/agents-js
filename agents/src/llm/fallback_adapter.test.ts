@@ -264,4 +264,80 @@ describe('FallbackAdapter', () => {
       }),
     );
   });
+
+  it('names the instance that served in the usage metrics, not the one preferred next', async () => {
+    class NamedMockLLM extends MockLLM {
+      constructor(
+        label: string,
+        private readonly _model: string,
+        private readonly _provider: string,
+      ) {
+        super(label);
+      }
+      override get model(): string {
+        return this._model;
+      }
+      override get provider(): string {
+        return this._provider;
+      }
+    }
+    const primary = new NamedMockLLM('primary', 'primary-model', 'primary');
+    primary.shouldFail = true;
+    const secondary = new NamedMockLLM('secondary', 'secondary-model', 'secondary');
+    const adapter = new FallbackAdapter({ llms: [primary, secondary], attemptTimeout: 1 });
+    const metrics: Array<{
+      label: string;
+      metadata?: { modelName?: string; modelProvider?: string };
+    }> = [];
+    adapter.on('metrics_collected', (m) => metrics.push(m));
+
+    const stream = adapter.chat({ chatCtx: { items: [] } as unknown as ChatContext });
+    for await (const _chunk of stream) {
+      // drain
+    }
+    // the primary is preferred again as soon as its recovery probe succeeds; the metrics of
+    // the request the secondary served must still say so
+    adapter._status[0]!.available = true;
+    await delay(20);
+
+    // the instances' own metrics are forwarded as they are; the adapter's own stream reports
+    // the instance that served its request
+    const adapterMetrics = metrics.filter((m) => m.label === adapter.label());
+    expect(adapterMetrics).toHaveLength(1);
+    expect(adapterMetrics[0]!.metadata?.modelName).toBe('secondary-model');
+    expect(adapterMetrics[0]!.metadata?.modelProvider).toBe('secondary');
+  });
+
+  it('reports the model and provider of the instance that serves next', () => {
+    class IdentifiedLLM extends MockLLM {
+      constructor(
+        label: string,
+        private readonly _model: string,
+        private readonly _provider: string,
+      ) {
+        super(label);
+      }
+      override get model(): string {
+        return this._model;
+      }
+      override get provider(): string {
+        return this._provider;
+      }
+    }
+    const primary = new IdentifiedLLM('primary', 'primary-model', 'primary');
+    const fallback = new IdentifiedLLM('fallback', 'fallback-model', 'fallback');
+    const adapter = new FallbackAdapter({ llms: [primary, fallback] });
+    // model and provider follow the instance that serves next, so spans and metrics name the
+    // model that will answer rather than the adapter; the label stays the adapter's own
+    expect(adapter.model).toBe('primary-model');
+    expect(adapter.provider).toBe('primary');
+    expect(adapter.label()).toContain('FallbackAdapter');
+    adapter._status[0]!.available = false;
+    expect(adapter.model).toBe('fallback-model');
+    expect(adapter.provider).toBe('fallback');
+    // once the primary recovers (its recovery task flips it back to available) the next request
+    // goes to it first, so that is what model and provider report
+    adapter._status[0]!.available = true;
+    expect(adapter.model).toBe('primary-model');
+  });
 });
