@@ -679,6 +679,41 @@ describe('FallbackAdapter dynamic model/provider getters', () => {
     expect(adapter.model).toBe('primary-model');
   });
 
+  it('a stream ending does not clear what a newer stream elected', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+      fakeTranscript: 'hello',
+    });
+    const fallback = new IdentifiedFakeSTT({
+      label: 'fallback',
+      model: 'fallback-model',
+      provider: 'fallback-provider',
+      fakeTranscript: 'hello',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+    adapter.status[0]!.available = false;
+    const older = adapter.stream();
+    older.pushFrame(emptyAudioFrame());
+    expect(adapter.model).toBe('fallback-model');
+    // the primary recovers and a second stream elects it while the first still runs
+    adapter.status[0]!.available = true;
+    const newer = adapter.stream();
+    newer.pushFrame(emptyAudioFrame());
+    expect(adapter.model).toBe('primary-model');
+    older.endInput();
+    for await (const _ of older) {
+      /* drain */
+    }
+    expect(adapter.model).toBe('primary-model');
+    newer.endInput();
+    for await (const _ of newer) {
+      /* drain */
+    }
+    expect(adapter.model).toBe('primary-model');
+  });
+
   it('reflects the active child once streaming events flow', async () => {
     const primary = new IdentifiedFakeSTT({
       label: 'primary',

@@ -157,11 +157,13 @@ export class FallbackAdapter extends STT {
   }
 
   /**
-   * @internal The instance serving the open stream, or the one that answered the last
-   * recognize(): what a transcript in flight is credited to. A stream stays on the child it
-   * elected until that child finishes or fails, whatever a recovery probe finds meanwhile.
+   * @internal The instance serving the open stream, and the stream that elected it: what a
+   * transcript in flight is credited to. A stream stays on the child it elected until that
+   * child finishes or fails, whatever a recovery probe finds meanwhile. One slot: an adapter
+   * streaming for two sessions at once reports the child elected last (a session has one
+   * recognition stream, and an adapter is normally one session's).
    */
-  _servedStt?: STT;
+  _served?: { stt: STT; stream: object }; // the stream, by identity only
 
   /**
    * The instance the next request goes to first: the first one marked available, or the primary
@@ -175,17 +177,17 @@ export class FallbackAdapter extends STT {
   }
 
   /**
-   * The model of the instance serving (see `_servedStt`), else of the one that serves next (see
-   * `nextInstance`). Spans and metrics read this, so a failover shows the model that answered,
-   * or is expected to, rather than the adapter.
+   * The model of the instance serving the open stream (see `_served`), else of the one that
+   * serves next (see `nextInstance`). Spans and metrics read this, so a failover shows the
+   * model transcribing, or expected to, rather than the adapter.
    */
   override get model(): string {
-    return (this._servedStt ?? this.nextInstance()).model;
+    return (this._served?.stt ?? this.nextInstance()).model;
   }
 
   /** The provider of the instance serving, else of the one that serves next (see {@link model}). */
   override get provider(): string {
-    return (this._servedStt ?? this.nextInstance()).provider;
+    return (this._served?.stt ?? this.nextInstance()).provider;
   }
 
   /**
@@ -292,7 +294,6 @@ export class FallbackAdapter extends STT {
       if (status.available || allFailed) {
         try {
           const result = await stt.recognize(frame, abortSignal);
-          this._servedStt = stt;
           return result;
         } catch (e) {
           this._logger.warn(
@@ -581,7 +582,7 @@ class FallbackSpeechStream extends SpeechStream {
           // Keep child timestamps anchored to the parent stream's current retry attempt.
           child.startTimeOffset = this.startTimeOffset + (Date.now() - startTime) / 1000;
           mainRef.current = child;
-          this.fallbackAdapter._servedStt = sttInstance;
+          this.fallbackAdapter._served = { stt: sttInstance, stream: this };
           try {
             if (this.abortSignal.aborted) return;
             // If the forwarder has already drained and exited (input EOF), it
@@ -648,7 +649,8 @@ class FallbackSpeechStream extends SpeechStream {
       const tasks = [forwarderTask, ...this.recoveringStreams.values()];
       closeStreams();
       await cancelAndWait(tasks, 1000);
-      this.fallbackAdapter._servedStt = undefined;
+      // only this stream's own election; another stream may have elected since
+      if (this.fallbackAdapter._served?.stream === this) this.fallbackAdapter._served = undefined;
     }
   }
 }
