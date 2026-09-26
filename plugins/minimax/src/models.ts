@@ -2,6 +2,80 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+/** Input modalities accepted by a MiniMax chat model. */
+export type ChatInputModality = 'text' | 'image' | 'video';
+
+/** Thinking behavior supported by a MiniMax chat model. */
+export type ChatThinkingMode = 'adaptive' | 'disabled' | 'always_on';
+
+/** Per-token pricing in USD per million tokens. */
+export interface ChatModelPricing {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number | null;
+}
+
+/** Metadata for a supported MiniMax chat model. */
+export interface ChatModelInfo {
+  contextWindow: number;
+  pricingUSDPerMillionTokens: ChatModelPricing;
+  inputModalities: readonly ChatInputModality[];
+  thinking: readonly ChatThinkingMode[];
+}
+
+/** Supported MiniMax chat models and their current capabilities. */
+export const CHAT_MODEL_INFO = {
+  'MiniMax-M3': {
+    contextWindow: 1_000_000,
+    pricingUSDPerMillionTokens: {
+      input: 0.6,
+      output: 2.4,
+      cacheRead: 0.12,
+      cacheWrite: null,
+    },
+    inputModalities: ['text', 'image', 'video'],
+    thinking: ['adaptive', 'disabled'],
+  },
+  'MiniMax-M2.7': {
+    contextWindow: 204_800,
+    pricingUSDPerMillionTokens: {
+      input: 0.3,
+      output: 1.2,
+      cacheRead: 0.06,
+      cacheWrite: 0.375,
+    },
+    inputModalities: ['text'],
+    thinking: ['always_on'],
+  },
+} as const satisfies Record<string, ChatModelInfo>;
+
+/** Supported MiniMax chat model identifiers. */
+export type ChatModels = keyof typeof CHAT_MODEL_INFO;
+
+/** Default MiniMax chat model. */
+export const DEFAULT_CHAT_MODEL: ChatModels = 'MiniMax-M3';
+
+/** Regional MiniMax compatible API endpoints. */
+export const REGIONAL_ENDPOINTS = {
+  global_en: {
+    openAIBaseURL: 'https://api.minimax.io/v1',
+    anthropicBaseURL: 'https://api.minimax.io/anthropic',
+    docsRoot: 'https://platform.minimax.io/docs',
+  },
+  cn_zh: {
+    openAIBaseURL: 'https://api.minimaxi.com/v1',
+    anthropicBaseURL: 'https://api.minimaxi.com/anthropic',
+    docsRoot: 'https://platform.minimaxi.com/docs',
+  },
+} as const;
+
+/** MiniMax API region. */
+export type Region = keyof typeof REGIONAL_ENDPOINTS;
+
+/** Default MiniMax API region. */
+export const DEFAULT_REGION: Region = 'global_en';
+
 // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 27-38 lines
 /** Supported MiniMax TTS models. */
 export type TTSModel =
