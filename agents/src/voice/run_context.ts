@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import { log } from '../log.js';
 import type { Future } from '../utils.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession } from './agent_session.js';
@@ -361,7 +362,12 @@ class FillerScheduler<UserData = UnknownUserData> {
       this.abortController.abort();
       this.session.off(AgentSessionEventTypes.AgentStateChanged, onAgentStateChanged);
       this.session.off(AgentSessionEventTypes.UserStateChanged, onUserStateChanged);
-      await loop.catch(() => undefined);
+      await loop.catch((error) => {
+        log().error(
+          { error },
+          'filler stopped on an error, no further filler will play for this tool call',
+        );
+      });
     }
   }
 
