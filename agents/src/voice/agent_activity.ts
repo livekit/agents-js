@@ -2802,7 +2802,8 @@ export class AgentActivity implements RecognitionHooks {
 
     return this.acquireAgentStateLease(stateLease, 'speaking', {
       startTime: startedSpeakingAt,
-      otelContext: stateLease.speechHandle._agentTurnContext,
+      // under the speech's agent_turn; a say() has none and follows its caller (a tool's span)
+      otelContext: stateLease.speechHandle._agentTurnContext ?? otelContext.active(),
     });
   }
 
