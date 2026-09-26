@@ -3516,6 +3516,8 @@ class FallbackAdapter_2 extends STT {
     protected _recognize(frame: Parameters<STT['recognize']>[0], abortSignal?: AbortSignal): Promise<SpeechEvent>;
     // (undocumented)
     readonly retryIntervalMs: number;
+    // @internal
+    _servedStt?: STT;
     // Warning: (ae-forgotten-export) The symbol "STTStatus" needs to be exported by the entry point index.d.ts
     get status(): STTStatus[];
     // (undocumented)
