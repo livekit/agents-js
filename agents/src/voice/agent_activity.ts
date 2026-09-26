@@ -70,7 +70,14 @@ import type {
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
-import { genAI, recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
+import {
+  genAI,
+  recordException,
+  recordRealtimeMetrics,
+  redactionEnabled,
+  traceTypes,
+  tracer,
+} from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { StreamAdapter as TTSStreamAdapter } from '../tts/stream_adapter.js';
 import { TTS, type TTSError } from '../tts/tts.js';
@@ -320,6 +327,50 @@ async function raceWithAbort<T>(
     ThrowsPromise.fromPromise<T | undefined, Error>(p),
     ThrowsPromise.fromPromise<undefined, Error>(waitForAbort(signal).then(() => undefined)),
   ]);
+}
+
+/**
+ * End the `user_turn` span the activity adopted from recognition (see {@link EndOfTurnInfo}).
+ * Module-level: tests drive the reply tasks with stand-in activities.
+ */
+function endAdoptedUserTurnSpan(info: EndOfTurnInfo): void {
+  if (info.userTurnSpanAdopted && info.userTurnSpan) {
+    if (info.userTurnSpan.isRecording()) {
+      info.userTurnSpan.end();
+    }
+    info.userTurnSpanAdopted = false;
+  }
+}
+
+/**
+ * The stages between the user stopping and the reply starting, next to lk.e2e_latency on the
+ * reply's agent_turn: a per-turn breakdown readable off one span. All in seconds.
+ */
+function recordUserTurnStages(span: Span, userMetrics: MetricsReport): void {
+  const attrs: Record<string, number> = {};
+  if (userMetrics.endOfTurnDelay !== undefined) {
+    attrs[traceTypes.ATTR_END_OF_TURN_DELAY] = userMetrics.endOfTurnDelay;
+  }
+  if (userMetrics.transcriptionDelay !== undefined) {
+    attrs[traceTypes.ATTR_TRANSCRIPTION_DELAY] = userMetrics.transcriptionDelay;
+  }
+  if (userMetrics.onUserTurnCompletedDelay !== undefined) {
+    attrs[traceTypes.ATTR_ON_USER_TURN_COMPLETED_DELAY] = userMetrics.onUserTurnCompletedDelay;
+  }
+  if (Object.keys(attrs).length) {
+    span.setAttributes(attrs);
+  }
+}
+
+/** Stamp how long the speech sat in the queue on its agent_turn span, in seconds. */
+function recordQueueWait(speechHandle: SpeechHandle): void {
+  const queueWait = speechHandle._queueWait();
+  if (queueWait === undefined || speechHandle._agentTurnContext === undefined) {
+    return; // no agent_turn span yet: never fall back to whatever span is current
+  }
+  trace
+    .getSpan(speechHandle._agentTurnContext)
+    ?.setAttribute(traceTypes.ATTR_SPEECH_QUEUE_WAIT, queueWait / 1000);
 }
 
 export class AgentActivity implements RecognitionHooks {
@@ -2491,6 +2542,10 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const oldTask = this._userTurnCompletedTask;
+    // the user turn ends after onUserTurnCompleted (see endAdoptedUserTurnSpan). A skipped
+    // reply returns at once, before recognition has stamped the transcript and timings on
+    // the span, so that turn is left for recognition to end
+    info.userTurnSpanAdopted = info.userTurnSpan !== undefined && !info.skipReply;
     this._userTurnCompletedTask = this.createSpeechTask({
       taskFn: () => this.userTurnCompleted(info, oldTask),
       name: 'AgentActivity.userTurnCompleted',
@@ -2747,7 +2802,8 @@ export class AgentActivity implements RecognitionHooks {
 
     return this.acquireAgentStateLease(stateLease, 'speaking', {
       startTime: startedSpeakingAt,
-      otelContext: stateLease.speechHandle._agentTurnContext,
+      // under the speech's agent_turn; a say() has none and follows its caller (a tool's span)
+      otelContext: stateLease.speechHandle._agentTurnContext ?? otelContext.active(),
     });
   }
 
@@ -2978,6 +3034,14 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async userTurnCompleted(info: EndOfTurnInfo, oldTask?: Task<void>): Promise<void> {
+    try {
+      await this.userTurnCompletedImpl(info, oldTask);
+    } finally {
+      endAdoptedUserTurnSpan(info);
+    }
+  }
+
+  private async userTurnCompletedImpl(info: EndOfTurnInfo, oldTask?: Task<void>): Promise<void> {
     if (oldTask) {
       // We never cancel user code as this is very confusing.
       // So we wait for the old execution of onUserTurnCompleted to finish.
@@ -3070,14 +3134,36 @@ export class AgentActivity implements RecognitionHooks {
     const chatCtx = this.agent.chatCtx.copy();
     const startTime = Date.now();
 
-    try {
-      await this.agent.onUserTurnCompleted(chatCtx, userMessage);
-    } catch (e) {
-      if (e instanceof StopResponse) {
-        return;
-      }
-      this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
-    }
+    // user code that gates the reply; without a span a slow hook is an unexplained gap
+    const hookMessage: ChatMessage = userMessage;
+    const hookContext =
+      info.userTurnSpanAdopted && info.userTurnSpan
+        ? trace.setSpan(this.agentSession.rootSpanContext ?? ROOT_CONTEXT, info.userTurnSpan)
+        : this.agentSession.rootSpanContext;
+    const stopped = await tracer.startActiveSpan(
+      async (hookSpan) => {
+        try {
+          await this.agent.onUserTurnCompleted(chatCtx, hookMessage);
+        } catch (e) {
+          if (e instanceof StopResponse) {
+            hookSpan.addEvent('stop_response');
+            return true; // ignore this turn
+          }
+          // the message may quote the transcript: honour the session's redaction too
+          recordException(hookSpan, e instanceof Error ? e : new Error(String(e)), {
+            redacted: this.agentSession._redactionEnabled || redactionEnabled(),
+          });
+          this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
+        }
+        return false;
+      },
+      {
+        name: 'on_user_turn_completed',
+        context: hookContext,
+        attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
+      },
+    );
+    if (stopped) return;
 
     const callbackDuration = Date.now() - startTime;
 
@@ -3190,7 +3276,6 @@ export class AgentActivity implements RecognitionHooks {
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
     const { speechHandle } = stateLease;
-    speechHandle._agentTurnContext = otelContext.active();
 
     speechHandleStorage.enterWith(speechHandle);
 
@@ -3207,6 +3292,7 @@ export class AgentActivity implements RecognitionHooks {
       authorizationTasks.push(this.userSilenceEvent.wait());
     }
     await speechHandle.waitIfNotInterrupted(authorizationTasks);
+    recordQueueWait(speechHandle);
 
     if (speechHandle.interrupted) {
       return;
@@ -3396,7 +3482,8 @@ export class AgentActivity implements RecognitionHooks {
     _previousUserMetrics?: MetricsReport;
   }): Promise<void> => {
     const { speechHandle } = stateLease;
-    speechHandle._agentTurnContext = otelContext.active();
+    // the turn's context is built from its span, never from whatever is current here
+    speechHandle._agentTurnContext = trace.setSpan(otelContext.active(), span);
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
     if (instructions) {
@@ -3614,6 +3701,7 @@ export class AgentActivity implements RecognitionHooks {
     }
     await speechHandle.waitIfNotInterrupted(authorizationTasks);
     speechHandle._clearAuthorization();
+    recordQueueWait(speechHandle);
 
     const replyStartedAt = Date.now();
 
@@ -3842,6 +3930,7 @@ export class AgentActivity implements RecognitionHooks {
         const e2eLatency = agentStartedSpeakingAt / 1000 - userMetrics.stoppedSpeakingAt;
         assistantMetrics.e2eLatency = e2eLatency;
         span.setAttribute(traceTypes.ATTR_E2E_LATENCY, e2eLatency);
+        recordUserTurnStages(span, userMetrics);
       }
     }
 
@@ -4120,7 +4209,8 @@ export class AgentActivity implements RecognitionHooks {
     inferenceSpan: Span;
   }): Promise<void> {
     const { speechHandle } = stateLease;
-    speechHandle._agentTurnContext = otelContext.active();
+    // the turn's context is built from its span, never from whatever is current here
+    speechHandle._agentTurnContext = trace.setSpan(otelContext.active(), span);
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
 
@@ -4175,6 +4265,7 @@ export class AgentActivity implements RecognitionHooks {
     }
     await speechHandle.waitIfNotInterrupted(authorizationTasks);
     speechHandle._clearAuthorization();
+    recordQueueWait(speechHandle);
 
     if (speechHandle.interrupted) {
       return;
