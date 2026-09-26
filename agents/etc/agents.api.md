@@ -6718,6 +6718,8 @@ export class SpeechHandle {
     get _parentGenerationId(): string | undefined;
     // @internal
     _queueWait(): number | undefined;
+    // @internal
+    _queueWaitRecorded: boolean;
     // @internal (undocumented)
     _releaseInterruptions(): void;
     // (undocumented)
