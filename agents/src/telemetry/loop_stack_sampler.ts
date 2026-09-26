@@ -135,14 +135,16 @@ async function enable() {
     if (event.params.url) scripts.set(event.params.scriptId, event.params.url);
   });
   s.on('Debugger.paused', (event) => {
-    if (pausing) {
-      pausing.resolve(event.params);
+    if (inspector.url() !== undefined) {
+      // a real debugger attached before the monitor's next heartbeat could notice it: whether
+      // this pause is its breakpoint or the sample we asked for, it is now its to resume, and
+      // resuming could take a breakpoint hit from under it. Get out of its way now (the pending
+      // sample, if any, is dropped)
+      void disable();
       return;
     }
-    if (inspector.url() !== undefined) {
-      // a real debugger attached and paused before the monitor's next heartbeat could notice
-      // it: the pause is its, not ours to resume. Get out of its way now
-      void disable();
+    if (pausing) {
+      pausing.resolve(event.params);
       return;
     }
     // a debugger statement in user code, which only pauses because this session enabled the
@@ -177,14 +179,17 @@ async function checkStall(now) {
   if (!wantFirst && !wantLate) return;
   if (wantFirst) incident.first = true;
   if (wantLate) incident.late = true;
+  // the stall being sampled: the incident may be cleared by the time the pause is taken (the
+  // loop resumed, an inspector attached)
+  const { windowStart } = incident;
   const sample = await pauseMainThread();
   if (sample) {
     parentPort.postMessage({
       type: 'stall_sample',
-      windowStart: incident.windowStart,
+      windowStart,
       // measured from the stall's start as the report dates it: the tick that was due one
       // interval after the last on-time one
-      sample: { ...sample, offset: sample.pausedAt - incident.windowStart - interval },
+      sample: { ...sample, offset: sample.pausedAt - windowStart - interval },
     });
   }
 }

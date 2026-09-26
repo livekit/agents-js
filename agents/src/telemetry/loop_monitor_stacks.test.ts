@@ -267,6 +267,26 @@ describe('BlockedSpanTracker', () => {
     await provider.shutdown();
   });
 
+  it('keeps a blocking span through a burst of spans ending before the late heartbeat', () => {
+    vi.useFakeTimers();
+    const T = 4_000_000;
+    vi.setSystemTime(T);
+    const tracker = new BlockedSpanTracker({ maxEnded: 8, minRetention: 1_000 });
+    const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
+    const t = provider.getTracer('test');
+    const tool = t.startSpan('function_tool');
+    vi.setSystemTime(T + 220);
+    tool.end(); // the blocking call returned...
+    // ...and its caller ended more spans than the count keeps, before the loop yielded
+    for (let i = 0; i < 20; i++) t.startSpan(`short_${i}`).end();
+    vi.setSystemTime(T + 240);
+    expect(tracker.blockedSpan(T + 20, T + 240, new Set(), 20)).toBe(tool);
+    // the count applies once they have settled
+    vi.setSystemTime(T + 240 + 1_000);
+    t.startSpan('tick').end();
+    expect(tracker.blockedSpan(T + 20, T + 240, new Set(), 20)).toBeUndefined();
+  });
+
   it('ignores a span created after the window, whatever its start time claims', () => {
     const tracker = new BlockedSpanTracker();
     const provider = new NodeTracerProvider({ spanProcessors: [tracker] });

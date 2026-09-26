@@ -25,10 +25,15 @@ export class BlockedSpanTracker implements SpanProcessor {
   readonly #ended: { span: Span; createdAt: number; endedAt: number }[] = [];
   readonly #retention: number;
   readonly #maxEnded: number;
+  readonly #minRetention: number;
 
-  constructor(options: { retention?: number; maxEnded?: number } = {}) {
+  constructor(options: { retention?: number; maxEnded?: number; minRetention?: number } = {}) {
     this.#retention = options.retention ?? 5_000;
+    // the count bounds the memory; it never evicts a span that ended within `minRetention`,
+    // long enough for the late heartbeat to report a stall the span was current for, however
+    // many spans ended after it before the loop yielded
     this.#maxEnded = options.maxEnded ?? 256;
+    this.#minRetention = options.minRetention ?? 1_000;
   }
 
   onStart(span: Span): void {
@@ -152,9 +157,11 @@ export class BlockedSpanTracker implements SpanProcessor {
 
   #prune(now: number): void {
     const cutoff = now - this.#retention;
+    const settled = now - this.#minRetention;
     while (
       this.#ended.length &&
-      (this.#ended[0]!.endedAt < cutoff || this.#ended.length > this.#maxEnded)
+      (this.#ended[0]!.endedAt < cutoff ||
+        (this.#ended.length > this.#maxEnded && this.#ended[0]!.endedAt < settled))
     ) {
       this.#ended.shift();
     }
