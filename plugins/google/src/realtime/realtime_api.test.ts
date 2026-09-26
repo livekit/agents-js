@@ -5,7 +5,7 @@ import type { LiveServerContent, UsageMetadata } from '@google/genai';
 import { Behavior, FunctionResponseScheduling } from '@google/genai';
 import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
-import { RealtimeSession, toClientContentParams } from './realtime_api.js';
+import { RealtimeModel, RealtimeSession, toClientContentParams } from './realtime_api.js';
 
 type ToolCallStatus = {
   name: string;
@@ -50,6 +50,29 @@ const schedulingModes = [
   FunctionResponseScheduling.WHEN_IDLE,
   FunctionResponseScheduling.INTERRUPT,
 ];
+
+describe('Google Realtime tool behavior defaults', () => {
+  it.each([
+    ['gemini-3.8-live', Behavior.NON_BLOCKING],
+    ['gemini-3.8-live-extended-thinking', Behavior.NON_BLOCKING],
+    ['gemini-3.1-flash-live-preview', undefined],
+    ['gemini-2.5-flash-native-audio-preview-12-2025', undefined],
+  ])('defaults tool behavior for %s to %s', (model, expected) => {
+    const realtimeModel = new RealtimeModel({ model, apiKey: 'fake-key' });
+
+    expect(realtimeModel._options.toolBehavior).toBe(expected);
+  });
+
+  it('preserves explicit tool behavior over the model default', () => {
+    const model = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      apiKey: 'fake-key',
+      toolBehavior: Behavior.BLOCKING,
+    });
+
+    expect(model._options.toolBehavior).toBe(Behavior.BLOCKING);
+  });
+});
 
 function createSessionForTest(
   toolResponseScheduling: FunctionResponseScheduling,
