@@ -3517,7 +3517,10 @@ class FallbackAdapter_2 extends STT {
     // (undocumented)
     readonly retryIntervalMs: number;
     // @internal
-    _servedStt?: STT;
+    _served?: {
+        stt: STT;
+        stream: object;
+    };
     // Warning: (ae-forgotten-export) The symbol "STTStatus" needs to be exported by the entry point index.d.ts
     get status(): STTStatus[];
     // (undocumented)
