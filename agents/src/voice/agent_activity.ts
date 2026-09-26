@@ -387,9 +387,13 @@ function recordQueueWait(speechHandle: SpeechHandle): void {
   if (queueWait === undefined || speechHandle._agentTurnContext === undefined) {
     return; // no agent_turn span yet: never fall back to whatever span is current
   }
+  // the turn's wait is its first generation's: the time before the reply started. A tool
+  // reply scheduled later on the same handle measures its own wait, which must not replace it
+  if (speechHandle._queueWaitRecorded) return;
   const span = trace.getSpan(speechHandle._agentTurnContext);
   if (span?.isRecording()) {
     span.setAttribute(traceTypes.ATTR_SPEECH_QUEUE_WAIT, queueWait / 1000);
+    speechHandle._queueWaitRecorded = true;
   }
 }
 

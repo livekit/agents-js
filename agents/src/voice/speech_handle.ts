@@ -193,6 +193,8 @@ export class SpeechHandle {
   _scheduledAt?: number;
   /** @internal - when generation was first authorized, for the queue-wait attribute */
   _authorizedAt?: number;
+  /** @internal The turn's queue wait is stamped once, for the first generation. */
+  _queueWaitRecorded = false;
   /** @internal - the first interrupt's cause, for the agent_turn trace */
   _interruptSource?: InterruptionSource;
 
