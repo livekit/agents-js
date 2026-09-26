@@ -2190,13 +2190,19 @@ export class AgentSession<
     const closeContext = trace.setSpan(this.rootSpanContext ?? otelContext.active(), closeSpan);
     try {
       await otelContext.with(closeContext, async () => {
-        await this.teardownActivity(wasStarted, reason, drain, closeContext);
+        // each step runs whatever the previous one did: a failing teardown (a recorder or a
+        // plugin that will not close) or a throwing Close listener must not leave the
+        // transports open, since the session counts as closed after this. The first failure
+        // is rethrown once all of it ran
+        const failures: unknown[] = [];
+        try {
+          await this.teardownActivity(wasStarted, reason, drain, closeContext);
+        } catch (e) {
+          failures.push(e);
+        }
 
         this.started = false;
 
-        // each step runs whatever the previous one did: a throwing Close listener must not
-        // leave the transports open. The first failure is rethrown once all three ran
-        const failures: unknown[] = [];
         if (wasStarted) {
           try {
             this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));

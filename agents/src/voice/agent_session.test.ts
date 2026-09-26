@@ -76,6 +76,34 @@ describe('AgentSession close', () => {
     expect(internals.sessionHost).toBeUndefined();
     expect(internals._roomIO).toBeUndefined();
   });
+
+  it('closes the transports even when the activity teardown fails, then rethrows', async () => {
+    const session = new AgentSession({ vad: null });
+    const internals = session as unknown as AgentSessionCloseInternals & {
+      _roomIO?: { close: () => Promise<void> };
+      _recorderIO?: { close: () => Promise<void> };
+    };
+    const closeSessionHost = vi.fn(async () => {});
+    const closeRoomIO = vi.fn(async () => {});
+    internals.started = true;
+    internals.sessionHost = { close: closeSessionHost };
+    internals._roomIO = { close: closeRoomIO };
+    internals._recorderIO = {
+      close: async () => {
+        throw new Error('recorder stuck');
+      },
+    };
+    const closed = vi.fn();
+    session.on(AgentSessionEventTypes.Close, closed);
+
+    await expect(session.close()).rejects.toThrow('recorder stuck');
+
+    expect(closed).toHaveBeenCalledOnce();
+    expect(closeSessionHost).toHaveBeenCalledOnce();
+    expect(closeRoomIO).toHaveBeenCalledOnce();
+    expect(internals.sessionHost).toBeUndefined();
+    expect(internals._roomIO).toBeUndefined();
+  });
 });
 
 describe('AgentSession AEC warmup', () => {
