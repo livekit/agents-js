@@ -2379,12 +2379,15 @@ abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> 
     //
     // (undocumented)
     protected queue: AsyncIterableQueue<SynthesizedAudio>;
+    protected get responseModel(): string;
+    protected get responseProvider(): string;
     // (undocumented)
     protected abstract run(): Promise<void>;
     protected setTokenUsage(input?: {
         inputTokens?: number;
         outputTokens?: number;
     }): void;
+    // (undocumented)
     protected get ttsRequestSpan(): Span | undefined;
 }
 
@@ -7297,6 +7300,8 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     //
     // (undocumented)
     protected queue: AsyncIterableQueue<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>;
+    protected get responseModel(): string;
+    protected get responseProvider(): string;
     // (undocumented)
     protected abstract run(): Promise<void>;
     protected setTokenUsage(input?: {
@@ -7305,6 +7310,7 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     }): void;
     // @internal
     get startedTime(): SynthesizeStreamStartedTime | undefined;
+    // (undocumented)
     protected get ttsRequestSpan(): Span | undefined;
     // (undocumented)
     updateInputStream(text: ReadableStream_2<string>): void;
