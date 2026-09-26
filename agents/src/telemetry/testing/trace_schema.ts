@@ -38,6 +38,13 @@ export const ROOT = null;
 /** Allowed parent meaning "whatever was current": spans that follow their caller. */
 export const ANY = '*';
 
+/**
+ * Allowed parent meaning "a span of the application's own": the framework was started inside
+ * it (an integrator's request span around `session.start()`), so the span is not in these rules
+ * and has no framework span above it. Its bounds are not checked: the session outlives it.
+ */
+export const EXTERNAL = 'external';
+
 export type AllowedParent = string | typeof ROOT;
 
 /** 2 ms of slack for clocks read on either side of a span boundary. */
@@ -56,8 +63,9 @@ export const SPAN_PARENTS: ReadonlyMap<string, ReadonlySet<AllowedParent>> = new
   ['session_end_upload', parents('job_shutdown')],
   ['room_disconnect', parents('job_shutdown')],
   ['shutdown_callback', parents('job_shutdown')],
-  // -- the session (voice/agent_session); ROOT outside a job (tests, integrators)
-  ['agent_session', parents('job_entrypoint', ROOT)],
+  // -- the session (voice/agent_session); ROOT outside a job (tests), or an integrator's own
+  // span (the session inherits the current context when it starts)
+  ['agent_session', parents('job_entrypoint', ROOT, EXTERNAL)],
   ['session_start', parents('agent_session')],
   ['session_close', parents('agent_session')],
   ['update_agent', parents('agent_session')],
@@ -137,6 +145,10 @@ export const MAY_OUTLIVE_PARENT: ReadonlyMap<string, string> = new Map([
   [
     edge('keyterm_detection', 'agent_turn'),
     'the pass runs alongside the reply and can outlast a short or interrupted turn',
+  ],
+  [
+    edge('realtime_metrics', 'realtime_inference'),
+    'the provider reports usage after the response, so the metrics land after the inference ends',
   ],
 ]);
 
@@ -297,27 +309,43 @@ export function checkTrace(
     violations.push(`spans belong to ${traceIds.size} traces, expected one`);
   }
 
+  // an unknown span with a framework span above it is one of ours missing from the rules; one
+  // with none is the application's own, which the framework may have been started inside
+  const hasKnownAncestor = (span: SpanRecord): boolean => {
+    let ancestor = span.parentId ? byId.get(span.parentId) : undefined;
+    while (ancestor !== undefined) {
+      if (SPAN_PARENTS.has(ancestor.name)) return true;
+      ancestor = ancestor.parentId ? byId.get(ancestor.parentId) : undefined;
+    }
+    return false;
+  };
+  const isExternal = (span: SpanRecord) => !SPAN_PARENTS.has(span.name) && !hasKnownAncestor(span);
+
   for (const span of spans) {
     const allowed = SPAN_PARENTS.get(span.name);
     if (allowed === undefined) {
-      violations.push(`${span.name}: unknown span, add it to trace_schema SPAN_PARENTS`);
+      if (!isExternal(span)) {
+        violations.push(`${span.name}: unknown span, add it to trace_schema SPAN_PARENTS`);
+      }
       continue;
     }
     const parent = span.parentId ? byId.get(span.parentId) : undefined;
     if (span.parentId && parent === undefined) {
-      if (!allowMissingParents) {
+      // a partial export (a view keyed to one span drops the ancestors), or an export of the
+      // framework's spans alone whose root was started inside an application span
+      if (!allowMissingParents && !allowed.has(EXTERNAL)) {
         violations.push(`${span.name}: parent ${span.parentId} is not in the trace`);
       }
-      continue; // a partial export: nothing to check the edge against
+      continue; // nothing to check the edge against
     }
-    const parentName: AllowedParent = parent ? parent.name : ROOT;
+    const parentName: AllowedParent = parent ? (isExternal(parent) ? EXTERNAL : parent.name) : ROOT;
     if (!allowed.has(ANY) && !allowed.has(parentName)) {
       const shown = parentName === ROOT ? 'no parent' : parentName;
       violations.push(
         `${span.name}: parent is ${shown}, allowed: ${[...allowed].map(showParent).sort().join(', ')}`,
       );
     }
-    if (parent) {
+    if (parent && parentName !== EXTERNAL) {
       if (span.startMs + toleranceMs < parent.startMs) {
         violations.push(
           `${span.name}: starts ${(parent.startMs - span.startMs).toFixed(1)} ms before its ` +

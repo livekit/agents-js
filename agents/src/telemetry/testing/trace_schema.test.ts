@@ -23,6 +23,7 @@ import { FakeLLM } from '../../voice/testing/fake_llm.js';
 import { setTracerProvider, tracer } from '../index.js';
 import {
   ANY,
+  EXTERNAL,
   type EventRecord,
   MAY_OUTLIVE_PARENT,
   ROOT,
@@ -92,7 +93,7 @@ describe('trace schema rules', () => {
     for (const [name, allowed] of SPAN_PARENTS) {
       for (const parent of allowed) {
         expect(
-          parent === ROOT || parent === ANY || SPAN_PARENTS.has(parent),
+          parent === ROOT || parent === ANY || parent === EXTERNAL || SPAN_PARENTS.has(parent),
           `${name}: unknown parent ${String(parent)}`,
         ).toBe(true);
       }
@@ -135,6 +136,23 @@ describe('trace schema rules', () => {
     expect(checkTrace(spans, { allowMissingParents: true })).toEqual([]);
   });
 
+  it('accepts a session started inside an application span', () => {
+    // the integrator's request span is not one of ours and has nothing of ours above it: an
+    // external parent, whose bounds are not checked (the session outlives the request)
+    const app = span('incoming_request', 'app', undefined, 0.5, 1.5);
+    let spans = soundTrace()
+      .filter((s) => s.name !== 'job_entrypoint' && s.name !== 'job_shutdown')
+      .map((s) => (s.name === 'agent_session' ? { ...s, parentId: 'app' } : s));
+    expect(checkTrace([app, ...spans])).toEqual([]);
+    // an export of the framework's spans alone leaves the application parent out
+    expect(checkTrace(spans)).toEqual([]);
+    // only the session may sit under it, and other orphans are still reported
+    spans = [app, ...soundTrace(), span('user_turn', 'u2', 'app', 2.0, 3.0)];
+    expect(checkTrace(spans)).toEqual(['user_turn: parent is external, allowed: agent_session']);
+    spans = [...soundTrace(), span('user_turn', 'u2', 'gone', 2.0, 3.0)];
+    expect(checkTrace(spans)).toEqual(['user_turn: parent gone is not in the trace']);
+  });
+
   it('checks bounds except where deliberately allowed', () => {
     let spans = soundTrace();
     spans.push(span('tts_node', 't', 'a', 11.0, 12.5)); // ends after agent_turn
@@ -157,6 +175,10 @@ describe('trace schema rules', () => {
     expect(checkTrace(spans)).toEqual([]);
     // and a stall's end is one tick late by construction, whatever it is under
     spans.push(span('event_loop_blocked', 'b', 'f', 8.05, 8.15));
+    expect(checkTrace(spans)).toEqual([]);
+    // the provider's usage report lands after the realtime response it describes
+    spans.push(span('realtime_inference', 'ri', 'a', 9.0, 10.0));
+    spans.push(span('realtime_metrics', 'rm', 'ri', 10.2, 10.2));
     expect(checkTrace(spans)).toEqual([]);
   });
 
