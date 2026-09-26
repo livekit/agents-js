@@ -601,6 +601,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     return this.pendingToolCallIds.size > 0 && !this.isNonBlockingToolBehavior();
   }
 
+  private hasPendingNonBlockingToolCall(): boolean {
+    return this.pendingToolCallIds.size > 0 && this.isNonBlockingToolBehavior();
+  }
+
   private getToolResultsForRealtime(
     ctx: llm.ChatContext,
     vertexai: boolean,
@@ -1313,7 +1317,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       // start new generation for serverContent or for standalone toolCalls
       if (this.isNewGeneration(response)) {
-        this.startNewGeneration();
+        this.startNewGeneration(response);
         if (LK_GOOGLE_DEBUG) {
           this.#logger.debug(`new generation started: ${this.currentGeneration?.responseId}`);
         }
@@ -1561,7 +1565,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     return config;
   }
 
-  private startNewGeneration(): void {
+  private startNewGeneration(response: types.LiveServerMessage): void {
     const previousGen = this.currentGeneration;
     const previousHadOpenFunctionChannel = previousGen && !previousGen.functionChannel.closed;
 
@@ -1621,9 +1625,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       generationEvent.userInitiated = true;
       this.pendingGenerationFut.resolve(generationEvent);
       this.pendingGenerationFut = undefined;
-    } else {
+    } else if (
+      !this.hasPendingNonBlockingToolCall() ||
+      response.serverContent?.inputTranscription?.text
+    ) {
       // emit input_speech_started event before starting an agent initiated generation
-      // to interrupt the previous audio playout if any
+      // to interrupt the previous audio playout if any.
+      // While a NON_BLOCKING tool call is pending, the model keeps talking in generations of
+      // its own; only one that carries the user's speech is a user turn. Interrupting on the
+      // others would cancel the speech that owns the call, and its result would never be sent.
       this.handleInputSpeechStarted();
     }
 
