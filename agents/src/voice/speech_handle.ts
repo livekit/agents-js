@@ -111,6 +111,24 @@ export interface AgentTurnCarry {
 /** How a speech came to continue another's `agent_turn` (see `SpeechHandle._continueAgentTurn`). */
 export type AgentTurnContinuation = 'preemptive_discarded' | 'tool_reply';
 
+/**
+ * End a turn taken off its speech (see `SpeechHandle._takeAgentTurn`) that no successor adopted.
+ * The duration metric is recorded from the turn's start, as when the speech ends its own.
+ * @internal
+ */
+export function endCarriedAgentTurn(carry: AgentTurnCarry, error?: unknown): void {
+  // the duration metric does not depend on the span being sampled in
+  if (carry.startedAt !== undefined && carry.agentName !== undefined) {
+    recordInvokeAgentDuration((performance.now() - carry.startedAt) / 1000, carry.agentName);
+  }
+  if (!carry.span.isRecording()) return;
+  if (error !== undefined) {
+    // a thrown string or object is a failure too: the turn must not read as a success
+    recordException(carry.span, error instanceof Error ? error : new Error(String(error)));
+  }
+  carry.span.end();
+}
+
 export class SpeechHandleCircularWaitError extends Error {
   constructor(functionCallName: string) {
     super(dedent`
@@ -661,7 +679,9 @@ export class SpeechHandle {
       span.setAttribute(traceTypes.ATTR_SPEECH_ID, this.id);
     } else {
       this._generationBaseId = from._generationBaseId ?? from.id;
-      this._generationStepBase = from._emittedGenerationStep ?? from._generationStep;
+      // after the last generation `from` emitted; from where its own numbering started when it
+      // emitted none (it then never ran), so the next id follows a generation that exists
+      this._generationStepBase = from._emittedGenerationStep ?? from._generationStepBase;
     }
     this._agentTurnSpan = span;
     this._agentTurnContext = trace.setSpan(otelContext.active(), span);
@@ -675,19 +695,15 @@ export class SpeechHandle {
     const span = this._agentTurnSpan;
     this._agentTurnSpan = undefined;
     if (span === undefined) return;
-    // the duration metric does not depend on the span being sampled in
-    if (this._agentTurnStartedAt !== undefined && this._agentTurnAgentName !== undefined) {
-      recordInvokeAgentDuration(
-        (performance.now() - this._agentTurnStartedAt) / 1000,
-        this._agentTurnAgentName,
-      );
-    }
-    if (!span.isRecording()) return;
-    if (error !== undefined) {
-      // a thrown string or object is a failure too: the turn must not read as a success
-      recordException(span, error instanceof Error ? error : new Error(String(error)));
-    }
-    span.end();
+    endCarriedAgentTurn(
+      {
+        span,
+        startedAt: this._agentTurnStartedAt,
+        agentName: this._agentTurnAgentName,
+        generations: this._agentTurnGenerations,
+      },
+      error,
+    );
   }
 
   /** @internal */

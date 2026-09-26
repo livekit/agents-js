@@ -163,10 +163,12 @@ import {
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { releaseTts, retainTts } from './model_refs.js';
 import {
+  type AgentTurnCarry,
   type InputDetails,
   type InterruptionSource,
   REPLY_TASK_CANCEL_TIMEOUT,
   SpeechHandle,
+  endCarriedAgentTurn,
 } from './speech_handle.js';
 import {
   ToolExecutor,
@@ -495,6 +497,45 @@ export function continueToolReplyTurn(speech: SpeechHandle, reply: SpeechHandle)
   if (carry !== undefined) reply._continueAgentTurn(carry, speech, 'tool_reply');
 }
 
+/**
+ * The turn of a realtime tool call whose reply the model generates on its own
+ * (`autoToolReplyGeneration`): held open past the tool call's speech until the model's next
+ * generation adopts it (see {@link continueToolReplyTurn}), or ended after `timeout` ms when
+ * none comes (the user spoke first, the model declined). Module-level like the helpers above.
+ * @internal
+ */
+export class AutoToolReplyTurnHold {
+  private held?: { carry: AgentTurnCarry; from: SpeechHandle; timer: NodeJS.Timeout };
+
+  /** Take `speech`'s open turn, ending any turn still held. */
+  hold(speech: SpeechHandle, timeout = 5000): void {
+    this.end();
+    const carry = speech._takeAgentTurn();
+    if (carry === undefined) return;
+    const timer = setTimeout(() => this.end(), timeout);
+    this.held = { carry, from: speech, timer };
+  }
+
+  /** Continue the held turn on `reply`, the generation that answers the tool calls. */
+  adopt(reply: SpeechHandle): boolean {
+    const held = this.held;
+    if (held === undefined) return false;
+    clearTimeout(held.timer);
+    this.held = undefined;
+    reply._continueAgentTurn(held.carry, held.from, 'tool_reply');
+    return true;
+  }
+
+  /** End the held turn, if any: no generation is coming for it. */
+  end(): void {
+    const held = this.held;
+    if (held === undefined) return;
+    clearTimeout(held.timer);
+    this.held = undefined;
+    endCarriedAgentTurn(held.carry);
+  }
+}
+
 export class AgentActivity implements RecognitionHooks {
   agent: Agent;
   agentSession: AgentSession;
@@ -524,6 +565,7 @@ export class AgentActivity implements RecognitionHooks {
   // Placeholder used to hold a RunResult open while waiting for a realtime
   // model to auto-generate a tool reply (autoToolReplyGeneration=true).
   private pendingAutoToolReplyFut?: Future<void, never>;
+  private autoToolReplyTurn = new AutoToolReplyTurnHold();
   private lock = new Mutex();
   private inlineTaskLock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
@@ -2017,6 +2059,9 @@ export class AgentActivity implements RecognitionHooks {
     const handle = SpeechHandle.create({
       allowInterruptions: this.allowInterruptions,
     });
+    // the model answering its tool calls: one agent_turn for the call and the reply, adopted
+    // before the reply task below opens a turn of its own
+    this.autoToolReplyTurn.adopt(handle);
     this.agentSession.emit(
       AgentSessionEventTypes.SpeechCreated,
       createSpeechCreatedEvent({
@@ -4386,11 +4431,14 @@ export class AgentActivity implements RecognitionHooks {
           });
         } finally {
           // an interruption while the tools run makes the task return early: the verdict is
-          // stamped here, whichever way the task left
-          span.setAttribute(
-            traceTypes.ATTR_SPEECH_INTERRUPTED,
-            stateLease.speechHandle.interrupted,
-          );
+          // stamped here, whichever way the task left. Not once the turn was handed to a
+          // successor (a discarded preemptive attempt unwinding): the verdict is then its
+          if (stateLease.speechHandle._agentTurnContext !== undefined) {
+            span.setAttribute(
+              traceTypes.ATTR_SPEECH_INTERRUPTED,
+              stateLease.speechHandle.interrupted,
+            );
+          }
           recordInterruption(stateLease.speechHandle);
         }
       },
@@ -5016,8 +5064,11 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    // skip realtime reply if not required or auto-generated
-    if (!shouldGenerateToolReply || realtimeModel.capabilities.autoToolReplyGeneration) {
+    if (!shouldGenerateToolReply) return;
+
+    // the model generates the reply itself: its next generation continues this turn
+    if (realtimeModel.capabilities.autoToolReplyGeneration) {
+      this.autoToolReplyTurn.hold(speechHandle);
       return;
     }
 
@@ -5565,6 +5616,7 @@ export class AgentActivity implements RecognitionHooks {
       this.closed = true;
 
       this.cancelPreemptiveGeneration();
+      this.autoToolReplyTurn.end();
 
       // Commit the in-flight assistant turn before teardown (#2041): a room
       // disconnect mid-playout parks the reply task on a playout promise that
