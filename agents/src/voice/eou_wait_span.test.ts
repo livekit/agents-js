@@ -404,6 +404,76 @@ describe.sequential('eou_wait span', () => {
       }
     });
 
+    it('starts no eou_detection once the user resumed during the language check', async () => {
+      // cancelling the bounce does not interrupt the detector's supportsLanguage; when it
+      // answers after the user resumed, the wait is over and no detection may open under it
+      const supported = new Future<boolean>();
+      const detector = {
+        model: 'test-turn-detector',
+        provider: 'test-provider',
+        supportsLanguage: () => supported.await,
+        unlikelyThreshold: async () => 0.5,
+        predictEndOfTurn: () => Promise.resolve(0.9),
+      };
+      const { ar, vad } = await makeRecognition({ minDelay: 1000, turnDetector: detector });
+      try {
+        ar['lastSpeakingTime'] = Date.now();
+        runEou(ar, 'vad');
+        await delay(20);
+        vad.startOfSpeech(0); // the user resumes: the wait ends and the bounce is cancelled
+        await delay(20);
+        supported.resolve(true);
+        await awaitBounce(ar);
+
+        expect(only(exporter, 'eou_wait').attributes[traceTypes.ATTR_EOU_OUTCOME]).toBe(
+          'user_resumed',
+        );
+        expect(spansNamed(exporter, 'eou_detection')).toEqual([]);
+        expect(ar['eouDetectionSpan']).toBeUndefined();
+        ar['_endUserTurnSpan']();
+      } finally {
+        await ar.close();
+      }
+    });
+
+    it("leaves the next turn's wait alone when an earlier decision lands late", async () => {
+      // the hook of turn A is still pending when the user resumes and stops again, opening
+      // turn B's wait; A's commit must not close B's wait as committed
+      const decisionA = new Future<boolean>();
+      const decisionB = new Future<boolean>();
+      const { ar, vad, hooks } = await makeRecognition({ minDelay: 10 });
+      vi.mocked(hooks.onEndOfTurn)
+        .mockImplementationOnce(async () => decisionA.await)
+        .mockImplementation(async () => decisionB.await);
+      try {
+        ar['lastSpeakingTime'] = Date.now();
+        runEou(ar, 'vad');
+        await delay(50); // past the delay: the bounce is awaiting the hook
+        vad.startOfSpeech(0);
+        await delay(20);
+        ar['audioTranscript'] = 'and more';
+        ar['lastSpeakingTime'] = Date.now();
+        runEou(ar, 'vad'); // turn B's wait
+        await delay(20);
+        const waitB = ar['eouWaitSpan'];
+        expect(waitB?.isRecording()).toBe(true);
+
+        decisionA.resolve(true); // turn A commits while B is still being decided
+        await delay(20);
+        expect(ar['eouWaitSpan']).toBe(waitB);
+        expect(waitB?.isRecording()).toBe(true);
+        const ended = spansNamed(exporter, 'eou_wait');
+        expect(ended.map((s) => s.attributes[traceTypes.ATTR_EOU_OUTCOME])).toEqual([
+          'user_resumed',
+        ]);
+        decisionB.resolve(false);
+        await awaitBounce(ar);
+        ar['_endUserTurnSpan']();
+      } finally {
+        await ar.close();
+      }
+    });
+
     it('lets only the current eou_detection move the wait floor', async () => {
       // a detection superseded by a re-armed trigger may resolve after the newer one: it is
       // ended, but the floor the wait is measured against belongs to the current prediction

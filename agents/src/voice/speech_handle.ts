@@ -520,13 +520,20 @@ export class SpeechHandle {
 
   /** @internal */
   _markScheduled(): void {
-    this._scheduledAt ??= performance.now();
+    if (this._authorizedAt !== undefined) {
+      // scheduled again after a generation ran (a tool reply on the same handle): this wait
+      // is the new generation's own, not the first one's
+      this._scheduledAt = performance.now();
+      this._authorizedAt = undefined;
+    } else {
+      this._scheduledAt ??= performance.now();
+    }
     if (!this.scheduledFut.done) {
       this.scheduledFut.resolve();
     }
   }
 
-  /** @internal Milliseconds between scheduling and the first generation authorization, once known. */
+  /** @internal Milliseconds between the latest scheduling and its generation's authorization, once known. */
   _queueWait(): number | undefined {
     if (this._scheduledAt === undefined || this._authorizedAt === undefined) return undefined;
     return Math.max(this._authorizedAt - this._scheduledAt, 0);

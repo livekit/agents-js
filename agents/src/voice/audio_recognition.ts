@@ -1596,7 +1596,12 @@ export class AudioRecognition {
         const eouWaitCtx = trace.setSpan(this.userTurnContext(userTurnSpan), eouWaitSpan);
 
         if (turnDetector) {
-          if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
+          const supported = await turnDetector.supportsLanguage(this.lastLanguage);
+          // cancellation does not interrupt that await: the user may have resumed meanwhile,
+          // ending this wait, and a detection must not start under an ended parent (the wait
+          // is compared by identity: a sampled-out span is never recording)
+          if (controller.signal.aborted || this.eouWaitSpan !== eouWaitSpan) return;
+          if (!supported) {
             // Unsupported language: produce no span and emit no prediction event.
             this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
           } else {
@@ -1868,15 +1873,20 @@ export class AudioRecognition {
         const committed = await this.hooks.onEndOfTurn(endOfTurn);
 
         if (committed) {
-          this.endEouWaitSpan('committed');
-          this._endUserTurnSpan({
-            transcript: this.audioTranscript,
-            confidence: confidenceAvg,
-            transcriptionDelay: metrics.transcriptionDelay ?? 0,
-            endOfUtteranceDelay: metrics.endOfUtteranceDelay ?? 0,
-            // the activity ends the span after onUserTurnCompleted (see EndOfTurnInfo)
-            keepOpen: endOfTurn.userTurnSpanAdopted === true,
-          });
+          // the decision is this bounce's: while the hook ran the user may have resumed and
+          // stopped again, opening the next turn's wait, which is not the one decided here
+          if (this.eouWaitSpan === eouWaitSpan) this.endEouWaitSpan('committed');
+          this._endUserTurnSpan(
+            {
+              transcript: this.audioTranscript,
+              confidence: confidenceAvg,
+              transcriptionDelay: metrics.transcriptionDelay ?? 0,
+              endOfUtteranceDelay: metrics.endOfUtteranceDelay ?? 0,
+              // the activity ends the span after onUserTurnCompleted (see EndOfTurnInfo)
+              keepOpen: endOfTurn.userTurnSpanAdopted === true,
+            },
+            { turn: userTurnSpan, wait: eouWaitSpan },
+          );
 
           // clear the transcript if the user turn was committed
           this.audioTranscript = '';
@@ -2603,16 +2613,35 @@ export class AudioRecognition {
     this.hooks.onTranscriptionTimeout(this.turnSpeechDuration, this.userTurnStart);
   }
 
-  private _endUserTurnSpan(info?: {
-    transcript: string;
-    confidence: number;
-    transcriptionDelay: number;
-    endOfUtteranceDelay: number;
-    /** Leave the span open for the activity to end (it was adopted at end of turn). */
-    keepOpen?: boolean;
-  }): void {
-    // a wait still open here never reached a decision (teardown, clearUserTurn, ...)
-    this.endEouWaitSpan('dropped');
+  private _endUserTurnSpan(
+    info?: {
+      transcript: string;
+      confidence: number;
+      transcriptionDelay: number;
+      endOfUtteranceDelay: number;
+      /** Leave the span open for the activity to end (it was adopted at end of turn). */
+      keepOpen?: boolean;
+    },
+    /** What the decision was taken for; a later turn's span, or a later wait, is not touched. */
+    decided?: { turn: Span; wait: Span },
+  ): void {
+    if (decided !== undefined && this.userTurnSpan !== decided.turn) {
+      // the turn moved on while the decision was pending: stamp the decided turn and leave
+      // the current one to its own decision
+      if (info && decided.turn.isRecording()) {
+        decided.turn.setAttributes({
+          [traceTypes.ATTR_USER_TRANSCRIPT]: info.transcript,
+          [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: info.confidence,
+          [traceTypes.ATTR_TRANSCRIPTION_DELAY]: info.transcriptionDelay / 1000,
+          [traceTypes.ATTR_END_OF_TURN_DELAY]: info.endOfUtteranceDelay / 1000,
+        });
+        if (!info.keepOpen) decided.turn.end();
+      }
+      return;
+    }
+    // a wait still open here never reached a decision (teardown, clearUserTurn, ...); a wait
+    // opened after the decided one is a later bounce's to decide
+    if (decided === undefined || this.eouWaitSpan === decided.wait) this.endEouWaitSpan('dropped');
     if (this.userTurnSpan && info) {
       this.userTurnSpan.setAttributes({
         [traceTypes.ATTR_USER_TRANSCRIPT]: info.transcript,
