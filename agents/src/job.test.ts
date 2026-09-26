@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { RoomEvent } from '@livekit/rtc-node';
+import { ConnectionState, RoomEvent } from '@livekit/rtc-node';
 import type { Room } from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { JobContext, type JobProcess, type RunningJobInfo } from './job.js';
 import { log } from './log.js';
 import { SimulationContext, parseSimulationDispatch } from './simulation.js';
+import * as rpcTracing from './telemetry/rpc.js';
 
 const { deleteRoomMock, roomServiceClientMock, setupCloudTracerMock } = vi.hoisted(() => ({
   deleteRoomMock: vi.fn(async () => {}),
@@ -468,5 +469,40 @@ describe('JobContext observability URL', () => {
     const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
     await ctx.initRecording(tracesOn);
     expect(setupCloudTracerMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobContext rpc tracing', () => {
+  it('installs rpc tracing whenever its room connects, however it was connected', () => {
+    // the entrypoint may connect ctx.room itself, with no session and no ctx.connect(): the
+    // job listens to its room, so the hook is there as long as the room is connected
+    const install = vi
+      .spyOn(rpcTracing, 'install')
+      .mockReturnValue({} as unknown as ReturnType<typeof rpcTracing.install>);
+    try {
+      const ctx = createJobContext();
+      const room = ctx.room as unknown as {
+        on: ReturnType<typeof vi.fn>;
+        isConnected: boolean;
+        localParticipant?: unknown;
+      };
+      const onConnectionState = room.on.mock.calls.find(
+        ([event]) => event === RoomEvent.ConnectionStateChanged,
+      )?.[1] as ((state: ConnectionState) => void) | undefined;
+      expect(onConnectionState).toBeDefined();
+
+      onConnectionState!(ConnectionState.CONN_DISCONNECTED);
+      expect(install).not.toHaveBeenCalled();
+
+      room.isConnected = true;
+      room.localParticipant = { identity: 'agent' };
+      onConnectionState!(ConnectionState.CONN_CONNECTED);
+      expect(install).toHaveBeenCalledWith(room.localParticipant, ctx);
+
+      onConnectionState!(ConnectionState.CONN_CONNECTED); // a reconnect installs again
+      expect(install).toHaveBeenCalledTimes(2);
+    } finally {
+      install.mockRestore();
+    }
   });
 });

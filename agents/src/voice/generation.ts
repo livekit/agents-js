@@ -631,6 +631,18 @@ export function performLLMInference(
   const toolCallWriter = toolCallStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
+  // the configured model and provider describe the inference only once it is known that this
+  // LLM served it: they go on the node span the moment the nested `llm_request` span is created
+  // (see withInferenceTracking), so a fallback that failed over can then name the serving
+  // provider on top of them rather than be overwritten by them when the node completes
+  const recordConfiguredModel = (span: Span) => {
+    if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+    const normalizedProvider = traceTypes.genAIProviderName(provider);
+    if (normalizedProvider) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, normalizedProvider);
+    }
+  };
+
   const _performLLMInferenceImpl = async (
     signal: AbortSignal,
     span: Span,
@@ -644,15 +656,6 @@ export function performLLMInference(
     );
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
-    // the configured model and provider describe the inference only once it is known that
-    // this LLM served it; that is decided below, when the nested span is (or is not) there
-    const recordConfiguredModel = () => {
-      if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
-      const normalizedProvider = traceTypes.genAIProviderName(provider);
-      if (normalizedProvider) {
-        span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, normalizedProvider);
-      }
-    };
     let nodeError: Error | string | undefined;
 
     // the GenAI inference attributes belong to the nested `llm_request` span, which is the
@@ -773,9 +776,7 @@ export function performLLMInference(
       }
       // a custom node may have generated this itself, with no nested `llm_request` span to
       // carry the convention's attributes; when there was one, they are already recorded
-      if (inference.recorded) {
-        recordConfiguredModel();
-      } else {
+      if (!inference.recorded) {
         // a third-party engine served this, so the configured model and provider are left
         // off rather than crediting it with a call it never made
         genAI.setRequestAttributes(span, {
@@ -816,7 +817,9 @@ export function performLLMInference(
   const inferenceTask = async (signal: AbortSignal) =>
     tracer.startActiveSpan(
       async (span) =>
-        genAI.withInferenceTracking((marker) => _performLLMInferenceImpl(signal, span, marker)),
+        genAI.withInferenceTracking((marker) => _performLLMInferenceImpl(signal, span, marker), {
+          onRecorded: () => recordConfiguredModel(span),
+        }),
       { name: 'llm_node', context: currentContext },
     );
 

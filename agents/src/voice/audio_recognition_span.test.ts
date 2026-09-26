@@ -48,6 +48,7 @@ function createFakeSession(rootSpanContext = ROOT_CONTEXT): AgentSession {
     _cancelUserAwayTimer: vi.fn(),
     _userSpeakingSpan: undefined,
     _userState: 'listening',
+    _addSessionEvent: vi.fn(),
     emit: vi.fn(),
     rootSpanContext,
   } as unknown as AgentSession;
@@ -118,7 +119,7 @@ const alwaysTrueTurnDetector: _TurnDetector = {
 describe('AudioRecognition user_turn span', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
-  it('creates user_turn and parents eou_detection under it (stt mode)', async () => {
+  it('creates user_turn and nests eou_wait and eou_detection under it (stt mode)', async () => {
     const { exporter } = setupInMemoryTracing();
 
     const hooks: RecognitionHooks = {
@@ -189,7 +190,11 @@ describe('AudioRecognition user_turn span', () => {
       throw new Error('expected user_turn and eou_detection spans');
     }
 
-    expect(eou.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
+    // the detector inference nests under the turn's endpointing wait, which nests under the turn
+    const eouWait = spanByName(spans, 'eou_wait');
+    expect(eouWait, 'eou_wait span missing').toBeTruthy();
+    expect(eou.parentSpanContext?.spanId).toBe(eouWait!.spanContext().spanId);
+    expect(eouWait!.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
 
     // creation-time attributes
     expect(userTurn.attributes['lk.participant_id']).toBe('p1');
@@ -387,7 +392,11 @@ describe('AudioRecognition user_turn span', () => {
     if (!userTurn || !eou) {
       throw new Error('expected user_turn and eou_detection spans');
     }
-    expect(eou.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
+    // the detector inference nests under the turn's endpointing wait, which nests under the turn
+    const eouWait = spanByName(spans, 'eou_wait');
+    expect(eouWait, 'eou_wait span missing').toBeTruthy();
+    expect(eou.parentSpanContext?.spanId).toBe(eouWait!.spanContext().spanId);
+    expect(eouWait!.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
 
     expect(hooks.onStartOfSpeech).toHaveBeenCalled();
     expect(hooks.onEndOfSpeech).toHaveBeenCalled();

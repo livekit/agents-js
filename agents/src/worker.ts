@@ -715,7 +715,8 @@ export class AgentServer {
         }
         case 'availability': {
           if (!msg.message.value.job) return;
-          const task = this.#availability(msg.message.value);
+          // receipt is now, not when the handler gets to run: that delay is dispatch latency
+          const task = this.#availability(msg.message.value, Date.now());
           this.#tasks.push(task);
           task.finally(() => {
             const taskIndex = this.#tasks.indexOf(task);
@@ -843,7 +844,7 @@ export class AgentServer {
     }
   }
 
-  async #availability(msg: AvailabilityRequest) {
+  async #availability(msg: AvailabilityRequest, receivedAt: number = Date.now()) {
     let answered = false;
 
     const onReject = async () => {
@@ -864,6 +865,7 @@ export class AgentServer {
 
     const onAccept = async (args: JobAcceptArguments) => {
       answered = true;
+      const acceptedAt = Date.now();
 
       this.event.emit(
         'worker_msg',
@@ -909,6 +911,9 @@ export class AgentServer {
             workerId: this.id,
             apiKey: this.#opts.apiKey,
             apiSecret: this.#opts.apiSecret,
+            receivedAt,
+            acceptedAt,
+            assignedAt: Date.now(),
           });
         } catch (e) {
           this.#logger.child({ requestId: req.id }).error(e, 'error launching job');

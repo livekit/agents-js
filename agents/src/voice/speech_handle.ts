@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
-import type { Context } from '@opentelemetry/api';
+import { type Context, type Span, context as otelContext, trace } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
 import { log } from '../log.js';
+import { recordInvokeAgentDuration } from '../telemetry/otel_metrics.js';
+import * as traceTypes from '../telemetry/trace_types.js';
+import { recordException } from '../telemetry/utils.js';
 import type { Task } from '../utils.js';
 import { Event, Future, dedent, shortuuid } from '../utils.js';
 import { functionCallStorage } from './agent.js';
@@ -89,6 +92,43 @@ export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
  *
  * @public
  */
+/**
+ * Why a speech was interrupted, for the `agent_turn` trace: the user started talking over it
+ * (`audio_activity`), a committed user turn preempted it (`user_turn`), or code did
+ * (`programmatic`: `session.interrupt()`, a tool, teardown).
+ */
+export type InterruptionSource = 'audio_activity' | 'user_turn' | 'programmatic';
+
+/** An open `agent_turn` handed from a discarded speech to its successor. @internal */
+export interface AgentTurnCarry {
+  span: Span;
+  startedAt: number | undefined;
+  agentName: string | undefined;
+  /** Generation events already on the span, so `lk.generation_count` keeps counting. */
+  generations: number;
+}
+
+/** How a speech came to continue another's `agent_turn` (see `SpeechHandle._continueAgentTurn`). */
+export type AgentTurnContinuation = 'preemptive_discarded' | 'tool_reply';
+
+/**
+ * End a turn taken off its speech (see `SpeechHandle._takeAgentTurn`) that no successor adopted.
+ * The duration metric is recorded from the turn's start, as when the speech ends its own.
+ * @internal
+ */
+export function endCarriedAgentTurn(carry: AgentTurnCarry, error?: unknown): void {
+  // the duration metric does not depend on the span being sampled in
+  if (carry.startedAt !== undefined && carry.agentName !== undefined) {
+    recordInvokeAgentDuration((performance.now() - carry.startedAt) / 1000, carry.agentName);
+  }
+  if (!carry.span.isRecording()) return;
+  if (error !== undefined) {
+    // a thrown string or object is a failure too: the turn must not read as a success
+    recordException(carry.span, error instanceof Error ? error : new Error(String(error)));
+  }
+  carry.span.end();
+}
+
 export class SpeechHandleCircularWaitError extends Error {
   constructor(functionCallName: string) {
     super(dedent`
@@ -132,7 +172,8 @@ export class SpeechHandle {
   private doneFut = new Future<void>();
   private generations: Future<void>[] = [];
   private _chatItems: ChatItem[] = [];
-  private _error: unknown;
+  /** @internal The first failure of an owned task, or the one the pipeline stored; see exception(). */
+  _error: unknown;
   private interruptionHolds = 0;
   private interruptionHoldsRestore: boolean;
 
@@ -141,9 +182,39 @@ export class SpeechHandle {
 
   /** @internal */
   _numSteps = 1;
+  /**
+   * @internal Generation ids continue another speech's numbering when this speech carries on
+   * its turn (a realtime tool reply, which the framework runs on a new handle): the base id and
+   * the step the other speech had reached.
+   */
+  _generationBaseId?: string;
+  /** @internal */
+  _generationStepBase = 0;
+  /** @internal The step of the last generation event this speech emitted on its turn. */
+  _emittedGenerationStep?: number;
+  /** @internal Generation events on the turn this speech owns, carried over on a handoff. */
+  _agentTurnGenerations = 0;
 
+  /**
+   * @internal One `agent_turn` span for the whole speech, however many generations (LLM steps)
+   * it takes; opened by the first reply task, ended with the speech in `_markDone`.
+   */
+  _agentTurnSpan?: Span;
   /** @internal - OpenTelemetry context for the agent turn span */
   _agentTurnContext?: Context;
+  /** @internal - when the turn opened (performance.now), for the duration metric */
+  _agentTurnStartedAt?: number;
+  /** @internal - the agent the turn was opened for, for the duration metric */
+  _agentTurnAgentName?: string;
+
+  /** @internal - when the speech was scheduled, for the queue-wait attribute */
+  _scheduledAt?: number;
+  /** @internal - when generation was first authorized, for the queue-wait attribute */
+  _authorizedAt?: number;
+  /** @internal The turn's queue wait is stamped once, for the first generation. */
+  _queueWaitRecorded = false;
+  /** @internal - the first interrupt's cause, for the agent_turn trace */
+  _interruptSource?: InterruptionSource;
 
   /** @internal - used by AgentTask/RunResult final output plumbing */
   _maybeRunFinalOutput?: unknown;
@@ -208,6 +279,31 @@ export class SpeechHandle {
 
   get id(): string {
     return this._id;
+  }
+
+  /** @internal The step of the current generation in the turn's numbering (see `_generationBaseId`). */
+  get _generationStep(): number {
+    return this._generationStepBase + this._numSteps;
+  }
+
+  /** @internal The id of the current generation (LLM step) of this speech. */
+  get _generationId(): string {
+    return `${this._generationBaseId ?? this._id}_${this._generationStep}`;
+  }
+
+  /**
+   * @internal The speech id the turn is filed under: the root speech's when this handle
+   * continues its turn (a realtime tool reply runs on a new handle), else its own.
+   */
+  get _turnSpeechId(): string {
+    return this._generationBaseId ?? this._id;
+  }
+
+  /** @internal The id of the generation before the current one; undefined on the first. */
+  get _parentGenerationId(): string | undefined {
+    const step = this._generationStep;
+    if (step <= 1) return undefined;
+    return `${this._generationBaseId ?? this._id}_${step - 1}`;
   }
 
   get scheduled(): boolean {
@@ -284,11 +380,15 @@ export class SpeechHandle {
   /**
    * Interrupt the current speech generation.
    *
+   * @param force - Interrupt even if this speech disallows interruptions.
+   * @param source - Why, for the `agent_turn` trace (see {@link InterruptionSource}). The first
+   *   interruption's cause is the one recorded.
+   *
    * @throws Error If this speech handle is still running and does not allow interruptions.
    *
    * @returns The same speech handle that was interrupted.
    */
-  interrupt(force: boolean = false): SpeechHandle {
+  interrupt(force: boolean = false, source: InterruptionSource = 'programmatic'): SpeechHandle {
     if (this.interrupted || this.done()) {
       // Already cancelled or finished: nothing to interrupt, and protection is moot.
       return this;
@@ -298,6 +398,7 @@ export class SpeechHandle {
       throw new Error('This generation handle does not allow interruptions');
     }
 
+    this._interruptSource = source; // first interrupt only: later calls return above
     this._cancel();
     return this;
   }
@@ -389,13 +490,19 @@ export class SpeechHandle {
     this.doneCallbacks.delete(callback);
   }
 
-  /** @internal */
-  _cancel(): SpeechHandle {
+  /**
+   * @internal
+   * @param source - Why, for the `agent_turn` trace: a preemptive attempt superseded by more of
+   *   the user's turn is `user_turn`, one dropped by a barge-in `audio_activity`; a cancel with
+   *   no cause (teardown, a pause) reads as programmatic. The first cause named stands.
+   */
+  _cancel(source?: InterruptionSource): SpeechHandle {
     if (this.done()) {
       return this;
     }
 
     if (!this.interruptFut.done) {
+      if (source !== undefined) this._interruptSource = source;
       this.interruptFut.resolve();
       this.startInterruptTimeout();
     }
@@ -450,6 +557,7 @@ export class SpeechHandle {
   _authorizeGeneration(): void {
     const fut = new Future<void>();
     this.generations.push(fut);
+    this._authorizedAt ??= performance.now();
     this.authorizedEvent.set();
   }
 
@@ -502,6 +610,8 @@ export class SpeechHandle {
       }
       this.doneFut.resolve();
     }
+    // a pipeline LLM failure is stored on the handle before the tasks finish
+    this.endAgentTurn(error !== undefined ? error : this._error);
 
     // Keep this outside the doneFut guard: if the handle is already done but a
     // generation future is still active, _waitForGeneration() must be released.
@@ -512,11 +622,109 @@ export class SpeechHandle {
     this.clearInterruptTimeout();
   }
 
+  /**
+   * Detach this speech's open `agent_turn` so a successor can continue it.
+   *
+   * Used when a preemptive generation is discarded for another speech answering the same user
+   * turn: the wasted generation stays visible under the one turn instead of becoming a turn of
+   * its own. After this the speech ends without touching the span.
+   * @internal
+   */
+  _takeAgentTurn(): AgentTurnCarry | undefined {
+    const span = this._agentTurnSpan;
+    if (span === undefined) return undefined;
+    const carry: AgentTurnCarry = {
+      span,
+      startedAt: this._agentTurnStartedAt,
+      agentName: this._agentTurnAgentName,
+      generations: this._agentTurnGenerations,
+    };
+    this._agentTurnSpan = undefined;
+    this._agentTurnContext = undefined;
+    this._agentTurnStartedAt = undefined;
+    this._agentTurnAgentName = undefined;
+    this._agentTurnGenerations = 0;
+    return carry;
+  }
+
+  /**
+   * @internal Adopt the `agent_turn` taken from `from` (see {@link _takeAgentTurn}).
+   *
+   * - `preemptive_discarded` (the default): `from` was a preemptive attempt dropped for this
+   *   speech; the span records that and takes this speech's id. Generation ids stay this
+   *   speech's own, as in Python.
+   * - `tool_reply`: this speech is the realtime tool reply the framework runs on a new handle
+   *   after `from`'s tool calls; Python runs it on the same handle as its next step. The turn
+   *   keeps `from`'s speech id and this speech's generations continue `from`'s numbering, so the
+   *   trace reads as Python's: one turn, the reply's generation parented to the tool call's.
+   */
+  _continueAgentTurn(
+    carry: AgentTurnCarry,
+    from: SpeechHandle,
+    continuation: AgentTurnContinuation = 'preemptive_discarded',
+  ): void {
+    // adopted even when sampled out: the duration metric still needs the start time
+    const { span, startedAt, agentName } = carry;
+    const own = this._agentTurnSpan;
+    if (own !== undefined && own !== span) {
+      // this speech already opened a turn of its own (the handoff came after its task started):
+      // close it rather than leak an unended span that its children would dangle from
+      own.addEvent('superseded_by_adopted_turn', { [traceTypes.ATTR_SPEECH_ID]: from.id });
+      if (own.isRecording()) own.end();
+    }
+    if (continuation === 'preemptive_discarded') {
+      span.addEvent('preemptive_generation_discarded', {
+        [traceTypes.ATTR_SPEECH_ID]: from.id,
+      });
+      span.setAttribute(traceTypes.ATTR_SPEECH_ID, this.id);
+    } else {
+      this._generationBaseId = from._generationBaseId ?? from.id;
+      // after the last generation `from` emitted; from where its own numbering started when it
+      // emitted none (it then never ran), so the next id follows a generation that exists
+      this._generationStepBase = from._emittedGenerationStep ?? from._generationStepBase;
+    }
+    this._agentTurnSpan = span;
+    this._agentTurnContext = trace.setSpan(otelContext.active(), span);
+    this._agentTurnStartedAt = startedAt;
+    this._agentTurnAgentName = agentName;
+    this._agentTurnGenerations = carry.generations;
+  }
+
+  /** Close the speech's `agent_turn` span: the speech is done, whatever step it was on. */
+  private endAgentTurn(error: unknown): void {
+    const span = this._agentTurnSpan;
+    this._agentTurnSpan = undefined;
+    if (span === undefined) return;
+    endCarriedAgentTurn(
+      {
+        span,
+        startedAt: this._agentTurnStartedAt,
+        agentName: this._agentTurnAgentName,
+        generations: this._agentTurnGenerations,
+      },
+      error,
+    );
+  }
+
   /** @internal */
   _markScheduled(): void {
+    if (this._authorizedAt !== undefined) {
+      // scheduled again after a generation ran (a tool reply on the same handle): this wait
+      // is the new generation's own, not the first one's
+      this._scheduledAt = performance.now();
+      this._authorizedAt = undefined;
+    } else {
+      this._scheduledAt ??= performance.now();
+    }
     if (!this.scheduledFut.done) {
       this.scheduledFut.resolve();
     }
+  }
+
+  /** @internal Milliseconds between the latest scheduling and its generation's authorization, once known. */
+  _queueWait(): number | undefined {
+    if (this._scheduledAt === undefined || this._authorizedAt === undefined) return undefined;
+    return Math.max(this._authorizedAt - this._scheduledAt, 0);
   }
 
   /** @internal */

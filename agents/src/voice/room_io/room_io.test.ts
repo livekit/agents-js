@@ -2,12 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import { ROOT_CONTEXT, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as jobModule from '../../job.js';
 import { RealtimeModel } from '../../llm/index.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
+import { setTracerProvider, tracer } from '../../telemetry/index.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { AgentSessionEventTypes, CloseReason, createCloseEvent } from '../events.js';
 import { AudioInput, AudioOutput, TextOutput } from '../io.js';
@@ -520,5 +524,45 @@ describe('RoomIO deleteRoomOnClose', () => {
     await vi.advanceTimersByTimeAsync(1);
     await closePromise;
     expect(closed).toBe(true);
+  });
+});
+
+describe('RoomIO participant switch tracing', () => {
+  it('parents a track wait started after startup to the session root', async () => {
+    // the startup link waits under session_start; a switch made later (a transfer, a tool)
+    // must still land under agent_session rather than become a root span, since the SDK's
+    // event paths carry no ambient context
+    const originalProvider = tracer.getProvider();
+    const exporter = new InMemorySpanExporter();
+    const provider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    setTracerProvider(provider);
+    const sessionSpan = provider.getTracer('test').startSpan('agent_session');
+    try {
+      const room = createFakeRoom();
+      const session = createFakeSession() as FakeSession & { rootSpanContext?: unknown };
+      session.rootSpanContext = trace.setSpan(ROOT_CONTEXT, sessionSpan);
+      const roomIO = new RoomIO({
+        agentSession: session as unknown as RoomIOArgs['agentSession'],
+        room: room as unknown as RoomIOArgs['room'],
+        inputOptions: { textEnabled: false },
+        outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+      });
+      roomIO.start();
+      expect(Reflect.get(roomIO, 'audioInput')).toBeDefined();
+
+      roomIO.setParticipant('bob');
+      roomIO.setParticipant(null); // ends the wait without a track
+      await roomIO.close();
+
+      const waits = exporter.getFinishedSpans().filter((s) => s.name === 'wait_for_audio_track');
+      expect(waits).toHaveLength(1);
+      expect(waits[0]!.parentSpanContext?.spanId).toBe(sessionSpan.spanContext().spanId);
+    } finally {
+      sessionSpan.end();
+      setTracerProvider(originalProvider);
+      await provider.shutdown();
+    }
   });
 });

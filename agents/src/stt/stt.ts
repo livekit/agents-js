@@ -287,6 +287,15 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
    */
   abstract stream(options?: { connOptions?: APIConnectOptions }): SpeechStream;
 
+  /**
+   * Open the provider connection ahead of the first recognition. Best effort and non-blocking.
+   * Called by the framework when an agent starts or resumes. Providers without a persistent
+   * connection need not override this.
+   */
+  prewarm(): void {
+    return;
+  }
+
   async close(): Promise<void> {
     return;
   }

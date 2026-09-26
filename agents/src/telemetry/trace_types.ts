@@ -42,9 +42,95 @@ export const ATTR_DEPLOYMENT_ID = 'lk.deployment_id';
 export const ATTR_ROOM_NAME = 'lk.pii.room_name';
 export const ATTR_SESSION_OPTIONS = 'lk.session_options';
 
+// join keys shared with the server, SIP, and client traces
+export const ATTR_ROOM_SID = 'lk.room_sid';
+export const ATTR_DISPATCH_ID = 'lk.dispatch_id';
+export const ATTR_WORKER_ID = 'lk.job.worker_id';
+export const ATTR_JOB_AGENT_ID = 'lk.job.agent_id';
+/**
+ * Prefix under which a linked SIP participant's `sip.*` attributes are copied (call id, trunk
+ * id and number, rule id, hostname, status, headers).
+ */
+export const ATTR_SIP_PREFIX = 'lk.sip.';
+/** The end user's phone number (`sip.phoneNumber`), the one SIP attribute that is PII. */
+export const ATTR_SIP_PHONE_NUMBER = 'lk.pii.sip.phoneNumber';
+
+// job dispatch timeline (job_entrypoint). The stage instants are timestamped events
+// (job_received, job_accepted, job_assigned, process_assigned, entrypoint_started); these
+// attributes are the seconds between adjacent stages, so the chain reads off the span without
+// timestamp arithmetic. They sum to the dispatch latency.
+/** Seconds from the availability request to the worker's accept (the request handler). */
+export const ATTR_JOB_ACCEPT_LATENCY = 'lk.job.accept_latency';
+/** Seconds from the accept to the server's assignment (a server round trip). */
+export const ATTR_JOB_ASSIGNMENT_LATENCY = 'lk.job.assignment_latency';
+/** Seconds from the assignment to a process taking the job (pool acquisition). */
+export const ATTR_JOB_LAUNCH_LATENCY = 'lk.job.launch_latency';
+/** Seconds from the process taking the job to the user entrypoint running in it. */
+export const ATTR_JOB_ENTRYPOINT_LATENCY = 'lk.job.entrypoint_latency';
+/** Seconds from the availability request to the entrypoint running: the whole chain. */
+export const ATTR_JOB_DISPATCH_LATENCY = 'lk.job.dispatch_latency';
+
+// keyterm detection (keyterm_detection span): counts only, the terms themselves are the
+// customer's vocabulary and travel as lk.pii.keyterms in the session report
+/** Keyterms in effect after the pass (static + confirmed). */
+export const ATTR_KEYTERMS_COUNT = 'lk.keyterms.count';
+export const ATTR_KEYTERMS_ADDED = 'lk.keyterms.added';
+export const ATTR_KEYTERMS_REMOVED = 'lk.keyterms.removed';
+
+// room connect / room io
+export const ATTR_ROOM_AUTO_SUBSCRIBE = 'lk.room.auto_subscribe';
+export const ATTR_ROOM_E2EE = 'lk.room.e2ee';
+export const ATTR_ROOM_REMOTE_PARTICIPANT_COUNT = 'lk.room.remote_participant_count';
+/** Whether RoomIO waited for a specific participant identity (true) or the first eligible one. */
+export const ATTR_ROOM_IO_PARTICIPANT_FILTER = 'lk.room_io.participant_filter';
+export const ATTR_TRACK_SID = 'lk.track_sid';
+export const ATTR_TRACK_SOURCE = 'lk.track_source';
+/** Seconds from linking the participant to the first media frame received from them. */
+export const ATTR_FIRST_FRAME_DELAY = 'lk.first_frame_delay';
+export const ATTR_PRE_CONNECT_AUDIO_DURATION = 'lk.pre_connect_audio.duration';
+export const ATTR_CONNECTION_STATE = 'lk.connection_state';
+export const ATTR_DISCONNECT_REASON = 'lk.disconnect_reason';
+export const ATTR_OLD_STATE = 'lk.old_state';
+export const ATTR_NEW_STATE = 'lk.new_state';
+
+// rpc (`rpc.method` from the OpenTelemetry RPC semantic conventions, plus lk.rpc.* details)
+export const ATTR_RPC_METHOD = 'rpc.method';
+export const ATTR_RPC_REQUEST_ID = 'lk.rpc.request_id';
+export const ATTR_RPC_CALLER_IDENTITY = 'lk.rpc.caller_identity';
+export const ATTR_RPC_DESTINATION_IDENTITY = 'lk.rpc.destination_identity';
+/** Request payload, truncated to `telemetry.rpc.MAX_PAYLOAD_ATTR_LEN` characters. */
+export const ATTR_RPC_PAYLOAD = 'lk.pii.rpc.payload';
+/** Request payload size in bytes, before truncation. */
+export const ATTR_RPC_PAYLOAD_SIZE = 'lk.rpc.payload_size';
+/** Response payload, truncated like the request. */
+export const ATTR_RPC_RESPONSE = 'lk.pii.rpc.response';
+/** Response payload size in bytes, before truncation. */
+export const ATTR_RPC_RESPONSE_SIZE = 'lk.rpc.response_size';
+/** Seconds the caller waits for a response. */
+export const ATTR_RPC_RESPONSE_TIMEOUT = 'lk.rpc.response_timeout';
+/** The `RpcError` code the call failed with. */
+export const ATTR_RPC_ERROR_CODE = 'lk.rpc.error_code';
+
+// session close / job shutdown
+export const ATTR_CLOSE_REASON = 'lk.close_reason';
+export const ATTR_CLOSE_DRAIN = 'lk.close.drain';
+/** The string passed to `JobContext.shutdown(reason)`; developer-authored, like a log line. */
+export const ATTR_SHUTDOWN_REASON = 'lk.shutdown.reason';
+export const ATTR_SHUTDOWN_USER_INITIATED = 'lk.shutdown.user_initiated';
+export const ATTR_CALLBACK_NAME = 'lk.callback.name';
+
 // assistant turn
+/**
+ * On `agent_turn`: the latest generation (LLM step) of the speech; each step is also a
+ * `generation` event carrying its own id.
+ */
 export const ATTR_AGENT_TURN_ID = 'lk.generation_id';
 export const ATTR_AGENT_PARENT_TURN_ID = 'lk.parent_generation_id';
+/**
+ * On `agent_turn`: how many generations (LLM steps) the speech took; more than one means tool
+ * calls were executed before the final reply.
+ */
+export const ATTR_GENERATION_COUNT = 'lk.generation_count';
 export const ATTR_USER_INPUT = 'lk.pii.user_input';
 export const ATTR_INSTRUCTIONS = 'lk.pii.instructions';
 export const ATTR_SPEECH_INTERRUPTED = 'lk.interrupted';
@@ -76,6 +162,7 @@ export const ATTR_RESPONSE_TTFB = 'lk.response.ttfb';
 // eou detection
 export const ATTR_EOU_PROBABILITY = 'lk.eou.probability';
 export const ATTR_EOU_UNLIKELY_THRESHOLD = 'lk.eou.unlikely_threshold';
+/** The endpointing delay in force for the turn, in seconds. */
 export const ATTR_EOU_DELAY = 'lk.eou.endpointing_delay';
 export const ATTR_EOU_LANGUAGE = 'lk.eou.language';
 /** Which signal triggered the EOU detection: 'vad' | 'stt' | 'manual'. */
@@ -83,15 +170,34 @@ export const ATTR_EOU_SOURCE = 'lk.eou.source';
 /** True when the audio EOT detector resolved this prediction from its
  * inference-window cache instead of running a fresh predict. */
 export const ATTR_EOU_FROM_CACHE = 'lk.eou.from_cache';
-/** Latest input-audio creation time → prediction receive time (ms). */
+/** Latest input-audio creation time → prediction receive time, in seconds. */
 export const ATTR_EOU_DETECTION_DELAY = 'lk.eou.detection_delay';
+// eou_wait span: from the user's last speech to the turn decision
+/** How the wait ended: `committed`, `user_resumed`, or `dropped`. */
+export const ATTR_EOU_OUTCOME = 'lk.eou.outcome';
+/** Seconds from the end of the user's speech to the turn decision. */
+export const ATTR_EOU_WAIT_DURATION = 'lk.eou.wait_duration';
+/** Times the endpointing wait restarted on a later trigger (late transcript, VAD). */
+export const ATTR_EOU_REARM_COUNT = 'lk.eou.rearm_count';
+/** Turn decisions the wait rejected (the detector said the user was not done) before it ended. */
+export const ATTR_EOU_NOT_COMMITTED_COUNT = 'lk.eou.not_committed_count';
+/** On user_turn: endpointing waits the user cut short by speaking again. */
+export const ATTR_EOU_RESUME_COUNT = 'lk.eou.resume_count';
+/** Seconds the onUserTurnCompleted hook took; on the reply's agent_turn with the other stages. */
+export const ATTR_ON_USER_TURN_COMPLETED_DELAY = 'lk.on_user_turn_completed_delay';
+
+// speech scheduling
+/** Seconds a speech handle waited in the queue before generation was authorized. */
+export const ATTR_SPEECH_QUEUE_WAIT = 'lk.speech.queue_wait';
 export const ATTR_USER_TRANSCRIPT = 'lk.pii.user_transcript';
 /** JSON list of transcript events on user_turn, in arrival order. Each entry has
  * received_at (SpeechEvent.createdAt, Unix milliseconds), type, and transcript_length
  * (Unicode code points in the first alternative). */
 export const ATTR_STT_EVENTS = 'lk.stt.events';
 export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
+/** Seconds from the end of the user's speech to the final transcript. */
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';
+/** Seconds from the end of the user's speech to the end-of-turn decision. */
 export const ATTR_END_OF_TURN_DELAY = 'lk.end_of_turn_delay';
 
 // answering machine detection
@@ -99,11 +205,28 @@ export const ATTR_AMD_CATEGORY = 'lk.amd.category';
 export const ATTR_AMD_REASON = 'lk.amd.reason';
 export const ATTR_AMD_IS_MACHINE = 'lk.amd.is_machine';
 export const ATTR_AMD_INTERRUPT_ON_MACHINE = 'lk.amd.interrupt_on_machine';
-/** Total user-speech duration captured before the AMD verdict (milliseconds). */
+/** Total user-speech duration captured before the AMD verdict, in seconds. */
 export const ATTR_AMD_SPEECH_DURATION = 'lk.amd.speech_duration';
-/** Time between speech end and the AMD verdict emission (milliseconds). */
+/** Time between speech end and the AMD verdict emission, in seconds. */
 export const ATTR_AMD_DELAY = 'lk.amd.delay';
 export const ATTR_AMD_TRANSCRIPT = 'lk.pii.amd.transcript';
+
+// Interruptions (agent_turn)
+/**
+ * What interrupted the speech: `audio_activity` (barge-in), `user_turn` (a committed turn
+ * preempting the reply), or `programmatic` (session.interrupt(), a tool, teardown).
+ */
+export const ATTR_INTERRUPTION_SOURCE = 'lk.interruption.source';
+/** Seconds of audio that had actually played when the speech was interrupted. */
+export const ATTR_PLAYOUT_POSITION = 'lk.playout.position';
+
+// Agent handoff (update_agent span)
+export const ATTR_PREVIOUS_AGENT_LABEL = 'lk.previous_agent_label';
+
+// Fallback adapters (the attempt span)
+/** Label of the provider that served the request. */
+export const ATTR_FALLBACK_LABEL = 'lk.fallback.label';
+export const ATTR_FALLBACK_INDEX = 'lk.fallback.index';
 
 // Adaptive Interruption attributes
 export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';
@@ -127,9 +250,13 @@ export const ATTR_BLOCKING_THRESHOLD = 'lk.blocking.threshold';
 export const ATTR_BLOCKING_SEVERITY = 'lk.blocking.severity';
 /** `code` for synchronous work on the loop, `host` when the process itself was not scheduled. */
 export const ATTR_BLOCKING_CAUSE = 'lk.blocking.cause';
-/** Not populated by the Node runtime: it cannot sample another thread's JavaScript stack. */
+/** Not populated by the Node runtime: it has no named tasks to attribute a stall to. */
 export const ATTR_BLOCKING_TASK = 'lk.blocking.task';
-/** Not populated by the Node runtime: it cannot sample another thread's JavaScript stack. */
+/**
+ * Stacks of the loop thread sampled during the stall by V8's profiler, one block per sample
+ * headed by when in the stall it was taken, innermost frames first; or a one-line note saying
+ * why there is none.
+ */
 export const ATTR_BLOCKING_STACK = 'lk.blocking.stack';
 /** Garbage-collection pause time inside the stall, in seconds. */
 export const ATTR_BLOCKING_GC_TIME = 'lk.blocking.gc_time';
@@ -376,3 +503,7 @@ export const ATTR_EXCEPTION_MESSAGE = 'exception.message';
 
 // Platform-specific attributes
 export const ATTR_LANGFUSE_COMPLETION_START_TIME = 'langfuse.observation.completion_start_time';
+
+// metric names (OpenTelemetry GenAI semantic conventions)
+/** Histogram, seconds: one agent turn (`invoke_agent`), however many LLM steps it took. */
+export const METRIC_GEN_AI_INVOKE_AGENT_DURATION = 'gen_ai.invoke_agent.duration';

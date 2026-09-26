@@ -132,6 +132,7 @@ const SAFE_KEYS = new Set([
   'lk.deployment_id',
   'lk.session_options',
   'lk.generation_id',
+  'lk.generation_count',
   'lk.parent_generation_id',
   'lk.interrupted',
   // LLM node metadata
@@ -164,6 +165,54 @@ const SAFE_KEYS = new Set([
   'lk.tts_metrics',
   'lk.realtime_model_metrics',
   'lk.e2e_latency',
+  // join keys, dispatch timeline, room/track ids, lifecycle enums (no content)
+  'lk.room_sid',
+  'lk.dispatch_id',
+  'lk.job.worker_id',
+  'lk.job.agent_id',
+  'lk.sip.',
+  'lk.job.accept_latency',
+  'lk.job.assignment_latency',
+  'lk.job.launch_latency',
+  'lk.job.entrypoint_latency',
+  'lk.job.dispatch_latency',
+  'lk.keyterms.count',
+  'lk.keyterms.added',
+  'lk.keyterms.removed',
+  'lk.room.auto_subscribe',
+  'lk.room.e2ee',
+  'lk.room.remote_participant_count',
+  'lk.room_io.participant_filter',
+  'lk.track_sid',
+  'lk.track_source',
+  'lk.first_frame_delay',
+  'lk.pre_connect_audio.duration',
+  'lk.connection_state',
+  'lk.disconnect_reason',
+  'lk.old_state',
+  'lk.new_state',
+  // rpc (semconv names, ids, sizes, codes; the payload keys are tagged)
+  'rpc.method',
+  'lk.rpc.request_id',
+  'lk.rpc.caller_identity',
+  'lk.rpc.destination_identity',
+  'lk.rpc.payload_size',
+  'lk.rpc.response_size',
+  'lk.rpc.response_timeout',
+  'lk.rpc.error_code',
+  'lk.close_reason',
+  'lk.close.drain',
+  'lk.shutdown.reason',
+  'lk.shutdown.user_initiated',
+  'lk.callback.name',
+  // eou_wait / speech scheduling (timings and enums)
+  'lk.eou.outcome',
+  'lk.eou.wait_duration',
+  'lk.eou.rearm_count',
+  'lk.eou.not_committed_count',
+  'lk.eou.resume_count',
+  'lk.on_user_turn_completed_delay',
+  'lk.speech.queue_wait',
   // Event loop blocking
   'lk.blocking.duration',
   'lk.blocking.threshold',
@@ -209,6 +258,12 @@ const SAFE_KEYS = new Set([
   'lk.amd.delay',
   // Adaptive interruption
   'lk.is_interruption',
+  // interruptions, handoff, fallback (enums, labels, sizes)
+  'lk.interruption.source',
+  'lk.playout.position',
+  'lk.previous_agent_label',
+  'lk.fallback.label',
+  'lk.fallback.index',
   'lk.interruption.probability',
   'lk.interruption.total_duration',
   'lk.interruption.prediction_duration',
@@ -245,7 +300,8 @@ const SAFE_KEYS = new Set([
 function declaredKeys(): Record<string, string> {
   return Object.fromEntries(
     Object.entries(traceTypes).filter((entry): entry is [string, string] => {
-      return typeof entry[1] === 'string';
+      // metric names are not attribute keys: they carry no values to classify
+      return typeof entry[1] === 'string' && !entry[0].startsWith('METRIC_');
     }),
   );
 }

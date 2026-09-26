@@ -564,7 +564,10 @@ class SynthesizeStream extends tts.SynthesizeStream {
     this.#cumulativeTime = 0;
     this.#generationEndTime = 0;
 
-    const ws = await this.#tts.pool.getConnection();
+    // one pool object for the whole stream: `updateOptions` can swap the TTS pool mid-synthesis,
+    // and the listener must be removed from the pool that holds it
+    const pool = this.#tts.pool;
+    const ws = await pool.getConnection();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const tokenizerStream = this.#opts.tokenizer!.stream();
 
@@ -728,7 +731,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    this.#tts.pool.registerListener(this.#contextId, handleMessage);
+    pool.registerListener(this.#contextId, handleMessage);
 
     const sendLoop = async () => {
       for await (const ev of tokenizerStream) {
@@ -785,7 +788,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
       throw e;
     } finally {
       ws.off('close', onClose);
-      this.#tts.pool.unregisterListener(this.#contextId);
+      pool.unregisterListener(this.#contextId);
     }
   }
 

@@ -337,9 +337,10 @@ export class RimePool {
     this.users--;
     if (!this.users && this.retired) void this.close();
   }
-  retire() {
+  /** Close once the last stream releases it; returns the close when nothing holds it now. */
+  retire(): Promise<void> | undefined {
     this.retired = true;
-    if (!this.users) void this.close();
+    return this.users ? undefined : this.close();
   }
   async close() {
     this.retired = true;
