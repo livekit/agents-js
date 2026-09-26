@@ -258,10 +258,12 @@ export class RoomIO {
     this.agentSession._addSessionEvent?.('connection_state_changed', {
       [traceTypes.ATTR_CONNECTION_STATE]: ConnectionState[state] ?? String(state),
     });
-    if (state === ConnectionState.CONN_CONNECTED && this.room.isConnected) {
-      if (!this.roomConnectedFuture.done) {
-        this.roomConnectedFuture.resolve();
-      }
+    if (
+      state === ConnectionState.CONN_CONNECTED &&
+      this.room.isConnected &&
+      !this.roomConnectedFuture.done
+    ) {
+      this.roomConnectedFuture.resolve();
     }
   };
 
