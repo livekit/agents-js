@@ -26,6 +26,7 @@ import { FallbackAdapter as STTFallbackAdapter } from '../stt/fallback_adapter.j
 import { STT, type SpeechEvent, SpeechStream } from '../stt/stt.js';
 import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
+import { assertTraceWellFormed } from '../telemetry/testing/trace_schema.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Future, delay } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, VADStream } from '../vad.js';
@@ -318,6 +319,8 @@ describe.sequential('coverage spans', () => {
       if (other === turn) continue;
       expect(other.attributes[traceTypes.ATTR_INTERRUPTION_SOURCE]).toBeUndefined();
     }
+    // the whole tree, not just the edges this test names (telemetry/testing/trace_schema)
+    assertTraceWellFormed(exporter.getFinishedSpans());
   });
 
   it('records an interruption that lands while the tools are running', async () => {
@@ -692,6 +695,8 @@ describe.sequential('coverage spans', () => {
     // the initial start is not a handoff: it lives under session_start, not update_agent
     const sessionStart = only(exporter, 'session_start');
     expect(childrenOf(exporter, 'start_agent_activity', sessionStart)).toHaveLength(1);
+    // the whole tree, not just the edges this test names (telemetry/testing/trace_schema)
+    assertTraceWellFormed(exporter.getFinishedSpans());
   });
 
   // -- fallback adapter attribution --
