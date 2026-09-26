@@ -5,15 +5,19 @@ import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
   APIStatusError,
+  APITimeoutError,
   DEFAULT_API_CONNECT_OPTIONS,
+  combineSignals,
   llm,
   shortuuid,
 } from '@livekit/agents';
 import { Mistral } from '@mistralai/mistralai';
 import type {
+  ChatCompletionStreamRequest,
   CompletionArgs,
   ConversationEvents,
   ConversationUsageInfo,
+  DeltaMessage,
   FunctionCallEvent,
   MessageOutputEvent,
   ResponseDoneEvent,
@@ -21,12 +25,27 @@ import type {
   ResponseStartedEvent,
   TextChunk,
 } from '@mistralai/mistralai/models/components';
+import { RequestTimeoutError } from '@mistralai/mistralai/models/errors';
 import type { MistralChatModels } from './models.js';
+import { MistralTool } from './tools.js';
 
 const DEFAULT_MODEL: MistralChatModels = 'ministral-8b-latest';
 
+export enum ApiMode {
+  CONVERSATIONS = 'conversations',
+  CHAT_COMPLETIONS = 'chat_completions',
+}
+
+function parseApiMode(apiMode: ApiMode | `${ApiMode}`): ApiMode {
+  if (apiMode === ApiMode.CONVERSATIONS || apiMode === ApiMode.CHAT_COMPLETIONS) {
+    return apiMode as ApiMode;
+  }
+  throw new Error(`Invalid Mistral API mode: ${apiMode}`);
+}
+
 interface LLMOpts {
   model: MistralChatModels | string;
+  apiMode: ApiMode;
   maxCompletionTokens: number | null;
   temperature: number | null;
   topP: number | null;
@@ -45,6 +64,7 @@ interface PendingFunctionCall {
 
 export interface LLMOptions {
   model?: MistralChatModels | string;
+  apiMode?: ApiMode | `${ApiMode}`;
   apiKey?: string;
   client?: Mistral;
   temperature?: number;
@@ -65,6 +85,7 @@ export class LLM extends llm.LLM {
 
     this.#opts = {
       model: opts.model ?? DEFAULT_MODEL,
+      apiMode: opts.apiMode !== undefined ? parseApiMode(opts.apiMode) : ApiMode.CONVERSATIONS,
       temperature: opts.temperature ?? null,
       topP: opts.topP ?? null,
       presencePenalty: opts.presencePenalty ?? null,
@@ -100,6 +121,7 @@ export class LLM extends llm.LLM {
 
   updateOptions(opts: {
     model?: MistralChatModels | string;
+    apiMode?: ApiMode | `${ApiMode}`;
     maxCompletionTokens?: number;
     temperature?: number;
     topP?: number;
@@ -109,6 +131,7 @@ export class LLM extends llm.LLM {
     toolChoice?: llm.ToolChoice;
   }): void {
     if (opts.model !== undefined) this.#opts.model = opts.model;
+    if (opts.apiMode !== undefined) this.#opts.apiMode = parseApiMode(opts.apiMode);
     if (opts.maxCompletionTokens !== undefined)
       this.#opts.maxCompletionTokens = opts.maxCompletionTokens;
     if (opts.temperature !== undefined) this.#opts.temperature = opts.temperature;
@@ -123,6 +146,7 @@ export class LLM extends llm.LLM {
     chatCtx,
     toolCtx,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    parallelToolCalls,
     toolChoice,
     extraKwargs,
   }: {
@@ -151,8 +175,11 @@ export class LLM extends llm.LLM {
     // Resolve tool choice
     const resolvedToolChoice = toolChoice ?? this.#opts.toolChoice;
     if (resolvedToolChoice !== null && resolvedToolChoice !== undefined) {
+      const hasProviderTools =
+        toolCtx !== undefined &&
+        llm.toToolContext(toolCtx).providerTools.some((tool) => tool instanceof MistralTool);
       if (typeof resolvedToolChoice === 'object' || resolvedToolChoice === 'required') {
-        completionArgs.toolChoice = 'required';
+        completionArgs.toolChoice = hasProviderTools ? 'auto' : 'required';
       } else if (resolvedToolChoice === 'auto' || resolvedToolChoice === 'none') {
         completionArgs.toolChoice = resolvedToolChoice;
       }
@@ -169,6 +196,8 @@ export class LLM extends llm.LLM {
       toolCtx,
       connOptions,
       extraKwargs: extra,
+      toolChoice: resolvedToolChoice ?? undefined,
+      parallelToolCalls,
     });
   }
 }
@@ -177,6 +206,8 @@ export class LLMStream extends llm.LLMStream {
   #client: Mistral;
   #opts: LLMOpts;
   #extraKwargs: Record<string, unknown>;
+  #toolChoice?: llm.ToolChoice;
+  #parallelToolCalls?: boolean;
 
   constructor(
     llmInstance: LLM,
@@ -187,6 +218,8 @@ export class LLMStream extends llm.LLMStream {
       toolCtx,
       connOptions,
       extraKwargs,
+      toolChoice,
+      parallelToolCalls,
     }: {
       client: Mistral;
       opts: LLMOpts;
@@ -194,15 +227,27 @@ export class LLMStream extends llm.LLMStream {
       toolCtx?: llm.ToolContextLike;
       connOptions: APIConnectOptions;
       extraKwargs: Record<string, unknown>;
+      toolChoice?: llm.ToolChoice;
+      parallelToolCalls?: boolean;
     },
   ) {
     super(llmInstance, { chatCtx, toolCtx, connOptions });
     this.#client = client;
     this.#opts = opts;
     this.#extraKwargs = extraKwargs;
+    this.#toolChoice = toolChoice;
+    this.#parallelToolCalls = parallelToolCalls;
   }
 
   protected async run(): Promise<void> {
+    if (this.#opts.apiMode === ApiMode.CHAT_COMPLETIONS) {
+      await this.#runChatCompletions();
+    } else {
+      await this.#runConversations();
+    }
+  }
+
+  async #runConversations(): Promise<void> {
     let retryable = true;
 
     try {
@@ -215,8 +260,6 @@ export class LLMStream extends llm.LLMStream {
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const toolsList: any[] = [];
-      // Provider tools are not supported by the Mistral schema; `sortedToolEntries` yields only
-      // function tools (sorted by name), so they are skipped here.
       if (this.toolCtx) {
         for (const [name, func] of llm.sortedToolEntries(this.toolCtx)) {
           toolsList.push({
@@ -227,6 +270,9 @@ export class LLMStream extends llm.LLMStream {
               parameters: llm.toJsonSchema(func.parameters, true, false),
             },
           });
+        }
+        for (const tool of this.toolCtx.providerTools) {
+          if (tool instanceof MistralTool) toolsList.push(tool.toJSON());
         }
       }
 
@@ -278,6 +324,130 @@ export class LLMStream extends llm.LLMStream {
         throw new APIStatusError({
           message: `Mistral LLM: error (${statusCode}) - ${err.message ?? 'unknown error'}`,
           options: { statusCode, retryable },
+        });
+      }
+
+      throw new APIConnectionError({
+        message: `Mistral LLM: connection error - ${err.message ?? 'unknown error'}`,
+        options: { retryable },
+      });
+    }
+  }
+
+  async #runChatCompletions(): Promise<void> {
+    if (this.toolCtx?.providerTools.some((tool) => tool instanceof MistralTool)) {
+      throw new Error(
+        "Provider tools (WebSearch, DocumentLibrary, CodeInterpreter, Connector) are not supported with apiMode='chat_completions'. Use apiMode='conversations' or remove provider tools.",
+      );
+    }
+
+    let retryable = true;
+
+    try {
+      const openaiMessages = (await this.chatCtx.toProviderFormat('openai')) as Record<
+        string,
+        unknown
+      >[];
+      const messages = toMistralChatMessages(openaiMessages);
+      const tools: Record<string, unknown>[] = [];
+      if (this.toolCtx) {
+        for (const [name, func] of llm.sortedToolEntries(this.toolCtx)) {
+          tools.push({
+            type: 'function',
+            function: {
+              name,
+              description: func.description,
+              parameters: llm.toJsonSchema(func.parameters, true, false),
+            },
+          });
+        }
+      }
+
+      const { completionArgs, ...extraKwargs } = this.#extraKwargs as {
+        completionArgs?: CompletionArgs;
+        [key: string]: unknown;
+      };
+      const request = {
+        model: this.#opts.model,
+        messages,
+        ...completionArgs,
+        ...(this.#toolChoice !== undefined ? { toolChoice: this.#toolChoice } : {}),
+        ...(this.#parallelToolCalls !== undefined
+          ? { parallelToolCalls: this.#parallelToolCalls }
+          : {}),
+        ...(tools.length > 0 ? { tools } : {}),
+        ...extraKwargs,
+      } as ChatCompletionStreamRequest;
+
+      const response = await this.#client.chat.stream(request, {
+        signal: combineSignals(
+          this.abortController.signal,
+          AbortSignal.timeout(this._connOptions.timeoutMs),
+        ),
+      });
+      const pendingFncCalls = new Map<number, PendingFunctionCall>();
+
+      for await (const ev of response) {
+        if (this.abortController.signal.aborted) break;
+        for (const choice of ev.data.choices) {
+          for (const chunk of parseCompletionDelta(
+            ev.data.id,
+            choice.delta,
+            choice.finishReason,
+            pendingFncCalls,
+          )) {
+            retryable = false;
+            this.queue.put(chunk);
+          }
+        }
+
+        if (ev.data.usage) {
+          this.queue.put({
+            id: ev.data.id,
+            usage: {
+              completionTokens: ev.data.usage.completionTokens ?? 0,
+              promptTokens: ev.data.usage.promptTokens ?? 0,
+              totalTokens: ev.data.usage.totalTokens ?? 0,
+              promptCachedTokens: 0,
+            },
+          });
+        }
+      }
+
+      for (const chunk of flushPendingByIndex(pendingFncCalls)) this.queue.put(chunk);
+    } catch (error: unknown) {
+      if (this.abortController.signal.aborted) throw error;
+      if (
+        error instanceof RequestTimeoutError ||
+        (error instanceof Error && error.name === 'TimeoutError')
+      ) {
+        throw new APITimeoutError({
+          message: error.message,
+          options: { retryable },
+        });
+      }
+      if (error instanceof APIStatusError) {
+        throw new APIStatusError({
+          message: error.message,
+          options: { statusCode: error.statusCode, retryable: retryable && error.retryable },
+        });
+      }
+
+      const err = error as {
+        statusCode?: number;
+        status?: number;
+        message?: string;
+        body?: string;
+      };
+      const statusCode = err.statusCode ?? err.status;
+      if (statusCode !== undefined) {
+        throw new APIStatusError({
+          message: err.message ?? 'Mistral API error',
+          options: {
+            statusCode,
+            body: err.body ? { raw: err.body } : null,
+            retryable: retryable && (statusCode === 408 || statusCode === 429 || statusCode >= 500),
+          },
         });
       }
 
@@ -383,4 +553,97 @@ export class LLMStream extends llm.LLMStream {
 
     return chunks;
   }
+}
+
+function toMistralChatMessages(
+  messages: Record<string, unknown>[],
+): ChatCompletionStreamRequest['messages'] {
+  return messages.map((message) => {
+    const { tool_calls: toolCalls, tool_call_id: toolCallId, ...rest } = message;
+    const converted: Record<string, unknown> = {
+      ...rest,
+      role: rest.role === 'developer' ? 'system' : rest.role,
+    };
+
+    if (Array.isArray(rest.content)) {
+      converted.content = rest.content.map((chunk) => {
+        if (typeof chunk === 'object' && chunk !== null && 'image_url' in chunk) {
+          const { image_url: imageUrl, ...chunkRest } = chunk as Record<string, unknown>;
+          return { ...chunkRest, imageUrl };
+        }
+        return chunk;
+      });
+    }
+
+    if (Array.isArray(toolCalls)) {
+      converted.toolCalls = toolCalls.map((toolCall) => {
+        const { extra_content: _extraContent, ...call } = toolCall as Record<string, unknown>;
+        return call;
+      });
+    }
+    if (toolCallId !== undefined) converted.toolCallId = toolCallId;
+
+    return converted;
+  }) as ChatCompletionStreamRequest['messages'];
+}
+
+function parseCompletionDelta(
+  chunkId: string,
+  delta: DeltaMessage,
+  finishReason: string | null,
+  pendingFncCalls: Map<number, PendingFunctionCall>,
+): llm.ChatChunk[] {
+  const chunks: llm.ChatChunk[] = [];
+  const content = delta.content;
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((chunk) => chunk.type === 'text')
+            .map((chunk) => ('text' in chunk ? chunk.text : ''))
+            .join('')
+        : '';
+  if (text) chunks.push({ id: chunkId, delta: { content: text, role: 'assistant' } });
+
+  for (const toolCall of delta.toolCalls ?? []) {
+    const callIndex = toolCall.index ?? Math.max(-1, ...pendingFncCalls.keys()) + 1;
+    const args =
+      typeof toolCall.function.arguments === 'string'
+        ? toolCall.function.arguments
+        : JSON.stringify(toolCall.function.arguments);
+    const pending = pendingFncCalls.get(callIndex);
+    if (!pending) {
+      pendingFncCalls.set(callIndex, {
+        id: chunkId,
+        name: toolCall.function.name,
+        toolCallId: toolCall.id && toolCall.id !== 'null' ? toolCall.id : '',
+        arguments: args,
+      });
+    } else {
+      if (toolCall.function.name) pending.name = toolCall.function.name;
+      pending.arguments += args;
+    }
+  }
+
+  if (finishReason === 'tool_calls') chunks.push(...flushPendingByIndex(pendingFncCalls));
+  return chunks;
+}
+
+function flushPendingByIndex(pending: Map<number, PendingFunctionCall>): llm.ChatChunk[] {
+  const chunks = [...pending.values()].map((fnc) => ({
+    id: fnc.id,
+    delta: {
+      role: 'assistant' as const,
+      toolCalls: [
+        llm.FunctionCall.create({
+          name: fnc.name,
+          args: fnc.arguments,
+          callId: fnc.toolCallId,
+        }),
+      ],
+    },
+  }));
+  pending.clear();
+  return chunks;
 }
