@@ -24,6 +24,7 @@ import {
   ChatMessage,
   type Instructions,
   type MetricsReport,
+  _upsertChatItem,
   concatInstructions,
   instructionsEqual,
   renderInstructions,
@@ -5000,14 +5001,15 @@ export class AgentActivity implements RecognitionHooks {
       const chatCtx = realtimeSession.chatCtx.copy();
       chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
 
-      // Also commit the outputs to the agent's own chat context. The FunctionCall items were
-      // added by onToolExecutionStarted, so without this the agent ctx keeps dangling calls with
-      // no results — breaking history summarization (which distills tool results) and agent
-      // handoff merges. `agentSession.history` is updated separately by `_toolItemsAdded`.
+      // Record each call with its output. A call rejected before execution may not have reached
+      // the started callback, and upserting also preserves the canonicalized arguments.
+      const toolCalls = functionToolsExecutedEvent.functionCalls as FunctionCall[];
       const toolCallOutputs =
         functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[];
-      this.agent._chatCtx.insert(toolCallOutputs);
-      this.agentSession._toolItemsAdded(toolCallOutputs);
+      for (const item of [...toolCalls, ...toolCallOutputs]) {
+        _upsertChatItem(this.agent._chatCtx, item);
+      }
+      this.agentSession._toolItemsAdded([...toolCalls, ...toolCallOutputs]);
 
       // If the realtime model auto-generates the tool reply, install a
       // placeholder so the active RunResult waits for that reply.

@@ -1824,7 +1824,18 @@ export class AgentSession<
 
   /** @internal */
   _toolItemsAdded(items: (FunctionCall | FunctionCallOutput)[]): void {
-    this._chatCtx.insert(items);
+    for (const item of items) {
+      // A call recorded when its execution started must not be inserted a second time.
+      const idx = this._chatCtx.indexById(item.id);
+      if (idx === undefined) {
+        this._chatCtx.insert(item);
+      } else {
+        if (this._chatCtx.items[idx]!.type !== item.type) {
+          throw new Error(`Item type mismatch: ${item.type} != ${this._chatCtx.items[idx]!.type}`);
+        }
+        this._chatCtx.items[idx] = item;
+      }
+    }
   }
 
   /** @internal */
