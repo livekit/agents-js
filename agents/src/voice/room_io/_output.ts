@@ -9,6 +9,7 @@ import {
   LocalAudioTrack,
   type LocalTrackPublication,
   type Participant,
+  ParticipantKind,
   type RemoteTrackPublication,
   type Room,
   RoomEvent,
@@ -18,9 +19,11 @@ import {
 } from '@livekit/rtc-node';
 import type { Context } from '@opentelemetry/api';
 import {
+  ATTRIBUTE_PUBLISH_ON_BEHALF,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
+  CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS,
   TOPIC_TRANSCRIPTION,
 } from '../../constants.js';
 import { log } from '../../log.js';
@@ -399,9 +402,58 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   }
 }
 
+/**
+ * True while some remote participant may still rely on the deprecated `Transcription` data
+ * packet.
+ *
+ * `publishTranscription` has no destination parameter, so this is all-or-nothing for the room:
+ * the packet is dropped only once every considered participant advertises a client protocol at
+ * or above {@link CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS}, meaning it rebuilds transcription
+ * events from the `lk.transcription` stream channel instead.
+ *
+ * An absent `clientProtocol` counts as 0, i.e. a legacy client. The coalesce is load bearing:
+ * protobuf-es types the field as optional, and in JavaScript every comparison against
+ * `undefined` is false, so omitting it would read a missing field as modern and silently drop
+ * the transcripts of a client that still needs them.
+ *
+ * Only STANDARD participants -- user-created client SDK instances -- are considered. SIP,
+ * INGRESS, AGENT (including avatar workers), CONNECTOR and BRIDGE participants never render
+ * legacy transcripts, so their client protocol tells us nothing about whether the legacy packet
+ * is still necessary. Counting them would also keep legacy publishing alive in every telephony
+ * room for good: the Go SDK does not send a client protocol at all, so SIP and INGRESS
+ * participants report 0 permanently. EGRESS participants join hidden and never reach
+ * `remoteParticipants`.
+ */
+function legacyTranscriptionNeeded(room: Room): boolean {
+  const localIdentity = room.localParticipant?.identity;
+
+  for (const participant of room.remoteParticipants.values()) {
+    if (participant.kind !== ParticipantKind.STANDARD) {
+      continue;
+    }
+
+    // our own avatar worker, if it joined as STANDARD rather than AGENT. Both sides must be
+    // present before comparing: an absent attribute and an absent local identity are both
+    // `undefined`, which would otherwise exclude every participant in the room.
+    const onBehalf = participant.attributes[ATTRIBUTE_PUBLISH_ON_BEHALF];
+    if (onBehalf && onBehalf === localIdentity) {
+      continue;
+    }
+
+    if ((participant.info.clientProtocol ?? 0) < CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscriptionOutput {
   private pushedText: string = '';
   private flushTask: Promise<void> | null = null;
+  /** the last status written to the log, so only transitions are logged. This never takes part
+   * in the decision itself. */
+  private legacyStatusLogged: boolean | null = null;
 
   protected async handleCaptureText(text: string): Promise<void> {
     if (!this.trackId) {
@@ -446,8 +498,29 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
     this.resetState();
   }
 
+  private shouldPublish(): boolean {
+    const needed = legacyTranscriptionNeeded(this.room);
+    if (needed !== this.legacyStatusLogged) {
+      this.legacyStatusLogged = needed;
+      this.logger.debug(
+        { 'lk.pii.participant': this.participantIdentity },
+        `legacy transcription publishing ${needed ? 'enabled' : 'disabled'}`,
+      );
+    }
+
+    return needed;
+  }
+
   async publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal) {
     if (!this.participantIdentity || !this.trackId) {
+      return;
+    }
+
+    // Gate here, not in handleCaptureText: every legacy publish carries the whole accumulated
+    // segment under a stable id, so pushedText/currentId must stay warm. A legacy client that
+    // joins mid-segment then gets the complete segment on the very next publish, and a client
+    // that only ever sees the final=true packet still gets a complete, correctly-closed segment.
+    if (!this.shouldPublish()) {
       return;
     }
 
