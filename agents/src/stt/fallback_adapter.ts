@@ -156,11 +156,13 @@ export class FallbackAdapter extends STT {
     this.setupEventForwarding();
   }
 
-  // Reflect the active child's model/provider so OTel `gen_ai.request.model`
-  // and `gen_ai.provider.name` on `user_turn` spans identify the provider
-  // that actually transcribed, not the static wrapper. `audio_recognition.
-  // refreshUserTurnSttAttributes` re-reads these on every STT event, so a
-  // mid-turn fallover surfaces the new child immediately.
+  /**
+   * @internal The instance serving the open stream, or the one that answered the last
+   * recognize(): what a transcript in flight is credited to. A stream stays on the child it
+   * elected until that child finishes or fails, whatever a recovery probe finds meanwhile.
+   */
+  _servedStt?: STT;
+
   /**
    * The instance the next request goes to first: the first one marked available, or the primary
    * once all are down (they are then all retried, primary first). A failed instance's recovery
@@ -173,16 +175,17 @@ export class FallbackAdapter extends STT {
   }
 
   /**
-   * The model of the instance that serves next (see `nextInstance`). Spans and metrics read
-   * this, so a failover shows the model expected to answer rather than the adapter.
+   * The model of the instance serving (see `_servedStt`), else of the one that serves next (see
+   * `nextInstance`). Spans and metrics read this, so a failover shows the model that answered,
+   * or is expected to, rather than the adapter.
    */
   override get model(): string {
-    return this.nextInstance().model;
+    return (this._servedStt ?? this.nextInstance()).model;
   }
 
-  /** The provider of the instance that serves next (see {@link model}). */
+  /** The provider of the instance serving, else of the one that serves next (see {@link model}). */
   override get provider(): string {
-    return this.nextInstance().provider;
+    return (this._servedStt ?? this.nextInstance()).provider;
   }
 
   /**
@@ -289,6 +292,7 @@ export class FallbackAdapter extends STT {
       if (status.available || allFailed) {
         try {
           const result = await stt.recognize(frame, abortSignal);
+          this._servedStt = stt;
           return result;
         } catch (e) {
           this._logger.warn(
@@ -577,6 +581,7 @@ class FallbackSpeechStream extends SpeechStream {
           // Keep child timestamps anchored to the parent stream's current retry attempt.
           child.startTimeOffset = this.startTimeOffset + (Date.now() - startTime) / 1000;
           mainRef.current = child;
+          this.fallbackAdapter._servedStt = sttInstance;
           try {
             if (this.abortSignal.aborted) return;
             // If the forwarder has already drained and exited (input EOF), it
@@ -643,6 +648,7 @@ class FallbackSpeechStream extends SpeechStream {
       const tasks = [forwarderTask, ...this.recoveringStreams.values()];
       closeStreams();
       await cancelAndWait(tasks, 1000);
+      this.fallbackAdapter._servedStt = undefined;
     }
   }
 }
