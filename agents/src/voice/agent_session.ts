@@ -2118,6 +2118,9 @@ export class AgentSession<
       activity = task._oldAgent._agentActivity;
     }
 
+    // each step runs whatever the previous one raised: a recorder that will not close must not
+    // leave the activity live, nor the activity its TTS. The first failure is rethrown at the end
+    const failures: unknown[] = [];
     if (wasStarted && activity) {
       if (!drain) {
         try {
@@ -2127,12 +2130,16 @@ export class AgentSession<
         }
       }
 
-      await activity.drain({ traceContext });
-      // wait any uninterruptible speech to finish
-      await activity.currentSpeech?.waitForPlayout();
+      try {
+        await activity.drain({ traceContext });
+        // wait any uninterruptible speech to finish
+        await activity.currentSpeech?.waitForPlayout();
 
-      if (reason !== CloseReason.ERROR) {
-        activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
+        if (reason !== CloseReason.ERROR) {
+          activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
+        }
+      } catch (e) {
+        failures.push(e);
       }
 
       try {
@@ -2144,7 +2151,11 @@ export class AgentSession<
 
     // Close recorder before detaching inputs/outputs (keep reference for session report)
     if (this._recorderIO) {
-      await this._recorderIO.close();
+      try {
+        await this._recorderIO.close();
+      } catch (e) {
+        failures.push(e);
+      }
     }
 
     // detach the inputs and outputs
@@ -2152,15 +2163,24 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await activity?.close();
+    try {
+      await activity?.close();
+    } catch (e) {
+      failures.push(e);
+    }
     this.activity = undefined;
 
     // the session's own use of its TTS is over; other sessions sharing it keep it alive
-    await releaseTts(this.tts);
+    try {
+      await releaseTts(this.tts);
+    } catch (e) {
+      failures.push(e);
+    }
 
     const sessionToolsets = this._toolCtx.toolsets;
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
     this._sessionToolsetsSetup = false;
+    if (failures.length) throw failures[0];
   }
 
   private async closeImplInner(
