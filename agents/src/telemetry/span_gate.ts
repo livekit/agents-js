@@ -49,10 +49,18 @@ export class JobSpanGateExporter implements SpanExporter {
     if (!held.length || !options.tracesEnabled) return;
     const spans = options.redacted ? held.map(redactReadableSpan) : held;
     // the batch processor's flush only covers its own batches: keep this upload until it
-    // settles so forceFlush() at job exit can wait for it
-    const release = new Promise<void>((resolve) => this.inner.export(spans, () => resolve()));
+    // settles so forceFlush() at job exit can wait for it, and fail that flush if it failed
+    const release = new Promise<void>((resolve, reject) =>
+      this.inner.export(spans, (result) =>
+        result.code === ExportResultCode.SUCCESS
+          ? resolve()
+          : reject(result.error ?? new Error('failed to upload the held spans')),
+      ),
+    );
     this.releases.add(release);
-    void release.finally(() => this.releases.delete(release));
+    // observed here so a failure nobody flushes is not an unhandled rejection; forceFlush
+    // still sees it through the set
+    release.catch(() => undefined).finally(() => this.releases.delete(release));
   }
 
   /** The job ended; anything still held was never meant to upload. */

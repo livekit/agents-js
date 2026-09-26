@@ -176,6 +176,21 @@ describe('job span gate', () => {
     // nothing left once settled: a later flush returns at once
     await gate.forceFlush();
   });
+
+  it('fails the flush when a release upload fails, instead of losing the spans quietly', async () => {
+    const inner = fakeInner();
+    inner.export.mockImplementation((_spans, cb) => {
+      cb({ code: ExportResultCode.FAILED, error: new Error('upload rejected') });
+    });
+    const gate = new JobSpanGateExporter(inner);
+    gate.openJob('job-1');
+    gate.export([fakeSpan('job-1', 'job_entrypoint')], vi.fn());
+    gate.jobRegistered('job-1', { tracesEnabled: true });
+
+    await expect(gate.forceFlush()).rejects.toThrow('upload rejected');
+    // reported once: the release is out of the set, and no rejection is left unhandled
+    await gate.forceFlush();
+  });
 });
 
 describe('prepared cloud tracer', () => {

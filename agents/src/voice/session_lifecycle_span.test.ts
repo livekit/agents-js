@@ -8,7 +8,7 @@
  * `agent_session`, and the SIP join keys copied from a linked participant.
  */
 import { AudioFrame, ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
-import { context as otelContext, trace } from '@opentelemetry/api';
+import { SpanStatusCode, context as otelContext, trace } from '@opentelemetry/api';
 import { hrTimeToMilliseconds } from '@opentelemetry/core';
 import {
   InMemorySpanExporter,
@@ -17,13 +17,14 @@ import {
 } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ReadableStream, type ReadableStreamDefaultController } from 'node:stream/web';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
 import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import { delay } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, VADStream } from '../vad.js';
 import { Agent } from './agent.js';
+import { AgentActivity } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes } from './events.js';
 import { AudioInput, AudioOutput } from './io.js';
@@ -299,6 +300,31 @@ describe.sequential('session lifecycle spans', () => {
     expect(userStates.some((e) => e.attributes?.[traceTypes.ATTR_NEW_STATE] === 'speaking')).toBe(
       true,
     );
+  });
+
+  it('ends start_agent_activity as failed when a start step throws', async () => {
+    // a failure in the start bypasses its normal end: the span must still close, or the
+    // failed start never exports (a toolset's own setup failure is logged, not thrown, so the
+    // step is failed directly here)
+    vi.spyOn(
+      AgentActivity.prototype as unknown as { setupToolsets: () => Promise<void> },
+      'setupToolsets',
+    ).mockRejectedValueOnce(new Error('start step failed'));
+    const session = new AgentSession({ llm: new FakeLLM(), stt: new FakeSTT() });
+    try {
+      await expect(session.start({ agent: new TestAgent() })).rejects.toThrow('start step failed');
+    } finally {
+      vi.restoreAllMocks();
+      await session.close();
+    }
+
+    const start = only(exporter, 'start_agent_activity');
+    expect(start.status.code).toBe(SpanStatusCode.ERROR);
+    expect(
+      start.events.find((event) => event.name === 'exception')?.attributes?.['exception.message'],
+    ).toBe('start step failed');
+    const toolsets = only(exporter, 'setup_toolsets');
+    expect(toolsets.parentSpanContext?.spanId).toBe(start.spanContext().spanId);
   });
 
   it("copies a linked SIP participant's attributes with only the number tagged as PII", async () => {

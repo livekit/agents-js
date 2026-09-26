@@ -154,6 +154,21 @@ describe('job dispatch telemetry', () => {
     ).toEqual([]);
   });
 
+  it('records no entrypoint stage for a job whose entrypoint never ran', () => {
+    // a shutdown that arrived before the entrypoint: the dispatch stages up to the process
+    // are real, an entrypoint start and the latencies ending at it would be invented
+    const running = info({ receivedAt: T0, acceptedAt: T0 + 200, launchedAt: T0 + 600 });
+    const span = tracer.startSpan({ name: 'job_entrypoint', startTime: T0 });
+    recordDispatchTimeline(span, running, undefined);
+    span.end();
+
+    const [entry] = spans(exporter, 'job_entrypoint');
+    expect(eventNames(entry!)).toEqual(['job_received', 'job_accepted', 'process_assigned']);
+    expect(entry!.attributes[traceTypes.ATTR_JOB_ACCEPT_LATENCY]).toBeCloseTo(0.2);
+    expect(entry!.attributes[traceTypes.ATTR_JOB_ENTRYPOINT_LATENCY]).toBeUndefined();
+    expect(entry!.attributes[traceTypes.ATTR_JOB_DISPATCH_LATENCY]).toBeUndefined();
+  });
+
   it('back-dates the job span to the request and carries the join keys', () => {
     const running = info({
       receivedAt: T0,

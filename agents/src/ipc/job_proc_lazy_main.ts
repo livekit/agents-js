@@ -173,8 +173,9 @@ const startJob = (
     await ctx._prepareTelemetry();
 
     // the job's root span, from the availability request to the end of shutdown; the
-    // entrypoint returning is an event on it
-    const jobSpan = startJobSpan(ctx);
+    // entrypoint returning is an event on it. A close that arrived while the pipeline was
+    // being prepared skips the entrypoint (below), so its start is not a stage of this job
+    const jobSpan = startJobSpan(ctx, shutdown ? null : Date.now());
     const jobSpanContext = trace.setSpan(otelContext.active(), jobSpan);
     ctx._jobSpanContext = jobSpanContext;
 

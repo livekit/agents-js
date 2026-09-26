@@ -7,9 +7,14 @@ import { traceTypes, tracer } from '../telemetry/index.js';
 
 /**
  * The job's root span, `job_entrypoint`, back-dated to the availability request; ended by the
- * job runner after the shutdown sequence.
+ * job runner after the shutdown sequence. `entrypointStartedAt` is `null` for a job whose
+ * entrypoint will not run (a shutdown arrived first): the dispatch stages up to the process
+ * are recorded, the entrypoint stage and the latencies ending at it are not.
  */
-export function startJobSpan(ctx: JobContext, entrypointStartedAt = Date.now()): Span {
+export function startJobSpan(
+  ctx: JobContext,
+  entrypointStartedAt: number | null = Date.now(),
+): Span {
   const job = ctx.job;
   const info = ctx.info;
   const span = tracer.startSpan({
@@ -25,7 +30,7 @@ export function startJobSpan(ctx: JobContext, entrypointStartedAt = Date.now()):
       [traceTypes.ATTR_JOB_AGENT_ID]: job.state?.agentId ?? '',
     },
   });
-  recordDispatchTimeline(span, info, entrypointStartedAt);
+  recordDispatchTimeline(span, info, entrypointStartedAt ?? undefined);
   return span;
 }
 
@@ -34,12 +39,13 @@ export function startJobSpan(ctx: JobContext, entrypointStartedAt = Date.now()):
  * between adjacent stages as attributes (they sum to the dispatch latency).
  *
  * Timestamps travel from the worker in the running job info (epoch ms); an unknown stage
- * (simulation, console) is skipped rather than guessed.
+ * (simulation, console) is skipped rather than guessed, as is the entrypoint stage of a job
+ * whose entrypoint never ran.
  */
 export function recordDispatchTimeline(
   span: Span,
   info: Pick<RunningJobInfo, 'receivedAt' | 'acceptedAt' | 'assignedAt' | 'launchedAt' | 'job'>,
-  entrypointStartedAt: number,
+  entrypointStartedAt: number | undefined,
 ): void {
   const stages: [string, number | undefined][] = [
     ['job_received', info.receivedAt],

@@ -677,6 +677,29 @@ export class AgentActivity implements RecognitionHooks {
 
     this.agent._agentActivity = this;
 
+    try {
+      await this._startSessionImpl({ startSpan, parentContext, runOnEnter, reuseResources });
+    } catch (error) {
+      recordException(startSpan, error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    } finally {
+      // a failed start (a toolset that would not set up, a realtime session that would not
+      // configure) ends the span too, or it would never export
+      startSpan.end();
+    }
+  }
+
+  private async _startSessionImpl({
+    startSpan,
+    parentContext,
+    runOnEnter,
+    reuseResources,
+  }: {
+    startSpan: Span;
+    parentContext: Context;
+    runOnEnter: boolean;
+    reuseResources?: ReusableResources;
+  }): Promise<void> {
     // detached: MCP servers connect here and their tasks live on; a current span would become
     // the parent of whatever those tasks emit later
     await tracer.detachedSpan(() => this.setupToolsets(), {
@@ -727,7 +750,6 @@ export class AgentActivity implements RecognitionHooks {
         );
       } catch (error) {
         if (this.realtimeSession instanceof DuplexRealtimeSession) {
-          startSpan.end();
           if (this.agentSession._started) {
             this.onError({
               type: 'realtime_model_error',
@@ -883,8 +905,6 @@ export class AgentActivity implements RecognitionHooks {
         name: 'AgentActivity_onEnter',
       });
     }
-
-    startSpan.end();
   }
 
   async _detachReusableResources(newActivity: AgentActivity): Promise<ReusableResources> {
