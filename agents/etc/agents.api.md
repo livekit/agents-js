@@ -4231,7 +4231,7 @@ export interface InputTranscriptionCompleted {
 }
 
 // @public
-function install(localParticipant: LocalParticipant | undefined, jobCtx?: JobContext): void;
+function install(localParticipant: LocalParticipant | undefined, jobCtx?: JobContext): TracingRpcInterceptor;
 
 // @public
 interface InstructionParts {
@@ -4268,9 +4268,6 @@ export class Instructions {
     readonly type: "instructions";
     readonly value: string;
 }
-
-// @public
-const interceptor: TracingRpcInterceptor;
 
 // @public (undocumented)
 export type InterruptionMetrics = {
@@ -5968,8 +5965,7 @@ declare namespace rpc {
     export {
         install,
         MAX_PAYLOAD_ATTR_LEN,
-        TracingRpcInterceptor,
-        interceptor
+        TracingRpcInterceptor
     }
 }
 
@@ -8078,6 +8074,7 @@ declare namespace traceTypes {
 
 // @public
 class TracingRpcInterceptor implements RpcInterceptor {
+    constructor(job?: JobContext | undefined);
     // (undocumented)
     interceptIncoming(invocation: RpcInvocationData, next: IncomingRpcNext): Promise<string>;
     // (undocumented)
