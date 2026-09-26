@@ -190,6 +190,10 @@ export const ATTR_ON_USER_TURN_COMPLETED_DELAY = 'lk.on_user_turn_completed_dela
 /** Seconds a speech handle waited in the queue before generation was authorized. */
 export const ATTR_SPEECH_QUEUE_WAIT = 'lk.speech.queue_wait';
 export const ATTR_USER_TRANSCRIPT = 'lk.pii.user_transcript';
+/** JSON list of transcript events on user_turn, in arrival order. Each entry has
+ * received_at (SpeechEvent.createdAt, Unix milliseconds), type, and transcript_length
+ * (Unicode code points in the first alternative). */
+export const ATTR_STT_EVENTS = 'lk.stt.events';
 export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
 /** Seconds from the end of the user's speech to the final transcript. */
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';

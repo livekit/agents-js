@@ -413,6 +413,11 @@ export class AudioRecognition {
   // `user_turn` span when it ends so we can correlate traces with the
   // provider's logs for debugging.
   private sttRequestIds: string[] = [];
+  private sttEvents: Array<{
+    received_at: number;
+    type: 'interim_transcript' | 'preflight_transcript' | 'final_transcript';
+    transcript_length: number;
+  }> = [];
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
@@ -1188,6 +1193,24 @@ export class AudioRecognition {
       createdAt: input.createdAt ?? Date.now(),
     };
 
+    if (
+      ev.type === SpeechEventType.INTERIM_TRANSCRIPT ||
+      ev.type === SpeechEventType.PREFLIGHT_TRANSCRIPT ||
+      ev.type === SpeechEventType.FINAL_TRANSCRIPT
+    ) {
+      const type =
+        ev.type === SpeechEventType.INTERIM_TRANSCRIPT
+          ? 'interim_transcript'
+          : ev.type === SpeechEventType.PREFLIGHT_TRANSCRIPT
+            ? 'preflight_transcript'
+            : 'final_transcript';
+      this.sttEvents.push({
+        received_at: ev.createdAt,
+        type,
+        transcript_length: Array.from(ev.alternatives?.[0]?.text ?? '').length,
+      });
+    }
+
     const firstAlternative = ev.alternatives?.[0];
     if (
       ev.speechEndTime === undefined &&
@@ -1591,6 +1614,10 @@ export class AudioRecognition {
         speechStartTime: number | undefined,
       ) =>
       async (controller: AbortController) => {
+        // Match asyncio.create_task: finish synchronous STT replay before starting EOU work.
+        await Promise.resolve();
+        if (controller.signal.aborted) return;
+
         let endpointingDelay = this.endpointing.minDelay;
 
         // a turn created here (no VAD/start-of-speech opened it) starts at the earliest
@@ -2655,6 +2682,9 @@ export class AudioRecognition {
     // a wait still open here never reached a decision (teardown, clearUserTurn, ...); a wait
     // opened after the decided one is a later bounce's to decide
     if (decided === undefined || this.eouWaitSpan === decided.wait) this.endEouWaitSpan('dropped');
+    if (this.sttEvents.length && !this.userTurnSpan) {
+      this.ensureUserTurnSpan(this.sttEvents[0]!.received_at);
+    }
     if (this.userTurnSpan && info) {
       // the instance that transcribed the turn, after any failover during it
       this.stampSttIdentity(this.userTurnSpan);
@@ -2668,6 +2698,7 @@ export class AudioRecognition {
         this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
       }
     }
+    this.stampSttEvents();
     if (this.userTurnSpan?.isRecording()) {
       this.stampUserTurnResumes(this.userTurnSpan);
       if (!info?.keepOpen) {
@@ -2677,6 +2708,14 @@ export class AudioRecognition {
     this.userTurnSpan = undefined;
     this.userTurnStart = undefined;
     this.sttRequestIds = [];
+  }
+
+  private stampSttEvents(): void {
+    const events = this.sttEvents;
+    this.sttEvents = [];
+    if (events.length && this.userTurnSpan?.isRecording()) {
+      this.userTurnSpan.setAttribute(traceTypes.ATTR_STT_EVENTS, JSON.stringify(events));
+    }
   }
 
   private stampUserTurnResumes(userTurnSpan: Span): void {

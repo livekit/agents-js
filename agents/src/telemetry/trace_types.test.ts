@@ -156,6 +156,7 @@ const SAFE_KEYS = new Set([
   'lk.eou.source',
   'lk.eou.from_cache',
   'lk.eou.detection_delay',
+  'lk.stt.events',
   'lk.transcript_confidence',
   'lk.transcription_delay',
   'lk.end_of_turn_delay',
