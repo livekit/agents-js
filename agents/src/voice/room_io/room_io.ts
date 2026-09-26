@@ -24,7 +24,6 @@ import { RealtimeModel } from '../../llm/index.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { participantAttributes, traceTypes, tracer } from '../../telemetry/index.js';
-import * as rpcTracing from '../../telemetry/rpc.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { Future, IdleTimeoutError, Task, waitForAbort, waitUntilTimeout } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
@@ -260,10 +259,6 @@ export class RoomIO {
       [traceTypes.ATTR_CONNECTION_STATE]: ConnectionState[state] ?? String(state),
     });
     if (state === ConnectionState.CONN_CONNECTED && this.room.isConnected) {
-      // on every connect and reconnect; install is idempotent (one interceptor instance,
-      // deduped by the SDK), so JobContext.connect() installing too is fine. The job is passed
-      // explicitly: this runs on the SDK's event path, outside the job's AsyncLocalStorage
-      rpcTracing.install(this.room.localParticipant, this.jobContext);
       if (!this.roomConnectedFuture.done) {
         this.roomConnectedFuture.resolve();
       }

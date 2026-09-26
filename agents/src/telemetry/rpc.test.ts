@@ -27,12 +27,7 @@ import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-tr
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type JobContext, getJobContext, runWithJobContext } from '../job.js';
-import {
-  MAX_PAYLOAD_ATTR_LEN,
-  TracingRpcInterceptor,
-  install,
-  interceptor as singleton,
-} from './rpc.js';
+import { MAX_PAYLOAD_ATTR_LEN, TracingRpcInterceptor, install } from './rpc.js';
 import * as traceTypes from './trace_types.js';
 import { setTracerProvider, tracer } from './traces.js';
 
@@ -254,10 +249,10 @@ describe.sequential('rpc tracing', () => {
       _primaryAgentSession: { rootSpanContext: trace.setSpan(ROOT_CONTEXT, sessionRoot) },
       job: { id: 'AJ_test' },
     } as unknown as JobContext;
-    install(fakeParticipant(vi.fn()), job);
+    const installed = install(fakeParticipant(vi.fn()), job);
 
     let seenJob: JobContext | undefined;
-    await interceptor.interceptIncoming(invocation(), async () => {
+    await installed.interceptIncoming(invocation(), async () => {
       seenJob = getJobContext(false);
       return '';
     });
@@ -268,17 +263,36 @@ describe.sequential('rpc tracing', () => {
     expect(seenJob).toBe(job); // the handler itself runs inside the job too
   });
 
-  it('installs the one interceptor once per participant', () => {
+  it('installs one interceptor per job, the same one on every connect', () => {
+    const jobA = { job: { id: 'AJ_a' } } as unknown as JobContext;
+    const jobB = { job: { id: 'AJ_b' } } as unknown as JobContext;
     const addRpcInterceptor = vi.fn();
     const participant = fakeParticipant(addRpcInterceptor);
-    install(participant);
-    install(participant);
-    // the same singleton each time: the SDK keeps one registration per instance
-    expect(addRpcInterceptor).toHaveBeenCalledTimes(2);
-    expect(addRpcInterceptor.mock.calls[0]![0]).toBe(singleton);
-    expect(addRpcInterceptor.mock.calls[1]![0]).toBe(singleton);
+    const first = install(participant, jobA);
+    const again = install(participant, jobA); // a reconnect
+    const other = install(participant, jobB);
+    // the same instance for a job each time: the SDK keeps one registration per instance
+    expect(again).toBe(first);
+    expect(other).not.toBe(first);
+    expect(addRpcInterceptor.mock.calls.map(([i]) => i)).toEqual([first, first, other]);
 
     // no participant yet (the room is not connected): nothing to install on
-    expect(() => install(undefined)).not.toThrow();
+    expect(() => install(undefined, jobA)).not.toThrow();
+  });
+
+  it('routes an invocation to the job its participant was installed for', async () => {
+    // two jobs in one process: each participant's invocations run under their own job, not
+    // the last one installed
+    const jobA = { job: { id: 'AJ_a' } } as unknown as JobContext;
+    const jobB = { job: { id: 'AJ_b' } } as unknown as JobContext;
+    const forA = install(fakeParticipant(vi.fn()), jobA);
+    install(fakeParticipant(vi.fn()), jobB);
+
+    let seenJob: JobContext | undefined;
+    await forA.interceptIncoming(invocation(), async () => {
+      seenJob = getJobContext(false);
+      return '';
+    });
+    expect(seenJob).toBe(jobA);
   });
 });

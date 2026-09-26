@@ -8,8 +8,8 @@
  * The room SDK exposes an `RpcInterceptor` hook (`@livekit/rtc-node` with
  * `LocalParticipant.addRpcInterceptor`) that wraps every call made through `performRpc` and
  * every invocation dispatched to a registered handler. This module installs one interceptor per
- * local participant that turns each call into a span following the OpenTelemetry RPC semantic
- * conventions:
+ * job on its local participant that turns each call into a span following the OpenTelemetry RPC
+ * semantic conventions:
  *
  * - `rpc_call` (`SpanKind.CLIENT`) for outgoing calls, under whatever span is current where the
  *   call is made (an RPC issued from a tool nests under `function_tool`);
@@ -64,8 +64,13 @@ function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-/** An `RpcInterceptor` emitting `rpc_call` / `rpc_handler` spans. */
+/**
+ * An `RpcInterceptor` emitting `rpc_call` / `rpc_handler` spans. Bound to the job it was
+ * installed for: incoming invocations arrive outside that job's context (see interceptIncoming).
+ */
 export class TracingRpcInterceptor implements RpcInterceptor {
+  constructor(private readonly job?: JobContext) {}
+
   async interceptOutgoing(call: RpcCallInfo, next: OutgoingRpcNext): Promise<string> {
     const attributes: Attributes = {
       [traceTypes.ATTR_RPC_METHOD]: call.method,
@@ -97,9 +102,9 @@ export class TracingRpcInterceptor implements RpcInterceptor {
 
   async interceptIncoming(invocation: RpcInvocationData, next: IncomingRpcNext): Promise<string> {
     // the SDK dispatches invocations from its FFI event path, outside the job's
-    // AsyncLocalStorage: restore the job captured at install so the session and job roots
-    // resolve (and the handler sees getJobContext(), as a Python handler does)
-    const job = getJobContext(false) ?? installedJob;
+    // AsyncLocalStorage: restore the job this interceptor was installed for so the session and
+    // job roots resolve (and the handler sees getJobContext(), as a Python handler does)
+    const job = getJobContext(false) ?? this.job;
     if (job !== undefined && getJobContext(false) === undefined) {
       return runWithJobContext(job, () => this.handleIncoming(invocation, next));
     }
@@ -145,17 +150,32 @@ export class TracingRpcInterceptor implements RpcInterceptor {
   }
 }
 
-/** The one interceptor every participant gets; the SDK dedups registrations by identity. */
-export const interceptor = new TracingRpcInterceptor();
+/** One interceptor per job, so a process hosting several jobs routes each invocation to its own. */
+const interceptors = new WeakMap<JobContext, TracingRpcInterceptor>();
+let joblessInterceptor: TracingRpcInterceptor | undefined;
 
-/** The job the interceptor was installed for: incoming invocations arrive outside its context. */
-let installedJob: JobContext | undefined;
+/** The interceptor for `job` (or the one shared outside any job), created on first use. */
+function interceptorFor(job: JobContext | undefined): TracingRpcInterceptor {
+  if (job === undefined) return (joblessInterceptor ??= new TracingRpcInterceptor());
+  let interceptor = interceptors.get(job);
+  if (!interceptor) {
+    interceptor = new TracingRpcInterceptor(job);
+    interceptors.set(job, interceptor);
+  }
+  return interceptor;
+}
 
 /**
- * Trace RPCs on `localParticipant`. Idempotent: the SDK keeps one registration per interceptor
- * instance. A missing participant (the room is not connected yet) installs nothing.
+ * Trace RPCs on `localParticipant` for `jobCtx` (else the current job). Idempotent: one
+ * interceptor per job, and the SDK keeps one registration per interceptor instance, so every
+ * connect and reconnect may install again. A missing participant (the room is not connected
+ * yet) installs nothing. Returns the interceptor installed.
  */
-export function install(localParticipant: LocalParticipant | undefined, jobCtx?: JobContext): void {
-  installedJob = jobCtx ?? getJobContext(false) ?? installedJob;
+export function install(
+  localParticipant: LocalParticipant | undefined,
+  jobCtx?: JobContext,
+): TracingRpcInterceptor {
+  const interceptor = interceptorFor(jobCtx ?? getJobContext(false));
   localParticipant?.addRpcInterceptor(interceptor);
+  return interceptor;
 }

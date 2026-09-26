@@ -10,7 +10,7 @@ import type {
   Room,
   RtcConfiguration,
 } from '@livekit/rtc-node';
-import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
+import { ConnectionState, ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Context } from '@opentelemetry/api';
 import { RoomServiceClient } from 'livekit-server-sdk';
@@ -249,6 +249,14 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // its lk.simulator attribute, and gating on simulationContext() here would
     // miss user-token runs where no dispatch rides the job.
     this.#room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+    // RPC tracing goes in whenever the room is connected, whether by connect() below, by a
+    // session, or by the entrypoint connecting ctx.room itself. On the SDK's event path the job
+    // is passed explicitly: there is no AsyncLocalStorage there
+    this.#room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
+      if (state === ConnectionState.CONN_CONNECTED && this.#room.isConnected) {
+        rpcTracing.install(this.#room.localParticipant, this as JobContext<unknown> as JobContext);
+      }
+    });
     this.#logger = log().child({
       jobId: this.#info.job.id,
       'lk.pii.room_name': this.#info.job.room?.name,
@@ -514,7 +522,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
         jobCtx: this as JobContext<unknown> as JobContext,
       },
     );
-    rpcTracing.install(this.#room.localParticipant, this as JobContext<unknown> as JobContext);
     this.#onConnect();
 
     this.#room.remoteParticipants.forEach(this.onParticipantConnected);
