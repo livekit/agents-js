@@ -387,8 +387,18 @@ class FallbackChunkedStream extends ChunkedStream {
   private _logger = log();
   // the span this request was made under (tts_node); see recordFallbackServed
   private callerSpan: Span | undefined = trace.getActiveSpan();
+  /** The instance whose audio reached the caller (see recordFallbackServed). */
+  private servedTts?: TTS;
 
   label: string = 'tts.FallbackChunkedStream';
+
+  protected override get responseModel(): string {
+    return this.servedTts?.model ?? this.adapter.model;
+  }
+
+  protected override get responseProvider(): string {
+    return this.servedTts?.provider ?? this.adapter.provider;
+  }
 
   constructor(
     adapter: FallbackAdapter,
@@ -488,6 +498,7 @@ class FallbackChunkedStream extends ChunkedStream {
         }
 
         this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
+        this.servedTts = tts;
         recordFallbackServed(tts, i, this.ttsRequestSpan, this.callerSpan);
         return;
       } catch (error) {
@@ -496,6 +507,9 @@ class FallbackChunkedStream extends ChunkedStream {
             { tts: tts.label, error: providerError ?? error },
             'TTS failed after audio pushed, cannot fallback mid-utterance',
           );
+          // the caller heard this instance's audio: it served, partially
+          this.servedTts = tts;
+          recordFallbackServed(tts, i, this.ttsRequestSpan, this.callerSpan);
           throw error;
         }
 
@@ -530,8 +544,18 @@ class FallbackSynthesizeStream extends SynthesizeStream {
   private _logger = log();
   // the span this request was made under (tts_node); see recordFallbackServed
   private callerSpan: Span | undefined = trace.getActiveSpan();
+  /** The instance whose audio reached the caller (see recordFallbackServed). */
+  private servedTts?: TTS;
 
   label: string = 'tts.FallbackSynthesizeStream';
+
+  protected override get responseModel(): string {
+    return this.servedTts?.model ?? this.adapter.model;
+  }
+
+  protected override get responseProvider(): string {
+    return this.servedTts?.provider ?? this.adapter.provider;
+  }
 
   constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
     super(adapter, connOptions);
@@ -720,6 +744,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
 
         this.queue.put(SynthesizeStream.END_OF_STREAM);
         this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
+        this.servedTts = originalTts;
         recordFallbackServed(originalTts, i, this.ttsRequestSpan, this.callerSpan);
         await readInputLLMStream.catch(() => {});
         return;
@@ -730,6 +755,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             'TTS failed after audio pushed, cannot fallback mid-utterance',
           );
           // the caller heard this instance's audio: it served, partially
+          this.servedTts = originalTts;
           recordFallbackServed(originalTts, i, this.ttsRequestSpan, this.callerSpan);
           throw error;
         }

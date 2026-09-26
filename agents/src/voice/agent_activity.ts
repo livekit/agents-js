@@ -904,6 +904,7 @@ export class AgentActivity implements RecognitionHooks {
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: sttIdent.model,
       sttProvider: sttIdent.provider,
+      sttIdentity: () => sttIdentity(this.stt),
       sttAlignedTranscript: Boolean(this.stt?.capabilities.alignedTranscript),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
       shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
@@ -1414,6 +1415,7 @@ export class AgentActivity implements RecognitionHooks {
               this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
               {
                 ...sttIdentity(resolvedStt),
+                identity: () => sttIdentity(resolvedStt),
                 alignedTranscript: Boolean(resolvedStt?.capabilities.alignedTranscript),
                 resetContext: true,
               },
@@ -1513,6 +1515,7 @@ export class AgentActivity implements RecognitionHooks {
               previous.resolvedStt ? (...args) => this.agent.sttNode(...args) : undefined,
               {
                 ...sttIdentity(previous.resolvedStt),
+                identity: () => sttIdentity(previous.resolvedStt),
                 alignedTranscript: Boolean(previous.resolvedStt?.capabilities.alignedTranscript),
                 resetContext: true,
               },

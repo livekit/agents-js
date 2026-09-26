@@ -22,6 +22,8 @@ import { FallbackAdapter } from '../llm/fallback_adapter.js';
 import { type ChatChunk, LLM, LLMStream } from '../llm/llm.js';
 import { type ToolChoice, ToolContext, type ToolContextLike, tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
+import { FallbackAdapter as STTFallbackAdapter } from '../stt/fallback_adapter.js';
+import { STT, type SpeechEvent, SpeechStream } from '../stt/stt.js';
 import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
@@ -559,6 +561,56 @@ describe.sequential('coverage spans', () => {
     const turn = await userTurnWith(stt);
     expect(turn.attributes[traceTypes.ATTR_GEN_AI_REQUEST_MODEL]).toBe('sarvam-saarika');
     expect(turn.attributes[traceTypes.ATTR_GEN_AI_PROVIDER_NAME]).toBe('sarvam');
+  });
+
+  it('names the STT instance that transcribed the turn after a failover', async () => {
+    // the identity is read when the turn is stamped, not snapshotted at start: a primary that
+    // failed mid-session must not be credited with the fallback's transcripts
+    class FailingSTTStream extends SpeechStream {
+      label = 'failing-stt-stream';
+      protected async run(): Promise<void> {
+        throw new APIConnectionError({ message: 'primary down' });
+      }
+    }
+    class FailingSTT extends STT {
+      label = 'primary';
+      constructor() {
+        super({ streaming: true, interimResults: true });
+      }
+      override get model(): string {
+        return 'primary-model';
+      }
+      override get provider(): string {
+        return 'fake-provider';
+      }
+      protected async _recognize(): Promise<SpeechEvent> {
+        throw new Error('not used');
+      }
+      stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
+        return new FailingSTTStream(this, undefined, options?.connOptions);
+      }
+    }
+    class ServingSTT extends FakeSTT {
+      override get model(): string {
+        return 'secondary-model';
+      }
+      override get provider(): string {
+        return 'fake-provider';
+      }
+    }
+    // the fallback stream hands frames to whichever child is current, so the secondary speaks
+    // on its own rather than from audio the failed primary already consumed
+    const secondary = new ServingSTT({
+      label: 'secondary',
+      capabilities: { streaming: true, interimResults: true },
+      fakeTranscript: 'Hello',
+    });
+    const adapter = new STTFallbackAdapter({
+      sttInstances: [new FailingSTT(), secondary],
+      maxRetryPerSTT: 0,
+    });
+    const turn = await userTurnWith(adapter as unknown as FakeSTT);
+    expect(turn.attributes[traceTypes.ATTR_GEN_AI_REQUEST_MODEL]).toBe('secondary-model');
   });
 
   it('normalizes the STT provider to the GenAI registry spelling', async () => {
