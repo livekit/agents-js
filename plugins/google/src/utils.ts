@@ -139,6 +139,40 @@ function isEmptyObjectSchema(jsonSchema: JSONSchema7Definition): boolean {
   );
 }
 
+function validateGeminiSchema(schema: JSONSchema7Definition): void {
+  if (typeof schema === 'boolean') return;
+
+  for (const field of [
+    'maxItems',
+    'maxLength',
+    'maxProperties',
+    'minItems',
+    'minLength',
+    'minProperties',
+    'maximum',
+    'minimum',
+  ] as const) {
+    if (schema[field] !== undefined && typeof schema[field] !== 'number') {
+      throw new TypeError(`${field} must be a number`);
+    }
+  }
+
+  if (schema.properties) {
+    for (const property of Object.values(schema.properties)) {
+      validateGeminiSchema(property);
+    }
+  }
+  if (schema.items) {
+    const items = Array.isArray(schema.items) ? schema.items : [schema.items];
+    for (const item of items) validateGeminiSchema(item);
+  }
+  for (const alternatives of [schema.allOf, schema.anyOf, schema.oneOf]) {
+    if (alternatives) {
+      for (const alternative of alternatives) validateGeminiSchema(alternative);
+    }
+  }
+}
+
 export function toFunctionDeclarations(
   toolCtx: llm.ToolContext,
   useParametersJsonSchema = true,
@@ -148,22 +182,27 @@ export function toFunctionDeclarations(
   // Provider tools are not supported by the Gemini schema; `sortedToolEntries` yields only
   // function tools (sorted by name), so they are skipped here.
   for (const [name, tool] of llm.sortedToolEntries(toolCtx)) {
-    const { description, parameters } = tool;
-    const jsonSchema = llm.toJsonSchema(parameters, false);
+    try {
+      const { description, parameters } = tool;
+      const jsonSchema = llm.toJsonSchema(parameters, false);
 
-    // Create a deep copy to prevent the Google GenAI library from mutating the schema
-    const schemaCopy = JSON.parse(JSON.stringify(jsonSchema));
+      // Create a deep copy to prevent the Google GenAI library from mutating the schema
+      const schemaCopy = JSON.parse(JSON.stringify(jsonSchema));
 
-    const declaration: FunctionDeclaration = {
-      name,
-      description,
-    };
-    if (useParametersJsonSchema) {
-      declaration.parametersJsonSchema = isEmptyObjectSchema(schemaCopy) ? undefined : schemaCopy;
-    } else {
-      declaration.parameters = convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema;
+      const declaration: FunctionDeclaration = {
+        name,
+        description,
+      };
+      if (useParametersJsonSchema) {
+        declaration.parametersJsonSchema = isEmptyObjectSchema(schemaCopy) ? undefined : schemaCopy;
+      } else {
+        validateGeminiSchema(jsonSchema);
+        declaration.parameters = convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema;
+      }
+      functionDeclarations.push(declaration);
+    } catch (cause) {
+      throw new Error(`tool ${name} has a schema Gemini rejected`, { cause });
     }
-    functionDeclarations.push(declaration);
   }
 
   return functionDeclarations;
