@@ -11,6 +11,7 @@ import {
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts as testTts } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
+import { type Server, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
@@ -45,6 +46,49 @@ async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
     client.close();
   }
   await new Promise<void>((resolve) => wss.close(() => resolve()));
+}
+
+// A minimal Cartesia /tts/bytes server. `onRequest` receives the parsed JSON
+// body and writes the response; the returned `requests` collects every body.
+async function startBytesServer(
+  onRequest: (body: Record<string, unknown>, res: ServerResponse) => void,
+): Promise<{ server: Server; baseURL: string; requests: Record<string, unknown>[] }> {
+  const requests: Record<string, unknown>[] = [];
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>;
+      requests.push(body);
+      onRequest(body, res);
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address() as AddressInfo;
+  return { server, baseURL: `http://127.0.0.1:${address.port}`, requests };
+}
+
+async function closeBytesServer(server: Server): Promise<void> {
+  server.closeAllConnections();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function synthesizeBytes(
+  cartesia: TTS,
+  text: string,
+  connOptions?: APIConnectOptions,
+): Promise<tts.SynthesizedAudio[]> {
+  const stream = cartesia.synthesize(text, connOptions);
+  try {
+    const events: tts.SynthesizedAudio[] = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+    return events;
+  } finally {
+    stream.close();
+  }
 }
 
 async function waitFor<T>(promise: Promise<T>, timeoutMs = 1000): Promise<T> {
@@ -380,6 +424,48 @@ describe('Cartesia streaming pool', () => {
       );
       expect(wss.clients.size).toBe(0);
     } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+describe('Cartesia /tts/bytes', () => {
+  it('omits the websocket-only max_buffer_delay_ms field', async () => {
+    const { server, baseURL, requests } = await startBytesServer((_body, res) => {
+      res.writeHead(200, { 'content-type': 'audio/pcm' });
+      res.end(CURRENT_CHUNK);
+    });
+
+    const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const events = await synthesizeBytes(cartesia, 'hello.');
+      expect(events).not.toHaveLength(0);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ transcript: 'hello.' });
+      expect(requests[0]).not.toHaveProperty('max_buffer_delay_ms');
+    } finally {
+      await cartesia.close();
+      await closeBytesServer(server);
+    }
+  });
+
+  it('keeps max_buffer_delay_ms on websocket generations', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const packets: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => packets.push(JSON.parse(raw.toString())));
+    });
+    serveCartesia(wss);
+
+    const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      expect(await synthesizeTurn(cartesia, 'hello.')).not.toHaveLength(0);
+      expect(packets.length).toBeGreaterThan(0);
+      for (const packet of packets) {
+        expect(packet).toMatchObject({ max_buffer_delay_ms: 0 });
+      }
+    } finally {
+      await cartesia.close();
       await closeWebSocketServer(wss);
     }
   });
