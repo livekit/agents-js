@@ -169,13 +169,16 @@ function interceptorFor(job: JobContext | undefined): TracingRpcInterceptor {
  * Trace RPCs on `localParticipant` for `jobCtx` (else the current job). Idempotent: one
  * interceptor per job, and the SDK keeps one registration per interceptor instance, so every
  * connect and reconnect may install again. A missing participant (the room is not connected
- * yet) installs nothing. Returns the interceptor installed.
+ * yet), or one without the interceptor hook (an older room SDK, a stand-in in tests), installs
+ * nothing: tracing must never be what breaks a connection. Returns the interceptor.
  */
 export function install(
   localParticipant: LocalParticipant | undefined,
   jobCtx?: JobContext,
 ): TracingRpcInterceptor {
   const interceptor = interceptorFor(jobCtx ?? getJobContext(false));
-  localParticipant?.addRpcInterceptor(interceptor);
+  if (typeof localParticipant?.addRpcInterceptor === 'function') {
+    localParticipant.addRpcInterceptor(interceptor);
+  }
   return interceptor;
 }

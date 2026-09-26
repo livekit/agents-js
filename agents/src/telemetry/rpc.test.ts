@@ -278,6 +278,9 @@ describe.sequential('rpc tracing', () => {
 
     // no participant yet (the room is not connected): nothing to install on
     expect(() => install(undefined, jobA)).not.toThrow();
+    // a participant without the hook (an older SDK, a stand-in): tracing steps aside rather
+    // than break the connection it is installed from
+    expect(() => install({ identity: 'agent' } as unknown as LocalParticipant, jobA)).not.toThrow();
   });
 
   it('routes an invocation to the job its participant was installed for', async () => {
