@@ -6,13 +6,14 @@ import {
   APIError,
   APIStatusError,
   APITimeoutError,
+  log,
   stt,
 } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { WebSocketServer } from 'ws';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { WebSocket, WebSocketServer } from 'ws';
 import {
   type LangSegment,
   type SonioxMessage,
@@ -608,6 +609,131 @@ describe('SpeechStream graceful close', () => {
       expect(final?.alternatives?.[0]?.text).toBe('Hello world.');
       expect(events.some((e) => e.type === stt.SpeechEventType.END_OF_SPEECH)).toBe(true);
     } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Half-open socket detection (same fix as Python livekit/agents#7357)
+// ---------------------------------------------------------------------------
+
+describe('SpeechStream socket liveness', () => {
+  it('opens the socket with a heartbeat', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const pingReceived = new Promise<void>((resolve) => {
+      wss.once('connection', (ws) => ws.once('ping', () => resolve()));
+    });
+    const nativeSetInterval = globalThis.setInterval;
+    vi.spyOn(globalThis, 'setInterval').mockImplementation(((
+      callback: () => void,
+      delay?: number,
+    ) => {
+      const timer = nativeSetInterval(callback, delay);
+      if (delay === 30_000) queueMicrotask(callback);
+      return timer;
+    }) as typeof setInterval);
+
+    const stream = new STT({ apiKey: 'test-key', baseUrl }).stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    const drain = (async () => {
+      for await (const _ of stream) {
+        /* discard events */
+      }
+    })();
+
+    try {
+      await pingReceived;
+    } finally {
+      vi.restoreAllMocks();
+      stream.close();
+      await drain.catch(() => {});
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('reconnects when a keepalive write fails', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    let connections = 0;
+    const reconnected = new Promise<void>((resolve) => {
+      wss.on('connection', () => {
+        connections++;
+        if (connections === 2) resolve();
+      });
+    });
+    const nativeSetInterval = globalThis.setInterval;
+    vi.spyOn(globalThis, 'setInterval').mockImplementation(((
+      callback: () => void,
+      delay?: number,
+    ) => {
+      const timer = nativeSetInterval(callback, delay);
+      if (delay === 5000) queueMicrotask(callback);
+      return timer;
+    }) as typeof setInterval);
+    const nativeSend = WebSocket.prototype.send;
+    let failedKeepalive = false;
+    vi.spyOn(WebSocket.prototype, 'send').mockImplementation(
+      function (data, optionsOrCallback?, callback?) {
+        if (!failedKeepalive && data === '{"type":"keepalive"}') {
+          failedKeepalive = true;
+          throw new Error('Cannot write to closing transport');
+        }
+        return Reflect.apply(nativeSend, this, [data, optionsOrCallback, callback]) as void;
+      },
+    );
+
+    const stream = new STT({ apiKey: 'test-key', baseUrl }).stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    const drain = (async () => {
+      for await (const _ of stream) {
+        /* discard events */
+      }
+    })();
+
+    try {
+      await reconnected;
+      expect(connections).toBe(2);
+    } finally {
+      vi.restoreAllMocks();
+      stream.close();
+      await drain.catch(() => {});
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('ends on a socket error and logs its cause', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const socketError = 'Invalid WebSocket frame: invalid opcode 3';
+    wss.once('connection', (ws) => {
+      ws.once('message', () => {
+        const socket = (ws as unknown as { _socket: { write(data: Buffer): void } })._socket;
+        socket.write(Buffer.from([0x83, 0x00]));
+      });
+    });
+    const warn = vi.spyOn(log(), 'warn');
+    const soniox = new STT({ apiKey: 'test-key', baseUrl });
+    const errorEvent = once(soniox, 'error') as Promise<Parameters<stt.STTCallbacks['error']>>;
+    const stream = soniox.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    const drain = (async () => {
+      for await (const _ of stream) {
+        /* discard events */
+      }
+    })();
+
+    try {
+      await errorEvent;
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.objectContaining({ message: socketError }) }),
+        'Soniox STT WebSocket error',
+      );
+    } finally {
+      warn.mockRestore();
+      stream.close();
+      await drain.catch(() => {});
       await closeWebSocketServer(wss);
     }
   });
