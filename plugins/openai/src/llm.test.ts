@@ -76,6 +76,48 @@ it('does not crash the stream when usage token counts are null', async () => {
   expect(usageChunks[0]?.totalTokens).toBe(0);
 });
 
+async function captureRequestBody(opts: { temperature?: number }) {
+  let body: Record<string, unknown> | undefined;
+  const client = new OpenAI({
+    apiKey: 'test-key',
+    fetch: async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(streamWithNullUsage, {
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    },
+  });
+  const model = new LLM({ model: 'm', client, ...opts });
+  const chatCtx = new llm.ChatContext();
+  chatCtx.addMessage({ role: 'user', content: 'hi' });
+
+  const chunks: llm.ChatChunk[] = [];
+  try {
+    for await (const chunk of model.chat({ chatCtx })) {
+      chunks.push(chunk);
+    }
+  } finally {
+    await model.aclose();
+  }
+  return body;
+}
+
+describe('OpenAI LLM temperature', () => {
+  it('sends temperature 0 instead of dropping it', async () => {
+    // 0 asks for deterministic sampling. A truthiness check used to treat it as unset, so the
+    // request silently fell back to the provider default.
+    const body = await captureRequestBody({ temperature: 0 });
+    expect(body).toBeDefined();
+    expect(body?.temperature).toBe(0);
+  });
+
+  it('omits temperature when it is not set', async () => {
+    const body = await captureRequestBody({});
+    expect(body).toBeDefined();
+    expect(body).not.toHaveProperty('temperature');
+  });
+});
+
 const hasOpenAIApiKey = Boolean(process.env.OPENAI_API_KEY);
 
 if (hasOpenAIApiKey) {

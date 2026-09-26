@@ -506,7 +506,7 @@ export class LLM extends llm.LLM {
       extras.max_completion_tokens = this.#opts.maxCompletionTokens;
     }
 
-    if (this.#opts.temperature) {
+    if (this.#opts.temperature !== undefined) {
       extras.temperature = this.#opts.temperature;
     }
 
