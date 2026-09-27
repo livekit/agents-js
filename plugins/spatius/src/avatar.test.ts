@@ -281,6 +281,44 @@ describe('Spatius AvatarSession', () => {
     expect(output.pendingPlayoutSegments).toBe(0);
   });
 
+  it.each([false, true])(
+    'survives SDK cancellation of an in-flight send (end=%s)',
+    async (blockEnd) => {
+      const output = await start();
+      const sending = new Future<string>();
+      let blocked = false;
+      sdk.sendAudio.mockImplementation(async (_audio, end) => {
+        if (!blocked && end === blockEnd) {
+          blocked = true;
+          return sending.await;
+        }
+        return 'next-request';
+      });
+      sdk.interrupt.mockImplementationOnce(async () => {
+        // The real SDK invalidates the active request before queuing the interrupt.
+        sending.reject(new Error('Audio request has already finished'));
+        return 'interrupted-request';
+      });
+      await output.captureFrame(frame(1));
+      output.flush();
+      await tick();
+      expect(blocked).toBe(true);
+      output.clearBuffer();
+      await tick();
+      expect(sdk.close).not.toHaveBeenCalled();
+      await rpc('playback_finished', '{"playback_position":0,"interrupted":true}');
+      await output.captureFrame(frame(3));
+      output.flush();
+      await tick();
+      expect(sdk.sendAudio.mock.calls.slice(-2)).toEqual([
+        [new Uint8Array([3, 0, 253, 255]), false],
+        [new Uint8Array(), true],
+      ]);
+      await rpc('playback_finished', '{"playback_position":0.5,"interrupted":false}');
+      expect(output.pendingPlayoutSegments).toBe(0);
+    },
+  );
+
   it('closes on send failure even without an SDK close callback', async () => {
     const output = await start();
     sdk.sendAudio.mockRejectedValueOnce(new Error('send failed'));

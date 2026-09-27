@@ -238,16 +238,23 @@ export class AvatarSession extends voice.AvatarSession {
         // Do not let a new utterance overtake an interrupt of the previous request.
         await this.interruptTask;
         if (this.closed) break;
-        const discard = this.readSegments < this.discardThrough;
-        if (value instanceof voice.AudioSegmentEnd) {
-          this.readSegments++;
-          if (!discard) await this.sdk!.sendAudio(new Uint8Array(), true);
-        } else if (!discard) {
-          this.hasRequest = true;
-          await this.sdk!.sendAudio(
-            new Uint8Array(value.data.buffer, value.data.byteOffset, value.data.byteLength),
-            false,
-          );
+        const segment = this.readSegments + 1;
+        const discard = segment <= this.discardThrough;
+        try {
+          if (value instanceof voice.AudioSegmentEnd) {
+            this.readSegments++;
+            if (!discard) await this.sdk!.sendAudio(new Uint8Array(), true);
+          } else if (!discard) {
+            this.hasRequest = true;
+            await this.sdk!.sendAudio(
+              new Uint8Array(value.data.buffer, value.data.byteOffset, value.data.byteLength),
+              false,
+            );
+          }
+        } catch (error) {
+          // interrupt() invalidates in-flight SDK encoding, which rejects sendAudio.
+          // Only errors belonging to a still-active segment are transport failures.
+          if (!this.closed && segment > this.discardThrough) throw error;
         }
       }
     } finally {
