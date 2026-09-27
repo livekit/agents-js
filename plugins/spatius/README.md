@@ -34,7 +34,8 @@ See `examples/src/spatius_avatar.ts` for a complete CLI entrypoint.
 
 Credentials may be passed as `apiKey`, `appId`, and `avatarId` constructor options.
 `start()` accepts `livekitUrl`, `livekitApiKey`, `livekitApiSecret`, and
-`livekitRoomName` overrides. Otherwise the room name comes from the connected room.
+`livekitRoomName` options. The room name defaults to the connected room's name;
+an explicit `livekitRoomName` must match it so avatar playback RPCs reach the agent.
 
 - Audio defaults to **Ogg Opus**, with the SDK encoding mono PCM using its bundled
   WASM encoder (20 ms frames, `audio` application). No system Opus library is needed.
@@ -59,7 +60,7 @@ variables as `AvatarSession`; failures never prevent worker startup. Disable
 token prefetch for single-use tokens:
 
 ```typescript
-prewarm: (proc) => spatius.prewarm(proc, { prefetchSessionToken: false })
+prewarm: (proc) => spatius.prewarm(proc, { prefetchSessionToken: false });
 ```
 
 ## Playback and lifecycle

@@ -53,7 +53,7 @@ export interface StartOptions {
   livekitUrl?: string;
   livekitApiKey?: string;
   livekitApiSecret?: string;
-  /** Defaults to the connected room's name. */
+  /** Defaults to the supplied room's name; an explicit value must match it. */
   livekitRoomName?: string;
 }
 
@@ -160,6 +160,9 @@ export class AvatarSession extends voice.AvatarSession {
       if (!roomName || !identity || !room.localParticipant) {
         throw new SpatiusException('a room name and local participant identity are required');
       }
+      if (roomName !== room.name) {
+        throw new SpatiusException('livekitRoomName must match the supplied room name');
+      }
       const sampleRate = this.options.sampleRate ?? agentSession.tts?.sampleRate ?? 24000;
       if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
         throw new SpatiusException('sampleRate must be a positive integer');
@@ -252,9 +255,15 @@ export class AvatarSession extends voice.AvatarSession {
             );
           }
         } catch (error) {
-          // interrupt() invalidates in-flight SDK encoding, which rejects sendAudio.
-          // Only errors belonging to a still-active segment are transport failures.
-          if (!this.closed && segment > this.discardThrough) throw error;
+          // SDK 0.1.0's requireActive() throws this plain Error after interrupt()
+          // invalidates a request; it exposes no cancellation type or code.
+          // Never suppress transport/encoder failures racing with interruption.
+          const cancelled =
+            segment <= this.discardThrough &&
+            error instanceof Error &&
+            error.constructor === Error &&
+            error.message === 'Audio request has already finished';
+          if (!this.closed && !cancelled) throw error;
         }
       }
     } finally {

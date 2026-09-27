@@ -5,6 +5,8 @@ import { Future, initializeLogger, voice } from '@livekit/agents';
 import { AudioFrame, type Room, type RpcInvocationData } from '@livekit/rtc-node';
 import type * as SpatiusSDK from '@spatius/server-sdk';
 import {
+  AvatarSDKError,
+  AvatarSDKErrorCode,
   type AvatarSession as SDKSession,
   type SessionConfig,
   newAvatarSession,
@@ -144,7 +146,7 @@ describe('Spatius AvatarSession', () => {
     vi.stubEnv('SPATIUS_REGION', 'us-west');
     vi.stubEnv('SPATIUS_AUDIO_FORMAT', 'pcm_s16le');
     avatar = new AvatarSession({ sampleRate: 44100 });
-    await avatar.start(session, room, { ...livekit, livekitRoomName: 'other-room' });
+    await avatar.start(session, room, { ...livekit, livekitRoomName: 'test-room' });
     expect(config).toMatchObject({
       apiKey: 'env-key',
       appId: 'env-app',
@@ -152,9 +154,24 @@ describe('Spatius AvatarSession', () => {
       region: 'us-west',
       audioFormat: 'pcm_s16le',
       sampleRate: 44100,
-      livekitEgress: { roomName: 'other-room' },
+      livekitEgress: { roomName: 'test-room' },
     });
     expect(config.oggOpusEncoder).toBeUndefined();
+  });
+
+  it('rejects a mismatched room name before opening the SDK and rolls back listeners', async () => {
+    avatar = new AvatarSession(credentials);
+    await expect(
+      avatar.start(session, room, { ...livekit, livekitRoomName: 'other-room' }),
+    ).rejects.toMatchObject({
+      cause: { message: 'livekitRoomName must match the supplied room name' },
+    });
+    expect(newAvatarSession).not.toHaveBeenCalled();
+    expect(room.localParticipant!.registerRpcMethod).not.toHaveBeenCalled();
+    expect(session.output.audio).toBeNull();
+    expect(room.eventNames()).toEqual([]);
+    expect(session.listenerCount(voice.AgentSessionEventTypes.Close)).toBe(0);
+    expect(session.listenerCount(voice.AgentSessionEventTypes.ConversationItemAdded)).toBe(0);
   });
 
   it('recovers when interrupted during the first capture', async () => {
@@ -319,18 +336,49 @@ describe('Spatius AvatarSession', () => {
     },
   );
 
-  it('closes on send failure even without an SDK close callback', async () => {
+  it.each([
+    new AvatarSDKError(AvatarSDKErrorCode.connectionFailed, 'Failed to send WebSocket message', {
+      phase: 'websocket_send',
+    }),
+    new AvatarSDKError(
+      AvatarSDKErrorCode.connectionClosed,
+      'WebSocket connection is not established',
+      { phase: 'websocket_send' },
+    ),
+    new Error('Opus encoding failed: -1'),
+  ])('closes on a send failure racing with interruption: %s', async (error) => {
     const output = await start();
-    sdk.sendAudio.mockRejectedValueOnce(new Error('send failed'));
+    const sending = new Future<string>();
+    sdk.sendAudio.mockReturnValueOnce(sending.await);
     await output.captureFrame(frame());
     output.flush();
     await tick();
-    await expect(output.waitForPlayout()).resolves.toMatchObject({ interrupted: true });
+    output.clearBuffer();
+    expect(sdk.interrupt).toHaveBeenCalledOnce();
+    sending.reject(error);
+    await tick();
     expect(sdk.close).toHaveBeenCalledOnce();
+    await expect(output.waitForPlayout()).resolves.toMatchObject({ interrupted: true });
     expect(handlers.size).toBe(0);
     await expect(output.captureFrame(frame())).rejects.toThrow('closed');
     expect(output.pendingPlayoutSegments).toBe(0);
   });
+
+  it.each(['send failed', 'Audio request has already finished'])(
+    'closes on an active-segment send failure without an SDK close callback: %s',
+    async (message) => {
+      const output = await start();
+      sdk.sendAudio.mockRejectedValueOnce(new Error(message));
+      await output.captureFrame(frame());
+      output.flush();
+      await tick();
+      await expect(output.waitForPlayout()).resolves.toMatchObject({ interrupted: true });
+      expect(sdk.close).toHaveBeenCalledOnce();
+      expect(handlers.size).toBe(0);
+      await expect(output.captureFrame(frame())).rejects.toThrow('closed');
+      expect(output.pendingPlayoutSegments).toBe(0);
+    },
+  );
 
   it('releases playout and listeners on remote close, even when SDK cleanup fails', async () => {
     const output = await start();
