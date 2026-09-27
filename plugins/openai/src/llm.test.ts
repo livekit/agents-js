@@ -44,6 +44,20 @@ describe('OpenAI LLM prewarm', () => {
   });
 });
 
+describe('Perplexity compatibility helper', () => {
+  it('uses a supported default model and warns with the Agent API migration path', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const llm = LLM.withPerplexity({ apiKey: 'test-key' });
+
+      expect(llm.model).toBe('sonar-pro');
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('responses.LLM'));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
 it('does not crash the stream when usage token counts are null', async () => {
   // Null fields inside a non-null usage object must not terminate the stream. Missing counts
   // default to zero.
