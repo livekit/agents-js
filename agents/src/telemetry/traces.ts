@@ -8,6 +8,7 @@ import {
   type Context,
   ProxyTracerProvider,
   type Span,
+  type SpanKind,
   type SpanOptions,
   type Tracer,
   type TracerProvider,
@@ -50,15 +51,18 @@ import {
 } from '../types.js';
 import { version } from '../version.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
+import { blockedSpanTracker } from './blocked_span_tracker.js';
 import type { ObservabilityEndpoint } from './observability_endpoint.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { PIIFilteringSpanProcessor } from './pii.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { uploadRecording } from './recording_upload.js';
-import { allowPiiFromEnv } from './redaction.js';
+import { allowPiiFromEnv, redactionEnabledFromAttributes } from './redaction.js';
+import { JobSpanGateExporter } from './span_gate.js';
 import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
 import { UploadGateMetricExporter, UploadGateTraceExporter, uploadGate } from './upload_gate.js';
+import { recordException } from './utils.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -71,6 +75,8 @@ export interface StartSpanOptions {
   endOnExit?: boolean;
   /** Optional start time for the span in milliseconds (Date.now() format) */
   startTime?: number;
+  /** The span's kind (client, server, ...); defaults to INTERNAL */
+  kind?: SpanKind;
 }
 
 /**
@@ -145,6 +151,7 @@ class DynamicTracer {
       {
         attributes: options.attributes,
         startTime: options.startTime,
+        kind: options.kind,
       },
       ctx,
     );
@@ -163,7 +170,11 @@ class DynamicTracer {
   async startActiveSpan<T>(fn: (span: Span) => Promise<T>, options: StartSpanOptions): Promise<T> {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
-    const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };
+    const opts: SpanOptions = {
+      attributes: options.attributes,
+      startTime: options.startTime,
+      kind: options.kind,
+    };
 
     // Directly return the tracer's startActiveSpan result - it handles async correctly
     return await this.tracer.startActiveSpan(options.name, opts, ctx, async (span) => {
@@ -178,6 +189,27 @@ class DynamicTracer {
   }
 
   /**
+   * Run `fn` under a span that is never made current.
+   *
+   * For code that spawns long-lived tasks (connecting the room, publishing a track, connecting
+   * MCP servers): a *current* span is inherited by every task created under it and becomes the
+   * accidental parent of unrelated spans those tasks emit for the rest of the session. The
+   * parent is `options.context` when given, else the ambient context; an exception is recorded
+   * redaction-aware and rethrown, and the span is always ended.
+   */
+  async detachedSpan<T>(fn: (span: Span) => Promise<T>, options: StartSpanOptions): Promise<T> {
+    const span = this.startSpan(options);
+    try {
+      return await fn(span);
+    } catch (error) {
+      recordException(span, error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    } finally {
+      span.end();
+    }
+  }
+
+  /**
    * Synchronous version of startActiveSpan for non-async operations.
    *
    * @param fn - The function to execute within the span context
@@ -187,7 +219,11 @@ class DynamicTracer {
   startActiveSpanSync<T>(fn: (span: Span) => T, options: StartSpanOptions): T {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
-    const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };
+    const opts: SpanOptions = {
+      attributes: options.attributes,
+      startTime: options.startTime,
+      kind: options.kind,
+    };
 
     return this.tracer.startActiveSpan(options.name, opts, ctx, (span) => {
       try {
@@ -211,6 +247,11 @@ class MetadataSpanProcessor implements SpanProcessor {
   private metadata: Attributes;
 
   constructor(metadata: Attributes) {
+    this.metadata = metadata;
+  }
+
+  /** Replace the stamp: the job's session metadata is only known once it registers. */
+  setMetadata(metadata: Attributes): void {
     this.metadata = metadata;
   }
 
@@ -292,6 +333,22 @@ interface CustomProviderConfig {
 const customProviderConfigs = new WeakMap<TracerProvider, CustomProviderConfig>();
 /** Providers that already carry the in-process PII stripper — installed at most once. */
 const piiRedactionInstalled = new WeakSet<TracerProvider>();
+/** Providers already reporting their spans to the loop monitor's blocked-span tracker. */
+const blockedSpanTrackerInstalled = new WeakSet<TracerProvider>();
+
+/**
+ * Report the provider's spans to the loop monitor's {@link blockedSpanTracker}, so a stall
+ * nests under the span that was running. Once per provider; a user's provider needs a
+ * registrar, like PII redaction.
+ */
+function installBlockedSpanTracker(
+  provider: TracerProvider,
+  registerSpanProcessor: SpanProcessorRegistrar | undefined,
+): void {
+  if (blockedSpanTrackerInstalled.has(provider) || !registerSpanProcessor) return;
+  blockedSpanTrackerInstalled.add(provider);
+  registerSpanProcessor(blockedSpanTracker);
+}
 
 let cloudMeterProvider: MeterProvider | undefined;
 let cloudMetricsUnavailable = false;
@@ -488,6 +545,7 @@ export function setTracerProvider(
   }
 
   installPIIRedaction(provider, registerSpanProcessor, options?.allowPii);
+  installBlockedSpanTracker(provider, registerSpanProcessor);
 
   if (registerSpanProcessor) {
     customProviderConfigs.set(provider, {
@@ -499,6 +557,156 @@ export function setTracerProvider(
   }
 
   tracer.setProvider(provider);
+}
+
+/** The trace pipeline a job prepared before its first span (see {@link prepareCloudTracer}). */
+interface PreparedCloudPipeline {
+  provider: NodeTracerProvider;
+  gate: JobSpanGateExporter;
+  metadata: MetadataSpanProcessor;
+  observabilityUrl: string;
+}
+
+let preparedCloud: PreparedCloudPipeline | undefined;
+
+async function cloudAuthHeaders(): Promise<Record<string, string>> {
+  const apiKey = process.env.LIVEKIT_API_KEY;
+  const apiSecret = process.env.LIVEKIT_API_SECRET;
+  if (!apiKey || !apiSecret) {
+    throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set for cloud tracing');
+  }
+  const token = new AccessToken(apiKey, apiSecret, {
+    identity: 'livekit-agents-telemetry',
+    ttl: '6h',
+  });
+  token.addObservabilityGrant({ write: true });
+  return { Authorization: `Bearer ${await token.toJwt()}` };
+}
+
+function cloudBaseMetadata(roomId: string, jobId: string, agentName?: string): Attributes {
+  const baseMetadata: Attributes = { room_id: roomId, job_id: jobId };
+  if (agentName) {
+    // identifies the agent for LiveKit Cloud agent insights (explicit dispatch only; the
+    // default dispatch has no agent name). Included in both the resource (traces) and the
+    // session metadata (spans + logs).
+    baseMetadata[ATTR_AGENT_NAME] = agentName;
+  }
+  // cloud agent id and deployment provided by LiveKit Cloud via env vars. Included in both the
+  // resource and the session metadata like agentName; omitted when unset.
+  const cloudAgentId = process.env.LIVEKIT_AGENT_ID;
+  if (cloudAgentId) baseMetadata[ATTR_CLOUD_AGENT_ID] = cloudAgentId;
+  const deploymentId = process.env.LIVEKIT_AGENT_DEPLOYMENT;
+  if (deploymentId) baseMetadata[ATTR_DEPLOYMENT_ID] = deploymentId;
+  return baseMetadata;
+}
+
+function cloudResource(baseMetadata: Attributes) {
+  return defaultResource()
+    .merge(detectResources({ detectors: [envDetector] }))
+    .merge(
+      resourceFromAttributes({
+        [ATTR_SERVICE_NAME]: 'livekit-agents',
+        ...baseMetadata,
+      }),
+    );
+}
+
+/**
+ * Have the LiveKit Cloud trace pipeline up before the job's first span.
+ *
+ * Without a tracer provider every span is a non-recording stub: the job's root
+ * (`job_entrypoint`) and everything before `session.start()` (`room_connect`, a stall while
+ * models load) would be lost, and later spans would start their own traces. This creates the
+ * provider and the gated exporter but registers nothing: the job's spans are held by the gate
+ * until {@link setupCloudTracer} decides whether they upload. A job that never decides drops
+ * them through {@link discardPreparedCloudTracer}.
+ *
+ * A user-configured provider is left alone: it records already, and what it exports is its own
+ * business.
+ *
+ * @internal
+ */
+export async function prepareCloudTracer(
+  options: ObservabilityEndpoint & { roomId: string; jobId: string; agentName?: string },
+): Promise<void> {
+  const observabilityUrl = resolveObservabilityUrl(options);
+  const current = tracer.getProvider();
+  if (preparedCloud) {
+    if (current === preparedCloud.provider) preparedCloud.gate.openJob(options.jobId);
+    return;
+  }
+  if (!(current instanceof ProxyTracerProvider)) return; // the user's provider records
+
+  const headers = await cloudAuthHeaders();
+  const gate = new JobSpanGateExporter(
+    new UploadGateTraceExporter({
+      url: `${observabilityUrl}/observability/traces/otlp/v0`,
+      headers,
+      compression: CompressionAlgorithm.GZIP,
+    }),
+  );
+  const baseMetadata = cloudBaseMetadata(options.roomId, options.jobId, options.agentName);
+  const metadata = new MetadataSpanProcessor(baseMetadata);
+  const provider = new NodeTracerProvider({
+    resource: cloudResource(baseMetadata),
+    spanProcessors: [
+      // strips PII while the span is still mutable, ahead of every exporter's onEnd
+      new PIIFilteringSpanProcessor(allowPiiFromEnv() ?? true),
+      metadata,
+      // which span a loop stall happened under (see BlockedSpanTracker)
+      blockedSpanTracker,
+      new BatchSpanProcessor(gate),
+    ],
+  });
+  piiRedactionInstalled.add(provider);
+  blockedSpanTrackerInstalled.add(provider);
+  gate.openJob(options.jobId);
+  preparedCloud = { provider, gate, metadata, observabilityUrl };
+  // register() installs an AsyncLocalStorageContextManager (needed for span nesting) and sets
+  // the global tracer provider; both are set-once in the OTel API, so a NodeSDK the user
+  // started already makes these no-ops
+  provider.register();
+  setTracerProvider(provider);
+}
+
+/**
+ * A job ended without ever registering: drop whatever the gate held for it.
+ *
+ * @internal
+ */
+export function discardPreparedCloudTracer(jobId: string): void {
+  preparedCloud?.gate.closeJob(jobId);
+}
+
+/** Forget the prepared pipeline so a test can prepare a fresh one. @internal */
+export async function _resetPreparedCloudTracer(): Promise<void> {
+  const prepared = preparedCloud;
+  preparedCloud = undefined;
+  await prepared?.provider.shutdown();
+}
+
+/**
+ * Export every span the framework's provider still holds. Call it once the job's root span has
+ * ended: the job process exits explicitly, so the batch processor would get no further turn.
+ *
+ * @internal
+ */
+export async function flushCloudTraces(): Promise<void> {
+  const provider = tracer.getProvider() as TracerProvider & {
+    forceFlush?: () => Promise<void>;
+  };
+  const prepared = preparedCloud;
+  // three independent queues, each drained whatever the others do: the active provider; the
+  // prepared provider when the entrypoint installed its own (job_entrypoint still sits in the
+  // prepared batch queue); and the gate, whose release uploads and other in-flight requests
+  // a batch processor's flush does not wait for. The first failure surfaces once all ran.
+  const results = await Promise.allSettled([
+    provider.forceFlush?.(),
+    prepared && prepared.provider !== provider ? prepared.provider.forceFlush() : undefined,
+    prepared?.gate.forceFlush(),
+  ]);
+  const failure = results.find((r) => r.status === 'rejected');
+  if (failure) throw failure.reason;
 }
 
 /**
@@ -524,59 +732,13 @@ export async function setupCloudTracer(
   const { roomId, jobId, agentName, enableTraces = true, enableLogs = true } = options;
   const observabilityUrl = resolveObservabilityUrl(options);
 
-  const apiKey = process.env.LIVEKIT_API_KEY;
-  const apiSecret = process.env.LIVEKIT_API_SECRET;
-
-  if (!apiKey || !apiSecret) {
-    throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set for cloud tracing');
-  }
-
-  const token = new AccessToken(apiKey, apiSecret, {
-    identity: 'livekit-agents-telemetry',
-    ttl: '6h',
-  });
-  token.addObservabilityGrant({ write: true });
-
   try {
-    const jwt = await token.toJwt();
-
-    const headers = {
-      Authorization: `Bearer ${jwt}`,
-    };
-
-    const baseMetadata: Attributes = {
-      room_id: roomId,
-      job_id: jobId,
-    };
-    if (agentName) {
-      // identifies the agent for LiveKit Cloud agent insights (explicit dispatch
-      // only; the default dispatch has no agent name). Included in both the
-      // resource (traces) and the session metadata (spans + logs).
-      baseMetadata[ATTR_AGENT_NAME] = agentName;
-    }
-
-    // cloud agent id and deployment provided by LiveKit Cloud via env vars.
-    // Included in both the resource and the session metadata like agentName;
-    // omitted when unset.
-    const cloudAgentId = process.env.LIVEKIT_AGENT_ID;
-    if (cloudAgentId) {
-      baseMetadata[ATTR_CLOUD_AGENT_ID] = cloudAgentId;
-    }
-    const deploymentId = process.env.LIVEKIT_AGENT_DEPLOYMENT;
-    if (deploymentId) {
-      baseMetadata[ATTR_DEPLOYMENT_ID] = deploymentId;
-    }
-
+    const headers = await cloudAuthHeaders();
+    const baseMetadata = cloudBaseMetadata(roomId, jobId, agentName);
+    const cloudAgentId = baseMetadata[ATTR_CLOUD_AGENT_ID] as string | undefined;
+    const deploymentId = baseMetadata[ATTR_DEPLOYMENT_ID] as string | undefined;
     const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
-
-    const resource = defaultResource()
-      .merge(detectResources({ detectors: [envDetector] }))
-      .merge(
-        resourceFromAttributes({
-          [ATTR_SERVICE_NAME]: 'livekit-agents',
-          ...baseMetadata,
-        }),
-      );
+    const resource = cloudResource(baseMetadata);
 
     // A meter provider has process lifetime and cannot carry room/job identity safely. Those
     // fields are attached to each measurement by otel_metrics instead.
@@ -595,7 +757,19 @@ export async function setupCloudTracer(
     // periodic reader would not get another turn before process.exit().
     setupCloudMetrics(observabilityUrl, headers, meterResource);
 
-    if (enableTraces) {
+    const currentProvider = tracer.getProvider();
+    if (preparedCloud) {
+      // the job's pipeline was prepared at job start: release what the gate held for it (or
+      // drop it) and stamp the session metadata on the spans that follow
+      preparedCloud.gate.jobRegistered(jobId, {
+        tracesEnabled: enableTraces,
+        redacted: redactionEnabledFromAttributes(options.metadata as Record<string, unknown>),
+      });
+      preparedCloud.metadata.setMetadata(sessionMetadata);
+    }
+    const preparedHere = preparedCloud !== undefined && currentProvider === preparedCloud.provider;
+
+    if (enableTraces && !preparedHere) {
       const url = `${observabilityUrl}/observability/traces/otlp/v0`;
       const createCloudExporter = () =>
         new UploadGateTraceExporter({
@@ -607,7 +781,6 @@ export async function setupCloudTracer(
       // If the user already configured a tracer provider (e.g. setTracerProvider in the job
       // entrypoint), attach the cloud exporter to it rather than replacing it, so spans reach
       // both the user's backend and LiveKit Cloud.
-      const currentProvider = tracer.getProvider();
       const existingProvider =
         currentProvider instanceof ProxyTracerProvider ? undefined : currentProvider;
 
@@ -618,6 +791,7 @@ export async function setupCloudTracer(
             // strips PII while the span is still mutable, ahead of every exporter's onEnd
             new PIIFilteringSpanProcessor(allowPiiFromEnv() ?? true),
             new MetadataSpanProcessor(sessionMetadata),
+            blockedSpanTracker,
             new BatchSpanProcessor(createCloudExporter()),
           ],
         });
@@ -625,6 +799,7 @@ export async function setupCloudTracer(
         // setTracerProvider call below finds no registrar and warns that redaction could
         // not be installed, on the default path where it demonstrably was
         piiRedactionInstalled.add(tracerProvider);
+        blockedSpanTrackerInstalled.add(tracerProvider);
         // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
         // and sets the global tracer provider. Both use set-once semantics in the OTel API,
         // so if the user already called NodeSDK.start(), these are safe no-ops.
@@ -654,6 +829,7 @@ export async function setupCloudTracer(
           // the spans going to the user's own backend. room_id/job_id — the keys Cloud
           // correlates on — still ride along as span attributes via MetadataSpanProcessor.
           installPIIRedaction(existingProvider, config.registerSpanProcessor, undefined);
+          installBlockedSpanTracker(existingProvider, config.registerSpanProcessor);
           config.registerSpanProcessor(new MetadataSpanProcessor(sessionMetadata));
           config.registerSpanProcessor(cloudSpanProcessor);
         }

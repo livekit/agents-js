@@ -8,10 +8,12 @@ import { WebSocketServer } from 'ws';
 import { APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
+import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, type VADStream } from '../vad.js';
+import { createConversationItemAddedEvent } from '../voice/events.js';
 import {
   SpeechStream as InferenceSpeechStream,
   STT,
@@ -37,6 +39,16 @@ function makeStt(overrides: Record<string, unknown> = {}) {
     baseURL: 'https://example.livekit.cloud',
   };
   return new STT({ ...defaults, ...overrides });
+}
+
+function makeAssemblyStt(overrides: Record<string, unknown> = {}) {
+  return makeStt({ model: 'assemblyai/universal-3-5-pro', ...overrides });
+}
+
+function assistantItemEvent(text: string) {
+  return createConversationItemAddedEvent(
+    ChatMessage.create({ role: 'assistant', content: [text] }),
+  );
 }
 
 function makeSpeechStream() {
@@ -430,6 +442,112 @@ describe('STT diarization capabilities', () => {
   });
 });
 
+describe('STT agent_context forwarding', () => {
+  it('enables chat context for AssemblyAI U3 Pro family models', () => {
+    for (const model of [
+      'assemblyai/u3-rt-pro',
+      'assemblyai/universal-3-5-pro',
+      'assemblyai/universal-3-6-pro',
+    ] as const) {
+      const stt = makeAssemblyStt({ model });
+      expect(stt.capabilities.chatContext).toBe(true);
+    }
+  });
+
+  it('disables chat context for unsupported AssemblyAI models', () => {
+    const stt = makeAssemblyStt({ model: 'assemblyai/universal-streaming' });
+
+    expect(stt.capabilities.chatContext).toBe(false);
+  });
+
+  it('disables chat context for non-AssemblyAI models', () => {
+    const stt = makeAssemblyStt({ model: 'deepgram/nova-3' });
+    expect(stt.capabilities.chatContext).toBe(false);
+  });
+
+  it('derives chatContext capability from model support only', () => {
+    const stt = makeAssemblyStt({ modelOptions: { previous_context_n_turns: 0 } });
+    expect(stt.capabilities.chatContext).toBe(true);
+  });
+
+  it('emits active carryover shaping in the session.update wire payload', () => {
+    const stt = makeAssemblyStt();
+    const stream = stt.stream();
+    const sent: string[] = [];
+    Reflect.set(stream, 'activeWs', {
+      readyState: 1,
+      send: (payload: string) => sent.push(payload),
+    });
+
+    stt._pushConversationItem(assistantItemEvent('Your room is booked for Tuesday.'));
+
+    expect(stt['opts'].modelOptions).toHaveProperty(
+      'agent_context',
+      'Your room is booked for Tuesday.',
+    );
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]!)).toMatchObject({
+      type: 'session.update',
+      settings: {
+        extra: {
+          agent_context: 'Your room is booked for Tuesday.',
+        },
+      },
+    });
+    stream.close();
+  });
+
+  it('truncates oversize replies keeping the tail', () => {
+    const text = 'a'.repeat(2000) + 'b'.repeat(1750);
+    const stt = makeAssemblyStt();
+    stt._pushConversationItem(assistantItemEvent(text));
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'b'.repeat(1750));
+  });
+
+  it('ignores non-assistant items', () => {
+    const stt = makeAssemblyStt();
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(ChatMessage.create({ role: 'user', content: ['hi there'] })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(ChatMessage.create({ role: 'assistant', content: [] })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('ignores agent handoff items', () => {
+    const stt = makeAssemblyStt();
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(AgentHandoffItem.create({ newAgentId: 'agent-2' })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('preserves explicit agent_context and later overwrites it with carryover', () => {
+    const stt = makeAssemblyStt({
+      modelOptions: { agent_context: 'The agent asked for a booking date.' },
+    });
+    expect(stt['opts'].modelOptions).toHaveProperty(
+      'agent_context',
+      'The agent asked for a booking date.',
+    );
+
+    stt._pushConversationItem(assistantItemEvent('And your zip code?'));
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'And your zip code?');
+  });
+
+  it('re-evaluates chat context capability on model update', () => {
+    const stt = makeAssemblyStt({ model: 'assemblyai/universal-streaming' });
+    expect(stt.capabilities.chatContext).toBe(false);
+
+    stt.updateOptions({ model: 'assemblyai/universal-3-5-pro' });
+    expect(stt.capabilities.chatContext).toBe(true);
+  });
+});
+
 describe('STT aligned transcript capability', () => {
   it('agrees with the Cartesia Ink-2 plugin capability', () => {
     const gatewayStt = makeStt({ model: 'cartesia/ink-2' });
@@ -443,6 +561,9 @@ describe('STT aligned transcript capability', () => {
     expect(
       makeStt({ model: 'assemblyai/universal-streaming' }).capabilities.alignedTranscript,
     ).toBe('word');
+    expect(makeStt({ model: 'assemblyai/universal-3-6-pro' }).capabilities.alignedTranscript).toBe(
+      'word',
+    );
     expect(makeStt({ model: 'auto' }).capabilities.alignedTranscript).toBe(false);
     expect(makeStt({ model: 'inworld/inworld-stt-1' }).capabilities.alignedTranscript).toBe(false);
   });
@@ -701,6 +822,46 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
+  it('closes the socket when the stream is closed while connecting', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    server.on('connection', (socket) => {
+      // The server sees the upgrade before the client's `open` fires, so this
+      // lands while connectWs is still pending.
+      stream.close();
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        messageTypes.push((JSON.parse(raw.toString()) as { type: string }).type);
+      });
+    });
+
+    try {
+      const closedInTime = await Promise.race([
+        socketClosed.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000)),
+      ]);
+
+      expect(closedInTime).toBe(true);
+      expect(messageTypes).toEqual(['session.create', 'session.close']);
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('finishes when session.closed follows input end', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
@@ -915,6 +1076,103 @@ describe('Inference STT connection lifecycle', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  it(
+    'does not let empty interims after finalize hold the stream open',
+    { timeout: 15_000 },
+    async () => {
+      // the sequence recorded from the gateway for xai/stt-1: finals during the audio, then
+      // after session.finalize an acknowledgment and an empty interim every second, for as long
+      // as the socket is open. Real timers: the 3 s wait after a final is a fixed constant, and
+      // the interims have to arrive over the socket while it runs
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const address = server.address() as AddressInfo;
+      const messageTypes: string[] = [];
+      let emptyInterims = 0;
+      let interimTimer: ReturnType<typeof setInterval> | undefined;
+      let finalizedAt = 0;
+      let resolveSessionCreated!: () => void;
+      const sessionCreated = new Promise<void>((resolve) => {
+        resolveSessionCreated = resolve;
+      });
+
+      server.on('connection', (socket) => {
+        socket.on('close', () => clearInterval(interimTimer));
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as { type: string };
+          messageTypes.push(event.type);
+          if (event.type === 'session.create') {
+            resolveSessionCreated();
+            socket.send(
+              JSON.stringify({
+                type: 'final_transcript',
+                transcript: 'final words',
+                language: 'en',
+              }),
+            );
+          }
+          if (event.type === 'session.finalize') {
+            finalizedAt = Date.now();
+            socket.send(JSON.stringify({ type: 'session.finalized' }));
+            interimTimer = setInterval(() => {
+              if (socket.readyState !== 1) return;
+              emptyInterims++;
+              socket.send(
+                JSON.stringify({
+                  type: 'interim_transcript',
+                  transcript: '',
+                  start: 50.753,
+                  duration: 1.21,
+                  language: 'en',
+                }),
+              );
+            }, 700);
+          }
+        });
+      });
+
+      const stt = makeStt({
+        model: 'xai/stt-1',
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+      const transcripts: string[] = [];
+      let resolveTranscript!: () => void;
+      const transcriptReceived = new Promise<void>((resolve) => {
+        resolveTranscript = resolve;
+      });
+      const outputTask = (async () => {
+        for await (const event of stream) {
+          if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+            transcripts.push(event.alternatives![0].text);
+            resolveTranscript();
+          }
+        }
+      })();
+
+      try {
+        await sessionCreated;
+        await transcriptReceived;
+        stream.endInput();
+        await outputTask;
+        const endedAfter = Date.now() - finalizedAt;
+
+        expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+        expect(transcripts).toEqual(['final words']);
+        // interims kept arriving through the wait, and did not extend it past its 3 s
+        expect(emptyInterims).toBeGreaterThanOrEqual(3);
+        expect(endedAfter).toBeGreaterThanOrEqual(2_500);
+        expect(endedAfter).toBeLessThan(5_000);
+      } finally {
+        clearInterval(interimTimer);
+        stream.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
 
   it('sends session.close and closes the socket when the stream closes', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });

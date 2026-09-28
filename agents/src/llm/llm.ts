@@ -31,6 +31,13 @@ export interface CompletionUsage {
   promptCachedTokens: number;
   /** Tokens used to write to the prompt cache. */
   cacheCreationTokens?: number;
+  /**
+   * Completion tokens spent on hidden reasoning.
+   *
+   * Already counted in `completionTokens`; do not add it to totals. Not all providers break
+   * reasoning out separately, and it is 0 when they don't.
+   */
+  reasoningTokens?: number;
   totalTokens: number;
   /** The service tier used for processing (e.g. 'default', 'priority', 'flex'). */
   serviceTier?: string;
@@ -240,10 +247,37 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     });
   }
 
+  /** The `llm_request` span of this stream, once the main task has opened it. */
+  /**
+   * The model named on the response side of the request span. The LLM's own model by default;
+   * a fallback adapter's stream reports the instance that actually served.
+   */
+  protected get responseModel(): string {
+    return this.#llm.model;
+  }
+
+  /** The provider named on the response side and in the usage metrics (see {@link responseModel}). */
+  protected get responseProvider(): string {
+    return this.#llm.provider;
+  }
+
+  /**
+   * The convention's operation for the request span: `chat` for a provider request. An adapter
+   * that delegates to another stream has none, or a backend counting inference spans would see
+   * two calls for one.
+   */
+  protected get genAIOperationName(): string | undefined {
+    return traceTypes.GenAIOperationName.CHAT;
+  }
+
+  protected get llmRequestSpan(): Span | undefined {
+    return this.#llmRequestSpan;
+  }
+
   /** The GenAI inference span's request side, per the OTel GenAI conventions. */
   private recordGenAIRequest(span: Span) {
     genAI.setRequestAttributes(span, {
-      operation: traceTypes.GenAIOperationName.CHAT,
+      operation: this.genAIOperationName,
       provider: this.#llm.provider,
       model: this.#llm.model,
       stream: true,
@@ -385,6 +419,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       promptTokens: usage?.promptTokens || 0,
       promptCachedTokens: usage?.promptCachedTokens || 0,
       cacheCreationTokens: usage?.cacheCreationTokens || 0,
+      reasoningTokens: usage?.reasoningTokens || 0,
       totalTokens: usage?.totalTokens || 0,
       tokensPerSecond: (() => {
         if (durationMs <= 0) {
@@ -393,8 +428,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         return (usage?.completionTokens || 0) / (durationMs / 1000);
       })(),
       metadata: {
-        modelProvider: this.#llm.provider,
-        modelName: this.#llm.model,
+        modelProvider: this.responseProvider,
+        modelName: this.responseModel,
       },
     };
 
@@ -410,7 +445,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       });
       genAI.setResponseAttributes(this.#llmRequestSpan, {
         responseId: requestId || undefined,
-        model: this.#llm.model,
+        model: this.responseModel,
         finishReasons: [finishReason],
         timeToFirstChunk: metrics.ttftMs >= 0 ? metrics.ttftMs / 1000 : undefined,
       });

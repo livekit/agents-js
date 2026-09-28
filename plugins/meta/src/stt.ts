@@ -11,7 +11,7 @@ import {
   DEFAULT_API_CONNECT_OPTIONS,
   normalizeLanguage,
   stt,
-  waitForAbort,
+  waitUntilAborted,
 } from '@livekit/agents';
 import { performance } from 'node:perf_hooks';
 import type { ClientOptions, RawData } from 'ws';
@@ -701,19 +701,25 @@ export class SpeechStream extends stt.SpeechStream {
     let pending = Buffer.alloc(0);
     let pacingOrigin: number | undefined;
     let sentDurationMs = 0;
-    const abortPromise = waitForAbort(signal);
-    const iterator = this.input[Symbol.asyncIterator]();
+    const nextInput = async () => {
+      try {
+        return await this.input.next({ signal });
+      } catch (e) {
+        if (signal.aborted) return undefined;
+        throw e;
+      }
+    };
 
     const sendPacket = async (packet: Buffer) => {
       if (!packet.length) return;
       pacingOrigin ??= performance.now();
       const delayMs = pacingOrigin + sentDurationMs - performance.now();
       if (delayMs > 0) {
-        const result = await Promise.race([
-          new Promise<'elapsed'>((resolve) => setTimeout(() => resolve('elapsed'), delayMs)),
-          abortPromise,
-        ]);
-        if (result !== 'elapsed') return;
+        const { isAborted } = await waitUntilAborted(
+          new Promise<void>((resolve) => setTimeout(resolve, delayMs)),
+          signal,
+        );
+        if (isAborted) return;
       }
       try {
         await send(ws, packet);
@@ -728,7 +734,7 @@ export class SpeechStream extends stt.SpeechStream {
     };
 
     while (true) {
-      const result = await Promise.race([iterator.next(), abortPromise]);
+      const result = await nextInput();
       if (result === undefined) return;
       if (result.done) break;
       const item = result.value;

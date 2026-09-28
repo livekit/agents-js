@@ -96,6 +96,50 @@ export function replaceWithGroups(
   });
 }
 
+/**
+ * What survives a removal, and the position to resume scanning from.
+ *
+ * A tag heading a line has no space before it to pair with, so the one after it is the
+ * stranded half and goes with it. Anywhere else exactly one separator stays: the space
+ * before is dropped when one already follows, kept when none does. Newlines are never
+ * touched, so paragraph structure survives.
+ *
+ * @param emitted - The output assembled so far (a non-empty sentinel when the text does
+ *   not begin a line).
+ * @param text - The text being scanned.
+ * @param pos - Index just past the end of the match in `text`.
+ * @param pre - The whitespace the pattern captured before the tag.
+ * @param kept - The text that survives the removal, or `''` when the tag vanishes.
+ * @returns The text to append and the position to resume scanning from.
+ *
+ * @internal
+ */
+export function stripOne(
+  emitted: string,
+  text: string,
+  pos: number,
+  pre: string,
+  kept: string,
+): [append: string, pos: number] {
+  if (kept) {
+    return [pre + kept, pos];
+  }
+  if (!emitted || emitted.endsWith('\n')) {
+    const rest = text.slice(pos);
+    return ['', pos + rest.length - rest.replace(/^[ \t]+/, '').length];
+  }
+  const nxt = text[pos];
+  return [pre && nxt !== ' ' && nxt !== '\t' ? pre : '', pos];
+}
+
+/**
+ * Sentinel opening the output of a strip pass that does not begin a line, so
+ * {@link stripOne} never mistakes the start of a mid-line chunk for a line start.
+ *
+ * @internal
+ */
+export const MID_LINE = '\u0000';
+
 /** A markup tag stripped from text: the XML tag name and its payload. */
 export type StrippedTag = [tag: string, value: string];
 
@@ -128,12 +172,17 @@ export type StrippedTag = [tag: string, value: string];
  *   the spoken sentence recorded as the delivery label and published as `lk.expression`.
  *   `normalizeMarkup` repairs that tag shape only on the audio path, so the transcript
  *   sinks see the raw form and have to handle it here.
+ * @param options - `atLineStart`: whether `text` begins a line (default `true`); `false`
+ *   for a chunk picked up mid-line, where leading whitespace is a real separator between
+ *   two words.
  */
 export function extractAndStrip(
   text: string,
   xmlTags: string[],
   attributeTags: ReadonlySet<string> = new Set(),
+  options: { atLineStart?: boolean } = {},
 ): [string, StrippedTag[]] {
+  const atLineStart = options.atLineStart ?? true;
   if (xmlTags.length === 0) {
     return [text, []];
   }
@@ -158,24 +207,13 @@ export function extractAndStrip(
 
   const tags: StrippedTag[] = [];
 
-  const replacer = ({
-    groups,
-    match,
-    offset,
-    source,
-  }: {
-    match: string;
-    groups: Record<string, string | undefined>;
-    offset: number;
-    source: string;
-  }): string => {
-    const pre = groups.pre ?? '';
-    const end = offset + match.length;
-
+  // the surviving text of one match: wrapping tags keep their inner content, self-closing
+  // and lone tags vanish
+  const kept = (groups: Record<string, string | undefined>): string => {
     if (groups.selfTag !== undefined) {
       const attrMatch = VALUE_ATTR_RE.exec(groups.selfAttrs ?? '');
       tags.push([groups.selfTag, attrMatch ? attrMatch[1]! : '']);
-      return dedupRemovalSpace(pre, '', source, end); // self-closing tags vanish
+      return '';
     }
 
     const tag = groups.tag;
@@ -194,10 +232,23 @@ export function extractAndStrip(
         value = attrValue;
       }
       tags.push([tag, value]);
-      // wrapping tags keep their inner content; lone open tags vanish
-      return dedupRemovalSpace(pre, inner || '', source, end);
+      return inner || '';
     }
-    return dedupRemovalSpace(pre, '', source, end); // lone closing tag
+    return ''; // lone closing tag
+  };
+
+  const pass = (source: string): string => {
+    let out = atLineStart ? '' : MID_LINE;
+    let pos = 0;
+    for (const m of source.matchAll(pattern)) {
+      const groups = m.groups ?? {};
+      out += source.slice(pos, m.index);
+      let append: string;
+      [append, pos] = stripOne(out, source, m.index + m[0].length, groups.pre ?? '', kept(groups));
+      out += append;
+    }
+    out += source.slice(pos);
+    return atLineStart ? out : out.slice(MID_LINE.length);
   };
 
   // iterate to a fixed point so nested wrapping tags are fully removed: a single pass
@@ -208,7 +259,7 @@ export function extractAndStrip(
   let prev: string | undefined;
   while (clean !== prev) {
     prev = clean;
-    clean = replaceWithGroups(clean, pattern, replacer);
+    clean = pass(clean);
   }
   return [clean, tags];
 }

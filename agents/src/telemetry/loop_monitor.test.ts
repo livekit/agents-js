@@ -99,6 +99,7 @@ describe.sequential('event loop monitor', () => {
       warnThreshold: WARN,
       errorThreshold: ERROR,
       tickInterval: TICK,
+      stacks: 'never', // sampled stacks have their own tests; reports stay synchronous here
     });
     monitor.onReport = (report) => reports.push(report);
     sessionRoot = tracer.startSpan({ name: 'agent_session' });
@@ -303,6 +304,7 @@ describe.sequential('event loop monitor', () => {
       errorThreshold: ERROR,
       tickInterval: TICK,
       emitSpans: false,
+      stacks: 'never',
     });
     const workerReports: BlockedReport[] = [];
     workerMonitor.onReport = (report) => workerReports.push(report);
@@ -416,6 +418,7 @@ describe.sequential('event loop monitor', () => {
         errorThreshold: ERROR,
         tickInterval: TICK,
         watchdog: false,
+        stacks: 'never',
       });
       bare.start();
       expect(bare.watchdogActive).toBe(false);

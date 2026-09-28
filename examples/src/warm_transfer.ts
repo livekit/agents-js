@@ -166,5 +166,8 @@ Brief summary in 100-200 characters from a first-person perspective
 // including the human agent room that WarmTransferTask creates — which puts a
 // second agent on the line with the human agent and produces overlapping voices.
 cli.runApp(
-  new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'warm-transfer' }),
+  new ServerOptions({
+    agent: fileURLToPath(import.meta.url),
+    agentName: process.env.AGENT_DISPATCH_NAME ?? 'warm-transfer',
+  }),
 );

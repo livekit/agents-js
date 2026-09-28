@@ -92,7 +92,7 @@ export interface SessionConnectOptions {
   llmConnOptions?: Partial<APIConnectOptions>;
   /** Connection options for text-to-speech. */
   ttsConnOptions?: Partial<APIConnectOptions>;
-  /** Maximum number of consecutive unrecoverable errors from LLM or TTS before closing the session. Default: 3 */
+  /** Maximum number of consecutive unrecoverable errors from STT, LLM, or TTS before closing the session. Default: 3 */
   maxUnrecoverableErrors?: number;
 }
 
