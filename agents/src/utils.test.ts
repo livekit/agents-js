@@ -460,10 +460,14 @@ describe('utils', () => {
       const parentTask = Task.from(async (controller) => {
         results.push('parent-start');
 
-        // Create first child task
+        // Create first child task.
+        // This has to finish after child2, whose own chain takes 10 + 10 ms.
+        // The margin is what keeps the assertion below deterministic: at 25 ms
+        // it was 5 ms, which is inside the timer granularity on Windows, so the
+        // two chains reordered on most runs.
         const child1Task = Task.from(async () => {
           results.push('child1-start');
-          await delay(25);
+          await delay(60);
           results.push('child1-end');
           return 'child1-result';
         }, controller);
