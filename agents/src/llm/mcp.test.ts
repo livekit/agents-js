@@ -1,18 +1,19 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { ClientOptions } from '@modelcontextprotocol/sdk/client/index.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentSession } from '../voice/agent_session.js';
+import { Agent } from '../voice/agent.js';
+import { AgentActivity } from '../voice/agent_activity.js';
+import { AgentSession } from '../voice/agent_session.js';
 import { RunContext } from '../voice/run_context.js';
 import { SpeechHandle } from '../voice/speech_handle.js';
-import { ChatContext, FunctionCall } from './chat_context.js';
+import { FunctionCall } from './chat_context.js';
 import { MCPServer, MCPServerHTTP, MCPToolset } from './mcp.js';
 import { ToolError } from './tool_context.js';
 
-const clientMock = vi.hoisted(() => ({
-  client: undefined as unknown,
-  options: undefined as unknown,
-}));
+const clientMock = vi.hoisted<{ client?: object; options?: ClientOptions }>(() => ({}));
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: class {
@@ -38,49 +39,48 @@ function deferred<T>() {
 
 function buildRunContext(name: string) {
   const functionCall = FunctionCall.create({ callId: `call_${name}`, name, args: '{}' });
-  const history = new ChatContext();
-  const agent = {
-    chatCtx: ChatContext.empty(),
-    async updateChatCtx(chatCtx: ChatContext) {
-      this.chatCtx = chatCtx;
-    },
-  };
-  const session = {
+  const session = new AgentSession({
+    vad: null,
     userData: {},
-    history,
-    currentAgent: agent,
-    _globalRunState: undefined,
-    async waitForIdle() {
-      return { agent };
-    },
-    generateReply: () => ({ id: 'speech_reply', addDoneCallback: () => {} }),
-  } as unknown as AgentSession;
+    turnHandling: { turnDetection: null },
+  });
+  const agent = new Agent({ instructions: '' });
+  const activity = new AgentActivity(agent, session);
+  vi.spyOn(session, 'currentAgent', 'get').mockReturnValue(agent);
+  vi.spyOn(session, 'waitForIdle').mockResolvedValue(activity);
+  vi.spyOn(session, 'generateReply').mockReturnValue(SpeechHandle.create());
   return {
     runCtx: new RunContext(session, SpeechHandle.create(), functionCall),
-    history,
+    history: session.history,
   };
 }
 
-class TestServer extends MCPServer {
-  protected override async createTransport(): Promise<unknown> {
-    return {};
-  }
+async function attachClient(server: MCPServer, client: object): Promise<void> {
+  clientMock.client = { connect: async () => {}, close: async () => {}, ...client };
+  await server.initialize();
+}
 
-  setClient(client: unknown): void {
-    (this as unknown as { client: unknown }).client = client;
+class TestServer extends MCPServer {
+  protected override async createTransport(): Promise<Transport> {
+    return {
+      start: async () => {},
+      send: async () => {},
+      close: async () => {},
+    };
   }
 
   async emitToolsChanged(): Promise<void> {
     await this.notifyToolsChanged();
   }
 
-  setLogger(logger: unknown): void {
-    (this as unknown as { logger: unknown }).logger = logger;
+  spyOnWarn() {
+    return vi.spyOn(this.logger, 'warn').mockImplementation(() => {});
   }
 }
 
 describe('MCPServer', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     clientMock.client = undefined;
     clientMock.options = undefined;
   });
@@ -167,10 +167,9 @@ describe('MCPServer', () => {
   });
 
   it('runs later tool-change listeners when an earlier listener throws synchronously', async () => {
-    const warn = vi.fn();
     const laterListener = vi.fn();
     const server = new TestServer();
-    server.setLogger({ warn });
+    const warn = server.spyOnWarn();
     server.onToolsChanged(() => {
       throw new Error('secret listener failure');
     });
@@ -188,7 +187,7 @@ describe('MCPServer', () => {
 
   it('turns an empty successful MCP result into a ToolError', async () => {
     const server = new TestServer();
-    server.setClient({
+    await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
       callTool: vi.fn().mockResolvedValue({ content: [] }),
     });
@@ -202,10 +201,42 @@ describe('MCPServer', () => {
     ).rejects.toBeInstanceOf(ToolError);
   });
 
+  it('rejects malformed input schemas from an MCP server', async () => {
+    const server = new TestServer();
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({
+        tools: [
+          { name: 'lookup', inputSchema: { type: 'object', properties: { query: { type: 42 } } } },
+        ],
+      }),
+    });
+
+    await expect(server.listTools()).rejects.toThrow("Tool 'lookup' has an invalid input schema.");
+  });
+
+  it('preserves nested MCP input schema constraints', async () => {
+    const inputSchema = {
+      type: 'object',
+      properties: { query: { anyOf: [{ type: 'string' }, { type: 'number' }] } },
+      required: ['query'],
+      additionalProperties: false,
+    };
+    const server = new TestServer();
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [{ name: 'lookup', inputSchema }] }),
+    });
+
+    const [lookup] = await server.listTools();
+    expect(lookup?.parameters).toEqual(inputSchema);
+  });
+
   it('forwards cancellation to the MCP SDK request', async () => {
     const server = new TestServer();
     const callTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
-    server.setClient({ listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }), callTool });
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool,
+    });
     const controller = new AbortController();
 
     const [lookup] = await server.listTools();
@@ -215,10 +246,9 @@ describe('MCPServer', () => {
   });
 
   it('logs only safe metadata when reporting progress fails', async () => {
-    const warn = vi.fn();
     const server = new TestServer();
-    server.setLogger({ warn });
-    server.setClient({
+    const warn = server.spyOnWarn();
+    await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
       callTool: vi.fn(async (_params, _schema, options) => {
         options?.onprogress?.({ progress: 1, message: 'working' });
@@ -245,10 +275,11 @@ describe('MCPServer', () => {
   });
 
   it('logs only safe metadata when closing the client fails', async () => {
-    const warn = vi.fn();
     const server = new TestServer();
-    server.setLogger({ warn });
-    server.setClient({ close: vi.fn().mockRejectedValue(new Error('secret bearer credential')) });
+    const warn = server.spyOnWarn();
+    await attachClient(server, {
+      close: vi.fn().mockRejectedValue(new Error('secret bearer credential')),
+    });
 
     await server.aclose();
 
@@ -265,7 +296,10 @@ describe('MCPServer', () => {
       })
       .mockResolvedValueOnce({ content: [{ type: 'text', text: 'ok' }] });
     const server = new TestServer();
-    server.setClient({ listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }), callTool });
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool,
+    });
 
     const [lookup] = await server.listTools();
     await expect(
@@ -295,14 +329,17 @@ describe('MCPServer', () => {
       )
       .mockResolvedValueOnce({ content: [{ type: 'text', text: 'ok' }] });
     const server = new TestServer();
-    server.setClient({ listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }), callTool });
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool,
+    });
 
     const [lookup] = await server.listTools();
     const error = await lookup!
       .execute({}, { ctx: {}, toolCallId: 'first', abortSignal: new AbortController().signal })
       .catch((error: unknown) => error);
     expect(error).toBeInstanceOf(ToolError);
-    expect((error as Error).message).toBe('MCP tool call failed unexpectedly.');
+    expect(error).toHaveProperty('message', 'MCP tool call failed unexpectedly.');
     expect(error).not.toHaveProperty('cause');
     await expect(
       lookup!.execute(
@@ -321,14 +358,17 @@ describe('MCPServer', () => {
         throw new Error('resolver failed with bearer secret');
       },
     });
-    server.setClient({ listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }), callTool });
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool,
+    });
 
     const [lookup] = await server.listTools();
     const error = await lookup!
       .execute({}, { ctx: {}, toolCallId: 'first', abortSignal: new AbortController().signal })
       .catch((error: unknown) => error);
     expect(error).toBeInstanceOf(ToolError);
-    expect((error as Error).message).toBe('MCP tool result processing failed unexpectedly.');
+    expect(error).toHaveProperty('message', 'MCP tool result processing failed unexpectedly.');
     expect(error).not.toHaveProperty('cause');
     await expect(
       lookup!.execute(
@@ -344,7 +384,7 @@ describe('MCPServer', () => {
     const server = new TestServer({
       toolResultResolver: () => new Error('returned error with bearer secret'),
     });
-    server.setClient({
+    await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
       callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }),
     });
@@ -365,7 +405,7 @@ describe('MCPServer', () => {
     });
     const server = new TestServer();
     const close = vi.fn().mockResolvedValue(undefined);
-    server.setClient({
+    await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
       callTool: vi.fn().mockRejectedValue(sdkConnectionError),
       close,
@@ -397,11 +437,9 @@ describe('MCPServer', () => {
     await server.initialize();
     expect((await server.listTools()).map((tool) => tool.name)).toEqual(['lookup']);
 
-    const options = clientMock.options as {
-      listChanged?: { tools?: { autoRefresh?: boolean; onChanged: () => void } };
-    };
+    const options = clientMock.options;
     expect(options.listChanged?.tools?.autoRefresh).toBe(false);
-    options.listChanged?.tools?.onChanged();
+    options?.listChanged?.tools?.onChanged(null, null);
 
     expect((await server.listTools()).map((tool) => tool.name)).toEqual(['new_lookup']);
   });
@@ -412,7 +450,7 @@ describe('MCPServer', () => {
       .fn()
       .mockResolvedValueOnce({ tools: [descriptor] })
       .mockResolvedValueOnce({ tools: [{ ...descriptor, name: 'new_lookup' }] });
-    server.setClient({ listTools, callTool: vi.fn() });
+    await attachClient(server, { listTools, callTool: vi.fn() });
 
     expect((await server.listTools()).map((tool) => tool.name)).toEqual(['lookup']);
     await server.emitToolsChanged();
@@ -427,7 +465,7 @@ describe('MCPServer', () => {
       .mockReturnValueOnce(firstPage.promise)
       .mockResolvedValueOnce({ tools: [{ ...descriptor, name: 'new_lookup' }] });
     const server = new TestServer();
-    server.setClient({ listTools, callTool: vi.fn() });
+    await attachClient(server, { listTools, callTool: vi.fn() });
 
     const initialTools = server.listTools();
     await vi.waitFor(() => expect(listTools).toHaveBeenCalledOnce());
@@ -445,7 +483,7 @@ describe('MCPServer', () => {
       .mockResolvedValueOnce({ tools: [descriptor], nextCursor: 'page-2' })
       .mockResolvedValueOnce({ tools: [{ ...descriptor, name: 'search' }] });
     const server = new TestServer();
-    server.setClient({ listTools, callTool: vi.fn() });
+    await attachClient(server, { listTools, callTool: vi.fn() });
 
     expect((await server.listTools()).map((tool) => tool.name)).toEqual(['lookup', 'search']);
     expect(listTools).toHaveBeenNthCalledWith(1, undefined, expect.anything());
@@ -462,7 +500,7 @@ describe('MCPServer', () => {
       close: vi.fn().mockResolvedValue(undefined),
     };
     const server = new TestServer();
-    server.setClient(oldClient);
+    await attachClient(server, oldClient);
 
     const listing = server.listTools();
     await vi.waitFor(() => expect(oldClient.listTools).toHaveBeenCalledOnce());
@@ -474,16 +512,14 @@ describe('MCPServer', () => {
     const newListTools = vi
       .fn()
       .mockResolvedValue({ tools: [{ ...descriptor, name: 'new_lookup' }] });
-    server.setClient({ listTools: newListTools });
+    await attachClient(server, { listTools: newListTools });
     expect((await server.listTools()).map((tool) => tool.name)).toEqual(['new_lookup']);
     expect(newListTools).toHaveBeenCalledOnce();
   });
 
   it('matches Python by treating an empty allowed-tools list as no filter', async () => {
     const server = new MCPServerHTTP({ url: 'https://example.com/mcp', allowedTools: [] });
-    (server as unknown as { client: unknown }).client = {
-      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
-    };
+    await attachClient(server, { listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }) });
 
     expect((await server.listTools()).map((tool) => tool.name)).toEqual(['lookup']);
   });
@@ -512,7 +548,7 @@ describe('MCPServer', () => {
   it('does not update a stale context when setup follows an in-flight close', async () => {
     const firstPage = deferred<{ tools: (typeof descriptor)[] }>();
     const server = new TestServer();
-    server.setClient({
+    await attachClient(server, {
       listTools: vi.fn().mockReturnValue(firstPage.promise),
       close: vi.fn().mockResolvedValue(undefined),
     });
@@ -531,7 +567,7 @@ describe('MCPServer', () => {
     firstPage.resolve({ tools: [descriptor] });
     await Promise.all([firstSetup, closing]);
 
-    server.setClient({
+    await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [{ ...descriptor, name: 'new_lookup' }] }),
     });
     await toolset.setup(secondContext);
@@ -545,7 +581,7 @@ describe('MCPServer', () => {
     const result = deferred<{ content: { type: string; text: string }[] }>();
     const close = vi.fn().mockResolvedValue(undefined);
     const server = new TestServer();
-    server.setClient({
+    await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
       callTool: vi.fn(async (_params, _schema, options) => {
         await options?.onprogress?.({ progress: 0, message: 'working' });
@@ -580,7 +616,7 @@ describe('MCPServer', () => {
     const resolvedResult = deferred<string>();
     const close = vi.fn().mockResolvedValue(undefined);
     const server = new TestServer({ toolResultResolver: () => resolvedResult.promise });
-    server.setClient({
+    await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
       callTool: vi.fn(async (_params, _schema, options) => {
         await options?.onprogress?.({ progress: 0, message: 'working' });
@@ -620,7 +656,7 @@ describe('MCPServer', () => {
     const close = vi.fn(async () => call.reject(new Error('connection closed')));
     const callTool = vi.fn(() => call.promise);
     const server = new TestServer({ clientSessionTimeout: null });
-    server.setClient({
+    await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
       callTool,
       close,
