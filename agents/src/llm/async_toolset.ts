@@ -13,10 +13,6 @@ export interface AsyncToolsetCreateOptions extends ToolsetCreateOptions {
 export class AsyncToolset extends Toolset {
   readonly _executor = new ToolExecutor({ owningActivity: null });
   private readonly asyncToolOptionsOverride?: ToolHandlingOptions['asyncOptions'];
-  private readonly activityAdapters = new WeakMap<
-    AgentActivity,
-    NonNullable<Parameters<ToolExecutor['setOwningActivity']>[0]>
-  >();
 
   protected constructor({ id, tools, toolHandling }: AsyncToolsetCreateOptions) {
     super({ id, tools });
@@ -34,22 +30,9 @@ export class AsyncToolset extends Toolset {
     activity: AgentActivity | null;
     session: AgentSession;
   }): void {
-    let adapter = activity && this.activityAdapters.get(activity);
-    if (activity && !adapter) {
-      adapter = {
-        agent: {
-          get chatCtx() {
-            return activity.agent._chatCtx;
-          },
-          updateChatCtx: (chatCtx) => activity.agent.updateChatCtx(chatCtx),
-        },
-        waitForIdle: async () => {
-          await activity.waitForIdle();
-        },
-      };
-      this.activityAdapters.set(activity, adapter);
-    }
-    this._executor.setOwningActivity(adapter || null);
+    this._executor.setOwningActivity(
+      activity as unknown as Parameters<ToolExecutor['setOwningActivity']>[0],
+    );
     if (this.asyncToolOptionsOverride) {
       this._executor.setToolOptions(this.asyncToolOptionsOverride);
       return;
