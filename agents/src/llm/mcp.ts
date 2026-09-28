@@ -645,6 +645,11 @@ export interface MCPToolsetOptions {
   toolHandling?: AsyncToolsetCreateOptions['toolHandling'];
 }
 
+const serverOwners = new WeakMap<
+  MCPServer,
+  { toolsets: Set<MCPToolset>; closing?: Promise<void> }
+>();
+
 export class MCPToolset extends AsyncToolset {
   private readonly server: MCPServer;
   private readonly options: Record<string, MCPToolOptions>;
@@ -653,6 +658,7 @@ export class MCPToolset extends AsyncToolset {
   private refreshRequested = false;
   private refreshGeneration = 0;
   private context?: ToolsetContext;
+  private closed = false;
 
   constructor({ id, mcpServer, toolOptions, toolHandling }: MCPToolsetOptions) {
     super({ id, tools: [], toolHandling });
@@ -661,21 +667,28 @@ export class MCPToolset extends AsyncToolset {
   }
 
   override async setup(ctx: ToolsetContext): Promise<void> {
+    this.closed = false;
     this.context = ctx;
     this.refreshGeneration += 1;
     this.unsubscribe ??= this.server.onToolsChanged(() => this.requestRefresh());
+    const owners = this.serverOwners();
+    owners.toolsets.add(this);
+    await owners.closing;
     await this.requestRefresh();
   }
 
   override async aclose(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
     this.context = undefined;
     this.refreshGeneration += 1;
     this.refreshRequested = false;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    this.serverOwners().toolsets.delete(this);
     // An unbounded request must be interrupted so executor drain cannot block shutdown forever.
     if (!this.server._hasBoundedRequests) {
-      await this.server.aclose();
+      await this.closeServerIfUnused();
       await this.settleRefresh();
       await super.aclose();
       return;
@@ -684,8 +697,30 @@ export class MCPToolset extends AsyncToolset {
     try {
       await super.aclose();
     } finally {
-      await this.server.aclose();
+      await this.closeServerIfUnused();
       await this.settleRefresh();
+    }
+  }
+
+  private serverOwners(): { toolsets: Set<MCPToolset>; closing?: Promise<void> } {
+    let owners = serverOwners.get(this.server);
+    if (!owners) {
+      owners = { toolsets: new Set() };
+      serverOwners.set(this.server, owners);
+    }
+    return owners;
+  }
+
+  private async closeServerIfUnused(): Promise<void> {
+    const owners = this.serverOwners();
+    if (owners.toolsets.size > 0) return;
+    const closing = owners.closing ?? this.server.aclose();
+    owners.closing = closing;
+    try {
+      await closing;
+    } finally {
+      if (owners.closing === closing) owners.closing = undefined;
+      if (owners.toolsets.size === 0) serverOwners.delete(this.server);
     }
   }
 
