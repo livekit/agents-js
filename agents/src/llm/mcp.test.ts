@@ -668,6 +668,77 @@ describe('MCPServer', () => {
     expect(secondContext.updateTools.mock.calls[0]?.[0][0]?.name).toBe('new_lookup');
   });
 
+  it.each([false, true])(
+    'keeps a shared server connected when one toolset closes (unbounded: %s)',
+    async (unbounded) => {
+      const close = vi.fn().mockResolvedValue(undefined);
+      const callTool = vi
+        .fn()
+        .mockResolvedValue({ content: [{ type: 'text', text: 'still available' }] });
+      const server = new TestServer({ clientSessionTimeout: unbounded ? null : 5000 });
+      await attachClient(server, {
+        listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+        callTool,
+        close,
+      });
+      const first = new MCPToolset({ id: 'first', mcpServer: server });
+      const second = new MCPToolset({ id: 'second', mcpServer: server });
+      const firstContext = { updateTools: vi.fn() };
+      const secondContext = { updateTools: vi.fn() };
+      await first.setup(firstContext);
+      await second.setup(secondContext);
+      const [lookup] = secondContext.updateTools.mock.calls[0]?.[0] ?? [];
+
+      await first.aclose();
+
+      expect(close).not.toHaveBeenCalled();
+      expect(server.initialized).toBe(true);
+      await expect(
+        lookup.execute(
+          {},
+          { ctx: {}, toolCallId: 'call', abortSignal: new AbortController().signal },
+        ),
+      ).resolves.toContain('still available');
+      expect(callTool).toHaveBeenCalledOnce();
+
+      await second.aclose();
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('waits for the final shared-server shutdown before a new toolset connects', async () => {
+    const oldClose = deferred<void>();
+    const close = vi.fn(() => oldClose.promise);
+    const server = new TestServer();
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      close,
+    });
+    const first = new MCPToolset({ id: 'first', mcpServer: server });
+    await first.setup({ updateTools: vi.fn() });
+
+    const closing = first.aclose();
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+
+    const newClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+    };
+    clientMock.client = newClient;
+    const second = new MCPToolset({ id: 'second', mcpServer: server });
+    const context = { updateTools: vi.fn() };
+    const settingUp = second.setup(context);
+    await Promise.resolve();
+    expect(newClient.connect).not.toHaveBeenCalled();
+
+    oldClose.resolve();
+    await Promise.all([closing, settingUp]);
+    expect(newClient.connect).toHaveBeenCalledOnce();
+    expect(context.updateTools).toHaveBeenCalledOnce();
+    await second.aclose();
+  });
+
   it('delivers a bounded non-cancellable result before closing the MCP server', async () => {
     const result = deferred<{ content: { type: string; text: string }[] }>();
     const close = vi.fn().mockResolvedValue(undefined);
