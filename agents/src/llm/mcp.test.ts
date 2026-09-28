@@ -198,7 +198,7 @@ describe('MCPServer', () => {
         {},
         { ctx: {}, toolCallId: 'call', abortSignal: new AbortController().signal },
       ),
-    ).rejects.toBeInstanceOf(ToolError);
+    ).rejects.toThrow("Tool 'lookup' completed without producing a result.");
   });
 
   it('rejects malformed input schemas from an MCP server', async () => {
@@ -398,6 +398,26 @@ describe('MCPServer', () => {
     ).rejects.toThrow('MCP tool result processing failed unexpectedly.');
   });
 
+  it('does not expose a custom resolver ToolError', async () => {
+    const server = new TestServer({
+      toolResultResolver: () => {
+        throw new ToolError('resolver secret');
+      },
+    });
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }),
+    });
+
+    const [lookup] = await server.listTools();
+    await expect(
+      lookup!.execute(
+        {},
+        { ctx: {}, toolCallId: 'call', abortSignal: new AbortController().signal },
+      ),
+    ).rejects.toThrow('MCP tool result processing failed unexpectedly.');
+  });
+
   it('resets the client after an MCP SDK connection error', async () => {
     const sdkConnectionError = Object.assign(new Error('connection closed'), {
       name: 'McpError',
@@ -420,6 +440,77 @@ describe('MCPServer', () => {
     ).rejects.toThrow('MCP server connection is unavailable');
     expect(server.initialized).toBe(false);
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('reconnects a disconnected toolset on the next call and publishes fresh tools', async () => {
+    const connectionError = Object.assign(new Error('connection closed'), {
+      name: 'McpError',
+      code: -32000,
+    });
+    const oldClient = {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool: vi.fn().mockRejectedValue(connectionError),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const server = new TestServer();
+    await attachClient(server, oldClient);
+    const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+    const context = { updateTools: vi.fn() };
+    await toolset.setup(context);
+    const [lookup] = context.updateTools.mock.calls[0]?.[0] ?? [];
+
+    await expect(
+      lookup.execute(
+        {},
+        { ctx: {}, toolCallId: 'first', abortSignal: new AbortController().signal },
+      ),
+    ).rejects.toThrow('MCP server connection is unavailable');
+    expect(server.initialized).toBe(false);
+    expect(oldClient.close).toHaveBeenCalledOnce();
+
+    const failedReconnect = {
+      connect: vi.fn().mockRejectedValue(new Error('credential-bearing connection failure')),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    clientMock.client = failedReconnect;
+    await expect(
+      lookup.execute(
+        {},
+        { ctx: {}, toolCallId: 'retry', abortSignal: new AbortController().signal },
+      ),
+    ).rejects.toThrow('MCP server connection is unavailable');
+    expect(failedReconnect.close).toHaveBeenCalledOnce();
+
+    const newClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      listTools: vi
+        .fn()
+        .mockResolvedValue({ tools: [descriptor, { ...descriptor, name: 'search' }] }),
+      callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'recovered' }] }),
+    };
+    clientMock.client = newClient;
+    await expect(
+      lookup.execute(
+        {},
+        { ctx: {}, toolCallId: 'second', abortSignal: new AbortController().signal },
+      ),
+    ).resolves.toContain('recovered');
+    await vi.waitFor(() => expect(context.updateTools).toHaveBeenCalledTimes(2));
+    expect(
+      context.updateTools.mock.calls[1]?.[0].map((tool: { name: string }) => tool.name),
+    ).toEqual(['lookup', 'search']);
+    await toolset.aclose();
+
+    const afterClose = { connect: vi.fn(), close: vi.fn() };
+    clientMock.client = afterClose;
+    await expect(
+      lookup.execute(
+        {},
+        { ctx: {}, toolCallId: 'closed', abortSignal: new AbortController().signal },
+      ),
+    ).rejects.toThrow('MCP server connection is unavailable');
+    expect(afterClose.connect).not.toHaveBeenCalled();
   });
 
   it('uses the SDK list-change handler to invalidate cached tools', async () => {
@@ -649,6 +740,62 @@ describe('MCPServer', () => {
         (item) => item.type === 'function_call_output' && item.output === 'resolved result',
       ),
     ).toBe(true);
+  });
+
+  it('delivers an MCP error after a progress update', async () => {
+    const server = new TestServer();
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool: vi.fn(async (_params, _schema, options) => {
+        await options?.onprogress?.({ progress: 0, message: 'working' });
+        return { isError: true, content: [{ type: 'text', text: 'not found' }] };
+      }),
+    });
+    const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+    const [lookup] = await server.listTools({ lookup: { reportProgress: true } });
+    const { runCtx, history } = buildRunContext('lookup');
+
+    await expect(
+      toolset._executor.execute({ tool: lookup!, runCtx, rawArguments: {} }),
+    ).resolves.toContain('working');
+    await vi.waitFor(() =>
+      expect(
+        history.items.some(
+          (item) =>
+            item.type === 'function_call_output' && String(item.output).includes('not found'),
+        ),
+      ).toBe(true),
+    );
+    await toolset.aclose();
+  });
+
+  it('delivers a sanitized SDK failure after a progress update', async () => {
+    const server = new TestServer();
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool: vi.fn(async (_params, _schema, options) => {
+        await options?.onprogress?.({ progress: 0, message: 'working' });
+        throw new Error('credential-bearing request failure');
+      }),
+    });
+    const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+    const [lookup] = await server.listTools({ lookup: { reportProgress: true } });
+    const { runCtx, history } = buildRunContext('lookup');
+
+    await expect(
+      toolset._executor.execute({ tool: lookup!, runCtx, rawArguments: {} }),
+    ).resolves.toContain('working');
+    await vi.waitFor(() =>
+      expect(
+        history.items.some(
+          (item) =>
+            item.type === 'function_call_output' &&
+            String(item.output).includes('MCP tool call failed unexpectedly.'),
+        ),
+      ).toBe(true),
+    );
+    expect(JSON.stringify(history.items)).not.toContain('credential-bearing request failure');
+    await toolset.aclose();
   });
 
   it('interrupts an unbounded MCP call so shutdown can complete', async () => {
