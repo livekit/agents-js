@@ -658,14 +658,18 @@ describe('MCPServer', () => {
     firstPage.resolve({ tools: [descriptor] });
     await Promise.all([firstSetup, closing]);
 
+    const secondClose = vi.fn().mockResolvedValue(undefined);
     await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [{ ...descriptor, name: 'new_lookup' }] }),
+      close: secondClose,
     });
     await toolset.setup(secondContext);
 
     expect(firstContext.updateTools).not.toHaveBeenCalled();
     expect(secondContext.updateTools).toHaveBeenCalledOnce();
     expect(secondContext.updateTools.mock.calls[0]?.[0][0]?.name).toBe('new_lookup');
+    await toolset.aclose();
+    expect(secondClose).toHaveBeenCalledOnce();
   });
 
   it.each([false, true])(
@@ -737,6 +741,98 @@ describe('MCPServer', () => {
     expect(newClient.connect).toHaveBeenCalledOnce();
     expect(context.updateTools).toHaveBeenCalledOnce();
     await second.aclose();
+  });
+
+  it('closes a shared unbounded toolset without disconnecting another owner', async () => {
+    const stalled = deferred<{ content: { type: string; text: string }[] }>();
+    const callTool = vi
+      .fn()
+      .mockImplementationOnce(async (_params, _schema, options) => {
+        await options?.onprogress?.({ progress: 0, message: 'working' });
+        return new Promise((resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
+            once: true,
+          });
+          stalled.promise.then(resolve, reject);
+        });
+      })
+      .mockResolvedValue({ content: [{ type: 'text', text: 'second owner works' }] });
+    const close = vi.fn().mockResolvedValue(undefined);
+    const server = new TestServer({ clientSessionTimeout: null });
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool,
+      close,
+    });
+    const first = new MCPToolset({
+      id: 'first',
+      mcpServer: server,
+      toolOptions: { lookup: { reportProgress: true } },
+    });
+    const second = new MCPToolset({ id: 'second', mcpServer: server });
+    const firstContext = { updateTools: vi.fn() };
+    const secondContext = { updateTools: vi.fn() };
+    await first.setup(firstContext);
+    await second.setup(secondContext);
+    const [firstLookup] = firstContext.updateTools.mock.calls[0]?.[0] ?? [];
+    const [secondLookup] = secondContext.updateTools.mock.calls[0]?.[0] ?? [];
+    const { runCtx } = buildRunContext('lookup');
+    await expect(
+      first._executor.execute({ tool: firstLookup, runCtx, rawArguments: {} }),
+    ).resolves.toContain('working');
+
+    let finished = false;
+    const closing = first.aclose().then(() => {
+      finished = true;
+    });
+    try {
+      await vi.waitFor(() => expect(finished).toBe(true), { timeout: 100 });
+      expect(close).not.toHaveBeenCalled();
+      await expect(
+        secondLookup.execute(
+          {},
+          { ctx: {}, toolCallId: 'second', abortSignal: new AbortController().signal },
+        ),
+      ).resolves.toContain('second owner works');
+    } finally {
+      stalled.resolve({ content: [{ type: 'text', text: 'late result' }] });
+      await closing;
+      await second.aclose();
+    }
+  });
+
+  it('makes concurrent close callers await the same teardown', async () => {
+    const result = deferred<{ content: { type: string; text: string }[] }>();
+    const server = new TestServer();
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool: vi.fn(async (_params, _schema, options) => {
+        await options?.onprogress?.({ progress: 0, message: 'working' });
+        return result.promise;
+      }),
+    });
+    const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+    const [lookup] = await server.listTools({ lookup: { reportProgress: true } });
+    const { runCtx } = buildRunContext('lookup');
+    await expect(
+      toolset._executor.execute({ tool: lookup!, runCtx, rawArguments: {} }),
+    ).resolves.toContain('working');
+
+    const firstClose = toolset.aclose();
+    let secondFinished = false;
+    const secondClose = toolset.aclose();
+    void secondClose.then(() => {
+      secondFinished = true;
+    });
+    try {
+      expect(secondClose).toBe(firstClose);
+      await vi.waitFor(() => expect(secondFinished).toBe(false), { timeout: 25 });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(secondFinished).toBe(false);
+    } finally {
+      result.resolve({ content: [{ type: 'text', text: 'finished' }] });
+      await Promise.all([firstClose, secondClose]);
+    }
   });
 
   it('delivers a bounded non-cancellable result before closing the MCP server', async () => {
