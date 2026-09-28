@@ -14,8 +14,10 @@ import {
   TrackSource,
   isFrameProcessor,
 } from '@livekit/rtc-node';
+import type { Context, Span } from '@opentelemetry/api';
 import { type ReadableStream, TransformStream } from 'node:stream/web';
 import { log } from '../../log.js';
+import { traceTypes, tracer } from '../../telemetry/index.js';
 import { resampleStream } from '../../utils.js';
 import { AudioInput } from '../io.js';
 
@@ -37,6 +39,14 @@ export class ParticipantAudioInputStream extends AudioInput {
   private attached = true;
   private closed = false;
   private logger = log();
+
+  // wait_for_audio_track: linked participant -> first frame
+  private trackWaitSpan?: Span;
+  private trackWaitStartedAt?: number;
+  private traceContext?: Context;
+  // parent for track waits outside startup (a participant switch): the session root, so the
+  // span lands on the session timeline rather than under whatever task switched participants
+  private defaultTraceContext?: Context;
 
   constructor({
     room,
@@ -78,11 +88,13 @@ export class ParticipantAudioInputStream extends AudioInput {
     if (this.participantIdentity) {
       this.closeStream();
     }
+    this.endTrackWait();
     this.participantIdentity = participantIdentity;
 
     if (!participantIdentity) {
       return;
     }
+    this.beginTrackWait(participantIdentity);
 
     const participantValue =
       participant instanceof RemoteParticipant
@@ -114,6 +126,46 @@ export class ParticipantAudioInputStream extends AudioInput {
 
   override setAttached(attached: boolean): void {
     this.attached = attached;
+  }
+
+  /** Parent for the next track-wait span (the session's startup bar), never made current. */
+  setTraceContext(context: Context | undefined): void {
+    this.traceContext = context;
+  }
+
+  /** Parent for track waits started outside the startup bar (the session root). */
+  setDefaultTraceContext(context: Context | undefined): void {
+    this.defaultTraceContext = context;
+  }
+
+  private beginTrackWait(participantIdentity: string): void {
+    this.trackWaitStartedAt = Date.now();
+    this.trackWaitSpan = tracer.startSpan({
+      name: 'wait_for_audio_track',
+      context: this.traceContext ?? this.defaultTraceContext,
+      attributes: { [traceTypes.ATTR_PARTICIPANT_IDENTITY]: participantIdentity },
+    });
+  }
+
+  private onFirstFrame(): void {
+    const span = this.trackWaitSpan;
+    if (!span?.isRecording()) return;
+    const now = Date.now();
+    span.addEvent('first_frame', undefined, now);
+    if (this.trackWaitStartedAt !== undefined) {
+      span.setAttribute(
+        traceTypes.ATTR_FIRST_FRAME_DELAY,
+        Math.max(now - this.trackWaitStartedAt, 0) / 1000,
+      );
+    }
+    this.endTrackWait();
+  }
+
+  private endTrackWait(): void {
+    const span = this.trackWaitSpan;
+    this.trackWaitSpan = undefined;
+    this.trackWaitStartedAt = undefined;
+    if (span?.isRecording()) span.end();
   }
 
   override onAttached(): void {
@@ -160,6 +212,15 @@ export class ParticipantAudioInputStream extends AudioInput {
   private updateStream(track: RemoteTrack | null, publication: RemoteTrackPublication | null) {
     this.track = track;
     this.publication = publication;
+    if (track && publication && this.trackWaitSpan?.isRecording()) {
+      this.trackWaitSpan.addEvent('track_subscribed', {
+        [traceTypes.ATTR_TRACK_SID]: publication.sid ?? '',
+        [traceTypes.ATTR_TRACK_SOURCE]:
+          publication.source !== undefined
+            ? TrackSource[publication.source] ?? String(publication.source)
+            : 'unknown',
+      });
+    }
 
     if (track && publication && !this.streamTransition && !this.currentInput) {
       this.openStream(track);
@@ -211,8 +272,13 @@ export class ParticipantAudioInputStream extends AudioInput {
   }
 
   private openStream(track: RemoteTrack) {
+    let firstFrame = true;
     const output = new TransformStream<AudioFrame, AudioFrame>({
       transform: (frame, controller) => {
+        if (firstFrame) {
+          firstFrame = false;
+          this.onFirstFrame();
+        }
         if (this.attached) {
           controller.enqueue(frame);
         }
@@ -305,6 +371,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room.off(RoomEvent.TrackUnsubscribed, this.onTrackUnsubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.closeStream();
+    this.endTrackWait();
     await this.streamTransition;
     await super.close();
 

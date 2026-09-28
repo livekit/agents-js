@@ -65,6 +65,7 @@ export class TTS extends tts.TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
+    releaseIdleConnections(): Promise<void>;
     // (undocumented)
     get sampleRate(): number;
     // (undocumented)

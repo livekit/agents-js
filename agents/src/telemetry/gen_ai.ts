@@ -76,11 +76,21 @@ const INFERENCE_RECORDED = Symbol('lkInferenceRecorded');
 
 export interface InferenceMarker {
   recorded: boolean;
+  /** Runs once, when the first `llm_request` span is created inside the tracked call. */
+  onRecorded?: () => void;
 }
 
-/** Runs `fn` with a marker that fills in if an `llm_request` span is created inside it. */
-export function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T): T {
-  const marker: InferenceMarker = { recorded: false };
+/**
+ * Runs `fn` with a marker that fills in if an `llm_request` span is created inside it.
+ * `onRecorded` runs at that moment: what the node knew before the request (its configured
+ * model and provider) is recorded before a fallback can overwrite the provider with the
+ * instance that actually served, and never afterwards.
+ */
+export function withInferenceTracking<T>(
+  fn: (marker: InferenceMarker) => T,
+  options: { onRecorded?: () => void } = {},
+): T {
+  const marker: InferenceMarker = { recorded: false, onRecorded: options.onRecorded };
   return otelContext.with(otelContext.active().setValue(INFERENCE_RECORDED, marker), () =>
     fn(marker),
   );
@@ -89,7 +99,9 @@ export function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T): T 
 /** Called where an `llm_request` span is created, so the enclosing node stands down. */
 export function markInferenceSpanRecorded(): void {
   const marker = otelContext.active().getValue(INFERENCE_RECORDED) as InferenceMarker | undefined;
-  if (marker) marker.recorded = true;
+  if (!marker || marker.recorded) return;
+  marker.recorded = true;
+  marker.onRecorded?.();
 }
 
 function textPart(content: string): MessagePart {
@@ -341,7 +353,8 @@ export function setContentAttributes(
 export function setRequestAttributes(
   span: Span,
   params: {
-    operation: string;
+    /** Absent for a delegating span: the nested provider request owns the operation. */
+    operation: string | undefined;
     provider?: string;
     model?: string;
     stream?: boolean;
@@ -350,7 +363,9 @@ export function setRequestAttributes(
 ): void {
   if (!span.isRecording()) return;
 
-  const attrs: Attributes = { [traceTypes.ATTR_GEN_AI_OPERATION_NAME]: params.operation };
+  const attrs: Attributes = {};
+  if (params.operation !== undefined)
+    attrs[traceTypes.ATTR_GEN_AI_OPERATION_NAME] = params.operation;
   const provider = traceTypes.genAIProviderName(params.provider);
   if (provider) attrs[traceTypes.ATTR_GEN_AI_PROVIDER_NAME] = provider;
   if (params.model) attrs[traceTypes.ATTR_GEN_AI_REQUEST_MODEL] = params.model;

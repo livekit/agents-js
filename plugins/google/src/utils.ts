@@ -81,6 +81,7 @@ export function convertJSONSchemaToOpenAPISchema(jsonSchema: JSONSchema7Definiti
       },
       {} as Record<string, unknown>,
     );
+    result.propertyOrdering = Object.keys(properties);
   }
 
   if (items) {

@@ -54,6 +54,59 @@ describe('AgentSession close', () => {
 
     expect(closeSessionHost).toHaveBeenCalledOnce();
   });
+
+  it('closes the transports even when a Close listener throws, then rethrows', async () => {
+    const session = new AgentSession({ vad: null });
+    const internals = session as unknown as AgentSessionCloseInternals & {
+      _roomIO?: { close: () => Promise<void> };
+    };
+    const closeSessionHost = vi.fn(async () => {});
+    const closeRoomIO = vi.fn(async () => {});
+    internals.started = true;
+    internals.sessionHost = { close: closeSessionHost };
+    internals._roomIO = { close: closeRoomIO };
+    session.on(AgentSessionEventTypes.Close, () => {
+      throw new Error('listener exploded');
+    });
+
+    await expect(session.close()).rejects.toThrow('listener exploded');
+
+    expect(closeSessionHost).toHaveBeenCalledOnce();
+    expect(closeRoomIO).toHaveBeenCalledOnce();
+    expect(internals.sessionHost).toBeUndefined();
+    expect(internals._roomIO).toBeUndefined();
+  });
+
+  it('closes the activity and the transports even when the recorder fails, then rethrows', async () => {
+    const session = new AgentSession({ vad: null });
+    const internals = session as unknown as AgentSessionCloseInternals & {
+      activity?: { agent: object; close: () => Promise<void> };
+      _roomIO?: { close: () => Promise<void> };
+      _recorderIO?: { close: () => Promise<void> };
+    };
+    const closeSessionHost = vi.fn(async () => {});
+    const closeRoomIO = vi.fn(async () => {});
+    const closeActivity = vi.fn(async () => {});
+    internals.sessionHost = { close: closeSessionHost };
+    internals._roomIO = { close: closeRoomIO };
+    // an activity that was never started (no drain to run), still to be closed
+    internals.started = false;
+    internals.activity = { agent: {}, close: closeActivity };
+    internals._recorderIO = {
+      close: async () => {
+        throw new Error('recorder stuck');
+      },
+    };
+
+    await expect(session.close()).rejects.toThrow('recorder stuck');
+
+    expect(closeActivity).toHaveBeenCalledOnce();
+    expect(internals.activity).toBeUndefined();
+    expect(closeSessionHost).toHaveBeenCalledOnce();
+    expect(closeRoomIO).toHaveBeenCalledOnce();
+    expect(internals.sessionHost).toBeUndefined();
+    expect(internals._roomIO).toBeUndefined();
+  });
 });
 
 describe('AgentSession AEC warmup', () => {

@@ -1,0 +1,643 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Where a stall lands and what it says: the `event_loop_blocked` span nests under the span that
+ * was running when the loop blocked, and carries the loop thread's sampled stack.
+ */
+import { ROOT_CONTEXT, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { execSync } from 'node:child_process';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type JobContext, runWithJobContext } from '../job.js';
+import { log } from '../log.js';
+import { BlockedSpanTracker, blockedSpanTracker } from './blocked_span_tracker.js';
+import { type BlockedReport, EventLoopMonitor, SPAN_NAME } from './loop_monitor.js';
+import {
+  ENV_STACKS,
+  MAX_STACK_FRAMES,
+  type StackSample,
+  formatSample,
+  innermostLocation,
+  stackSamplingModeFromEnv,
+} from './loop_stack_sampler.js';
+import { ATTR_BLOCKING_STACK } from './trace_types.js';
+import { setTracerProvider, tracer } from './traces.js';
+
+const WARN = 30;
+const ERROR = 150;
+const TICK = 5;
+
+/** Named so the sampled stack can be checked for it. */
+function burnCpuForTest(duration: number): number {
+  const until = performance.now() + duration;
+  let hash = 0;
+  while (performance.now() < until) {
+    for (let i = 0; i < 1000; i++) hash = (hash * 31 + i) | 0;
+  }
+  return hash;
+}
+
+async function waitFor(condition: () => boolean, timeout = 3000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+function fakeJob(session?: unknown, jobSpanContext?: unknown): JobContext {
+  return {
+    _primaryAgentSession: session,
+    _jobSpanContext: jobSpanContext,
+    job: { id: 'AJ_test', room: { sid: 'RM_test' } },
+  } as unknown as JobContext;
+}
+
+describe.sequential('event loop stall parent', () => {
+  let exporter: InMemorySpanExporter;
+  let provider: NodeTracerProvider;
+  let originalProvider: ReturnType<typeof tracer.getProvider>;
+  let monitor: EventLoopMonitor;
+  let reports: BlockedReport[];
+
+  beforeEach(async () => {
+    originalProvider = tracer.getProvider();
+    exporter = new InMemorySpanExporter();
+    provider = new NodeTracerProvider({
+      spanProcessors: [blockedSpanTracker, new SimpleSpanProcessor(exporter)],
+    });
+    setTracerProvider(provider);
+    reports = [];
+    monitor = new EventLoopMonitor({
+      warnThreshold: WARN,
+      errorThreshold: ERROR,
+      tickInterval: TICK,
+      watchdog: false,
+      stacks: 'never',
+    });
+    monitor.onReport = (report) => reports.push(report);
+  });
+
+  afterEach(async () => {
+    monitor.stop();
+    setTracerProvider(originalProvider);
+    await provider.shutdown();
+    vi.restoreAllMocks();
+  });
+
+  function stalls() {
+    return exporter.getFinishedSpans().filter((span) => span.name === SPAN_NAME);
+  }
+
+  it('nests under the span that was running when the loop blocked', async () => {
+    const sessionRoot = tracer.startSpan({ name: 'agent_session' });
+    const rootCtx = trace.setSpan(ROOT_CONTEXT, sessionRoot);
+    monitor.setReportContext(rootCtx, (fn) =>
+      runWithJobContext(fakeJob({ rootSpanContext: rootCtx }), fn),
+    );
+    monitor.start();
+    await new Promise((resolve) => setTimeout(resolve, WARN));
+
+    // a tool that blocks: its span is open across the stall and ends when the call returns
+    const tool = tracer.startSpan({ name: 'function_tool', context: rootCtx });
+    burnCpuForTest(70);
+    tool.end();
+    await waitFor(() => stalls().length > 0);
+    sessionRoot.end();
+
+    const [stall] = stalls();
+    expect(stall!.parentSpanContext?.spanId).toBe(tool.spanContext().spanId);
+  });
+
+  it('falls back to the session root, then the job root', async () => {
+    const sessionRoot = tracer.startSpan({ name: 'agent_session' });
+    const rootCtx = trace.setSpan(ROOT_CONTEXT, sessionRoot);
+    monitor.setReportContext(rootCtx, (fn) =>
+      runWithJobContext(fakeJob({ rootSpanContext: rootCtx }), fn),
+    );
+    monitor.start();
+    await new Promise((resolve) => setTimeout(resolve, WARN));
+    burnCpuForTest(70);
+    await waitFor(() => stalls().length > 0);
+    expect(stalls()[0]!.parentSpanContext?.spanId).toBe(sessionRoot.spanContext().spanId);
+    sessionRoot.end();
+    exporter.reset();
+
+    // no session: the job's root
+    const jobRoot = tracer.startSpan({ name: 'job_entrypoint' });
+    const jobCtx = trace.setSpan(ROOT_CONTEXT, jobRoot);
+    monitor.setReportContext(undefined, (fn) => runWithJobContext(fakeJob(undefined, jobCtx), fn));
+    burnCpuForTest(70);
+    await waitFor(() => stalls().length > 0);
+    expect(stalls()[0]!.parentSpanContext?.spanId).toBe(jobRoot.spanContext().spanId);
+    jobRoot.end();
+  });
+});
+
+describe('BlockedSpanTracker', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('picks the innermost span current across the window and forgets ended ones', () => {
+    vi.useFakeTimers();
+    const T = 1_000_000;
+    vi.setSystemTime(T);
+    const tracker = new BlockedSpanTracker({ retention: 60_000 });
+    const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
+    const t = provider.getTracer('test');
+    const outer = t.startSpan('outer');
+    const inner = t.startSpan('inner');
+    const early = t.startSpan('early');
+    const late = t.startSpan('late');
+    vi.setSystemTime(T + 40);
+    early.end(); // over before the window opens
+    vi.setSystemTime(T + 90);
+    late.end(); // ended after the window closed: it was current during it
+    vi.setSystemTime(T + 100);
+    // the window: [T+50, T+80]. Open spans and `late` were current; the innermost is the one
+    // created last, `late`; excluding it, `inner`
+    expect(tracker.blockedSpan(T + 50, T + 80, new Set())).toBe(late);
+    expect(tracker.blockedSpan(T + 50, T + 80, new Set(['late']))).toBe(inner);
+    expect(tracker.blockedSpan(T + 50, T + 80, new Set(['late', 'inner']))).toBe(outer);
+    expect(
+      tracker.blockedSpan(T + 50, T + 80, new Set(['late', 'inner', 'outer'])),
+    ).toBeUndefined();
+    // a later window: only the spans still open qualify
+    expect(tracker.blockedSpan(T + 95, T + 99, new Set())).toBe(inner);
+    inner.end();
+    outer.end();
+    expect(tracker.openCount).toBe(0);
+    // ended spans are forgotten after the retention
+    vi.setSystemTime(T + 100 + 60_000 + 1);
+    t.startSpan('tick').end();
+    expect(tracker.blockedSpan(T + 50, T + 80, new Set())).toBeUndefined();
+  });
+
+  it('does not guess between two operations of the same kind', () => {
+    // two tools of one turn were both in flight when the loop blocked: timing cannot say which
+    // one spun, so the stall lands on the turn that contains both, not on the newer tool
+    vi.useFakeTimers();
+    const T = 2_000_000;
+    vi.setSystemTime(T);
+    const tracker = new BlockedSpanTracker({ retention: 60_000 });
+    const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
+    const t = provider.getTracer('test');
+    const session = t.startSpan('agent_session');
+    const turn = t.startSpan('agent_turn', {}, trace.setSpan(ROOT_CONTEXT, session));
+    const turnCtx = trace.setSpan(ROOT_CONTEXT, turn);
+    const toolA = t.startSpan('function_tool', {}, turnCtx);
+    vi.setSystemTime(T + 10);
+    const toolB = t.startSpan('function_tool', {}, turnCtx);
+    vi.setSystemTime(T + 100);
+    expect(tracker.blockedSpan(T + 50, T + 80, new Set())).toBe(turn);
+    // once one of them is over before the window, the other is the one that blocked
+    toolA.end();
+    vi.setSystemTime(T + 200);
+    expect(tracker.blockedSpan(T + 150, T + 180, new Set())).toBe(toolB);
+    toolB.end();
+
+    // operations of different kinds overlap all the time: the newest is the one that blocked
+    const userTurn = t.startSpan('user_turn', {}, trace.setSpan(ROOT_CONTEXT, session));
+    vi.setSystemTime(T + 210);
+    const rpc = t.startSpan('rpc_handler', {}, trace.setSpan(ROOT_CONTEXT, session));
+    vi.setSystemTime(T + 300);
+    expect(tracker.blockedSpan(T + 250, T + 280, new Set())).toBe(rpc);
+    rpc.end();
+    userTurn.end();
+
+    // two of a kind with no common ancestor in sight: nothing, rather than a wrong parent
+    const rootA = t.startSpan('rpc_handler');
+    vi.setSystemTime(T + 310);
+    const rootB = t.startSpan('rpc_handler');
+    vi.setSystemTime(T + 400);
+    expect(tracker.blockedSpan(T + 350, T + 380, new Set())).toBeUndefined();
+    rootA.end();
+    rootB.end();
+    turn.end();
+    session.end();
+  });
+
+  it('confines the parent to the trace of the fallback context', () => {
+    // a background HTTP request of the application, open in its own trace, was created after
+    // the tool: newest by timing, but not a candidate for the job's stall
+    vi.useFakeTimers();
+    const T = 4_000_000;
+    vi.setSystemTime(T);
+    const tracker = new BlockedSpanTracker({ retention: 60_000 });
+    const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
+    const t = provider.getTracer('test');
+    const session = t.startSpan('agent_session');
+    const sessionCtx = trace.setSpan(ROOT_CONTEXT, session);
+    const tool = t.startSpan('function_tool', {}, sessionCtx);
+    vi.setSystemTime(T + 10);
+    const http = t.startSpan('http.request'); // a root of its own: another trace
+    vi.setSystemTime(T + 100);
+    expect(tracker.blockedSpan(T + 50, T + 80, new Set())).toBe(http);
+    const ctx = tracker.blockedContext(T + 50, T + 80, new Set(), sessionCtx);
+    expect(trace.getSpan(ctx!)).toBe(tool);
+    http.end();
+    tool.end();
+    session.end();
+  });
+
+  it('keeps a blocking RPC when its span ends before the late heartbeat', async () => {
+    vi.useFakeTimers();
+    const T = 3_000_000;
+    vi.setSystemTime(T);
+    const tracker = new BlockedSpanTracker();
+    const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
+    const t = provider.getTracer('test');
+    const session = t.startSpan('agent_session');
+    const sessionCtx = trace.setSpan(ROOT_CONTEXT, session);
+    const audioWait = t.startSpan('wait_for_audio_track', {}, sessionCtx);
+    vi.setSystemTime(T + 15);
+    const rpc = t.startSpan('rpc_handler', {}, sessionCtx);
+    vi.setSystemTime(T + 620);
+    rpc.end(); // the synchronous RPC returns before the next heartbeat runs
+    vi.setSystemTime(T + 800);
+
+    expect(tracker.blockedSpan(T + 20, T + 720, new Set(), 20)).toBe(rpc);
+
+    audioWait.end();
+    session.end();
+    await provider.shutdown();
+  });
+
+  it('keeps a blocking span through a burst of spans ending before the late heartbeat', () => {
+    vi.useFakeTimers();
+    const T = 4_000_000;
+    vi.setSystemTime(T);
+    const tracker = new BlockedSpanTracker({ maxEnded: 8, minRetention: 1_000 });
+    const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
+    const t = provider.getTracer('test');
+    const tool = t.startSpan('function_tool');
+    vi.setSystemTime(T + 220);
+    tool.end(); // the blocking call returned...
+    // ...and its caller ended more spans than the count keeps, before the loop yielded
+    for (let i = 0; i < 20; i++) t.startSpan(`short_${i}`).end();
+    vi.setSystemTime(T + 240);
+    expect(tracker.blockedSpan(T + 20, T + 240, new Set(), 20)).toBe(tool);
+    // the count applies once they have settled
+    vi.setSystemTime(T + 240 + 1_000);
+    t.startSpan('tick').end();
+    expect(tracker.blockedSpan(T + 20, T + 240, new Set(), 20)).toBeUndefined();
+  });
+
+  it('ignores a span created after the window, whatever its start time claims', () => {
+    const tracker = new BlockedSpanTracker();
+    const provider = new NodeTracerProvider({ spanProcessors: [tracker] });
+    const t = provider.getTracer('test');
+    const windowStart = Date.now() - 500;
+    // back-dated like eou_wait: created now, starts in the past
+    const backdated = t.startSpan('eou_wait', { startTime: windowStart - 1000 });
+    expect(tracker.blockedSpan(windowStart, windowStart + 100, new Set())).toBeUndefined();
+    backdated.end();
+  });
+});
+
+describe.sequential('event loop stall stacks', () => {
+  let exporter: InMemorySpanExporter;
+  let provider: NodeTracerProvider;
+  let originalProvider: ReturnType<typeof tracer.getProvider>;
+  let sessionRoot: ReturnType<typeof tracer.startSpan>;
+  let monitors: EventLoopMonitor[];
+
+  beforeEach(() => {
+    originalProvider = tracer.getProvider();
+    exporter = new InMemorySpanExporter();
+    provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+    setTracerProvider(provider);
+    sessionRoot = tracer.startSpan({ name: 'agent_session' });
+    monitors = [];
+  });
+
+  afterEach(async () => {
+    for (const monitor of monitors) monitor.stop();
+    sessionRoot.end();
+    setTracerProvider(originalProvider);
+    await provider.shutdown();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  function startMonitor(stacks: 'adaptive' | 'always' | 'never'): {
+    monitor: EventLoopMonitor;
+    reports: BlockedReport[];
+  } {
+    const reports: BlockedReport[] = [];
+    const monitor = new EventLoopMonitor({
+      warnThreshold: WARN,
+      errorThreshold: ERROR,
+      tickInterval: TICK,
+      stacks,
+    });
+    monitor.onReport = (report) => reports.push(report);
+    const rootCtx = trace.setSpan(ROOT_CONTEXT, sessionRoot);
+    monitor.setReportContext(rootCtx, (fn) =>
+      runWithJobContext(fakeJob({ rootSpanContext: rootCtx }), fn),
+    );
+    monitor.start();
+    monitors.push(monitor);
+    return { monitor, reports };
+  }
+
+  function stalls() {
+    return exporter.getFinishedSpans().filter((span) => span.name === SPAN_NAME);
+  }
+
+  /** The watchdog is up (it vouches for the process) and, if asked, sampling too. */
+  async function watchdogReady(monitor: EventLoopMonitor, sampling: boolean): Promise<void> {
+    await waitFor(() => monitor.watchdogActive);
+    if (sampling) await waitFor(() => monitor.stackSamplingActive);
+    // enabling the debugger domain blocks the loop for a moment: let that stall be reported
+    await new Promise((resolve) => setTimeout(resolve, WARN + TICK * 4));
+  }
+
+  /**
+   * The report of `block`'s stall whose sampled stack names `needle`. On a loaded host (CI runs
+   * every test file at once) the block's stall can be preceded by stalls of the host's own, and
+   * a pause can land in one of those instead: the block is retried a few times rather than
+   * trusting the first report after it.
+   */
+  async function sampledStall(
+    reports: BlockedReport[],
+    block: () => void,
+    needle: string,
+    attempts = 3,
+  ): Promise<BlockedReport> {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const before = codeReports(reports).length;
+      block();
+      const found = () =>
+        codeReports(reports)
+          .slice(before)
+          .find((r) => r.stack?.includes(needle));
+      try {
+        await waitFor(() => found() !== undefined, 1_500);
+      } catch {
+        continue;
+      }
+      return found()!;
+    }
+    throw new Error(`no sampled stall naming ${needle} in ${attempts} attempts`);
+  }
+
+  /** Reports of the loop's own code (a loaded host can add host stalls around a test's block). */
+  function codeReports(reports: BlockedReport[]): BlockedReport[] {
+    return reports.filter((report) => report.cause === 'code');
+  }
+
+  it('samples after the first stall by default, and names the blocking function', async () => {
+    const { monitor, reports } = startMonitor('adaptive');
+    await watchdogReady(monitor, false);
+    expect(monitor.stackSamplingActive).toBe(false);
+
+    burnCpuForTest(70);
+    await waitFor(() => codeReports(reports).length >= 1);
+    // the first stall turned sampling on but was itself reported without a stack
+    expect(codeReports(reports)[0]!.stack).toBe(
+      "# no sample: stack sampling starts after a process's first stall",
+    );
+    expect(codeReports(reports)[0]!.location).toBeUndefined();
+    await watchdogReady(monitor, true);
+    // enabling the debugger domain blocks the loop itself (see samplingStarted): with this
+    // test's 30 ms threshold that is a stall of its own, and it is reported as such
+    for (const report of codeReports(reports).slice(1)) {
+      expect(report.stack).toContain('the stack sampler was starting');
+    }
+
+    const report = await sampledStall(reports, () => burnCpuForTest(80), 'at burnCpuForTest (');
+    expect(report.stack).toMatch(/^# loop thread sampled \d+ms into the stall\n/);
+    expect(report.location).toMatch(/^burnCpuForTest \(.*loop_monitor_stacks\.test\.ts:\d+\)$/);
+    expect(stalls().some((span) => span.attributes[ATTR_BLOCKING_STACK] === report.stack)).toBe(
+      true,
+    );
+  });
+
+  it('has no stacks to offer without the watchdog thread, and says nothing', async () => {
+    // the sampler is the watchdog thread's: `always` without it would promise stacks that
+    // never come, and note on every stall that sampling starts after the first one
+    const reports: BlockedReport[] = [];
+    const monitor = new EventLoopMonitor({
+      warnThreshold: WARN,
+      errorThreshold: ERROR,
+      tickInterval: TICK,
+      watchdog: false,
+      stacks: 'always',
+    });
+    monitor.onReport = (report) => reports.push(report);
+    monitor.start();
+    monitors.push(monitor);
+    burnCpuForTest(70);
+    await waitFor(() => codeReports(reports).length >= 1);
+    expect(monitor.stackSamplingActive).toBe(false);
+    expect(codeReports(reports)[0]!.stack).toBeUndefined();
+  });
+
+  it('stops sampling when an inspector attaches, and says why', async () => {
+    const inspector = await import('node:inspector');
+    const { monitor, reports } = startMonitor('always');
+    await watchdogReady(monitor, true);
+    expect(monitor.stackSamplingActive).toBe(true);
+    // an operator enables the inspector on the running process
+    inspector.open(0, '127.0.0.1', false);
+    try {
+      expect(inspector.url()).toBeDefined();
+      await waitFor(() => !monitor.stackSamplingActive);
+      const before = codeReports(reports).length;
+      burnCpuForTest(70);
+      await waitFor(() => codeReports(reports).length >= before + 1);
+      const report = codeReports(reports)[before]!;
+      expect(report.stack).toContain('an inspector is attached');
+      expect(report.location).toBeUndefined();
+    } finally {
+      inspector.close();
+    }
+  });
+
+  it('samples in the worker process too, into the log', async () => {
+    // no spans and no job in the worker: the stack still names the blocking code in the log,
+    // as the Python monitor's does in every process
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    const reports: BlockedReport[] = [];
+    const monitor = new EventLoopMonitor({
+      warnThreshold: WARN,
+      errorThreshold: ERROR,
+      tickInterval: TICK,
+      emitSpans: false,
+      stacks: 'adaptive',
+    });
+    monitor.onReport = (report) => reports.push(report);
+    monitor.start();
+    monitors.push(monitor);
+    await watchdogReady(monitor, false);
+
+    burnCpuForTest(70);
+    await waitFor(() => codeReports(reports).length >= 1);
+    expect(codeReports(reports)[0]!.stack).toBe(
+      "# no sample: stack sampling starts after a process's first stall",
+    );
+    await watchdogReady(monitor, true);
+
+    const report = await sampledStall(reports, () => burnCpuForTest(80), 'at burnCpuForTest (');
+    expect(stalls()).toEqual([]);
+    const logged = warn.mock.calls.map((call) => call[0] as { stack?: string });
+    expect(logged.some((fields) => fields.stack === report.stack)).toBe(true);
+  });
+
+  it('samples from the start with always, and never with never', async () => {
+    const always = startMonitor('always');
+    await watchdogReady(always.monitor, true);
+    await sampledStall(always.reports, () => burnCpuForTest(80), 'at burnCpuForTest (');
+    always.monitor.stop();
+
+    exporter.reset();
+    const never = startMonitor('never');
+    await watchdogReady(never.monitor, false);
+    burnCpuForTest(70);
+    await waitFor(() => codeReports(never.reports).length >= 1);
+    expect(never.monitor.stackSamplingActive).toBe(false);
+    expect(codeReports(never.reports)[0]!.stack).toBeUndefined();
+    expect(stalls().every((span) => span.attributes[ATTR_BLOCKING_STACK] === undefined)).toBe(true);
+  });
+
+  it('takes a second look at a long stall', async () => {
+    const { monitor, reports } = startMonitor('always');
+    await watchdogReady(monitor, true);
+    // past LATE_SAMPLE_FACTOR x the threshold
+    const report = await sampledStall(
+      reports,
+      () => burnCpuForTest(WARN * 12),
+      'at burnCpuForTest (',
+    );
+    const stack = report.stack!;
+    const headers = stack.split('\n').filter((line) => line.startsWith('# loop thread sampled'));
+    expect(headers).toHaveLength(2);
+    const offsets = headers.map((line) => Number(/(\d+)ms/.exec(line)![1]));
+    expect(offsets[0]).toBeLessThan(offsets[1]!);
+    expect(offsets[1]).toBeGreaterThanOrEqual(WARN * 10 - TICK);
+    expect(stack.split('\n---\n')).toHaveLength(2);
+  });
+
+  it('samples a native call in its caller once it returns', async () => {
+    const { monitor, reports } = startMonitor('always');
+    await watchdogReady(monitor, true);
+    // a synchronous child process: V8 services the pause only when the call returns, so the
+    // sample is taken at the end of the stall, in the frame that made the call (Atomics.wait,
+    // by contrast, checks for interrupts and is sampled while waiting)
+    const report = await sampledStall(
+      reports,
+      () => execSync('sleep 0.08'),
+      'loop_monitor_stacks.test.ts',
+    );
+    const offset = Number(/sampled (\d+)ms/.exec(report.stack!)![1]);
+    // the call started up to a heartbeat before the stall is dated from
+    expect(offset).toBeGreaterThanOrEqual(75 - TICK);
+  });
+
+  it('discards a pause that landed after the loop had moved on', () => {
+    const { monitor } = startMonitor('adaptive');
+    const report = monitor['buildReport'](100, { cpuTime: 5, gcTime: 0, watchdogGap: 0 });
+    const late = { offset: 150, pausedAt: report.endedAt + 50, frames: [] };
+    monitor['attachStack'](report, [late]);
+    expect(report.stack).toContain('native call');
+    expect(report.stack).toContain('50ms after the call returned');
+    expect(report.location).toBeUndefined();
+    // and with no sample at all while sampling is off, the note says when it starts
+    const short = monitor['buildReport'](100, { cpuTime: 5, gcTime: 0, watchdogGap: 0 });
+    monitor['attachStack'](short, undefined);
+    expect(short.stack).toBe("# no sample: stack sampling starts after a process's first stall");
+  });
+
+  it('puts the location in the warning', async () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    const { monitor, reports } = startMonitor('always');
+    await watchdogReady(monitor, true);
+    await sampledStall(reports, () => burnCpuForTest(80), 'at burnCpuForTest (');
+    const call = warn.mock.calls.find((args) => String(args[1]).includes('at burnCpuForTest'));
+    expect(call).toBeDefined();
+    expect(String(call![1])).toMatch(/^event loop blocked at burnCpuForTest \(/);
+    expect((call![0] as { location?: string }).location).toContain('burnCpuForTest');
+    expect((call![0] as { stack?: string }).stack).toContain('at burnCpuForTest (');
+  });
+
+  it('reads env: adaptive by default, 1/always, 0/never', () => {
+    expect(stackSamplingModeFromEnv({})).toBe('adaptive');
+    expect(stackSamplingModeFromEnv({ [ENV_STACKS]: '1' })).toBe('always');
+    expect(stackSamplingModeFromEnv({ [ENV_STACKS]: 'always' })).toBe('always');
+    expect(stackSamplingModeFromEnv({ [ENV_STACKS]: '0' })).toBe('never');
+    expect(stackSamplingModeFromEnv({ [ENV_STACKS]: 'never' })).toBe('never');
+    expect(stackSamplingModeFromEnv({ [ENV_STACKS]: 'sometimes' })).toBe('adaptive');
+  });
+});
+
+describe('stack formatting', () => {
+  const frame = (functionName: string, url: string, line = 1) => ({
+    functionName,
+    url,
+    line,
+    column: 1,
+  });
+  const sample = (offset: number, frames: StackSample['frames']): StackSample => ({
+    offset,
+    pausedAt: 0,
+    frames,
+  });
+
+  it('formats like the Python monitor and cuts internals and the job runner', () => {
+    const text = formatSample(
+      sample(42.4, [
+        frame('slowTool', 'file:///app/tools.js', 12),
+        frame('processTimers', 'node:internal/timers', 500),
+        frame('runEntry', 'file:///app/node_modules/@livekit/agents/dist/voice/x.js', 1),
+        frame(
+          'startJob',
+          'file:///app/node_modules/@livekit/agents/dist/ipc/job_proc_lazy_main.js',
+          7,
+        ),
+        frame('bootstrap', 'node:internal/main', 1),
+      ]),
+    );
+    expect(text.split('\n')[0]).toBe('# loop thread sampled 42ms into the stall');
+    expect(text).toContain('at slowTool (/app/tools.js:12:1)');
+    expect(text).not.toContain('processTimers');
+    expect(text).not.toContain('startJob');
+    expect(text).not.toContain('bootstrap');
+    expect(text).toContain('runEntry');
+    // the innermost frame is kept even when it is Node's own
+    expect(formatSample(sample(0, [frame('wait', '', 0)]))).toContain('at wait (native)');
+    expect(formatSample(sample(0, [frame('read', 'node:fs', 3)]))).toContain(
+      'at read (node:fs:3:1)',
+    );
+    // and the frame budget is the innermost 20
+    const deep = sample(
+      0,
+      Array.from({ length: 30 }, (_, i) => frame(`f${i}`, 'file:///x.js', i)),
+    );
+    const lines = formatSample(deep).split('\n').slice(1);
+    expect(lines).toHaveLength(MAX_STACK_FRAMES);
+    expect(lines[0]).toContain('f0');
+  });
+
+  it('names the innermost frame of the agent’s own code', () => {
+    expect(
+      innermostLocation(
+        sample(0, [
+          frame('wait', '', 0),
+          frame(
+            'recordException',
+            'file:///app/node_modules/@livekit/agents/dist/telemetry/utils.js',
+            3,
+          ),
+          frame('myTool', 'file:///app/src/agent.ts', 42),
+        ]),
+      ),
+    ).toBe('myTool (/app/src/agent.ts:42)');
+    expect(innermostLocation(sample(0, [frame('wait', '', 0)]))).toBe('wait (native)');
+    expect(innermostLocation(sample(0, []))).toBeUndefined();
+  });
+});

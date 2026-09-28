@@ -1,5 +1,62 @@
 # @livekit/agents
 
+## 1.9.1
+
+### Patch Changes
+
+- Add TwilioConnectorWarmTransferTask with bounded, best-effort cleanup after cancellation or an unanswered call. - [#2402](https://github.com/livekit/agents-js/pull/2402) ([@anunaym14](https://github.com/anunaym14))
+
+- One `agent_turn` span per speech handle: the follow-up generation after a tool call continues the open span instead of opening a second turn, each generation is a `generation` event with `lk.generation_count` on the span, the turn ends with the speech, and a discarded preemptive generation hands its turn to the reply that answered. - [#2500](https://github.com/livekit/agents-js/pull/2500) ([@davidzhao](https://github.com/davidzhao))
+
+- Add `assemblyai/universal-3-6-pro` to the inference STT model type hints and the word-aligned model set so adaptive interruption gets word timings for it. - [#2550](https://github.com/livekit/agents-js/pull/2550) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+- Telemetry coverage: `lk.interruption.source` and `lk.playout.position` on `agent_turn`, an `update_agent` span grouping agent handoffs, fallback adapters reporting the instance that serves (`lk.fallback.label`/`index`, response model on the request and node spans), and a `keyterm_detection` span for the keyterm-detection LLM pass. - [#2499](https://github.com/livekit/agents-js/pull/2499) ([@davidzhao](https://github.com/davidzhao))
+
+- Trace the end-of-turn wait (`eou_wait`), the `onUserTurnCompleted` hook, and the speech queue wait, with per-turn stage attributes on the reply's `agent_turn`. Every duration attribute on a span is now in seconds like the Python SDK: `lk.eou.endpointing_delay`, `lk.eou.detection_delay`, `lk.transcription_delay`, `lk.end_of_turn_delay`, `lk.amd.speech_duration` and `lk.amd.delay` were reported in milliseconds before. - [#2496](https://github.com/livekit/agents-js/pull/2496) ([@davidzhao](https://github.com/davidzhao))
+
+- Support AssemblyAI inference STT agent context carryover. - [#2057](https://github.com/livekit/agents-js/pull/2057) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Set default shutdown reasons for job and worker-initiated shutdowns. - [#1931](https://github.com/livekit/agents-js/pull/1931) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Support adaptive interruption for STT providers without aligned word timestamps. - [#2315](https://github.com/livekit/agents-js/pull/2315) ([@chenghao-mou](https://github.com/chenghao-mou))
+  Release an active false-interruption pause when a tool calls `disallowInterruptions()`.
+  Restore the paused speech's agent state before resuming audio.
+  Enable adaptive interruption during realtime playback after the initial backchannel boundary.
+
+- Report reasoning tokens in usage metrics. `CompletionUsage`, `LLMMetrics` and `RealtimeModelMetrics` gain a `reasoningTokens` field, aggregated into `LLMModelUsage.outputReasoningTokens` and emitted as the `gen_ai.usage.reasoning*` span attributes — matching how the Python framework exposes them. - [#2517](https://github.com/livekit/agents-js/pull/2517) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+  The Gemini Live plugin now maps `usageMetadata.thoughtsTokenCount` onto that field. Gemini counts thinking tokens inside `responseTokenCount`, so `reasoningTokens` is reported alongside `outputTokens` rather than added to it, and is left `undefined` when the provider omits it — a reported zero stays distinguishable from a missing count without deriving it from `totalTokens - inputTokens - outputTokens`.
+
+- Add the `gemini-3.8-flash-tts` and `gemini-3.8-flash-lite-tts` models to Gemini TTS, with expressive mode support. Delivery markers become per-part `speech_metadata.style`, while sounds, pauses and emphasis lower to Gemini's inline tags. The 3.8 models also accept multi-speaker configs (`speakers` + `speaker`). Expressive mode now works for any non-streaming TTS that declares a markup dialect, since `tts.StreamAdapter` lowers the markup. Transcript stripping also no longer leaves a stray space where a marker opened a turn or line, or closed the turn. - [#2576](https://github.com/livekit/agents-js/pull/2576) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Event loop stalls now nest under the span that was running when the loop blocked (`function_tool`, `rpc_handler`, `on_user_turn_completed`, ...) and carry `lk.blocking.stack`, the loop thread's call stack sampled by the monitor's watchdog thread through an inspector session (at the warn threshold and again at ten times it). Sampling starts after a process's first stall, or from the start with `LIVEKIT_AGENTS_LOOP_BLOCK_STACKS=1`, never with `0`; it costs a one-time enumeration of the loaded scripts on the loop when it starts and about 1% of throughput afterwards. Not enabled while an inspector is attached to the process. - [#2541](https://github.com/livekit/agents-js/pull/2541) ([@davidzhao](https://github.com/davidzhao))
+
+- Prewarm the LLM, STT and TTS when an agent activity starts or resumes, like the Python framework does, so the first reply after a handoff does not pay for the provider handshake. Adds a no-op `prewarm()` to the base `TTS` and `STT` classes for providers to override. - [#2567](https://github.com/livekit/agents-js/pull/2567) ([@davidzhao](https://github.com/davidzhao))
+
+- Release a TTS's pooled provider connections once nothing uses it any more. Every activity and session that uses a TTS instance counts as a user; when the last one closes, or `Agent.updateOptions` swaps the instance out, its idle connections close and any in-flight synthesis closes its connection when it finishes instead of returning it to the pool. Pooled websockets of a handed-off agent otherwise idled until the process exited. Instances shared between agents or sessions keep their connections until the last user is done, and a session's own TTS stays warm across every handoff. Adds `TTS.releaseIdleConnections()` and `ConnectionPool.releaseIdle()`, implemented by the inference TTS and the Cartesia, Deepgram, Fish Audio, Rime and xAI plugins. The Inworld stream now keeps one pool object for its whole lifetime, so an API key update mid-synthesis no longer strands its listener. - [#2567](https://github.com/livekit/agents-js/pull/2567) ([@davidzhao](https://github.com/davidzhao))
+
+- Trace RPC calls the agent performs (`rpc_call`) and handles (`rpc_handler`) through the room SDK's `RpcInterceptor` hook. `@livekit/rtc-node` `^1.1.0` is now required, the first release with `LocalParticipant.addRpcInterceptor`. - [#2498](https://github.com/livekit/agents-js/pull/2498) ([@davidzhao](https://github.com/davidzhao))
+
+- Session transports now throw when a message cannot be sent because the transport is closed or the room is disconnected, instead of returning silently. A RemoteSession request over a dead transport fails at once rather than waiting out its timeout, and the session host logs a failed event send with one warning. Matches the Python SessionTransport contract. - [#2482](https://github.com/livekit/agents-js/pull/2482) ([@u9g](https://github.com/u9g))
+
+- Trace the job's dispatch timeline, startup and shutdown: `job_entrypoint` now spans the whole job with the dispatch stages as events and latencies, `agent_session` nests under it with `session_start`/`session_close` grouping the startup and teardown work (`room_connect`, `wait_for_participant`, `wait_for_audio_track`, `publish_audio_output`, `setup_toolsets`, `drain_agent_activity`), `job_shutdown` groups the shutdown sequence, and the cloud trace pipeline is prepared at job start so the first job's early spans record. - [#2497](https://github.com/livekit/agents-js/pull/2497) ([@davidzhao](https://github.com/davidzhao))
+
+- fix(stt): close the inference STT socket when the stream is closed while it is still connecting, instead of holding it open until the 30s finalization timeout - [#2564](https://github.com/livekit/agents-js/pull/2564) ([@u9g](https://github.com/u9g))
+
+- LiveKit Inference STT: an interim transcript with no text no longer keeps a finalizing stream open. `xai/stt-1` sends one every second after `session.finalized` for as long as the socket is open, so a stream on it never ended after `endInput()`; it now closes 3 s after the last final like every other model. - [#2546](https://github.com/livekit/agents-js/pull/2546) ([@davidzhao](https://github.com/davidzhao))
+
+- Reuse the STT pipeline across agent handoffs and task transitions for agents built with `Agent.create()` / `AgentTask.create()`. The generated classes always override `sttNode`, so the reuse check treated them as custom nodes and every transition closed the STT connection and opened a new one, even when no `sttNode` hook was given. - [#2567](https://github.com/livekit/agents-js/pull/2567) ([@davidzhao](https://github.com/davidzhao))
+
+- Reset the STT retry budget once a connection attempt outlived the connect timeout, so an idle socket recycled by the provider (Cartesia's `1001 Idle timeout` every ~3 minutes on a silent caller) no longer exhausts `maxRetry` and ends the session. - [#2494](https://github.com/livekit/agents-js/pull/2494) ([@u9g](https://github.com/u9g))
+
+- Stop the STT send loops from retaining every audio frame for the life of a stream, and from stealing the next attempt's first frame. `inference.STT` and the Cartesia, Deepgram and Meta STTs raced each read against one long-lived abort promise; every race appended a reaction to that never-settling promise, and each reaction kept the settled read and its `AudioFrame` alive (nodejs/node#17469) — about 8 MB per minute per stream under continuous speech, until the job hit its memory limit. Reads now go through the input queue's cancellable `next({ signal })`, so a torn-down sender's read is cancelled instead of left parked in the queue, and any remaining race goes through `waitUntilAborted`, which installs and removes its own abort listener per call. `Queue.get` and `AsyncIterableQueue.next` now honour an already-aborted signal even when items are buffered, so a cancelled reader never takes a frame the replacement reader needs. - [#2544](https://github.com/livekit/agents-js/pull/2544) ([@praveen4star](https://github.com/praveen4star))
+
+- Recover the STT stream after an unrecoverable error instead of closing the session on the first one: `AgentSession` now applies `maxUnrecoverableErrors` to `stt_error` (reset by a user transcript) like it does for LLM and TTS, and the STT pipeline recreates its stream after a connection failure. Matches livekit/agents#6418. - [#2494](https://github.com/livekit/agents-js/pull/2494) ([@u9g](https://github.com/u9g))
+
+- Stop `tts.FallbackAdapter` from closing the session while it is falling back. Child `error` events were re-emitted verbatim, so one provider failure (an ElevenLabs 401, say) closed the session even though the next instance was already serving audio, and the recovery probe re-raised it every `recoveryDelayMs`. The adapter now absorbs a child's failure when it recovers from it, logging the provider's own error, and reports its own error when it can't: every instance failed, or speech was already cut off. A recovery probe that errors no longer counts as recovered, `StreamAdapter` wrappers no longer stay subscribed to non-streaming instances, `close()` removes only the adapter's own listeners, and a failed `ChunkedStream` no longer surfaces as an unhandled rejection. - [#2568](https://github.com/livekit/agents-js/pull/2568) ([@vznh](https://github.com/vznh))
+
+- Add optional `originalCallerNumber` and `twilioCallToken` to `TwilioConnectorWarmTransferTask` to preserve the inbound caller ID on Twilio warm transfers, with fallback to the business number. - [#2540](https://github.com/livekit/agents-js/pull/2540) ([@piyush-gambhir](https://github.com/piyush-gambhir))
+
 ## 1.9.0
 
 ### Minor Changes

@@ -27,6 +27,7 @@ export {
   normalizeMarkup,
   sentenceTokenizer,
   splitAllMarkup,
+  splitExprMarkup,
   steeringInstructions,
   stripAllMarkup,
   stripExprMarkup,

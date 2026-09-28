@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { Schema } from '@google/genai';
 import { llm } from '@livekit/agents';
 import type { JSONSchema7 } from 'json-schema';
 import { describe, expect, it } from 'vitest';
@@ -57,7 +58,26 @@ describe('Gemini function declarations', () => {
       type: 'object',
       properties: { fields: { type: 'object' } },
       required: ['fields'],
+      propertyOrdering: ['fields'],
     });
+  });
+
+  it('orders Live API parameters as declared, nested objects included', () => {
+    const decide = llm.tool({
+      name: 'decide',
+      description: 'Reason first, then answer.',
+      parameters: z.object({
+        reasoning: z.string(),
+        answer: z.enum(['a', 'b']),
+        details: z.object({ zeta: z.string(), alpha: z.string() }),
+      }),
+      execute: async () => {},
+    });
+    const declaration = singleDeclaration(new llm.ToolContext([decide]), false);
+
+    const schema = declaration.parameters as Schema;
+    expect(schema.propertyOrdering).toEqual(['reasoning', 'answer', 'details']);
+    expect(schema.properties?.details?.propertyOrdering).toEqual(['zeta', 'alpha']);
   });
 
   it('omits the schema for a function tool without parameters', () => {

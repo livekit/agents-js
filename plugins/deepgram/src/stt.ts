@@ -7,7 +7,6 @@ import {
   APIStatusError,
   type AudioBuffer,
   AudioByteStream,
-  AudioEnergyFilter,
   Future,
   Task,
   createTimedString,
@@ -18,6 +17,7 @@ import {
   stt,
   waitForAbort,
   waitForWebSocketOpen,
+  waitUntilAborted,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
@@ -268,7 +268,6 @@ export class STT extends stt.STT {
 
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
-  #audioEnergyFilter: AudioEnergyFilter;
   #logger = log();
   #speaking = false;
   #resetWS = new Future();
@@ -283,7 +282,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
     this.closed = false;
-    this.#audioEnergyFilter = new AudioEnergyFilter();
     this.#audioDurationCollector = new PeriodicCollector(
       (duration) => this.onAudioDurationReport(duration),
       { duration: 5.0 },
@@ -438,18 +436,13 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      // waitForAbort internally sets up an abort listener on the abort signal
-      // we need to put it outside loop to avoid constant re-registration of the listener
-      const abortPromise = waitForAbort(this.abortSignal);
-
       try {
         while (!this.closed) {
-          const result = await Promise.race([
+          const { result, isAborted } = await waitUntilAborted(
             this.input.next({ signal: attempt.signal }),
-            abortPromise,
-          ]);
-
-          if (result === undefined) return; // aborted
+            this.abortSignal,
+          );
+          if (isAborted) return;
           if (result.done) {
             break;
           }
@@ -471,11 +464,9 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           for await (const frame of frames) {
-            if (this.#audioEnergyFilter.pushFrame(frame)) {
-              const frameDuration = frame.samplesPerChannel / frame.sampleRate;
-              this.#audioDurationCollector.push(frameDuration);
-              ws.send(frame.data.buffer);
-            }
+            const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+            this.#audioDurationCollector.push(frameDuration);
+            ws.send(frame.data.buffer);
           }
 
           if (hasEnded) {

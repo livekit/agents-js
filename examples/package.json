@@ -65,7 +65,7 @@
     "@opentelemetry/sdk-trace-base": "^2.8.0",
     "@opentelemetry/sdk-trace-node": "^2.8.0",
     "@opentelemetry/semantic-conventions": "^1.28.0",
-    "livekit-server-sdk": "^2.14.1",
+    "livekit-server-sdk": "^2.15.0",
     "ws": "catalog:"
   },
   "peerDependencies": {

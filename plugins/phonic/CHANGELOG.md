@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-phonic
 
+## 1.9.1
+
+### Patch Changes
+
+- feat(phonic): add phonicModel option to select phonic model version - [#2559](https://github.com/livekit/agents-js/pull/2559) ([@arunwpm-work](https://github.com/arunwpm-work))
+
+- Updated dependencies [[`3b086bc`](https://github.com/livekit/agents-js/commit/3b086bc19a403cd1d622f8e458c744ad69fb48a5), [`72898e1`](https://github.com/livekit/agents-js/commit/72898e1e583874860b5a1d8d241195ecf8d99d54), [`f6ea8df`](https://github.com/livekit/agents-js/commit/f6ea8df234c9f4a992e67908f3f100c956a9acc0), [`7e23bc5`](https://github.com/livekit/agents-js/commit/7e23bc56364cdd411163e31fc0b74bafc75851c3), [`3a8b621`](https://github.com/livekit/agents-js/commit/3a8b6210cb0175c79d410afae5fe0bba0c19c08d), [`c9e1f26`](https://github.com/livekit/agents-js/commit/c9e1f26172681190257e8e01b86c7fe90e4e15dd), [`f6f9e7a`](https://github.com/livekit/agents-js/commit/f6f9e7ad1614d22c21b935ee4101a727eea1b145), [`d3a0abe`](https://github.com/livekit/agents-js/commit/d3a0abead85e7d9db79c355b345c515eb6aa42fe), [`21aa476`](https://github.com/livekit/agents-js/commit/21aa4763f2b89506fb1e56f6879b23e41a5bcfa6), [`38f65f8`](https://github.com/livekit/agents-js/commit/38f65f8a4c790f0bc4b62b1aba407cf1f95a2360), [`646f0bc`](https://github.com/livekit/agents-js/commit/646f0bc70f4a55d9b282dde8b25ebfb5be818fb7), [`1244049`](https://github.com/livekit/agents-js/commit/1244049976d3caea04debef32ad72e4785f20d99), [`1244049`](https://github.com/livekit/agents-js/commit/1244049976d3caea04debef32ad72e4785f20d99), [`1fc4290`](https://github.com/livekit/agents-js/commit/1fc429084d063d7b7fd4f61eec0df3378b066777), [`5287be1`](https://github.com/livekit/agents-js/commit/5287be114b12fb16f0a3eb6ccca4173e6e3eb219), [`d650cc0`](https://github.com/livekit/agents-js/commit/d650cc025c6322e0bc822a9ab6cace9d1fa29648), [`f089dc5`](https://github.com/livekit/agents-js/commit/f089dc52967ccab3f70db449dddc52af664dea61), [`40bf9b1`](https://github.com/livekit/agents-js/commit/40bf9b13f3b71fe50076f53609aa63af449737b4), [`1244049`](https://github.com/livekit/agents-js/commit/1244049976d3caea04debef32ad72e4785f20d99), [`b7ad990`](https://github.com/livekit/agents-js/commit/b7ad990c5faa424b31697bd2e868232f81f2bdf5), [`7ab8bd8`](https://github.com/livekit/agents-js/commit/7ab8bd801bc78d3c88c8b50904f1d90e81d976b8), [`b7ad990`](https://github.com/livekit/agents-js/commit/b7ad990c5faa424b31697bd2e868232f81f2bdf5), [`546dc33`](https://github.com/livekit/agents-js/commit/546dc3330d2543a61f3291b60e72e881d4b1e4b4), [`5481379`](https://github.com/livekit/agents-js/commit/5481379b435119aba4ae00779ce6f3c2e2e39977)]:
+  - @livekit/agents@1.9.1
+
 ## 1.9.0
 
 ### Patch Changes

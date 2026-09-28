@@ -247,10 +247,37 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     });
   }
 
+  /** The `llm_request` span of this stream, once the main task has opened it. */
+  /**
+   * The model named on the response side of the request span. The LLM's own model by default;
+   * a fallback adapter's stream reports the instance that actually served.
+   */
+  protected get responseModel(): string {
+    return this.#llm.model;
+  }
+
+  /** The provider named on the response side and in the usage metrics (see {@link responseModel}). */
+  protected get responseProvider(): string {
+    return this.#llm.provider;
+  }
+
+  /**
+   * The convention's operation for the request span: `chat` for a provider request. An adapter
+   * that delegates to another stream has none, or a backend counting inference spans would see
+   * two calls for one.
+   */
+  protected get genAIOperationName(): string | undefined {
+    return traceTypes.GenAIOperationName.CHAT;
+  }
+
+  protected get llmRequestSpan(): Span | undefined {
+    return this.#llmRequestSpan;
+  }
+
   /** The GenAI inference span's request side, per the OTel GenAI conventions. */
   private recordGenAIRequest(span: Span) {
     genAI.setRequestAttributes(span, {
-      operation: traceTypes.GenAIOperationName.CHAT,
+      operation: this.genAIOperationName,
       provider: this.#llm.provider,
       model: this.#llm.model,
       stream: true,
@@ -401,8 +428,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         return (usage?.completionTokens || 0) / (durationMs / 1000);
       })(),
       metadata: {
-        modelProvider: this.#llm.provider,
-        modelName: this.#llm.model,
+        modelProvider: this.responseProvider,
+        modelName: this.responseModel,
       },
     };
 
@@ -418,7 +445,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       });
       genAI.setResponseAttributes(this.#llmRequestSpan, {
         responseId: requestId || undefined,
-        model: this.#llm.model,
+        model: this.responseModel,
         finishReasons: [finishReason],
         timeToFirstChunk: metrics.ttftMs >= 0 ? metrics.ttftMs / 1000 : undefined,
       });
