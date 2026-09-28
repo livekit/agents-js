@@ -482,6 +482,93 @@ describe('executeToolCall', () => {
     expect(result.output).toMatch(/Arguments parsing failed/);
   });
 
+  it('should treat null as absent for an optional argument without a default', async () => {
+    const search = tool({
+      name: 'search',
+      description: 'search',
+      parameters: z.object({ query: z.string(), limit: z.number().optional() }),
+      execute: async (args) => args,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-optional-1',
+        name: 'search',
+        args: '{"query":"cats","limit":null}',
+      }),
+      new ToolContext([search]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({ query: 'cats' });
+  });
+
+  it('should treat null as absent for optional arguments carrying constraints', async () => {
+    const lookup = tool({
+      name: 'lookup',
+      description: 'lookup',
+      parameters: z.object({ id: z.string().min(1).optional() }),
+      execute: async (args) => args,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-optional-2',
+        name: 'lookup',
+        args: '{"id":null}',
+      }),
+      new ToolContext([lookup]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({});
+  });
+
+  it('should treat nested null as absent for optional arguments', async () => {
+    const nested = tool({
+      name: 'nested',
+      description: 'nested',
+      parameters: z.object({
+        outer: z.object({ inner: z.string().optional(), kept: z.string() }),
+        list: z.array(z.object({ x: z.number().optional() })),
+      }),
+      execute: async (args) => args,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-optional-3',
+        name: 'nested',
+        args: JSON.stringify({ outer: { inner: null, kept: 'k' }, list: [{ x: null }] }),
+      }),
+      new ToolContext([nested]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({ outer: { kept: 'k' }, list: [{}] });
+  });
+
+  it('should preserve a genuine null for a nullish argument', async () => {
+    const maybe = tool({
+      name: 'maybe',
+      description: 'maybe',
+      parameters: z.object({ n: z.number().nullish() }),
+      execute: async (args) => args,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-nullish-1',
+        name: 'maybe',
+        args: '{"n":null}',
+      }),
+      new ToolContext([maybe]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({ n: null });
+  });
+
   it('should preserve a genuine null for a nullable defaulted argument', async () => {
     const maybe = tool({
       name: 'maybe',
