@@ -658,7 +658,9 @@ export class MCPToolset extends AsyncToolset {
   private refreshRequested = false;
   private refreshGeneration = 0;
   private context?: ToolsetContext;
+  private readonly activeCalls = new Set<AbortController>();
   private closed = false;
+  private closePromise?: Promise<void>;
 
   constructor({ id, mcpServer, toolOptions, toolHandling }: MCPToolsetOptions) {
     super({ id, tools: [], toolHandling });
@@ -667,6 +669,8 @@ export class MCPToolset extends AsyncToolset {
   }
 
   override async setup(ctx: ToolsetContext): Promise<void> {
+    if (this.closePromise) await this.closePromise;
+    this.closePromise = undefined;
     this.closed = false;
     this.context = ctx;
     this.refreshGeneration += 1;
@@ -677,17 +681,25 @@ export class MCPToolset extends AsyncToolset {
     await this.requestRefresh();
   }
 
-  override async aclose(): Promise<void> {
-    if (this.closed) return;
+  override aclose(): Promise<void> {
+    this.closePromise ??= this.close();
+    return this.closePromise;
+  }
+
+  private async close(): Promise<void> {
     this.closed = true;
     this.context = undefined;
     this.refreshGeneration += 1;
     this.refreshRequested = false;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
-    this.serverOwners().toolsets.delete(this);
+    const owners = this.serverOwners();
+    owners.toolsets.delete(this);
     // An unbounded request must be interrupted so executor drain cannot block shutdown forever.
     if (!this.server._hasBoundedRequests) {
+      if (owners.toolsets.size > 0) {
+        for (const controller of this.activeCalls) controller.abort();
+      }
       await this.closeServerIfUnused();
       await this.settleRefresh();
       await super.aclose();
@@ -743,12 +755,31 @@ export class MCPToolset extends AsyncToolset {
         await this.server.initialize();
         const tools = await this.server.listTools(this.options);
         if (context === this.context && generation === this.refreshGeneration) {
-          context.updateTools(tools);
+          context.updateTools(tools.map((tool) => this.scopeTool(tool)));
         }
       } catch (error) {
         if (context === this.context && generation === this.refreshGeneration) throw error;
       }
     }
+  }
+
+  private scopeTool(tool: FunctionTool): FunctionTool {
+    return {
+      ...tool,
+      execute: async (args, options) => {
+        if (this.closed) throw new ToolError(MCP_SERVER_UNAVAILABLE);
+        const controller = new AbortController();
+        this.activeCalls.add(controller);
+        try {
+          return await tool.execute(args, {
+            ...options,
+            abortSignal: AbortSignal.any([options.abortSignal, controller.signal]),
+          });
+        } finally {
+          this.activeCalls.delete(controller);
+        }
+      },
+    };
   }
 
   private async settleRefresh(): Promise<void> {
