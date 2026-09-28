@@ -12,6 +12,7 @@ import {
   type JSONObject,
   ToolError,
   ToolFlag,
+  type ToolOptions,
   type ToolsetContext,
   tool,
 } from './tool_context.js';
@@ -118,10 +119,7 @@ const JSON_SCHEMA_TYPE_NAMES = new Set([
   'string',
 ]);
 const JSON_SCHEMA_VALUE_KEYS = new Set(['const', 'default', 'examples']);
-const defaultToolResultResolver: MCPToolResultResolver = ({ toolName, result }) => {
-  if (result.content.length === 0) {
-    throw new ToolError(`Tool '${toolName}' completed without producing a result.`);
-  }
+const defaultToolResultResolver: MCPToolResultResolver = ({ result }) => {
   return JSON.stringify(result.content.length === 1 ? result.content[0] : result.content);
 };
 
@@ -243,6 +241,7 @@ export abstract class MCPServer {
   protected logger = log();
   private client: Client | null = null;
   private connectingClient: Client | null = null;
+  private reconnectOnNextCall = false;
   private initializing?: { generation: number; promise: Promise<void> };
   private connectionGeneration = 0;
   private cachedTools?: MCPToolDescriptor[];
@@ -351,6 +350,7 @@ export abstract class MCPServer {
 
   async aclose(): Promise<void> {
     this.connectionGeneration += 1;
+    this.reconnectOnNextCall = false;
     const initializing = this.initializing?.promise;
     const client = this.client;
     const connectingClient = this.connectingClient;
@@ -425,62 +425,92 @@ export abstract class MCPServer {
       flags: options.flags,
       onDuplicate: options.onDuplicate,
       execute: async (args, { ctx, abortSignal }) => {
-        const client = this.client;
-        if (!client) throw new ToolError(MCP_SERVER_UNAVAILABLE);
-
-        let response: unknown;
         try {
-          response = await client.callTool(
-            { name, arguments: args },
-            undefined,
-            this.requestOptions(
-              options.reportProgress
-                ? ({ message }) => {
-                    if (message) {
-                      void ctx.update(message).catch((error) => {
-                        this.logger.warn(
-                          { errorType: safeErrorType(error), toolName: name },
-                          'failed to report progress for MCP tool',
-                        );
-                      });
-                    }
-                  }
-                : undefined,
-              abortSignal,
-            ),
-          );
+          return await this.executeTool(name, args, options, ctx, abortSignal);
         } catch (error) {
-          if (isConnectionError(error)) {
-            await this.disconnectClient(client);
-            throw new ToolError(MCP_SERVER_UNAVAILABLE);
-          }
-          throw new ToolError(MCP_TOOL_CALL_FAILED);
-        }
-        if (!isMCPToolCallResult(response)) {
-          throw new ToolError(`Tool '${name}' returned an unsupported legacy result.`);
-        }
-
-        if (response.isError)
-          throw new ToolError(
-            response.content
-              .map((part) =>
-                'text' in part && typeof part.text === 'string' ? part.text : JSON.stringify(part),
-              )
-              .join('\n'),
-          );
-        try {
-          const resolved = await this.toolResultResolver({
-            toolName: name,
-            arguments: args,
-            result: response,
-          });
-          if (resolved instanceof Error) throw resolved;
-          return resolved;
-        } catch {
-          throw new ToolError(MCP_TOOL_RESULT_PROCESSING_FAILED);
+          if (!ctx.updates?.length || abortSignal.aborted) throw error;
+          await ctx.update(error instanceof ToolError ? error.message : MCP_TOOL_CALL_FAILED);
         }
       },
     });
+  }
+
+  private async executeTool(
+    name: string,
+    args: JSONObject,
+    options: Required<MCPToolOptions>,
+    ctx: ToolOptions['ctx'],
+    abortSignal: AbortSignal,
+  ): Promise<unknown> {
+    let client = this.client;
+    if (!client && this.reconnectOnNextCall) {
+      try {
+        await this.initialize();
+      } catch {
+        throw new ToolError(MCP_SERVER_UNAVAILABLE);
+      }
+      client = this.client;
+      if (client && this.reconnectOnNextCall) {
+        this.reconnectOnNextCall = false;
+        await this.notifyToolsChanged();
+      }
+    }
+    if (!client) throw new ToolError(MCP_SERVER_UNAVAILABLE);
+
+    let response: unknown;
+    try {
+      response = await client.callTool(
+        { name, arguments: args },
+        undefined,
+        this.requestOptions(
+          options.reportProgress
+            ? ({ message }) => {
+                if (message) {
+                  void ctx.update(message).catch((error) => {
+                    this.logger.warn(
+                      { errorType: safeErrorType(error), toolName: name },
+                      'failed to report progress for MCP tool',
+                    );
+                  });
+                }
+              }
+            : undefined,
+          abortSignal,
+        ),
+      );
+    } catch (error) {
+      if (isConnectionError(error)) {
+        await this.disconnectClient(client);
+        throw new ToolError(MCP_SERVER_UNAVAILABLE);
+      }
+      throw new ToolError(MCP_TOOL_CALL_FAILED);
+    }
+    if (!isMCPToolCallResult(response)) {
+      throw new ToolError(`Tool '${name}' returned an unsupported legacy result.`);
+    }
+
+    if (response.isError)
+      throw new ToolError(
+        response.content
+          .map((part) =>
+            'text' in part && typeof part.text === 'string' ? part.text : JSON.stringify(part),
+          )
+          .join('\n'),
+      );
+    if (this.toolResultResolver === defaultToolResultResolver && response.content.length === 0) {
+      throw new ToolError(`Tool '${name}' completed without producing a result.`);
+    }
+    try {
+      const resolved = await this.toolResultResolver({
+        toolName: name,
+        arguments: args,
+        result: response,
+      });
+      if (resolved instanceof Error) throw resolved;
+      return resolved;
+    } catch {
+      throw new ToolError(MCP_TOOL_RESULT_PROCESSING_FAILED);
+    }
   }
 
   private requestOptions(
@@ -505,6 +535,7 @@ export abstract class MCPServer {
   private async disconnectClient(client: Client): Promise<void> {
     if (this.client !== client) return;
     this.resetConnection();
+    this.reconnectOnNextCall = true;
     await this.closeClient(client);
   }
 
