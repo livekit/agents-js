@@ -8,6 +8,7 @@ import {
   APIStatusError,
   APITimeoutError,
   log,
+  tokenize,
   tts,
 } from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
@@ -205,6 +206,37 @@ const joined = (events: tts.SynthesizedAudio[]) =>
     .map((timed) => timed.text)
     .join('');
 
+/**
+ * The default sentence tokenizer, except that pushing `failAt` fails it: synchronously when
+ * `how` is 'push', or while it splits the text when `how` is 'split'.
+ */
+const failingTokenizer = (failAt: string, error: Error, how: 'push' | 'split') => {
+  const basic = new tokenize.basic.SentenceTokenizer();
+  return {
+    tokenize: (text: string) => basic.tokenize(text),
+    stream: () => {
+      const inner = basic.stream();
+      let fail!: (reason: Error) => void;
+      const failed = new Promise<never>((_, reject) => (fail = reject));
+      failed.catch(() => {});
+      return {
+        pushText(text: string) {
+          if (text === failAt && how === 'push') throw error;
+          if (text === failAt) fail(error);
+          inner.pushText(text);
+        },
+        flush: () => inner.flush(),
+        endInput: () => inner.endInput(),
+        close: () => inner.close(),
+        next: () => Promise.race([inner.next(), failed]),
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+    },
+  } as unknown as tokenize.SentenceTokenizer;
+};
+
 const newTTS = (baseUrl: string) => {
   const speechify = new TTS({ apiKey: 'test-key', baseUrl });
   const errors: { error: Error; recoverable: boolean }[] = [];
@@ -366,7 +398,8 @@ describe('stream', () => {
     expect(new Set(secondSegment.map((event) => event.segmentId)).size).toBe(1);
     expect(secondSegment[0]!.segmentId).not.toBe(firstSegment[0]!.segmentId);
     expect(secondSegment.at(-1)!.final).toBe(true);
-    expect(joined([...firstSegment, ...secondSegment])).toBe(`${FIRST} ${SECOND}`);
+    expect(joined(firstSegment)).toBe(FIRST);
+    expect(joined(secondSegment)).toBe(SECOND);
   });
 
   it('retries a sentence that failed before its audio, after the input was consumed', async () => {
@@ -424,6 +457,53 @@ describe('stream', () => {
     expect(errors[0]!.recoverable).toBe(false);
     expect(errors[0]!.error).toBeInstanceOf(APIConnectionError);
     expect((errors[0]!.error as APIError).retryable).toBe(false);
+  });
+
+  it('reports a tokenizer that fails while the stream waits for input', async () => {
+    const server = await startServer(speakAll);
+    const failure = new Error('tokenizer failed');
+    const speechify = new TTS({
+      apiKey: 'test-key',
+      baseUrl: server.baseUrl,
+      sentenceTokenizer: failingTokenizer(SECOND, failure, 'split'),
+    });
+    const errors: Error[] = [];
+    speechify.on('error', ({ error }) => errors.push(error));
+    const stream = speechify.stream();
+    const iterator = stream[Symbol.asyncIterator]();
+
+    stream.pushText(FIRST);
+    stream.flush();
+    while (!(await iterator.next()).value?.final);
+    stream.pushText(SECOND);
+    const { ended } = await drain(stream);
+
+    expect(ended).toBe(false);
+    expect(errors).toEqual([failure]);
+    expect(server.requests.map(input)).toEqual([FIRST]);
+  });
+
+  it('reports a tokenizer that rejects input instead of ending the stream', async () => {
+    const server = await startServer(speakAll);
+    const failure = new Error('tokenizer rejected input');
+    const speechify = new TTS({
+      apiKey: 'test-key',
+      baseUrl: server.baseUrl,
+      sentenceTokenizer: failingTokenizer(SECOND, failure, 'push'),
+    });
+    const errors: Error[] = [];
+    speechify.on('error', ({ error }) => errors.push(error));
+    const stream = speechify.stream();
+    const iterator = stream[Symbol.asyncIterator]();
+
+    stream.pushText(FIRST);
+    stream.flush();
+    while (!(await iterator.next()).value?.final);
+    stream.pushText(SECOND);
+    const { ended } = await drain(stream);
+
+    expect(ended).toBe(false);
+    expect(errors).toEqual([failure]);
   });
 
   it('closing the stream aborts the request in flight', async () => {

@@ -226,7 +226,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #client: SpeechifyClient;
   #opts: TTSOptions;
   #work = new AsyncIterableQueue<Work>();
-  #readError?: unknown;
+  #inputFailure?: { error: unknown };
   #current?: Work;
   #emitter = new FrameEmitter(this.queue, shortuuid());
   #spoke = false;
@@ -235,13 +235,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     super(tts, connOptions);
     this.#client = clientOf(tts);
     this.#opts = opts;
-    this.#readInput().catch((error: unknown) => {
-      this.#readError = error;
-    });
+    void this.#readInput();
   }
 
   protected async run(): Promise<void> {
-    while (!this.abortSignal.aborted) {
+    while (!this.abortSignal.aborted && !this.#inputFailure) {
       if (!this.#current) {
         const next = await this.#work.next();
         if (next.done) break;
@@ -249,49 +247,71 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       if (this.#current.kind === 'segmentEnd') {
         this.#emitter.endSegment();
+        this.#spoke = false;
       } else if (!(await this.#synthesizeSentence(this.#current.text, this.#current.segmentId))) {
         return;
       }
       this.#current = undefined;
     }
 
-    if (this.#readError !== undefined) throw this.#readError;
+    if (this.#inputFailure) throw this.#inputFailure.error;
     if (!this.abortSignal.aborted && !this.queue.closed) {
       this.queue.put(SynthesizeStream.END_OF_STREAM);
     }
   }
 
+  /** Never rejects: a failure is recorded for `run` to raise, and ends the work queue. */
   async #readInput(): Promise<void> {
+    let sentences: tokenize.SentenceStream | undefined;
     try {
       let segmentId = shortuuid();
-      let sentences = this.#opts.sentenceTokenizer.stream();
+      sentences = this.#opts.sentenceTokenizer.stream();
       let queued = this.#queueSentences(sentences, segmentId);
       for await (const data of this.input) {
+        if (this.#inputFailure) return;
         if (data !== SynthesizeStream.FLUSH_SENTINEL) {
           sentences.pushText(data);
           continue;
         }
         sentences.endInput();
         await queued;
+        if (this.#inputFailure) return;
         this.#work.put({ kind: 'segmentEnd' });
 
         segmentId = shortuuid();
         sentences = this.#opts.sentenceTokenizer.stream();
         queued = this.#queueSentences(sentences, segmentId);
       }
+      if (this.#inputFailure) return;
       sentences.endInput();
       await queued;
+      if (this.#inputFailure) return;
       this.#work.put({ kind: 'segmentEnd' });
+    } catch (error) {
+      this.#failInput(error);
     } finally {
-      this.#work.close();
+      // Ends the sentence task of a failed segment instead of leaving it waiting for text.
+      if (this.#inputFailure) sentences?.close();
+      if (!this.#work.closed) this.#work.close();
     }
   }
 
+  /** Never rejects, so a tokenizer failure surfaces while the input is still open. */
   async #queueSentences(sentences: tokenize.SentenceStream, segmentId: string): Promise<void> {
-    for await (const { token } of sentences) {
-      const text = token.trim();
-      if (text) this.#work.put({ kind: 'sentence', segmentId, text });
+    try {
+      for await (const { token } of sentences) {
+        if (this.#inputFailure) return;
+        const text = token.trim();
+        if (text) this.#work.put({ kind: 'sentence', segmentId, text });
+      }
+    } catch (error) {
+      this.#failInput(error);
     }
+  }
+
+  #failInput(error: unknown): void {
+    this.#inputFailure ??= { error };
+    if (!this.#work.closed) this.#work.close();
   }
 
   /** Returns false when the stream was closed during the sentence. */
