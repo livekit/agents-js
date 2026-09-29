@@ -757,6 +757,11 @@ export class SpeechStream extends stt.SpeechStream {
               try {
                 this.#processStreamEvent(parseStreamEvent(JSON.parse(msg.toString())));
               } catch (error) {
+                if (error instanceof APIError) {
+                  sessionController.abort();
+                  reject(error);
+                  return;
+                }
                 this.#logger.error({ error }, 'failed to process ElevenLabs STT message');
               }
             };
@@ -1001,7 +1006,12 @@ export class SpeechStream extends stt.SpeechStream {
       const errorMsg = data.message ?? 'Unknown error';
       const detailsSuffix = data.details ? ` - ${data.details}` : '';
       this.#logger.error(`ElevenLabs STT error [${messageType}]: ${errorMsg}${detailsSuffix}`);
-      throw new APIConnectionError({ message: `${messageType}: ${errorMsg}${detailsSuffix}` });
+      // a bad key, an exhausted quota or a rejected request fails the same way on a retry
+      const retryable = messageType === 'transcriber_error' || messageType === 'error';
+      throw new APIConnectionError({
+        message: `${messageType}: ${errorMsg}${detailsSuffix}`,
+        options: { retryable },
+      });
     } else {
       this.#logger.warn(
         {
