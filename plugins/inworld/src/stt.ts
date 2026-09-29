@@ -14,6 +14,7 @@ import {
   shortuuid,
   stt,
   waitForAbort,
+  waitUntilAborted,
 } from '@livekit/agents';
 import { WebSocket } from 'ws';
 
@@ -293,6 +294,11 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket): Promise<void> {
     this.#resetWS = new Future();
     let closing = false;
+    // Scoped to this connection. An abandoned `input.next()` stays parked inside the queue and
+    // shifts the next frame off it for a promise nobody awaits, so a sender left over from a
+    // previous connection steals audio from the current one. The read has to be cancelled, not
+    // merely raced against.
+    const attempt = new AbortController();
 
     ws.send(
       JSON.stringify({
@@ -337,13 +343,14 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      const abortPromise = waitForAbort(this.abortSignal);
-
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
+          const { result, isAborted } = await waitUntilAborted(
+            this.input.next({ signal: attempt.signal }),
+            this.abortSignal,
+          );
 
-          if (result === undefined) return;
+          if (isAborted) return;
           if (result.done) break;
 
           const data = result.value;
@@ -365,6 +372,9 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(JSON.stringify({ audioChunk: { content: b64 } }));
           }
         }
+      } catch (e) {
+        if (attempt.signal.aborted) return; // teardown, not a failure of this send
+        throw e;
       } finally {
         closing = true;
         ws.send(JSON.stringify({ endTurn: {} }));
@@ -474,12 +484,19 @@ export class SpeechStream extends stt.SpeechStream {
       await Promise.race([listenMessage, waitForAbort(controller.signal)]);
     }, this.abortController);
 
-    await Promise.race([
-      this.#resetWS.await,
-      Promise.all([sendTask(), listenTask.result, wsMonitor.result]),
-    ]);
-    closing = true;
-    ws.close();
+    const sendPromise = sendTask();
+    try {
+      await Promise.race([
+        this.#resetWS.await,
+        Promise.all([sendPromise, listenTask.result, wsMonitor.result]),
+      ]);
+    } finally {
+      closing = true;
+      ws.close();
+      // settle this connection's sender before the caller opens the next socket
+      attempt.abort();
+      await sendPromise.catch(() => {});
+    }
   }
 
   #maybeReportUsage(): void {
