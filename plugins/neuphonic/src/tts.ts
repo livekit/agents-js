@@ -307,12 +307,22 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
+    if (this.abortController.signal.aborted) return;
+
     const url = `wss://${API_BASE_URL}/speak/${getBaseLanguage(this.#opts.langCode)}?${getQueryParamString(this.#opts)}`;
     const ws = new WebSocket(url, {
       headers: {
         [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
       },
     });
+
+    // recvTask only stops on a message or a close, so an interrupted synthesis has to close
+    // the socket itself, or the run never ends and the connection stays open
+    const onAbort = () => {
+      closing = true;
+      ws.close();
+    };
+    this.abortController.signal.addEventListener('abort', onAbort, { once: true });
 
     try {
       await new Promise((resolve, reject) => {
@@ -323,7 +333,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       await Promise.all([tokenizeInput(), sendTask(ws), recvTask(ws)]);
     } catch (e) {
+      if (this.abortController.signal.aborted) return;
       throw new Error(`failed to connect to Neuphonic: ${e}`);
+    } finally {
+      this.abortController.signal.removeEventListener('abort', onAbort);
     }
   }
 }
