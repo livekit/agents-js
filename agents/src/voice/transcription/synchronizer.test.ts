@@ -345,6 +345,68 @@ describe('TranscriptionSynchronizer attachment warnings', () => {
   });
 });
 
+class PassthroughAudioOutput extends AudioOutput {
+  constructor() {
+    super(8000);
+  }
+
+  clearBuffer(): void {}
+}
+
+describe('TranscriptionSynchronizer rotated-out segment finishes', () => {
+  it("does not hand a rotated-out segment's transcript to the next reply's playout wait", async () => {
+    const downstream = new PassthroughAudioOutput();
+    const synchronizer = new TranscriptionSynchronizer(downstream, new MockTextOutput());
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    // reply A: text + audio; its playback_finished has not arrived yet
+    await synchronizer.textOutput.captureText('REPLY_A_TEXT');
+    synchronizer.textOutput.flush();
+    await synchronizer.audioOutput.captureFrame(frame);
+    synchronizer.audioOutput.flush();
+
+    // reply B's text arrives before A's playback_finished -> A is rotated out
+    await synchronizer.textOutput.captureText('REPLY_B_TEXT');
+    await synchronizer.barrier();
+    expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+    // B's forwardSegment waits for playout; A's in-flight finish lands
+    const playoutAwaitedByReplyB = synchronizer.audioOutput.waitForPlayout();
+    downstream.onPlaybackFinished({ playbackPosition: 1, interrupted: true });
+
+    const ev = await playoutAwaitedByReplyB;
+    expect(ev.interrupted).toBe(true);
+    expect(ev.synchronizedTranscript ?? '').not.toContain('REPLY_A_TEXT');
+    expect(synchronizer._pendingRotatedSegments).toHaveLength(0);
+
+    await synchronizer.close();
+  });
+
+  it("still hands a rotated-out segment's transcript to its own playout wait", async () => {
+    const downstream = new PassthroughAudioOutput();
+    const synchronizer = new TranscriptionSynchronizer(downstream, new MockTextOutput());
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    await synchronizer.textOutput.captureText('REPLY_A_TEXT');
+    synchronizer.textOutput.flush();
+    await synchronizer.audioOutput.captureFrame(frame);
+    synchronizer.audioOutput.flush();
+
+    // reply A starts waiting before B's text rotates it out
+    const playoutAwaitedByReplyA = synchronizer.audioOutput.waitForPlayout();
+    await synchronizer.textOutput.captureText('REPLY_B_TEXT');
+    await synchronizer.barrier();
+
+    downstream.onPlaybackFinished({ playbackPosition: 1, interrupted: true });
+
+    const ev = await playoutAwaitedByReplyA;
+    expect(ev.synchronizedTranscript).toBeDefined();
+    expect(ev.synchronizedTranscript).not.toContain('REPLY_B_TEXT');
+
+    await synchronizer.close();
+  });
+});
+
 class DroppingAudioOutput extends AudioOutput {
   constructor() {
     super(8000);

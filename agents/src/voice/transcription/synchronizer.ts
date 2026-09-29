@@ -881,11 +881,31 @@ class SyncedAudioOutput extends AudioOutput {
   }
 
   async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    // the segment this caller is waiting on; a finish that settles a different (rotated-out)
+    // segment must not hand that segment's transcript to this caller
+    const owner = this.synchronizer._impl;
     const drift = this.pendingPlayoutSegments - this.nextInChainAudio.pendingPlayoutSegments;
     for (let i = 0; i < drift; i++) {
       this.settleDriftFinish();
     }
-    return super.waitForPlayout();
+    const ev = await super.waitForPlayout();
+    const settled = this.settledSegments.get(ev);
+    if (settled !== undefined && settled !== owner) {
+      return { ...ev, synchronizedTranscript: undefined };
+    }
+    return ev;
+  }
+
+  /** Segment each emitted finish settled, so `waitForPlayout` can tell whose event it got. */
+  private settledSegments = new WeakMap<PlaybackFinishedEvent, SegmentSynchronizerImpl>();
+
+  private emitSettledFinish(ev: PlaybackFinishedEvent, segment: SegmentSynchronizerImpl): void {
+    const settledEv: PlaybackFinishedEvent = {
+      ...ev,
+      synchronizedTranscript: segment.synchronizedTranscript,
+    };
+    this.settledSegments.set(settledEv, segment);
+    super.onPlaybackFinished(settledEv);
   }
 
   /**
@@ -905,20 +925,14 @@ class SyncedAudioOutput extends AudioOutput {
     const idx = queue.findIndex((entry) => !entry.acceptedDownstream);
     if (idx >= 0) {
       const [entry] = queue.splice(idx, 1);
-      super.onPlaybackFinished({
-        ...ev,
-        synchronizedTranscript: entry!.impl.synchronizedTranscript,
-      });
+      this.emitSettledFinish(ev, entry!.impl);
       this.pushedDuration = 0.0;
       return;
     }
 
     // the dropped segment is the current one
     this.synchronizer._impl.markPlaybackFinished(ev.playbackPosition, ev.interrupted);
-    super.onPlaybackFinished({
-      ...ev,
-      synchronizedTranscript: this.synchronizer._impl.synchronizedTranscript,
-    });
+    this.emitSettledFinish(ev, this.synchronizer._impl);
     this.synchronizer.rotateSegment();
     this.pushedDuration = 0.0;
   }
@@ -948,21 +962,19 @@ class SyncedAudioOutput extends AudioOutput {
     const idx = queue.findIndex((entry) => entry.acceptedDownstream);
     if (idx >= 0) {
       const [entry] = queue.splice(idx, 1);
-      super.onPlaybackFinished({
-        playbackPosition: ev.playbackPosition,
-        interrupted: ev.interrupted,
-        synchronizedTranscript: entry!.impl.synchronizedTranscript,
-      });
+      this.emitSettledFinish(
+        { playbackPosition: ev.playbackPosition, interrupted: ev.interrupted },
+        entry!.impl,
+      );
       this.pushedDuration = 0.0;
       return;
     }
 
     this.synchronizer._impl.markPlaybackFinished(ev.playbackPosition, ev.interrupted);
-    super.onPlaybackFinished({
-      playbackPosition: ev.playbackPosition,
-      interrupted: ev.interrupted,
-      synchronizedTranscript: this.synchronizer._impl.synchronizedTranscript,
-    });
+    this.emitSettledFinish(
+      { playbackPosition: ev.playbackPosition, interrupted: ev.interrupted },
+      this.synchronizer._impl,
+    );
 
     this.synchronizer.rotateSegment();
     this.pushedDuration = 0.0;
