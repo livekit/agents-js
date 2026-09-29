@@ -80,5 +80,22 @@ describe('VADStream endInput', () => {
   });
 });
 
+describe('VADStream output after endInput', () => {
+  it('ends the iterator once the input has ended', async () => {
+    const vad = new VAD();
+    const stream = vad.stream();
+    try {
+      stream.endInput();
+      const result = await Promise.race([
+        stream.next(),
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2000)),
+      ]);
+      expect(result).toMatchObject({ done: true });
+    } finally {
+      stream.close();
+    }
+  });
+});
+
 const internalsReader = (stream: VADStream) =>
   (stream as unknown as { inputReader: ReadableStreamDefaultReader<unknown> }).inputReader;

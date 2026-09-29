@@ -139,6 +139,24 @@ describe('Silero VADStream inference errors', () => {
   });
 });
 
+describe('Silero VADStream end of input', () => {
+  it('ends the iterator after endInput', { timeout: 30000 }, async () => {
+    const vad = await VAD.load();
+    const stream = vad.stream();
+    try {
+      stream.endInput();
+      const result = await Promise.race([
+        stream.next(),
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 5000)),
+      ]);
+      expect(result).toMatchObject({ done: true });
+    } finally {
+      stream.close();
+      await vad.close();
+    }
+  });
+});
+
 describe('Silero VADStream flush reset', () => {
   it(
     'recovers a full speech segment after flush() resets the stream',
