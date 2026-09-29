@@ -77,3 +77,52 @@ describe('ElevenLabs realtime STT server errors', () => {
     expect(errors.at(-1)?.error.message).toContain('transcriber_error: internal failure');
   });
 });
+
+describe('ElevenLabs realtime STT retries', () => {
+  it('sends audio pushed after a server error on the new connection', async () => {
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(wss, 'listening');
+    const { port } = wss.address() as AddressInfo;
+    const audioChunks: number[] = [];
+    let connections = 0;
+    wss.on('connection', (ws) => {
+      const connection = ++connections;
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString());
+        if (!message.audio_base_64) return;
+        audioChunks[connection] = (audioChunks[connection] ?? 0) + 1;
+        if (connection === 1) {
+          ws.send(JSON.stringify({ message_type: 'transcriber_error', message: 'try again' }));
+        }
+      });
+    });
+
+    const stt = new STT({
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${port}`,
+      model: 'scribe_v2_realtime',
+    });
+    const stream = stt.stream({ connOptions });
+    const frame = () => new AudioFrame(new Int16Array(1600).fill(1), 16000, 1, 1600);
+    const waitFor = async (predicate: () => boolean) => {
+      const deadline = Date.now() + 2000;
+      while (!predicate() && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    };
+    try {
+      stream.pushFrame(frame());
+      await waitFor(() => connections === 2);
+      // give the failed attempt time to wind down before the next frame arrives
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      stream.pushFrame(frame());
+      await waitFor(() => (audioChunks[2] ?? 0) > 0);
+
+      expect(connections).toBe(2);
+      expect(audioChunks[2]).toBeGreaterThan(0);
+    } finally {
+      stream.close();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+    }
+  });
+});

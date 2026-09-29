@@ -691,12 +691,19 @@ export class SpeechStream extends stt.SpeechStream {
           const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
           const abortPromise = waitForAbort(controller.signal);
           const streamAbortPromise = waitForAbort(this.abortSignal);
+          // An abandoned `input.next()` stays parked inside the queue and takes the next frame
+          // for a read nobody awaits, so the read is cancelled with the attempt instead of only
+          // being raced against the abort.
+          const readSignal = AbortSignal.any([controller.signal, this.abortSignal]);
           let hasEnded = false;
 
           try {
             while (!this.closed) {
               const result = await Promise.race([
-                this.input.next(),
+                this.input.next({ signal: readSignal }).catch((error: unknown) => {
+                  if (readSignal.aborted) return undefined;
+                  throw error;
+                }),
                 abortPromise,
                 streamAbortPromise,
               ]);
