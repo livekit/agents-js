@@ -61,3 +61,24 @@ describe('inference.VAD updateOptions propagation', () => {
     }
   });
 });
+
+describe('VADStream endInput', () => {
+  it('ends the input without throwing and rejects later pushes', async () => {
+    const vad = new VAD();
+    const stream = vad.stream();
+    try {
+      expect(() => stream.endInput()).not.toThrow();
+      expect(() => stream.endInput()).toThrow('Input is closed');
+      expect(() => stream.flush()).toThrow('Input is closed');
+
+      // The input reader observes the end of the stream.
+      const reader = internalsReader(stream);
+      await expect(reader.read()).resolves.toMatchObject({ done: true });
+    } finally {
+      stream.close();
+    }
+  });
+});
+
+const internalsReader = (stream: VADStream) =>
+  (stream as unknown as { inputReader: ReadableStreamDefaultReader<unknown> }).inputReader;
