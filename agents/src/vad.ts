@@ -148,9 +148,13 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        // `endInput()` and `close()` close the input writer, so stop forwarding frames.
+        if (this.inputClosed || this.closed) break;
         await this.inputWriter.write(value);
       }
     } catch (e) {
+      // A write that races with `endInput()` or `close()` rejects because the writer is closed.
+      if (this.inputClosed || this.closed) return;
       this.logger.error(`Error pumping deferred stream: ${e}`);
       throw e;
     } finally {
