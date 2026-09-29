@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { STT } from './stt.js';
 
+const SpeechEventType = stt.SpeechEventType;
 const SAMPLE_RATE = 16000;
 // the stream forwards audio in chunks of 512 samples at 16 kHz
 const SAMPLES_PER_CHUNK = 512;
@@ -81,6 +83,53 @@ describe('Baseten STT reconnect', () => {
 
     expect(connections[1]!.chunks).toBe(frames);
     expect(connections[0]!.chunks).toBe(0);
+    stream.close();
+  });
+
+  it('ends the active speech turn when the socket drops and starts a new one after reconnect', async () => {
+    const connections: Connection[] = [];
+    const modelEndpoint = await startServer(connections);
+    const stream = new STT({ apiKey: 'test-key', modelEndpoint }).stream();
+    const types: stt.SpeechEventType[] = [];
+    void (async () => {
+      for await (const event of stream) types.push(event.type);
+    })();
+
+    const interim = JSON.stringify({ is_final: false, transcript: 'hello' });
+    await waitFor(() => connections[0]?.configured === true);
+    connections[0]!.socket.send(interim);
+    await waitFor(() => types.length >= 2);
+    connections[0]!.socket.close();
+    await waitFor(() => connections[1]?.configured === true);
+    connections[1]!.socket.send(interim);
+    await waitFor(() => types.length >= 5);
+
+    expect(types).toEqual([
+      SpeechEventType.START_OF_SPEECH,
+      SpeechEventType.INTERIM_TRANSCRIPT,
+      SpeechEventType.END_OF_SPEECH,
+      SpeechEventType.START_OF_SPEECH,
+      SpeechEventType.INTERIM_TRANSCRIPT,
+    ]);
+    stream.close();
+  });
+
+  it('keeps samples buffered before the drop and sends them on the new socket', async () => {
+    const connections: Connection[] = [];
+    const modelEndpoint = await startServer(connections);
+    const stream = new STT({ apiKey: 'test-key', modelEndpoint }).stream();
+
+    await waitFor(() => connections[0]?.configured === true);
+    const partial = (samples: number) =>
+      new AudioFrame(new Int16Array(samples), SAMPLE_RATE, 1, samples);
+    stream.pushFrame(partial(160));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    connections[0]!.socket.close();
+    await waitFor(() => connections[1]?.configured === true);
+    stream.pushFrame(partial(SAMPLES_PER_CHUNK - 160));
+    await waitFor(() => connections[1]!.chunks >= 1, 1000).catch(() => {});
+
+    expect(connections[1]!.chunks).toBe(1);
     stream.close();
   });
 

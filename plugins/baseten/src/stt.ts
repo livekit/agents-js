@@ -92,12 +92,16 @@ export class SpeechStream extends stt.SpeechStream {
   #opts: BasetenSttOptions;
   #logger = log();
   #speaking = false;
+  // Shared across connections so samples buffered toward the next chunk survive a reconnect.
+  #audioByteStream: AudioByteStream;
   #requestId = '';
   label = 'baseten.SpeechStream';
 
   constructor(stt: STT, opts: BasetenSttOptions) {
     super(stt, opts.sampleRate);
     this.#opts = opts;
+    const sampleRate = opts.sampleRate ?? 16000;
+    this.#audioByteStream = new AudioByteStream(sampleRate, 1, sampleRate === 16000 ? 512 : 256);
     this.closed = false;
   }
 
@@ -137,6 +141,13 @@ export class SpeechStream extends stt.SpeechStream {
 
           const delay = Math.min(retries * 5, 10);
           retries++;
+
+          // The dropped connection can no longer deliver the final transcript, so close the
+          // active speech turn to let the next connection start a new one.
+          if (this.#speaking) {
+            this.#speaking = false;
+            this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+          }
 
           this.#logger.warn(
             `failed to connect to Baseten, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
@@ -183,8 +194,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     const sendTask = async () => {
       const sampleRate = this.#opts.sampleRate ?? 16000;
-      const samplesPerChunk = sampleRate === 16000 ? 512 : 256;
-      const audioByteStream = new AudioByteStream(sampleRate, 1, samplesPerChunk);
+      const audioByteStream = this.#audioByteStream;
 
       try {
         while (!this.closed) {
