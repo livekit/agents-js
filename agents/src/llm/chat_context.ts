@@ -920,14 +920,23 @@ export class ChatContext {
     return this;
   }
 
+  /**
+   * Truncate the context to the last `maxItems` conversational items.
+   *
+   * Preserves the first system instruction by adding it back to the beginning. A `maxItems`
+   * value of 0 leaves nothing but that instruction. A negative value is a programming error.
+   */
   truncate(maxItems: number): ChatContext {
-    if (maxItems <= 0) return this;
+    if (maxItems < 0) {
+      throw new RangeError('maxItems must be non-negative');
+    }
 
     const instructions = this._items.find((i) => i.type === 'message' && i.role === 'system') as
       | ChatMessage
       | undefined;
 
-    let newItems = this._items.slice(-maxItems);
+    // `-0` is `0` and `items.slice(0)` returns the whole list, so handle a zero budget explicitly.
+    let newItems = maxItems === 0 ? [] : this._items.slice(-maxItems);
 
     // Ensure the first item is not a function-call artefact.
     while (
