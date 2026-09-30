@@ -86,7 +86,7 @@ describe('DataStreamAudioOutput.clearBuffer', () => {
       payload: '',
     });
     expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
-      { error, destinationIdentity: 'avatar' },
+      { error, 'lk.pii.destination_identity': 'avatar' },
       'failed to perform clear buffer rpc',
     );
   });
