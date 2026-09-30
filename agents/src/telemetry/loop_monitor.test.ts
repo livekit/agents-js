@@ -198,7 +198,7 @@ describe.sequential('event loop monitor', () => {
     blockLoopWithGarbage(200);
     await settle();
     // the longest stall is the block above; a loaded host can add shorter ones around it
-    const report = codeReports(reports).sort((a, b) => b.duration - a.duration)[0];
+    const report = reports.sort((a, b) => b.duration - a.duration)[0];
     expect(report).toBeDefined();
     expect(report!.gcTime).toBeGreaterThan(0);
     expect(report!.gcTime).toBeLessThanOrEqual(report!.duration);
