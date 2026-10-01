@@ -197,6 +197,11 @@ export class STTPipeline {
     // a closing session must not recreate provider connections that are torn down at once
     this.isClosing = opts.isClosing ?? (() => false);
     this._pumpTask = Task.from(({ signal }) => this.sttPump(signal));
+    this._pumpTask.result.catch((error) => {
+      if (!this._pumpTask.cancelled) {
+        log().error({ err: error }, 'STT pipeline failed');
+      }
+    });
     this._pumpTask.addDoneCallback(() => {
       this._eventChannel.close().catch((error) => {
         log().error(error, 'Error closing STT event channel');
