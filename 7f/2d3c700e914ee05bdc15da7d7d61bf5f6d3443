@@ -1,0 +1,32 @@
+agents/src/voice/agent_session.test.ts
+  s_72f2bf84405bd1::t_2cf12a05d3ee37 6,319,326
+.changeset/quiet-stt-recovery.md
+  s_72f2bf84405bd1::t_2cf12a05d3ee37 1-5
+agents/src/voice/audio_recognition.ts
+  s_72f2bf84405bd1::t_2cf12a05d3ee37 200-204
+agents/src/voice/audio_recognition_stt_recovery.test.ts
+  s_72f2bf84405bd1::t_1ae35829bf6e58 5,7,35,81-83,87,95-114
+agents/src/voice/agent_activity.ts
+  s_72f2bf84405bd1::t_2cf12a05d3ee37 1936-1937,1951-1952
+agents/src/voice/agent_session.ts
+  s_72f2bf84405bd1::t_97ec608a6575d3 1796
+  s_72f2bf84405bd1::t_2cf12a05d3ee37 21,1797-1800
+agents/src/voice/agent_session_stt_recovery.test.ts
+  s_72f2bf84405bd1::t_7884458f2d96ac 1-209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f2d3c700e914ee05bdc15da7d7d61bf5f6d3443",
+  "prompts": {},
+  "sessions": {
+    "s_72f2bf84405bd1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f5a4-62a4-7fd1-9e13-5a2d922a8d84",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
