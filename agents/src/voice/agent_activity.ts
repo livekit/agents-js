@@ -1025,6 +1025,14 @@ export class AgentActivity implements RecognitionHooks {
       // Disable stt node if stt is not provided
       stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
       isClosing: () => this.agentSession._closing,
+      onSttError: (error) =>
+        this.onError({
+          type: 'stt_error',
+          timestamp: Date.now(),
+          label: this.stt?.label ?? 'sttNode',
+          error,
+          recoverable: false,
+        }),
       vad: recognitionVad,
       turnDetector:
         typeof this._resolvedTurnDetection === 'string' ? undefined : this._resolvedTurnDetection,

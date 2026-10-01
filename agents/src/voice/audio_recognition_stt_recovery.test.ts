@@ -100,7 +100,7 @@ describe('STTPipeline recovery after an exhausted retry budget', () => {
   });
 
   it.each(['throw', 'reject'] as const)('logs a node startup failure (%s)', async (failure) => {
-    const error = new APIConnectionError({ message: 'STT node failed to start' });
+    const error = new Error('STT node failed to start');
     const errorLog = vi.spyOn(log(), 'error');
     const sttNode = vi.fn(() => {
       if (failure === 'throw') throw error;
