@@ -308,7 +308,7 @@ type ResolvedSTTOptions = Omit<STTOptions, 'apiKey' | 'language' | 'keywords' | 
 export class STT extends stt.STT {
   #opts: ResolvedSTTOptions;
   #client: OpenAI;
-  #streams = new Set<SpeechStream>();
+  #streams = new Set<WeakRef<SpeechStream>>();
   #specifiedLanguages: string[];
   #userKeywords: string[];
   #sessionKeyterms: string[] = [];
@@ -547,7 +547,7 @@ export class STT extends stt.STT {
     const vadOptedOut = opts.vad === null || (opts.vad === undefined && this.#vadOptedOut);
     validateContext(model, languages, userKeywords);
     if (opts.language === undefined) {
-      for (const stream of this.#streams) {
+      for (const stream of this.#activeStreams()) {
         validateContext(model, stream.languages, userKeywords);
       }
     }
@@ -611,11 +611,7 @@ export class STT extends stt.STT {
       interimResults: useRealtime,
       keyterms: supportsContextHints(model),
     });
-    for (const stream of this.#streams) {
-      if (stream.isClosed) {
-        this.#streams.delete(stream);
-        continue;
-      }
+    for (const stream of this.#activeStreams()) {
       stream._updateOptions(this.#opts, languageGiven ? languages : undefined);
     }
   }
@@ -633,7 +629,7 @@ export class STT extends stt.STT {
     }
     this.#sessionKeyterms = [...keyterms];
     this.#opts.keywords = [...new Set([...this.#userKeywords, ...keyterms])];
-    for (const stream of this.#streams) stream._updateOptions(this.#opts);
+    for (const stream of this.#activeStreams()) stream._updateOptions(this.#opts);
   }
 
   stream(
@@ -654,14 +650,27 @@ export class STT extends stt.STT {
       this,
       streamOptions,
       options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
-      () => this.#streams.delete(stream),
+      () => this.#streams.delete(ref),
     );
-    this.#streams.add(stream);
+    const ref = new WeakRef(stream);
+    this.#streams.add(ref);
     return stream;
   }
 
+  *#activeStreams(): Generator<SpeechStream> {
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (!stream || stream.isClosed || stream.terminalError) {
+        stream?.close();
+        this.#streams.delete(ref);
+        continue;
+      }
+      yield stream;
+    }
+  }
+
   override async close(): Promise<void> {
-    for (const stream of this.#streams) {
+    for (const stream of this.#activeStreams()) {
       stream.close();
     }
     this.#streams.clear();

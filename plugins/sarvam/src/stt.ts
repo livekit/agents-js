@@ -616,12 +616,14 @@ export class SpeechStream extends stt.SpeechStream {
           const delay = Math.min(retries * 5, 10);
           retries++;
           this.#logger.warn(
-            `Failed to connect to Sarvam STT, retrying in ${delay}s: ${e} (${retries}/${maxRetry})`,
+            { error: e, retryDelayMs: delay * 1000, attempt: retries, maxRetry },
+            'Failed to connect to Sarvam STT, retrying',
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            `Sarvam STT disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            { error: e, inputClosed: this.input.closed, isClosed: this.closed },
+            'Sarvam STT disconnected, connection is closed',
           );
         }
       }
@@ -825,7 +827,7 @@ export class SpeechStream extends stt.SpeechStream {
                 json['message'] ??
                 'Unknown error';
               const errorCode = nested?.code ?? json['code'] ?? '';
-              this.#logger.error(`Sarvam STT WebSocket error [${errorCode}]: ${errorInfo}`);
+              this.#logger.error({ 'lk.pii.error': json }, 'Sarvam STT WebSocket error');
               reject(
                 new APIStatusError({
                   message: `Sarvam STT API error [${errorCode}]: ${errorInfo}`,

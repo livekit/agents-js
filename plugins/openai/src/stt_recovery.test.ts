@@ -6,6 +6,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as ws from 'ws';
+import type { SpeechStream } from './stt.js';
 import { STT } from './stt.js';
 
 const endpoint = vi.hoisted(() => ({ url: '' }));
@@ -61,6 +62,15 @@ afterEach(async () => {
 });
 
 describe('openai STT recovery', () => {
+  it('removes terminal streams from provider option updates', async () => {
+    await startServer({ verifyClient: (_info, done) => done(false, 401) });
+    const { provider, stream } = startStream();
+    const update = vi.spyOn(stream as SpeechStream, '_updateOptions');
+    await drain(stream);
+    provider.updateOptions({ language: 'fr' });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it.each([1000, 1006, 1011])(
     'preserves an API error after unexpected closure %i',
     async (code) => {

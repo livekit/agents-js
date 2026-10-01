@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIConnectionError, APIError, APIStatusError, type stt } from '@livekit/agents';
+import { APIConnectionError, APIError, APIStatusError, log, type stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -135,17 +135,33 @@ describe('sarvam STT recovery', () => {
     expect(onError).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(server.clients.size).toBe(0));
   });
-  it('propagates provider errors while the socket stays open', async () => {
-    await startServer();
-    const body = { type: 'error', data: { message: 'invalid key', code: '401' } };
-    server.on('connection', (socket) => {
-      socket.once('pong', () => socket.send(JSON.stringify(body)));
-      socket.ping();
-    });
-    const { stream } = startStream();
-    await drain(stream);
-    expect(stream.terminalError).toBeInstanceOf(APIError);
-    expect((stream.terminalError as APIError).body).toEqual(body);
-    expect(stream.terminalError).toBeInstanceOf(APIStatusError);
-  });
+  it.each(['401', '500'])(
+    'propagates provider errors while the socket stays open (%s)',
+    async (code) => {
+      await startServer();
+      const sensitive = 'private speech from the caller';
+      const body = { type: 'error', data: { message: sensitive, code, transcript: sensitive } };
+      const warnLog = vi.spyOn(log(), 'warn');
+      const errorLog = vi.spyOn(log(), 'error');
+      server.on('connection', (socket) => {
+        socket.once('pong', () => socket.send(JSON.stringify(body)));
+        socket.ping();
+      });
+      const { stream } = startStream();
+      await drain(stream);
+      expect(stream.terminalError).toBeInstanceOf(APIError);
+      expect((stream.terminalError as APIError).body).toEqual(body);
+      expect(stream.terminalError).toBeInstanceOf(APIStatusError);
+      for (const args of [...warnLog.mock.calls, ...errorLog.mock.calls]) {
+        const message = typeof args[0] === 'string' ? args[0] : args[1];
+        expect(message).not.toContain(sensitive);
+      }
+      if (code === '500') {
+        expect(warnLog).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.objectContaining({ body }) }),
+          expect.any(String),
+        );
+      }
+    },
+  );
 });

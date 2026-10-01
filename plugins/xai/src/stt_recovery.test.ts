@@ -8,6 +8,7 @@ import {
   Agent,
   AgentSession,
   AgentSessionEventTypes,
+  log,
   type stt,
 } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
@@ -160,7 +161,10 @@ describe('xai STT recovery', () => {
   });
   it('propagates provider errors while the socket stays open', async () => {
     await startServer();
-    const body = { type: 'error', message: 'service unavailable' };
+    const sensitive = 'private speech from the caller';
+    const body = { type: 'error', message: sensitive, transcript: sensitive };
+    const warnLog = vi.spyOn(log(), 'warn');
+    const errorLog = vi.spyOn(log(), 'error');
     server.on('connection', (socket) => {
       socket.once('pong', () => socket.send(JSON.stringify(body)));
       socket.ping();
@@ -170,6 +174,14 @@ describe('xai STT recovery', () => {
     expect(stream.terminalError).toBeInstanceOf(APIError);
     expect((stream.terminalError as APIError).body).toEqual(body);
     expect(stream.terminalError).toBeInstanceOf(APIStatusError);
+    for (const args of [...warnLog.mock.calls, ...errorLog.mock.calls]) {
+      const message = typeof args[0] === 'string' ? args[0] : args[1];
+      expect(message).not.toContain(sensitive);
+    }
+    expect(warnLog).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ body }) }),
+      expect.any(String),
+    );
   });
 
   it('resumes session transcripts after exhausting plugin retries', async () => {
