@@ -67,6 +67,17 @@ function needsReplyPlaceholder(model: string): boolean {
   return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
 }
 
+// These models declare tools NON_BLOCKING unless the client says otherwise. Sending nothing
+// would leave the server async while we still treat the tools as blocking.
+const MODELS_DEFAULT_NON_BLOCKING = ['3.8'];
+
+function defaultToolBehavior(model: string): types.Behavior | undefined {
+  if (MODELS_DEFAULT_NON_BLOCKING.some((tag) => model.includes(tag))) {
+    return types.Behavior.NON_BLOCKING;
+  }
+  return undefined;
+}
+
 /**
  * The SDK rejects an empty `turns` array ("contents are required"), so a
  * content event carrying no turns is sent as a bare `turnComplete`. That is
@@ -356,7 +367,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       thinkingConfig?: types.ThinkingConfig;
 
       /**
-       * The behavior for tool calls. Default behavior is `BLOCKING` in Gemini Realtime API.
+       * The behavior for tool calls. Defaults to `NON_BLOCKING` on models that declare it by
+       * default (Gemini 3.8 Live), and to the server default (`BLOCKING`) elsewhere.
        * Note: Not supported in Vertex AI.
        */
       toolBehavior?: types.Behavior;
@@ -435,7 +447,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       apiVersion: options.apiVersion,
       geminiTools: options.geminiTools,
       thinkingConfig: options.thinkingConfig,
-      toolBehavior: options.toolBehavior,
+      toolBehavior: options.toolBehavior ?? defaultToolBehavior(model),
       toolResponseScheduling: options.toolResponseScheduling,
     };
   }
