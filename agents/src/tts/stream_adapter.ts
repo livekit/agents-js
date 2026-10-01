@@ -108,6 +108,7 @@ export class StreamAdapter extends TTS {
 }
 
 export class StreamAdapterWrapper extends SynthesizeStream {
+  protected override emitMetrics = false;
   #tts: TTS;
   #sentenceStream: SentenceStream;
   #expressive: boolean;
