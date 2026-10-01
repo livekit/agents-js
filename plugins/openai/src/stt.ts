@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIError,
   Event as AsyncEvent,
   type AudioBuffer,
   AudioByteStream,
@@ -15,10 +17,12 @@ import {
   mergeFrames,
   normalizeLanguage,
   stt,
+  waitForAbort,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { OpenAI } from 'openai';
-import { type MessageEvent, WebSocket } from 'ws';
+import { type RawData, WebSocket } from 'ws';
 import { z } from 'zod';
 import type { GroqAudioModels, STTModels } from './models.js';
 import type * as api_proto from './realtime/api_proto.js';
@@ -673,8 +677,7 @@ export class SpeechStream extends stt.SpeechStream {
   #itemAudioTiming = new Map<string, { startMs?: number; endMs?: number }>();
   #speaking = false;
   #ws?: WebSocket;
-  #wsReady = new AsyncEvent();
-  #vadStream?: VADStream;
+  #connectionController?: AbortController;
   #reconnectRequested = false;
 
   constructor(
@@ -718,7 +721,7 @@ export class SpeechStream extends stt.SpeechStream {
       this.#reconnectRequested = true;
       const ws = this.#ws;
       this.#ws = undefined;
-      this.#wsReady.clear();
+      this.#connectionController?.abort();
       ws.close();
       return;
     }
@@ -739,46 +742,44 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run(): Promise<void> {
-    // Avoid fusing an open segment into the next connection attempt after a retry.
     this.#emitEndOfSpeech();
-    const inputTask = this.#forwardInput();
-    try {
-      while (!this.abortSignal.aborted) {
-        const vad = _requiresRealtimeVad(this.#options.model, this.#options.turnDetection)
-          ? this.#options.vad
-            ? await _loadRealtimeVad(this.#options.vad)
-            : undefined
-          : undefined;
-        const vadStream = vad?.stream();
-        const ws = await this.#connect();
+    while (!this.abortSignal.aborted) {
+      const vad = _requiresRealtimeVad(this.#options.model, this.#options.turnDetection)
+        ? this.#options.vad
+          ? await _loadRealtimeVad(this.#options.vad)
+          : undefined
+        : undefined;
+      const ws = await this.#connect();
+      const attemptController = new AbortController();
+      this.#connectionController = attemptController;
+      const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
+      const connectionTasks: Promise<void>[] = [];
+      let vadStream: VADStream | undefined;
+      try {
+        vadStream = vad?.stream();
         this.#ws = ws;
-        this.#vadStream = vadStream;
-        this.#wsReady.set();
-        const abort = () => {
-          if (ws.readyState < WebSocket.CLOSING) ws.close();
-        };
-        this.abortSignal.addEventListener('abort', abort, { once: true });
-
-        try {
-          ws.send(JSON.stringify(this.#sessionUpdateEvent()));
-          const connectionTasks: Promise<void>[] = [this.#forwardEvents(ws, Boolean(vadStream))];
-          if (vadStream) connectionTasks.push(this.#forwardVadEvents(ws, vadStream));
-          await Promise.race([inputTask, ...connectionTasks]);
-        } finally {
-          this.#ws = undefined;
-          this.#vadStream = undefined;
-          this.#wsReady.clear();
-          this.abortSignal.removeEventListener('abort', abort);
-          vadStream?.close();
-          if (ws.readyState < WebSocket.CLOSING) ws.close();
+        ws.send(JSON.stringify(this.#sessionUpdateEvent()));
+        connectionTasks.push(this.#forwardEvents(ws, Boolean(vadStream), attemptSignal));
+        if (vadStream) {
+          connectionTasks.push(this.#forwardVadEvents(ws, vadStream, attemptSignal));
         }
-
-        if (!this.#reconnectRequested) return;
-        this.#reconnectRequested = false;
-        this.#emitEndOfSpeech();
+        connectionTasks.push(this.#forwardInput(ws, vadStream, attemptSignal));
+        await Promise.race(connectionTasks);
+      } finally {
+        this.#ws = undefined;
+        this.#connectionController = undefined;
+        attemptController.abort();
+        vadStream?.close();
+        if (ws.readyState < WebSocket.CLOSING) ws.close();
+        await Promise.allSettled(connectionTasks);
       }
-    } finally {
-      this.#onClose();
+
+      if (!this.#reconnectRequested) {
+        this.#onClose();
+        return;
+      }
+      this.#reconnectRequested = false;
+      this.#emitEndOfSpeech();
     }
   }
 
@@ -788,13 +789,16 @@ export class SpeechStream extends stt.SpeechStream {
         Authorization: `Bearer ${this.#options.apiKey}`,
       },
     });
-
-    await new Promise<void>((resolve, reject) => {
-      ws.onopen = () => resolve();
-      ws.onerror = (error) => reject(new Error(error.message));
-    });
-
-    return ws;
+    const connected = waitForWebSocketOpen(ws, 'OpenAI STT');
+    const abort = () => ws.close();
+    this.abortSignal.addEventListener('abort', abort, { once: true });
+    if (this.abortSignal.aborted) abort();
+    try {
+      await connected;
+      return ws;
+    } finally {
+      this.abortSignal.removeEventListener('abort', abort);
+    }
   }
 
   #realtimeUrl(): string {
@@ -827,41 +831,52 @@ export class SpeechStream extends stt.SpeechStream {
     };
   }
 
-  async #forwardInput(): Promise<void> {
+  async #forwardInput(
+    ws: WebSocket,
+    vadStream: VADStream | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
     const audioStream = new AudioByteStream(
       REALTIME_SAMPLE_RATE,
       REALTIME_NUM_CHANNELS,
       REALTIME_SAMPLE_RATE / 20,
     );
 
-    for await (const item of this.input) {
-      while (!this.#ws && !this.abortSignal.aborted) await this.#wsReady.wait();
-      const ws = this.#ws;
-      if (!ws) return;
-      const vadStream = this.#vadStream;
-      if (item === SpeechStream.FLUSH_SENTINEL) {
-        for (const frame of audioStream.flush()) {
+    try {
+      while (!signal.aborted) {
+        const result = await this.input.next({ signal });
+        if (result.done) break;
+        const item = result.value;
+        if (item === SpeechStream.FLUSH_SENTINEL) {
+          for (const frame of audioStream.flush()) {
+            this.#sendAudioFrame(ws, frame);
+          }
+          if (
+            _requiresRealtimeVad(this.#options.model, this.#options.turnDetection) &&
+            !this.#options.vad
+          ) {
+            ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+          }
+          continue;
+        }
+
+        vadStream?.pushFrame(item);
+        for (const frame of audioStream.write(item.data.buffer as ArrayBuffer)) {
           this.#sendAudioFrame(ws, frame);
         }
-        if (
-          _requiresRealtimeVad(this.#options.model, this.#options.turnDetection) &&
-          !this.#options.vad
-        ) {
-          ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-        }
-        continue;
       }
-
-      vadStream?.pushFrame(item);
-      for (const frame of audioStream.write(item.data.buffer as ArrayBuffer)) {
-        this.#sendAudioFrame(ws, frame);
-      }
+      if (!signal.aborted) vadStream?.endInput();
+    } catch (error) {
+      if (!signal.aborted) throw error;
     }
-    this.#vadStream?.endInput();
   }
 
-  async #forwardVadEvents(ws: WebSocket, vadStream: VADStream): Promise<void> {
-    for await (const event of vadStream) {
+  async #forwardVadEvents(ws: WebSocket, vadStream: VADStream, signal: AbortSignal): Promise<void> {
+    const aborted = waitForAbort(signal);
+    while (!signal.aborted) {
+      const result = await Promise.race([vadStream.next(), aborted]);
+      if (!result || result.done) return;
+      const event = result.value;
       if (event.type === VADEventType.START_OF_SPEECH) {
         this.#emitStartOfSpeech();
       } else if (event.type === VADEventType.END_OF_SPEECH) {
@@ -873,8 +888,8 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  async #forwardEvents(ws: WebSocket, hasClientVad: boolean): Promise<void> {
-    for await (const data of this.#messages(ws)) {
+  async #forwardEvents(ws: WebSocket, hasClientVad: boolean, signal: AbortSignal): Promise<void> {
+    for await (const data of this.#messages(ws, signal)) {
       const event = parseRealtimeTranscriptionServerEvent(data);
       switch (event.type) {
         case 'input_audio_buffer.speech_started': {
@@ -924,48 +939,63 @@ export class SpeechStream extends stt.SpeechStream {
           break;
         }
         case 'error': {
-          throw new Error(event.error?.message || 'OpenAI realtime transcription error');
+          throw new APIError(event.error?.message || 'OpenAI realtime transcription error', {
+            body: event,
+            retryable: false,
+          });
         }
       }
     }
   }
 
-  async *#messages(ws: WebSocket): AsyncGenerator<string> {
+  async *#messages(ws: WebSocket, signal: AbortSignal): AsyncGenerator<string> {
     const queue: string[] = [];
     const messageEvent = new AsyncEvent();
     let closed = false;
     let error: Error | undefined;
 
-    ws.onmessage = (message: MessageEvent) => {
-      queue.push(
-        typeof message.data === 'string'
-          ? message.data
-          : Buffer.from(message.data as ArrayBuffer).toString(),
-      );
+    const onMessage = (message: RawData) => {
+      queue.push(message.toString());
       messageEvent.set();
     };
-    ws.onclose = () => {
-      closed = true;
-      messageEvent.set();
-    };
-    ws.onerror = (event) => {
-      error = new Error(event.message);
-      closed = true;
-      messageEvent.set();
-    };
-
-    while (!closed || queue.length > 0) {
-      if (queue.length > 0) {
-        yield queue.shift()!;
-        continue;
+    const onClose = (code: number) => {
+      if (!signal.aborted && !this.#reconnectRequested) {
+        error ??= new APIConnectionError({
+          message: `OpenAI STT WebSocket closed unexpectedly (${code})`,
+        });
       }
-
-      messageEvent.clear();
-      if (closed || queue.length > 0) continue;
-      await messageEvent.wait();
+      closed = true;
+      messageEvent.set();
+    };
+    const onError = (event: Error) => {
+      error = new APIConnectionError({ message: `OpenAI STT WebSocket failed (${event.name})` });
+      closed = true;
+      messageEvent.set();
+    };
+    const onAbort = () => {
+      closed = true;
+      messageEvent.set();
+    };
+    ws.on('message', onMessage);
+    ws.on('close', onClose);
+    ws.on('error', onError);
+    signal.addEventListener('abort', onAbort, { once: true });
+    try {
+      while (!signal.aborted && (!closed || queue.length > 0)) {
+        if (queue.length > 0) {
+          yield queue.shift()!;
+          continue;
+        }
+        messageEvent.clear();
+        await messageEvent.wait();
+      }
+      if (error && !signal.aborted) throw error;
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      ws.off('message', onMessage);
+      ws.off('close', onClose);
+      ws.off('error', onError);
     }
-
-    if (error) throw error;
   }
 
   #sendAudioFrame(ws: WebSocket, frame: AudioFrame): void {
