@@ -1,0 +1,34 @@
+agents/src/voice/audio_recognition.ts
+  s_72f2bf84405bd1::t_231ac4413816e2 44,196-199,300,361,493,2029-2031
+  s_72f2bf84405bd1::t_77b8f62dcefaba 189,203,208,230,232,241,243-245,260-262,265,299,2028
+agents/src/voice/agent_session_stt_recovery.test.ts
+  s_72f2bf84405bd1::t_926eac5a09c6b6 4,135,137-167,169-175,267,283
+  s_72f2bf84405bd1::t_77b8f62dcefaba 136,168
+  s_72f2bf84405bd1::t_fe4d31aca6cb01 78-103
+  s_72f2bf84405bd1::t_2623c98d8c3e61 104-134
+agents/src/voice/agent_activity.ts
+  s_72f2bf84405bd1::t_77b8f62dcefaba 1027-1032
+  s_72f2bf84405bd1::t_231ac4413816e2 1026,1033
+agents/src/voice/audio_recognition_stt_recovery.test.ts
+  s_72f2bf84405bd1::t_2623c98d8c3e61 103
+agents/src/voice/agent_session.ts
+  s_72f2bf84405bd1::t_decedc623bed70 539,1135,1142,1150-1151,1822-1823
+.changeset/quiet-stt-recovery.md
+  s_72f2bf84405bd1::t_669419a5211f35 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d9f237f13807297e19686f3145c9daa263f3b1a",
+  "prompts": {},
+  "sessions": {
+    "s_72f2bf84405bd1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f5a4-62a4-7fd1-9e13-5a2d922a8d84",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
