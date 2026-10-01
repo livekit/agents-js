@@ -2359,6 +2359,7 @@ abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> 
     // (undocumented)
     protected closed: boolean;
     collect(): Promise<AudioFrame>;
+    protected emitMetrics: boolean;
     // @internal
     get error(): Error | undefined;
     // (undocumented)
@@ -7007,6 +7008,8 @@ class StreamAdapterWrapper extends SpeechStream {
 // @public (undocumented)
 class StreamAdapterWrapper_2 extends SynthesizeStream {
     constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions);
+    // (undocumented)
+    protected emitMetrics: boolean;
     // @internal
     get error(): Error | undefined;
     // @internal
@@ -7267,6 +7270,7 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     protected closed: boolean;
     // (undocumented)
     protected connOptions: APIConnectOptions;
+    protected emitMetrics: boolean;
     // (undocumented)
     static readonly END_OF_STREAM: unique symbol;
     endInput(): void;
