@@ -1,0 +1,23 @@
+agents/src/voice/agent_session.ts
+  s_72f2bf84405bd1::t_5ce238d662f3cd 85,1014-1019,1026,1139,1823-1829
+agents/src/voice/agent_session_stt_recovery.test.ts
+  s_72f2bf84405bd1::t_5ce238d662f3cd 149-150,152-157,206,213,222
+  s_72f2bf84405bd1::t_a7cba323abcfda 10-15
+  s_72f2bf84405bd1::t_1cbc09452d8e80 4-5,9,87-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d8727a78e93e6674ab55248e52ce9767df0f13ec",
+  "prompts": {},
+  "sessions": {
+    "s_72f2bf84405bd1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f5a4-62a4-7fd1-9e13-5a2d922a8d84",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
