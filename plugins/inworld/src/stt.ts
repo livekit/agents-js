@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIError,
+  APIStatusError,
   type AudioBuffer,
   AudioByteStream,
   Future,
@@ -14,6 +17,7 @@ import {
   shortuuid,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import { WebSocket } from 'ws';
 
@@ -259,18 +263,14 @@ export class SpeechStream extends stt.SpeechStream {
       });
 
       try {
-        await new Promise<void>((resolve, reject) => {
-          ws.on('open', () => resolve());
-          ws.on('error', (err) => reject(err));
-          ws.on('close', (code) => reject(new Error(`WebSocket closed with code ${code}`)));
-        });
+        await waitForWebSocketOpen(ws, 'Inworld');
 
-        retries = 0;
         await this.#runWS(ws);
+        retries = 0;
       } catch (e) {
         if (!this.closed && !this.input.closed) {
-          if (retries >= maxRetry) {
-            throw new Error(`Failed to connect to Inworld STT after ${retries} attempts: ${e}`);
+          if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
+            throw e;
           }
 
           const delay = Math.min(retries * 5, 10);
@@ -293,6 +293,8 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket): Promise<void> {
     this.#resetWS = new Future();
     let closing = false;
+    const attemptController = new AbortController();
+    const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
 
     ws.send(
       JSON.stringify({
@@ -322,8 +324,18 @@ export class SpeechStream extends stt.SpeechStream {
         ws.once('close', (code, reason) => {
           if (!closing) {
             this.#logger.error(`Inworld STT WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            reject(
+              new APIConnectionError({
+                message: `Inworld STT WebSocket closed unexpectedly (${code})`,
+              }),
+            );
           }
+        });
+        ws.once('error', (error: Error) => {
+          if (!closing)
+            reject(
+              new APIConnectionError({ message: `Inworld STT WebSocket failed (${error.name})` }),
+            );
         });
       });
       await Promise.race([closed, waitForAbort(controller.signal)]);
@@ -337,13 +349,10 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      const abortPromise = waitForAbort(this.abortSignal);
-
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
+          const result = await this.input.next({ signal: attemptSignal });
 
-          if (result === undefined) return;
           if (result.done) break;
 
           const data = result.value;
@@ -365,16 +374,21 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(JSON.stringify({ audioChunk: { content: b64 } }));
           }
         }
+      } catch (error) {
+        if (!attemptSignal.aborted) throw error;
       } finally {
         closing = true;
-        ws.send(JSON.stringify({ endTurn: {} }));
-        ws.send(JSON.stringify({ closeStream: {} }));
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ endTurn: {} }));
+          ws.send(JSON.stringify({ closeStream: {} }));
+        }
         wsMonitor.cancel();
       }
     };
 
-    const listenTask = Task.from(async (controller) => {
+    const listenTask = Task.from(async () => {
       const listenMessage = new Promise<void>((resolve, reject) => {
+        ws.once('close', () => resolve());
         ws.on('message', (msg) => {
           try {
             const json = JSON.parse(msg.toString()) as {
@@ -391,7 +405,12 @@ export class SpeechStream extends stt.SpeechStream {
             };
 
             if (json.error) {
-              reject(new Error(`Inworld STT error: ${json.error.message}`));
+              reject(
+                new APIStatusError({
+                  message: `Inworld STT error: ${json.error.message}`,
+                  options: { body: json },
+                }),
+              );
               return;
             }
 
@@ -471,15 +490,23 @@ export class SpeechStream extends stt.SpeechStream {
         });
       });
 
-      await Promise.race([listenMessage, waitForAbort(controller.signal)]);
-    }, this.abortController);
+      await Promise.race([listenMessage, waitForAbort(attemptSignal)]);
+    });
 
-    await Promise.race([
-      this.#resetWS.await,
-      Promise.all([sendTask(), listenTask.result, wsMonitor.result]),
-    ]);
-    closing = true;
-    ws.close();
+    const sendPromise = sendTask();
+    try {
+      await Promise.race([
+        this.#resetWS.await,
+        Promise.all([sendPromise, listenTask.result, wsMonitor.result]),
+      ]);
+    } finally {
+      closing = true;
+      attemptController.abort();
+      wsMonitor.cancel();
+      ws.close();
+      await Promise.allSettled([sendPromise, listenTask.result, wsMonitor.result]);
+      ws.removeAllListeners('message');
+    }
   }
 
   #maybeReportUsage(): void {
