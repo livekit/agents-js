@@ -4,6 +4,7 @@
 //
 import {
   type APIConnectOptions,
+  APIConnectionError,
   type AudioBuffer,
   AudioByteStream,
   ChatMessage,
@@ -441,7 +442,7 @@ export class SpeechStream extends stt.SpeechStream {
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           if (retries >= maxRetry) {
-            throw new Error(`failed to connect to AssemblyAI after ${retries} attempts: ${e}`);
+            throw e;
           }
 
           const retryDelaySeconds = Math.min(retries * 5, 10);
@@ -531,8 +532,16 @@ export class SpeechStream extends stt.SpeechStream {
 
     await new Promise<void>((resolve, reject) => {
       ws.on('open', () => resolve());
-      ws.on('error', (error) => reject(error));
-      ws.on('close', (code) => reject(new Error(`WebSocket returned ${code}`)));
+      ws.on('error', (error) =>
+        reject(
+          new APIConnectionError({ message: `AssemblyAI connection failed: ${error.message}` }),
+        ),
+      );
+      ws.on('close', (code) =>
+        reject(
+          new APIConnectionError({ message: `AssemblyAI WebSocket closed with code ${code}` }),
+        ),
+      );
     });
 
     return ws;
@@ -548,7 +557,11 @@ export class SpeechStream extends stt.SpeechStream {
         ws.once('close', (code, reason) => {
           if (!closing) {
             this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            reject(
+              new APIConnectionError({
+                message: `AssemblyAI WebSocket closed unexpectedly with code ${code}`,
+              }),
+            );
           }
         });
       });
