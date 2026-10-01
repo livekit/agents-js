@@ -536,6 +536,7 @@ export class AgentSession<
   private nextActivity?: AgentActivity;
   private updateActivityTask?: Task<void>;
   private started = false;
+  private startTask?: Promise<void>;
   private sessionHost?: SessionHost;
 
   private _chatCtx: ChatContext;
@@ -1131,13 +1132,14 @@ export class AgentSession<
     // retained inside the guarded start: a failure below schedules close(), which releases it
     retainTts(this.tts);
     try {
-      await this._startImpl({
+      this.startTask = this._startImpl({
         agent,
         room,
         inputOptions,
         outputOptions,
         span: this.sessionSpan,
       });
+      await this.startTask;
     } catch (error) {
       recordException(sessionStartSpan, error instanceof Error ? error : new Error(String(error)));
       sessionStartSpan.end();
@@ -1145,6 +1147,8 @@ export class AgentSession<
       this._closeSoon({ reason: CloseReason.ERROR });
       await this.closingTask;
       throw error;
+    } finally {
+      this.startTask = undefined;
     }
     sessionStartSpan.end();
     this.sessionStartContext = undefined;
@@ -1815,6 +1819,8 @@ export class AgentSession<
     this.logger.error(error, 'AgentSession is closing due to an unrecoverable error');
 
     this.closingTask = (async () => {
+      // A provider can fail during startup. Let startup settle before tearing down its activity.
+      await this.startTask?.catch(() => {});
       await this.closeImpl(CloseReason.ERROR, error);
     })().then(() => {
       this.closingTask = null;
