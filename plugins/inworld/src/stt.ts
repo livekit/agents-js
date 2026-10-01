@@ -276,12 +276,14 @@ export class SpeechStream extends stt.SpeechStream {
           const delay = Math.min(retries * 5, 10);
           retries++;
           this.#logger.warn(
-            `Failed to connect to Inworld STT, retrying in ${delay}s: ${e} (${retries}/${maxRetry})`,
+            { error: e, retryDelayMs: delay * 1000, attempt: retries, maxRetry },
+            'Failed to connect to Inworld STT, retrying',
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            `Inworld STT disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            { error: e, inputClosed: this.input.closed, isClosed: this.closed },
+            'Inworld STT disconnected, connection is closed',
           );
         }
       }

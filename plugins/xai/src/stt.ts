@@ -257,12 +257,14 @@ export class SpeechStream extends stt.SpeechStream {
           retries++;
 
           this.#logger.warn(
-            `failed to connect to xAI STT, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+            { error: e, retryDelayMs: delay * 1000, attempt: retries, maxRetry },
+            'Failed to connect to xAI STT, retrying',
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            `xAI STT disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            { error: e, inputClosed: this.input.closed, isClosed: this.closed },
+            'xAI STT disconnected, connection is closed',
           );
         }
       }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIConnectionError, APIError, APIStatusError, type stt } from '@livekit/agents';
+import { APIConnectionError, APIError, APIStatusError, log, type stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -137,7 +137,10 @@ describe('inworld STT recovery', () => {
   });
   it('propagates provider errors while the socket stays open', async () => {
     await startServer();
-    const body = { error: { message: 'service unavailable' } };
+    const sensitive = 'private speech from the caller';
+    const body = { error: { message: sensitive }, transcript: sensitive };
+    const warnLog = vi.spyOn(log(), 'warn');
+    const errorLog = vi.spyOn(log(), 'error');
     server.on('connection', (socket) => {
       socket.once('pong', () => socket.send(JSON.stringify(body)));
       socket.ping();
@@ -147,5 +150,13 @@ describe('inworld STT recovery', () => {
     expect(stream.terminalError).toBeInstanceOf(APIError);
     expect((stream.terminalError as APIError).body).toEqual(body);
     expect(stream.terminalError).toBeInstanceOf(APIStatusError);
+    for (const args of [...warnLog.mock.calls, ...errorLog.mock.calls]) {
+      const message = typeof args[0] === 'string' ? args[0] : args[1];
+      expect(message).not.toContain(sensitive);
+    }
+    expect(warnLog).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ body }) }),
+      expect.any(String),
+    );
   });
 });

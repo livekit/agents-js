@@ -8,4 +8,4 @@
 '@livekit/agents-plugin-xai': patch
 ---
 
-Propagate STT connection and provider failures through API error recovery. Release failed connections' audio readers before reconnecting, preserve error types when retries are exhausted, and clean up Azure recognition startup failures.
+Propagate STT connection and provider failures through API error recovery. Release failed connections' audio readers before reconnecting, preserve error types when retries are exhausted, and clean up Azure recognition startup failures. Keep provider error payloads in redactable log fields and release unused OpenAI streams.
