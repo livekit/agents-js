@@ -1,0 +1,38 @@
+plugins/xai/src/stt.ts
+  s_72f2bf84405bd1::t_938fc133ab9c5a 260-261,266-267
+plugins/inworld/src/stt_recovery.test.ts
+  s_72f2bf84405bd1::t_b498c77930f25a 4,140-143,153-160
+plugins/xai/src/stt_recovery.test.ts
+  s_72f2bf84405bd1::t_5aa7edc1e33fdc 11
+  s_72f2bf84405bd1::t_b498c77930f25a 164-167,177-184
+plugins/openai/src/stt_recovery.test.ts
+  s_72f2bf84405bd1::t_b498c77930f25a 65-73
+  s_72f2bf84405bd1::t_87f1a5d94aaec5 9
+plugins/sarvam/src/stt.ts
+  s_72f2bf84405bd1::t_938fc133ab9c5a 619-620,625-626,830
+plugins/sarvam/src/stt_recovery.test.ts
+  s_72f2bf84405bd1::t_5aa7edc1e33fdc 138-166
+  s_72f2bf84405bd1::t_b498c77930f25a 4
+plugins/inworld/src/stt.ts
+  s_72f2bf84405bd1::t_938fc133ab9c5a 279-280,285-286
+plugins/openai/src/stt.ts
+  s_72f2bf84405bd1::t_938fc133ab9c5a 311,550,614,632,653,655-656,660-671,673
+.changeset/typed-plugin-stt-errors.md
+  s_72f2bf84405bd1::t_82f0feca82128d 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "afe46eedc101d10b50529564189acd6eb15e9cb1",
+  "prompts": {},
+  "sessions": {
+    "s_72f2bf84405bd1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f5a4-62a4-7fd1-9e13-5a2d922a8d84",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
