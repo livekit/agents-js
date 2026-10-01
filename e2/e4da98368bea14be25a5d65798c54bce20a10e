@@ -1,0 +1,19 @@
+agents/etc/agents.api.md
+  s_ec392fe4626817::t_5a8f11a65088c0 1113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e2e4da98368bea14be25a5d65798c54bce20a10e",
+  "prompts": {},
+  "sessions": {
+    "s_ec392fe4626817": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f968-f27a-7623-9914-64c6b136d85f",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
