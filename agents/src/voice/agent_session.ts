@@ -82,7 +82,7 @@ import {
   type SessionConnectOptions,
   recordingEnabled,
 } from '../types.js';
-import { Event, Task, asError } from '../utils.js';
+import { Event, Task, asError, waitUntilAborted } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type Agent, AgentTask } from './agent.js';
 import {
@@ -546,7 +546,6 @@ export class AgentSession<
   private nextActivity?: AgentActivity;
   private updateActivityTask?: Task<void>;
   private started = false;
-  private startTask?: Promise<void>;
   private sessionHost?: SessionHost;
 
   private _chatCtx: ChatContext;
@@ -1022,14 +1021,19 @@ export class AgentSession<
       }),
     );
 
-    const startupResults = await ThrowsPromise.allSettled(tasks);
-    for (const result of startupResults) {
+    const startup = await waitUntilAborted(
+      ThrowsPromise.allSettled(tasks),
+      this.closingController.signal,
+    );
+    if (startup.isAborted) throw asError(this.closingController.signal.reason);
+    for (const result of startup.result) {
       if (result.status === 'rejected') throw result.reason;
     }
 
     if (this.sessionHost) {
       await this.sessionHost.start();
     }
+    this.closingController.signal.throwIfAborted();
 
     // Log used IO configuration
     this.logger.debug(
@@ -1142,14 +1146,13 @@ export class AgentSession<
     // retained inside the guarded start: a failure below schedules close(), which releases it
     retainTts(this.tts);
     try {
-      this.startTask = this._startImpl({
+      await this._startImpl({
         agent,
         room,
         inputOptions,
         outputOptions,
         span: this.sessionSpan,
       });
-      await this.startTask;
     } catch (error) {
       recordException(sessionStartSpan, error instanceof Error ? error : new Error(String(error)));
       sessionStartSpan.end();
@@ -1157,8 +1160,6 @@ export class AgentSession<
       this._closeSoon({ reason: CloseReason.ERROR });
       await this.closingTask;
       throw error;
-    } finally {
-      this.startTask = undefined;
     }
     sessionStartSpan.end();
     this.sessionStartContext = undefined;
@@ -1829,8 +1830,13 @@ export class AgentSession<
     this.logger.error(error, 'AgentSession is closing due to an unrecoverable error');
 
     this.closingTask = (async () => {
-      // A provider can fail during startup. Let startup settle before tearing down its activity.
-      await this.startTask?.catch(() => {});
+      this.closing = true;
+      // Publish closingTask before abort callbacks can call close() again.
+      await Promise.resolve();
+      this.closingController.abort(error.error);
+      // Wait for activity creation, without waiting for the room connection.
+      const unlock = await this.activityLock.lock();
+      unlock();
       await this.closeImpl(CloseReason.ERROR, error);
     })().then(() => {
       this.closingTask = null;
