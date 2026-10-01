@@ -41,6 +41,7 @@
     "@livekit/agents-plugin-liveavatar": "workspace:*",
     "@livekit/agents-plugin-livekit": "workspace:*",
     "@livekit/agents-plugin-minimax": "workspace:*",
+    "@livekit/agents-plugin-microsoft": "workspace:*",
     "@livekit/agents-plugin-mistralai": "workspace:*",
     "@livekit/agents-plugin-neuphonic": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
