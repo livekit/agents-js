@@ -1933,6 +1933,8 @@ export class AgentActivity implements RecognitionHooks {
 
   private onError(ev: RealtimeModelError | STTError | TTSError | LLMError): void {
     try {
+      if (this.agentSession.listenerCount(AgentSessionEventTypes.Error) === 0) return;
+
       if (ev.type === 'realtime_model_error') {
         const errorEvent = createErrorEvent(ev, this.llm);
         this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
@@ -1946,6 +1948,8 @@ export class AgentActivity implements RecognitionHooks {
         const errorEvent = createErrorEvent(ev, this.llm);
         this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
       }
+    } catch (error) {
+      this.logger.error({ err: error }, 'Error in session error listener');
     } finally {
       this.agentSession._onError(ev);
     }

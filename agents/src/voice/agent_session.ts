@@ -18,6 +18,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
+import { isAPIError } from '../_exceptions.js';
 import type { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import {
   LLM as InferenceLLM,
@@ -1792,7 +1793,11 @@ export class AgentSession<
     // Track error counts per type to implement max_unrecoverable_errors logic
     if (error.type === 'stt_error') {
       this.sttErrorCounts += 1;
-      if (this.sttErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
+      // The STT pipeline only recreates streams after API errors.
+      if (
+        isAPIError(error.error) &&
+        this.sttErrorCounts <= this._connOptions.maxUnrecoverableErrors
+      ) {
         return;
       }
     } else if (error.type === 'llm_error') {

@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ReadableStream } from 'node:stream/web';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { STTPipeline } from './audio_recognition.js';
 import type { STTNode } from './io.js';
@@ -32,6 +32,7 @@ function yielding(event: SpeechEvent) {
 
 describe('STTPipeline recovery after an exhausted retry budget', () => {
   initializeLogger({ pretty: false, level: 'silent' });
+  afterEach(() => vi.restoreAllMocks());
 
   it('recreates the STT stream after a connection failure and keeps delivering events', async () => {
     const startedAt = Date.now();
@@ -77,11 +78,13 @@ describe('STTPipeline recovery after an exhausted retry budget', () => {
     }
   });
 
-  it('stops on any error that is not a connection failure', async () => {
+  it('logs and stops on any error that is not a connection failure', async () => {
+    const error = new Error('not a provider failure');
+    const errorLog = vi.spyOn(log(), 'error');
     let calls = 0;
     const sttNode: STTNode = async () => {
       calls += 1;
-      return erroring(new Error('not a provider failure'));
+      return erroring(error);
     };
 
     const pipeline = new STTPipeline(sttNode);
@@ -89,6 +92,26 @@ describe('STTPipeline recovery after an exhausted retry budget', () => {
     try {
       expect(await reader.read()).toEqual({ value: undefined, done: true });
       expect(calls).toBe(1);
+      expect(errorLog).toHaveBeenCalledExactlyOnceWith({ err: error }, 'STT pipeline failed');
+    } finally {
+      reader.releaseLock();
+      await pipeline.close();
+    }
+  });
+
+  it.each(['throw', 'reject'] as const)('logs a node startup failure (%s)', async (failure) => {
+    const error = new APIConnectionError({ message: 'STT node failed to start' });
+    const errorLog = vi.spyOn(log(), 'error');
+    const sttNode = vi.fn(() => {
+      if (failure === 'throw') throw error;
+      return Promise.reject(error);
+    });
+    const pipeline = new STTPipeline(sttNode);
+    const reader = pipeline.eventChannel.stream().getReader();
+    try {
+      expect(await reader.read()).toEqual({ value: undefined, done: true });
+      expect(sttNode).toHaveBeenCalledOnce();
+      expect(errorLog).toHaveBeenCalledExactlyOnceWith({ err: error }, 'STT pipeline failed');
     } finally {
       reader.releaseLock();
       await pipeline.close();

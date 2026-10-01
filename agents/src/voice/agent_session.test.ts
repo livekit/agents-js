@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
+import { APIConnectionError } from '../_exceptions.js';
 import type { STTError } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
@@ -315,14 +316,14 @@ describe('AgentSession STT error tolerance', () => {
       type: 'stt_error',
       timestamp: Date.now(),
       label: 'test',
-      error: new Error('stt unavailable'),
+      error: new APIConnectionError({ message: 'stt unavailable' }),
       recoverable: false,
     };
   }
 
   type Internals = AgentSessionCloseInternals & { sttErrorCounts: number };
 
-  it('tolerates unrecoverable STT errors up to maxUnrecoverableErrors, like LLM and TTS', async () => {
+  it('tolerates STT connection failures up to maxUnrecoverableErrors', async () => {
     const session = new AgentSession({ vad: null, connOptions: { maxUnrecoverableErrors: 1 } });
     const internals = session as unknown as Internals;
 
