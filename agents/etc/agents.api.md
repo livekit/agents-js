@@ -1110,7 +1110,7 @@ const ATTR_CONNECTION_STATE = "lk.connection_state";
 // @public (undocumented)
 const ATTR_DEPLOYMENT_ID = "lk.deployment_id";
 
-// @public
+// @public (undocumented)
 const ATTR_DESTINATION_IDENTITY = "lk.pii.destination_identity";
 
 // @public (undocumented)
