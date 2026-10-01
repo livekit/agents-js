@@ -1111,6 +1111,9 @@ const ATTR_CONNECTION_STATE = "lk.connection_state";
 const ATTR_DEPLOYMENT_ID = "lk.deployment_id";
 
 // @public (undocumented)
+const ATTR_DESTINATION_IDENTITY = "lk.pii.destination_identity";
+
+// @public (undocumented)
 const ATTR_DISCONNECT_REASON = "lk.disconnect_reason";
 
 // @public (undocumented)
@@ -7898,6 +7901,7 @@ declare namespace traceTypes {
         ATTR_PROVIDER_REQUEST_IDS,
         ATTR_PARTICIPANT_ID,
         ATTR_PARTICIPANT_IDENTITY,
+        ATTR_DESTINATION_IDENTITY,
         ATTR_PARTICIPANT_KIND,
         ATTR_JOB_ID,
         ATTR_AGENT_NAME,
