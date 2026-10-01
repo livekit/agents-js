@@ -1,0 +1,26 @@
+plugins/assemblyai/src/stt-recovery.test.ts
+  s_72f2bf84405bd1::t_383ba3c7b7013e 103-112,144-147,173-175
+  s_72f2bf84405bd1::t_416cc4b5a0bd0c 1-17,20-102,113-143,148-172,176-187
+  s_72f2bf84405bd1::t_9085a08917eeb3 18-19
+plugins/assemblyai/src/stt.ts
+  s_72f2bf84405bd1::t_87341187d458dd 7,445,535-536,538-541,543-544,560-564
+  s_72f2bf84405bd1::t_c8f59d386328a6 537,542
+.changeset/assemblyai-connection-errors.md
+  s_72f2bf84405bd1::t_87341187d458dd 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "21c8ff2949b9fa425800ecd90f21e5ea9b3a9a8b",
+  "prompts": {},
+  "sessions": {
+    "s_72f2bf84405bd1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f5a4-62a4-7fd1-9e13-5a2d922a8d84",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
