@@ -62,6 +62,18 @@ afterEach(async () => {
 });
 
 describe('openai STT recovery', () => {
+  it('closes terminal streams when creating replacements', async () => {
+    await startServer({ verifyClient: (_info, done) => done(false, 401) });
+    const { provider, stream: failedStream } = startStream();
+    await drain(failedStream);
+    expect(failedStream.terminalError).toBeInstanceOf(APIStatusError);
+    expect((failedStream as SpeechStream).isClosed).toBe(false);
+
+    stream = provider.stream({ connOptions });
+    expect((failedStream as SpeechStream).isClosed).toBe(true);
+    await drain(stream);
+  });
+
   it('removes terminal streams from provider option updates', async () => {
     await startServer({ verifyClient: (_info, done) => done(false, 401) });
     const { provider, stream } = startStream();

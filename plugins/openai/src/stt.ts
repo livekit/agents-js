@@ -646,6 +646,8 @@ export class STT extends stt.STT {
       keywords: [...this.#opts.keywords],
     };
     validateContext(streamOptions.model, streamOptions.languages, streamOptions.keywords);
+    // Prune failed streams when replacements are created.
+    this.#activeStreams();
     const stream = new SpeechStream(
       this,
       streamOptions,
@@ -657,7 +659,8 @@ export class STT extends stt.STT {
     return stream;
   }
 
-  *#activeStreams(): Generator<SpeechStream> {
+  #activeStreams(): SpeechStream[] {
+    const streams: SpeechStream[] = [];
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (!stream || stream.isClosed || stream.terminalError) {
@@ -665,8 +668,9 @@ export class STT extends stt.STT {
         this.#streams.delete(ref);
         continue;
       }
-      yield stream;
+      streams.push(stream);
     }
+    return streams;
   }
 
   override async close(): Promise<void> {
