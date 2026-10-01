@@ -1,9 +1,18 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { Room } from '@livekit/rtc-node';
+import { EventEmitter } from 'node:events';
 import { ReadableStream } from 'node:stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
+import type { InferenceExecutor } from '../ipc/inference_executor.js';
+import {
+  JobContext,
+  type JobProcess,
+  type RunningJobInfo,
+  runWithJobContextAsync,
+} from '../job.js';
 import { log } from '../log.js';
 import { STT, type SpeechEvent, SpeechEventType, SpeechStream } from '../stt/stt.js';
 import type { APIConnectOptions } from '../types.js';
@@ -75,6 +84,60 @@ async function waitForStream(stt: ControlledSTT, index: number) {
 afterEach(() => vi.restoreAllMocks());
 
 describe('AgentSession STT recovery', () => {
+  it('closes on a startup STT failure while room connection is still pending', async () => {
+    const room = Object.assign(new EventEmitter(), {
+      name: 'test-room',
+      isConnected: false,
+      remoteParticipants: new Map(),
+      registerByteStreamHandler: vi.fn(),
+    });
+    const context = new JobContext(
+      {} as JobProcess,
+      {
+        acceptArguments: { name: 'agent', identity: 'agent', metadata: '' },
+        job: { id: 'job-id', room: { name: 'test-room' }, attributes: {} },
+        workerId: 'worker-id',
+      } as RunningJobInfo,
+      room as unknown as Room,
+      () => {},
+      () => {},
+      {} as InferenceExecutor,
+    );
+    const connected = new Future<void>();
+    const connect = vi.spyOn(context, 'connect').mockReturnValue(connected.await);
+    const stt = new ControlledSTT();
+    const session = createSession(stt);
+    const agent = new Agent({ instructions: 'test' });
+    const error = new Error('STT node failed to start');
+    const sttNode = vi.spyOn(agent, 'sttNode').mockRejectedValue(error);
+    const startup = runWithJobContextAsync(context, () =>
+      session.start({
+        agent,
+        room: room as unknown as Room,
+        record: false,
+        inputOptions: { audioEnabled: false, textEnabled: false },
+        outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+      }),
+    ).catch((failure: unknown) => failure);
+    try {
+      await vi.waitFor(() => expect(sttNode).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(session._closingSignal.aborted).toBe(true));
+      await session.close();
+      expect(await startup).toBe(error);
+      expect(connect).toHaveBeenCalledOnce();
+      expect(connected.done).toBe(false);
+      expect(session._activity).toBeUndefined();
+      connected.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(session._started).toBe(false);
+      expect(room.registerByteStreamHandler).not.toHaveBeenCalled();
+    } finally {
+      connected.resolve();
+      await startup;
+      await session.close();
+    }
+  });
+
   it.each([
     new Error('STT node failed to start'),
     new APIConnectionError({ message: 'STT node failed to start' }),
@@ -83,17 +146,15 @@ describe('AgentSession STT recovery', () => {
     const session = createSession(stt, 0);
     const agent = new Agent({ instructions: 'test' });
     const sttNode = vi.spyOn(agent, 'sttNode').mockRejectedValue(error);
-    const onClose = vi.fn();
-    session.on(AgentSessionEventTypes.Close, onClose);
+    const onError = vi.fn();
+    session.on(AgentSessionEventTypes.Error, onError);
     try {
-      await session.start({ agent });
-      await vi.waitFor(() =>
-        expect(onClose).toHaveBeenCalledExactlyOnceWith(
-          expect.objectContaining({
-            reason: CloseReason.ERROR,
-            error: expect.objectContaining({ error }),
-          }),
-        ),
+      await expect(session.start({ agent })).rejects.toBe(error);
+      await session.close();
+      expect(session._started).toBe(false);
+      expect(session._activity).toBeUndefined();
+      expect(onError).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ error: expect.objectContaining({ error }) }),
       );
       expect(sttNode).toHaveBeenCalledOnce();
     } finally {
@@ -142,13 +203,14 @@ describe('AgentSession STT recovery', () => {
         failure === 'read'
           ? new Error('STT node failed while reading')
           : new APIConnectionError({ message: 'STT node failed to start' });
+      let failRead: (() => void) | undefined;
       const sttNode = vi.spyOn(agent, 'sttNode').mockImplementation(() => {
         if (failure === 'throw') throw error;
         if (failure === 'reject') return Promise.reject(error);
         return Promise.resolve(
           new ReadableStream<SpeechEvent | string>({
             start(controller) {
-              controller.error(error);
+              failRead = () => controller.error(error);
             },
           }),
         );
@@ -157,6 +219,7 @@ describe('AgentSession STT recovery', () => {
       session.on(AgentSessionEventTypes.Close, onClose);
       try {
         await session.start({ agent });
+        failRead?.();
         await vi.waitFor(() =>
           expect(onClose).toHaveBeenCalledExactlyOnceWith(
             expect.objectContaining({
