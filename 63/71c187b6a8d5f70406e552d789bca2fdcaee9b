@@ -1,0 +1,36 @@
+agents/src/tts/stream_adapter.ts
+  s_f52ed58d3bac74::t_5d1d72684bb113 111
+agents/src/tts/tts.ts
+  s_f52ed58d3bac74::t_54c921649cb68b 651,1025-1027
+  s_f52ed58d3bac74::t_5d1d72684bb113 344-345,650,652,799-800,1032-1034
+.changeset/fix-tts-adapter-usage.md
+  s_f52ed58d3bac74::t_5d1d72684bb113 1-4
+  s_f52ed58d3bac74::t_54c921649cb68b 5-6
+agents/etc/agents.api.md
+  s_f52ed58d3bac74::t_421820e9202a30 2362,7011-7012,7273
+agents/src/tts/fallback_adapter.ts
+  s_f52ed58d3bac74::t_5d1d72684bb113 385,538
+agents/src/tts/fallback_adapter.test.ts
+  s_f52ed58d3bac74::t_2a3d13dea4c8c6 227
+  s_f52ed58d3bac74::t_5d1d72684bb113 953-957
+  s_f52ed58d3bac74::t_aad9aedb856c77 12-13,184-186,194-226,228-238,244-246,251-253
+  s_f52ed58d3bac74::t_a93d9965593afc 951-952
+  s_f52ed58d3bac74::t_bb65687b757fda 187-193,239-243,247-250
+  s_f52ed58d3bac74::t_3c5f584b516e45 254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6371c187b6a8d5f70406e552d789bca2fdcaee9b",
+  "prompts": {},
+  "sessions": {
+    "s_f52ed58d3bac74": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f85a-5ed2-7222-a332-8e48ecb5cb49",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
