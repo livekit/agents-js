@@ -18,13 +18,7 @@ import {
   SpeechEventType,
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import {
-  type AudioBuffer,
-  Task,
-  cancelAndWait,
-  shortuuid,
-  waitUntilAborted,
-} from '../utils.js';
+import { type AudioBuffer, Task, cancelAndWait, shortuuid, waitUntilAborted } from '../utils.js';
 import { type VAD, VADEventType, type VADStream } from '../vad.js';
 import type { ConversationItemAddedEvent } from '../voice/events.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
