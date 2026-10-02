@@ -16,8 +16,10 @@ import type OpenAI from 'openai';
 import { WebSocket } from 'ws';
 import type { ChatModels, Reasoning } from '../models.js';
 import { defaultReasoningEffort } from '../models.js';
-import { toResponsesTools } from '../tool_utils.js';
+import { logProviderToolExecutions, toResponsesTools } from '../tool_utils.js';
+import type { ResponsesProviderToolType } from '../tool_utils.js';
 import type {
+  WsOutputItem,
   WsOutputItemDoneEvent,
   WsOutputTextDeltaEvent,
   WsResponseCompletedEvent,
@@ -179,6 +181,7 @@ export interface WSLLMOptions {
   maxOutputTokens?: number;
   /** Configuration options for reasoning models. */
   reasoning?: Reasoning | null;
+  providerToolType?: ResponsesProviderToolType;
 }
 
 const defaultLLMOptions: WSLLMOptions = {
@@ -366,6 +369,7 @@ export class WSLLM extends llm.LLM {
       modelOptions,
       prevResponseId,
       strictToolSchema: this.#opts.strictToolSchema ?? true,
+      providerToolType: this.#opts.providerToolType,
     });
   }
 
@@ -390,6 +394,7 @@ export class WSLLMStream extends llm.LLMStream {
   #model: string | ChatModels;
   #modelOptions: Record<string, unknown>;
   #strictToolSchema: boolean;
+  #providerToolType?: ResponsesProviderToolType;
   #prevResponseId?: string;
   /** Full chat context — used as fallback when previous_response_id is stale. */
   #fullChatCtx: llm.ChatContext;
@@ -414,6 +419,7 @@ export class WSLLMStream extends llm.LLMStream {
       modelOptions,
       prevResponseId,
       strictToolSchema,
+      providerToolType,
     }: {
       pool: ConnectionPool<ResponsesWebSocket>;
       model: string | ChatModels;
@@ -424,6 +430,7 @@ export class WSLLMStream extends llm.LLMStream {
       modelOptions: Record<string, unknown>;
       prevResponseId?: string;
       strictToolSchema: boolean;
+      providerToolType?: ResponsesProviderToolType;
     },
   ) {
     super(llm, { chatCtx, toolCtx, connOptions });
@@ -432,6 +439,7 @@ export class WSLLMStream extends llm.LLMStream {
     this.#model = model;
     this.#modelOptions = modelOptions;
     this.#strictToolSchema = strictToolSchema;
+    this.#providerToolType = providerToolType;
     this.#prevResponseId = prevResponseId;
     this.#fullChatCtx = fullChatCtx;
   }
@@ -489,7 +497,9 @@ export class WSLLMStream extends llm.LLMStream {
       'openai.responses',
     )) as OpenAI.Responses.ResponseInputItem[];
 
-    const tools = this.toolCtx ? toResponsesTools(this.toolCtx, this.#strictToolSchema) : undefined;
+    const tools = this.toolCtx
+      ? toResponsesTools(this.toolCtx, this.#strictToolSchema, this.#providerToolType)
+      : undefined;
 
     const requestOptions: Record<string, unknown> = { ...this.#modelOptions };
     if (!tools) {
@@ -605,7 +615,7 @@ export class WSLLMStream extends llm.LLMStream {
   }
 
   #handleOutputItemDone(event: WsOutputItemDoneEvent): llm.ChatChunk | undefined {
-    if (event.item.type === 'function_call') {
+    if (isWsFunctionCallItem(event.item)) {
       this.#pendingToolCalls.add(event.item.call_id);
       return {
         id: this.#responseId,
@@ -645,6 +655,7 @@ export class WSLLMStream extends llm.LLMStream {
   }
 
   #handleResponseCompleted(event: WsResponseCompletedEvent): llm.ChatChunk | undefined {
+    logProviderToolExecutions(event.response.output);
     this.#llm._onResponseCompleted(event.response.id, this.#fullChatCtx);
     this.#llm._setPendingToolCalls(this.#pendingToolCalls);
 
@@ -681,6 +692,23 @@ export class WSLLMStream extends llm.LLMStream {
 // ============================================================================
 // Internal helpers
 // ============================================================================
+
+function isWsFunctionCallItem(item: WsOutputItem): item is WsOutputItem & {
+  type: 'function_call';
+  call_id: string;
+  name: string;
+  arguments: string;
+} {
+  return (
+    item.type === 'function_call' &&
+    'call_id' in item &&
+    typeof item.call_id === 'string' &&
+    'name' in item &&
+    typeof item.name === 'string' &&
+    'arguments' in item &&
+    typeof item.arguments === 'string'
+  );
+}
 
 async function connectWs(url: string, apiKey: string, timeoutMs: number): Promise<WebSocket> {
   return new Promise<WebSocket>((resolve, reject) => {
