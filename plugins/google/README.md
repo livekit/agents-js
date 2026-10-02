@@ -47,6 +47,20 @@ const realtimeModel = new google.realtime.RealtimeModel({
 const geminiTTS = new google.beta.TTS(),
 ```
 
+### Live API model support
+
+LiveKit supports the Gemini Live API through both the Gemini Developer API and Vertex AI. Model availability and behavior differ between APIs. Some models, such as `gemini-3.8-live`, are available on both.
+
+For model/API pairs that appear incompatible, the plugin logs a warning and lets the API decide whether the model is available.
+
+On the Gemini Developer API, `gemini-3.8-live` does not support `thinkingConfig.thinkingLevel`. Use `gemini-3.8-live-extended-thinking` for configurable thinking.
+
+References:
+
+- [Gemini API Models](https://ai.google.dev/gemini-api/docs/models)
+- [Gemini Live API thinking](https://ai.google.dev/gemini-api/docs/live-api/thinking)
+- [Vertex Live API](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/live-api)
+
 ### Environment Variables
 
 - `GOOGLE_API_KEY` or `GOOGLE_GENAI_API_KEY`: Your Google AI Studio API key
