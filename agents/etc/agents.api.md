@@ -2027,8 +2027,6 @@ export function calculateAudioDurationSeconds(frame: AudioBuffer_2): number;
 // @public (undocumented)
 export function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void>;
 
-// Warning: (ae-missing-release-tag) "CartesiaModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 
@@ -3970,8 +3968,7 @@ interface GoogleSTTOptions {
     custom_vocabulary?: string[];
     language_codes?: string[];
 }
-// Warning: (ae-missing-release-tag) "handoff" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+
 // @public (undocumented)
 export function handoff(options: {
     agent: Agent;
@@ -9103,7 +9100,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
-// src/utils.ts:553:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
+// src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:394:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1060:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1776:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
