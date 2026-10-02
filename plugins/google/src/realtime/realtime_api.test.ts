@@ -14,9 +14,21 @@ const compatibleModels = [
   ['gemini-3.1-flash-live-preview', false],
   ['gemini-2.5-flash-native-audio-preview-12-2025', false],
   ['gemini-live-2.5-flash-native-audio', true],
+  ['models/gemini-3.8-live', false],
+  ['models/gemini-3.8-live', true],
+  ['google/gemini-3.8-live', true],
   ['publishers/google/models/gemini-3.8-live', true],
+  ['projects/test-project/locations/eu/publishers/google/models/gemini-3.8-live', true],
   ['future-live-model', false],
   ['future-live-model', true],
+  ['models/future-live-model', false],
+  ['models/future-live-model', true],
+  ['other/gemini-3.8-live-extended-thinking', true],
+  ['publishers/other/models/gemini-3.8-live-extended-thinking', true],
+  [
+    'projects/test-project/locations/eu/publishers/other/models/gemini-3.8-live-extended-thinking',
+    true,
+  ],
 ] as const;
 
 const mismatchedModels = [
@@ -24,6 +36,20 @@ const mismatchedModels = [
   ['gemini-3.1-flash-live-preview', true],
   ['gemini-2.5-flash-native-audio-preview-12-2025', true],
   ['gemini-live-2.5-flash-native-audio', false],
+  ['models/gemini-3.8-live-extended-thinking', true],
+  ['google/gemini-3.8-live-extended-thinking', true],
+  ['publishers/google/models/gemini-3.8-live-extended-thinking', true],
+  [
+    'projects/test-project/locations/eu/publishers/google/models/gemini-3.8-live-extended-thinking',
+    true,
+  ],
+  ['models/gemini-live-2.5-flash-native-audio', false],
+  ['google/gemini-live-2.5-flash-native-audio', false],
+  ['publishers/google/models/gemini-live-2.5-flash-native-audio', false],
+  [
+    'projects/test-project/locations/eu/publishers/google/models/gemini-live-2.5-flash-native-audio',
+    false,
+  ],
 ] as const;
 
 describe('Google Realtime model API compatibility', () => {

@@ -83,7 +83,11 @@ export function toClientContentParams({
 }
 
 function warnModelAPIMismatch(model: string, vertexai: boolean): void {
-  if (vertexai && KNOWN_GEMINI_API_MODELS.has(model) && !KNOWN_VERTEXAI_MODELS.has(model)) {
+  const modelName = model.replace(
+    /^(?:google\/|(?:(?:projects\/[^/]+\/locations\/[^/]+\/)?publishers\/google\/)?models\/)/,
+    '',
+  );
+  if (vertexai && KNOWN_GEMINI_API_MODELS.has(modelName) && !KNOWN_VERTEXAI_MODELS.has(modelName)) {
     log().warn(
       `Model '${model}' may not be available on VertexAI (vertexai=true). ` +
         `If the connection fails, use a VertexAI model ` +
@@ -91,7 +95,11 @@ function warnModelAPIMismatch(model: string, vertexai: boolean): void {
     );
   }
 
-  if (!vertexai && KNOWN_VERTEXAI_MODELS.has(model) && !KNOWN_GEMINI_API_MODELS.has(model)) {
+  if (
+    !vertexai &&
+    KNOWN_VERTEXAI_MODELS.has(modelName) &&
+    !KNOWN_GEMINI_API_MODELS.has(modelName)
+  ) {
     log().warn(
       `Model '${model}' may not be available on the Gemini API (vertexai=false). ` +
         `If the connection fails, use a Gemini API model ` +

@@ -10,7 +10,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { AudioTranscriptionConfig } from '@google/genai';
 import { Behavior } from '@google/genai';
-import type { Context } from '@opentelemetry/api';
+import { Context } from '@opentelemetry/api';
 import { ContextWindowCompressionConfig } from '@google/genai';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
@@ -33,7 +33,7 @@ import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } fro
 import { RealtimeInputConfig } from '@google/genai';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
+import { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -576,7 +576,7 @@ type Voice = 'Achernar' | 'Achird' | 'Algenib' | 'Algieba' | 'Alnilam' | 'Aoede'
 // Warnings were encountered during analysis:
 //
 // src/aiplatform_llm.ts:176:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
-// src/realtime/realtime_api.ts:309:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_api.ts:317:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
