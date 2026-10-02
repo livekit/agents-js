@@ -371,7 +371,7 @@ describe('DetectorViewAfterFallback', () => {
     });
     // server defaults arrive, then the cloud session fails
     stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
-    stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
+    stream._fallbackToLocal(new APIConnectionError({ message: 'boom' }));
     await waitFor(() => stream.model === 'turn-detector-v1-mini');
 
     // Both the stream and the detector (sharing one ThresholdOptions) reflect it.
@@ -408,7 +408,7 @@ describe('WarningDedupe', () => {
     const stream = makeStreamWithTransport(transport);
     await waitFor(() => stream.model === 'turn-detector-v1-mini');
     // Trigger a second fallback path directly.
-    stream._fallBackToLocal(new APIConnectionError({ message: 'boom2' }));
+    stream._fallbackToLocal(new APIConnectionError({ message: 'boom2' }));
     // Across both invocations only one warning was emitted — tracked by
     // the `warnedCloudFailure` flag staying flipped after the first call.
     expect(stream.warnedCloudFailure).toBe(true);
@@ -702,7 +702,7 @@ describe('ThresholdRescaleOnFallback', () => {
     const transport = new ScriptedTransport({ runBehavior: 'idle' });
     const stream = makeStreamWithTransport(transport, { userThreshold: 0.5 });
     stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
-    stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
+    stream._fallbackToLocal(new APIConnectionError({ message: 'boom' }));
     await waitFor(() => stream.model === 'turn-detector-v1-mini');
     expect(stream.isFallback).toBe(true);
     expect(await stream.unlikelyThreshold('en')).toBeCloseTo(
@@ -715,7 +715,7 @@ describe('ThresholdRescaleOnFallback', () => {
     const transport = new ScriptedTransport({ runBehavior: 'idle' });
     const stream = makeStreamWithTransport(transport);
     stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
-    stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
+    stream._fallbackToLocal(new APIConnectionError({ message: 'boom' }));
     await waitFor(() => stream.model === 'turn-detector-v1-mini');
     // ratio 1.0 → local table unchanged
     expect(await stream.unlikelyThreshold('en')).toBeCloseTo(LOCAL_LANGUAGES.en!);
@@ -726,7 +726,7 @@ describe('ThresholdRescaleOnFallback', () => {
     const transport = new ScriptedTransport({ runBehavior: 'idle' });
     const stream = makeStreamWithTransport(transport, { userThreshold: { en: 0.55, ja: 0.25 } });
     stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
-    stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
+    stream._fallbackToLocal(new APIConnectionError({ message: 'boom' }));
     await waitFor(() => stream.model === 'turn-detector-v1-mini');
     expect(stream.isFallback).toBe(true);
     expect(await stream.unlikelyThreshold('en')).toBeCloseTo(
