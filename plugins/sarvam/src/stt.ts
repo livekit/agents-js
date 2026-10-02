@@ -12,6 +12,7 @@ import {
   normalizeLanguage,
   stt,
   waitForAbort,
+  waitUntilAborted,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
@@ -667,13 +668,17 @@ export class SpeechStream extends stt.SpeechStream {
     const sendTask = async () => {
       const samples50Ms = Math.floor(SAMPLE_RATE / 20); // 50ms chunks
       const stream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, samples50Ms);
-      const abortPromise = waitForAbort(this.abortSignal);
-      const sessionAbort = waitForAbort(sessionController.signal);
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise, sessionAbort]);
-          if (result === undefined) return; // aborted
+          // The read is scoped to this connection and cancelled when it ends. Merely racing it
+          // against an abort would leave it parked in the queue, where it takes the next audio
+          // frame for a promise nobody awaits and starves the sender of the next connection.
+          const { result, isAborted } = await waitUntilAborted(
+            this.input.next({ signal: sessionController.signal }),
+            this.abortSignal,
+          );
+          if (isAborted) return; // stream aborted
           if (result.done) break;
 
           const data = result.value;
@@ -718,6 +723,9 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(JSON.stringify({ type: 'flush' }));
           }
         }
+      } catch (e) {
+        if (sessionController.signal.aborted) return; // teardown, not a failure of this send
+        throw e;
       } finally {
         closing = true;
         // Match Python: end_of_stream includes an empty audio field to avoid
