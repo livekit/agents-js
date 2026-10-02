@@ -148,7 +148,7 @@ export class RealtimeSession extends OpenAIRealtimeSession {
     }
 
     if (!previousItemId) {
-      previousItemId = this.remoteChatCtx.toChatCtx().items.at(-1)?.id ?? '';
+      previousItemId = this.remoteChatCtx.tailId ?? '';
     }
     super.handleConversationItemCreated({ ...event, previous_item_id: previousItemId });
   }
