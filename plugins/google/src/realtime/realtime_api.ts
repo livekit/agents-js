@@ -50,7 +50,7 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
 
-const KNOWN_VERTEXAI_MODELS = new Set(['gemini-live-2.5-flash-native-audio']);
+const KNOWN_VERTEXAI_MODELS = new Set(['gemini-3.8-live', 'gemini-live-2.5-flash-native-audio']);
 
 const KNOWN_GEMINI_API_MODELS = new Set([
   'gemini-3.8-live',
@@ -82,17 +82,27 @@ export function toClientContentParams({
   };
 }
 
-function validateModelAPIMatch(model: string, vertexai: boolean): void {
-  if (vertexai && KNOWN_GEMINI_API_MODELS.has(model)) {
-    throw new Error(
-      `Model '${model}' is a Gemini API model, but vertexai=true. Use a VertexAI model ` +
+function warnModelAPIMismatch(model: string, vertexai: boolean): void {
+  const modelName = model.replace(
+    /^(?:google\/|(?:(?:projects\/[^/]+\/locations\/[^/]+\/)?publishers\/google\/)?models\/)/,
+    '',
+  );
+  if (vertexai && KNOWN_GEMINI_API_MODELS.has(modelName) && !KNOWN_VERTEXAI_MODELS.has(modelName)) {
+    log().warn(
+      `Model '${model}' may not be available on VertexAI (vertexai=true). ` +
+        `If the connection fails, use a VertexAI model ` +
         `(e.g., 'gemini-live-2.5-flash-native-audio') or set vertexai=false.`,
     );
   }
 
-  if (!vertexai && KNOWN_VERTEXAI_MODELS.has(model)) {
-    throw new Error(
-      `Model '${model}' is a VertexAI model, but vertexai=false. Use a Gemini API model ` +
+  if (
+    !vertexai &&
+    KNOWN_VERTEXAI_MODELS.has(modelName) &&
+    !KNOWN_GEMINI_API_MODELS.has(modelName)
+  ) {
+    log().warn(
+      `Model '${model}' may not be available on the Gemini API (vertexai=false). ` +
+        `If the connection fails, use a Gemini API model ` +
         `(e.g., 'gemini-2.5-flash-native-audio-preview-12-2025') or set vertexai=true.`,
     );
   }
@@ -198,6 +208,10 @@ export class RealtimeModel extends llm.RealtimeModel {
 
   get model(): string {
     return this._options.model;
+  }
+
+  override get provider(): string {
+    return this._options.vertexai ? 'Vertex AI' : 'Gemini';
   }
 
   label(): string {
@@ -351,6 +365,7 @@ export class RealtimeModel extends llm.RealtimeModel {
        * Thinking configuration for native audio models.
        * If not set, the model's default thinking behavior is used.
        * Gemini 3.1 live models use `thinkingLevel`.
+       * `thinkingLevel` is not supported by gemini-3.8-live on the Gemini API.
        * Gemini 2.5 live models use `thinkingBudget`.
        */
       thinkingConfig?: types.ThinkingConfig;
@@ -382,7 +397,10 @@ export class RealtimeModel extends llm.RealtimeModel {
     const apiKey = options.apiKey || process.env.GOOGLE_API_KEY;
     const project = options.project || process.env.GOOGLE_CLOUD_PROJECT;
     const location = options.location || process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
-    const vertexai = options.vertexai ?? false;
+    const vertexai =
+      options.vertexai ??
+      (process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' ||
+        process.env.GOOGLE_GENAI_USE_VERTEXAI === '1');
 
     // Model selection based on API type
     const defaultModel = vertexai
@@ -390,7 +408,18 @@ export class RealtimeModel extends llm.RealtimeModel {
       : 'gemini-2.5-flash-native-audio-preview-12-2025';
 
     const model = options.model || defaultModel;
-    validateModelAPIMatch(model, vertexai);
+    warnModelAPIMismatch(model, vertexai);
+
+    if (
+      !vertexai &&
+      model.replace(/^models\//, '') === 'gemini-3.8-live' &&
+      options.thinkingConfig?.thinkingLevel !== undefined
+    ) {
+      throw new Error(
+        `Model '${model}' does not support thinkingLevel on the Gemini API. ` +
+          `Omit thinkingLevel or use 'gemini-3.8-live-extended-thinking'.`,
+      );
+    }
 
     super({
       messageTruncation: false,
