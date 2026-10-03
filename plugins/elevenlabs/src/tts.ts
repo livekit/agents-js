@@ -29,6 +29,7 @@ const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
 const AUTHORIZATION_HEADER = 'xi-api-key';
 const WS_INACTIVITY_TIMEOUT = 180;
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_22050';
+const MAX_ACTIVE_CONTEXTS = 5;
 
 export interface VoiceSettings {
   stability: number; // [0.0 - 1.0]
@@ -256,6 +257,8 @@ class Connection {
   #ws: WebSocket | null = null;
   #isCurrent = true;
   #activeContexts = new Set<string>();
+  #closingContexts = new Set<string>();
+  #cancelledContexts = new Set<string>();
   #inputQueue: ConnectionMessage[] = [];
   #contextData = new Map<string, StreamData>();
   #sendTask: Promise<void> | null = null;
@@ -327,6 +330,14 @@ class Connection {
     if (this.#closed || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) {
       throw new APIConnectionError({ message: 'WebSocket connection is closed' });
     }
+
+    if (
+      this.#cancelledContexts.has(content.contextId) ||
+      this.#closingContexts.has(content.contextId)
+    ) {
+      return;
+    }
+
     this.#inputQueue.push(content);
     this.#inputQueueResolver?.();
   }
@@ -335,25 +346,73 @@ class Connection {
     if (this.#closed || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) {
       throw new APIConnectionError({ message: 'WebSocket connection is closed' });
     }
+    if (this.#cancelledContexts.has(contextId) || this.#closingContexts.has(contextId)) {
+      return;
+    }
     this.#inputQueue.push({ contextId });
     this.#inputQueueResolver?.();
+  }
+
+  cancelContext(contextId: string): void {
+    if (this.#closed || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) {
+      throw new APIConnectionError({ message: 'WebSocket connection is closed' });
+    }
+    if (this.#cancelledContexts.has(contextId)) {
+      return;
+    }
+
+    this.#cancelledContexts.add(contextId);
+    this.#inputQueue = this.#inputQueue.filter((message) => message.contextId !== contextId);
+
+    if (this.#activeContexts.has(contextId)) {
+      if (!this.#closingContexts.has(contextId)) {
+        this.#inputQueue.unshift({ contextId });
+      }
+    } else {
+      this.#contextData.delete(contextId);
+    }
+
+    this.#inputQueueResolver?.();
+  }
+
+  finishCancelledContext(contextId: string): void {
+    this.#cancelledContexts.delete(contextId);
+  }
+
+  #takeNextMessage(): ConnectionMessage | undefined {
+    const seenContexts = new Set<string>();
+
+    for (let i = 0; i < this.#inputQueue.length; i++) {
+      const message = this.#inputQueue[i]!;
+      if (seenContexts.has(message.contextId)) {
+        continue;
+      }
+      seenContexts.add(message.contextId);
+
+      const isActive = this.#activeContexts.has(message.contextId);
+      const canProcess =
+        !('text' in message) || isActive || this.#activeContexts.size < MAX_ACTIVE_CONTEXTS;
+      if (canProcess) {
+        return this.#inputQueue.splice(i, 1)[0];
+      }
+    }
+
+    return undefined;
   }
 
   async #sendLoop(): Promise<void> {
     try {
       while (!this.#closed) {
-        // Wait for messages in queue
-        if (this.#inputQueue.length === 0) {
+        const msg = this.#takeNextMessage();
+        if (!msg) {
           await new Promise<void>((resolve) => {
             this.#inputQueueResolver = resolve;
           });
           this.#inputQueueResolver = null;
+          continue;
         }
 
         if (this.#closed) break;
-
-        const msg = this.#inputQueue.shift();
-        if (!msg) continue;
 
         if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) {
           break;
@@ -364,8 +423,10 @@ class Connection {
           const content = msg as SynthesizeContent;
           const isNewContext = !this.#activeContexts.has(content.contextId);
 
-          // If not current and this is a new context, ignore it
-          if (!this.#isCurrent && isNewContext) {
+          if (
+            this.#cancelledContexts.has(content.contextId) ||
+            this.#closingContexts.has(content.contextId)
+          ) {
             continue;
           }
 
@@ -412,13 +473,17 @@ class Connection {
         } else {
           // CloseContext
           const closeMsg = msg as CloseContext;
-          if (this.#activeContexts.has(closeMsg.contextId)) {
+          if (
+            this.#activeContexts.has(closeMsg.contextId) &&
+            !this.#closingContexts.has(closeMsg.contextId)
+          ) {
             const closePkt = {
               context_id: closeMsg.contextId,
               close_context: true,
             };
             const closePktStr = JSON.stringify(closePkt);
             this.#ws.send(closePktStr);
+            this.#closingContexts.add(closeMsg.contextId);
           }
         }
       }
@@ -627,6 +692,9 @@ class Connection {
   #cleanupContext(contextId: string): void {
     this.#contextData.delete(contextId);
     this.#activeContexts.delete(contextId);
+    this.#closingContexts.delete(contextId);
+    this.#cancelledContexts.delete(contextId);
+    this.#inputQueueResolver?.();
   }
 
   async close(): Promise<void> {
@@ -977,11 +1045,19 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const segmentId = this.#contextId;
     const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
 
+    if (this.abortController.signal.aborted) {
+      return;
+    }
+
     let connection: Connection;
     try {
       connection = await this.#tts.currentConnection();
     } catch (e) {
       throw new APIConnectionError({ message: 'could not connect to ElevenLabs' });
+    }
+
+    if (this.abortController.signal.aborted) {
+      return;
     }
 
     let waiterReject: ((reason: Error) => void) | undefined;
@@ -990,6 +1066,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       connection.registerStream(this, { resolve, reject });
     });
     let contextClosed = false;
+    let contextCancelled = false;
 
     const closeContext = (suppressErrors = false) => {
       if (contextClosed) {
@@ -1010,13 +1087,36 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       contextClosed = true;
     };
 
+    const cancelContext = (suppressErrors = false) => {
+      if (contextCancelled) {
+        return;
+      }
+
+      contextCancelled = true;
+      contextClosed = true;
+      if (suppressErrors) {
+        try {
+          connection.cancelContext(this.#contextId);
+        } catch {
+          // The connection may already be closed during cancellation.
+        }
+        return;
+      }
+
+      connection.cancelContext(this.#contextId);
+    };
+
     // Handle abort - reject the waiter so Promise.all can complete
     const abortHandler = () => {
+      cancelContext(true);
       if (waiterReject) {
         waiterReject(new Error('Stream aborted'));
       }
     };
     this.abortController.signal.addEventListener('abort', abortHandler, { once: true });
+    if (this.abortController.signal.aborted) {
+      abortHandler();
+    }
 
     const inputTask = async () => {
       for await (const data of this.input) {
@@ -1065,6 +1165,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           text: formattedText,
           flush: flushOnChunk,
         });
+      }
+
+      if (this.abortController.signal.aborted) {
+        return;
       }
 
       if (xmlContent.length > 0) {
@@ -1134,11 +1238,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       sendLastFrame(true);
     };
 
+    const inputPromise = inputTask();
+    const sentenceStreamPromise = sentenceStreamTask();
+    const audioProcessPromise = audioProcessTask();
+
     try {
-      await Promise.all([inputTask(), sentenceStreamTask(), audioProcessTask(), waiterPromise]);
+      await Promise.all([inputPromise, sentenceStreamPromise, audioProcessPromise, waiterPromise]);
     } catch (e) {
       // If aborted, this is a normal termination - don't throw
       if (this.abortController.signal.aborted) {
+        await Promise.allSettled([inputPromise, sentenceStreamPromise, audioProcessPromise]);
         return;
       }
 
@@ -1150,7 +1259,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       throw new APIStatusError({ message: 'Could not synthesize' });
     } finally {
-      closeContext(true);
+      if (this.abortController.signal.aborted) {
+        cancelContext(true);
+      } else {
+        closeContext(true);
+      }
+      connection.finishCancelledContext(this.#contextId);
       // Clean up abort listener
       this.abortController.signal.removeEventListener('abort', abortHandler);
     }
