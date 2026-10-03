@@ -477,6 +477,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
   private chatCtxEventFutures: { [id: string]: Future } = {};
+  private sentChatCtxEvents: { [id: string]: api_proto.ClientEvent } = {};
 
   private inputTranscriptAccumulators = new Map<string, Map<number, string>>();
 
@@ -631,6 +632,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const ownedCreateFutures: { [id: string]: Future<void> } = {};
       const ownedDeleteFutures: { [id: string]: Future<void> } = {};
       const ownedEventFutures: { [id: string]: Future<void> } = {};
+      this.sentChatCtxEvents = {};
 
       const cleanupFutures = () => {
         for (const [itemId, future] of Object.entries(ownedDeleteFutures)) {
@@ -704,6 +706,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
       } finally {
         cleanupFutures();
+        this.sentChatCtxEvents = {};
         if (!timeoutController.signal.aborted) {
           timeoutController.abort();
         }
@@ -1165,17 +1168,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         'Reconnecting to OpenAI Realtime API',
       );
 
-      // Clean up pending futures from old connection to prevent memory leaks
-      for (const fut of Object.values(this.itemCreateFutures)) {
-        if (!fut.done) fut.reject(new Error('Session reconnected'));
-      }
-      this.itemCreateFutures = {};
-
-      for (const fut of Object.values(this.itemDeleteFutures)) {
-        if (!fut.done) fut.reject(new Error('Session reconnected'));
-      }
-      this.itemDeleteFutures = {};
-
       this.rejectResponseCreatedFutures('Session reconnected');
       this.discardedEventIds.clear();
       this.closeCurrentGeneration('session reconnection');
@@ -1196,7 +1188,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       // chat context
       const chatCtx = this.chatCtx.copy({
-        excludeFunctionCall: true,
         excludeInstructions: true,
         excludeEmptyMessage: true,
       });
@@ -1204,6 +1195,16 @@ export class RealtimeSession extends llm.RealtimeSession {
       const oldChatCtx = this.remoteChatCtx;
       this.remoteChatCtx = new llm.RemoteChatContext();
       events.push(...(await this.createChatCtxUpdateEvents(chatCtx)));
+      // The replay holds only confirmed items. Resend events the lost connection never
+      // confirmed so their confirmations settle the original updateChatCtx waiter.
+      events.push(
+        ...Object.entries(this.sentChatCtxEvents)
+          .filter(([eventId]) => {
+            const future = this.chatCtxEventFutures[eventId];
+            return future !== undefined && !future.done;
+          })
+          .map(([, event]) => event),
+      );
 
       try {
         for (const ev of events) {
@@ -1316,6 +1317,9 @@ export class RealtimeSession extends llm.RealtimeSession {
             normalizeAzureClientEvent(event as unknown as Record<string, unknown>);
           }
           wsConn.send(JSON.stringify(event));
+          if (event.event_id && this.chatCtxEventFutures[event.event_id]) {
+            this.sentChatCtxEvents[event.event_id] = event;
+          }
         } catch (error) {
           break;
         }
@@ -1927,6 +1931,15 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
+    // conversation.item.added carries a function call before its arguments are generated;
+    // retain the completed arguments so a reconnection can replay them.
+    if (event.item.type === 'function_call') {
+      const remoteItem = this.remoteChatCtx.get(event.item.id);
+      if (remoteItem?.item instanceof llm.FunctionCall) {
+        remoteItem.item.args = event.item.arguments;
+      }
+    }
+
     if (this.currentGeneration instanceof DiscardedGeneration) return;
 
     if (!this.currentGeneration) {
