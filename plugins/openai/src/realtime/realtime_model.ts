@@ -22,7 +22,6 @@ import {
   stream,
 } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
-import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { type MessageEvent, WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
@@ -461,7 +460,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   private _tools: llm.ToolContext = llm.ToolContext.empty();
   protected remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
   private messageChannel = new Queue<api_proto.ClientEvent>();
-  private inputResampler?: AudioResampler;
   private instructions?: string;
   private oaiRealtimeModel: RealtimeModel;
   // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py - 795-797 lines
@@ -471,8 +469,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   protected currentGeneration?: ResponseGeneration | DiscardedGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
   private discardedEventIds = new Set<string>();
-
-  private textModeRecoveryRetries: number = 0;
 
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
@@ -934,7 +930,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       instructions: responseInstructions,
       userInitiated: true,
     });
-    this.textModeRecoveryRetries = 0;
 
     const onAbort = () => {
       const eventId = Object.entries(this.responseCreatedFutures).find(
@@ -1594,7 +1589,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (itemType !== 'message') {
       // non-message items (e.g. function calls) don't need additional handling here
       // the generation event was already emitted in handleResponseCreated
-      this.textModeRecoveryRetries = 0;
       return;
     }
 
@@ -1810,8 +1804,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
-
-    // TODO(shubhra): handle text mode recovery
   }
 
   protected handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
