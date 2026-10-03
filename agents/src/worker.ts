@@ -848,6 +848,7 @@ export class AgentServer {
     let answered = false;
 
     const onReject = async () => {
+      if (answered) return;
       answered = true;
       this.event.emit(
         'worker_msg',
@@ -864,6 +865,7 @@ export class AgentServer {
     };
 
     const onAccept = async (args: JobAcceptArguments) => {
+      if (answered) return;
       answered = true;
       const acceptedAt = Date.now();
 
@@ -960,6 +962,7 @@ export class AgentServer {
         this.#logger
           .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
           .info('no answer was given inside the jobRequestFunc, automatically rejecting the job');
+        await onReject();
       }
     };
 
