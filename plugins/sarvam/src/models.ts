@@ -136,3 +136,56 @@ export type STTV3Languages =
 
 /** All supported STT language codes */
 export type STTLanguages = STTV2Languages | STTV3Languages;
+
+// ---------------------------------------------------------------------------
+// Realtime STT model types
+// ---------------------------------------------------------------------------
+
+/**
+ * Model used by {@link STTRealtime}. Pinned to Sarvam's realtime API and not configurable.
+ *
+ * @see {@link https://docs.sarvam.ai/api-reference/speech-to-text/transcribe/realtime/ws | Sarvam realtime STT WebSocket docs}
+ */
+export type STTRealtimeModel = 'saaras:v3-realtime';
+
+/** Latency profile for the realtime stream. */
+export type RealtimeStreamType = 'fast' | 'balanced' | 'simulated';
+
+/** How turn boundaries are determined on the realtime API. */
+export type RealtimeEndpointing = 'vad' | 'manual';
+
+/** Wire audio encodings accepted by the realtime API. */
+export type RealtimeEncoding = 'linear16' | 'linear32' | 'mulaw' | 'alaw';
+
+/**
+ * Languages supported by the realtime API (BCP-47), plus `'auto'` for adaptive language
+ * identification.
+ *
+ * @remarks
+ * Odia is `or-IN` on this API, unlike the legacy {@link STTLanguages} which uses `od-IN`.
+ */
+export type STTRealtimeLanguages =
+  | 'auto'
+  | 'as-IN'
+  | 'bn-IN'
+  | 'brx-IN'
+  | 'doi-IN'
+  | 'en-IN'
+  | 'gu-IN'
+  | 'hi-IN'
+  | 'kn-IN'
+  | 'kok-IN'
+  | 'ks-IN'
+  | 'mai-IN'
+  | 'ml-IN'
+  | 'mni-IN'
+  | 'mr-IN'
+  | 'ne-IN'
+  | 'or-IN'
+  | 'pa-IN'
+  | 'sa-IN'
+  | 'sat-IN'
+  | 'sd-IN'
+  | 'ta-IN'
+  | 'te-IN'
+  | 'ur-IN';
