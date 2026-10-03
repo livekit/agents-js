@@ -274,6 +274,9 @@ export class SpeechStream extends stt.SpeechStream {
     this.#resetWS = new Future();
     this.#serverReady = new Future();
     let closing = false;
+    // Scoped to this connection: a sender left over from a previous attempt would
+    // keep pulling audio off the input queue and steal it from the reconnected one.
+    const attempt = new AbortController();
 
     const wsMonitor = Task.from(async (controller) => {
       const closed = new Promise<void>((_, reject) => {
@@ -296,7 +299,8 @@ export class SpeechStream extends stt.SpeechStream {
     });
 
     const sendTask = async () => {
-      await this.#serverReady.await;
+      await Promise.race([this.#serverReady.await, waitForAbort(attempt.signal)]);
+      if (attempt.signal.aborted) return;
 
       const samples50ms = Math.floor(this.#opts.sampleRate / 20);
       const stream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
@@ -304,7 +308,10 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
+          const result = await Promise.race([
+            this.input.next({ signal: attempt.signal }),
+            abortPromise,
+          ]);
 
           if (result === undefined) return;
           if (result.done) break;
@@ -325,17 +332,23 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(frame.data.buffer);
           }
         }
+      } catch (e) {
+        if (attempt.signal.aborted) return; // teardown, not a failure of this send
+        throw e;
       } finally {
         this.#audioDurationCollector.flush();
         closing = true;
-        ws.send(JSON.stringify({ type: 'audio.done' }));
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'audio.done' }));
+        }
         wsMonitor.cancel();
       }
     };
 
     const listenTask = Task.from(async (controller) => {
+      let onMessage: ((msg: WebSocket.RawData) => void) | undefined;
       const listenMessage = new Promise<void>((resolve, reject) => {
-        ws.on('message', (msg) => {
+        onMessage = (msg) => {
           try {
             const json = JSON.parse(msg.toString());
             this.#processStreamEvent(json);
@@ -353,18 +366,38 @@ export class SpeechStream extends stt.SpeechStream {
             );
             reject(err);
           }
-        });
+        };
+        ws.on('message', onMessage);
       });
 
-      await Promise.race([listenMessage, waitForAbort(controller.signal)]);
+      try {
+        // this.abortController is stream-wide, so the listener also ends with its
+        // attempt: a closed socket settles neither of the other two branches
+        await Promise.race([
+          listenMessage,
+          waitForAbort(controller.signal),
+          waitForAbort(attempt.signal),
+        ]);
+      } finally {
+        if (onMessage) ws.off('message', onMessage);
+      }
     }, this.abortController);
 
-    await Promise.race([
-      this.#resetWS.await,
-      Promise.all([sendTask(), listenTask.result, wsMonitor]),
-    ]);
-    closing = true;
-    ws.close();
+    const sendPromise = sendTask();
+    try {
+      await Promise.race([
+        this.#resetWS.await,
+        // wsMonitor.result, not wsMonitor: Task is not thenable, so Promise.all
+        // resolved it instantly and an unexpected close never reached the retry.
+        Promise.all([sendPromise, listenTask.result, wsMonitor.result]),
+      ]);
+    } finally {
+      closing = true;
+      ws.close();
+      // settle this attempt's sender and listener before the caller opens the next socket
+      attempt.abort();
+      await Promise.allSettled([sendPromise, listenTask.result]);
+    }
   }
 
   #onAudioDurationReport(duration: number) {
