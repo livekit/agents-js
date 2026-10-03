@@ -5,6 +5,9 @@ packages:
 
 minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
+  # Initial Spatius SDK release and its required WebSocket dependency.
+  - '@spatius/server-sdk@0.1.0'
+  - ws@8.22.0
   # Explicitly approved Rime protocol release.
   - '@rimelabs/api@0.0.1'
   - '@livekit/*'
