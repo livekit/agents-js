@@ -1052,9 +1052,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       await this.closeActiveSession();
 
       this.sessionShouldClose.clear();
-      const config = this.buildConnectConfig();
 
       try {
+        const config = this.buildConnectConfig();
         this.#logger.debug('Connecting to Gemini Realtime API...');
 
         const sessionOpened = new Event();
