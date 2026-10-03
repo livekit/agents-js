@@ -887,7 +887,7 @@ export interface APIConnectOptions {
 export class APIError extends Error {
     constructor(message: string, input?: APIErrorOptions);
     // (undocumented)
-    readonly body: object | null;
+    readonly body: object | string | null;
     // (undocumented)
     readonly retryable: boolean;
     // (undocumented)

@@ -33,7 +33,7 @@ export class AssignmentTimeoutError extends Error {
  * Interface for API error options
  */
 interface APIErrorOptions {
-  body?: object | null;
+  body?: object | string | null;
   retryable?: boolean;
 }
 
@@ -44,7 +44,7 @@ const API_ERROR_SYMBOL = Symbol('APIError');
  * This is used on our TTS/STT/LLM plugins.
  */
 export class APIError extends Error {
-  readonly body: object | null;
+  readonly body: object | string | null;
   readonly retryable: boolean;
 
   constructor(message: string, { body = null, retryable = true }: APIErrorOptions = {}) {
