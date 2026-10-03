@@ -15,6 +15,7 @@ import {
   GPTLiveModel,
   type GPTLiveModelOptions,
   type GPTLiveSession,
+  liveSessionsURL,
 } from './gpt_live_model.js';
 import type * as GPTLive from './gpt_live_types.js';
 
@@ -1425,6 +1426,178 @@ describe('GPTLiveModel', () => {
     await session.close();
     await delay(120);
     expect(server.sockets).toHaveLength(1);
+  });
+});
+
+describe('GPTLiveModel.withAzure', () => {
+  const providerEnv = [
+    'OPENAI_API_KEY',
+    'OPENAI_BASE_URL',
+    'AZURE_OPENAI_API_KEY',
+    'AZURE_OPENAI_ENDPOINT',
+  ];
+  const backendRequired =
+    "Azure responses delegation needs responsesOptions.model, the name of a Responses deployment in the same resource; or use delegation='client'";
+  const origin = () => new URL(server.url).origin;
+  const connect = async (model: GPTLiveModel) => {
+    const session = model.session();
+    session.on('error', () => {});
+    sessions.push(session);
+    await ready(session);
+  };
+
+  beforeEach(() => {
+    for (const name of providerEnv) vi.stubEnv(name, '');
+  });
+
+  it.each(['', '/', '/openai', '/openai/', '/openai/v1', '/openai/v1/live/sessions'])(
+    'connects endpoint path %j to the v1 sessions path with an API key header',
+    async (endpointPath) => {
+      const model = GPTLiveModel.withAzure({
+        azureDeployment: 'my-live',
+        azureEndpoint: `${origin()}${endpointPath}`,
+        apiKey: 'azure-key',
+        responsesOptions: { model: 'my-backend' },
+      });
+      expect(model.model).toBe('my-live');
+      expect(model.provider).toBe(new URL(origin()).host);
+      await connect(model);
+
+      expect(server.requests[0]).toMatchObject({
+        url: '/openai/v1/live/sessions',
+        headers: { 'api-key': 'azure-key' },
+      });
+      expect(server.requests[0]?.headers).not.toHaveProperty('authorization');
+      expect(startConfig()).toMatchObject({
+        model: 'my-live',
+        delegation: { type: 'responses', responses: { model: 'my-backend' } },
+      });
+    },
+  );
+
+  it('uses an Entra bearer token and ignores the ambient Azure API key', async () => {
+    vi.stubEnv('AZURE_OPENAI_API_KEY', 'env-key');
+    const model = GPTLiveModel.withAzure({
+      azureDeployment: 'my-live',
+      azureEndpoint: origin(),
+      entraToken: 'entra-token',
+      delegation: 'client',
+    });
+    await connect(model);
+
+    expect(server.requests[0]?.headers).toMatchObject({ authorization: 'Bearer entra-token' });
+    expect(server.requests[0]?.headers).not.toHaveProperty('api-key');
+    expect(startConfig().delegation).toEqual({ type: 'client' });
+  });
+
+  it('falls back to the Azure environment variables', async () => {
+    vi.stubEnv('AZURE_OPENAI_ENDPOINT', origin());
+    vi.stubEnv('AZURE_OPENAI_API_KEY', 'env-key');
+    await connect(GPTLiveModel.withAzure({ azureDeployment: 'my-live', delegation: 'client' }));
+
+    expect(server.requests[0]).toMatchObject({
+      url: '/openai/v1/live/sessions',
+      headers: { 'api-key': 'env-key' },
+    });
+  });
+
+  it('keeps a gateway path supplied as baseURL', async () => {
+    await connect(
+      GPTLiveModel.withAzure({
+        azureDeployment: 'my-live',
+        baseURL: `${origin()}/gateway`,
+        apiKey: 'azure-key',
+        delegation: 'client',
+      }),
+    );
+
+    expect(server.requests[0]).toMatchObject({
+      url: '/gateway/live/sessions',
+      headers: { 'api-key': 'azure-key' },
+    });
+  });
+
+  it.each([
+    ['', '/live/sessions'],
+    ['/v1', '/v1/live/sessions'],
+  ])('leaves the OpenAI handshake at %s unchanged', async (basePath, expectedPath) => {
+    await connect(new GPTLiveModel({ apiKey: 'sk-test', baseURL: `${origin()}${basePath}` }));
+
+    expect(server.requests[0]).toMatchObject({
+      url: expectedPath,
+      headers: { authorization: 'Bearer sk-test' },
+    });
+    expect(server.requests[0]?.headers).not.toHaveProperty('api-key');
+    expect(startConfig().model).toBe('gpt-live-1');
+  });
+
+  it.each([
+    ['wss://http-gateway.example.com', false, 'wss://http-gateway.example.com/live/sessions'],
+    ['ws://localhost:8080/v1/', false, 'ws://localhost:8080/v1/live/sessions'],
+    [
+      'https://r.openai.azure.com/openai?api-version=2025-01-01',
+      true,
+      'wss://r.openai.azure.com/openai/v1/live/sessions',
+    ],
+  ])('swaps only the scheme for %s', (baseURL, isAzure, expected) => {
+    expect(liveSessionsURL(baseURL, isAzure).toString()).toBe(expected);
+  });
+
+  it.each([
+    [
+      { azureEndpoint: 'https://r.openai.azure.com', baseURL: 'https://gw' },
+      'baseURL and azureEndpoint are mutually exclusive',
+    ],
+    [
+      { azureEndpoint: 'https://r.openai.azure.com', entraToken: 't' },
+      'apiKey and entraToken are mutually exclusive',
+    ],
+    [
+      { azureDeployment: '', azureEndpoint: 'https://r.openai.azure.com' },
+      "Azure needs azureDeployment, the voice model's deployment name",
+    ],
+    [
+      { apiKey: undefined, azureEndpoint: 'https://r.openai.azure.com' },
+      'Missing Azure credentials. Pass apiKey or entraToken, or set the AZURE_OPENAI_API_KEY environment variable',
+    ],
+    [
+      { azureEndpoint: undefined },
+      'Missing Azure endpoint. Pass azureEndpoint or baseURL, or set the AZURE_OPENAI_ENDPOINT environment variable',
+    ],
+    [
+      { azureEndpoint: 'https://r.openai.azure.com', delegation: 'responses' as const },
+      backendRequired,
+    ],
+    [
+      {
+        azureEndpoint: 'https://r.openai.azure.com',
+        delegation: 'responses' as const,
+        responsesOptions: { model: '' },
+      },
+      backendRequired,
+    ],
+  ])('rejects incomplete configuration: %s', (overrides, message) => {
+    expect(() =>
+      GPTLiveModel.withAzure({
+        azureDeployment: 'my-live',
+        apiKey: 'k',
+        delegation: 'client',
+        ...overrides,
+      }),
+    ).toThrow(message);
+  });
+
+  it('does not accept OPENAI_API_KEY for Azure', () => {
+    vi.stubEnv('OPENAI_API_KEY', 'sk-openai');
+    expect(() =>
+      GPTLiveModel.withAzure({
+        azureDeployment: 'my-live',
+        azureEndpoint: 'https://r.openai.azure.com',
+        delegation: 'client',
+      }),
+    ).toThrow(
+      'Missing Azure credentials. Pass apiKey or entraToken, or set the AZURE_OPENAI_API_KEY environment variable',
+    );
   });
 });
 
