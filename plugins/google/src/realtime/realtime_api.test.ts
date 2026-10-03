@@ -198,7 +198,7 @@ type RealtimeSessionInternals = {
     };
   };
   pendingToolCallIds: Set<string>;
-  locallyGeneratedToolCallIds: Set<string>;
+  syntheticCallIds: Set<string>;
   toolCallStatuses: Map<string, ToolCallStatus>;
   toolResponseCallIds: WeakMap<Record<string, unknown>, string>;
   sessionLock: { lock(): Promise<() => void> };
@@ -238,7 +238,7 @@ function createSessionForTest(
   session._realtimeModel = { capabilities: { midSessionChatCtxUpdate: true } };
   session.activeSession = {};
   session.pendingToolCallIds = new Set();
-  session.locallyGeneratedToolCallIds = new Set();
+  session.syntheticCallIds = new Set();
   session.toolCallStatuses = new Map();
   session.toolResponseCallIds = new WeakMap();
   session.sessionLock = { lock: async () => () => {} };
@@ -386,9 +386,9 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     expect(response?.scheduling).toBe(vertexai ? undefined : FunctionResponseScheduling.WHEN_IDLE);
   });
 
-  it('omits locally generated ids from Vertex AI tool responses', () => {
+  it.each([false, true])('omits synthetic ids with vertexai=%s', (vertexai) => {
     const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
-    session.options.vertexai = true;
+    session.options.vertexai = vertexai;
 
     session.handleToolCall({
       functionCalls: [{ name: 'getWeather', args: { location: 'Seattle' } }],
@@ -402,32 +402,34 @@ describe('Google Realtime non-blocking tool scheduling', () => {
             id: undefined,
             name: 'getWeather',
             response: {},
+            ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
             willContinue: true,
           },
         ],
       },
     });
 
-    const call = session.currentGeneration?.functionChannel.write.mock.calls[0]?.[0] as
-      | { callId: string }
-      | undefined;
-    expect(call).toBeDefined();
+    const callId = (
+      session.currentGeneration?.functionChannel.write.mock.calls[0]?.[0] as { callId: string }
+    ).callId;
+    expect(callId).toBeDefined();
 
     const ctx = llm.ChatContext.empty();
     ctx.insert(
       llm.FunctionCallOutput.create({
-        callId: call!.callId,
+        callId,
         name: 'getWeather',
         output: 'The weather in Seattle is sunny today.',
         isError: false,
       }),
     );
 
-    expect(session.getToolResultsForRealtime(ctx, true)?.functionResponses).toEqual([
+    expect(session.getToolResultsForRealtime(ctx, vertexai)?.functionResponses).toEqual([
       {
         id: undefined,
         name: 'getWeather',
         response: { output: 'The weather in Seattle is sunny today.' },
+        ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
         willContinue: false,
       },
     ]);
