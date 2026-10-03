@@ -729,6 +729,53 @@ describe('GPTLiveModel', () => {
     expect(types()).toEqual(['response.item.create', 'response.item.create', 'response.create']);
   });
 
+  it('replays a startup result nothing answered to the backend, paired with its call', async () => {
+    // a resumed agent starts a new connection with its tool's result already in the history
+    const session = create();
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(new llm.FunctionCall({ callId: 'old', name: 'getWeather', args: '{}' }));
+    ctx.insert(output('old'));
+    ctx.addMessage({ role: 'assistant', content: "It's rainy." });
+    ctx.insert(new llm.FunctionCall({ callId: 'new', name: 'getWeather', args: '{}' }));
+    ctx.insert(output('new'));
+    await session._updateSession(undefined, ctx);
+    await waitCount(4);
+    await delay(20);
+    expect(types()).toEqual(['response.item.create', 'response.item.create', 'response.create']);
+    expect(server.events().slice(1, 3)).toMatchObject([
+      { item: { type: 'function_call', call_id: 'new', name: 'getWeather', arguments: '{}' } },
+      { item: { type: 'function_call_output', call_id: 'new', output: 'rainy' } },
+    ]);
+  });
+
+  it('does not replay a startup result the model already acted on', async () => {
+    // a call made after the result, still waiting on its own, means the model moved past it
+    const session = create();
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(new llm.FunctionCall({ callId: 'done', name: 'getWeather', args: '{}' }));
+    ctx.insert(output('done'));
+    ctx.insert(new llm.FunctionCall({ callId: 'waiting', name: 'getWeather', args: '{}' }));
+    await session._updateSession(undefined, ctx);
+    await vi.waitFor(() => expect(session.sessionId).toBeDefined());
+    await delay(20);
+    expect(types()).toEqual([]);
+  });
+
+  it('replays a result for a call made on an earlier connection when it arrives', async () => {
+    const session = create();
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(new llm.FunctionCall({ callId: 'prev', name: 'getWeather', args: '{}' }));
+    await session._updateSession(undefined, ctx);
+    await vi.waitFor(() => expect(session.sessionId).toBeDefined());
+    await session._appendItems([output('prev')]);
+    await waitCount(4);
+    await delay(20);
+    expect(types()).toEqual(['response.item.create', 'response.item.create', 'response.create']);
+    expect(server.events()[1]).toMatchObject({
+      item: { type: 'function_call', call_id: 'prev', name: 'getWeather' },
+    });
+  });
+
   it('releases the continuation a failed response held back and discards its calls', async () => {
     const session = create();
     await ready(session);
@@ -958,7 +1005,7 @@ describe('GPTLiveModel', () => {
     ctx.insert(new llm.FunctionCall({ callId: 'old', name: 'getWeather', args: '{}' }));
     ctx.insert(output('old'));
     await session._updateSession(undefined, ctx);
-    await waitCount(1);
+    await waitCount(4);
     expect(startConfig().input).toHaveLength(128);
     expect(startConfig().input?.[0]?.content[0]?.text).toBe('message 4');
     expect(startConfig().input?.slice(-2)).toMatchObject([
@@ -992,9 +1039,11 @@ describe('GPTLiveModel', () => {
     ]);
     await server.send(session, { type: 'session.usage.updated', usage: { seconds: 2 } });
     expect(durations).toEqual([10000, 2000]);
+    // the new connection's backend never saw the call, so the result goes back paired with it
     await session._appendItems([output('old')]);
-    await waitCount(2, 1);
-    expect(server.events(1)[1]?.type).toBe('session.thinking.append');
+    await waitCount(4, 1);
+    expect(types(1)).toEqual(['response.item.create', 'response.item.create', 'response.create']);
+    expect(server.events(1)[1]).toMatchObject({ item: { type: 'function_call', call_id: 'old' } });
   });
 
   it('retains sent standing rules and silent context across reconnects', async () => {
@@ -1111,7 +1160,9 @@ describe('GPTLiveModel', () => {
       { content: [{ text: 'Called tool getWeather with {"location":"Paris"}' }] },
       { content: [{ text: 'Tool getWeather returned rainy' }] },
     ]);
-    expect(server.events(1)).toHaveLength(1);
+    // the drained connection's queued response is gone; the new one continues from the result
+    await waitCount(4, 1);
+    expect(types(1)).toEqual(['response.item.create', 'response.item.create', 'response.create']);
     server.autoClose = true;
   });
 
