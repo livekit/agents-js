@@ -541,6 +541,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
   private pendingToolCallIds = new Set<string>();
+  private locallyGeneratedToolCallIds = new Set<string>();
   private toolCallStatuses = new Map<string, ToolCallStatus>();
   private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
   private generationPendingTurnComplete?: ResponseGeneration;
@@ -607,6 +608,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pendingInterruptText = false;
 
     this.pendingToolCallIds.clear();
+    this.locallyGeneratedToolCallIds.clear();
     this.toolCallStatuses.clear();
     if (this.generationPendingTurnComplete) {
       this.markCurrentGenerationDone(false, this.generationPendingTurnComplete);
@@ -640,7 +642,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (item.type === 'function_call_output') {
         const response: types.FunctionResponse = {
           // gemini-3.8-live on Vertex AI drops BLOCKING responses without an id
-          id: item.callId,
+          id:
+            vertexai && this.locallyGeneratedToolCallIds.has(item.callId) ? undefined : item.callId,
           name: item.name,
           response: { output: item.output },
         };
@@ -1802,6 +1805,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       const callId = fc.id || shortuuid('fnc-call-');
       this.pendingToolCallIds.add(callId);
+      if (!fc.id) {
+        this.locallyGeneratedToolCallIds.add(callId);
+      }
       this.toolCallStatuses.set(callId, {
         name: fc.name,
         status: 'pending',
@@ -1810,7 +1816,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       });
       if (this.isNonBlockingToolBehavior()) {
         const continuingResponse: types.FunctionResponse = {
-          id: callId,
+          id: this.options.vertexai && !fc.id ? undefined : callId,
           name: fc.name,
           response: {},
           willContinue: true,
@@ -1852,6 +1858,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
     for (const id of cancellation.ids || []) {
       this.pendingToolCallIds.delete(id);
+      this.locallyGeneratedToolCallIds.delete(id);
       const status = this.toolCallStatuses.get(id);
       if (status) {
         status.status = 'cancelled';
@@ -1868,6 +1875,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const callId = fr.id ?? this.toolResponseCallIds.get(fr);
       if (callId) {
         this.pendingToolCallIds.delete(callId);
+        this.locallyGeneratedToolCallIds.delete(callId);
       }
     }
   }

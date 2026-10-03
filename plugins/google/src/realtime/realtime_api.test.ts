@@ -198,6 +198,7 @@ type RealtimeSessionInternals = {
     };
   };
   pendingToolCallIds: Set<string>;
+  locallyGeneratedToolCallIds: Set<string>;
   toolCallStatuses: Map<string, ToolCallStatus>;
   toolResponseCallIds: WeakMap<Record<string, unknown>, string>;
   sessionLock: { lock(): Promise<() => void> };
@@ -237,6 +238,7 @@ function createSessionForTest(
   session._realtimeModel = { capabilities: { midSessionChatCtxUpdate: true } };
   session.activeSession = {};
   session.pendingToolCallIds = new Set();
+  session.locallyGeneratedToolCallIds = new Set();
   session.toolCallStatuses = new Map();
   session.toolResponseCallIds = new WeakMap();
   session.sessionLock = { lock: async () => () => {} };
@@ -382,6 +384,52 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     const response = session.getToolResultsForRealtime(ctx, vertexai)?.functionResponses[0];
 
     expect(response?.scheduling).toBe(vertexai ? undefined : FunctionResponseScheduling.WHEN_IDLE);
+  });
+
+  it('omits locally generated ids from Vertex AI tool responses', () => {
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    session.options.vertexai = true;
+
+    session.handleToolCall({
+      functionCalls: [{ name: 'getWeather', args: { location: 'Seattle' } }],
+    });
+
+    expect(session.sendClientEvent).toHaveBeenCalledWith({
+      type: 'tool_response',
+      value: {
+        functionResponses: [
+          {
+            id: undefined,
+            name: 'getWeather',
+            response: {},
+            willContinue: true,
+          },
+        ],
+      },
+    });
+
+    const call = session.currentGeneration?.functionChannel.write.mock.calls[0]?.[0] as
+      { callId: string } | undefined;
+    expect(call).toBeDefined();
+
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(
+      llm.FunctionCallOutput.create({
+        callId: call!.callId,
+        name: 'getWeather',
+        output: 'The weather in Seattle is sunny today.',
+        isError: false,
+      }),
+    );
+
+    expect(session.getToolResultsForRealtime(ctx, true)?.functionResponses).toEqual([
+      {
+        id: undefined,
+        name: 'getWeather',
+        response: { output: 'The weather in Seattle is sunny today.' },
+        willContinue: false,
+      },
+    ]);
   });
 });
 
