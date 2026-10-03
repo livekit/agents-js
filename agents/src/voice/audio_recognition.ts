@@ -2384,6 +2384,10 @@ export class AudioRecognition {
   }
 
   clearUserTurn() {
+    // A commit still waiting for its transcript belongs to the turn being cleared. Left running,
+    // it fires inside the next turn and either commits that turn empty or leaves
+    // `userTurnCommitted` stuck so the next turn's STT events are dropped.
+    this.commitUserTurnTask?.cancel();
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
     this.audioPreflightTranscript = '';
