@@ -20,7 +20,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { OpenAI } from 'openai';
 import { type MessageEvent, WebSocket } from 'ws';
 import { z } from 'zod';
-import type { GroqAudioModels, STTModels } from './models.js';
+import type { GroqAudioModels, STTModels, UrunSTTModels } from './models.js';
 import type * as api_proto from './realtime/api_proto.js';
 
 const REALTIME_SAMPLE_RATE = 24000;
@@ -459,6 +459,37 @@ export class STT extends stt.STT {
     return new STT({
       model: 'whisper-large-v3-turbo',
       baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
+      ...opts,
+      useRealtime: false,
+    });
+  }
+
+  /**
+   * Create a new instance of uRun STT.
+   *
+   * @remarks
+   * uRun is an OpenAI-compatible inference provider serving open-weight models (https://urun.sh).
+   * `apiKey` must be set to your uRun API key, either using the argument or by setting the
+   * `URUN_API_KEY` environment variable.
+   */
+  static withUrun(
+    opts: Partial<{
+      model: string | UrunSTTModels;
+      apiKey?: string;
+      baseURL?: string;
+      client: OpenAI;
+      language: string | string[];
+      detectLanguage: boolean;
+    }> = {},
+  ): STT {
+    opts.apiKey = opts.apiKey || process.env.URUN_API_KEY;
+    if (opts.apiKey === undefined) {
+      throw new Error('uRun API key is required, whether as an argument or as $URUN_API_KEY');
+    }
+
+    return new STT({
+      model: 'nemotron-3.5-asr:fp16',
+      baseURL: 'https://inference.urun.sh/v1',
       ...opts,
       useRealtime: false,
     });
