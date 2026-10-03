@@ -409,7 +409,8 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     });
 
     const call = session.currentGeneration?.functionChannel.write.mock.calls[0]?.[0] as
-      { callId: string } | undefined;
+      | { callId: string }
+      | undefined;
     expect(call).toBeDefined();
 
     const ctx = llm.ChatContext.empty();
