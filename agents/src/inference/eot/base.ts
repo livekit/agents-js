@@ -118,7 +118,8 @@ export abstract class BaseStreamingTurnDetector extends (EventEmitter as new () 
   }
 
   /** Most-recent materialized threshold map (after any cloud→local fallback
-   * rescale or server-default adoption). */
+   * rescale or server-default adoption).
+   * @deprecated No in-package callers; removed in a future major version. */
   get thresholds(): Readonly<Record<string, number>> {
     return this._opts.thresholds.thresholds;
   }
@@ -130,11 +131,13 @@ export abstract class BaseStreamingTurnDetector extends (EventEmitter as new () 
   }
 
   /** Threshold above which a pause is a backchannel opportunity, or `undefined`
-   * when backchannel is disabled (server sent none, or the local mini model). */
+   * when backchannel is disabled (server sent none, or the local mini model).
+   * @deprecated Use the same method on the stream returned by `stream()`. */
   async backchannelThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
     return this._opts.thresholds.lookupBackchannel(language);
   }
 
+  /** @deprecated Use the same method on the stream returned by `stream()`. */
   async supportsLanguage(language: LanguageCode | undefined): Promise<boolean> {
     return this._opts.thresholds.supports(language);
   }
@@ -215,6 +218,7 @@ export class BaseStreamingTurnDetectorStream {
     return this._detector.model;
   }
 
+  /** @deprecated Use `provider` on the owning detector (e.g. `TurnDetector.provider`). */
   get provider(): string {
     return this._detector.provider;
   }
