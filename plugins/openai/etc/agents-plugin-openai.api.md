@@ -2186,6 +2186,7 @@ export class TTS extends tts_2.TTS {
         model?: TTSModels | string;
         voice?: TTSVoices;
         speed?: number;
+        responseFormat?: TTSResponseFormat;
     }): void;
 }
 
@@ -2208,11 +2209,17 @@ export interface TTSOptions {
     instructions?: string;
     // (undocumented)
     model: TTSModels | string;
+    responseFormat?: TTSResponseFormat;
     // (undocumented)
     speed: number;
     // (undocumented)
     voice: TTSVoices;
 }
+
+// Warning: (ae-missing-release-tag) "TTSResponseFormat" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type TTSResponseFormat = 'pcm' | (string & Record<never, never>);
 
 // Warning: (ae-missing-release-tag) "TTSVoices" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
