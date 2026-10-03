@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame } from '@livekit/rtc-node';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
 import type { VADStream } from '../vad.js';
@@ -57,6 +58,75 @@ describe('inference.VAD updateOptions propagation', () => {
         Math.trunc((20_000 * sampleRate) / 1000) + expectedPrefix,
       );
     } finally {
+      stream.close();
+    }
+  });
+});
+
+describe('VADStream endInput', () => {
+  it('ends the input without throwing and rejects later pushes', async () => {
+    const vad = new VAD();
+    const stream = vad.stream();
+    try {
+      expect(() => stream.endInput()).not.toThrow();
+      expect(() => stream.endInput()).toThrow('Input is closed');
+      expect(() => stream.flush()).toThrow('Input is closed');
+
+      // The input reader observes the end of the stream.
+      const reader = internalsReader(stream);
+      await expect(reader.read()).resolves.toMatchObject({ done: true });
+    } finally {
+      stream.close();
+    }
+  });
+});
+
+describe('VADStream output after endInput', () => {
+  it('ends the iterator once the input has ended', async () => {
+    const vad = new VAD();
+    const stream = vad.stream();
+    try {
+      stream.endInput();
+      const result = await Promise.race([
+        stream.next(),
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2000)),
+      ]);
+      expect(result).toMatchObject({ done: true });
+    } finally {
+      stream.close();
+    }
+  });
+});
+
+const internalsReader = (stream: VADStream) =>
+  (stream as unknown as { inputReader: ReadableStreamDefaultReader<unknown> }).inputReader;
+
+describe('VADStream endInput with an attached source', () => {
+  it('stops forwarding frames without an unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+
+    const vad = new VAD();
+    const stream = vad.stream();
+    try {
+      let controller!: ReadableStreamDefaultController<AudioFrame>;
+      stream.updateInputStream(
+        new ReadableStream<AudioFrame>({
+          start(c) {
+            controller = c;
+          },
+        }),
+      );
+
+      stream.endInput();
+      // A frame that arrives after the input ended must be dropped quietly.
+      controller.enqueue({} as AudioFrame);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
       stream.close();
     }
   });

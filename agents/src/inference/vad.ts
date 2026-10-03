@@ -135,12 +135,14 @@ class InferenceVADStream extends BaseVADStream {
       this._nativeVad = mod.createVad();
       this._windowSamples = mod.VAD_WINDOW_SAMPLES;
     }
-    this._pumpTask = this._pump().catch((err) => {
-      this._logger.error(
-        { err: err instanceof Error ? err.message : String(err) },
-        'VAD pump failed',
-      );
-    });
+    this._pumpTask = this._pump()
+      .then(() => this.closeOutput())
+      .catch((err) => {
+        this._logger.error(
+          { err: err instanceof Error ? err.message : String(err) },
+          'VAD pump failed',
+        );
+      });
   }
 
   /**
