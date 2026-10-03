@@ -183,6 +183,9 @@ type ToolCallStatus = {
 };
 
 type RealtimeSessionInternals = {
+  _chatCtx: llm.ChatContext;
+  _realtimeModel: { capabilities: { midSessionChatCtxUpdate: boolean } };
+  activeSession?: Record<string, never>;
   options: {
     toolBehavior?: Behavior;
     toolResponseScheduling?: FunctionResponseScheduling;
@@ -195,8 +198,11 @@ type RealtimeSessionInternals = {
     };
   };
   pendingToolCallIds: Set<string>;
+  syntheticCallIds: Set<string>;
   toolCallStatuses: Map<string, ToolCallStatus>;
   toolResponseCallIds: WeakMap<Record<string, unknown>, string>;
+  sessionLock: { lock(): Promise<() => void> };
+  pendingInterruptText: boolean;
   sendClientEvent: ReturnType<typeof vi.fn>;
   markCurrentGenerationDone: ReturnType<typeof vi.fn>;
   getToolResultsForRealtime(
@@ -210,7 +216,7 @@ type RealtimeSessionInternals = {
       args?: Record<string, unknown>;
     }>;
   }): void;
-  clearPendingToolCallIdsForResponses(functionResponses: Array<Record<string, unknown>>): void;
+  updateChatCtx(chatCtx: llm.ChatContext): Promise<void>;
 };
 
 const schedulingModes = [
@@ -228,9 +234,15 @@ function createSessionForTest(
     toolResponseScheduling,
     vertexai: false,
   };
+  session._chatCtx = llm.ChatContext.empty();
+  session._realtimeModel = { capabilities: { midSessionChatCtxUpdate: true } };
+  session.activeSession = {};
   session.pendingToolCallIds = new Set();
+  session.syntheticCallIds = new Set();
   session.toolCallStatuses = new Map();
   session.toolResponseCallIds = new WeakMap();
+  session.sessionLock = { lock: async () => () => {} };
+  session.pendingInterruptText = false;
   session.sendClientEvent = vi.fn();
   session.markCurrentGenerationDone = vi.fn();
   session.currentGeneration = {
@@ -320,9 +332,44 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     },
   );
 
-  it('clears pending tool calls for VertexAI responses without ids', () => {
+  it.each([false, true])(
+    'includes the call id in outbound tool responses with vertexai=%s',
+    async (vertexai) => {
+      const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+      session.options.vertexai = vertexai;
+      session.options.toolBehavior = Behavior.BLOCKING;
+
+      const ctx = session._chatCtx.copy();
+      ctx.insert(
+        llm.FunctionCallOutput.create({
+          callId: 'call_123',
+          name: 'getWeather',
+          output: 'The weather in Seattle is sunny today.',
+          isError: false,
+        }),
+      );
+
+      await session.updateChatCtx(ctx);
+
+      expect(session.sendClientEvent).toHaveBeenCalledWith({
+        type: 'tool_response',
+        value: {
+          functionResponses: [
+            {
+              id: 'call_123',
+              name: 'getWeather',
+              response: { output: 'The weather in Seattle is sunny today.' },
+              ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
+            },
+          ],
+        },
+      });
+    },
+  );
+
+  it.each([false, true])('includes scheduling only with vertexai=%s', (vertexai) => {
     const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
-    session.pendingToolCallIds.add('call_123');
+    session.options.vertexai = vertexai;
 
     const ctx = llm.ChatContext.empty();
     ctx.insert(
@@ -334,19 +381,58 @@ describe('Google Realtime non-blocking tool scheduling', () => {
       }),
     );
 
-    const result = session.getToolResultsForRealtime(ctx, true);
+    const response = session.getToolResultsForRealtime(ctx, vertexai)?.functionResponses[0];
 
-    expect(result?.functionResponses).toEqual([
+    expect(response?.scheduling).toBe(vertexai ? undefined : FunctionResponseScheduling.WHEN_IDLE);
+  });
+
+  it.each([false, true])('omits synthetic ids with vertexai=%s', (vertexai) => {
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    session.options.vertexai = vertexai;
+
+    session.handleToolCall({
+      functionCalls: [{ name: 'getWeather', args: { location: 'Seattle' } }],
+    });
+
+    expect(session.sendClientEvent).toHaveBeenCalledWith({
+      type: 'tool_response',
+      value: {
+        functionResponses: [
+          {
+            id: undefined,
+            name: 'getWeather',
+            response: {},
+            ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
+            willContinue: true,
+          },
+        ],
+      },
+    });
+
+    const callId = (
+      session.currentGeneration?.functionChannel.write.mock.calls[0]?.[0] as { callId: string }
+    ).callId;
+    expect(callId).toBeDefined();
+
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(
+      llm.FunctionCallOutput.create({
+        callId,
+        name: 'getWeather',
+        output: 'The weather in Seattle is sunny today.',
+        isError: false,
+      }),
+    );
+
+    expect(session.getToolResultsForRealtime(ctx, vertexai)?.functionResponses).toEqual([
       {
+        id: undefined,
         name: 'getWeather',
         response: { output: 'The weather in Seattle is sunny today.' },
-        scheduling: FunctionResponseScheduling.WHEN_IDLE,
+        ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
+        willContinue: false,
       },
     ]);
-
-    session.clearPendingToolCallIdsForResponses(result?.functionResponses ?? []);
-
-    expect(session.pendingToolCallIds.has('call_123')).toBe(false);
   });
 });
 
