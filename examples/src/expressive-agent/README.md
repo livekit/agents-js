@@ -37,10 +37,10 @@ The comparison is the point of the demo. Run it once with `expressive: true` and
 once with `expressive: false`, and say the same thing to each. The words come out
 much the same; the delivery does not.
 
-Expressive mode requires an `inference.TTS` model that declares a markup
-dialect. Fish Audio, Inworld TTS 2, Cartesia Sonic 3, and xAI qualify; providers
-without a dialect synthesize normally and the flag stays inert. To hear another
-one, swap the `tts` model in `expressive_agent.ts`:
+Expressive mode needs a TTS that declares a markup dialect; in this demo that's
+an `inference.TTS` model. Fish Audio, Inworld TTS 2, Cartesia Sonic 3, and xAI
+qualify; providers without a dialect synthesize normally and the flag stays
+inert. To hear another one, swap the `tts` model in `expressive_agent.ts`:
 
 | Provider   | Model                   | Voice                                  |
 | ---------- | ----------------------- | -------------------------------------- |
