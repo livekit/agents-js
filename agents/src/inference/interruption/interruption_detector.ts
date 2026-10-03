@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
 import { log } from '../../log.js';
@@ -151,29 +150,5 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
    */
   removeStream(stream: InterruptionStreamBase): void {
     this.streams.delete(stream);
-  }
-
-  /**
-   * Update options for the detector and propagate to all active streams.
-   * For WebSocket streams, this triggers a reconnection with new settings.
-   */
-  async updateOptions(options: {
-    threshold?: number;
-    minInterruptionDurationInS?: number;
-  }): Promise<void> {
-    if (options.threshold !== undefined) {
-      this.options.threshold = options.threshold;
-    }
-    if (options.minInterruptionDurationInS !== undefined) {
-      this.options.minInterruptionDurationInS = options.minInterruptionDurationInS;
-      this.options.minFrames = Math.ceil(options.minInterruptionDurationInS * FRAMES_PER_SECOND);
-    }
-
-    // Propagate option updates to all active streams (matching Python behavior)
-    const updatePromises: Promise<void>[] = [];
-    for (const stream of this.streams) {
-      updatePromises.push(stream.updateOptions(options));
-    }
-    await ThrowsPromise.all(updatePromises);
   }
 }
