@@ -35,6 +35,8 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:*",
+    "@livekit/agents-plugin-anthropic": "workspace:*",
+    "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.58.12",
@@ -47,6 +49,8 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
+    "@livekit/agents-plugin-anthropic": "workspace:*",
+    "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/rtc-node": "catalog:"
   }
 }
