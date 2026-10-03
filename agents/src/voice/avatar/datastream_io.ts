@@ -17,6 +17,7 @@ import {
   shortuuid,
   waitForParticipant,
   waitForTrackPublication,
+  waitUntilAborted,
 } from '../../utils.js';
 import { AudioOutput } from '../io.js';
 import { parsePlaybackFinishedPayload } from './playback_payload.js';
@@ -121,7 +122,8 @@ export class DataStreamAudioOutput extends AudioOutput {
     try {
       if (this.started) return;
 
-      await this.roomConnectedFuture.await;
+      const connected = await waitUntilAborted(this.roomConnectedFuture.await, abortSignal);
+      if (connected.isAborted) throw abortSignal.reason;
 
       this.#logger.debug(
         {
@@ -173,6 +175,7 @@ export class DataStreamAudioOutput extends AudioOutput {
     }
 
     await this.startTask.result;
+    if (this.closed) throw new Error('DataStreamAudioOutput is closed');
     await super.captureFrame(frame);
 
     if (!this.firstFrameEmitted) {
@@ -226,16 +229,14 @@ export class DataStreamAudioOutput extends AudioOutput {
     });
   }
 
-  /** Release resources owned by this data-stream output. */
+  /**
+   * Release resources owned by this data-stream output. Pending playout segments are settled as
+   * interrupted, since the remote participant can no longer report them.
+   */
   async aclose(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     this.room.off(RoomEvent.ConnectionStateChanged, this.onRoomConnectionStateChanged);
-    this.startTask?.cancel();
-    if (this.streamWriter) {
-      await this.streamWriter.close();
-      this.streamWriter = undefined;
-    }
     if (
       DataStreamAudioOutput._playbackFinishedHandlers[this.destinationIdentity] ===
       this.playbackFinishedHandler
@@ -247,6 +248,17 @@ export class DataStreamAudioOutput extends AudioOutput {
       this.playbackStartedHandler
     ) {
       delete DataStreamAudioOutput._playbackStartedHandlers[this.destinationIdentity];
+    }
+    while (this.pendingPlayoutSegments > 0) {
+      this.onPlaybackFinished({ playbackPosition: this.pushedDuration, interrupted: true });
+    }
+
+    const streamWriter = this.streamWriter;
+    this.streamWriter = undefined;
+    try {
+      await this.startTask?.cancelAndWait().catch(() => undefined);
+    } finally {
+      await streamWriter?.close();
     }
   }
 

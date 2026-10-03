@@ -452,11 +452,25 @@ export class AgentOutput {
     }
   }
 
+  /** The leaf audio sink at the end of the wrapper chain, or the bare output when unwrapped. */
+  get audioTail(): AudioOutput | null {
+    let current = this._audioSink;
+    while (current) {
+      const next = (current as unknown as { nextInChain?: AudioOutput }).nextInChain;
+      if (!next) return current;
+      current = next;
+    }
+    return null;
+  }
+
   /**
    * Replace the leaf audio sink while retaining recorder and transcription wrappers.
    * Falls back to replacing the whole output when no wrapper chain is installed.
+   * Segments the previous leaf still owed a finish for are settled as interrupted.
+   *
+   * @returns The previous leaf sink, so callers can restore it later.
    */
-  replaceAudioTail(sink: AudioOutput): void {
+  replaceAudioTail(sink: AudioOutput): AudioOutput | null {
     let current = this._audioSink;
     while (current) {
       const internals = current as unknown as {
@@ -468,9 +482,12 @@ export class AgentOutput {
       };
       const next = internals.nextInChain;
       if (next && !(next as unknown as { nextInChain?: AudioOutput }).nextInChain) {
+        // the previous leaf can no longer report finishes upstream once detached, so every
+        // segment it still holds has to be settled here, one interrupted finish per segment
+        const abandoned = next.pendingPlayoutSegments;
         next.off(AudioOutput.EVENT_PLAYBACK_STARTED, internals.onNextPlaybackStarted);
         next.off(AudioOutput.EVENT_PLAYBACK_FINISHED, internals.onNextPlaybackFinished);
-        if (current.pendingPlayoutSegments > 0) {
+        if (abandoned > 0) {
           if (internals._capturing) next.flush();
           next.clearBuffer();
         }
@@ -478,14 +495,16 @@ export class AgentOutput {
         internals.nextInChain = sink;
         internals.attachNextInChainListeners();
         if (this._audioEnabled) sink.onAttached();
-        if (current.pendingPlayoutSegments > 0) {
+        for (let i = 0; i < abandoned; i++) {
           current.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
         }
-        return;
+        return next;
       }
       current = next ?? null;
     }
+    const previous = this._audioSink;
     this.audio = sink;
+    return previous;
   }
 
   get transcription(): TextOutput | null {

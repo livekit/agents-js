@@ -96,9 +96,10 @@ describe('AgentOutput.replaceAudioTail', () => {
     const replacement = new TestAudioOutput();
     output.audio = original;
 
-    output.replaceAudioTail(replacement);
+    expect(output.replaceAudioTail(replacement)).toBe(original);
 
     expect(output.audio).toBe(replacement);
+    expect(output.audioTail).toBe(replacement);
     expect(original.onDetached).toHaveBeenCalledOnce();
     expect(replacement.onAttached).toHaveBeenCalledOnce();
   });
@@ -121,5 +122,40 @@ describe('AgentOutput.replaceAudioTail', () => {
     await expect(wrapper.waitForPlayout()).resolves.toMatchObject({ interrupted: true });
     await wrapper.captureFrame(frame);
     expect(replacement.captureFrame).toHaveBeenCalledWith(frame);
+  });
+
+  it('settles every segment the previous leaf still owed and returns it', async () => {
+    const output = new AgentOutput(() => {});
+    const original = new TestAudioOutput();
+    const replacement = new TestAudioOutput();
+    const wrapper = new TestAudioWrapper(original);
+    output.audio = wrapper;
+    const frame = { samplesPerChannel: 480, sampleRate: 24000 } as AudioFrame;
+    for (let i = 0; i < 2; i++) {
+      await wrapper.captureFrame(frame);
+      wrapper.flush();
+    }
+    expect(wrapper.pendingPlayoutSegments).toBe(2);
+
+    expect(output.replaceAudioTail(replacement)).toBe(original);
+
+    expect(output.audioTail).toBe(replacement);
+    expect(wrapper.pendingPlayoutSegments).toBe(0);
+    await expect(wrapper.waitForPlayout()).resolves.toMatchObject({ interrupted: true });
+  });
+
+  it('can restore the previous leaf', () => {
+    const output = new AgentOutput(() => {});
+    const original = new TestAudioOutput();
+    const replacement = new TestAudioOutput();
+    const wrapper = new TestAudioWrapper(original);
+    output.audio = wrapper;
+
+    const previous = output.replaceAudioTail(replacement);
+    output.replaceAudioTail(previous!);
+
+    expect(output.audio).toBe(wrapper);
+    expect(output.audioTail).toBe(original);
+    expect(replacement.onDetached).toHaveBeenCalledOnce();
   });
 });

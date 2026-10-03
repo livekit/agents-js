@@ -6,7 +6,7 @@ import type { RemoteParticipant, RemoteTrackPublication, Room } from '@livekit/r
 import { RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { VideoGrant } from 'livekit-server-sdk';
 import { AccessToken } from 'livekit-server-sdk';
-import { SynthesiaAPI } from './api.js';
+import { SynthesiaAPI, errorName, requireSecureApiUrl } from './api.js';
 import { ErrorType, SynthesiaError } from './errors.js';
 import { log } from './log.js';
 import {
@@ -60,7 +60,9 @@ export class AvatarSession extends voice.AvatarSession {
   private starting = false;
   private room?: Room;
   private sessionIdValue: string | null = null;
+  private agentSession?: voice.AgentSession;
   private audioOutput?: voice.DataStreamAudioOutput;
+  private previousAudioTail: voice.AudioOutput | null = null;
   private closePromise?: Promise<void>;
   private teardownPromise?: Promise<void>;
 
@@ -80,7 +82,9 @@ export class AvatarSession extends voice.AvatarSession {
     }
     this.avatarIds = [...avatarConfig.avatarIds];
     this.#apiKey = apiKey;
-    this.apiUrl = options.apiUrl ?? process.env.SYNTHESIA_API_URL ?? DEFAULT_API_URL;
+    this.apiUrl = requireSecureApiUrl(
+      options.apiUrl ?? process.env.SYNTHESIA_API_URL ?? DEFAULT_API_URL,
+    );
     this.joinTimeout = options.joinTimeout ?? DEFAULT_JOIN_TIMEOUT;
     this.avatarParticipantIdentity = options.avatarParticipantIdentity ?? AVATAR_IDENTITY;
     this.avatarParticipantName = options.avatarParticipantName ?? AVATAR_NAME;
@@ -155,7 +159,8 @@ export class AvatarSession extends voice.AvatarSession {
           destinationIdentity: this.avatarIdentity,
           waitRemoteTrack: TrackKind.KIND_VIDEO,
         });
-        agentSession.output.replaceAudioTail(audioOutput);
+        this.agentSession = agentSession;
+        this.previousAudioTail = agentSession.output.replaceAudioTail(audioOutput);
         this.audioOutput = audioOutput;
         await this.waitForJoin({ timeout: this.joinTimeout });
       } catch (error) {
@@ -203,23 +208,26 @@ export class AvatarSession extends voice.AvatarSession {
         payload: JSON.stringify({ avatar_id: avatarId }),
         responseTimeout: timeout,
       });
-    } catch (cause) {
-      throw new SynthesiaError(`avatar swap RPC failed: ${String(cause)}`, {
+    } catch (error) {
+      // the RPC error can carry provider content, so only its name and code are surfaced
+      const code = isRecord(error) && typeof error.code === 'number' ? ` (code ${error.code})` : '';
+      throw new SynthesiaError(`avatar swap RPC failed: ${errorName(error)}${code}`, {
         type: ErrorType.CONNECTION,
-        cause,
       });
     }
 
     let response: unknown;
     try {
       response = JSON.parse(raw) as unknown;
-    } catch (cause) {
-      throw new SynthesiaError('avatar swap returned a malformed response', { cause });
+    } catch {
+      throw new SynthesiaError('avatar swap returned a malformed response');
     }
     const result = isRecord(response) ? response.avatar_id : undefined;
     if (!isRecord(response) || response.error || typeof result !== 'string') {
-      const detail = isRecord(response) ? response.error : undefined;
-      throw new SynthesiaError(`avatar swap failed: ${detail || raw}`);
+      const detail = isRecord(response) && typeof response.error === 'string' ? response.error : '';
+      throw new SynthesiaError(
+        detail ? `avatar swap failed: ${detail}` : 'avatar swap returned an unrecognized response',
+      );
     }
     return result;
   }
@@ -236,26 +244,52 @@ export class AvatarSession extends voice.AvatarSession {
   }
 
   private async closeImpl(): Promise<void> {
-    try {
-      const audioOutput = this.audioOutput;
-      this.audioOutput = undefined;
-      await audioOutput?.aclose();
-      if (this.room) {
-        this.room.off(RoomEvent.Disconnected, this.onRoomDisconnected);
-        this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
-        this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+    // every stage runs even if an earlier one fails; the first failure is rethrown at the end
+    let failure: unknown;
+    const attempt = async (stage: () => Promise<void> | void) => {
+      try {
+        await stage();
+      } catch (error) {
+        failure ??= error;
       }
-      await super.aclose();
-    } finally {
-      this.room = undefined;
+    };
+    await attempt(() => this.releaseAudioOutput());
+    const room = this.room;
+    if (room) {
+      room.off(RoomEvent.Disconnected, this.onRoomDisconnected);
+      room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
+      room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
     }
+    await attempt(() => super.aclose());
+    this.room = undefined;
+    if (failure !== undefined) throw failure;
   }
 
   private async discardPartialStart(): Promise<void> {
-    const audioOutput = this.audioOutput;
-    this.audioOutput = undefined;
-    await audioOutput?.aclose();
+    await this.releaseAudioOutput();
     this.sessionIdValue = null;
+  }
+
+  /**
+   * Detach the avatar output from the agent session, restoring the sink it replaced so later
+   * speech keeps playing, then close it.
+   */
+  private async releaseAudioOutput(): Promise<void> {
+    const audioOutput = this.audioOutput;
+    const previous = this.previousAudioTail;
+    const output = this.agentSession?.output;
+    this.audioOutput = undefined;
+    this.previousAudioTail = null;
+    this.agentSession = undefined;
+    if (!audioOutput) return;
+    if (output?.audioTail === audioOutput) {
+      if (previous) {
+        output.replaceAudioTail(previous);
+      } else if (output.audio === audioOutput) {
+        output.audio = null;
+      }
+    }
+    await audioOutput.aclose();
   }
 
   private async mintToken(room: Room, apiKey: string, apiSecret: string): Promise<string> {
@@ -320,7 +354,12 @@ export class AvatarSession extends voice.AvatarSession {
   private beginTeardown() {
     if (this.teardownPromise || this.state === State.CLOSED) return;
     this.teardownPromise = this.aclose();
-    void this.teardownPromise.catch((error) => log().error({ error }, 'avatar teardown failed'));
+    void this.teardownPromise.catch((error) =>
+      log().error(
+        { errorType: errorName(error), 'lk.pii.error': String(error) },
+        'avatar teardown failed',
+      ),
+    );
   }
 
   private isClosed(): boolean {

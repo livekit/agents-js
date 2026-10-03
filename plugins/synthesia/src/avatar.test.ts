@@ -75,12 +75,17 @@ function fakeRoom({ identity = 'dev-agent', connected = true } = {}) {
   };
 }
 
-function fakeAgentSession() {
+function fakeAgentSession(audio: voice.AudioOutput | null = null) {
   const emitter = new EventEmitter();
   const output = {
-    audio: null as voice.AudioOutput | null,
+    audio,
+    get audioTail() {
+      return this.audio;
+    },
     replaceAudioTail(sink: voice.AudioOutput) {
+      const previous = this.audio;
       this.audio = sink;
+      return previous;
     },
   };
   const session = {
@@ -302,7 +307,7 @@ describe('Synthesia AvatarSession', () => {
 
   it.each([
     ['worker error', JSON.stringify({ error: 'swap timeout' }), 'swap timeout'],
-    ['unrecognized response', JSON.stringify({ status: 'weird' }), 'weird'],
+    ['unrecognized response', JSON.stringify({ status: 'weird' }), 'unrecognized response'],
     ['malformed response', 'not json', 'malformed'],
   ])('surfaces a %s', async (_case, raw, message) => {
     const room = fakeRoom();
@@ -322,6 +327,64 @@ describe('Synthesia AvatarSession', () => {
       type: ErrorType.CONNECTION,
     });
     await session.aclose();
+  });
+
+  it('keeps provider content out of swap errors', async () => {
+    const room = fakeRoom();
+    const session = avatar();
+    await session.start(fakeAgentSession(), room.room, LIVEKIT);
+
+    room.setRpcResponse(JSON.stringify({ status: 'weird', secret: 'provider-payload' }));
+    const unrecognized = await session.swapAvatar(SECOND_ID).catch((error: Error) => error);
+    expect(String(unrecognized)).not.toContain('provider-payload');
+
+    room.setRpcError(new Error('provider-payload'));
+    const transport = await session.swapAvatar(SECOND_ID).catch((error: Error) => error);
+    expect(String(transport)).not.toContain('provider-payload');
+    expect((transport as Error).cause).toBeUndefined();
+    await session.aclose();
+  });
+
+  it('restores the replaced audio sink on close', async () => {
+    const previous = new voice.DataStreamAudioOutput({
+      room: fakeRoom().room,
+      destinationIdentity: 'previous-sink',
+    });
+    const agent = fakeAgentSession(previous);
+    const session = avatar();
+    await session.start(agent, fakeRoom().room, LIVEKIT);
+    expect(agent.output.audio).not.toBe(previous);
+
+    await session.aclose();
+
+    expect(agent.output.audio).toBe(previous);
+    await previous.aclose();
+  });
+
+  it('finishes teardown when closing the audio output fails', async () => {
+    vi.spyOn(voice.DataStreamAudioOutput.prototype, 'aclose').mockRejectedValueOnce(
+      new Error('stream close failed'),
+    );
+    const baseClose = vi.spyOn(voice.AvatarSession.prototype, 'aclose');
+    const room = fakeRoom();
+    const session = avatar();
+    await session.start(fakeAgentSession(), room.room, LIVEKIT);
+
+    await expect(session.aclose()).rejects.toThrow('stream close failed');
+
+    expect(room.room.listenerCount(RoomEvent.Disconnected)).toBe(0);
+    expect(baseClose).toHaveBeenCalled();
+  });
+
+  it.each(['http://api.example', 'ftp://api.example', 'not a url'])(
+    'rejects an insecure apiUrl %s',
+    (apiUrl) => {
+      expect(() => avatar({ apiUrl })).toThrow(SynthesiaError);
+    },
+  );
+
+  it('allows plaintext apiUrl for localhost', () => {
+    expect(() => avatar({ apiUrl: 'http://localhost:8080' })).not.toThrow();
   });
 
   it('rejects swaps before start and after close', async () => {

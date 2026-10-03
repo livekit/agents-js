@@ -57,7 +57,7 @@ export class SynthesiaAPI {
 
   constructor(options: SynthesiaAPIOptions) {
     this.#apiKey = options.apiKey;
-    this.apiUrl = options.apiUrl.replace(/\/+$/, '');
+    this.apiUrl = requireSecureApiUrl(options.apiUrl).replace(/\/+$/, '');
     this.connOptions = options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS;
     this.fetch = options.fetch ?? globalThis.fetch;
   }
@@ -222,6 +222,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function errorName(value: unknown): string {
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * The API key and minted LiveKit token travel in the request, so plaintext `http://` is only
+ * allowed for loopback development servers.
+ * @internal
+ */
+export function requireSecureApiUrl(apiUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(apiUrl);
+  } catch {
+    throw new SynthesiaError(`apiUrl ${JSON.stringify(apiUrl)} is not a valid URL`);
+  }
+  if (url.protocol === 'https:') return apiUrl;
+  if (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname)) return apiUrl;
+  throw new SynthesiaError(
+    `apiUrl ${JSON.stringify(apiUrl)} must use https:// (http:// is only allowed for localhost)`,
+  );
+}
+
+/** @internal */
+export function errorName(value: unknown): string {
   return value instanceof Error ? value.name : typeof value;
 }
