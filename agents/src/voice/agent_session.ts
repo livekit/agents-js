@@ -18,6 +18,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
+import { isAPIError } from '../_exceptions.js';
 import type { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import {
   LLM as InferenceLLM,
@@ -81,7 +82,7 @@ import {
   type SessionConnectOptions,
   recordingEnabled,
 } from '../types.js';
-import { Event, Task, asError } from '../utils.js';
+import { Event, Task, asError, waitUntilAborted } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type Agent, AgentTask } from './agent.js';
 import {
@@ -1010,14 +1011,19 @@ export class AgentSession<
       }),
     );
 
-    const startupResults = await ThrowsPromise.allSettled(tasks);
-    for (const result of startupResults) {
+    const startup = await waitUntilAborted(
+      ThrowsPromise.allSettled(tasks),
+      this.closingController.signal,
+    );
+    if (startup.isAborted) throw asError(this.closingController.signal.reason);
+    for (const result of startup.result) {
       if (result.status === 'rejected') throw result.reason;
     }
 
     if (this.sessionHost) {
       await this.sessionHost.start();
     }
+    this.closingController.signal.throwIfAborted();
 
     // Log used IO configuration
     this.logger.debug(
@@ -1792,7 +1798,11 @@ export class AgentSession<
     // Track error counts per type to implement max_unrecoverable_errors logic
     if (error.type === 'stt_error') {
       this.sttErrorCounts += 1;
-      if (this.sttErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
+      // The STT pipeline only recreates streams after API errors.
+      if (
+        isAPIError(error.error) &&
+        this.sttErrorCounts <= this._connOptions.maxUnrecoverableErrors
+      ) {
         return;
       }
     } else if (error.type === 'llm_error') {
@@ -1810,6 +1820,13 @@ export class AgentSession<
     this.logger.error(error, 'AgentSession is closing due to an unrecoverable error');
 
     this.closingTask = (async () => {
+      this.closing = true;
+      // Publish closingTask before abort callbacks can call close() again.
+      await Promise.resolve();
+      this.closingController.abort(error.error);
+      // Wait for activity creation, without waiting for the room connection.
+      const unlock = await this.activityLock.lock();
+      unlock();
       await this.closeImpl(CloseReason.ERROR, error);
     })().then(() => {
       this.closingTask = null;
