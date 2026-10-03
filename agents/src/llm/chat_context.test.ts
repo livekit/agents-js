@@ -1631,6 +1631,79 @@ describe('ChatContext.copy with toolCtx filter', () => {
     const filtered = ctx.copy({ toolCtx: new ToolContext([provider]) });
     expect(filtered.items.map((i) => ('name' in i ? i.name : ''))).toEqual(['code_runner']);
   });
+
+  it('keeps a tool output with no name by pairing it with its callId', () => {
+    const getWeather = tool({ name: 'get_weather', description: 'k', execute: async () => 'ok' });
+    const ctx = new ChatContext([
+      ChatMessage.create({ role: 'user', content: ["what's the weather in Paris?"] }),
+      FunctionCall.create({ callId: 'c1', name: 'get_weather', args: '{"location":"Paris"}' }),
+      FunctionCallOutput.create({ callId: 'c1', output: 'sunny, 22C', isError: false }),
+    ]);
+
+    const copied = ctx.copy({ toolCtx: new ToolContext([getWeather]) });
+    expect(copied.items.map((item) => item.type)).toEqual([
+      'message',
+      'function_call',
+      'function_call_output',
+    ]);
+  });
+
+  it('drops a tool output whose call is dropped', () => {
+    const getWeather = tool({ name: 'get_weather', description: 'k', execute: async () => 'ok' });
+    const ctx = new ChatContext([
+      FunctionCall.create({ callId: 'c1', name: 'removed_tool', args: '{}' }),
+      FunctionCallOutput.create({
+        callId: 'c1',
+        name: 'removed_tool',
+        output: 'ok',
+        isError: false,
+      }),
+      FunctionCallOutput.create({
+        callId: 'c2',
+        name: 'removed_tool',
+        output: 'ok',
+        isError: false,
+      }),
+    ]);
+
+    expect(ctx.copy({ toolCtx: new ToolContext([getWeather]) }).items).toEqual([]);
+  });
+
+  it('keeps a call that has no output yet', () => {
+    const getWeather = tool({ name: 'get_weather', description: 'k', execute: async () => 'ok' });
+    const ctx = new ChatContext([
+      FunctionCall.create({ callId: 'c1', name: 'get_weather', args: '{}' }),
+    ]);
+
+    expect(
+      ctx.copy({ toolCtx: new ToolContext([getWeather]) }).items.map((item) => item.type),
+    ).toEqual(['function_call']);
+  });
+
+  it('keeps a named tool output whose call is not in the context', () => {
+    const getWeather = tool({ name: 'get_weather', description: 'k', execute: async () => 'ok' });
+    const ctx = new ChatContext([
+      FunctionCallOutput.create({
+        callId: 'c1',
+        name: 'get_weather',
+        output: 'ok',
+        isError: false,
+      }),
+    ]);
+
+    expect(
+      ctx.copy({ toolCtx: new ToolContext([getWeather]) }).items.map((item) => item.type),
+    ).toEqual(['function_call_output']);
+  });
+
+  it('drops a nameless tool output whose call is not in the context', () => {
+    const getWeather = tool({ name: 'get_weather', description: 'k', execute: async () => 'ok' });
+    const ctx = new ChatContext([
+      FunctionCallOutput.create({ callId: 'c1', output: 'ok', isError: false }),
+    ]);
+
+    expect(ctx.copy({ toolCtx: new ToolContext([getWeather]) }).items).toEqual([]);
+  });
 });
 
 describe('AgentConfigUpdate.toJSON', () => {
