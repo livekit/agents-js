@@ -10,6 +10,7 @@ import {
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts as testTts } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
+import { type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
@@ -33,7 +34,13 @@ interface FakeFluxServer {
  * A local server that speaks the Flux `/v2/speak` protocol: `Connected` on open, then
  * `SpeechStarted` → audio → `SpeechMetadata` → `Flushed` for each turn the client flushes.
  */
-async function startFakeFluxServer(options: { failWith?: string } = {}): Promise<FakeFluxServer> {
+async function startFakeFluxServer(
+  options: {
+    failWith?: string;
+    failFirstConnectionWith?: string;
+    failFirstConnectionAfterAudioWith?: string;
+  } = {},
+): Promise<FakeFluxServer> {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await once(wss, 'listening');
 
@@ -49,6 +56,7 @@ async function startFakeFluxServer(options: { failWith?: string } = {}): Promise
 
   wss.on('connection', (ws: WebSocket) => {
     server.connections += 1;
+    const connectionNumber = server.connections;
     ws.on('error', () => {});
     ws.send(JSON.stringify({ type: 'Connected', request_id: 'req-1' }));
 
@@ -60,8 +68,20 @@ async function startFakeFluxServer(options: { failWith?: string } = {}): Promise
       }
       if (message.type !== 'Flush') return;
 
-      if (options.failWith) {
-        ws.send(JSON.stringify({ type: 'Error', description: options.failWith }));
+      const failWith =
+        options.failWith ?? (connectionNumber === 1 ? options.failFirstConnectionWith : undefined);
+      if (failWith) {
+        ws.send(JSON.stringify({ type: 'Error', description: failWith }));
+        return;
+      }
+
+      // Audio first, then a failure: the turn dies after part of it has already played.
+      if (connectionNumber === 1 && options.failFirstConnectionAfterAudioWith) {
+        ws.send(JSON.stringify({ type: 'SpeechStarted' }));
+        ws.send(Buffer.alloc(SAMPLE_RATE), { binary: true }); // 0.5s, several frames
+        ws.send(
+          JSON.stringify({ type: 'Error', description: options.failFirstConnectionAfterAudioWith }),
+        );
         return;
       }
 
@@ -217,6 +237,196 @@ describe('Deepgram TTSv2 encoding validation', () => {
   it('rejects a compressed encoding passed to updateOptions', () => {
     const ttsv2 = new TTSv2({ apiKey: 'test-key' });
     expect(() => ttsv2.updateOptions({ encoding: invalid('mp3') })).toThrow(/unsupported/);
+  });
+});
+
+describe('Deepgram TTSv2 (Flux) streaming retry', () => {
+  let cleanup: (() => Promise<void>)[] = [];
+
+  afterEach(async () => {
+    for (const fn of cleanup.reverse()) await fn();
+    cleanup = [];
+  });
+
+  // `SynthesizeStream.input` is created once and never reset between retry attempts, so
+  // text consumed by attempt 1 is gone by attempt 2. Without the per-segment replay
+  // buffer, the retry sent nothing at all and the stream ended successfully but silent.
+  it('replays the segment text after a retryable failure', async () => {
+    const server = await startFakeFluxServer({ failFirstConnectionWith: 'transient' });
+    const ttsv2 = new TTSv2({
+      apiKey: 'test-key',
+      baseUrl: server.baseUrl,
+      sampleRate: SAMPLE_RATE,
+    });
+    cleanup.push(async () => {
+      await ttsv2.close();
+      await server.close();
+    });
+
+    const { audio, endOfStreamCount } = await synthesizeTurn(ttsv2, 'hello world', {
+      ...DEFAULT_API_CONNECT_OPTIONS,
+      maxRetry: 3,
+      retryIntervalMs: 10,
+    });
+
+    expect(audio.length).toBeGreaterThan(0);
+    expect(endOfStreamCount).toBe(1);
+    // Once for the attempt that failed, once for the attempt that worked.
+    expect(server.spoken).toEqual(['hello ', 'world ', 'hello ', 'world ']);
+    expect(server.connections).toBe(2);
+  });
+
+  // Matches the Python base class, which refuses to retry once
+  // `output_emitter.pushed_duration() > 0`. Replaying a segment whose opening words
+  // already reached the listener would say them twice, which is worse than failing.
+  it('does not replay a segment whose audio had already started playing', async () => {
+    const server = await startFakeFluxServer({ failFirstConnectionAfterAudioWith: 'died midway' });
+    const ttsv2 = new TTSv2({
+      apiKey: 'test-key',
+      baseUrl: server.baseUrl,
+      sampleRate: SAMPLE_RATE,
+    });
+    cleanup.push(async () => {
+      await ttsv2.close();
+      await server.close();
+    });
+
+    const errors: { error: Error; recoverable: boolean }[] = [];
+    ttsv2.on('error', (ev) => errors.push({ error: ev.error, recoverable: ev.recoverable }));
+
+    const { audio } = await synthesizeTurn(ttsv2, 'hello world', {
+      ...DEFAULT_API_CONNECT_OPTIONS,
+      maxRetry: 3,
+      retryIntervalMs: 10,
+    });
+
+    // Some of the segment played before the failure...
+    expect(audio.length).toBeGreaterThan(0);
+    // ...so the words went out exactly once: no second attempt, no repeated speech.
+    expect(server.spoken).toEqual(['hello ', 'world ']);
+    expect(server.connections).toBe(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.recoverable).toBe(false);
+    expect(errors[0]!.error.message).toMatch(/already played/);
+  });
+});
+
+describe('Deepgram TTSv2 (Flux) batch', () => {
+  let cleanup: (() => Promise<void>)[] = [];
+
+  afterEach(async () => {
+    for (const fn of cleanup.reverse()) await fn();
+    cleanup = [];
+  });
+
+  const startBatchServer = async (
+    handler: (res: ServerResponse) => void,
+  ): Promise<{ baseUrl: string; requests: () => number; close: () => Promise<void> }> => {
+    let requests = 0;
+    const server = createServer((req, res) => {
+      requests += 1;
+      req.resume();
+      req.on('end', () => handler(res));
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    return {
+      baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      requests: () => requests,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  };
+
+  // The batch path imported `request` from node:https unconditionally, so any non-https
+  // baseUrl — the form the streaming path and these tests both use — turned into a TLS
+  // handshake against a plain HTTP port.
+  it('honours a plain http baseUrl instead of always dialling TLS', async () => {
+    const body = Buffer.alloc(SAMPLE_RATE * 2); // 1s of 24kHz s16le
+    const server = await startBatchServer((res) => {
+      res.writeHead(200, { 'Content-Length': String(body.length) });
+      res.end(body);
+    });
+    const ttsv2 = new TTSv2({
+      apiKey: 'test-key',
+      baseUrl: server.baseUrl,
+      sampleRate: SAMPLE_RATE,
+    });
+    cleanup.push(async () => {
+      await ttsv2.close();
+      await server.close();
+    });
+
+    const frame = await ttsv2.synthesize('hello').collect();
+    expect(frame.samplesPerChannel).toBe(SAMPLE_RATE);
+  });
+
+  // Node reports a severed body as Error('aborted'), which the old filter discarded as
+  // if it were a caller-side cancellation; `close` then flushed the partial buffer and
+  // resolved, so a truncated response looked like a complete one.
+  it('fails a truncated response instead of reporting a short synthesis as success', async () => {
+    const server = await startBatchServer((res) => {
+      res.writeHead(200, { 'Content-Length': String(SAMPLE_RATE * 2) }); // promises 1s
+      res.write(Buffer.alloc(4800)); // delivers 100ms
+      setTimeout(() => res.socket?.destroy(), 20);
+    });
+    const ttsv2 = new TTSv2({
+      apiKey: 'test-key',
+      baseUrl: server.baseUrl,
+      sampleRate: SAMPLE_RATE,
+    });
+    cleanup.push(async () => {
+      await ttsv2.close();
+      await server.close();
+    });
+
+    // As on the streaming path, the base ChunkedStream swallows the throw to avoid an
+    // unhandled rejection and reports it on the TTS `error` event, so that is what a
+    // caller observes. Before the fix no error was raised at all and the short audio
+    // was indistinguishable from a complete synthesis.
+    const errors: { error: Error; recoverable: boolean }[] = [];
+    ttsv2.on('error', (ev) => errors.push({ error: ev.error, recoverable: ev.recoverable }));
+
+    const frame = await ttsv2
+      .synthesize('hello', { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 })
+      .collect();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error.message).toMatch(/ended before the full body arrived/);
+    expect(errors[0]!.recoverable).toBe(false);
+    // 100ms of the 1s that was promised.
+    expect(frame.samplesPerChannel).toBe(2400);
+  });
+
+  // Nothing has been emitted yet when the body is cut short before the first frame, so
+  // the attempt is safe to repeat: no partial audio has escaped to be duplicated.
+  it('retries a truncation that produced no audio', async () => {
+    const body = Buffer.alloc(SAMPLE_RATE * 2);
+    let attempt = 0;
+    const server = await startBatchServer((res) => {
+      attempt += 1;
+      if (attempt === 1) {
+        res.writeHead(200, { 'Content-Length': String(body.length) });
+        setTimeout(() => res.socket?.destroy(), 20); // headers only, no body
+        return;
+      }
+      res.writeHead(200, { 'Content-Length': String(body.length) });
+      res.end(body);
+    });
+    const ttsv2 = new TTSv2({
+      apiKey: 'test-key',
+      baseUrl: server.baseUrl,
+      sampleRate: SAMPLE_RATE,
+    });
+    cleanup.push(async () => {
+      await ttsv2.close();
+      await server.close();
+    });
+
+    const frame = await ttsv2
+      .synthesize('hello', { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 3, retryIntervalMs: 10 })
+      .collect();
+    expect(frame.samplesPerChannel).toBe(SAMPLE_RATE);
+    expect(server.requests()).toBe(2);
   });
 });
 
