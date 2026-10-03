@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { APIError, Future, Task, llm, stream } from '@livekit/agents';
 import { once } from 'node:events';
+import { createServer } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import type * as api_proto from './api_proto.js';
@@ -234,6 +235,41 @@ describe('RealtimeSession response.done status handling', () => {
         },
       }),
     ).not.toThrow();
+  });
+});
+
+describe('RealtimeSession connect failures', () => {
+  it('rejects the session instead of throwing an unhandled ws error when the connect times out', async () => {
+    // Accept the TCP connection but never answer the HTTP upgrade, so the socket stays in
+    // CONNECTING until the plugin's timeout calls ws.close(). On a CONNECTING socket, `ws`
+    // emits 'error' ("WebSocket was closed before the connection was established") before
+    // 'close'; without an 'error' listener that is an unhandled EventEmitter error, which
+    // escapes the connect promise and crashes the worker process.
+    const server = createServer((socket) => socket.pause());
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+
+    const address = server.address();
+    if (typeof address === 'string' || address === null) {
+      throw new Error('expected server to listen on a TCP port');
+    }
+
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${address.port}/v1`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 50 },
+    });
+    const session = model.session();
+
+    try {
+      await expect(session.generateReply()).rejects.toThrow('Realtime session closed');
+      // Let ws's nextTick 'error' + 'close' run; without the listener this is where vitest
+      // reports the unhandled error and fails the file.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } finally {
+      await session.close();
+      server.close();
+    }
   });
 });
 
