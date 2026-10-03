@@ -71,6 +71,24 @@ export interface CollectedResponse {
   extra: Record<string, unknown>;
 }
 
+const streamErrors = new WeakMap<LLMStream, Error>();
+
+/** @internal */
+export function getLLMStreamError(stream: LLMStream): Error | undefined {
+  return streamErrors.get(stream);
+}
+
+class LLMEventQueue extends AsyncIterableQueue<ChatChunk> {
+  outputSent = false;
+
+  override put(chunk: ChatChunk): void {
+    super.put(chunk);
+    if (hasResponse(chunk)) {
+      this.outputSent = true;
+    }
+  }
+}
+
 export interface LLMError {
   type: 'llm_error';
   timestamp: number;
@@ -187,11 +205,13 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
 
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected output = new AsyncIterableQueue<ChatChunk>();
-  protected queue = new AsyncIterableQueue<ChatChunk>();
+  protected queue: AsyncIterableQueue<ChatChunk> = new LLMEventQueue();
   protected closed = false;
   protected abortController = new AbortController();
   protected _connOptions: APIConnectOptions;
   protected logger = log();
+  /** @internal */
+  _retryOnChunkSent = true;
 
   #llm: LLM;
   #chatCtx: ChatContext;
@@ -236,7 +256,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     const runMainTask = async () => {
       try {
         await this.mainTask();
-      } catch {
+      } catch (error) {
+        streamErrors.set(this, toError(error));
         // already surfaced via emitError; swallow to avoid unhandled rejection.
       } finally {
         this.queue.close();
@@ -321,6 +342,9 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         );
       } catch (error) {
         if (error instanceof APIError) {
+          if (!this._retryOnChunkSent && (this.queue as LLMEventQueue).outputSent) {
+            Object.defineProperty(error, 'retryable', { value: false });
+          }
           const retryInterval = intervalForRetry(this._connOptions, i);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
