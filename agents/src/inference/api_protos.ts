@@ -117,19 +117,6 @@ export const ttsServerEventSchema = z.union([
   ttsUnknownServerEventSchema,
 ]);
 
-export type TtsGenerationConfig = z.infer<typeof ttsGenerationConfigSchema>;
-export type TtsSessionCreateEvent = z.infer<typeof ttsSessionCreateEventSchema>;
-export type TtsInputTranscriptEvent = z.infer<typeof ttsInputTranscriptEventSchema>;
-export type TtsSessionFlushEvent = z.infer<typeof ttsSessionFlushEventSchema>;
-export type TtsSessionCloseEvent = z.infer<typeof ttsSessionCloseEventSchema>;
-export type TtsSessionCreatedEvent = z.infer<typeof ttsSessionCreatedEventSchema>;
-export type TtsOutputAudioEvent = z.infer<typeof ttsOutputAudioEventSchema>;
-export type TtsWordTimestamp = z.infer<typeof ttsWordTimestampSchema>;
-export type TtsCharTimestamp = z.infer<typeof ttsCharTimestampSchema>;
-export type TtsOutputAlignmentEvent = z.infer<typeof ttsOutputAlignmentEventSchema>;
-export type TtsDoneEvent = z.infer<typeof ttsDoneEventSchema>;
-export type TtsSessionClosedEvent = z.infer<typeof ttsSessionClosedEventSchema>;
-export type TtsErrorEvent = z.infer<typeof ttsErrorEventSchema>;
 export type TtsClientEvent = z.infer<typeof ttsClientEventSchema>;
 export type TtsServerEvent = z.infer<typeof ttsServerEventSchema>;
 
@@ -247,19 +234,11 @@ export const sttServerEventSchema = z.union([
 ]);
 
 // Type exports for STT
-export type SttWord = z.infer<typeof sttWordSchema>;
 export type SttInterimTranscriptEvent = z.infer<typeof sttInterimTranscriptEventSchema>;
 export type SttFinalTranscriptEvent = z.infer<typeof sttFinalTranscriptEventSchema>;
 export type SttPreflightTranscriptEvent = z.infer<typeof sttPreflightTranscriptEventSchema>;
-export type SttStartOfSpeechEvent = z.infer<typeof sttStartOfSpeechEventSchema>;
 export type SttTranscriptEvent =
   | SttInterimTranscriptEvent
   | SttFinalTranscriptEvent
   | SttPreflightTranscriptEvent;
-export type SttSessionCreatedEvent = z.infer<typeof sttSessionCreatedEventSchema>;
-export type SttSessionFinalizedEvent = z.infer<typeof sttSessionFinalizedEventSchema>;
-export type SttSessionClosedEvent = z.infer<typeof sttSessionClosedEventSchema>;
-export type SttErrorEvent = z.infer<typeof sttErrorEventSchema>;
-export type SttKnownServerEvent = z.infer<typeof sttKnownServerEventSchema>;
-export type SttUnknownServerEvent = z.infer<typeof sttUnknownServerEventSchema>;
 export type SttServerEvent = z.infer<typeof sttServerEventSchema>;
