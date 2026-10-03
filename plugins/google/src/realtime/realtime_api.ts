@@ -639,19 +639,15 @@ export class RealtimeSession extends llm.RealtimeSession {
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
         const response: types.FunctionResponse = {
+          // gemini-3.8-live on Vertex AI drops BLOCKING responses without an id
+          id: item.callId,
           name: item.name,
           response: { output: item.output },
         };
 
-        if (this.options.toolResponseScheduling !== undefined) {
-          // vertexai currently doesn't support the scheduling parameter, gemini api defaults to idle
-          // it's the user's responsibility to avoid this parameter when using vertexai
+        // Vertex AI does not support scheduling; the Gemini API defaults it to WHEN_IDLE.
+        if (!vertexai && this.options.toolResponseScheduling !== undefined) {
           response.scheduling = this.options.toolResponseScheduling;
-        }
-
-        if (!vertexai) {
-          // vertexai does not support id in FunctionResponse
-          response.id = item.callId;
         }
         this.toolResponseCallIds.set(response, item.callId);
 
@@ -1814,12 +1810,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       });
       if (this.isNonBlockingToolBehavior()) {
         const continuingResponse: types.FunctionResponse = {
-          id: this.options.vertexai ? undefined : callId,
+          id: callId,
           name: fc.name,
           response: {},
           willContinue: true,
         };
-        if (this.options.toolResponseScheduling !== undefined) {
+        if (!this.options.vertexai && this.options.toolResponseScheduling !== undefined) {
           continuingResponse.scheduling = this.options.toolResponseScheduling;
         }
         this.sendClientEvent({
