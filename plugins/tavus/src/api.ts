@@ -198,6 +198,7 @@ export class TavusAPI {
 
   private async post(endpoint: string, payload: Record<string, unknown>): Promise<unknown> {
     const url = `${this.apiUrl}/${endpoint}`;
+    const body = JSON.stringify(payload);
 
     for (let attempt = 0; attempt <= this.connOptions.maxRetry; attempt++) {
       try {
@@ -207,16 +208,26 @@ export class TavusAPI {
             'Content-Type': 'application/json',
             'x-api-key': this.apiKey,
           },
-          body: JSON.stringify(payload),
+          body,
           signal: AbortSignal.timeout(this.connOptions.timeoutMs),
         });
 
         if (!response.ok) {
-          const text = await response.text();
-          throw new APIStatusError({
+          let responseBody: object | null = null;
+          let cause: unknown;
+          try {
+            responseBody = { error: await response.text() };
+          } catch (e) {
+            cause = e;
+          }
+          const error = new APIStatusError({
             message: 'Server returned an error',
-            options: { statusCode: response.status, body: { error: text } },
+            options: { statusCode: response.status, body: responseBody },
           });
+          if (cause !== undefined) {
+            error.cause = cause;
+          }
+          throw error;
         }
 
         try {
