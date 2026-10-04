@@ -341,6 +341,8 @@ export abstract class SynthesizeStream
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >();
   protected closed = false;
+  /** Wrappers forward provider metrics instead of emitting their own usage. */
+  protected emitMetrics = true;
   protected connOptions: APIConnectOptions;
   protected abortController = new AbortController();
 
@@ -645,10 +647,10 @@ export abstract class SynthesizeStream
             modelName: this.responseModel,
           },
         };
-        if (this.#ttsRequestSpan) {
-          this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+        if (this.emitMetrics) {
+          this.#ttsRequestSpan?.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+          this.#tts.emit('metrics_collected', metrics);
         }
-        this.#tts.emit('metrics_collected', metrics);
 
         // Reset token usage after emitting metrics for the next segment
         this.#inputTokens = 0;
@@ -794,6 +796,8 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   protected queue = new AsyncIterableQueue<SynthesizedAudio>();
   protected output = new AsyncIterableQueue<SynthesizedAudio>();
   protected closed = false;
+  /** Wrappers forward provider metrics instead of emitting their own usage. */
+  protected emitMetrics = true;
   abstract label: string;
   #text: string;
   #tts: TTS;
@@ -1018,12 +1022,16 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     };
 
     if (this.#ttsRequestSpan) {
-      this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+      if (this.emitMetrics) {
+        this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+      }
       this.#ttsRequestSpan.end();
       this.#ttsRequestSpan = undefined;
     }
 
-    this.#tts.emit('metrics_collected', metrics);
+    if (this.emitMetrics) {
+      this.#tts.emit('metrics_collected', metrics);
+    }
   }
 
   /** Collect every frame into one in a single call */

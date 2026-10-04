@@ -32,6 +32,7 @@ export const ATTR_PROVIDER_REQUEST_IDS = 'lk.provider_request_ids';
 
 export const ATTR_PARTICIPANT_ID = 'lk.participant_id';
 export const ATTR_PARTICIPANT_IDENTITY = 'lk.pii.participant_identity';
+export const ATTR_DESTINATION_IDENTITY = 'lk.pii.destination_identity';
 export const ATTR_PARTICIPANT_KIND = 'lk.participant_kind';
 
 // session start

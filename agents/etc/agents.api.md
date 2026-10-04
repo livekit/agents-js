@@ -1111,6 +1111,9 @@ const ATTR_CONNECTION_STATE = "lk.connection_state";
 const ATTR_DEPLOYMENT_ID = "lk.deployment_id";
 
 // @public (undocumented)
+const ATTR_DESTINATION_IDENTITY = "lk.pii.destination_identity";
+
+// @public (undocumented)
 const ATTR_DISCONNECT_REASON = "lk.disconnect_reason";
 
 // @public (undocumented)
@@ -2024,29 +2027,6 @@ export function calculateAudioDurationSeconds(frame: AudioBuffer_2): number;
 // @public (undocumented)
 export function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void>;
 
-// Warning: (ae-internal-missing-underscore) The name "CancellablePromise" should be prefixed with an underscore because the declaration is marked as @internal
-//
-// @internal (undocumented)
-export class CancellablePromise<T, E extends Error = Error> {
-    constructor(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason: E) => void, onCancel: (cancelFn: () => void) => void) => void);
-    // (undocumented)
-    cancel(): void;
-    // (undocumented)
-    catch<TResult = never>(onrejected?: ((reason: E) => TResult | Promise<TResult>) | null): Promise<Throws<T | TResult | undefined, E>>;
-    // (undocumented)
-    get error(): Error | null;
-    // (undocumented)
-    finally(onfinally?: (() => void) | null): Promise<Throws<T, E>>;
-    // (undocumented)
-    static from<T, E extends Error = Error>(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>;
-    // (undocumented)
-    static from<T>(promise: Promise<T>): CancellablePromise<T>;
-    // (undocumented)
-    get isCancelled(): boolean;
-    // (undocumented)
-    then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null, onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null): Promise<TResult1 | TResult2>;
-}
-
 // @public (undocumented)
 type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 
@@ -2359,6 +2339,7 @@ abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> 
     // (undocumented)
     protected closed: boolean;
     collect(): Promise<AudioFrame>;
+    protected emitMetrics: boolean;
     // @internal
     get error(): Error | undefined;
     // (undocumented)
@@ -3988,11 +3969,6 @@ interface GoogleSTTOptions {
     language_codes?: string[];
 }
 
-// Warning: (ae-internal-missing-underscore) The name "gracefullyCancel" should be prefixed with an underscore because the declaration is marked as @internal
-//
-// @internal (undocumented)
-export function gracefullyCancel<T>(promise: CancellablePromise<T>): Promise<void>;
-
 // @public (undocumented)
 export function handoff(options: {
     agent: Agent;
@@ -5280,7 +5256,7 @@ export type OpenAIFunctionParameters = {
 };
 
 // @public (undocumented)
-type OpenAIModels = 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
+type OpenAIModels = 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTaskOptions"
 //
@@ -7007,6 +6983,8 @@ class StreamAdapterWrapper extends SpeechStream {
 // @public (undocumented)
 class StreamAdapterWrapper_2 extends SynthesizeStream {
     constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions);
+    // (undocumented)
+    protected emitMetrics: boolean;
     // @internal
     get error(): Error | undefined;
     // @internal
@@ -7267,6 +7245,7 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     protected closed: boolean;
     // (undocumented)
     protected connOptions: APIConnectOptions;
+    protected emitMetrics: boolean;
     // (undocumented)
     static readonly END_OF_STREAM: unique symbol;
     endInput(): void;
@@ -7898,6 +7877,7 @@ declare namespace traceTypes {
         ATTR_PROVIDER_REQUEST_IDS,
         ATTR_PARTICIPANT_ID,
         ATTR_PARTICIPANT_IDENTITY,
+        ATTR_DESTINATION_IDENTITY,
         ATTR_PARTICIPANT_KIND,
         ATTR_JOB_ID,
         ATTR_AGENT_NAME,
@@ -9120,7 +9100,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
-// src/utils.ts:553:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
+// src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:394:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1060:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1776:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts

@@ -382,6 +382,7 @@ function recordFallbackServed(tts: TTS, index: number, ...spans: (Span | undefin
 }
 
 class FallbackChunkedStream extends ChunkedStream {
+  protected override emitMetrics = false;
   private adapter: FallbackAdapter;
   private connOptions: APIConnectOptions;
   private _logger = log();
@@ -534,6 +535,7 @@ class FallbackChunkedStream extends ChunkedStream {
 }
 
 class FallbackSynthesizeStream extends SynthesizeStream {
+  protected override emitMetrics = false;
   private adapter: FallbackAdapter;
   private tokenBuffer: (
     | string
