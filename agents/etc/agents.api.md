@@ -79,6 +79,9 @@ export type Aborted<T> = {
 };
 
 // @public
+function accuracyJudge(llm?: LLM): Evaluator;
+
+// @public
 export class AdaptiveNoiseGate implements AudioGate {
     constructor(options?: AdaptiveNoiseGateOptions);
     deactivate(): void;
@@ -2485,6 +2488,9 @@ interface CloudTransportOptions {
     connOptions: APIConnectOptions;
 }
 
+// @public
+function coherenceJudge(llm?: LLM): Evaluator;
+
 // @public (undocumented)
 export interface CollectedResponse {
     extra: Record<string, unknown>;
@@ -2521,6 +2527,9 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
 
 // @public
 export function concatInstructions(...parts: Array<string | Instructions>): string | Instructions;
+
+// @public
+function concisenessJudge(llm?: LLM): Evaluator;
 
 // @public (undocumented)
 export const CONFIRM_DUPLICATE_PARAM = "lk_agents_confirm_duplicate";
@@ -3144,6 +3153,53 @@ type ErrorEvent_2 = {
     createdAt: number;
 };
 export { ErrorEvent_2 as ErrorEvent }
+
+declare namespace evals {
+    export {
+        EvaluationResult,
+        JudgeGroup,
+        JudgeGroupOptions,
+        Judge,
+        JudgmentResult,
+        accuracyJudge,
+        coherenceJudge,
+        concisenessJudge,
+        handoffJudge,
+        relevancyJudge,
+        safetyJudge,
+        taskCompletionJudge,
+        toolUseJudge,
+        EvaluateOptions,
+        Evaluator,
+        Verdict
+    }
+}
+
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "Evaluator"
+//
+// @public
+interface EvaluateOptions {
+    chatCtx: ChatContext;
+    llm?: LLM;
+    reference?: ChatContext;
+}
+
+// @public
+class EvaluationResult {
+    constructor(judgments?: Record<string, JudgmentResult>);
+    get allPassed(): boolean;
+    get anyPassed(): boolean;
+    readonly judgments: Record<string, JudgmentResult>;
+    get majorityPassed(): boolean;
+    get noneFailed(): boolean;
+    get score(): number;
+}
+
+// @public
+interface Evaluator {
+    evaluate(options: EvaluateOptions): Promise<JudgmentResult>;
+    readonly name: string;
+}
 
 // @internal (undocumented)
 class Event_2 {
@@ -3976,6 +4032,9 @@ export function handoff(options: {
 }): AgentHandoff;
 
 // @public
+function handoffJudge(llm?: LLM): Evaluator;
+
+// @public
 function hasAlignedTranscript(model: string | undefined, modelOptions: Record<string, unknown> | undefined): boolean;
 
 // @public
@@ -4494,6 +4553,51 @@ export class JobRequest {
     reject(): Promise<void>;
     // (undocumented)
     get room(): proto.Room | undefined;
+}
+
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "Judge"
+//
+// @public
+class Judge implements Evaluator {
+    constructor(input: {
+        name: string;
+    });
+    evaluate(_options: EvaluateOptions): Promise<JudgmentResult>;
+    // (undocumented)
+    get name(): string;
+}
+
+// @public
+class JudgeGroup {
+    constructor(input: JudgeGroupOptions);
+    evaluate(chatCtx: ChatContext, options?: {
+        reference?: ChatContext;
+    }): Promise<EvaluationResult>;
+    get judges(): Evaluator[];
+    get llm(): LLM;
+}
+
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "JudgeGroup"
+//
+// @public
+interface JudgeGroupOptions {
+    judges?: Evaluator[];
+    llm: LLM;
+}
+
+// @public
+class JudgmentResult {
+    constructor(params: {
+        verdict: Verdict;
+        reasoning: string;
+        instructions?: string;
+    });
+    get failed(): boolean;
+    instructions: string;
+    get passed(): boolean;
+    reasoning: string;
+    get uncertain(): boolean;
+    verdict: Verdict;
 }
 
 // @public
@@ -5745,6 +5849,9 @@ function redactionEnabled(spanAttributes?: Attributes): boolean;
 // @public (undocumented)
 export function rejectOnAbort(signal: AbortSignal): Promise<never>;
 
+// @public
+function relevancyJudge(llm?: LLM): Evaluator;
+
 // @public (undocumented)
 export class RemoteChatContext {
     // (undocumented)
@@ -6100,6 +6207,9 @@ export function runWithJobContext<T>(context: JobContext, fn: () => T): T;
 //
 // @internal
 export function runWithJobContextAsync<T>(context: JobContext, fn: () => Promise<T>): Promise<T>;
+
+// @public
+function safetyJudge(llm?: LLM): Evaluator;
 
 export { Scenario }
 
@@ -7347,6 +7457,9 @@ interface TaskCompletedEvent {
     taskId: string;
 }
 
+// @public
+function taskCompletionJudge(llm?: LLM): Evaluator;
+
 // @public (undocumented)
 class TaskGroup extends AgentTask<TaskGroupResult> {
     constructor(options?: TaskGroupOptions);
@@ -7833,6 +7946,9 @@ export interface ToolsetCreateOptions {
 
 // @public (undocumented)
 export type ToolType = 'function' | 'provider';
+
+// @public
+function toolUseJudge(llm?: LLM): Evaluator;
 
 // @public
 function toOutputMessages(params: {
@@ -8666,6 +8782,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
 
 // @public
 export function validateChatContextStructure(chatCtx: ChatContext): ChatContextValidationResult;
+
+// @public
+type Verdict = 'pass' | 'fail' | 'maybe';
 
 // @public (undocumented)
 export const version: string;
