@@ -199,7 +199,7 @@ export class TavusAPI {
   private async post(endpoint: string, payload: Record<string, unknown>): Promise<unknown> {
     const url = `${this.apiUrl}/${endpoint}`;
 
-    for (let i = 0; i <= this.connOptions.maxRetry; i++) {
+    for (let attempt = 0; attempt <= this.connOptions.maxRetry; attempt++) {
       try {
         const response = await fetch(url, {
           method: 'POST',
@@ -219,22 +219,48 @@ export class TavusAPI {
           });
         }
 
-        return await response.json();
+        try {
+          return await response.json();
+        } catch (cause) {
+          // Tavus already accepted the POST; retrying could create a duplicate.
+          const error = new APIConnectionError({
+            message: 'Tavus returned an invalid response',
+            options: { retryable: false },
+          });
+          error.cause = cause;
+          throw error;
+        }
       } catch (e) {
-        if (e instanceof APIStatusError && !e.retryable) {
+        if (e instanceof APIStatusError) {
+          if (!e.retryable) {
+            throw e;
+          }
+          this.#logger.warn(
+            { attempt: attempt + 1, statusCode: e.statusCode },
+            'failed to call tavus api',
+          );
+          if (attempt >= this.connOptions.maxRetry) {
+            throw e;
+          }
+        } else if (
+          e instanceof TypeError ||
+          (e instanceof DOMException && e.name === 'TimeoutError')
+        ) {
+          this.#logger.warn({ attempt: attempt + 1, error: String(e) }, 'failed to call tavus api');
+          if (attempt >= this.connOptions.maxRetry) {
+            const error = new APIConnectionError({
+              message: 'Failed to call Tavus API after all retries',
+            });
+            error.cause = e;
+            throw error;
+          }
+        } else {
           throw e;
         }
-        if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: String(e) }, 'failed to call tavus api');
-        } else {
-          this.#logger.error({ error: e }, 'failed to call tavus api');
-        }
 
-        if (i < this.connOptions.maxRetry) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, intervalForRetry(this.connOptions, i)),
-          );
-        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, intervalForRetry(this.connOptions, attempt)),
+        );
       }
     }
 
