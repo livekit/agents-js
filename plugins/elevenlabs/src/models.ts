@@ -11,13 +11,15 @@ export type TTSModels =
   | 'eleven_turbo_v2'
   | 'eleven_turbo_v2_5'
   | 'eleven_v3'
-  | 'eleven_v3_conversational';
+  | 'eleven_v3_conversational'
+  | 'eleven_v4'
+  | 'eleven_v4_turbo';
 
-const DIALOGUE_TTS_MODEL_PREFIX = 'eleven_v3';
+const DIALOGUE_TTS_MODEL_PREFIXES = ['eleven_v3', 'eleven_v4'];
 
 /** Whether the model must be synthesized via the text-to-dialogue API. */
 export function isDialogueModel(model: string): boolean {
-  return model.startsWith(DIALOGUE_TTS_MODEL_PREFIX);
+  return DIALOGUE_TTS_MODEL_PREFIXES.some((prefix) => model.startsWith(prefix));
 }
 
 export type TTSEncoding =

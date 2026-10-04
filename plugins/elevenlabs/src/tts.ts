@@ -57,6 +57,11 @@ export interface TTSOptions {
   // New interface
   voiceId?: string;
   voiceSettings?: VoiceSettings;
+  /**
+   * TTS model to use. Defaults to `eleven_turbo_v2_5`. `eleven_v3`, `eleven_v3_conversational`,
+   * `eleven_v4` and `eleven_v4_turbo` go through ElevenLabs' text-to-dialogue API instead
+   * (single voice per instance, same as other models).
+   */
   model?: TTSModels | string;
   /**
    * Language code used to enforce a language for the model and text normalization. If the
@@ -132,6 +137,8 @@ interface StreamData {
   firstWordOffsetMs: number | null;
   timeoutMs: number;
   timeoutTimer?: ReturnType<typeof setTimeout>;
+  /** Set once close_context is sent: no more input, only provider output is pending */
+  inputClosed?: boolean;
   terminate: () => void;
 }
 
@@ -515,19 +522,7 @@ class Connection {
           }
 
           const pktStr = JSON.stringify(pkt);
-          const ctx = this.#contextData.get(content.contextId);
-          if (ctx && !ctx.timeoutTimer) {
-            ctx.timeoutTimer = setTimeout(() => {
-              ctx.waiter.reject(
-                new APITimeoutError({
-                  message: `${dialogue ? '11labs text-to-dialogue' : '11labs tts'} timed out after ${ctx.timeoutMs}ms`,
-                  options: { retryable: false },
-                }),
-              );
-              ctx.terminate();
-              this.#cleanupContext(content.contextId);
-            }, ctx.timeoutMs);
-          }
+          this.#startTimeoutTimer(content.contextId);
           this.#ws.send(pktStr);
           if (dialogue) this.#lastContextSend.set(content.contextId, performance.now());
         } else {
@@ -540,6 +535,7 @@ class Connection {
               close_context: true,
             };
             const closePktStr = JSON.stringify(closePkt);
+            this.#markInputClosed(closeMsg.contextId);
             this.#ws.send(closePktStr);
           }
         }
@@ -547,15 +543,7 @@ class Connection {
         if (dialogue) await this.#sendDueKeepAlives();
       }
     } catch (e) {
-      if (dialogue) {
-        const error = asError(e);
-        this.#logger.warn(
-          { exception_type: error.name, 'lk.pii.error': error.message },
-          'dialogue send loop error',
-        );
-      } else {
-        this.#logger.warn({ error: e }, 'send loop error');
-      }
+      this.#logger.warn({ error: e }, dialogue ? 'dialogue send loop error' : 'send loop error');
     } finally {
       if (!this.#closed) {
         await this.close('send');
@@ -616,17 +604,7 @@ class Connection {
 
         if (data.error) {
           this.#logger.error(
-            dialogue
-              ? {
-                  context_id: contextId,
-                  'lk.pii.error': data.error,
-                  'lk.pii.data': data,
-                }
-              : {
-                  context_id: contextId,
-                  error: data.error,
-                  'lk.pii.data': data,
-                },
+            { context_id: contextId, error: data.error, 'lk.pii.data': data },
             dialogue
               ? 'elevenlabs text-to-dialogue returned error'
               : 'elevenlabs tts returned error',
@@ -750,6 +728,11 @@ class Connection {
           stream.pushAudio(audioData);
           if (ctx.timeoutTimer) {
             clearTimeout(ctx.timeoutTimer);
+            ctx.timeoutTimer = undefined;
+          }
+          if (ctx.inputClosed) {
+            // the final response is still pending, keep the idle timeout active
+            this.#startTimeoutTimer(contextId!);
           }
         }
 
@@ -779,15 +762,7 @@ class Connection {
         }
       }
     } catch (e) {
-      if (dialogue) {
-        const error = asError(e);
-        this.#logger.warn(
-          { exception_type: error.name, 'lk.pii.error': error.message },
-          'dialogue recv loop error',
-        );
-      } else {
-        this.#logger.warn({ error: e }, 'recv loop error');
-      }
+      this.#logger.warn({ error: e }, dialogue ? 'dialogue recv loop error' : 'recv loop error');
       for (const ctx of this.#contextData.values()) {
         if (ctx.timeoutTimer) clearTimeout(ctx.timeoutTimer);
         ctx.terminate();
@@ -803,6 +778,31 @@ class Connection {
         await this.close('recv');
       }
     }
+  }
+
+  #startTimeoutTimer(contextId: string): void {
+    const ctx = this.#contextData.get(contextId);
+    if (!ctx || ctx.timeoutTimer) return;
+
+    const label = isDialogueModel(this.#opts.model) ? '11labs text-to-dialogue' : '11labs tts';
+    ctx.timeoutTimer = setTimeout(() => {
+      ctx.waiter.reject(
+        new APITimeoutError({
+          message: `${label} timed out after ${ctx.timeoutMs}ms`,
+          options: { retryable: false },
+        }),
+      );
+      ctx.terminate();
+      this.#cleanupContext(contextId);
+    }, ctx.timeoutMs);
+  }
+
+  /** Arm the timeout for the final response once no more input will be sent */
+  #markInputClosed(contextId: string): void {
+    const ctx = this.#contextData.get(contextId);
+    if (!ctx) return;
+    ctx.inputClosed = true;
+    this.#startTimeoutTimer(contextId);
   }
 
   #cleanupContext(contextId: string): void {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { log } from '@livekit/agents';
+import { APITimeoutError, log } from '@livekit/agents';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -278,6 +278,8 @@ describe('ElevenLabs text-to-dialogue', () => {
   it.each([
     ['eleven_v3', true],
     ['eleven_v3_conversational', true],
+    ['eleven_v4', true],
+    ['eleven_v4_turbo', true],
     ['eleven_turbo_v2_5', false],
     ['eleven_flash_v2_5', false],
   ])('classifies %s as dialogue=%s', (model, expected) => {
@@ -435,9 +437,93 @@ describe('ElevenLabs text-to-dialogue', () => {
     );
 
     expect(errorSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ 'lk.pii.error': 'something went wrong' }),
+      expect.objectContaining({ error: 'something went wrong' }),
       'elevenlabs text-to-dialogue returned error',
     );
+  });
+
+  it('re-arms the response timeout after audio arrives', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let textMessages = 0;
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (!message.inputs) return;
+        // Answer only the first text send, then stall.
+        if (++textMessages === 1) {
+          ws.send(JSON.stringify({ context_id: message.context_id, audio }));
+        }
+      });
+    });
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'eleven_v3_conversational',
+    });
+    const errors: unknown[] = [];
+    elevenlabs.on('error', (event) => errors.push(event.error));
+    const stream = elevenlabs.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 300 },
+    });
+    const output = (async () => {
+      for await (const _event of stream) {
+        // Consume the generated audio.
+      }
+    })();
+
+    try {
+      stream.pushText('hello world.');
+      stream.flush();
+      await waitUntil(() => textMessages === 1);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      stream.pushText('second sentence.');
+      stream.flush();
+      await waitUntil(() => errors.length > 0);
+      expect(errors[0]).toBeInstanceOf(APITimeoutError);
+      await waitFor(output);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('times out when the final response stalls after close_context', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+        // Answer every text send with audio, but never send is_final.
+        if (message.inputs) ws.send(JSON.stringify({ context_id: message.context_id, audio }));
+      });
+    });
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'eleven_v3_conversational',
+    });
+    const errors: unknown[] = [];
+    elevenlabs.on('error', (event) => errors.push(event.error));
+    const stream = elevenlabs.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 300 },
+    });
+    const output = (async () => {
+      for await (const _event of stream) {
+        // Consume the generated audio.
+      }
+    })();
+
+    try {
+      stream.pushText('hello world.');
+      stream.endInput();
+      await waitUntil(() => errors.length > 0);
+      expect(errors[0]).toBeInstanceOf(APITimeoutError);
+      await waitFor(output);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
   });
 
   it('drops late dialogue audio after a stream is closed', async () => {
