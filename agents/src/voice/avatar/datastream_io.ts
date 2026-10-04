@@ -11,7 +11,6 @@ import {
   type TrackKind,
 } from '@livekit/rtc-node';
 import { log } from '../../log.js';
-import * as traceTypes from '../../telemetry/trace_types.js';
 import {
   Future,
   Task,
@@ -122,7 +121,7 @@ export class DataStreamAudioOutput extends AudioOutput {
 
       this.#logger.debug(
         {
-          [traceTypes.ATTR_DESTINATION_IDENTITY]: this.destinationIdentity,
+          destinationIdentity: this.destinationIdentity,
         },
         'waiting for the remote participant',
       );
@@ -135,7 +134,7 @@ export class DataStreamAudioOutput extends AudioOutput {
       if (this.waitRemoteTrack) {
         this.#logger.debug(
           {
-            [traceTypes.ATTR_DESTINATION_IDENTITY]: this.destinationIdentity,
+            destinationIdentity: this.destinationIdentity,
             kind: this.waitRemoteTrack,
           },
           'waiting for the remote track',
@@ -150,7 +149,7 @@ export class DataStreamAudioOutput extends AudioOutput {
 
       this.#logger.debug(
         {
-          [traceTypes.ATTR_DESTINATION_IDENTITY]: this.destinationIdentity,
+          destinationIdentity: this.destinationIdentity,
         },
         'remote participant ready',
       );
@@ -224,7 +223,7 @@ export class DataStreamAudioOutput extends AudioOutput {
       })
       .catch((error) => {
         this.#logger.warn(
-          { error, [traceTypes.ATTR_DESTINATION_IDENTITY]: this.destinationIdentity },
+          { error, destinationIdentity: this.destinationIdentity },
           'failed to perform clear buffer rpc',
         );
 
@@ -239,8 +238,8 @@ export class DataStreamAudioOutput extends AudioOutput {
     if (data.callerIdentity !== this.destinationIdentity) {
       this.#logger.warn(
         {
-          'lk.pii.caller_identity': data.callerIdentity,
-          [traceTypes.ATTR_DESTINATION_IDENTITY]: this.destinationIdentity,
+          callerIdentity: data.callerIdentity,
+          destinationIdentity: this.destinationIdentity,
         },
         'playback finished event received from unexpected participant',
       );
@@ -249,7 +248,7 @@ export class DataStreamAudioOutput extends AudioOutput {
 
     this.#logger.info(
       {
-        'lk.pii.caller_identity': data.callerIdentity,
+        callerIdentity: data.callerIdentity,
       },
       'playback finished event received',
     );
@@ -281,10 +280,8 @@ export class DataStreamAudioOutput extends AudioOutput {
       if (!handler) {
         log().warn(
           {
-            'lk.pii.caller_identity': data.callerIdentity,
-            'lk.pii.expected_identities': Object.keys(
-              DataStreamAudioOutput._playbackFinishedHandlers,
-            ),
+            callerIdentity: data.callerIdentity,
+            expectedIdentities: Object.keys(DataStreamAudioOutput._playbackFinishedHandlers),
           },
           'playback finished event received from unexpected participant',
         );
@@ -302,8 +299,8 @@ export class DataStreamAudioOutput extends AudioOutput {
     if (data.callerIdentity !== this.destinationIdentity) {
       this.#logger.warn(
         {
-          'lk.pii.caller_identity': data.callerIdentity,
-          [traceTypes.ATTR_DESTINATION_IDENTITY]: this.destinationIdentity,
+          callerIdentity: data.callerIdentity,
+          destinationIdentity: this.destinationIdentity,
         },
         'playback started event received from unexpected participant',
       );
@@ -334,10 +331,8 @@ export class DataStreamAudioOutput extends AudioOutput {
       if (!handler) {
         log().warn(
           {
-            'lk.pii.caller_identity': data.callerIdentity,
-            'lk.pii.expected_identities': Object.keys(
-              DataStreamAudioOutput._playbackStartedHandlers,
-            ),
+            callerIdentity: data.callerIdentity,
+            expectedIdentities: Object.keys(DataStreamAudioOutput._playbackStartedHandlers),
           },
           'playback started event received from unexpected participant',
         );

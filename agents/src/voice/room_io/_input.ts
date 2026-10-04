@@ -77,10 +77,7 @@ export class ParticipantAudioInputStream extends AudioInput {
   setParticipant(participant: RemoteParticipant | string | null) {
     const participantIdentity =
       participant instanceof RemoteParticipant ? participant.identity : participant;
-    this.logger.debug(
-      { 'lk.pii.participant_identity': participantIdentity },
-      'setting participant audio input',
-    );
+    this.logger.debug({ participantIdentity }, 'setting participant audio input');
 
     if (this.participantIdentity === participantIdentity) {
       return;
@@ -106,7 +103,7 @@ export class ParticipantAudioInputStream extends AudioInput {
 
     this.logger.info(
       {
-        'lk.pii.participant_identity': participantValue?.identity,
+        participantIdentity: participantValue?.identity,
         trackPublications: trackPublicationsArray,
         lengthOfTrackPublications: trackPublicationsArray.length,
       },
@@ -169,17 +166,11 @@ export class ParticipantAudioInputStream extends AudioInput {
   }
 
   override onAttached(): void {
-    this.logger.debug(
-      { 'lk.pii.participant_identity': this.participantIdentity },
-      'input stream attached',
-    );
+    this.logger.debug({ participantIdentity: this.participantIdentity }, 'input stream attached');
   }
 
   override onDetached(): void {
-    this.logger.debug(
-      { 'lk.pii.participant_identity': this.participantIdentity },
-      'input stream detached',
-    );
+    this.logger.debug({ participantIdentity: this.participantIdentity }, 'input stream detached');
   }
 
   private onTrackUnpublished = (
@@ -306,10 +297,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): boolean => {
-    this.logger.debug(
-      { 'lk.pii.participant_identity': participant.identity },
-      'onTrackSubscribed in _input',
-    );
+    this.logger.debug({ participantIdentity: participant.identity }, 'onTrackSubscribed in _input');
     if (
       this.closed ||
       this.participantIdentity !== participant.identity ||
