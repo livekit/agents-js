@@ -920,15 +920,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     options.signal?.addEventListener('abort', onAbort, { once: true });
 
-    if (this.inUserActivity) {
-      this.sendClientEvent({
-        type: 'realtime_input',
-        value: {
-          activityEnd: {},
-        },
-      });
-      this.inUserActivity = false;
-    }
+    this.endUserActivity();
 
     const turns: types.Content[] = [];
     if (instructions !== undefined) {
@@ -989,6 +981,20 @@ export class RealtimeSession extends llm.RealtimeSession {
         },
       });
     }
+  }
+
+  private endUserActivity(): void {
+    if (!this.inUserActivity) {
+      return;
+    }
+
+    this.inUserActivity = false;
+    this.sendClientEvent({
+      type: 'realtime_input',
+      value: {
+        activityEnd: {},
+      },
+    });
   }
 
   private generationHasOutput(gen: ResponseGeneration): boolean {
@@ -1961,8 +1967,17 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.sessionShouldClose.set();
   }
 
-  async commitAudio() {}
+  /**
+   * With manual activity detection, ends the user activity opened by `startUserActivity()`.
+   * Gemini Live has no separate audio buffer to commit: `activityEnd` closes the user turn.
+   */
+  async commitAudio() {
+    this.endUserActivity();
+  }
 
+  /**
+   * Not supported: Gemini Live cannot drop audio that has already been streamed.
+   */
   async clearAudio() {}
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
