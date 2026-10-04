@@ -121,7 +121,7 @@ export class DataStreamAudioOutput extends AudioOutput {
 
       this.#logger.debug(
         {
-          'lk.pii.destination_identity': this.destinationIdentity,
+          destinationIdentity: this.destinationIdentity,
         },
         'waiting for the remote participant',
       );
@@ -134,7 +134,7 @@ export class DataStreamAudioOutput extends AudioOutput {
       if (this.waitRemoteTrack) {
         this.#logger.debug(
           {
-            'lk.pii.destination_identity': this.destinationIdentity,
+            destinationIdentity: this.destinationIdentity,
             kind: this.waitRemoteTrack,
           },
           'waiting for the remote track',
@@ -149,7 +149,7 @@ export class DataStreamAudioOutput extends AudioOutput {
 
       this.#logger.debug(
         {
-          'lk.pii.destination_identity': this.destinationIdentity,
+          destinationIdentity: this.destinationIdentity,
         },
         'remote participant ready',
       );
@@ -238,8 +238,8 @@ export class DataStreamAudioOutput extends AudioOutput {
     if (data.callerIdentity !== this.destinationIdentity) {
       this.#logger.warn(
         {
-          'lk.pii.caller_identity': data.callerIdentity,
-          'lk.pii.destination_identity': this.destinationIdentity,
+          callerIdentity: data.callerIdentity,
+          destinationIdentity: this.destinationIdentity,
         },
         'playback finished event received from unexpected participant',
       );
@@ -248,7 +248,7 @@ export class DataStreamAudioOutput extends AudioOutput {
 
     this.#logger.info(
       {
-        'lk.pii.caller_identity': data.callerIdentity,
+        callerIdentity: data.callerIdentity,
       },
       'playback finished event received',
     );
@@ -280,10 +280,8 @@ export class DataStreamAudioOutput extends AudioOutput {
       if (!handler) {
         log().warn(
           {
-            'lk.pii.caller_identity': data.callerIdentity,
-            'lk.pii.expected_identities': Object.keys(
-              DataStreamAudioOutput._playbackFinishedHandlers,
-            ),
+            callerIdentity: data.callerIdentity,
+            expectedIdentities: Object.keys(DataStreamAudioOutput._playbackFinishedHandlers),
           },
           'playback finished event received from unexpected participant',
         );
@@ -301,8 +299,8 @@ export class DataStreamAudioOutput extends AudioOutput {
     if (data.callerIdentity !== this.destinationIdentity) {
       this.#logger.warn(
         {
-          'lk.pii.caller_identity': data.callerIdentity,
-          'lk.pii.destination_identity': this.destinationIdentity,
+          callerIdentity: data.callerIdentity,
+          destinationIdentity: this.destinationIdentity,
         },
         'playback started event received from unexpected participant',
       );
@@ -333,10 +331,8 @@ export class DataStreamAudioOutput extends AudioOutput {
       if (!handler) {
         log().warn(
           {
-            'lk.pii.caller_identity': data.callerIdentity,
-            'lk.pii.expected_identities': Object.keys(
-              DataStreamAudioOutput._playbackStartedHandlers,
-            ),
+            callerIdentity: data.callerIdentity,
+            expectedIdentities: Object.keys(DataStreamAudioOutput._playbackStartedHandlers),
           },
           'playback started event received from unexpected participant',
         );
