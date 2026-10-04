@@ -46,7 +46,6 @@ const AUTHORIZATION_HEADER = 'X-API-Key';
 const VERSION_HEADER = 'Cartesia-Version';
 const API_VERSION = '2025-04-16';
 const API_VERSION_WITH_EXPERIMENTAL_CONTROLS = '2024-11-13';
-const MODEL_WITH_EXPERIMENTAL_CONTROLS = 'sonic-2-2025-03-07';
 const NUM_CHANNELS = 1;
 const BUFFERED_WORDS_COUNT = 8;
 // Cartesia refreshes a pooled socket after this long so a very long call cannot
@@ -106,24 +105,22 @@ const checkGenerationConfig = (opts: TTSOptions) => {
   const logger = log();
   if (isSonic3(opts.model)) {
     if (opts.speed !== undefined && typeof opts.speed === 'number') {
-      if (opts.speed < 0.6 || opts.speed > 2.0) {
-        logger.warn('speed must be between 0.6 and 2.0 for sonic-3');
+      if (opts.speed < 0.6 || opts.speed > 1.5) {
+        logger.warn('speed must be between 0.6 and 1.5 for sonic-3');
       }
     }
     if (opts.volume !== undefined && (opts.volume < 0.5 || opts.volume > 2.0)) {
       logger.warn('volume must be between 0.5 and 2.0 for sonic-3');
     }
-  } else if (
-    opts.apiVersion !== API_VERSION_WITH_EXPERIMENTAL_CONTROLS ||
-    opts.model !== MODEL_WITH_EXPERIMENTAL_CONTROLS
-  ) {
-    if (opts.speed || opts.emotion) {
-      logger.warn(
-        { model: opts.model, speed: opts.speed, emotion: opts.emotion },
-        `speed and emotion controls are only supported for model '${MODEL_WITH_EXPERIMENTAL_CONTROLS}' ` +
-          `or sonic-3 models, see https://docs.cartesia.ai/developer-tools/changelog for details`,
-      );
-    }
+  } else if (opts.speed || opts.emotion || opts.volume !== undefined) {
+    // the old speed/emotion controls only worked with sonic-2-2025-03-07,
+    // which Cartesia switched off on June 1, 2026
+    logger.warn(
+      { model: opts.model, speed: opts.speed, emotion: opts.emotion, volume: opts.volume },
+      'speed, emotion and volume are only supported for sonic-3 models, where they are sent as ' +
+        "generation_config; use a sonic-3 model such as 'sonic-3', see " +
+        'https://docs.cartesia.ai/build-with-cartesia/capability-guides/volume-speed-emotion',
+    );
   }
 
   if (opts.pronunciationDictId && !isSonic3(opts.model)) {
