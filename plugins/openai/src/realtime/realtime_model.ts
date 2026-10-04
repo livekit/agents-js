@@ -478,6 +478,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private itemDeleteFutures: { [id: string]: Future } = {};
   private chatCtxEventFutures: { [id: string]: Future } = {};
   private sentChatCtxEvents: { [id: string]: api_proto.ClientEvent } = {};
+  private replayItemCreateEventIds: { [id: string]: string[] } = {};
+  private replayItemCreateEventItems: { [eventId: string]: string } = {};
 
   private inputTranscriptAccumulators = new Map<string, Map<number, string>>();
 
@@ -1187,24 +1189,62 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
 
       // chat context
-      const chatCtx = this.chatCtx.copy({
+      const fullChatCtx = this.chatCtx;
+      const chatCtx = fullChatCtx.copy({
         excludeInstructions: true,
         excludeEmptyMessage: true,
       });
 
       const oldChatCtx = this.remoteChatCtx;
       this.remoteChatCtx = new llm.RemoteChatContext();
-      events.push(...(await this.createChatCtxUpdateEvents(chatCtx)));
+      const replayEvents = await this.createChatCtxUpdateEvents(chatCtx);
+      events.push(...replayEvents);
+
+      const availableItemIds = new Set(
+        replayEvents
+          .filter((event) => event.type === 'conversation.item.create')
+          .map((event) => event.item.id),
+      );
+      this.replayItemCreateEventIds = {};
+      this.replayItemCreateEventItems = {};
+      for (const event of replayEvents) {
+        if (
+          event.type === 'conversation.item.create' &&
+          event.event_id &&
+          this.itemCreateFutures[event.item.id]
+        ) {
+          (this.replayItemCreateEventIds[event.item.id] ??= []).push(event.event_id);
+          this.replayItemCreateEventItems[event.event_id] = event.item.id;
+        }
+      }
+
       // The replay holds only confirmed items. Resend events the lost connection never
       // confirmed so their confirmations settle the original updateChatCtx waiter.
-      events.push(
-        ...Object.entries(this.sentChatCtxEvents)
-          .filter(([eventId]) => {
-            const future = this.chatCtxEventFutures[eventId];
-            return future !== undefined && !future.done;
-          })
-          .map(([, event]) => event),
-      );
+      for (const [eventId, event] of Object.entries(this.sentChatCtxEvents)) {
+        const future = this.chatCtxEventFutures[eventId];
+        if (!future || future.done) continue;
+
+        if (event.type === 'conversation.item.create') {
+          let previousItemId = event.previous_item_id;
+          if (previousItemId && !availableItemIds.has(previousItemId)) {
+            const previousIndex = fullChatCtx.indexById(previousItemId);
+            previousItemId = undefined;
+            if (previousIndex !== undefined) {
+              for (let i = previousIndex - 1; i >= 0; i--) {
+                const candidateId = fullChatCtx.items[i]!.id;
+                if (availableItemIds.has(candidateId)) {
+                  previousItemId = candidateId;
+                  break;
+                }
+              }
+            }
+          }
+          events.push({ ...event, previous_item_id: previousItemId });
+          availableItemIds.add(event.item.id);
+        } else {
+          events.push(event);
+        }
+      }
 
       try {
         for (const ev of events) {
@@ -1505,6 +1545,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
     this.itemDeleteFutures = {};
+    this.replayItemCreateEventIds = {};
+    this.replayItemCreateEventItems = {};
 
     this.inputTranscriptAccumulators.clear();
 
@@ -1640,7 +1682,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     const serverEventType = event.type as string;
     const incomingItem = openAIItemToLivekitItem(event.item);
     const existingItem = this.remoteChatCtx.get(event.item.id);
-    const pendingCreateFuture = this.itemCreateFutures[event.item.id];
+    const replayConfirmation = this.consumeReplayItemCreate(event.item.id);
+    const pendingCreateFuture = replayConfirmation
+      ? undefined
+      : this.itemCreateFutures[event.item.id];
     if (existingItem && serverEventType === 'conversation.item.added' && !pendingCreateFuture) {
       // The server may emit a later input-audio-backed view of a user item whose
       // transcribed text variant we already inserted locally under the same ID.
@@ -2114,6 +2159,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   private handleError(event: api_proto.ErrorEvent): void {
     const eventId = event.error.event_id;
     if (eventId) {
+      const replayItemId = this.replayItemCreateEventItems[eventId];
+      if (replayItemId) {
+        this.consumeReplayItemCreate(replayItemId, eventId);
+      }
+
       const future = this.chatCtxEventFutures[eventId];
       if (future) {
         delete this.chatCtxEventFutures[eventId];
@@ -2147,6 +2197,19 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw error;
     }
     this.emitError({ error, recoverable: true });
+  }
+
+  private consumeReplayItemCreate(itemId: string, eventId?: string): boolean {
+    const eventIds = this.replayItemCreateEventIds[itemId];
+    if (!eventIds?.length) return false;
+
+    const index = eventId ? eventIds.indexOf(eventId) : 0;
+    if (index === -1) return false;
+
+    const [consumedEventId] = eventIds.splice(index, 1);
+    if (consumedEventId) delete this.replayItemCreateEventItems[consumedEventId];
+    if (eventIds.length === 0) delete this.replayItemCreateEventIds[itemId];
+    return true;
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
