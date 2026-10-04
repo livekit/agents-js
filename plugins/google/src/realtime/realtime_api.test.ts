@@ -590,6 +590,7 @@ type UserActivitySessionInternals = {
   inUserActivity: boolean;
   sendClientEvent: ReturnType<typeof vi.fn>;
   startUserActivity(): void;
+  endUserActivity(): void;
   commitAudio(): Promise<void>;
 };
 
@@ -605,11 +606,12 @@ function createUserActivitySession(manual: boolean): UserActivitySessionInternal
 }
 
 describe('Google Realtime manual activity detection', () => {
-  it('commitAudio ends the user activity opened by startUserActivity', async () => {
+  it('endUserActivity ends the user activity opened by startUserActivity', () => {
     const session = createUserActivitySession(true);
 
     session.startUserActivity();
-    await session.commitAudio();
+    session.endUserActivity();
+    session.endUserActivity();
 
     expect(session.sendClientEvent.mock.calls).toEqual([
       [{ type: 'realtime_input', value: { activityStart: {} } }],
@@ -618,20 +620,24 @@ describe('Google Realtime manual activity detection', () => {
     expect(session.inUserActivity).toBe(false);
   });
 
-  it('commitAudio sends nothing when no user activity is open', async () => {
-    const session = createUserActivitySession(true);
+  it('endUserActivity sends nothing with automatic activity detection', () => {
+    const session = createUserActivitySession(false);
 
-    await session.commitAudio();
+    session.startUserActivity();
+    session.endUserActivity();
 
     expect(session.sendClientEvent).not.toHaveBeenCalled();
   });
 
-  it('commitAudio sends nothing with automatic activity detection', async () => {
-    const session = createUserActivitySession(false);
+  it('commitAudio leaves the user activity open', async () => {
+    const session = createUserActivitySession(true);
 
     session.startUserActivity();
     await session.commitAudio();
 
-    expect(session.sendClientEvent).not.toHaveBeenCalled();
+    expect(session.sendClientEvent.mock.calls).toEqual([
+      [{ type: 'realtime_input', value: { activityStart: {} } }],
+    ]);
+    expect(session.inUserActivity).toBe(true);
   });
 });

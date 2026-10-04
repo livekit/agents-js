@@ -983,7 +983,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private endUserActivity(): void {
+  /**
+   * With manual activity detection, ends the user activity opened by `startUserActivity()`.
+   * Gemini replies to `activityEnd` on its own, so don't call `generateReply()` after this.
+   */
+  endUserActivity(): void {
     if (!this.inUserActivity) {
       return;
     }
@@ -1968,12 +1972,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   /**
-   * With manual activity detection, ends the user activity opened by `startUserActivity()`.
-   * Gemini Live has no separate audio buffer to commit: `activityEnd` closes the user turn.
+   * No-op: Gemini replies as soon as it gets `activityEnd`, and the agent calls this before
+   * `onUserTurnCompleted`, so ending the activity here would reply twice. `generateReply()`
+   * ends it instead; use `endUserActivity()` to close a turn yourself.
    */
-  async commitAudio() {
-    this.endUserActivity();
-  }
+  async commitAudio() {}
 
   /**
    * Not supported: Gemini Live cannot drop audio that has already been streamed.
