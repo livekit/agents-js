@@ -41,7 +41,7 @@
   "dependencies": {
     "@livekit/av": "^10.0.0",
     "fastest-levenshtein": "^1.0.16",
-    "vitest": "^4.0.17"
+    "vitest": "^4.1.11"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
