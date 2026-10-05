@@ -11,6 +11,10 @@ import type { JSONObject, JSONValue, ToolContext } from './tool_context.js';
 
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 export interface ImageContent {
+  /**
+   * Unique identifier for the image. Use a new id when replacing inline image data; input-delta
+   * telemetry tells images apart by this id rather than by hashing their data.
+   */
   id: string;
 
   type: 'image_content';
@@ -741,15 +745,17 @@ export type ChatItem =
   | AgentHandoffItem
   | AgentConfigUpdate;
 
-type EssentialField = ChatRole | boolean | string | ChatContent[];
-
-/** The item payload used by both equivalence checks and telemetry fingerprints. */
-function essentialFields(item: ChatItem): EssentialField[] {
+/**
+ * What identifies an item's content beyond its id and type: what {@link ChatContext.isEquivalent}
+ * compares and {@link chatItemFingerprint} hashes, so the two cannot drift apart. Timestamps,
+ * metrics and similar metadata are left out.
+ */
+function essentialFields(item: ChatItem): unknown[] {
   switch (item.type) {
     case 'message':
       return [item.role, item.interrupted, item.content];
     case 'function_call':
-      return [item.name, item.callId, item.args];
+      return [item.name, item.callId, item.args, item.thoughtSignature, item.groupId, item.extra];
     case 'function_call_output':
       return [item.name, item.callId, item.output, item.isError];
     case 'agent_handoff':
@@ -758,102 +764,96 @@ function essentialFields(item: ChatItem): EssentialField[] {
   }
 }
 
-const inlineImageTokens = new WeakMap<ImageContent, { source: unknown; token: number }>();
-const videoFrameTokens = new WeakMap<object, number>();
-let nextMediaToken = 1;
-
-function mediaToken(content: ImageContent): number {
-  if (typeof content.image === 'object') {
-    let token = videoFrameTokens.get(content.image);
-    if (token === undefined) {
-      token = nextMediaToken++;
-      videoFrameTokens.set(content.image, token);
-    }
-    return token;
+function contentEqual(a: ChatContent, b: ChatContent): boolean {
+  if (typeof a === 'string' || typeof b === 'string') return a === b;
+  if (isInstructions(a) || isInstructions(b)) {
+    return (
+      isInstructions(a) &&
+      isInstructions(b) &&
+      a.audio === b.audio &&
+      a.text === b.text &&
+      a.value === b.value
+    );
   }
+  if (a.type === 'image_content' && b.type === 'image_content') {
+    return (
+      a.id === b.id &&
+      a.image === b.image &&
+      a.inferenceDetail === b.inferenceDetail &&
+      a.inferenceWidth === b.inferenceWidth &&
+      a.inferenceHeight === b.inferenceHeight &&
+      a.mimeType === b.mimeType
+    );
+  }
+  if (a.type === 'audio_content' && b.type === 'audio_content') {
+    return a.frame.length === b.frame.length && a.transcript === b.transcript;
+  }
+  return false;
+}
 
-  const previous = inlineImageTokens.get(content);
-  if (previous?.source === content.image) return previous.token;
-  const token = nextMediaToken++;
-  inlineImageTokens.set(content, { source: content.image, token });
+function essentialFieldEqual(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return (
+      a.length === b.length &&
+      a.every((value, index) => contentEqual(value as ChatContent, b[index] as ChatContent))
+    );
+  }
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+  return a === b;
+}
+
+// stand-in identities for video frames, which are never worth hashing
+const frameTokens = new WeakMap<object, number>();
+let nextFrameToken = 0;
+
+function frameToken(frame: object): number {
+  let token = frameTokens.get(frame);
+  if (token === undefined) {
+    token = nextFrameToken++;
+    frameTokens.set(frame, token);
+  }
   return token;
 }
 
-function fingerprintValue(value: EssentialField | ChatContent): unknown {
-  if (typeof value === 'string' || typeof value === 'boolean') return value;
-  if (Array.isArray(value)) return value.map(fingerprintValue);
-  if (isInstructions(value)) {
-    return ['instructions', value.audio, value.text, value.value];
+function fingerprintValue(this: unknown, _key: string, value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  if (isInstructions(value as ChatContent)) {
+    const instructions = value as Instructions;
+    return ['instructions', instructions.audio, instructions.text, instructions.value];
   }
-  if (value.type === 'image_content') {
+  const content = value as Exclude<ChatContent, string>;
+  if (content.type === 'image_content') {
+    // media payloads are never hashed: a URL counts as itself, inline data by its length and
+    // a video frame by its identity, next to the image id
+    const image = content.image;
     const source =
-      typeof value.image === 'string' && !value.image.startsWith('data:')
-        ? value.image
-        : mediaToken(value);
+      typeof image === 'string'
+        ? image.startsWith('data:')
+          ? image.length
+          : image
+        : frameToken(image);
     return [
       'image',
-      value.id,
+      content.id,
       source,
-      value.inferenceWidth,
-      value.inferenceHeight,
-      value.inferenceDetail,
-      value.mimeType,
+      content.inferenceWidth,
+      content.inferenceHeight,
+      content.inferenceDetail,
+      content.mimeType,
     ];
   }
-  return ['audio', value.transcript];
+  if (content.type === 'audio_content') {
+    return ['audio', content.frame.length, content.transcript];
+  }
+  return value;
 }
 
-/** @internal A media-safe fingerprint of an item's essential payload (excluding id/type). */
+/** @internal A short digest of an item's essential fields, to tell whether it changed. */
 export function chatItemFingerprint(item: ChatItem): string {
-  const payload = JSON.stringify([item.type, ...essentialFields(item).map(fingerprintValue)]);
+  const payload = JSON.stringify([item.type, ...essentialFields(item)], fingerprintValue);
   return createHash('blake2b512').update(payload).digest('hex').slice(0, 16);
-}
-
-function contentEqual(a: ChatContent[], b: ChatContent[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((left, index) => {
-    const right = b[index]!;
-    if (typeof left === 'string' || typeof right === 'string') return left === right;
-    if (isInstructions(left) || isInstructions(right)) {
-      return (
-        isInstructions(left) &&
-        isInstructions(right) &&
-        left.audio === right.audio &&
-        left.text === right.text &&
-        left.value === right.value
-      );
-    }
-    if (left.type !== right.type) return false;
-    if (left.type === 'image_content' && right.type === 'image_content') {
-      return (
-        left.id === right.id &&
-        left.image === right.image &&
-        left.inferenceDetail === right.inferenceDetail &&
-        left.inferenceWidth === right.inferenceWidth &&
-        left.inferenceHeight === right.inferenceHeight &&
-        left.mimeType === right.mimeType
-      );
-    }
-    return (
-      left.type === 'audio_content' &&
-      right.type === 'audio_content' &&
-      left.frame.length === right.frame.length &&
-      left.frame.every((frame, frameIndex) => frame === right.frame[frameIndex]) &&
-      left.transcript === right.transcript
-    );
-  });
-}
-
-function essentialFieldsEqual(a: ChatItem, b: ChatItem): boolean {
-  if (a.type !== b.type) return false;
-  const left = essentialFields(a);
-  const right = essentialFields(b);
-  return left.every((value, index) => {
-    const other = right[index]!;
-    return Array.isArray(value) && Array.isArray(other)
-      ? contentEqual(value, other)
-      : value === other;
-  });
 }
 
 export class ChatContext {
@@ -1163,10 +1163,11 @@ export class ChatContext {
    *
    * Comparison rules:
    * - Messages: compares the full `content` list, `role` and `interrupted`.
-   * - Function calls: compares `name`, `callId`, and `args`.
+   * - Function calls: compares `name`, `callId`, `args`, `thoughtSignature`, `groupId` and
+   *   `extra`.
    * - Function call outputs: compares `name`, `callId`, `output`, and `isError`.
    *
-   * Does not consider timestamps or other metadata.
+   * Does not consider timestamps or other metadata. Item fingerprints hash the same fields.
    */
   isEquivalent(other: ChatContext): boolean {
     if (this === other) {
@@ -1181,7 +1182,12 @@ export class ChatContext {
       const a = this.items[i]!;
       const b = other.items[i]!;
 
-      if (a.id !== b.id || a.type !== b.type || !essentialFieldsEqual(a, b)) {
+      if (a.id !== b.id || a.type !== b.type) {
+        return false;
+      }
+      const left = essentialFields(a);
+      const right = essentialFields(b);
+      if (!left.every((value, index) => essentialFieldEqual(value, right[index]))) {
         return false;
       }
     }

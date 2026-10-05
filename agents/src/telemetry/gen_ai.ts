@@ -33,6 +33,8 @@ import * as traceTypes from './trace_types.js';
 // matched on their own `type` discriminants instead.
 
 const FALSY = new Set(['0', 'false', 'no', 'off']);
+// the id `voice/generation.ts` gives the agent's instructions message; telemetry cannot import
+// from voice (voice imports telemetry), and a test keeps the two equal
 const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
 
 // the env var name the GenAI conventions standardise for this opt-in
@@ -50,6 +52,10 @@ let captureContent = !FALSY.has(
  */
 export function setCaptureContent(enabled: boolean): void {
   captureContent = enabled;
+}
+
+export function captureContentEnabled(): boolean {
+  return captureContent;
 }
 
 // ---------------------------------------------------------------------------

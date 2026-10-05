@@ -26,9 +26,10 @@ describe('running tool placeholders', () => {
         (item) => item.type === 'function_call_output' && item.callId === running.callId,
       ),
     ).toHaveLength(1);
+    // ids of their own, the same on every turn the call is still running
     expect(chatCtx.items.map((item) => item.id)).toEqual([
       `${running.id}_running`,
-      `${running.id}_running_output`,
+      `lk_running_placeholder/${running.callId}`,
     ]);
   });
 

@@ -17,6 +17,7 @@ import {
   FunctionCallOutput,
 } from '../llm/chat_context.js';
 import { tool } from '../llm/tool_context.js';
+import { INSTRUCTIONS_MESSAGE_ID } from '../voice/generation.js';
 import * as genAI from './gen_ai.js';
 import * as traceTypes from './trace_types.js';
 
@@ -106,7 +107,8 @@ describe('gen_ai builders', () => {
 
   it('uses only the canonical instructions message and keeps later instructions in place', () => {
     const ctx = new ChatContext([
-      new ChatMessage({ id: 'lk.agent_task.instructions', role: 'developer', content: 'be brief' }),
+      // the id voice/generation.ts gives it, which gen_ai.ts repeats
+      new ChatMessage({ id: INSTRUCTIONS_MESSAGE_ID, role: 'developer', content: 'be brief' }),
       new ChatMessage({ id: 'u1', role: 'user', content: 'hi' }),
       new ChatMessage({ id: 'x', role: 'developer', content: 'greet' }),
       new ChatMessage({ id: 'G', role: 'system', content: 'guide' }),

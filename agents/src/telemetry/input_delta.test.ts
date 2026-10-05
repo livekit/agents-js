@@ -591,6 +591,27 @@ describe('input delta tracking', () => {
     expect(inputRoles(toolStep!)).toEqual(['assistant', 'tool']);
   });
 
+  it('does not continue a request whose input was not captured', async () => {
+    const tracker = new InputDeltaTracker();
+    const llm = new FakeLLM();
+    genAI.setCaptureContent(false);
+    try {
+      await request(llm, context(INSTRUCTIONS, ['u1', 'user', 'Hello']), tracker);
+    } finally {
+      genAI.setCaptureContent(true);
+    }
+    await request(
+      llm,
+      context(INSTRUCTIONS, ['u1', 'user', 'Hello'], ['u2', 'user', 'Weather?']),
+      tracker,
+    );
+
+    // the first span recorded no input, so the second records all of it
+    const [, second] = requestSpans();
+    expect(second!.attributes[traceTypes.ATTR_INPUT_DELTA]).toBeUndefined();
+    expect(inputRoles(second!)).toEqual(['user', 'user']);
+  });
+
   it('records full LLMStream request inputs when input delta is off', async () => {
     const llm = new FakeLLM();
     await request(llm, context(INSTRUCTIONS, ['u1', 'user', 'Hello']));

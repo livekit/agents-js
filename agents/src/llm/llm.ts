@@ -283,6 +283,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       stream: true,
       outputType: traceTypes.GenAIOutputType.TEXT,
     });
+    // no input is recorded, so this span must not become the parent of a later delta either
+    if (!genAI.captureContentEnabled() || !span.isRecording()) return;
     if (this.genAIOperationName === undefined && inputDelta.active()) {
       genAI.setContentAttributes(span, {
         toolDefinitions: this.#toolCtx ? genAI.toToolDefinitions(this.#toolCtx.functionTools) : [],

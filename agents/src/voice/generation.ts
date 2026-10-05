@@ -77,8 +77,7 @@ export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
 export const DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
 export const RUNNING_TOOL_PLACEHOLDER = 'The tool call is still in progress.';
 export const RUNNING_TOOL_PLACEHOLDER_KEY = '__lk_running_placeholder__';
-const RUNNING_TOOL_PLACEHOLDER_ID_SUFFIX = '_running';
-const RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_SUFFIX = '_running_output';
+const RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX = 'lk_running_placeholder/';
 
 export function _injectRunningToolCalls(
   chatCtx: ChatContext,
@@ -102,7 +101,9 @@ export function _injectRunningToolCalls(
       chatCtx.insert(
         FunctionCall.create({
           ...runningCall,
-          id: `${runningCall.id}${RUNNING_TOOL_PLACEHOLDER_ID_SUFFIX}`,
+          // an id of its own, stable across turns: input-delta telemetry tells items apart by
+          // id, so the copy matches itself while the tool runs and never the real call
+          id: `${runningCall.id}_running`,
           extra: { ...runningCall.extra, [RUNNING_TOOL_PLACEHOLDER_KEY]: true },
         }),
       );
@@ -110,7 +111,7 @@ export function _injectRunningToolCalls(
     existingOutputIds.add(runningCall.callId);
     chatCtx.insert(
       FunctionCallOutput.create({
-        id: `${runningCall.id}${RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_SUFFIX}`,
+        id: `${RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX}${runningCall.callId}`,
         callId: runningCall.callId,
         name: runningCall.name,
         output: RUNNING_TOOL_PLACEHOLDER,
@@ -135,7 +136,7 @@ export function _stripRunningToolCalls(chatCtx: ChatContext): void {
       !(
         (item.type === 'function_call' && injectedCallIds.has(item.callId)) ||
         (item.type === 'function_call_output' &&
-          item.id.endsWith(RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_SUFFIX))
+          item.id.startsWith(RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX))
       ),
   );
 }

@@ -1342,10 +1342,10 @@ const ATTR_GENERATION_COUNT = "lk.generation_count";
 // @public (undocumented)
 const ATTR_INPUT_BASE_SPAN_ID = "lk.input.base_span_id";
 
-// @public (undocumented)
+// @public
 const ATTR_INPUT_DELTA = "lk.input.delta";
 
-// @public (undocumented)
+// @public
 const ATTR_INPUT_DROPPED_FROM_BASE = "lk.input.dropped_from_base";
 
 // @public (undocumented)
@@ -2039,6 +2039,9 @@ export function calculateAudioDurationSeconds(frame: AudioBuffer_2): number;
 
 // @public (undocumented)
 export function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void>;
+
+// @public (undocumented)
+function captureContentEnabled(): boolean;
 
 // @public (undocumented)
 type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
@@ -3876,6 +3879,7 @@ const GEN_AI_PROVIDER_NAMES: ReadonlySet<string>;
 declare namespace genAI {
     export {
         setCaptureContent,
+        captureContentEnabled,
         withInferenceTracking,
         markInferenceSpanRecorded,
         splitInstructions,
@@ -4021,7 +4025,6 @@ export class IdleTimeoutError extends Error {
 export interface ImageContent {
     // (undocumented)
     _cache: Record<any, any>;
-    // (undocumented)
     id: string;
     image: string | VideoFrame_2;
     // (undocumented)
@@ -4210,6 +4213,16 @@ export const initializeLogger: (input: LoggerOptions) => void;
 // @public (undocumented)
 function initPinoCloudExporter(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig): void;
 
+// @internal (undocumented)
+interface InputBaseline {
+    // (undocumented)
+    instructions: string;
+    keys: Array<[string, string]>;
+    layout: Array<'new' | 'merged' | 'skipped'>;
+    // (undocumented)
+    spanContext: SpanContext;
+}
+
 // @public
 class InputDelta {
     constructor(chatCtx: ChatContext, instructions: ChatItem[], conversation: ChatItem[], base?: SpanContext | undefined, droppedFromBase?: number | undefined);
@@ -4240,6 +4253,7 @@ declare namespace inputDelta {
         InputDeltaSite,
         LLM_NODE,
         LLM_REQUEST,
+        InputBaseline,
         InputDelta,
         InputDeltaTracker,
         InputDeltaScope
@@ -4257,7 +4271,6 @@ class InputDeltaScope {
 
 // @public
 interface InputDeltaSite {
-    // (undocumented)
     chatCtx: boolean;
     // (undocumented)
     name: 'llm_node' | 'llm_request';
@@ -4265,7 +4278,8 @@ interface InputDeltaSite {
 
 // @public
 class InputDeltaTracker {
-    constructor();
+    // @internal (undocumented)
+    readonly _baselines: Map<InputDeltaSite, InputBaseline>;
     // (undocumented)
     begin(): InputDeltaScope;
 }
@@ -9202,7 +9216,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
 // src/inference/tts.ts:282:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
-// src/llm/chat_context.ts:77:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
+// src/llm/chat_context.ts:81:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:702:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts

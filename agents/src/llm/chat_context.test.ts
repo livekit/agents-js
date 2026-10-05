@@ -1679,6 +1679,9 @@ describe('ChatItem essential fields and fingerprints', () => {
     [0, { interrupted: true }],
     [1, { args: '{"x": 1}' }],
     [1, { name: 'g' }],
+    [1, { thoughtSignature: 'signature' }],
+    [1, { groupId: 'g' }],
+    [1, { extra: { k: 1 } }],
     [2, { output: 'nope' }],
     [2, { isError: true }],
   ] as const)(
@@ -1703,12 +1706,7 @@ describe('ChatItem essential fields and fingerprints', () => {
       Object.assign(Object.create(Object.getPrototypeOf(item)), item),
     );
     Object.assign(changed[0]!, { createdAt: 0, transcriptConfidence: 0.5, extra: { k: 1 } });
-    Object.assign(changed[1]!, {
-      createdAt: 0,
-      groupId: 'g',
-      thoughtSignature: 'signature',
-      extra: { k: 1 },
-    });
+    Object.assign(changed[1]!, { createdAt: 0 });
     Object.assign(changed[2]!, { createdAt: 0 });
     Object.assign(changed[3]!, { newAgentId: 'c' });
 
@@ -1716,7 +1714,7 @@ describe('ChatItem essential fields and fingerprints', () => {
     expect(items.map(chatItemFingerprint)).toEqual(changed.map(chatItemFingerprint));
   });
 
-  it('detects a replaced inline image without hashing its payload', () => {
+  it('counts inline image data by its id and length, never its payload', () => {
     const image = (id: string, data: string): ImageContent => ({
       id,
       type: 'image_content',
@@ -1724,22 +1722,20 @@ describe('ChatItem essential fields and fingerprints', () => {
       inferenceDetail: 'auto',
       _cache: {},
     });
-    const a = new ChatMessage({
-      role: 'user',
-      content: [image('img', 'data:image/png;base64,AA')],
-    });
-    const b = new ChatMessage({
-      role: 'user',
-      content: [image('img', 'data:image/png;base64,BB')],
-    });
-    const other = new ChatMessage({
-      role: 'user',
-      content: [image('img2', 'data:image/png;base64,AA')],
-    });
+    const message = (content: ImageContent) =>
+      new ChatMessage({ role: 'user', content: [content] });
+    const a = message(image('img', 'data:image/png;base64,AA'));
 
-    expect(chatItemFingerprint(a)).not.toBe(chatItemFingerprint(b));
-    expect(chatItemFingerprint(a)).not.toBe(chatItemFingerprint(other));
-    expect(chatItemFingerprint(a)).not.toContain('base64,AA');
+    expect(chatItemFingerprint(a)).not.toBe(
+      chatItemFingerprint(message(image('img2', 'data:image/png;base64,AA'))),
+    );
+    expect(chatItemFingerprint(a)).not.toBe(
+      chatItemFingerprint(message(image('img', 'data:image/png;base64,AAAA'))),
+    );
+    // replacing the data with the same id and length is not detected: give it a new id
+    expect(chatItemFingerprint(a)).toBe(
+      chatItemFingerprint(message(image('img', 'data:image/png;base64,BB'))),
+    );
   });
 
   it('tracks image URLs and inference settings', () => {
