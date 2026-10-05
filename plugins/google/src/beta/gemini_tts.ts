@@ -70,7 +70,7 @@ function stylesPerPart(model: string): boolean {
 // Headerless PCM, asked for explicitly: the byte stream is decoded as raw PCM, and the docs
 // only guarantee a headerless stream when response_format names it. The docs spell it
 // "audio/l16"; on the wire it is an enum (AUDIO_MULAW and AUDIO_ALAW are the other two)
-// nested under a ResponseFormatConfig that the typed SDK has no field for.
+// nested under a ResponseFormatConfig that the SDK does not send from its typed field.
 const RESPONSE_FORMAT = { audio: { mime_type: 'AUDIO_L16' } };
 
 // where one part ends and the next begins: Gemini takes a style per part, and an
@@ -293,8 +293,8 @@ export class ChunkedStream extends tts.ChunkedStream {
       .filter((instruction): instruction is string => !!instruction)
       .join('\n');
 
-    // response_format has no field on the typed config, so it rides extraBody, which merges
-    // into `generationConfig` since objects recurse.
+    // googleapis/js-genai#2004: the SDK drops the typed responseFormat from the request; move RESPONSE_FORMAT there once it's sent
+    // Until then it rides extraBody, which merges into `generationConfig` since objects recurse.
     if (stylesPerPart(opts.model)) {
       config.httpOptions = {
         extraBody: { generationConfig: { response_format: RESPONSE_FORMAT } },
