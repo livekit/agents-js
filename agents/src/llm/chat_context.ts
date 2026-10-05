@@ -12,8 +12,7 @@ import type { JSONObject, JSONValue, ToolContext } from './tool_context.js';
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 export interface ImageContent {
   /**
-   * Unique identifier for the image. Use a new id when replacing inline image data; input-delta
-   * telemetry tells images apart by this id rather than by hashing their data.
+   * Unique identifier for the image.
    */
   id: string;
 
@@ -748,12 +747,16 @@ export type ChatItem =
 /**
  * What identifies an item's content beyond its id and type: what {@link ChatContext.isEquivalent}
  * compares and {@link chatItemFingerprint} hashes, so the two cannot drift apart. Timestamps,
- * metrics and similar metadata are left out.
+ * metrics and similar metadata are left out. `content` maps a message's content entries: as they
+ * are for equivalence, as media-safe stand-ins for the fingerprint.
  */
-function essentialFields(item: ChatItem): unknown[] {
+function essentialFields(
+  item: ChatItem,
+  content: (entry: ChatContent) => unknown = (entry) => entry,
+): unknown[] {
   switch (item.type) {
     case 'message':
-      return [item.role, item.interrupted, item.content];
+      return [item.role, item.interrupted, item.content.map(content)];
     case 'function_call':
       return [item.name, item.callId, item.args, item.thoughtSignature, item.groupId, item.extra];
     case 'function_call_output':
@@ -786,7 +789,11 @@ function contentEqual(a: ChatContent, b: ChatContent): boolean {
     );
   }
   if (a.type === 'audio_content' && b.type === 'audio_content') {
-    return a.frame.length === b.frame.length && a.transcript === b.transcript;
+    return (
+      a.frame.length === b.frame.length &&
+      a.frame.every((frame, index) => frame === b.frame[index]) &&
+      a.transcript === b.transcript
+    );
   }
   return false;
 }
@@ -804,56 +811,52 @@ function essentialFieldEqual(a: unknown, b: unknown): boolean {
   return a === b;
 }
 
-// stand-in identities for video frames, which are never worth hashing
+function digest(text: string): string {
+  return createHash('blake2b512').update(text).digest('hex').slice(0, 16);
+}
+
+// media payloads are never kept: a URL counts as itself, inline data by a digest computed once per
+// image object (and again when its data changes), and a video frame by its identity
+const imageSources = new WeakMap<ImageContent, { image: unknown; source: string | number }>();
 const frameTokens = new WeakMap<object, number>();
 let nextFrameToken = 0;
 
-function frameToken(frame: object): number {
-  let token = frameTokens.get(frame);
-  if (token === undefined) {
-    token = nextFrameToken++;
-    frameTokens.set(frame, token);
+function imageSource(content: ImageContent): string | number {
+  const image = content.image;
+  if (typeof image === 'string' && !image.startsWith('data:')) return image;
+  const cached = imageSources.get(content);
+  if (cached?.image === image) return cached.source;
+  let source: string | number;
+  if (typeof image === 'string') {
+    source = digest(image);
+  } else {
+    source = frameTokens.get(image) ?? nextFrameToken++;
+    frameTokens.set(image, source);
   }
-  return token;
+  imageSources.set(content, { image, source });
+  return source;
 }
 
-function fingerprintValue(this: unknown, _key: string, value: unknown): unknown {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
-  if (isInstructions(value as ChatContent)) {
-    const instructions = value as Instructions;
-    return ['instructions', instructions.audio, instructions.text, instructions.value];
-  }
-  const content = value as Exclude<ChatContent, string>;
-  if (content.type === 'image_content') {
-    // media payloads are never hashed: a URL counts as itself, inline data by its length and
-    // a video frame by its identity, next to the image id
-    const image = content.image;
-    const source =
-      typeof image === 'string'
-        ? image.startsWith('data:')
-          ? image.length
-          : image
-        : frameToken(image);
+function contentStandIn(entry: ChatContent): unknown {
+  if (typeof entry === 'string') return entry;
+  if (isInstructions(entry)) return ['instructions', entry.audio, entry.text, entry.value];
+  if (entry.type === 'image_content') {
     return [
       'image',
-      content.id,
-      source,
-      content.inferenceWidth,
-      content.inferenceHeight,
-      content.inferenceDetail,
-      content.mimeType,
+      entry.id,
+      imageSource(entry),
+      entry.inferenceWidth,
+      entry.inferenceHeight,
+      entry.inferenceDetail,
+      entry.mimeType,
     ];
   }
-  if (content.type === 'audio_content') {
-    return ['audio', content.frame.length, content.transcript];
-  }
-  return value;
+  return ['audio', entry.frame.length, entry.transcript];
 }
 
 /** @internal A short digest of an item's essential fields, to tell whether it changed. */
 export function chatItemFingerprint(item: ChatItem): string {
-  const payload = JSON.stringify([item.type, ...essentialFields(item)], fingerprintValue);
-  return createHash('blake2b512').update(payload).digest('hex').slice(0, 16);
+  return digest(JSON.stringify([item.type, ...essentialFields(item, contentStandIn)]));
 }
 
 export class ChatContext {

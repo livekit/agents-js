@@ -1714,7 +1714,7 @@ describe('ChatItem essential fields and fingerprints', () => {
     expect(items.map(chatItemFingerprint)).toEqual(changed.map(chatItemFingerprint));
   });
 
-  it('counts inline image data by its id and length, never its payload', () => {
+  it('detects changed inline image data without keeping it', () => {
     const image = (id: string, data: string): ImageContent => ({
       id,
       type: 'image_content',
@@ -1724,18 +1724,49 @@ describe('ChatItem essential fields and fingerprints', () => {
     });
     const message = (content: ImageContent) =>
       new ChatMessage({ role: 'user', content: [content] });
-    const a = message(image('img', 'data:image/png;base64,AA'));
+    const original = image('img', 'data:image/png;base64,AA');
+    const fingerprint = chatItemFingerprint(message(original));
 
-    expect(chatItemFingerprint(a)).not.toBe(
-      chatItemFingerprint(message(image('img2', 'data:image/png;base64,AA'))),
+    // the same id and length with different data
+    expect(chatItemFingerprint(message(image('img', 'data:image/png;base64,BB')))).not.toBe(
+      fingerprint,
     );
-    expect(chatItemFingerprint(a)).not.toBe(
-      chatItemFingerprint(message(image('img', 'data:image/png;base64,AAAA'))),
+    // the same data in another object
+    expect(chatItemFingerprint(message(image('img', 'data:image/png;base64,AA')))).toBe(
+      fingerprint,
     );
-    // replacing the data with the same id and length is not detected: give it a new id
-    expect(chatItemFingerprint(a)).toBe(
-      chatItemFingerprint(message(image('img', 'data:image/png;base64,BB'))),
-    );
+    // the data edited in place
+    original.image = 'data:image/png;base64,CC';
+    expect(chatItemFingerprint(message(original))).not.toBe(fingerprint);
+    expect(fingerprint).not.toContain('base64');
+  });
+
+  it('compares audio frames by identity', () => {
+    const audio = (frame: object): AudioContent =>
+      ({ type: 'audio_content', frame: [frame] }) as unknown as AudioContent;
+    const frame = {};
+    const message = (content: AudioContent) =>
+      new ChatMessage({ id: 'm', role: 'user', content: [content] });
+
+    expect(
+      new ChatContext([message(audio(frame))]).isEquivalent(
+        new ChatContext([message(audio(frame))]),
+      ),
+    ).toBe(true);
+    expect(
+      new ChatContext([message(audio(frame))]).isEquivalent(new ChatContext([message(audio({}))])),
+    ).toBe(false);
+  });
+
+  it('fingerprints function-call extra as plain data', () => {
+    // an object that looks like chat content, but is not in a message's content
+    const call = new FunctionCall({
+      callId: '1',
+      name: 'f',
+      args: '{}',
+      extra: { metadata: { type: 'audio_content' } },
+    });
+    expect(() => chatItemFingerprint(call)).not.toThrow();
   });
 
   it('tracks image URLs and inference settings', () => {

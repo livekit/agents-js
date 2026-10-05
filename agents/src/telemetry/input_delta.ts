@@ -68,7 +68,8 @@
  *   inside such a message.
  * - On an `llm_node` span, the instructions are the first entry of `lk.pii.chat_ctx`. Thus, a
  *   change of the instructions causes a full record of `lk.pii.chat_ctx`.
- * - The fingerprint does not include media data. It uses the image ID and the audio transcript.
+ * - The fingerprint does not keep media data. Inline image data counts by a digest, a video frame
+ *   by its identity, and audio by its frame count and transcript.
  * - A span that does not record its input (content capture is off) does not become a parent.
  * - Each `AgentActivity` has its own tracker. After a handoff, the first span records all of the
  *   input.
