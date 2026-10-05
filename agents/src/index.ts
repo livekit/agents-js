@@ -15,6 +15,7 @@ export * as beta from './beta/index.js';
 export * as cli from './cli.js';
 export * from './connection_pool.js';
 export { ATTRIBUTE_TRANSCRIPTION_EXPRESSION } from './constants.js';
+export * as evals from './evals/index.js';
 export { defineAgent, isAgent, type AgentDefinition } from './generator.js';
 export * as inference from './inference/index.js';
 export * from './inference_runner.js';
