@@ -35,6 +35,9 @@ SPDX-License-Identifier: Apache-2.0
   attributes, tag metadata, nested session data, and provider debug dumps. A protected span does
   not prove that a separate log is protected. Conversely, an attribute without a `pii` segment is
   not a finding when the existing processor explicitly redacts it.
+- In log records, participant, avatar, and room identifiers are not tagged with `lk.pii.*`,
+  matching the Python SDK. The corresponding span attributes in
+  `agents/src/telemetry/trace_types.ts` still are.
 
 ### Exceptions
 
