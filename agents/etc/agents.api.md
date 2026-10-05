@@ -50,6 +50,7 @@ import { SimulationRun_Job } from '@livekit/protocol';
 import type { SIPOutboundConfig } from '@livekit/protocol';
 import { Span } from '@opentelemetry/api';
 import type { Span as Span_2 } from '@opentelemetry/sdk-trace-base';
+import type { SpanContext } from '@opentelemetry/api';
 import type { SpanExporter } from '@opentelemetry/sdk-trace-base';
 import { SpanKind } from '@opentelemetry/api';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base';
@@ -77,6 +78,9 @@ export type Aborted<T> = {
     result: undefined;
     isAborted: true;
 };
+
+// @public (undocumented)
+function active(): boolean;
 
 // @public
 export class AdaptiveNoiseGate implements AudioGate {
@@ -1336,6 +1340,15 @@ const ATTR_GEN_AI_WORKFLOW_NAME = "gen_ai.workflow.name";
 const ATTR_GENERATION_COUNT = "lk.generation_count";
 
 // @public (undocumented)
+const ATTR_INPUT_BASE_SPAN_ID = "lk.input.base_span_id";
+
+// @public
+const ATTR_INPUT_DELTA = "lk.input.delta";
+
+// @public
+const ATTR_INPUT_DROPPED_FROM_BASE = "lk.input.dropped_from_base";
+
+// @public (undocumented)
 const ATTR_INSTRUCTIONS = "lk.pii.instructions";
 
 // @public (undocumented)
@@ -2028,6 +2041,9 @@ export function calculateAudioDurationSeconds(frame: AudioBuffer_2): number;
 export function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void>;
 
 // @public (undocumented)
+function captureContentEnabled(): boolean;
+
+// @public (undocumented)
 type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 
 // @public (undocumented)
@@ -2514,6 +2530,9 @@ export interface CompletionUsage {
     totalTokens: number;
 }
 
+// @public
+function compute(site: InputDeltaSite, chatCtx: ChatContext, span: Span): InputDelta;
+
 // Warning: (ae-forgotten-export) The symbol "DiffOps" needs to be exported by the entry point index.d.ts
 //
 // @public
@@ -2559,6 +2578,9 @@ export type ConversationItemAddedEvent = {
     item: ChatMessage | AgentHandoffItem;
     createdAt: number;
 };
+
+// @internal (undocumented)
+function conversationMessages(items: readonly ChatItem[]): ChatMessagePayload[];
 
 // @public
 function convertMarkup(provider: string, text: string): string;
@@ -3857,10 +3879,15 @@ const GEN_AI_PROVIDER_NAMES: ReadonlySet<string>;
 declare namespace genAI {
     export {
         setCaptureContent,
+        captureContentEnabled,
         withInferenceTracking,
         markInferenceSpanRecorded,
+        splitInstructions,
         toSystemInstructions,
         toInputMessages,
+        instructionParts,
+        conversationMessages,
+        messageLayout,
         toOutputMessages,
         toToolDefinitions,
         finishReasonFor,
@@ -3998,7 +4025,6 @@ export class IdleTimeoutError extends Error {
 export interface ImageContent {
     // (undocumented)
     _cache: Record<any, any>;
-    // (undocumented)
     id: string;
     image: string | VideoFrame_2;
     // (undocumented)
@@ -4187,6 +4213,77 @@ export const initializeLogger: (input: LoggerOptions) => void;
 // @public (undocumented)
 function initPinoCloudExporter(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig): void;
 
+// @internal (undocumented)
+interface InputBaseline {
+    // (undocumented)
+    instructions: string;
+    keys: Array<[string, string]>;
+    layout: Array<'new' | 'merged' | 'skipped'>;
+    // (undocumented)
+    spanContext: SpanContext;
+}
+
+// @public
+class InputDelta {
+    constructor(chatCtx: ChatContext, instructions: ChatItem[], conversation: ChatItem[], base?: SpanContext | undefined, droppedFromBase?: number | undefined);
+    // (undocumented)
+    readonly base?: SpanContext | undefined;
+    // (undocumented)
+    readonly chatCtx: ChatContext;
+    // (undocumented)
+    readonly conversation: ChatItem[];
+    // (undocumented)
+    readonly droppedFromBase?: number | undefined;
+    // (undocumented)
+    static full(chatCtx: ChatContext): InputDelta;
+    // (undocumented)
+    inputMessages(): ChatMessagePayload[];
+    // (undocumented)
+    readonly instructions: ChatItem[];
+    // (undocumented)
+    systemInstructions(): MessagePart[];
+}
+
+declare namespace inputDelta {
+    export {
+        runWithScope,
+        active,
+        compute,
+        setAttributes,
+        InputDeltaSite,
+        LLM_NODE,
+        LLM_REQUEST,
+        InputBaseline,
+        InputDelta,
+        InputDeltaTracker,
+        InputDeltaScope
+    }
+}
+
+// @public
+class InputDeltaScope {
+    constructor(tracker: InputDeltaTracker);
+    // (undocumented)
+    commit(): void;
+    // (undocumented)
+    delta(site: InputDeltaSite, chatCtx: ChatContext, span: Span): InputDelta;
+}
+
+// @public
+interface InputDeltaSite {
+    chatCtx: boolean;
+    // (undocumented)
+    name: 'llm_node' | 'llm_request';
+}
+
+// @public
+class InputDeltaTracker {
+    // @internal (undocumented)
+    readonly _baselines: Map<InputDeltaSite, InputBaseline>;
+    // (undocumented)
+    begin(): InputDeltaScope;
+}
+
 // @public
 export interface InputDetails {
     // (undocumented)
@@ -4222,6 +4319,9 @@ interface InstructionParts {
     extra?: Instructions | string;
     persona?: Instructions | string;
 }
+
+// @internal (undocumented)
+function instructionParts(items: readonly ChatItem[]): MessagePart[];
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "asModality"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "asModality"
@@ -4755,6 +4855,12 @@ declare namespace llm_3 {
 }
 
 // @public (undocumented)
+const LLM_NODE: InputDeltaSite;
+
+// @public (undocumented)
+const LLM_REQUEST: InputDeltaSite;
+
+// @public (undocumented)
 export type LLMCallbacks = {
     ['metrics_collected']: (metrics: LLMMetrics) => void;
     ['error']: (error: LLMError) => void;
@@ -5051,6 +5157,9 @@ export interface MessageGeneration {
     modalities?: Promise<('text' | 'audio')[]>;
     textStream: ReadableStream_2<string | TimedString>;
 }
+
+// @internal (undocumented)
+function messageLayout(items: readonly ChatItem[]): Array<'new' | 'merged' | 'skipped'>;
 
 // @public (undocumented)
 interface MessagePart {
@@ -6101,6 +6210,9 @@ export function runWithJobContext<T>(context: JobContext, fn: () => T): T;
 // @internal
 export function runWithJobContextAsync<T>(context: JobContext, fn: () => Promise<T>): Promise<T>;
 
+// @public
+function runWithScope<T>(scope: InputDeltaScope, fn: () => T): T;
+
 export { Scenario }
 
 export { ScenarioGroup }
@@ -6366,6 +6478,9 @@ function setAgentAttributes(span: Span, params: {
     model?: string;
     provider?: string;
 }): void;
+
+// @public
+function setAttributes(span: Span, delta: InputDelta): void;
 
 // @public
 function setCaptureContent(enabled: boolean): void;
@@ -6862,6 +6977,9 @@ function splitAllMarkup(text: string, options?: {
 //
 // @public
 function splitExprMarkup(text: string): [string, ExpressiveTag[]];
+
+// @internal (undocumented)
+function splitInstructions(items: readonly ChatItem[]): [ChatItem[], ChatItem[]];
 
 // @public
 const splitWords: (text: string, ignorePunctuation?: boolean) => [string, number, number][];
@@ -7441,6 +7559,7 @@ declare namespace telemetry {
         PinoCloudExporterUrlConfig,
         PinoLogObject,
         genAI,
+        inputDelta,
         REDACTED_EXCEPTION_MESSAGE,
         loopMonitor,
         rpc,
@@ -7939,6 +8058,9 @@ declare namespace traceTypes {
         ATTR_RESPONSE_TEXT,
         ATTR_RESPONSE_FUNCTION_CALLS,
         ATTR_RESPONSE_TTFT,
+        ATTR_INPUT_DELTA,
+        ATTR_INPUT_BASE_SPAN_ID,
+        ATTR_INPUT_DROPPED_FROM_BASE,
         ATTR_FUNCTION_TOOL_ID,
         ATTR_FUNCTION_TOOL_NAME,
         ATTR_FUNCTION_TOOL_ARGS,
@@ -9094,18 +9216,18 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
 // src/inference/tts.ts:282:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
-// src/llm/chat_context.ts:76:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
+// src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:702:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:394:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1060:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1776:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1776:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1776:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:404:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1070:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"

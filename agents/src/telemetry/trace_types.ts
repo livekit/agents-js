@@ -146,6 +146,19 @@ export const ATTR_RESPONSE_FUNCTION_CALLS = 'lk.pii.response.function_calls';
 /** Time to first token in seconds. */
 export const ATTR_RESPONSE_TTFT = 'lk.response.ttft';
 
+// input deltas (`record: { inputDelta: true }`); see telemetry/input_delta.ts
+/**
+ * The span's record (`lk.pii.chat_ctx` on `llm_node`, `gen_ai.input.messages` on `llm_request`)
+ * continues the one on its parent, `lk.input.base_span_id`.
+ */
+export const ATTR_INPUT_DELTA = 'lk.input.delta';
+export const ATTR_INPUT_BASE_SPAN_ID = 'lk.input.base_span_id';
+/**
+ * Rebuild: the parent's full record without its last N entries, followed by this span's. Without
+ * `gen_ai.system_instructions` on an `llm_request` span, the parent's apply.
+ */
+export const ATTR_INPUT_DROPPED_FROM_BASE = 'lk.input.dropped_from_base';
+
 // function tool
 export const ATTR_FUNCTION_TOOL_ID = 'lk.function_tool.id';
 export const ATTR_FUNCTION_TOOL_NAME = 'lk.function_tool.name';
