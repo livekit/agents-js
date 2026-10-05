@@ -224,3 +224,30 @@ describe('AssemblyAI STT metadata', () => {
     expect(transcript.metadata).toBeUndefined();
   });
 });
+
+describe('AssemblyAI STT speaker labels', () => {
+  it('surfaces the turn speaker label as speakerId', async () => {
+    const transcript = await collectTranscript(
+      turnMessage({ end_of_turn: true, transcript: 'hello', speaker_label: 'B' }),
+      sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+    );
+
+    expect(transcript.speakerId).toBe('B');
+  });
+
+  it('treats the UNKNOWN speaker label as no speaker', async () => {
+    const transcript = await collectTranscript(
+      turnMessage({ speaker_label: 'UNKNOWN' }),
+      sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+    );
+
+    expect(transcript.speakerId).toBeNull();
+  });
+
+  it('advertises diarization only when speakerLabels is enabled', () => {
+    expect(new STT({ apiKey: 'test-key' }).capabilities.diarization).toBe(false);
+    expect(new STT({ apiKey: 'test-key', speakerLabels: true }).capabilities.diarization).toBe(
+      true,
+    );
+  });
+});
