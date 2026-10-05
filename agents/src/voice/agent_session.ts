@@ -158,9 +158,10 @@ export interface AgentSessionUsage {
 /**
  * Granular control over which recording features are active.
  *
- * Recording keys default to `true` when omitted, so `{ logs: false }` means "record
- * everything except logs". Redaction defaults to the project setting; `false` is ignored when
- * redaction is enabled globally for the project. Pass to {@link AgentSession.start} as `record`:
+ * Content recording keys default to `true` when omitted, so `{ logs: false }` means "record
+ * everything except logs". Input deltas are opt-in. Redaction defaults to the project setting;
+ * `false` is ignored when redaction is enabled globally for the project. Pass to
+ * {@link AgentSession.start} as `record`:
  *
  * - `record: true` — all on (backward compatible)
  * - `record: false` — all off (backward compatible)
@@ -178,6 +179,13 @@ export interface RecordingOptions {
   transcript?: boolean;
   /** Enable redaction. `false` does not disable project redaction. */
   redaction?: boolean;
+  /**
+   * Record only input changes on successive LLM trace spans. The model still receives the full
+   * input. Delta spans link to `lk.input.base_span_id`; reconstruct the record by removing its
+   * last `lk.input.dropped_from_base` entries and appending the delta. Unchanged system
+   * instructions are inherited from the base span. Defaults to `false`.
+   */
+  inputDelta?: boolean;
 }
 
 /** @internal Recording options with every category resolved to a boolean. */
@@ -189,6 +197,7 @@ const RECORDING_ALL_ON: ResolvedRecordingOptions = {
   logs: true,
   transcript: true,
   redaction: false,
+  inputDelta: false,
 };
 
 const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
@@ -197,14 +206,15 @@ const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
   logs: false,
   transcript: false,
   redaction: false,
+  inputDelta: false,
 };
 
 const idleHoldStorage = new AsyncLocalStorage<boolean>();
 
 /**
  * Resolve a `record` argument into explicit per-category flags. A boolean turns
- * every category on or off; a partial object is merged onto all-on so omitted
- * keys default to `true`.
+ * every content category on or off; a partial object is merged onto those defaults.
+ * Input deltas remain off unless explicitly enabled.
  *
  * @internal
  */

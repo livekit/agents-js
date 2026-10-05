@@ -9,7 +9,13 @@ import {
 } from '@opentelemetry/sdk-trace-node';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import {
+  AgentConfigUpdate,
+  ChatContext,
+  ChatMessage,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../llm/chat_context.js';
 import { tool } from '../llm/tool_context.js';
 import * as genAI from './gen_ai.js';
 import * as traceTypes from './trace_types.js';
@@ -96,6 +102,51 @@ describe('gen_ai builders', () => {
     expect(genAI.finishReasonFor({ functionCalls: [{}] })).toBe('tool_call');
     // a tool call emitted before the generation failed is not a successful handoff
     expect(genAI.finishReasonFor({ functionCalls: [{}], interrupted: true })).toBe('error');
+  });
+
+  it('uses only the canonical instructions message and keeps later instructions in place', () => {
+    const ctx = new ChatContext([
+      new ChatMessage({ id: 'lk.agent_task.instructions', role: 'developer', content: 'be brief' }),
+      new ChatMessage({ id: 'u1', role: 'user', content: 'hi' }),
+      new ChatMessage({ id: 'x', role: 'developer', content: 'greet' }),
+      new ChatMessage({ id: 'G', role: 'system', content: 'guide' }),
+    ]);
+
+    expect(genAI.toSystemInstructions(ctx)).toEqual([{ type: 'text', content: 'be brief' }]);
+    expect(genAI.toInputMessages(ctx).map((message) => message.role)).toEqual([
+      'user',
+      'system',
+      'system',
+    ]);
+
+    const standalone = new ChatContext([
+      new ChatMessage({ id: 's', role: 'developer', content: 'you are a bot' }),
+      new ChatMessage({ id: 'G', role: 'system', content: 'guide' }),
+      new ChatMessage({ id: 'u1', role: 'user', content: 'hi' }),
+    ]);
+    expect(genAI.toSystemInstructions(standalone)).toEqual([
+      { type: 'text', content: 'you are a bot' },
+    ]);
+    expect(genAI.toInputMessages(standalone).map((message) => message.role)).toEqual([
+      'system',
+      'user',
+    ]);
+  });
+
+  it('keeps tool calls merged across skipped items without resetting the previous role', () => {
+    const items = [
+      new ChatMessage({ id: 'a1', role: 'assistant', content: 'checking' }),
+      new AgentConfigUpdate({ id: 'cfg', toolsAdded: ['f'] }),
+      new FunctionCall({ id: 'fc1', callId: 'c1', name: 'f', args: '{}' }),
+      new AgentConfigUpdate({ id: 'cfg2', toolsRemoved: ['g'] }),
+      new FunctionCall({ id: 'fc2', callId: 'c2', name: 'f', args: '{}' }),
+    ];
+
+    expect(genAI.messageLayout(items)).toEqual(['new', 'skipped', 'merged', 'skipped', 'merged']);
+    const messages = genAI.conversationMessages(items);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.role).toBe('assistant');
+    expect(messages[0]!.parts.map((part) => part.type)).toEqual(['text', 'tool_call', 'tool_call']);
   });
 });
 

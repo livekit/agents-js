@@ -31,7 +31,7 @@ import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-import { genAI, traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, inputDelta, traceTypes, tracer } from '../telemetry/index.js';
 import { stripAllMarkup } from '../tts/provider_format.js';
 import {
   type FlushSentinel,
@@ -77,7 +77,8 @@ export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
 export const DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
 export const RUNNING_TOOL_PLACEHOLDER = 'The tool call is still in progress.';
 export const RUNNING_TOOL_PLACEHOLDER_KEY = '__lk_running_placeholder__';
-const RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX = 'lk_running_placeholder/';
+const RUNNING_TOOL_PLACEHOLDER_ID_SUFFIX = '_running';
+const RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_SUFFIX = '_running_output';
 
 export function _injectRunningToolCalls(
   chatCtx: ChatContext,
@@ -101,6 +102,7 @@ export function _injectRunningToolCalls(
       chatCtx.insert(
         FunctionCall.create({
           ...runningCall,
+          id: `${runningCall.id}${RUNNING_TOOL_PLACEHOLDER_ID_SUFFIX}`,
           extra: { ...runningCall.extra, [RUNNING_TOOL_PLACEHOLDER_KEY]: true },
         }),
       );
@@ -108,7 +110,7 @@ export function _injectRunningToolCalls(
     existingOutputIds.add(runningCall.callId);
     chatCtx.insert(
       FunctionCallOutput.create({
-        id: `${RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX}${runningCall.callId}`,
+        id: `${runningCall.id}${RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_SUFFIX}`,
         callId: runningCall.callId,
         name: runningCall.name,
         output: RUNNING_TOOL_PLACEHOLDER,
@@ -133,7 +135,7 @@ export function _stripRunningToolCalls(chatCtx: ChatContext): void {
       !(
         (item.type === 'function_call' && injectedCallIds.has(item.callId)) ||
         (item.type === 'function_call_output' &&
-          item.id.startsWith(RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX))
+          item.id.endsWith(RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_SUFFIX))
       ),
   );
 }
@@ -648,12 +650,14 @@ export function performLLMInference(
     span: Span,
     inference: genAI.InferenceMarker,
   ) => {
+    const delta = inputDelta.compute(inputDelta.LLM_NODE, chatCtx, span);
     span.setAttribute(
       traceTypes.ATTR_CHAT_CTX,
       // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
       // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
-      JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
+      JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
     );
+    inputDelta.setAttributes(span, delta);
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
     let nodeError: Error | string | undefined;
@@ -794,8 +798,8 @@ export function performLLMInference(
           timeToFirstChunk: data.ttft,
         });
         genAI.setContentAttributes(span, {
-          systemInstructions: genAI.toSystemInstructions(chatCtx),
-          inputMessages: genAI.toInputMessages(chatCtx),
+          systemInstructions: delta.systemInstructions(),
+          inputMessages: delta.inputMessages(),
           toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
           outputMessages: genAI.toOutputMessages({
             text: data.generatedText,

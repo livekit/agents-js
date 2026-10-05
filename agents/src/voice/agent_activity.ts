@@ -72,6 +72,7 @@ import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import {
   genAI,
+  inputDelta,
   recordException,
   recordRealtimeMetrics,
   redactionEnabled,
@@ -570,6 +571,7 @@ export class AgentActivity implements RecognitionHooks {
   private inlineTaskLock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
+  private readonly inputDeltaTracker = new inputDelta.InputDeltaTracker();
 
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
@@ -3835,16 +3837,23 @@ export class AgentActivity implements RecognitionHooks {
     const runningCalls = getRunningTasks(this.agentSession);
     _injectRunningToolCalls(chatCtx, runningCalls);
     const tasks: Array<Task<void>> = [];
-    const [llmTask, llmGenData] = performLLMInference(
-      // preserve  `this` context in llmNode
-      (...args) => this.agent.llmNode(...args),
-      chatCtx,
-      toolCtx,
-      modelSettings,
-      replyAbortController,
-      this.llm?.model,
-      this.llm?.provider,
-    );
+    const deltaScope = this.agentSession.sessionOptions.recordingOptions.inputDelta
+      ? this.inputDeltaTracker.begin()
+      : undefined;
+    const startInference = () =>
+      performLLMInference(
+        // preserve  `this` context in llmNode
+        (...args) => this.agent.llmNode(...args),
+        chatCtx,
+        toolCtx,
+        modelSettings,
+        replyAbortController,
+        this.llm?.model,
+        this.llm?.provider,
+      );
+    const [llmTask, llmGenData] = deltaScope
+      ? inputDelta.runWithScope(deltaScope, startInference)
+      : startInference();
     tasks.push(llmTask);
     // as python's _on_llm_task_done: a genuine LLM failure (not a cancellation) fails the
     // speech, through exception() and the agent_turn span. Nothing else awaits this task's
@@ -3947,6 +3956,8 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
+
+    if (deltaScope && speechHandle.scheduled) deltaScope.commit();
 
     let userMetrics: MetricsReport | undefined = _previousUserMetrics;
     // Add new message to actual chat context if the speech is scheduled

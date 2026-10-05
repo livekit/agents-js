@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
-import { genAI, recordException, traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, inputDelta, recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, Task, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
@@ -283,11 +283,19 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       stream: true,
       outputType: traceTypes.GenAIOutputType.TEXT,
     });
+    if (this.genAIOperationName === undefined && inputDelta.active()) {
+      genAI.setContentAttributes(span, {
+        toolDefinitions: this.#toolCtx ? genAI.toToolDefinitions(this.#toolCtx.functionTools) : [],
+      });
+      return;
+    }
+    const delta = inputDelta.compute(inputDelta.LLM_REQUEST, this.#chatCtx, span);
     genAI.setContentAttributes(span, {
-      systemInstructions: genAI.toSystemInstructions(this.#chatCtx),
-      inputMessages: genAI.toInputMessages(this.#chatCtx),
+      systemInstructions: delta.systemInstructions(),
+      inputMessages: delta.inputMessages(),
       toolDefinitions: this.#toolCtx ? genAI.toToolDefinitions(this.#toolCtx.functionTools) : [],
     });
+    inputDelta.setAttributes(span, delta);
   }
 
   private _mainTaskImpl = async (span: Span) => {

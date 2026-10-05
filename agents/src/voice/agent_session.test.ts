@@ -188,6 +188,7 @@ describe('resolveRecordingOptions', () => {
       logs: true,
       transcript: true,
       redaction: false,
+      inputDelta: false,
     });
     expect(resolveRecordingOptions(false)).toEqual({
       audio: false,
@@ -195,6 +196,7 @@ describe('resolveRecordingOptions', () => {
       logs: false,
       transcript: false,
       redaction: false,
+      inputDelta: false,
     });
   });
 
@@ -205,6 +207,7 @@ describe('resolveRecordingOptions', () => {
       logs: true,
       transcript: true,
       redaction: false,
+      inputDelta: false,
     });
 
     expect(resolveRecordingOptions({ redaction: true })).toEqual({
@@ -213,6 +216,7 @@ describe('resolveRecordingOptions', () => {
       logs: true,
       transcript: true,
       redaction: true,
+      inputDelta: false,
     });
 
     // The granular form from the docs: keep audio, drop everything else.
@@ -230,7 +234,10 @@ describe('resolveRecordingOptions', () => {
       logs: false,
       transcript: false,
       redaction: true,
+      inputDelta: false,
     });
+
+    expect(resolveRecordingOptions({ inputDelta: true }).inputDelta).toBe(true);
   });
 
   it('returns a fresh object so callers cannot corrupt the shared defaults', () => {

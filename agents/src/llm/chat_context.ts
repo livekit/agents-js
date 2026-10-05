@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
+import { createHash } from 'node:crypto';
 import { stripExprMarkup } from '../tts/provider_format.js';
 import { createImmutableArray, shortuuid } from '../utils.js';
 import type { LLM } from './llm.js';
@@ -740,6 +741,121 @@ export type ChatItem =
   | AgentHandoffItem
   | AgentConfigUpdate;
 
+type EssentialField = ChatRole | boolean | string | ChatContent[];
+
+/** The item payload used by both equivalence checks and telemetry fingerprints. */
+function essentialFields(item: ChatItem): EssentialField[] {
+  switch (item.type) {
+    case 'message':
+      return [item.role, item.interrupted, item.content];
+    case 'function_call':
+      return [item.name, item.callId, item.args];
+    case 'function_call_output':
+      return [item.name, item.callId, item.output, item.isError];
+    case 'agent_handoff':
+    case 'agent_config_update':
+      return [];
+  }
+}
+
+const inlineImageTokens = new WeakMap<ImageContent, { source: unknown; token: number }>();
+const videoFrameTokens = new WeakMap<object, number>();
+let nextMediaToken = 1;
+
+function mediaToken(content: ImageContent): number {
+  if (typeof content.image === 'object') {
+    let token = videoFrameTokens.get(content.image);
+    if (token === undefined) {
+      token = nextMediaToken++;
+      videoFrameTokens.set(content.image, token);
+    }
+    return token;
+  }
+
+  const previous = inlineImageTokens.get(content);
+  if (previous?.source === content.image) return previous.token;
+  const token = nextMediaToken++;
+  inlineImageTokens.set(content, { source: content.image, token });
+  return token;
+}
+
+function fingerprintValue(value: EssentialField | ChatContent): unknown {
+  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.map(fingerprintValue);
+  if (isInstructions(value)) {
+    return ['instructions', value.audio, value.text, value.value];
+  }
+  if (value.type === 'image_content') {
+    const source =
+      typeof value.image === 'string' && !value.image.startsWith('data:')
+        ? value.image
+        : mediaToken(value);
+    return [
+      'image',
+      value.id,
+      source,
+      value.inferenceWidth,
+      value.inferenceHeight,
+      value.inferenceDetail,
+      value.mimeType,
+    ];
+  }
+  return ['audio', value.transcript];
+}
+
+/** @internal A media-safe fingerprint of an item's essential payload (excluding id/type). */
+export function chatItemFingerprint(item: ChatItem): string {
+  const payload = JSON.stringify([item.type, ...essentialFields(item).map(fingerprintValue)]);
+  return createHash('blake2b512').update(payload).digest('hex').slice(0, 16);
+}
+
+function contentEqual(a: ChatContent[], b: ChatContent[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((left, index) => {
+    const right = b[index]!;
+    if (typeof left === 'string' || typeof right === 'string') return left === right;
+    if (isInstructions(left) || isInstructions(right)) {
+      return (
+        isInstructions(left) &&
+        isInstructions(right) &&
+        left.audio === right.audio &&
+        left.text === right.text &&
+        left.value === right.value
+      );
+    }
+    if (left.type !== right.type) return false;
+    if (left.type === 'image_content' && right.type === 'image_content') {
+      return (
+        left.id === right.id &&
+        left.image === right.image &&
+        left.inferenceDetail === right.inferenceDetail &&
+        left.inferenceWidth === right.inferenceWidth &&
+        left.inferenceHeight === right.inferenceHeight &&
+        left.mimeType === right.mimeType
+      );
+    }
+    return (
+      left.type === 'audio_content' &&
+      right.type === 'audio_content' &&
+      left.frame.length === right.frame.length &&
+      left.frame.every((frame, frameIndex) => frame === right.frame[frameIndex]) &&
+      left.transcript === right.transcript
+    );
+  });
+}
+
+function essentialFieldsEqual(a: ChatItem, b: ChatItem): boolean {
+  if (a.type !== b.type) return false;
+  const left = essentialFields(a);
+  const right = essentialFields(b);
+  return left.every((value, index) => {
+    const other = right[index]!;
+    return Array.isArray(value) && Array.isArray(other)
+      ? contentEqual(value, other)
+      : value === other;
+  });
+}
+
 export class ChatContext {
   protected _items: ChatItem[];
 
@@ -1065,104 +1181,8 @@ export class ChatContext {
       const a = this.items[i]!;
       const b = other.items[i]!;
 
-      if (a.id !== b.id || a.type !== b.type) {
+      if (a.id !== b.id || a.type !== b.type || !essentialFieldsEqual(a, b)) {
         return false;
-      }
-
-      if (a.type === 'message' && b.type === 'message') {
-        if (
-          a.role !== b.role ||
-          a.interrupted !== b.interrupted ||
-          !this.compareContent(a.content, b.content)
-        ) {
-          return false;
-        }
-      } else if (a.type === 'function_call' && b.type === 'function_call') {
-        if (
-          a.name !== b.name ||
-          a.callId !== b.callId ||
-          a.args !== b.args ||
-          a.thoughtSignature !== b.thoughtSignature ||
-          a.groupId !== b.groupId ||
-          JSON.stringify(a.extra) !== JSON.stringify(b.extra)
-        ) {
-          return false;
-        }
-      } else if (a.type === 'function_call_output' && b.type === 'function_call_output') {
-        if (
-          a.name !== b.name ||
-          a.callId !== b.callId ||
-          a.output !== b.output ||
-          a.isError !== b.isError
-        ) {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Compare two content arrays for equality.
-   */
-  private compareContent(a: ChatContent[], b: ChatContent[]): boolean {
-    if (a.length !== b.length) {
-      return false;
-    }
-
-    for (let i = 0; i < a.length; i++) {
-      const contentA = a[i]!;
-      const contentB = b[i]!;
-
-      if (typeof contentA === 'string' && typeof contentB === 'string') {
-        if (contentA !== contentB) {
-          return false;
-        }
-        continue;
-      }
-
-      if (typeof contentA !== typeof contentB) {
-        return false;
-      }
-
-      if (isInstructions(contentA) && isInstructions(contentB)) {
-        if (
-          contentA.audio !== contentB.audio ||
-          contentA.text !== contentB.text ||
-          contentA.value !== contentB.value
-        ) {
-          return false;
-        }
-        continue;
-      }
-
-      if (isInstructions(contentA) || isInstructions(contentB)) {
-        return false;
-      }
-
-      if (typeof contentA === 'object' && typeof contentB === 'object') {
-        if (contentA.type === 'image_content' && contentB.type === 'image_content') {
-          if (
-            contentA.id !== contentB.id ||
-            contentA.image !== contentB.image ||
-            contentA.inferenceDetail !== contentB.inferenceDetail ||
-            contentA.inferenceWidth !== contentB.inferenceWidth ||
-            contentA.inferenceHeight !== contentB.inferenceHeight ||
-            contentA.mimeType !== contentB.mimeType
-          ) {
-            return false;
-          }
-        } else if (contentA.type === 'audio_content' && contentB.type === 'audio_content') {
-          if (contentA.frame.length !== contentB.frame.length) {
-            return false;
-          }
-          if (contentA.transcript !== contentB.transcript) {
-            return false;
-          }
-        } else {
-          return false;
-        }
       }
     }
 

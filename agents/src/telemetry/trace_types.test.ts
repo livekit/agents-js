@@ -110,6 +110,10 @@ const SAFE_KEYS = new Set([
   'lk.agent_name',
   'lk.cloud_agent_id',
   'lk.deployment_id',
+  // Input delta markers: a flag, a count, and a span id.
+  'lk.input.delta',
+  'lk.input.base_span_id',
+  'lk.input.dropped_from_base',
   'lk.session_options',
   'lk.generation_id',
   'lk.generation_count',

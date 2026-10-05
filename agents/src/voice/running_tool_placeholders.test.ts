@@ -26,6 +26,10 @@ describe('running tool placeholders', () => {
         (item) => item.type === 'function_call_output' && item.callId === running.callId,
       ),
     ).toHaveLength(1);
+    expect(chatCtx.items.map((item) => item.id)).toEqual([
+      `${running.id}_running`,
+      `${running.id}_running_output`,
+    ]);
   });
 
   it('adds only the missing output when the running call is already in context', () => {
