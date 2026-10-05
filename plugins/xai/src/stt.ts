@@ -5,6 +5,7 @@ import type { LanguageCode } from '@livekit/agents';
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIError,
   APIStatusError,
   type AudioBuffer,
   AudioByteStream,
@@ -248,20 +249,22 @@ export class SpeechStream extends stt.SpeechStream {
         await this.#runWS(ws);
       } catch (e) {
         if (!this.closed && !this.input.closed) {
-          if (retries >= maxRetry) {
-            throw new Error(`failed to connect to xAI after ${retries} attempts: ${e}`);
+          if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
+            throw e;
           }
 
           const delay = Math.min(retries * 5, 10);
           retries++;
 
           this.#logger.warn(
-            `failed to connect to xAI STT, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+            { error: e, retryDelayMs: delay * 1000, attempt: retries, maxRetry },
+            'Failed to connect to xAI STT, retrying',
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            `xAI STT disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            { error: e, inputClosed: this.input.closed, isClosed: this.closed },
+            'xAI STT disconnected, connection is closed',
           );
         }
       }
@@ -274,6 +277,8 @@ export class SpeechStream extends stt.SpeechStream {
     this.#resetWS = new Future();
     this.#serverReady = new Future();
     let closing = false;
+    const attemptController = new AbortController();
+    const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
 
     const wsMonitor = Task.from(async (controller) => {
       const closed = new Promise<void>((_, reject) => {
@@ -296,17 +301,16 @@ export class SpeechStream extends stt.SpeechStream {
     });
 
     const sendTask = async () => {
-      await this.#serverReady.await;
+      await Promise.race([this.#serverReady.await, waitForAbort(attemptSignal)]);
+      if (attemptSignal.aborted) return;
 
       const samples50ms = Math.floor(this.#opts.sampleRate / 20);
       const stream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
-      const abortPromise = waitForAbort(this.abortSignal);
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
+          const result = await this.input.next({ signal: attemptSignal });
 
-          if (result === undefined) return;
           if (result.done) break;
 
           const data = result.value;
@@ -325,16 +329,19 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(frame.data.buffer);
           }
         }
+      } catch (error) {
+        if (!attemptSignal.aborted) throw error;
       } finally {
         this.#audioDurationCollector.flush();
         closing = true;
-        ws.send(JSON.stringify({ type: 'audio.done' }));
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'audio.done' }));
         wsMonitor.cancel();
       }
     };
 
-    const listenTask = Task.from(async (controller) => {
+    const listenTask = Task.from(async () => {
       const listenMessage = new Promise<void>((resolve, reject) => {
+        ws.once('close', () => resolve());
         ws.on('message', (msg) => {
           try {
             const json = JSON.parse(msg.toString());
@@ -356,15 +363,24 @@ export class SpeechStream extends stt.SpeechStream {
         });
       });
 
-      await Promise.race([listenMessage, waitForAbort(controller.signal)]);
-    }, this.abortController);
+      await Promise.race([listenMessage, waitForAbort(attemptSignal)]);
+    });
 
-    await Promise.race([
-      this.#resetWS.await,
-      Promise.all([sendTask(), listenTask.result, wsMonitor]),
-    ]);
-    closing = true;
-    ws.close();
+    const sendPromise = sendTask();
+    try {
+      await Promise.race([
+        this.#resetWS.await,
+        waitForAbort(attemptSignal),
+        Promise.all([sendPromise, listenTask.result, wsMonitor.result]),
+      ]);
+    } finally {
+      closing = true;
+      attemptController.abort();
+      wsMonitor.cancel();
+      ws.close();
+      await Promise.allSettled([sendPromise, listenTask.result, wsMonitor.result]);
+      ws.removeAllListeners('message');
+    }
   }
 
   #onAudioDurationReport(duration: number) {
@@ -463,7 +479,10 @@ export class SpeechStream extends stt.SpeechStream {
         this.#putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
       }
     } else if (msgType === 'error') {
-      this.#logger.error(`xAI STT error: ${(data['message'] as string) ?? 'unknown error'}`);
+      throw new APIStatusError({
+        message: `xAI STT error: ${(data['message'] as string) ?? 'unknown error'}`,
+        options: { body: data },
+      });
     } else {
       this.#logger.warn(`received unexpected message from xAI: ${msgType}`);
     }
