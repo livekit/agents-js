@@ -1,0 +1,19 @@
+.changeset/quiet-owls-replay.md
+  s_3ec95cd2af5f5a::t_f82610f8b10918 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3331df116cbe309d61a7d1b506b115fad0f5f034",
+  "prompts": {},
+  "sessions": {
+    "s_3ec95cd2af5f5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed267a58-9cb8-41d5-983a-3c002fe13dc7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
