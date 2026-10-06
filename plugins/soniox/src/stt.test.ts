@@ -88,6 +88,72 @@ describe('TokenAccumulator', () => {
     expect(accumulator.langSegments).toEqual([]);
   });
 
+  it('covers all timed tokens when timing arrives late', () => {
+    const accumulator = new TokenAccumulator();
+    accumulator.update({ text: " He's", language: 'en', is_final: true });
+    accumulator.update({ text: ' trying', language: 'en', is_final: true });
+    accumulator.update({
+      text: '.',
+      language: 'en',
+      is_final: true,
+      start_ms: 43663,
+      end_ms: 43843,
+    });
+
+    expect(accumulator.text).toBe(" He's trying.");
+    expect(accumulator.startTime).toBe(43663);
+    expect(accumulator.endTime).toBe(43843);
+  });
+
+  it('never regresses end time', () => {
+    const accumulator = new TokenAccumulator();
+    accumulator.update({
+      text: " He's",
+      language: 'en',
+      is_final: true,
+      start_ms: 41000,
+      end_ms: 41400,
+    });
+    accumulator.update({
+      text: ' trying',
+      language: 'en',
+      is_final: true,
+      start_ms: 41400,
+      end_ms: 43843,
+    });
+    accumulator.update({
+      text: '.',
+      language: 'en',
+      is_final: true,
+      start_ms: 43663,
+      end_ms: 43700,
+    });
+
+    expect(accumulator.startTime).toBe(41000);
+    expect(accumulator.endTime).toBe(43843);
+  });
+
+  it('takes the earliest start time', () => {
+    const accumulator = new TokenAccumulator();
+    accumulator.update({
+      text: " He's",
+      language: 'en',
+      is_final: true,
+      start_ms: 41000,
+      end_ms: 41400,
+    });
+    accumulator.update({
+      text: ' trying',
+      language: 'en',
+      is_final: true,
+      start_ms: 40000,
+      end_ms: 43843,
+    });
+
+    expect(accumulator.startTime).toBe(40000);
+    expect(accumulator.endTime).toBe(43843);
+  });
+
   it('resets all state via reset()', () => {
     const accumulator = new TokenAccumulator();
     accumulator.update({ text: 'hi', language: 'en', is_final: true, start_ms: 100, end_ms: 200 });

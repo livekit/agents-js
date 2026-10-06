@@ -10,6 +10,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { APIStatusError } from '../src/_exceptions.js';
 import { initializeLogger } from '../src/log.js';
 import {
+  AsyncIterableQueue,
   Event,
   Queue,
   Task,
@@ -20,6 +21,7 @@ import {
   resampleStream,
   toStream,
   waitForWebSocketOpen,
+  waitUntilAborted,
 } from '../src/utils.js';
 
 describe('utils', () => {
@@ -1142,5 +1144,61 @@ world
 
       expect(first.cancelled).toBe(true);
     });
+  });
+});
+
+describe('waitUntilAborted', () => {
+  it('installs one abort listener per call and removes it once the promise settles', async () => {
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, 'addEventListener');
+    const removed = vi.spyOn(controller.signal, 'removeEventListener');
+
+    for (let index = 0; index < 100; index += 1) {
+      const outcome = await waitUntilAborted(Promise.resolve(index), controller.signal);
+      expect(outcome).toEqual({ result: index, isAborted: false });
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(added).toHaveBeenCalledTimes(100);
+    expect(removed).toHaveBeenCalledTimes(100);
+  });
+
+  it('resolves the abort marker when the signal fires first, and still removes its listener', async () => {
+    const controller = new AbortController();
+    const removed = vi.spyOn(controller.signal, 'removeEventListener');
+    const pending = new Promise<never>(() => {});
+
+    const outcome = waitUntilAborted(pending, controller.signal);
+    controller.abort();
+
+    await expect(outcome).resolves.toEqual({ result: undefined, isAborted: true });
+    expect(removed).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe('AsyncIterableQueue.next with a signal', () => {
+  it('leaves the next item in the queue when the read is cancelled, so a torn-down reader cannot steal it', async () => {
+    const queue = new AsyncIterableQueue<number>();
+    const controller = new AbortController();
+    const cancelled = queue.next({ signal: controller.signal });
+
+    controller.abort();
+    await expect(cancelled).rejects.toBeDefined();
+    queue.put(1);
+
+    await expect(queue.next()).resolves.toEqual({ value: 1, done: false });
+  });
+
+  it('rejects a read whose signal is already aborted even when items are buffered, leaving them for the next reader', async () => {
+    const queue = new AsyncIterableQueue<number>();
+    queue.put(1);
+    queue.put(2);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(queue.next({ signal: controller.signal })).rejects.toBeDefined();
+
+    await expect(queue.next()).resolves.toEqual({ value: 1, done: false });
+    await expect(queue.next()).resolves.toEqual({ value: 2, done: false });
   });
 });

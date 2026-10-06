@@ -2,13 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame, LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ATTRIBUTE_TRANSCRIPTION_EXPRESSION,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
 } from '../../constants.js';
 import { TranscriptMarkupStripper } from '../../tts/provider_format.js';
 import { Future } from '../../utils.js';
+import type { PlaybackProgressedEvent } from '../io.js';
 import { ParticipantAudioOutput, ParticipantTranscriptionOutput } from './_output.js';
 
 type CaptureFrameArg = Parameters<ParticipantAudioOutput['captureFrame']>[0];
@@ -598,6 +599,206 @@ describe('ParticipantAudioOutput discarded audio accounting', () => {
       playbackPosition: nextFrame.samplesPerChannel / nextFrame.sampleRate,
     });
     expect(onPlaybackFinished).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * The room sink reports where its audio actually went.
+ *
+ * Playback is continuous between discontinuities, so an event exists to describe a boundary: the
+ * source queue drained, the queue was cleared, or the segment finished.
+ */
+describe('ParticipantAudioOutput playback progress', () => {
+  type ProgressOutput = TestParticipantAudioOutput & {
+    runOffset: number;
+    dryAt?: number;
+    onPlaybackProgressed: (ev: PlaybackProgressedEvent) => void;
+  };
+
+  function makeProgressOutput(source: QueuedAudioSource) {
+    const output = makeTestOutput(source) as ProgressOutput;
+    output.runOffset = 0;
+    const progress: PlaybackProgressedEvent[] = [];
+    output.onPlaybackProgressed = (ev) => progress.push(ev);
+    return { output, progress };
+  }
+
+  beforeEach(() => {
+    // only Date is faked: the tests still rely on real microtask and timer scheduling
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(100_000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const advance = (ms: number) => vi.setSystemTime(Date.now() + ms);
+
+  it('reports uninterrupted playback once', async () => {
+    const source = new QueuedAudioSource();
+    const { output, progress } = makeProgressOutput(source);
+
+    source.queuedDuration = 500; // a backlog the clock never catches up with
+    for (let i = 0; i < 3; i++) {
+      await output.captureFrame(audioFrame(100));
+      advance(100);
+    }
+
+    expect(progress, 'nothing to report while playback is continuous').toEqual([]);
+
+    output.flush();
+    await output.waitForPlayout();
+
+    expect(progress).toHaveLength(1);
+    expect(progress[0]!.offset).toBe(0);
+    expect(progress[0]!.duration).toBeCloseTo(300);
+  });
+
+  it('ends a drained run when the source ran dry, not when we noticed', async () => {
+    const source = new QueuedAudioSource();
+    const { output, progress } = makeProgressOutput(source);
+
+    await output.captureFrame(audioFrame(200));
+    const dryAt = output.dryAt!;
+
+    source.queuedDuration = 0;
+    vi.setSystemTime(dryAt + 500); // the next audio arrives half a second after the source ran out
+    await output.captureFrame(audioFrame(100));
+
+    expect(progress).toHaveLength(1);
+    expect(progress[0]!.offset).toBe(0);
+    expect(progress[0]!.duration).toBeCloseTo(200);
+    // the run ended when the queue emptied, not when the next push revealed it
+    expect(progress[0]!.startedAt).toBeCloseTo(dryAt - 200);
+  });
+
+  it('ends a run at the moment the source ran dry when the flush trails it', async () => {
+    const source = new QueuedAudioSource();
+    const { output, progress } = makeProgressOutput(source);
+
+    await output.captureFrame(audioFrame(200));
+    const dryAt = output.dryAt!;
+
+    source.queuedDuration = 0;
+    vi.setSystemTime(dryAt + 700); // the flush arrives long after the last audio played
+    output.flush();
+    await output.waitForPlayout();
+
+    expect(progress).toHaveLength(1);
+    expect(progress[0]!.offset).toBe(0);
+    expect(progress[0]!.duration).toBeCloseTo(200);
+    expect(progress[0]!.startedAt).toBeCloseTo(dryAt - 200);
+  });
+
+  it('leaves a hole rather than a short tail when the queue is cleared', async () => {
+    const source = new QueuedAudioSource();
+    const { output, progress } = makeProgressOutput(source);
+
+    await output.captureFrame(audioFrame(500));
+    advance(300);
+    source.queuedDuration = 200; // 0.2s queued and about to be thrown away
+
+    output.pause();
+    const held = output.captureFrame(audioFrame(100));
+    await nextTick(); // the capture notices the pause and clears the queue
+    expect(source.clearCount).toBe(1);
+
+    expect(progress).toHaveLength(1);
+    expect(progress[0]!.offset).toBe(0);
+    expect(progress[0]!.duration).toBeCloseTo(300);
+    // the next run resumes past the discarded audio rather than replaying it
+    expect(output.runOffset).toBeCloseTo(500);
+
+    output.resume();
+    await held;
+  });
+
+  it('reports two runs around the hole a pause leaves', async () => {
+    const source = new QueuedAudioSource();
+    const { output, progress } = makeProgressOutput(source);
+
+    await output.captureFrame(audioFrame(500));
+    advance(300);
+    source.queuedDuration = 200;
+
+    output.pause();
+    const held = output.captureFrame(audioFrame(500));
+    await nextTick();
+
+    advance(1000); // the agent stays silent while the user speaks
+    const resumedAt = Date.now();
+    source.queuedDuration = 2000; // a backlog the clock never catches up with
+    output.resume();
+    await held;
+
+    advance(1000); // the resumed audio plays out
+    output.flush();
+    await output.waitForPlayout();
+
+    expect(progress).toHaveLength(2);
+    const [first, second] = progress as [PlaybackProgressedEvent, PlaybackProgressedEvent];
+    expect(first.offset).toBe(0);
+    expect(first.duration).toBeCloseTo(300);
+    // the second run resumes past the discarded audio, and only after playback came back
+    expect(second.offset).toBeCloseTo(500);
+    expect(second.startedAt).toBeGreaterThan(resumedAt);
+    expect(second.startedAt).toBeGreaterThan(first.startedAt + first.duration);
+  });
+
+  it('reports the run once when a pause is followed by an interruption', async () => {
+    const source = new QueuedAudioSource();
+    const { output, progress } = makeProgressOutput(source);
+
+    await output.captureFrame(audioFrame(500));
+    source.queuedDuration = 200;
+
+    output.pause();
+    const held = output.captureFrame(audioFrame(100));
+    await nextTick();
+    expect(progress).toHaveLength(1);
+
+    // the pause already ended the run; the interruption has nothing left to add
+    output.flush();
+    output.clearBuffer();
+    await held;
+    await output.waitForPlayout();
+
+    expect(progress).toHaveLength(1);
+    expect(progress[0]!.duration).toBeCloseTo(300);
+  });
+
+  it('ends the run at the playhead when playback is interrupted', async () => {
+    const source = new QueuedAudioSource();
+    const { output, progress } = makeProgressOutput(source);
+
+    await output.captureFrame(audioFrame(500));
+    source.queuedDuration = 150; // queued and about to be dropped
+
+    output.flush();
+    output.clearBuffer();
+    await output.waitForPlayout();
+
+    expect(progress).toHaveLength(1);
+    expect(progress[0]!.duration).toBeCloseTo(350);
+  });
+
+  it('restarts offsets with each segment', async () => {
+    const source = new QueuedAudioSource();
+    const { output, progress } = makeProgressOutput(source);
+
+    for (let i = 0; i < 2; i++) {
+      source.queuedDuration = 500;
+      await output.captureFrame(audioFrame(200));
+      output.flush();
+      await output.waitForPlayout();
+      advance(1000);
+    }
+
+    expect(progress.map((ev) => ev.offset)).toEqual([0, 0]);
+    for (const ev of progress) {
+      expect(ev.duration).toBeCloseTo(200);
+    }
   });
 });
 

@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { mergeFrames, stt as sttLib } from '@livekit/agents';
+import { log, mergeFrames, stt as sttLib } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { type RequestListener, type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
-import { STT } from './stt.js';
+import { STT, type STTOptions } from './stt.js';
 
 function makeFrame(samplesPerChannel = 800, sampleRate = 16000): AudioFrame {
   const data = new Int16Array(samplesPerChannel);
@@ -79,6 +79,7 @@ async function processStreamEvents(
   messages: Record<string, unknown>[],
   expectedEventCount: number,
   serverVad: { vadSilenceThresholdSecs: number } | null,
+  options: STTOptions = {},
 ): Promise<sttLib.SpeechEvent[]> {
   const { wss, baseURL } = await startWebSocketServer();
   wss.on('connection', (ws) => {
@@ -92,6 +93,7 @@ async function processStreamEvents(
     baseURL,
     model: 'scribe_v2_realtime',
     serverVad,
+    ...options,
   }).stream();
   const events: sttLib.SpeechEvent[] = [];
   try {
@@ -111,8 +113,45 @@ function partialTranscript(text: string): Record<string, unknown> {
   return { message_type: 'partial_transcript', text, words: [] };
 }
 
-function committedTranscript(text: string): Record<string, unknown> {
-  return { message_type: 'committed_transcript', text, words: [] };
+function committedTranscript(
+  text: string,
+  options: {
+    withTimestamps?: boolean;
+    languageCode?: string;
+    words?: Record<string, unknown>[];
+  } = {},
+): Record<string, unknown> {
+  return {
+    message_type: options.withTimestamps
+      ? 'committed_transcript_with_timestamps'
+      : 'committed_transcript',
+    text,
+    words: options.words ?? [],
+    ...(options.languageCode !== undefined && { language_code: options.languageCode }),
+  };
+}
+
+async function realtimeConnectionUrl(options: STTOptions = {}): Promise<URL> {
+  const { wss, baseURL } = await startWebSocketServer();
+  let requestUrl = '';
+  wss.on('connection', (_ws, req) => {
+    requestUrl = req.url ?? '';
+  });
+
+  const stream = new STT({
+    apiKey: 'test-key',
+    baseURL,
+    model: 'scribe_v2_realtime',
+    ...options,
+  }).stream();
+  try {
+    await waitUntil(() => requestUrl !== '');
+    return new URL(`ws://127.0.0.1${requestUrl}`);
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stream.close();
+    await closeWebSocketServer(wss);
+  }
 }
 
 function interimTexts(events: sttLib.SpeechEvent[]): string[] {
@@ -198,6 +237,177 @@ describe('ElevenLabs STT integration', () => {
 });
 
 describe('ElevenLabs STT', () => {
+  it('normalizes the primary language in the realtime connection URL', async () => {
+    const url = await realtimeConnectionUrl({
+      languageCode: 'en_US',
+      secondaryLanguages: ['ru-RU'],
+    });
+
+    expect(url.searchParams.getAll('language_code')).toEqual(['en']);
+    expect(url.searchParams.getAll('secondary_languages')).toEqual(['ru']);
+  });
+
+  it('includes secondary languages as repeated realtime query parameters', async () => {
+    const url = await realtimeConnectionUrl({
+      languageCode: 'en',
+      secondaryLanguages: ['ru', 'es'],
+    });
+
+    expect(url.searchParams.get('language_code')).toBe('en');
+    expect(url.searchParams.getAll('secondary_languages')).toEqual(['ru', 'es']);
+  });
+
+  it('normalizes secondary languages in the realtime connection URL', async () => {
+    const url = await realtimeConnectionUrl({
+      languageCode: 'en',
+      secondaryLanguages: ['ru_RU', 'french', 'spa'],
+    });
+
+    expect(url.searchParams.getAll('secondary_languages')).toEqual(['ru', 'fr', 'es']);
+  });
+
+  it('omits secondary languages when not given', async () => {
+    const url = await realtimeConnectionUrl({ languageCode: 'en' });
+
+    expect(url.searchParams.has('secondary_languages')).toBe(false);
+  });
+
+  it('normalizes language options before serializing them', async () => {
+    const url = await realtimeConnectionUrl({
+      languageCode: 'en_US',
+      secondaryLanguages: ['ru_RU', 'french', 'spa'],
+    });
+
+    expect(url.searchParams.get('language_code')).toBe('en');
+    expect(url.searchParams.getAll('secondary_languages')).toEqual(['ru', 'fr', 'es']);
+  });
+
+  it('ignores secondary languages for batch models', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new STT({ apiKey: 'test-key', model: 'scribe_v2', secondaryLanguages: ['ru'] });
+
+    expect(warn).toHaveBeenCalledWith(
+      '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
+    );
+    warn.mockRestore();
+  });
+
+  it('requests language detection when no language is pinned', async () => {
+    const url = await realtimeConnectionUrl();
+
+    expect(url.searchParams.get('include_language_detection')).toBe('true');
+  });
+
+  it('omits language detection when a language is pinned', async () => {
+    const url = await realtimeConnectionUrl({ languageCode: 'en' });
+
+    expect(url.searchParams.has('include_language_detection')).toBe(false);
+  });
+
+  it('requests language detection when explicitly enabled', async () => {
+    const url = await realtimeConnectionUrl({
+      languageCode: 'en',
+      includeLanguageDetection: true,
+    });
+
+    expect(url.searchParams.get('include_language_detection')).toBe('true');
+  });
+
+  it('omits language detection when explicitly disabled', async () => {
+    const url = await realtimeConnectionUrl({ includeLanguageDetection: false });
+
+    expect(url.searchParams.has('include_language_detection')).toBe(false);
+  });
+
+  it('reports the detected language on final transcripts', async () => {
+    const events = await processStreamEvents(
+      [
+        committedTranscript('привет'),
+        committedTranscript('привет', { withTimestamps: true, languageCode: 'ru' }),
+      ],
+      3,
+      { vadSilenceThresholdSecs: 0.5 },
+      { languageCode: 'en', secondaryLanguages: ['ru'], includeLanguageDetection: true },
+    );
+
+    const finals = events.filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT);
+    expect(finals).toHaveLength(1);
+    expect(finals[0]?.alternatives?.[0]?.language).toBe('ru');
+  });
+
+  it('reports autodetected languages without adding unrequested word timings', async () => {
+    const events = await processStreamEvents(
+      [
+        committedTranscript('привет', {
+          withTimestamps: true,
+          languageCode: 'ru',
+          words: [{ text: 'привет', start: 0.1, end: 0.4 }],
+        }),
+        committedTranscript('привет'),
+      ],
+      2,
+      null,
+    );
+
+    const finals = events.filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT);
+    expect(finals).toHaveLength(1);
+    expect(finals[0]?.alternatives?.[0]?.language).toBe('ru');
+    expect(finals[0]?.alternatives?.[0]?.words).toBeUndefined();
+  });
+
+  it('keeps the plain final transcript when detection is disabled', async () => {
+    const events = await processStreamEvents(
+      [committedTranscript('hola'), committedTranscript('hola', { withTimestamps: true })],
+      2,
+      null,
+      { languageCode: 'es' },
+    );
+
+    const finals = events.filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT);
+    expect(finals).toHaveLength(1);
+    expect(finals[0]?.alternatives?.[0]?.language).toBe('es');
+  });
+
+  describe.each([
+    'partial_transcript',
+    'committed_transcript',
+    'committed_transcript_with_timestamps',
+  ] as const)('%s language', (messageType) => {
+    it.each([
+      ['es', {}, 'es'],
+      ['es', { language_code: null }, 'es'],
+      ['es', { language_code: '' }, 'es'],
+      ['es', { language_code: 'fra' }, 'fr'],
+      [undefined, {}, 'en'],
+      [undefined, { language_code: null }, 'en'],
+      [undefined, { language_code: '' }, 'en'],
+      [undefined, { language_code: 'fra' }, 'fr'],
+    ] as const)(
+      'falls back from $1 with configured language $0 to $2',
+      async (languageCode, languageData, expectedLanguage) => {
+        const events = await processStreamEvents(
+          [{ message_type: messageType, text: 'hola', ...languageData }],
+          2,
+          null,
+          {
+            languageCode,
+            includeTimestamps: messageType === 'committed_transcript_with_timestamps',
+            includeLanguageDetection: false,
+          },
+        );
+
+        const transcript = events.at(-1);
+        expect(transcript?.type).toBe(
+          messageType === 'partial_transcript'
+            ? sttLib.SpeechEventType.INTERIM_TRANSCRIPT
+            : sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+        );
+        expect(transcript?.alternatives?.[0]?.language).toBe(expectedLanguage);
+      },
+    );
+  });
+
   it('forwards advancing partial transcripts', async () => {
     const events = await processStreamEvents(
       [partialTranscript('yeah'), partialTranscript('yeah please')],
@@ -227,6 +437,7 @@ describe('ElevenLabs STT', () => {
       [partialTranscript('right'), committedTranscript('right'), partialTranscript('right')],
       6,
       { vadSilenceThresholdSecs: 0.5 },
+      { includeLanguageDetection: false },
     );
 
     expect(interimTexts(events)).toEqual(['right', 'right']);
@@ -237,6 +448,7 @@ describe('ElevenLabs STT', () => {
       [partialTranscript('right'), committedTranscript(''), partialTranscript('right')],
       5,
       null,
+      { includeLanguageDetection: false },
     );
 
     expect(interimTexts(events)).toEqual(['right', 'right']);
@@ -294,6 +506,7 @@ describe('ElevenLabs STT', () => {
         baseURL,
         model: 'scribe_v2_realtime',
         serverVad: { vadSilenceThresholdSecs: 0.5 },
+        includeLanguageDetection: false,
       }).stream();
       await waitUntil(() => connected);
       stream.pushFrame(makeFrame());
@@ -424,13 +637,13 @@ describe('ElevenLabs STT', () => {
         );
         ws.send(
           JSON.stringify({
-            message_type: 'committed_transcript',
+            message_type: 'committed_transcript_with_timestamps',
             text: 'hello',
             language_code: 'en',
             words: [{ text: 'hello', start: 0.1, end: 0.4 }],
           }),
         );
-        ws.send(JSON.stringify({ message_type: 'committed_transcript', text: '' }));
+        ws.send(JSON.stringify({ message_type: 'committed_transcript_with_timestamps', text: '' }));
         setTimeout(() => ws.close(), 20);
       });
     });
@@ -481,12 +694,7 @@ describe('ElevenLabs STT', () => {
         startTime: 1.1,
         endTime: 1.4,
       });
-      expect(speechEvents[2]?.alternatives?.[0]?.words?.[0]).toMatchObject({
-        text: 'hello',
-        startTime: 1.1,
-        endTime: 1.4,
-        startTimeOffset: 1,
-      });
+      expect(speechEvents[2]?.alternatives?.[0]?.words).toBeUndefined();
     } finally {
       await closeWebSocketServer(wss);
     }
@@ -544,6 +752,115 @@ describe('ElevenLabs STT', () => {
       await closeWebSocketServer(wss);
     }
   });
+
+  it('defaults audio chunks to 50ms', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const sent: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => sent.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      stream.pushFrame(makeFrame(784));
+      stream.flush();
+      await waitUntil(() => sent.some((message) => message.commit === true));
+      expect(sent.map((message) => message.commit)).toEqual([false, true]);
+      expect(Buffer.from(sent[0]?.audio_base_64 as string, 'base64')).toHaveLength(1568);
+
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => sent.length === 3);
+      expect(sent[2]?.commit).toBe(false);
+      expect(Buffer.from(sent[2]?.audio_base_64 as string, 'base64')).toHaveLength(1600);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it.each([0, -1, 0.5, 100.5, true, false, null, '100'])(
+    'rejects invalid audio chunk duration %j',
+    (audioChunkDuration) => {
+      expect(
+        () =>
+          new STT({
+            apiKey: 'test-key',
+            audioChunkDuration: audioChunkDuration as number,
+          }),
+      ).toThrow('audioChunkDuration must be a positive integer');
+    },
+  );
+
+  for (const sampleRate of [8000, 16000, 48000] as const) {
+    for (const audioChunkDuration of [1, 50, 75, 100, 200]) {
+      for (const tailDuration of [0, 1]) {
+        it(`preserves ${sampleRate}Hz audio with ${audioChunkDuration}ms chunks and ${tailDuration}ms tail`, async () => {
+          const { wss, baseURL } = await startWebSocketServer();
+          const sent: Record<string, unknown>[] = [];
+          wss.on('connection', (ws) => {
+            ws.on('message', (raw) =>
+              sent.push(JSON.parse(raw.toString()) as Record<string, unknown>),
+            );
+          });
+
+          const stream = new STT({
+            apiKey: 'test-key',
+            baseURL,
+            model: 'scribe_v2_realtime',
+            sampleRate,
+            audioChunkDuration,
+          }).stream();
+          const totalSamples = Math.floor(
+            (sampleRate * (audioChunkDuration * 2 + tailDuration)) / 1000,
+          );
+          const audio = Buffer.from(
+            Array.from({ length: totalSamples * 2 }, (_, index) => index % 251),
+          );
+          const inputFrameBytes = Math.floor((sampleRate * 20) / 1000) * 2;
+          const chunkBytes = Math.floor((sampleRate * audioChunkDuration) / 1000) * 2;
+          const expectedChunks = Array.from(
+            { length: Math.ceil(audio.length / chunkBytes) },
+            (_, index) => audio.subarray(index * chunkBytes, (index + 1) * chunkBytes),
+          );
+
+          try {
+            for (let offset = 0; offset < audio.length; offset += inputFrameBytes) {
+              const data = audio.subarray(offset, offset + inputFrameBytes);
+              stream.pushFrame(
+                new AudioFrame(
+                  new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2),
+                  sampleRate,
+                  1,
+                  data.byteLength / 2,
+                ),
+              );
+            }
+
+            await waitUntil(() => sent.length >= Math.floor(audio.length / chunkBytes));
+            stream.flush();
+            await waitUntil(() => sent.length >= expectedChunks.length + 1);
+
+            expect(sent.slice(0, -1).map((message) => message.audio_base_64)).toEqual(
+              expectedChunks.map((chunk) => chunk.toString('base64')),
+            );
+            expect(sent.map((message) => message.commit)).toEqual([
+              ...expectedChunks.map(() => false),
+              true,
+            ]);
+            expect(sent.every((message) => message.sample_rate === sampleRate)).toBe(true);
+            expect(sent.at(-1)?.audio_base_64).toBe('');
+          } finally {
+            stream.close();
+            await closeWebSocketServer(wss);
+          }
+        });
+      }
+    }
+  }
 
   it('builds realtime query params for language, timestamps, and server VAD', async () => {
     const { wss, baseURL } = await startWebSocketServer();

@@ -7,6 +7,7 @@ import type { WebSocket } from 'ws';
 import { APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
+import { ChatMessage } from '../llm/index.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import {
@@ -17,8 +18,9 @@ import {
   SpeechEventType,
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
+import { type AudioBuffer, Task, cancelAndWait, shortuuid, waitUntilAborted } from '../utils.js';
 import { type VAD, VADEventType, type VADStream } from '../vad.js';
+import type { ConversationItemAddedEvent } from '../voice/events.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type SttServerEvent,
@@ -48,7 +50,8 @@ export type AssemblyaiModels =
   | 'assemblyai/universal-streaming'
   | 'assemblyai/universal-streaming-multilingual'
   | 'assemblyai/u3-rt-pro'
-  | 'assemblyai/universal-3-5-pro';
+  | 'assemblyai/universal-3-5-pro'
+  | 'assemblyai/universal-3-6-pro';
 
 export type XaiSTTModels = 'xai/stt-1';
 
@@ -135,8 +138,10 @@ export interface AssemblyAIOptions {
   keyterms_prompt?: string[];
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
-  /** Context to bias recognition. Only supported with u3-rt-pro. Max 1500 chars. */
+  /** Context to bias recognition. Only supported with U3 Pro models. Max 1750 chars. */
   agent_context?: string;
+  /** Prior turns carried as context; 0 disables carryover. Only supported with U3 Pro models. */
+  previous_context_n_turns?: number;
   /** Isolate the primary voice. Only supported with u3-rt-pro. */
   voice_focus?: 'near-field' | 'far-field';
   /** Background suppression strength. Only supported with u3-rt-pro. */
@@ -246,6 +251,19 @@ function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): b
   });
 }
 
+// AssemblyAI U3 Pro models accept `agent_context`, so assistant replies can be carried over.
+const ASSEMBLYAI_CARRYOVER_MODELS = new Set([
+  'assemblyai/u3-rt-pro',
+  'assemblyai/universal-3-5-pro',
+  'assemblyai/universal-3-6-pro',
+]);
+
+const ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS = 1750;
+
+function supportsChatContext(model: string | undefined): boolean {
+  return model !== undefined && ASSEMBLYAI_CARRYOVER_MODELS.has(model);
+}
+
 /**
  * Return the provider's keyterm `extra` entry: user keyterms (from `extraKwargs`)
  * merged with the framework `sessionKeyterms`.
@@ -312,6 +330,7 @@ const WORD_ALIGNED_MODELS = new Set([
   'assemblyai/universal-streaming-multilingual',
   'assemblyai/u3-rt-pro',
   'assemblyai/universal-3-5-pro',
+  'assemblyai/universal-3-6-pro',
   'xai/stt-1',
   'speechmatics/enhanced',
   'speechmatics/standard',
@@ -489,6 +508,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       alignedTranscript,
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
       keyterms: keytermsExtraForModel(initialModel) !== undefined,
+      chatContext: supportsChatContext(initialModel),
     });
 
     const {
@@ -602,6 +622,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       ];
       this.updateCapabilities({
         keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
+        chatContext: supportsChatContext(this.opts.model),
         alignedTranscript: alignmentModels.every(alignedTranscriptForModel) ? 'word' : false,
       });
     }
@@ -656,6 +677,22 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       } else {
         stream.updateOptions({ modelOptions: keytermExtra as STTOptions<TModel> });
       }
+    }
+  }
+
+  override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    const chatItem = ev.item;
+    if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
+      // count code points, not UTF-16 units, to match the provider's character limit
+      const chars = Array.from(chatItem.textContent);
+      if (chars.length > ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS) {
+        this.#logger.debug(
+          { fromChars: chars.length, toChars: ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS },
+          'truncating agent_context carryover',
+        );
+      }
+      const agentContext = chars.slice(-ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS).join('');
+      this.updateOptions({ modelOptions: { agent_context: agentContext } as STTOptions<TModel> });
     }
   }
 
@@ -742,7 +779,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   /** @internal */
   _pendingExtra?: Record<string, unknown>;
   private speechDuration = 0;
-  private reconnectEvent = new Event();
   private stt: STT<TModel>;
   private connOptions: APIConnectOptions;
   private activeWs?: WebSocket;
@@ -898,10 +934,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (json.type === 'final_transcript') {
               finalTranscriptReceived = true;
             }
+            // a transcript keeps the finalization wait open; an interim with no text is not one
+            // (xai/stt-1 sends an empty interim every second after session.finalized, for as
+            // long as the socket is open, and the stream would never end)
+            const transcriptText = (json as { transcript?: string }).transcript;
             if (
-              json.type === 'interim_transcript' ||
               json.type === 'final_transcript' ||
-              json.type === 'preflight_transcript'
+              json.type === 'preflight_transcript' ||
+              (json.type === 'interim_transcript' && Boolean(transcriptText))
             ) {
               scheduleFinalizationTimeout();
             }
@@ -942,75 +982,56 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           Math.floor(this.opts.sampleRate / 20), // 50ms
         );
 
-        // Create abort promise once to avoid memory leak
-        const abortPromise = new ThrowsPromise<never, Error>((_, reject) => {
-          if (signal.aborted) {
-            return reject(new Error('Send aborted'));
+        const nextInput = async () => {
+          try {
+            return await this.input.next({ signal });
+          } catch (e) {
+            if (signal.aborted) return undefined;
+            throw e;
           }
-          const onAbort = () => reject(new Error('Send aborted'));
-          signal.addEventListener('abort', onAbort, { once: true });
-        });
-
-        // Manual iteration to support cancellation
-        const iterator = this.input[Symbol.asyncIterator]();
-        try {
-          while (true) {
-            const result = await ThrowsPromise.race([iterator.next(), abortPromise]);
-
-            if (result.done) break;
-            const ev = result.value;
-
-            let frames: AudioFrame[];
-            if (ev === SpeechStream.FLUSH_SENTINEL) {
-              frames = audioStream.flush();
-            } else {
-              const frame = ev as AudioFrame;
-              vadStream?.pushFrame(frame);
-              frames = audioStream.write(new Int16Array(frame.data).buffer);
-            }
-
-            for (const frame of frames) {
-              this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
-              const base64 = Buffer.from(frame.data.buffer).toString('base64');
-              const msg = { type: 'input_audio', audio: base64 };
-              socket.send(JSON.stringify(msg));
-            }
-          }
-
-          inputEnded = true;
-          vadStream?.endInput();
-          sendSessionFinalize(socket);
-          scheduleFinalizationTimeout();
-        } catch (e) {
-          if ((e as Error).message === 'Send aborted') {
+        };
+        while (true) {
+          const result = await nextInput();
+          if (result === undefined) {
             // Expected abort, don't log
             return;
           }
-          throw e;
+          if (result.done) break;
+          const ev = result.value;
+
+          let frames: AudioFrame[];
+          if (ev === SpeechStream.FLUSH_SENTINEL) {
+            frames = audioStream.flush();
+          } else {
+            const frame = ev as AudioFrame;
+            vadStream?.pushFrame(frame);
+            frames = audioStream.write(new Int16Array(frame.data).buffer);
+          }
+
+          for (const frame of frames) {
+            this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
+            const base64 = Buffer.from(frame.data.buffer).toString('base64');
+            const msg = { type: 'input_audio', audio: base64 };
+            socket.send(JSON.stringify(msg));
+          }
         }
+
+        inputEnded = true;
+        vadStream?.endInput();
+        sendSessionFinalize(socket);
+        scheduleFinalizationTimeout();
       };
 
       const processVAD = async (stream: VADStream, socket: WebSocket, signal: AbortSignal) => {
-        const abortPromise = new ThrowsPromise<never, Error>((_, reject) => {
-          if (signal.aborted) {
-            return reject(new Error('VAD aborted'));
-          }
-          const onAbort = () => reject(new Error('VAD aborted'));
-          signal.addEventListener('abort', onAbort, { once: true });
-        });
-
+        // VADStream.next() does not support cancellation.
         const iterator = stream[Symbol.asyncIterator]();
-        try {
-          while (true) {
-            const result = await ThrowsPromise.race([iterator.next(), abortPromise]);
-            if (result.done) break;
-            if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
-            if (socket.readyState !== 1) return;
-            sendSessionFinalize(socket);
-          }
-        } catch (e) {
-          if ((e as Error).message === 'VAD aborted') return;
-          throw e;
+        while (true) {
+          const { result, isAborted } = await waitUntilAborted(iterator.next(), signal);
+          if (isAborted) return;
+          if (result.done) break;
+          if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
+          if (socket.readyState !== 1) return;
+          sendSessionFinalize(socket);
         }
       };
 
@@ -1106,6 +1127,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       try {
         ws = await this.stt.connectWs(this.connOptions.timeoutMs);
+        // An abort that landed during connectWs has no listener yet: the socket would
+        // otherwise idle until the finalization timeout, holding a gateway concurrency slot.
+        if (this.abortController.signal.aborted) break;
         this.activeWs = ws;
         vadStream = vad?.stream() ?? null;
 
@@ -1124,28 +1148,19 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         const vadTask = activeVADStream
           ? Task.from(({ signal }) => processVAD(activeVADStream, ws!, signal), connController)
           : undefined;
-        const waitReconnectTask = Task.from(
-          ({ signal }) => ThrowsPromise.race([this.reconnectEvent.wait(), waitForAbort(signal)]),
-          connController,
-        );
 
         try {
           const taskResults = [sendTask.result, wsListenerTask.result, recvTask.result];
           if (vadTask) taskResults.push(vadTask.result);
 
-          await ThrowsPromise.race([ThrowsPromise.all(taskResults), waitReconnectTask.result]);
-
-          // If reconnect didn't trigger, tasks finished - exit loop
-          if (!waitReconnectTask.done) break;
-
-          // Reconnect triggered - clear event and continue loop
-          this.reconnectEvent.clear();
+          await ThrowsPromise.all(taskResults);
+          break;
         } finally {
           connController.abort();
           this.abortController.signal.removeEventListener('abort', onStreamAbort);
           this.activeWs = undefined;
           vadStream?.close();
-          const tasks = [sendTask, wsListenerTask, recvTask, waitReconnectTask];
+          const tasks = [sendTask, wsListenerTask, recvTask];
           if (vadTask) tasks.push(vadTask);
           await cancelAndWait(tasks, DEFAULT_CANCEL_TIMEOUT);
           resourceCleanup();

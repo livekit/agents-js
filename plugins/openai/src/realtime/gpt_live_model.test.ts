@@ -147,6 +147,11 @@ const ready = async (session: GPTLiveSession) => {
 };
 const waitCount = async (count: number, index = 0) =>
   vi.waitFor(() => expect(server.events(index)).toHaveLength(count));
+const types = (index = 0) =>
+  server
+    .events(index)
+    .slice(1)
+    .map((event) => event.type);
 const startConfig = (index = 0): GPTLive.SessionConfig => {
   const event = server.events(index)[0];
   if (event?.type !== 'session.start') throw new Error('Missing session.start');
@@ -700,6 +705,52 @@ describe('GPTLiveModel', () => {
         .slice(1)
         .map((event) => event.type),
     ).toEqual(['response.item.create', 'response.item.create', 'response.create']);
+  });
+
+  it('holds the continuation until every open call in the conversation is answered', async () => {
+    const session = create();
+    await ready(session);
+    await server.response(session, { type: 'response.created' });
+    await server.response(session, callDone('slow'));
+    await server.response(session, completed());
+    // the same delegation asks again before the first call is answered: the first call stays open
+    await server.response(session, { type: 'response.created' });
+    await server.response(session, callDone('fast'));
+    await server.response(session, completed());
+
+    await session._appendItems([output('fast')]);
+    await waitCount(2);
+    await delay(20);
+    expect(types()).toEqual(['response.item.create']);
+
+    await session._appendItems([output('slow')]);
+    await waitCount(4);
+    await delay(20);
+    expect(types()).toEqual(['response.item.create', 'response.item.create', 'response.create']);
+  });
+
+  it('releases the continuation a failed response held back and discards its calls', async () => {
+    const session = create();
+    await ready(session);
+    await server.response(session, { type: 'response.created' }, 'd1');
+    await server.response(session, callDone('c1'), 'd1');
+    await server.response(session, completed(), 'd1');
+    await server.response(session, { type: 'response.created' }, 'd2');
+    await server.response(session, callDone('c2'), 'd2');
+
+    await session._appendItems([output('c1')]);
+    await waitCount(2);
+    await delay(20);
+    expect(types()).toEqual(['response.item.create']);
+
+    await server.response(session, { type: 'response.failed' }, 'd2');
+    await waitCount(3);
+    expect(types()).toEqual(['response.item.create', 'response.create']);
+
+    // the service refuses an output for a discarded call, so it is context for the voice model
+    await session._appendItems([output('c2')]);
+    await waitCount(4);
+    expect(server.events()[3]?.type).toBe('session.thinking.append');
   });
 
   it.each(['response.failed', 'response.incomplete'])(

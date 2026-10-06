@@ -64,12 +64,7 @@ async function getBranchHeadCommit(
       revision,
       ...params,
     })) {
-      // The commit object structure varies, so we check multiple possible properties
-      const commitHash = (commit as any).oid || (commit as any).id || (commit as any).commitId;
-      if (commitHash) {
-        return commitHash;
-      }
-      break; // Only need the first one
+      return commit.oid;
     }
 
     logger.error({ repo: toRepoId(repo), revision }, 'No commits found for revision');

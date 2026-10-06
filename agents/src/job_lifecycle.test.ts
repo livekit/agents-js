@@ -7,17 +7,24 @@ import { type JobContext, getJobContext } from './job.js';
 import {
   finalizeSession,
   flushJobLogs,
+  flushJobMetrics,
+  flushJobTraces,
   runShutdownCallbacks,
   waitForEntrypointShutdown,
 } from './job_lifecycle.js';
-import { flushOtelLogs } from './telemetry/index.js';
+import { flushCloudMetrics, flushCloudTraces, flushOtelLogs } from './telemetry/index.js';
 import type { AgentSession } from './voice/agent_session.js';
 
-vi.mock('./telemetry/index.js', () => ({
+vi.mock('./telemetry/index.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./telemetry/index.js')>()),
   flushOtelLogs: vi.fn(),
+  flushCloudMetrics: vi.fn(),
+  flushCloudTraces: vi.fn(),
 }));
 
 const flushOtelLogsMock = vi.mocked(flushOtelLogs);
+const flushCloudMetricsMock = vi.mocked(flushCloudMetrics);
+const flushCloudTracesMock = vi.mocked(flushCloudTraces);
 
 function createLogger(): Logger {
   return {
@@ -337,5 +344,61 @@ describe('flushJobLogs', () => {
     await flushJobLogs(logger);
 
     expect(logger.error).toHaveBeenCalledWith({ error }, 'Failed to flush OTEL logs');
+  });
+});
+
+describe('flushJobMetrics', () => {
+  it('exports the pending cloud metrics', async () => {
+    flushCloudMetricsMock.mockResolvedValue();
+    await flushJobMetrics(createLogger());
+    expect(flushCloudMetricsMock).toHaveBeenCalledOnce();
+  });
+
+  it('stops waiting after the metric flush timeout', async () => {
+    vi.useFakeTimers();
+    flushCloudMetricsMock.mockReturnValue(new Promise<void>(() => {}));
+    const logger = createLogger();
+    const completion = flushJobMetrics(logger);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await completion;
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { timeout: 10_000 },
+      'OTEL metric flush timed out; proceeding with job shutdown',
+    );
+  });
+
+  it('continues after logging metric exporter errors', async () => {
+    const error = new Error('exporter failed');
+    const logger = createLogger();
+    flushCloudMetricsMock.mockRejectedValue(error);
+
+    await flushJobMetrics(logger);
+
+    expect(logger.error).toHaveBeenCalledWith({ error }, 'Failed to flush OTEL metrics');
+  });
+});
+
+describe('flushJobTraces', () => {
+  it('exports the remaining spans', async () => {
+    flushCloudTracesMock.mockResolvedValue();
+    await flushJobTraces(createLogger());
+    expect(flushCloudTracesMock).toHaveBeenCalledOnce();
+  });
+
+  it('stops waiting after the trace flush timeout', async () => {
+    vi.useFakeTimers();
+    flushCloudTracesMock.mockReturnValue(new Promise<void>(() => {}));
+    const logger = createLogger();
+    const completion = flushJobTraces(logger);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await completion;
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { timeout: 10_000 },
+      'OTEL trace flush timed out; proceeding with job shutdown',
+    );
   });
 });

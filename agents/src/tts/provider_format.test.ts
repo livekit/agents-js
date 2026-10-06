@@ -220,7 +220,7 @@ describe('transcript stripping (provider-agnostic)', () => {
     const text =
       'Press [Enter], then read [the docs](https://docs.livekit.io). <sound value="sigh"/>';
     const [clean, tags] = splitAllMarkup(text);
-    expect(clean).toBe('Press [Enter], then read [the docs](https://docs.livekit.io). ');
+    expect(clean).toBe('Press [Enter], then read [the docs](https://docs.livekit.io).');
     expect(tags).toEqual([{ type: 'sound', value: 'sigh' }]);
   });
 
@@ -229,7 +229,8 @@ describe('transcript stripping (provider-agnostic)', () => {
     // keep the native Inworld tag on the generic strip path with its own type
     const text = '<expression value="speak calmly"/> Hi <expr type="break" label="1s"/> there.';
     const [clean, tags] = splitAllMarkup(text);
-    expect(clean).toBe(' Hi there.');
+    // the native tag opens the text, so its separator goes with it
+    expect(clean).toBe('Hi there.');
     expect(tags).toContainEqual({ type: 'expression', value: 'speak calmly' });
     expect(tags).toContainEqual({ type: 'break', value: '1s' });
     // conversion must also leave the native tag for the provider pipeline, not eat it
@@ -277,9 +278,11 @@ describe('transcript stripping (provider-agnostic)', () => {
   });
 
   it('keeps the trailing space before a marker at the end of a chunk', () => {
-    // the space before a trailing marker is the separator for words still streaming in,
-    // so it survives the strip (the seam is deduped by TranscriptMarkupStripper)
-    expect(stripAllMarkup('Right. <expr type="sound" label="laugh"/>')).toBe('Right. ');
+    // mid-stream that space is the separator for words still arriving
+    const chunk = 'Right. <expr type="sound" label="laugh"/>';
+    expect(splitAllMarkup(chunk, { atLineStart: false, atTextEnd: false })[0]).toBe('Right. ');
+    // as a whole segment there is nothing still arriving, so the separator goes
+    expect(stripAllMarkup(chunk)).toBe('Right.');
   });
 
   it('dedups the space across chunk seams', () => {
@@ -326,7 +329,7 @@ describe('transcript stripping (provider-agnostic)', () => {
 });
 
 describe('normalizeMarkup', () => {
-  it.each(['xai', 'inworld', 'cartesia', 'fishaudio'])(
+  it.each(['xai', 'inworld', 'cartesia', 'fishaudio', 'gemini'])(
     'closes an unclosed self-closing expr marker for %s',
     (provider) => {
       const text = '<expr type="sound" label="laugh"> Hello';
@@ -343,12 +346,15 @@ describe('normalizeMarkup', () => {
 });
 
 describe('llmInstructions', () => {
-  it.each(['xai', 'inworld', 'cartesia', 'fishaudio'])('uses expr syntax for %s', (provider) => {
-    const instructions = llmInstructions(provider);
-    expect(instructions).toBeDefined();
-    expect(instructions).toContain('<expr');
-    expect(instructions).toContain('<expr type="break" label="');
-  });
+  it.each(['xai', 'inworld', 'cartesia', 'fishaudio', 'gemini'])(
+    'uses expr syntax for %s',
+    (provider) => {
+      const instructions = llmInstructions(provider);
+      expect(instructions).toBeDefined();
+      expect(instructions).toContain('<expr');
+      expect(instructions).toContain('<expr type="break" label="');
+    },
+  );
 
   it('advertises Cartesia’s kinds only', () => {
     const instructions = llmInstructions('cartesia')!;
@@ -414,7 +420,7 @@ const MIXED =
   'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
   '<expr type="prosody" label="whisper">keep it secret</expr>';
 const MIXED_CLEAN =
-  ' Press [Enter] to see <b>bold</b>, ' +
+  'Press [Enter] to see <b>bold</b>, ' +
   'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
   'keep it secret';
 
@@ -755,5 +761,204 @@ describe('dropBracketCues', () => {
     dropBracketCues([timed('Hello [lau')], held);
     const out = dropBracketCues([], held, { final: true });
     expect(out.map((t) => t.text).join('')).toBe('[lau');
+  });
+});
+
+// Gemini-flavored turn: free-form style labels only, lifted out into speech_metadata
+const GEMINI_TURN =
+  '<expr type="expression" label="Thoughtful, Quiet, American accent"/> Sienna? ' +
+  '<expr type="expression" label="Wistful, American accent"/> ' +
+  "What's on your mind, Comanchero?";
+
+describe('Gemini expr dialect', () => {
+  it('advertises its own marker kinds', () => {
+    const instructions = llmInstructions('gemini');
+    expect(instructions).toBeDefined();
+    // free-form style descriptors plus an accent, Gemini's own prompting vocabulary
+    expect(instructions).toContain('<expr type="expression" label="DESCRIPTORS"/>');
+    expect(instructions).toContain('free-form natural language');
+    expect(instructions).toContain('"<PLACE> accent"');
+    // discrete events are real for this voice, and land inline
+    expect(instructions).toContain('type="sound"');
+    expect(instructions).toContain('laugh, chuckle, sigh, breath, cough, argh, gasp, giggle, cry');
+    expect(instructions).toContain('type="break"');
+    // emphasis is the only wrapping prosody, and there is no spell marker
+    expect(instructions).toContain('<expr type="prosody" label="emphasis">');
+    expect(instructions).not.toContain('type="spell"');
+  });
+
+  it('lowers events inline and leaves the style marker', () => {
+    // a discrete event becomes an inline tag; the delivery marker is left standing
+    expect(convertMarkup('gemini', GEMINI_TURN)).toBe(GEMINI_TURN);
+    const turn =
+      '<expr type="expression" label="Easygoing"/> Yeah, <expr type="sound" label="chuckle"/> I get that.';
+    expect(convertMarkup('gemini', turn)).toBe(
+      '<expr type="expression" label="Easygoing"/> Yeah, <chuckle> I get that.',
+    );
+  });
+
+  it('lowers pauses and emphasis to native forms', () => {
+    // Gemini documents one pause length, so a duration is only a hint that a beat belongs
+    expect(convertMarkup('gemini', 'Oh no. <expr type="break" label="300ms"/> Let me look.')).toBe(
+      'Oh no. <short pause> Let me look.',
+    );
+    expect(convertMarkup('gemini', '<expr type="break" label="2s"/> Right.')).toBe(
+      '<short pause> Right.',
+    );
+    // its one in-text prosody control is capitalizing the word
+    expect(
+      convertMarkup('gemini', 'Your code is <expr type="prosody" label="emphasis">B four</expr>.'),
+    ).toBe('Your code is B FOUR.');
+  });
+
+  it('lowers sound aliases and drops unknown labels', () => {
+    // other providers advertise "breathe"; it still lands on a tag Gemini renders
+    expect(convertMarkup('gemini', '<expr type="sound" label="breathe"/> Okay.')).toBe(
+      '<breath> Okay.',
+    );
+    // the general docs write these plural or gerund; they lower onto the stems
+    for (const [written, native] of [
+      ['giggles', 'giggle'],
+      ['crying', 'cry'],
+      ['sighs', 'sigh'],
+    ]) {
+      expect(convertMarkup('gemini', `<expr type="sound" label="${written}"/> Okay.`)).toBe(
+        `<${native}> Okay.`,
+      );
+    }
+    // a label from no vocabulary at all is dropped rather than invented into a tag
+    expect(convertMarkup('gemini', 'Hi <expr type="sound" label="kazoo"/> there.')).toBe(
+      'Hi there.',
+    );
+  });
+
+  it('strips native inline tags from transcripts', () => {
+    // they belong in the words sent to the provider, never in what the user reads
+    const [clean] = splitAllMarkup('Yeah, <chuckle> I get that. <short pause> Right?');
+    expect(clean).toBe('Yeah, I get that. Right?');
+  });
+
+  it('removes the sounds section under steering', () => {
+    const off = llmInstructions('gemini', { nonverbalSounds: false });
+    expect(off).toBeDefined();
+    expect(off).not.toContain('type="sound"');
+    // ... and a single category takes only its own labels with it
+    const noLaughs = llmInstructions('gemini', { nonverbalSounds: { laughing: false } });
+    expect(noLaughs).toBeDefined();
+    expect(noLaughs).not.toContain('chuckle');
+    expect(noLaughs).not.toContain('laugh');
+    expect(noLaughs).not.toContain('giggle'); // the whole laughter family, not just the stem
+    expect(noLaughs).toContain('sigh, breath, cough, argh, gasp, cry');
+  });
+
+  it('strips markers to transcript and tags', () => {
+    const [clean, tags] = splitAllMarkup(GEMINI_TURN);
+    expect(clean).toBe("Sienna? What's on your mind, Comanchero?");
+    expect(tags).toEqual([
+      { type: 'expression', value: 'Thoughtful, Quiet, American accent' },
+      { type: 'expression', value: 'Wistful, American accent' },
+    ]);
+    // the free-form label still surfaces as `lk.expression`
+    const attribute = expressionAttribute(tags);
+    expect(attribute).toBeDefined();
+    expect(Object.values(attribute!)[0]).toContain(
+      '"expression":"Thoughtful, Quiet, American accent"',
+    );
+  });
+
+  it('normalizes an unclosed marker', () => {
+    // the marker is the only thing carrying the style
+    const text = '<expr type="expression" label="Warm, Welcoming"> Hey there.';
+    const [clean, tags] = splitAllMarkup(normalizeMarkup('gemini', text));
+    expect(clean).toBe('Hey there.');
+    expect(tags).toEqual([{ type: 'expression', value: 'Warm, Welcoming' }]);
+  });
+});
+
+function pushAll(chunks: string[]): string {
+  const stripper = new TranscriptMarkupStripper();
+  return chunks.map((c) => stripper.push(c)).join('') + stripper.flush();
+}
+
+describe('a marker opening or closing a turn takes its separator with it', () => {
+  it('leaves no leading space after an opening marker', () => {
+    // a marker opens every turn, with only the space after it
+    expect(stripAllMarkup(JOKE).startsWith('Why did')).toBe(true);
+    expect(stripExprMarkup(JOKE).startsWith('Why did')).toBe(true);
+    expect(splitAllMarkup(JOKE)[0].startsWith('Why did')).toBe(true);
+  });
+
+  it('leaves no trailing space before a closing marker', () => {
+    // the mirror case: a turn ending on a sound strands the space before the marker
+    expect(stripAllMarkup(JOKE).endsWith('better buns!')).toBe(true);
+    expect(stripExprMarkup(JOKE).endsWith('better buns!')).toBe(true);
+    // a marker mid-turn keeps its separator
+    expect(stripAllMarkup(JOKE + ' Ha!').endsWith('buns! Ha!')).toBe(true);
+  });
+
+  it('leaves no trailing space before a streamed closing marker', () => {
+    expect(pushAll(['Hi there! ', '<expr type="sound" label="laugh"/>'])).toBe('Hi there!');
+  });
+
+  it.each([
+    [['<expr type="expression" label="Warm"/> Hi there.']],
+    // the marker lands in a chunk of its own, so its space falls to the next one
+    [['<expr type="expression" label="Warm"/>', ' Hi there.']],
+    [['<expr type="expression" la', 'bel="Warm"/> Hi there.']],
+    [['  <expr type="expression" label="Warm"/> Hi there.']],
+  ])('leaves no leading space after a streamed opening marker: %j', (chunks) => {
+    expect(pushAll(chunks)).toBe('Hi there.');
+  });
+
+  it('does not glue words at a marker mid-segment', () => {
+    // a chunk boundary is not a segment boundary
+    expect(pushAll(['Hi there.', '<expr type="expression" label="Bright"/> Lovely day.'])).toBe(
+      'Hi there. Lovely day.',
+    );
+  });
+});
+
+// one sentence per line puts every marker after the first at the head of a line
+const PER_LINE =
+  '<expr type="expression" label="Warm"/> Hi there.\n' +
+  '<expr type="expression" label="Amused"/> Why so late?';
+
+describe('a marker heading a line takes its separator with it', () => {
+  it('leaves no leading space after a line-opening marker', () => {
+    expect(stripAllMarkup(PER_LINE)).toBe('Hi there.\nWhy so late?');
+    expect(stripExprMarkup(PER_LINE)).toBe('Hi there.\nWhy so late?');
+  });
+
+  it.each([
+    [[PER_LINE]],
+    // the line break ends one chunk, so the next one has no newline of its own to see
+    [[PER_LINE.slice(0, PER_LINE.indexOf('\n') + 1), PER_LINE.slice(PER_LINE.indexOf('\n') + 1)]],
+    [['Hi there.\n', '<expr type="expression" label="Amused"/> Why so late?']],
+  ])('leaves no leading space after a streamed line-opening marker: %j', (chunks) => {
+    expect(pushAll(chunks)).toBe('Hi there.\nWhy so late?');
+  });
+
+  it('keeps the separator of a chunk starting mid-line', () => {
+    // the counterpart trap: that leading space is all there is between two words
+    expect(pushAll(['<expr type="expression" label="Warm"/> Hi', ' there.'])).toBe('Hi there.');
+  });
+
+  it('never collapses paragraph structure', () => {
+    // only the horizontal run a marker stranded goes, never the line break
+    expect(stripAllMarkup('a\n<expr type="sound" label="laugh"/>\nb')).toBe('a\n\nb');
+    for (const text of ['   Indented on purpose.  ', 'a\n   indented line']) {
+      expect(stripAllMarkup(text)).toBe(text);
+      expect(stripExprMarkup(text)).toBe(text);
+    }
+  });
+
+  it('drops only the stranded separator', () => {
+    // the drop happens at the removal, so whitespace on lines the marker never touched is
+    // left alone — indented blocks survive a turn that carries markers
+    const turn = '<expr type="expression" label="Warm"/> Intro:\n    indented text';
+    expect(stripAllMarkup(turn)).toBe('Intro:\n    indented text');
+    expect(stripExprMarkup(turn)).toBe('Intro:\n    indented text');
+    // and a marker mid-line still leaves exactly one separator
+    expect(stripAllMarkup('a <expr type="sound" label="laugh"/> b')).toBe('a b');
   });
 });

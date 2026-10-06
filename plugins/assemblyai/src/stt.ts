@@ -4,6 +4,7 @@
 //
 import {
   type APIConnectOptions,
+  APIConnectionError,
   type AudioBuffer,
   AudioByteStream,
   ChatMessage,
@@ -141,6 +142,12 @@ function speechDataMetadata(data: StreamEventMessage): stt.SpeechData['metadata'
     assemblyai.languageConfidence = data.language_confidence;
   }
 
+  // Universal-3 Pro models ramp this from 0 toward 1 while holding a turn open,
+  // allowing callers to trigger eager generation before the final transcript.
+  if (typeof data.end_of_turn_confidence === 'number') {
+    assemblyai.endOfTurnConfidence = data.end_of_turn_confidence;
+  }
+
   if (Object.keys(assemblyai).length === 0) return undefined;
 
   return { assemblyai };
@@ -182,14 +189,7 @@ export interface STTOptions {
   /** Only supported with the Universal-3 Pro model family. Set at connection time only. */
   previousContextNTurns?: number;
   vadThreshold?: number;
-  /**
-   * Enable speaker diarization. Note: AssemblyAI will return per-word speaker
-   * labels, but the JS framework's `stt.SpeechData` type does not yet expose
-   * a `speakerId` field (unlike the Python framework), so the labels are not
-   * currently surfaced on emitted events. Setting this to `true` still has
-   * effect server-side. Once the base `SpeechData` interface gains speaker
-   * support, `#processStreamEvent` should forward `data.words[].speaker` too.
-   */
+  /** Enable speaker diarization; the turn's speaker label is surfaced as `speakerId`. */
   speakerLabels?: boolean;
   maxSpeakers?: number;
   domain?: string;
@@ -259,6 +259,7 @@ export class STT extends stt.STT {
       interimResults: true,
       alignedTranscript: 'word',
       keyterms: true,
+      diarization: opts.speakerLabels === true,
       chatContext: (opts.agentContextCarryover ?? true) && supportsCarryover,
     });
 
@@ -435,7 +436,7 @@ export class SpeechStream extends stt.SpeechStream {
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           if (retries >= maxRetry) {
-            throw new Error(`failed to connect to AssemblyAI after ${retries} attempts: ${e}`);
+            throw e;
           }
 
           const retryDelaySeconds = Math.min(retries * 5, 10);
@@ -525,8 +526,16 @@ export class SpeechStream extends stt.SpeechStream {
 
     await new Promise<void>((resolve, reject) => {
       ws.on('open', () => resolve());
-      ws.on('error', (error) => reject(error));
-      ws.on('close', (code) => reject(new Error(`WebSocket returned ${code}`)));
+      ws.on('error', (error) =>
+        reject(
+          new APIConnectionError({ message: `AssemblyAI connection failed: ${error.message}` }),
+        ),
+      );
+      ws.on('close', (code) =>
+        reject(
+          new APIConnectionError({ message: `AssemblyAI WebSocket closed with code ${code}` }),
+        ),
+      );
     });
 
     return ws;
@@ -542,7 +551,11 @@ export class SpeechStream extends stt.SpeechStream {
         ws.once('close', (code, reason) => {
           if (!closing) {
             this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            reject(
+              new APIConnectionError({
+                message: `AssemblyAI WebSocket closed unexpectedly with code ${code}`,
+              }),
+            );
           }
         });
       });
@@ -699,6 +712,9 @@ export class SpeechStream extends stt.SpeechStream {
     const transcript = data.transcript ?? '';
     const language = normalizeLanguage(data.language_code ?? 'en');
     const metadata = speechDataMetadata(data);
+    // AssemblyAI labels speakers "A", "B", ... and uses "UNKNOWN" when it can't attribute one.
+    const speakerId =
+      data.speaker_label && data.speaker_label !== 'UNKNOWN' ? data.speaker_label : null;
 
     // Word timestamps are in milliseconds:
     // https://www.assemblyai.com/docs/api-reference/streaming-api/streaming-api#receive.receiveTurn.words
@@ -733,6 +749,7 @@ export class SpeechStream extends stt.SpeechStream {
             endTime,
             confidence,
             words: timedWords,
+            speakerId,
             ...(metadata ? { metadata } : {}),
           },
         ],
@@ -761,6 +778,7 @@ export class SpeechStream extends stt.SpeechStream {
             endTime,
             confidence: utteranceConfidence,
             words: utteranceWords,
+            speakerId,
             ...(metadata ? { metadata } : {}),
           },
         ],
@@ -782,6 +800,7 @@ export class SpeechStream extends stt.SpeechStream {
             endTime,
             confidence,
             words: timedWords,
+            speakerId,
             ...(metadata ? { metadata } : {}),
           },
         ],
