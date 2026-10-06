@@ -87,6 +87,14 @@ export interface AudioOutputCapabilities {
   pause: boolean;
 }
 
+const audioOutputChainControls = new WeakMap<
+  AudioOutput,
+  {
+    next: () => AudioOutput | undefined;
+    replace: (sink: AudioOutput, attached: boolean) => void;
+  }
+>();
+
 export abstract class AudioInput {
   protected multiStream: MultiInputStream<AudioFrame> = new MultiInputStream<AudioFrame>();
 
@@ -137,18 +145,41 @@ export abstract class AudioOutput extends EventEmitter {
   ) {
     super();
     this.capabilities = capabilities;
+    this.attachNextInChainListeners();
+    audioOutputChainControls.set(this, {
+      next: () => this.nextInChain,
+      replace: (sink, attached) => this.replaceNextInChain(sink, attached),
+    });
+  }
 
-    if (this.nextInChain) {
-      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_STARTED, (ev: PlaybackStartedEvent) =>
-        this.onPlaybackStarted(ev.createdAt),
-      );
-      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (ev: PlaybackFinishedEvent) =>
-        this.onPlaybackFinished(ev),
-      );
-      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_PROGRESSED, (ev: PlaybackProgressedEvent) =>
-        this.onPlaybackProgressed(ev),
-      );
-    }
+  private readonly onNextPlaybackStarted = (ev: PlaybackStartedEvent) =>
+    this.onPlaybackStarted(ev.createdAt);
+  private readonly onNextPlaybackFinished = (ev: PlaybackFinishedEvent) =>
+    this.onPlaybackFinished(ev);
+  private readonly onNextPlaybackProgressed = (ev: PlaybackProgressedEvent) =>
+    this.onPlaybackProgressed(ev);
+
+  private attachNextInChainListeners(): void {
+    this.nextInChain?.on(AudioOutput.EVENT_PLAYBACK_STARTED, this.onNextPlaybackStarted);
+    this.nextInChain?.on(AudioOutput.EVENT_PLAYBACK_FINISHED, this.onNextPlaybackFinished);
+    this.nextInChain?.on(AudioOutput.EVENT_PLAYBACK_PROGRESSED, this.onNextPlaybackProgressed);
+  }
+
+  private detachNextInChainListeners(): void {
+    this.nextInChain?.off(AudioOutput.EVENT_PLAYBACK_STARTED, this.onNextPlaybackStarted);
+    this.nextInChain?.off(AudioOutput.EVENT_PLAYBACK_FINISHED, this.onNextPlaybackFinished);
+    this.nextInChain?.off(AudioOutput.EVENT_PLAYBACK_PROGRESSED, this.onNextPlaybackProgressed);
+  }
+
+  private replaceNextInChain(sink: AudioOutput, attached: boolean): void {
+    const old = this.nextInChain;
+    if (!old) return;
+    this.detachNextInChainListeners();
+    if (attached) old.onDetached();
+    (this as unknown as { nextInChain?: AudioOutput }).nextInChain = sink;
+    this.sampleRate = sink.sampleRate;
+    this.attachNextInChainListeners();
+    if (attached) sink.onAttached();
   }
 
   /**
@@ -479,6 +510,20 @@ export class AgentOutput {
     }
   }
 
+  /**
+   * Replace the sink at the bottom of the audio chain while preserving wrappers such as
+   * transcription synchronization and recording. Falls back to replacing the complete output
+   * when no wrapper chain is present.
+   */
+  replaceAudioTail(sink: AudioOutput): void {
+    if (this._audioSink?.pendingPlayoutSegments) {
+      throw new Error('cannot replace the audio tail while playout is active');
+    }
+    if (!this._audioSink || !replaceAudioTail(this._audioSink, sink, this._audioEnabled)) {
+      this.audio = sink;
+    }
+  }
+
   get transcription(): TextOutput | null {
     return this._transcriptionSink;
   }
@@ -499,4 +544,13 @@ export class AgentOutput {
       this._transcriptionSink.onAttached();
     }
   }
+}
+
+function replaceAudioTail(output: AudioOutput, sink: AudioOutput, attached: boolean): boolean {
+  const controls = audioOutputChainControls.get(output);
+  const next = controls?.next();
+  if (!controls || !next) return false;
+  if (replaceAudioTail(next, sink, attached)) return true;
+  controls.replace(sink, attached);
+  return true;
 }
