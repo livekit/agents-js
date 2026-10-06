@@ -164,6 +164,7 @@ class SegmentSynchronizerImpl {
   private closedFuture: Future = new Future();
   private playbackCompleted: boolean = false;
   private interrupted: boolean = false;
+  private playbackFinishedReceived: boolean = false;
 
   /**
    * Paces against the visible text only; stateful because a markup tag with spaces in its
@@ -236,6 +237,14 @@ class SegmentSynchronizerImpl {
 
   get textInputEnded() {
     return this.textData.done;
+  }
+
+  /**
+   * Whether a `playback_finished` for this segment is still outstanding. Only a segment that
+   * carried audio downstream is ever owed one, and only until it arrives.
+   */
+  get owesPlaybackFinished(): boolean {
+    return this.audioData.pushedDuration > 0 && !this.playbackFinishedReceived;
   }
 
   get hasPendingText(): boolean {
@@ -372,6 +381,7 @@ class SegmentSynchronizerImpl {
     }
 
     this.interrupted = interrupted;
+    this.playbackFinishedReceived = true;
     if (!this.textData.done || !this.audioData.done) {
       this.logger.warn(
         { textDone: this.textData.done, audioDone: this.audioData.done },
@@ -1023,13 +1033,18 @@ class SyncedTextOutput extends TextOutput {
       this.logger.warn(
         'SegmentSynchronizerImpl text marked as ended in capture text, rotating segment',
       );
-      // This segment's text input already ended but its on_playback_finished hasn't arrived
-      // yet (interrupt + fast next reply). Remember it so the still-pending playback_finished
-      // settles *this* segment, not the new one we're about to rotate in.
-      this.synchronizer._pendingRotatedSegments.push({
-        impl: this.synchronizer._impl,
-        acceptedDownstream: this.synchronizer.audioOutput._rotationCandidateAccepted,
-      });
+      // Only queue a segment that still owes a playback_finished, so the pending finish settles
+      // *this* segment rather than the one we are about to rotate in. A segment whose finish
+      // already arrived, or one rotated in mid-flow that never carried audio, owes nothing:
+      // queuing it would make the next segment's finish settle this entry instead, leaving the
+      // queue permanently off by one and attributing every later reply the previous reply's
+      // transcript for the rest of the session.
+      if (this.synchronizer._impl.owesPlaybackFinished) {
+        this.synchronizer._pendingRotatedSegments.push({
+          impl: this.synchronizer._impl,
+          acceptedDownstream: this.synchronizer.audioOutput._rotationCandidateAccepted,
+        });
+      }
       this.synchronizer.rotateSegment();
       await this.synchronizer.barrier();
     }
