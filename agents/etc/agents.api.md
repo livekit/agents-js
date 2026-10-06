@@ -3009,7 +3009,6 @@ function createWarmTransferTask(input?: WarmTransferTaskOptions): AgentTask<Warm
 // @public
 export class DataStreamAudioOutput extends AudioOutput {
     constructor(opts: DataStreamAudioOutputOptions);
-    aclose(): Promise<void>;
     // (undocumented)
     captureFrame(frame: AudioFrame): Promise<void>;
     // (undocumented)

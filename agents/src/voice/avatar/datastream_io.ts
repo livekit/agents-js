@@ -17,7 +17,6 @@ import {
   shortuuid,
   waitForParticipant,
   waitForTrackPublication,
-  waitUntilAborted,
 } from '../../utils.js';
 import { AudioOutput } from '../io.js';
 import { parsePlaybackFinishedPayload } from './playback_payload.js';
@@ -61,9 +60,6 @@ export class DataStreamAudioOutput extends AudioOutput {
   private lock = new Mutex();
   private startTask?: Task<void>;
   private firstFrameEmitted: boolean = false;
-  private closed: boolean = false;
-  private playbackFinishedHandler = (data: RpcInvocationData) => this.handlePlaybackFinished(data);
-  private playbackStartedHandler = (data: RpcInvocationData) => this.handlePlaybackStarted(data);
 
   #logger = log();
 
@@ -77,20 +73,23 @@ export class DataStreamAudioOutput extends AudioOutput {
     this.waitRemoteTrack = waitRemoteTrack;
     this.waitPlaybackStart = waitPlaybackStart ?? false;
 
-    const onRoomConnected = () => {
-      if (this.startTask || !this.room.isConnected || this.closed) return;
+    const onRoomConnected = async () => {
+      if (this.startTask) return;
+
+      await this.roomConnectedFuture.await;
+
       // register the rpc method right after the room is connected
       DataStreamAudioOutput.registerPlaybackFinishedRpc({
         room,
         callerIdentity: this.destinationIdentity,
-        handler: this.playbackFinishedHandler,
+        handler: (data) => this.handlePlaybackFinished(data),
       });
 
       if (this.waitPlaybackStart) {
         DataStreamAudioOutput.registerPlaybackStartedRpc({
           room,
           callerIdentity: this.destinationIdentity,
-          handler: this.playbackStartedHandler,
+          handler: (data) => this.handlePlaybackStarted(data),
         });
       }
 
@@ -99,13 +98,11 @@ export class DataStreamAudioOutput extends AudioOutput {
 
     this.roomConnectedFuture = new Future<void>();
 
-    this.onRoomConnectionStateChanged = () => {
+    this.room.on(RoomEvent.ConnectionStateChanged, (_) => {
       if (room.isConnected && !this.roomConnectedFuture.done) {
         this.roomConnectedFuture.resolve(undefined);
       }
-      onRoomConnected();
-    };
-    this.room.on(RoomEvent.ConnectionStateChanged, this.onRoomConnectionStateChanged);
+    });
 
     if (this.room.isConnected) {
       this.roomConnectedFuture.resolve(undefined);
@@ -114,16 +111,13 @@ export class DataStreamAudioOutput extends AudioOutput {
     onRoomConnected();
   }
 
-  private onRoomConnectionStateChanged: () => void;
-
-  private async _start(abortSignal: AbortSignal) {
+  private async _start(_abortSignal: AbortSignal) {
     const unlock = await this.lock.lock();
 
     try {
       if (this.started) return;
 
-      const connected = await waitUntilAborted(this.roomConnectedFuture.await, abortSignal);
-      if (connected.isAborted) throw abortSignal.reason;
+      await this.roomConnectedFuture.await;
 
       this.#logger.debug(
         {
@@ -135,7 +129,6 @@ export class DataStreamAudioOutput extends AudioOutput {
       await waitForParticipant({
         room: this.room,
         identity: this.destinationIdentity,
-        signal: abortSignal,
       });
 
       if (this.waitRemoteTrack) {
@@ -151,7 +144,6 @@ export class DataStreamAudioOutput extends AudioOutput {
           room: this.room,
           identity: this.destinationIdentity,
           kind: this.waitRemoteTrack,
-          signal: abortSignal,
         });
       }
 
@@ -169,13 +161,11 @@ export class DataStreamAudioOutput extends AudioOutput {
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
-    if (this.closed) throw new Error('DataStreamAudioOutput is closed');
     if (!this.startTask) {
       this.startTask = Task.from(({ signal }) => this._start(signal));
     }
 
     await this.startTask.result;
-    if (this.closed) throw new Error('DataStreamAudioOutput is closed');
     await super.captureFrame(frame);
 
     if (!this.firstFrameEmitted) {
@@ -227,39 +217,6 @@ export class DataStreamAudioOutput extends AudioOutput {
       method: RPC_CLEAR_BUFFER,
       payload: '',
     });
-  }
-
-  /**
-   * Release resources owned by this data-stream output. Pending playout segments are settled as
-   * interrupted, since the remote participant can no longer report them.
-   */
-  async aclose(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
-    this.room.off(RoomEvent.ConnectionStateChanged, this.onRoomConnectionStateChanged);
-    if (
-      DataStreamAudioOutput._playbackFinishedHandlers[this.destinationIdentity] ===
-      this.playbackFinishedHandler
-    ) {
-      delete DataStreamAudioOutput._playbackFinishedHandlers[this.destinationIdentity];
-    }
-    if (
-      DataStreamAudioOutput._playbackStartedHandlers[this.destinationIdentity] ===
-      this.playbackStartedHandler
-    ) {
-      delete DataStreamAudioOutput._playbackStartedHandlers[this.destinationIdentity];
-    }
-    while (this.pendingPlayoutSegments > 0) {
-      this.onPlaybackFinished({ playbackPosition: this.pushedDuration, interrupted: true });
-    }
-
-    const streamWriter = this.streamWriter;
-    this.streamWriter = undefined;
-    try {
-      await this.startTask?.cancelAndWait().catch(() => undefined);
-    } finally {
-      await streamWriter?.close();
-    }
   }
 
   private handlePlaybackFinished(data: RpcInvocationData): string {

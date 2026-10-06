@@ -75,19 +75,13 @@ function fakeRoom({ identity = 'dev-agent', connected = true } = {}) {
   };
 }
 
+class StubAudioOutput extends voice.AudioOutput {
+  clearBuffer(): void {}
+}
+
 function fakeAgentSession(audio: voice.AudioOutput | null = null) {
   const emitter = new EventEmitter();
-  const output = {
-    audio,
-    get audioTail() {
-      return this.audio;
-    },
-    replaceAudioTail(sink: voice.AudioOutput) {
-      const previous = this.audio;
-      this.audio = sink;
-      return previous;
-    },
-  };
+  const output = { audio };
   const session = {
     _started: false,
     output,
@@ -306,7 +300,7 @@ describe('Synthesia AvatarSession', () => {
   });
 
   it.each([
-    ['worker error', JSON.stringify({ error: 'swap timeout' }), 'swap timeout'],
+    ['worker error', JSON.stringify({ error: 'swap timeout' }), 'avatar swap failed'],
     ['unrecognized response', JSON.stringify({ status: 'weird' }), 'unrecognized response'],
     ['malformed response', 'not json', 'malformed'],
   ])('surfaces a %s', async (_case, raw, message) => {
@@ -338,6 +332,10 @@ describe('Synthesia AvatarSession', () => {
     const unrecognized = await session.swapAvatar(SECOND_ID).catch((error: Error) => error);
     expect(String(unrecognized)).not.toContain('provider-payload');
 
+    room.setRpcResponse(JSON.stringify({ error: 'provider-payload' }));
+    const workerError = await session.swapAvatar(SECOND_ID).catch((error: Error) => error);
+    expect(String(workerError)).not.toContain('provider-payload');
+
     room.setRpcError(new Error('provider-payload'));
     const transport = await session.swapAvatar(SECOND_ID).catch((error: Error) => error);
     expect(String(transport)).not.toContain('provider-payload');
@@ -346,10 +344,7 @@ describe('Synthesia AvatarSession', () => {
   });
 
   it('restores the replaced audio sink on close', async () => {
-    const previous = new voice.DataStreamAudioOutput({
-      room: fakeRoom().room,
-      destinationIdentity: 'previous-sink',
-    });
+    const previous = new StubAudioOutput();
     const agent = fakeAgentSession(previous);
     const session = avatar();
     await session.start(agent, fakeRoom().room, LIVEKIT);
@@ -358,22 +353,34 @@ describe('Synthesia AvatarSession', () => {
     await session.aclose();
 
     expect(agent.output.audio).toBe(previous);
-    await previous.aclose();
   });
 
-  it('finishes teardown when closing the audio output fails', async () => {
-    vi.spyOn(voice.DataStreamAudioOutput.prototype, 'aclose').mockRejectedValueOnce(
-      new Error('stream close failed'),
+  it('settles pending avatar playout as interrupted on close', async () => {
+    const agent = fakeAgentSession();
+    const session = avatar();
+    await session.start(agent, fakeRoom().room, LIVEKIT);
+    const output = agent.output.audio!;
+    await voice.AudioOutput.prototype.captureFrame.call(output, {} as never);
+    output.flush();
+
+    await session.aclose();
+
+    await expect(output.waitForPlayout()).resolves.toMatchObject({ interrupted: true });
+  });
+
+  it('finishes teardown when the base cleanup fails', async () => {
+    vi.spyOn(voice.AvatarSession.prototype, 'aclose').mockRejectedValueOnce(
+      new Error('base close failed'),
     );
-    const baseClose = vi.spyOn(voice.AvatarSession.prototype, 'aclose');
+    const agent = fakeAgentSession();
     const room = fakeRoom();
     const session = avatar();
-    await session.start(fakeAgentSession(), room.room, LIVEKIT);
+    await session.start(agent, room.room, LIVEKIT);
 
-    await expect(session.aclose()).rejects.toThrow('stream close failed');
+    await expect(session.aclose()).rejects.toThrow('base close failed');
 
+    expect(agent.output.audio).toBeNull();
     expect(room.room.listenerCount(RoomEvent.Disconnected)).toBe(0);
-    expect(baseClose).toHaveBeenCalled();
   });
 
   it.each(['http://api.example', 'ftp://api.example', 'not a url'])(
@@ -399,15 +406,13 @@ describe('Synthesia AvatarSession', () => {
     vi.mocked(voice.AvatarSession.prototype.waitForJoin).mockRejectedValueOnce(
       new Error('timed out waiting for avatar participant'),
     );
-    const close = vi.spyOn(voice.DataStreamAudioOutput.prototype, 'aclose');
+    const agent = fakeAgentSession();
     const session = avatar({ joinTimeout: 50 });
-    await expect(session.start(fakeAgentSession(), fakeRoom().room, LIVEKIT)).rejects.toMatchObject(
-      {
-        type: ErrorType.TIMEOUT,
-        message: 'avatar did not join within 50ms',
-      },
-    );
-    expect(close).toHaveBeenCalledTimes(1);
+    await expect(session.start(agent, fakeRoom().room, LIVEKIT)).rejects.toMatchObject({
+      type: ErrorType.TIMEOUT,
+      message: 'avatar did not join within 50ms',
+    });
+    expect(agent.output.audio).toBeNull();
   });
 
   it('tears down after a mapped launch failure and can retry', async () => {
@@ -444,17 +449,18 @@ describe('Synthesia AvatarSession', () => {
     const logger = logModule.log();
     const warn = vi.spyOn(logger, 'warn');
     vi.spyOn(logModule, 'log').mockReturnValue(logger);
-    const close = vi.spyOn(voice.DataStreamAudioOutput.prototype, 'aclose');
+    const agent = fakeAgentSession();
     const room = fakeRoom();
     const session = avatar();
-    await session.start(fakeAgentSession(), room.room, LIVEKIT);
+    await session.start(agent, room.room, LIVEKIT);
+    expect(agent.output.audio).not.toBeNull();
     const participant = { identity: AVATAR_IDENTITY };
     if (event === RoomEvent.TrackUnpublished) {
       room.emit(event, { kind: TrackKind.KIND_VIDEO }, participant);
     } else {
       room.emit(event, participant);
     }
-    await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(agent.output.audio).toBeNull());
     expect(warn).toHaveBeenCalledWith('avatar left the room unexpectedly');
     expect(kind).toBeTruthy();
   });

@@ -62,7 +62,7 @@ export class AvatarSession extends voice.AvatarSession {
   private sessionIdValue: string | null = null;
   private agentSession?: voice.AgentSession;
   private audioOutput?: voice.DataStreamAudioOutput;
-  private previousAudioTail: voice.AudioOutput | null = null;
+  private previousAudio: voice.AudioOutput | null = null;
   private closePromise?: Promise<void>;
   private teardownPromise?: Promise<void>;
 
@@ -160,7 +160,8 @@ export class AvatarSession extends voice.AvatarSession {
           waitRemoteTrack: TrackKind.KIND_VIDEO,
         });
         this.agentSession = agentSession;
-        this.previousAudioTail = agentSession.output.replaceAudioTail(audioOutput);
+        this.previousAudio = agentSession.output.audio;
+        agentSession.output.audio = audioOutput;
         this.audioOutput = audioOutput;
         await this.waitForJoin({ timeout: this.joinTimeout });
       } catch (error) {
@@ -224,10 +225,12 @@ export class AvatarSession extends voice.AvatarSession {
     }
     const result = isRecord(response) ? response.avatar_id : undefined;
     if (!isRecord(response) || response.error || typeof result !== 'string') {
-      const detail = isRecord(response) && typeof response.error === 'string' ? response.error : '';
-      throw new SynthesiaError(
-        detail ? `avatar swap failed: ${detail}` : 'avatar swap returned an unrecognized response',
-      );
+      if (isRecord(response) && response.error) {
+        // the worker's error text is provider content, so it only goes to a redactable field
+        log().warn({ 'lk.pii.error': String(response.error) }, 'avatar swap failed');
+        throw new SynthesiaError('avatar swap failed');
+      }
+      throw new SynthesiaError('avatar swap returned an unrecognized response');
     }
     return result;
   }
@@ -266,30 +269,27 @@ export class AvatarSession extends voice.AvatarSession {
   }
 
   private async discardPartialStart(): Promise<void> {
-    await this.releaseAudioOutput();
+    this.releaseAudioOutput();
     this.sessionIdValue = null;
   }
 
   /**
-   * Detach the avatar output from the agent session, restoring the sink it replaced so later
-   * speech keeps playing, then close it.
+   * Detach the avatar output from the agent session. Segments it can no longer report are
+   * settled as interrupted so pending playout waits finish, and the sink it replaced is restored
+   * so later speech keeps playing.
    */
-  private async releaseAudioOutput(): Promise<void> {
+  private releaseAudioOutput(): void {
     const audioOutput = this.audioOutput;
-    const previous = this.previousAudioTail;
+    const previous = this.previousAudio;
     const output = this.agentSession?.output;
     this.audioOutput = undefined;
-    this.previousAudioTail = null;
+    this.previousAudio = null;
     this.agentSession = undefined;
     if (!audioOutput) return;
-    if (output?.audioTail === audioOutput) {
-      if (previous) {
-        output.replaceAudioTail(previous);
-      } else if (output.audio === audioOutput) {
-        output.audio = null;
-      }
+    while (audioOutput.pendingPlayoutSegments > 0) {
+      audioOutput.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
     }
-    await audioOutput.aclose();
+    if (output?.audio === audioOutput) output.audio = previous;
   }
 
   private async mintToken(room: Room, apiKey: string, apiSecret: string): Promise<string> {
