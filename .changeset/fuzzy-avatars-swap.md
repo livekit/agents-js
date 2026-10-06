@@ -1,5 +1,5 @@
 ---
-'@livekit/agents-plugin-synthesia': minor
+'@livekit/agents-plugin-synthesia': patch
 '@livekit/agents': patch
 ---
 
