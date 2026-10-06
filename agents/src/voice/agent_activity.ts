@@ -1148,6 +1148,9 @@ export class AgentActivity implements RecognitionHooks {
         reusable =
           reusable && (capabilities.midSessionToolsUpdate || this.tools.equals(newActivity.tools));
 
+        // the session was created with this activity's server-side turn detection setting
+        reusable = reusable && this.rtTurnDetectionEnabled === newActivity.rtTurnDetectionEnabled;
+
         if (reusable) {
           // detach: remove event listeners but don't close the session
           this.realtimeSession.off('generation_created', this.onRealtimeGenerationCreated);
@@ -1739,6 +1742,20 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (hasTurnDetection) {
+      // server-side turn detection is resolved once at session start and can't follow this yet
+      if (
+        this.llm instanceof RealtimeModel &&
+        this.llm.capabilities.canDisableTurnDetection &&
+        turnDetection !== null &&
+        this.resolveRealtimeTurnDetectionEnabled() !== this.rtTurnDetectionEnabled
+      ) {
+        this.logger.warn(
+          "changing turnDetection at runtime does not update a realtime model's server-side " +
+            `turn detection (resolved at session start); it stays ${
+              this.rtTurnDetectionEnabled ? 'enabled' : 'disabled'
+            } for this session`,
+        );
+      }
       if (this.turnDetectionMode === 'manual' || turnDetection === 'manual') {
         this.cancelFalseInterruptionTimer();
       }
@@ -2760,11 +2777,7 @@ export class AgentActivity implements RecognitionHooks {
 
     // A replying turn interrupts the paused speech, so cancel the resume that would race it.
     // The reply task returns before that for these two cases, so leave the resume armed.
-    //
-    const realtimeTurnDetectionEnabled =
-      this.rtTurnDetectionEnabled ??
-      (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection);
-    if (!info.skipReply && !realtimeTurnDetectionEnabled) {
+    if (!info.skipReply && !this.rtTurnDetectionEnabled) {
       this.cancelFalseInterruptionTimer();
     }
 
@@ -5704,13 +5717,17 @@ export class AgentActivity implements RecognitionHooks {
       return capabilities.turnDetection;
     }
 
-    const clientTurnDetection = this.turnDetection;
+    // Only an explicit choice counts: every session carries a default TurnDetector.
+    const explicit =
+      this.agent.turnHandling?.turnDetection !== undefined ||
+      this.agentSession._turnDetectionExplicit;
+    const clientTurnDetection = explicit ? this.turnDetection : undefined;
     if (clientTurnDetection === 'realtime_llm') return true;
-    if (clientTurnDetection === 'manual' || clientTurnDetection === 'vad') return false;
+    if (clientTurnDetection === 'manual') return false;
     if (
       this.vad !== undefined &&
-      !this.usingDefaultVad &&
       (clientTurnDetection instanceof BaseStreamingTurnDetector ||
+        clientTurnDetection === 'vad' ||
         this.agent.turnHandling?.interruption?.mode !== undefined ||
         this.agentSession.interruptionDetection !== undefined)
     ) {

@@ -625,6 +625,13 @@ export class AgentSession<
    */
   _usingDefaultVad: boolean = false;
 
+  /**
+   * True when the caller chose turn detection, as opposed to the eager default TurnDetector.
+   *
+   * @internal
+   */
+  _turnDetectionExplicit: boolean = false;
+
   /** @internal True when the current job is a text simulation. */
   get _textOnly(): boolean {
     return resolveTextOnly();
@@ -786,6 +793,7 @@ export class AgentSession<
       configuredTurnDetection === null
         ? undefined
         : configuredTurnDetection ?? new InferenceTurnDetector();
+    this._turnDetectionExplicit = configuredTurnDetection !== undefined;
     // The session report serializes `sessionOptions`, so record the effective detector there
     // (Python keeps the eager default in `AgentSessionOptions.turn_handling` the same way).
     resolvedSessionOptions.turnHandling.turnDetection =
@@ -1388,6 +1396,7 @@ export class AgentSession<
     if (hasTurnDetection) {
       this.turnDetection = normalizedTurnDetection;
       this.sessionOptions.turnHandling.turnDetection = normalizedTurnDetection;
+      this._turnDetectionExplicit = turnDetection !== null;
     }
 
     if (this.activity) {

@@ -1,8 +1,8 @@
-import { inference } from '@livekit/agents';
-
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { inference } from '@livekit/agents';
+
 export * from './api_proto.js';
 export * from './realtime_model.js';
 export * from './gpt_live_model.js';
