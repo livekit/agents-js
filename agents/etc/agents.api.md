@@ -1531,6 +1531,9 @@ const ATTR_SPEECH_QUEUE_WAIT = "lk.speech.queue_wait";
 // @public (undocumented)
 const ATTR_START_TIME = "lk.start_time";
 
+// @public
+const ATTR_STT_EVENTS = "lk.stt.events";
+
 // @public (undocumented)
 const ATTR_TOOL_SETS = "lk.tool_sets";
 
@@ -8085,6 +8088,7 @@ declare namespace traceTypes {
         ATTR_ON_USER_TURN_COMPLETED_DELAY,
         ATTR_SPEECH_QUEUE_WAIT,
         ATTR_USER_TRANSCRIPT,
+        ATTR_STT_EVENTS,
         ATTR_TRANSCRIPT_CONFIDENCE,
         ATTR_TRANSCRIPTION_DELAY,
         ATTR_END_OF_TURN_DELAY,
