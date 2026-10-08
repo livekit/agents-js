@@ -423,27 +423,15 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
  * `remoteParticipants`.
  */
 function legacyTranscriptionNeeded(room: Room): boolean {
-  const localIdentity = room.localParticipant?.identity;
+  const localIdentity = room.localParticipant?.identity ?? null;
 
-  for (const participant of room.remoteParticipants.values()) {
-    if (participant.kind !== ParticipantKind.STANDARD) {
-      continue;
-    }
-
-    // our own avatar worker, if it joined as STANDARD rather than AGENT. Both sides must be
-    // present before comparing: an absent attribute and an absent local identity are both
-    // `undefined`, which would otherwise exclude every participant in the room.
-    const onBehalf = participant.attributes[ATTRIBUTE_PUBLISH_ON_BEHALF];
-    if (onBehalf && onBehalf === localIdentity) {
-      continue;
-    }
-
-    if ((participant.info.clientProtocol ?? 0) < CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS) {
-      return true;
-    }
-  }
-
-  return false;
+  return [...room.remoteParticipants.values()].some(
+    (p) =>
+      p.kind === ParticipantKind.STANDARD &&
+      (p.info.clientProtocol ?? 0) < CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS &&
+      // not our own avatar worker that joined as STANDARD rather than AGENT
+      p.attributes[ATTRIBUTE_PUBLISH_ON_BEHALF] !== localIdentity,
+  );
 }
 
 export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscriptionOutput {
