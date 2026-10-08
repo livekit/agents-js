@@ -33,6 +33,7 @@ export {
 } from './avatar.js';
 
 export {
+  dropUnsupportedParams,
   LLM,
   LLMStream,
   type ChatCompletionOptions,
