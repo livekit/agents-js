@@ -796,10 +796,14 @@ export class AgentSession<
     this._asyncToolOptions = resolveAsyncToolOptions(toolHandling?.asyncOptions);
 
     // configurable IO
-    this._input = new AgentInput(this.onAudioInputChanged, (enabled) =>
-      this.onAudioEnabledChanged(enabled),
+    this._input = new AgentInput(
+      () => this.onAudioInputChanged(),
+      (enabled) => this.onAudioEnabledChanged(enabled),
     );
-    this._output = new AgentOutput(this.onAudioOutputChanged, this.onTextOutputChanged);
+    this._output = new AgentOutput(
+      () => this.onAudioOutputChanged(),
+      () => this.onTextOutputChanged(),
+    );
 
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
