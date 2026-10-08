@@ -25,6 +25,12 @@
  * only the first profile of a process names code optimized before it started: every later
  * profile attributes a hot function's samples to its caller, and reading samples means
  * restarting the profile. Not usable for repeated captures.
+ *
+ * Off by default (`LIVEKIT_AGENTS_LOOP_BLOCK_STACKS=1` or `adaptive` turns it on): a pause gives
+ * the paused function break info, and a TurboFan job on a background thread that had already
+ * chosen to inline that function then fails a CHECK in `JSInliner::ReduceJSCall` and aborts the
+ * process. V8 accepts the race since https://github.com/v8/v8/commit/be5b9d427892fa1ee60a90176c8f6934cdd74b12
+ * (Node 26.10); Node 22, 24 and 25 crash.
  */
 import { log } from '../log.js';
 import type { StackSamplingMode } from './loop_monitor.js';
@@ -38,15 +44,15 @@ export const ENV_STACKS = 'LIVEKIT_AGENTS_LOOP_BLOCK_STACKS';
 
 export function stackSamplingModeFromEnv(env: NodeJS.ProcessEnv = process.env): StackSamplingMode {
   const raw = env[ENV_STACKS]?.trim().toLowerCase();
-  if (raw === undefined || raw === '') return 'adaptive';
+  if (raw === undefined || raw === '') return 'never';
   if (raw === '1' || raw === 'always' || raw === 'true') return 'always';
   if (raw === '0' || raw === 'never' || raw === 'false') return 'never';
   if (raw === 'adaptive') return 'adaptive';
   log().warn(
     { value: raw },
-    `invalid ${ENV_STACKS}, expected adaptive, always or never; using adaptive`,
+    `invalid ${ENV_STACKS}, expected adaptive, always or never; using never`,
   );
-  return 'adaptive';
+  return 'never';
 }
 
 /** One frame of a sampled stack, innermost first in {@link StackSample.frames}. */
