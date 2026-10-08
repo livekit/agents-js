@@ -1,0 +1,26 @@
+agents/src/telemetry/loop_stack_sampler.ts
+  s_51320c10906b28::t_e97684ff4292e9 32
+  s_51320c10906b28::t_8d9f22dd7f6408 28-31,33,47,53,55
+agents/src/telemetry/loop_monitor.ts
+  s_51320c10906b28::t_8d9f22dd7f6408 72-74,171-174
+.changeset/stack-sampler-off-by-default.md
+  s_51320c10906b28::t_8d9f22dd7f6408 1-5
+agents/src/telemetry/loop_monitor_stacks.test.ts
+  s_51320c10906b28::t_8d9f22dd7f6408 394,568-570,575
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "682def3f3a727f64cb4538d85c14956407b95546",
+  "prompts": {},
+  "sessions": {
+    "s_51320c10906b28": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "766e25f1-ad1f-41cb-be79-ec6b69f5dede",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
