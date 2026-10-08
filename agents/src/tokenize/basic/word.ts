@@ -3,6 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { PUNCTUATIONS } from '../tokenizer.js';
 
+// Strip punctuation by set membership rather than a regex built from the joined
+// list: concatenating the characters into a `[...]` class mis-parses the members
+// that are regex-significant (e.g. `\` followed by `]` becomes an escaped `]`, so
+// backslash was never stripped, and `,-.` silently forms a range).
+const PUNCTUATION_SET = new Set(PUNCTUATIONS);
+
 /**
  * Split the text into words.
  */
@@ -17,7 +23,9 @@ export const splitWords = (text: string, ignorePunctuation = true): [string, num
     const end = start + word.length;
 
     if (ignorePunctuation) {
-      word = word.replace(new RegExp(`[${PUNCTUATIONS.join('')}]`, 'g'), '');
+      word = Array.from(word)
+        .filter((c) => !PUNCTUATION_SET.has(c))
+        .join('');
     }
 
     words.push([word, start, end]);
