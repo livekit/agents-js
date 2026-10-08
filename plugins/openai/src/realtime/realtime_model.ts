@@ -1271,16 +1271,22 @@ export class RealtimeSession extends llm.RealtimeSession {
       while (!this.#closed && !signal.aborted) {
         this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
         wsConn = await this.createWsConn();
-        if (signal.aborted) break;
+        if (signal.aborted) {
+          wsConn.close();
+          break;
+        }
 
         try {
           if (reconnecting) {
             await reconnect();
-            if (signal.aborted) break;
+            if (signal.aborted) {
+              wsConn.close();
+              break;
+            }
             numRetries = 0;
           }
 
-          await this.runWs(wsConn);
+          await this.runWs(wsConn, signal);
           if (signal.aborted) break;
         } catch (error) {
           if (!isAPIError(error)) {
@@ -1330,7 +1336,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private async runWs(wsConn: WebSocket): Promise<void> {
+  private async runWs(wsConn: WebSocket, sessionSignal: AbortSignal): Promise<void> {
     const forwardEvents = async (signal: AbortSignal): Promise<void> => {
       const abortFuture = new Future<void>();
       signal.addEventListener('abort', () => abortFuture.resolve());
@@ -1490,6 +1496,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         signal.addEventListener('abort', () => {
           resolve();
         });
+        sessionSignal.addEventListener('abort', () => resolve(), { once: true, signal });
       });
 
       return Promise.race([wsCloseFuture.await, abortPromise]);
@@ -1527,7 +1534,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.resetInputTurnState();
     super.close();
     this.#closed = true;
-    await this.#task;
+    await this.#task.cancelAndWait(5000).catch((error) => {
+      this.#logger.debug({ error }, 'OpenAI Realtime session task ended with an error');
+    });
 
     // Clean up pending futures to prevent memory leaks
     this.rejectResponseCreatedFutures('Session closed');

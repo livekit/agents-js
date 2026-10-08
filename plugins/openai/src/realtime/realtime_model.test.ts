@@ -1463,3 +1463,43 @@ it('recreates an item the lost connection never confirmed', async () => {
     });
   }
 });
+
+describe('RealtimeSession.close', () => {
+  it('closes an idle websocket before it resolves', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+
+    const address = server.address();
+    if (typeof address === 'string' || address === null) {
+      throw new Error('expected websocket server to listen on a TCP port');
+    }
+
+    const connected = once(server, 'connection') as Promise<[WebSocket]>;
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${address.port}/v1`,
+    });
+    const session = model.session();
+
+    try {
+      const [socket] = await connected;
+      const socketClosed = once(socket, 'close');
+      // Let the session flush its opening events, so close() finds the send loop idle.
+      await once(socket, 'message');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      await session.close();
+
+      const closedInTime = await Promise.race([
+        socketClosed.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1000)),
+      ]);
+      expect(closedInTime).toBe(true);
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
