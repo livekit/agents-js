@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { log } from '@livekit/agents';
+import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
@@ -74,5 +75,37 @@ describe('Deepgram STT logging', () => {
       expect(connectionCalls).toEqual([['connecting to Deepgram']]);
       expect(JSON.stringify(connectionCalls)).not.toContain('private-keyterm');
     });
+  });
+
+  it('does not log an error when a v2 stream is closed after sending audio', async () => {
+    const errorSpy = vi.spyOn(log(), 'error');
+    let audioReceived = false;
+    let socketClosed = false;
+    const baseUrl = await startServer((socket) => {
+      socket.on('message', (_data, isBinary) => {
+        if (isBinary) audioReceived = true;
+      });
+      socket.on('close', () => {
+        socketClosed = true;
+      });
+    });
+    const recognizer = new STTv2({
+      apiKey: 'test',
+      endpointUrl: `${baseUrl}/v2/listen`,
+      sampleRate: 16000,
+    });
+    const stream = recognizer.stream();
+    streams.push(stream);
+
+    for (let i = 0; i < 10; i++) {
+      stream.pushFrame(new AudioFrame(new Int16Array(800), 16000, 1, 800));
+    }
+    await vi.waitFor(() => expect(audioReceived).toBe(true));
+
+    stream.close();
+    await vi.waitFor(() => expect(socketClosed).toBe(true));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });
