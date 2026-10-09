@@ -566,6 +566,7 @@ export class AgentSession<
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
   private readonly _aecWarmupDurationExplicit: boolean;
+  private _isSimulation = false;
 
   /**
    * The session's expressive setting, as the user passed it.
@@ -906,6 +907,7 @@ export class AgentSession<
     const tasks: Promise<void>[] = [];
 
     const jobCtx = getJobContext(false);
+    this._isSimulation = jobCtx?.simulationContext() !== undefined;
     if (jobCtx) {
       span.setAttributes({
         [traceTypes.ATTR_ROOM_NAME]: jobCtx.job.room?.name ?? '',
@@ -2061,10 +2063,15 @@ export class AgentSession<
 
     const isOutboundSip =
       participant.info.kind === ParticipantKind.SIP && !participant.attributes[SIP_RULE_ID_ATTR];
-    this.sessionOptions.aecWarmupDuration = isOutboundSip ? null : DEFAULT_AEC_WARMUP_DURATION;
+    // A simulator publishes synthesized audio, so the agent's speech never echoes back.
+    const noWarmup =
+      isOutboundSip ||
+      this._isSimulation ||
+      getJobContext(false)?.simulationContext() !== undefined;
+    this.sessionOptions.aecWarmupDuration = noWarmup ? null : DEFAULT_AEC_WARMUP_DURATION;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
 
-    if (isOutboundSip && this._aecWarmupTimer !== null) {
+    if (noWarmup && this._aecWarmupTimer !== null) {
       clearTimeout(this._aecWarmupTimer);
       this._aecWarmupTimer = null;
     }

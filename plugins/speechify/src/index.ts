@@ -3,17 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
 
-export * from './stt.js';
-export { ChunkedStream, SynthesizeStream, TTS, type TTSOptions } from './tts.js';
+export * from './models.js';
+export * from './tts.js';
 
-class SonioxPlugin extends Plugin {
+class SpeechifyPlugin extends Plugin {
   constructor() {
     super({
-      title: 'soniox',
+      title: 'speechify',
       version: __PACKAGE_VERSION__,
       package: __PACKAGE_NAME__,
     });
   }
 }
 
-Plugin.registerPlugin(new SonioxPlugin());
+Plugin.registerPlugin(new SpeechifyPlugin());

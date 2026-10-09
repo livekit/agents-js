@@ -240,6 +240,16 @@ describe('tokenizer', () => {
           });
         }
       });
+
+      it.each([
+        ['مرحبا، كيف حالك؟', ['مرحبا', 'كيف', 'حالك']],
+        ['تم الحجز؛ شكراً', ['تم', 'الحجز', 'شكراً']],
+        ['آپ کیسے ہیں۔', ['آپ', 'کیسے', 'ہیں']],
+        ['आप कैसे हैं।', ['आप', 'कैसे', 'हैं']],
+        ['你好，我很好。', ['你好我很好']],
+      ])('ignores non-ASCII punctuation in %s', (text, expected) => {
+        expect(new WordTokenizer(true).tokenize(text)).toEqual(expected);
+      });
     });
   });
   describe('hyphenateWord', () => {

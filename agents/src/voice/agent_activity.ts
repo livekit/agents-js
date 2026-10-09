@@ -195,9 +195,6 @@ export const onEnterStorage = new AsyncLocalStorage<OnEnterData>();
  * regex carries the `g` flag, which is safe here only because `String.prototype.match` resets
  * `lastIndex` before iterating — switching to `.exec()` or `.test()` would silently break it.
  *
- * Full-width CJK punctuation (e.g. `。`) is not stripped by either implementation. This is a
- * shared upstream limitation, not a JS-only defect — do not "fix" it on the JS side alone.
- *
  * `toLowerCase()` is a weaker fold than Python's `casefold()`. Do not replace it with
  * `casefold()` or add Unicode NFKC normalization: differential execution over 18 inputs found
  * 15 agree and 3 diverge (`STRASSE`/`straße`, `ΟΔΟΣ`/`οδοσ`, `ﬁle`/`file`), and in every
