@@ -142,6 +142,7 @@ describe('SynthesiaAPI', () => {
     [{ 'Retry-After': '12' }, { error: { code: 'rate_limited' } }, 12_000],
     [{}, { error: { code: 'rate_limited' }, retry_after: 3.5 }, 3_500],
     [{}, { error: { code: 'rate_limited', retry_after: 9 } }, 9_000],
+    [{ 'Retry-After': '' }, { error: { code: 'rate_limited' }, retry_after: 4 }, 4_000],
   ] as const)('reads retry-after in JS milliseconds', async (headers, body, expected) => {
     const { api } = client([response(429, body, headers)]);
     await expect(api.startSession(REQUEST)).rejects.toMatchObject({ retryAfter: expected });

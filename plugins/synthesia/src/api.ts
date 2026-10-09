@@ -196,7 +196,7 @@ function publicAvatarId(avatarId: string): string {
 
 function parseRetryAfter(response: Response, body: unknown): number | null {
   const header = response.headers.get('Retry-After');
-  if (header !== null) {
+  if (header !== null && header.trim()) {
     const seconds = Number(header);
     if (Number.isFinite(seconds)) return seconds * 1000;
   }

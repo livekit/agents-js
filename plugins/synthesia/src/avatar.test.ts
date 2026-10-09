@@ -403,9 +403,7 @@ describe('Synthesia AvatarSession', () => {
   });
 
   it('maps join timeout and tears down its exact audio output', async () => {
-    vi.mocked(voice.AvatarSession.prototype.waitForJoin).mockRejectedValueOnce(
-      new Error('timed out waiting for avatar participant'),
-    );
+    vi.mocked(voice.AvatarSession.prototype.waitForJoin).mockReturnValueOnce(new Promise(() => {}));
     const agent = fakeAgentSession();
     const session = avatar({ joinTimeout: 50 });
     await expect(session.start(agent, fakeRoom().room, LIVEKIT)).rejects.toMatchObject({
@@ -413,6 +411,13 @@ describe('Synthesia AvatarSession', () => {
       message: 'avatar did not join within 50ms',
     });
     expect(agent.output.audio).toBeNull();
+  });
+
+  it('passes other join failures through unmapped', async () => {
+    const failure = new Error('timed out waiting for avatar participant');
+    vi.mocked(voice.AvatarSession.prototype.waitForJoin).mockRejectedValueOnce(failure);
+    const session = avatar();
+    await expect(session.start(fakeAgentSession(), fakeRoom().room, LIVEKIT)).rejects.toBe(failure);
   });
 
   it('tears down after a mapped launch failure and can retry', async () => {

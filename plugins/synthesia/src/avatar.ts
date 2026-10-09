@@ -163,11 +163,11 @@ export class AvatarSession extends voice.AvatarSession {
         this.previousAudio = agentSession.output.audio;
         agentSession.output.audio = audioOutput;
         this.audioOutput = audioOutput;
-        await this.waitForJoin({ timeout: this.joinTimeout });
+        await this.waitForJoinWithin(this.joinTimeout);
       } catch (error) {
         await this.aclose().catch(() => undefined);
         await this.discardPartialStart();
-        if (isJoinTimeout(error)) {
+        if (error instanceof JoinTimeoutError) {
           throw new SynthesiaError(`avatar did not join within ${this.joinTimeout}ms`, {
             type: ErrorType.TIMEOUT,
             cause: error,
@@ -292,6 +292,21 @@ export class AvatarSession extends voice.AvatarSession {
     if (output?.audio === audioOutput) output.audio = previous;
   }
 
+  /** The timer lives here so a join timeout is told apart by type, not by the base's message. */
+  private async waitForJoinWithin(timeout: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.waitForJoin({ timeout: null }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new JoinTimeoutError()), timeout);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async mintToken(room: Room, apiKey: string, apiSecret: string): Promise<string> {
     const jobContext = getJobContext(false);
     const agentIdentity =
@@ -381,8 +396,11 @@ function toWebSocketUrl(url: string): string {
   return url;
 }
 
-function isJoinTimeout(error: unknown): boolean {
-  return error instanceof Error && error.message === 'timed out waiting for avatar participant';
+class JoinTimeoutError extends Error {
+  constructor() {
+    super('timed out waiting for avatar participant');
+    this.name = 'JoinTimeoutError';
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
