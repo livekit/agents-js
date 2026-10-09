@@ -8,7 +8,7 @@ import type {
   Session,
 } from '@google/genai';
 import { Live } from '@google/genai';
-import { llm } from '@livekit/agents';
+import { llm, log } from '@livekit/agents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { RealtimeModel, type RealtimeSession } from './realtime_api.js';
@@ -93,5 +93,19 @@ describe('Google Realtime session resumption', () => {
 
     expect(connects[0]!.config?.sessionResumption).toBeUndefined();
     expect(connects[1]!.config?.sessionResumption).toBeUndefined();
+  });
+
+  it('warns when spoken turns could not be replayed after a reconnect', () => {
+    const warn = vi.fn();
+    vi.spyOn(log(), 'warn').mockImplementation(warn);
+
+    new RealtimeModel({
+      model: 'gemini-3.8-live',
+      apiKey: 'fake-key',
+      sessionResumption: false,
+      inputAudioTranscription: null,
+    });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('spoken turns never enter'));
   });
 });

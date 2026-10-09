@@ -389,6 +389,12 @@ export class RealtimeModel extends llm.RealtimeModel {
        * resumption handle. Defaults to `true`. With `false` every reconnect
        * starts a fresh session and the plugin replays the chat context, which
        * is what restores seeded history when a resumed session drops it.
+       *
+       * The replay carries what the chat context holds: messages, including
+       * spoken turns once their input transcription arrives, but not tool
+       * calls or their results. After a fresh reconnect the model knows what
+       * was said about a tool's result, not the result itself. Spoken turns
+       * need `inputAudioTranscription` enabled to be replayed at all.
        */
       sessionResumption?: boolean;
     } = {},
@@ -397,6 +403,13 @@ export class RealtimeModel extends llm.RealtimeModel {
       options.inputAudioTranscription === undefined ? {} : options.inputAudioTranscription;
     const outputAudioTranscription =
       options.outputAudioTranscription === undefined ? {} : options.outputAudioTranscription;
+
+    if (options.sessionResumption === false && inputAudioTranscription === null) {
+      log().warn(
+        'sessionResumption is off and inputAudioTranscription is disabled: spoken turns never ' +
+          'enter the chat context, so a reconnect loses them.',
+      );
+    }
 
     let serverTurnDetection = true;
     if (options.realtimeInputConfig?.automaticActivityDetection?.disabled) {
