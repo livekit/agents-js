@@ -8,7 +8,7 @@ import { AgentInference } from '@livekit/protocol';
 import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
-import type { Context } from '@opentelemetry/api';
+import { Context } from '@opentelemetry/api';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
 import type { EventMap } from '@livekit/typed-emitter';
@@ -25,7 +25,7 @@ import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } fro
 import type { Reasoning as Reasoning_2 } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
+import { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -120,7 +120,7 @@ export type CerebrasChatModels = 'gpt-oss-120b' | 'zai-glm-4.7' | 'gemma-4-31b';
 // Warning: (ae-missing-release-tag) "ChatModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type ChatModels = 'gpt-5.6-luna' | 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.5' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-chat-latest' | 'gpt-5.2' | 'gpt-5.2-chat-latest' | 'gpt-5.1' | 'gpt-5.1-chat-latest' | 'gpt-5' | 'gpt-5-mini' | 'gpt-5-nano' | 'gpt-4.1' | 'gpt-4.1-mini' | 'gpt-4.1-nano' | 'gpt-4o' | 'gpt-4o-2024-05-13' | 'gpt-4o-mini' | 'gpt-4o-mini-2024-07-18' | 'gpt-4-turbo' | 'gpt-4-turbo-2024-04-09' | 'gpt-4-turbo-preview' | 'gpt-4-0125-preview' | 'gpt-4-1106-preview' | 'gpt-4-vision-preview' | 'gpt-4-1106-vision-preview' | 'gpt-4' | 'gpt-4-0314' | 'gpt-4-0613' | 'gpt-4-32k' | 'gpt-4-32k-0314' | 'gpt-4-32k-0613' | 'gpt-3.5-turbo' | 'gpt-3.5-turbo-16k' | 'gpt-3.5-turbo-0301' | 'gpt-3.5-turbo-0613' | 'gpt-3.5-turbo-1106' | 'gpt-3.5-turbo-16k-0613';
+export type ChatModels = 'gpt-5.6-luna' | 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.5' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.4-nano' | 'gpt-5.3-chat-latest' | 'gpt-5.2' | 'gpt-5.2-chat-latest' | 'gpt-5.1' | 'gpt-5.1-chat-latest' | 'gpt-5' | 'gpt-5-mini' | 'gpt-5-nano' | 'gpt-4.1' | 'gpt-4.1-mini' | 'gpt-4.1-nano' | 'gpt-4o' | 'gpt-4o-2024-05-13' | 'gpt-4o-mini' | 'gpt-4o-mini-2024-07-18' | 'gpt-4-turbo' | 'gpt-4-turbo-2024-04-09' | 'gpt-4-turbo-preview' | 'gpt-4-0125-preview' | 'gpt-4-1106-preview' | 'gpt-4-vision-preview' | 'gpt-4-1106-vision-preview' | 'gpt-4' | 'gpt-4-0314' | 'gpt-4-0613' | 'gpt-4-32k' | 'gpt-4-32k-0314' | 'gpt-4-32k-0613' | 'gpt-3.5-turbo' | 'gpt-3.5-turbo-16k' | 'gpt-3.5-turbo-0301' | 'gpt-3.5-turbo-0613' | 'gpt-3.5-turbo-1106' | 'gpt-3.5-turbo-16k-0613';
 
 // Warning: (ae-forgotten-export) The symbol "tts_2" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "ChunkedStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

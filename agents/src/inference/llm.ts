@@ -131,6 +131,10 @@ const REASONING_UNSUPPORTED_PARAMS = new Set([
 
 const XAI_REASONING_UNSUPPORTED_PARAMS = new Set(['presence_penalty', 'frequency_penalty', 'stop']);
 
+// temperature/top_p are accepted by gpt-5.1+ only at reasoning_effort
+// "none"; see the note in dropUnsupportedParams.
+const SAMPLING_PARAMS = new Set(['temperature', 'top_p']);
+
 const UNSUPPORTED_PARAMS: Record<string, Set<string>> = {
   o1: REASONING_UNSUPPORTED_PARAMS,
   o3: REASONING_UNSUPPORTED_PARAMS,
@@ -147,20 +151,14 @@ const MODEL_THINK_TAGS = new Map<string, [string, string]>([
   ['google/gemma-4-31b-it', ['<|channel>thought', '<channel|>']],
 ]);
 
-function dropUnsupportedParams(
+/** @internal Shared with provider plugins for request normalization. */
+export function dropUnsupportedParams(
   model: string,
   params: Record<string, unknown>,
   tools?: unknown[],
 ): Record<string, unknown> {
   const modelName = model.includes('/') ? model.split('/').pop()! : model;
   let result = { ...params };
-
-  for (const [prefix, unsupported] of Object.entries(UNSUPPORTED_PARAMS)) {
-    if (modelName.startsWith(prefix)) {
-      result = Object.fromEntries(Object.entries(result).filter(([k]) => !unsupported.has(k)));
-      break;
-    }
-  }
 
   if (
     tools &&
@@ -171,7 +169,55 @@ function dropUnsupportedParams(
     result = rest;
   }
 
+  for (const [prefix, unsupported] of Object.entries(UNSUPPORTED_PARAMS)) {
+    if (modelName.startsWith(prefix)) {
+      let unsupportedForRequest = unsupported;
+      if (
+        unsupported === REASONING_UNSUPPORTED_PARAMS &&
+        minReasoningEffort(modelName) === 'none' &&
+        reasoningEffortIsNone(result)
+      ) {
+        // OpenAI accepts temperature/top_p on gpt-5.1+ models only at effort
+        // "none". This applies only to models in MIN_REASONING_EFFORT.
+        unsupportedForRequest = new Set(
+          Array.from(unsupported).filter((param) => !SAMPLING_PARAMS.has(param)),
+        );
+      }
+      result = Object.fromEntries(
+        Object.entries(result).filter(([key]) => !unsupportedForRequest.has(key)),
+      );
+      break;
+    }
+  }
+
   return result;
+}
+
+function reasoningEffortIsNone(params: Record<string, unknown>): boolean {
+  if (params.reasoning_effort === 'none') {
+    return true;
+  }
+  return (params.reasoning as { effort?: unknown } | undefined)?.effort === 'none';
+}
+
+const MIN_REASONING_EFFORT = new Map<string, ChatCompletionOptions['reasoning_effort']>([
+  ['gpt-5.1', 'none'],
+  ['gpt-5.2', 'none'],
+  ['gpt-5.4', 'none'],
+  ['gpt-5.4-mini', 'none'],
+  ['gpt-5.4-nano', 'none'],
+  ['gpt-5.5', 'none'],
+  ['gpt-5.6-luna', 'none'],
+  ['gpt-5.6-sol', 'none'],
+  ['gpt-5.6-terra', 'none'],
+  ['gpt-5', 'minimal'],
+  ['gpt-5-mini', 'minimal'],
+  ['gpt-5-nano', 'minimal'],
+]);
+
+function minReasoningEffort(model: string): ChatCompletionOptions['reasoning_effort'] {
+  const modelName = model.includes('/') ? model.split('/').pop()! : model;
+  return MIN_REASONING_EFFORT.get(modelName);
 }
 
 /**
