@@ -209,4 +209,27 @@ describe('Google Realtime dropped connections', () => {
 
     expect(internals.currentGeneration?._done).toBe(false);
   });
+
+  it('finishes the reply in flight when a planned restart replaces the socket', async () => {
+    const { sockets, connect } = fakeServer(['live', 'live']);
+    const opened = openSession();
+    session = opened.session;
+    const internals = session as unknown as {
+      currentGeneration?: { _done: boolean };
+      markRestartNeeded(): void;
+    };
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    sockets[0]!.callbacks.onmessage({
+      serverContent: { modelTurn: { parts: [{ text: 'Seven three' }] } },
+    } as LiveServerMessage);
+    await vi.waitFor(() => expect(internals.currentGeneration?._done).toBe(false));
+    const reply = internals.currentGeneration!;
+
+    // As updateTools() does; the old socket never reports its close.
+    internals.markRestartNeeded();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+
+    expect(reply._done).toBe(true);
+  });
 });

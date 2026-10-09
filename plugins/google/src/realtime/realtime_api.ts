@@ -608,6 +608,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       } finally {
         this.activeSession = undefined;
       }
+      // A reply in flight belongs to the socket being closed. Its own close can
+      // arrive after the next socket is live, too late to finish it there.
+      this.markCurrentGenerationDone();
     }
     this.earlyCompletionPending = false;
     this.pendingInterruptText = false;
@@ -1129,7 +1132,7 @@ export class RealtimeSession extends llm.RealtimeSession {
                 }
               }
               // A replaced socket's close must not end the reply on the socket
-              // that replaced it; the next generation finalizes its own.
+              // that replaced it; closeActiveSession already finished its own.
               if (
                 !this.activeSession ||
                 !connected.session ||
