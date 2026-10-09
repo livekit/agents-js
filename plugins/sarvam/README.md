@@ -44,7 +44,7 @@ In an `AgentSession`, LiveKit will use sentence chunking + non-streaming `synthe
 import * as sarvam from '@livekit/agents-plugin-sarvam';
 
 const stt = new sarvam.STT({
-  model: 'saaras:v3',
+  model: 'saaras:v4',
   languageCode: 'en-IN',
   mode: 'transcribe',
 });
@@ -56,7 +56,7 @@ const stt = new sarvam.STT({
 import * as sarvam from '@livekit/agents-plugin-sarvam';
 
 const stt = new sarvam.STT({
-  model: 'saaras:v3',
+  model: 'saaras:v4',
   streaming: false,
 });
 ```
@@ -81,11 +81,12 @@ Set the `SARVAM_API_KEY` environment variable or pass `apiKey` directly.
 
 | Model                 | Endpoint                    | Languages   | Modes | Prompt |
 | --------------------- | --------------------------- | ----------- | ----- | ------ |
-| `saaras:v3` (default) | `/speech-to-text`           | 22 (BCP-47) | Yes   | No     |
+| `saaras:v4` (default) | `/speech-to-text`           | 22 (BCP-47) | Yes   | No     |
+| `saaras:v3`           | `/speech-to-text`           | 22 (BCP-47) | Yes   | No     |
 | `saaras:v2.5`         | `/speech-to-text-translate` | Auto-detect | No    | Yes    |
 | `saarika:v2.5`        | `/speech-to-text`           | 12 (BCP-47) | No    | No     |
 
-`saarika:v2.5` will be deprecated soon — all its languages are available in `saaras:v3`.
+`saarika:v2.5` will be deprecated soon — all its languages are available in `saaras:v3` and `saaras:v4`.
 
 ## Supported Languages
 
@@ -93,13 +94,13 @@ Set the `SARVAM_API_KEY` environment variable or pass `apiKey` directly.
 
 Bengali (`bn-IN`), English (`en-IN`), Gujarati (`gu-IN`), Hindi (`hi-IN`), Kannada (`kn-IN`), Malayalam (`ml-IN`), Marathi (`mr-IN`), Odia (`od-IN`), Punjabi (`pa-IN`), Tamil (`ta-IN`), Telugu (`te-IN`).
 
-### STT (Saaras v3)
+### STT (Saaras v3/v4)
 
 All TTS languages plus: Assamese (`as-IN`), Bodo (`brx-IN`), Dogri (`doi-IN`), Kashmiri (`ks-IN`), Konkani (`kok-IN`), Maithili (`mai-IN`), Manipuri (`mni-IN`), Nepali (`ne-IN`), Sanskrit (`sa-IN`), Santali (`sat-IN`), Sindhi (`sd-IN`), Urdu (`ur-IN`).
 
 Set `languageCode` to `'unknown'` for automatic language detection.
 
-## STT Modes (Saaras v3)
+## STT Modes (Saaras v3/v4)
 
 | Mode         | Description                                                        |
 | ------------ | ------------------------------------------------------------------ |
