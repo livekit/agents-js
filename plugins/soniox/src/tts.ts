@@ -69,15 +69,20 @@ const validateAudioFormat = (audioFormat: string) => {
 
 const cloneOptions = (opts: TTSOptions): TTSOptions => ({ ...opts });
 
-const toAPIStatusError = (message: string, statusCode?: number, body?: object | null) =>
+const toAPIStatusError = (
+  message: string,
+  statusCode?: number,
+  body?: object | null,
+  requestId?: string | null,
+) =>
   new APIStatusError({
     message,
-    options: { statusCode, body: body ?? null },
+    options: { statusCode, body: body ?? null, requestId },
   });
 
 interface TTSState {
-  currentConnection?: Connection;
-  connectionPromise?: Promise<Connection>;
+  currentConnection?: _Connection;
+  connectionPromise?: Promise<_Connection>;
   streams: Set<SynthesizeStream>;
 }
 
@@ -133,9 +138,11 @@ export class TTS extends tts.TTS {
   }
 
   prewarm(): void {
-    void currentConnection(this, this.#opts.websocketUrl, 20000).catch((error: unknown) => {
-      log().debug({ error }, 'Soniox TTS prewarm failed');
-    });
+    void currentConnection(this, this.#opts.websocketUrl, this.#opts.apiKey!, 20000).catch(
+      (error: unknown) => {
+        log().debug({ error }, 'Soniox TTS prewarm failed');
+      },
+    );
   }
 
   override async close(): Promise<void> {
@@ -162,8 +169,9 @@ const getTTSState = (tts: TTS): TTSState => {
 const currentConnection = async (
   tts: TTS,
   websocketUrl: string,
+  apiKey: string,
   timeoutMs: number,
-): Promise<Connection> => {
+): Promise<_Connection> => {
   const state = getTTSState(tts);
   const current = state.currentConnection;
   if (current !== undefined && current.isCurrent && !current.closed) {
@@ -178,8 +186,8 @@ const currentConnection = async (
     current.markNonCurrent();
   }
 
-  state.connectionPromise = new Promise<Connection>((resolve, reject) => {
-    const connection = new Connection(websocketUrl);
+  state.connectionPromise = new Promise<_Connection>((resolve, reject) => {
+    const connection = new _Connection(websocketUrl, apiKey);
     const timeout = setTimeout(() => {
       void connection.close();
       reject(new APITimeoutError({ message: 'Timeout connecting to Soniox TTS API' }));
@@ -209,7 +217,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   #opts: TTSOptions;
   #text: string;
   #connOptions: APIConnectOptions | undefined;
-  #connection?: Connection;
+  #connection?: _Connection;
   #streamId = '';
   label = 'soniox.ChunkedStream';
 
@@ -246,6 +254,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       this.#connection = await currentConnection(
         this.#tts,
         this.#opts.websocketUrl,
+        this.#opts.apiKey!,
         this.#connOptions?.timeoutMs ?? 10000,
       );
       this.#connection.registerStream(this.#streamId, {
@@ -298,7 +307,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   #tts: TTS;
   #opts: TTSOptions;
-  #connection?: Connection;
+  #connection?: _Connection;
   #streamId = '';
   #cancelled = false;
   #inputCache: Array<string | typeof SynthesizeStream.FLUSH_SENTINEL> = [];
@@ -341,6 +350,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       this.#connection = await currentConnection(
         this.#tts,
         this.#opts.websocketUrl,
+        this.#opts.apiKey!,
         this.connOptions.timeoutMs,
       );
       this.#connection.registerStream(this.#streamId, {
@@ -443,8 +453,10 @@ interface StreamData {
   configSent?: boolean;
 }
 
-class Connection {
+/** @internal */
+export class _Connection {
   #websocketUrl: string;
+  #apiKey: string;
   #ws?: WebSocket;
   #streams = new Map<string, StreamData>();
   #outbound = new AsyncIterableQueue<OutboundMessage>();
@@ -452,10 +464,12 @@ class Connection {
   #keepalive?: NodeJS.Timeout;
   #isCurrent = true;
   #closed = false;
+  #error?: Error;
   #logger = log();
 
-  constructor(websocketUrl: string) {
+  constructor(websocketUrl: string, apiKey: string) {
     this.#websocketUrl = websocketUrl;
+    this.#apiKey = apiKey;
   }
 
   get isCurrent(): boolean {
@@ -471,7 +485,9 @@ class Connection {
       return;
     }
 
-    this.#ws = new WebSocket(this.#websocketUrl);
+    this.#ws = new WebSocket(this.#websocketUrl, {
+      headers: { Authorization: `Bearer ${this.#apiKey}` },
+    });
     await new Promise<void>((resolve, reject) => {
       this.#ws!.once('open', () => resolve());
       this.#ws!.once('error', (error) => reject(error));
@@ -507,8 +523,10 @@ class Connection {
   }
 
   registerStream(streamId: string, stream: StreamData): void {
-    if (this.#closed) {
-      stream.waiter.reject(new APIConnectionError({ message: 'Soniox TTS connection is closed' }));
+    if (this.#closed || this.#error !== undefined) {
+      stream.waiter.reject(
+        this.#error ?? new APIConnectionError({ message: 'Soniox TTS connection is closed' }),
+      );
       return;
     }
     if (this.#streams.has(streamId)) {
@@ -607,7 +625,6 @@ class Connection {
 
         if (msg.type === 'start') {
           const config: Record<string, unknown> = {
-            api_key: msg.opts.apiKey,
             model: msg.opts.model,
             language: msg.opts.language,
             voice: msg.opts.voice,
@@ -651,12 +668,21 @@ class Connection {
     }
 
     const streamId = response.stream_id;
-    if (typeof streamId !== 'string') {
+    if (typeof streamId !== 'string' || !streamId) {
       if (response.error_code !== undefined) {
         this.#logger.error(
           { response },
           `Soniox TTS connection-level error: ${response.error_code} - ${response.error_message}`,
         );
+        this.#failAll(
+          toAPIStatusError(
+            String(response.error_message ?? 'Unknown Soniox TTS error'),
+            parseStatusCode(response.error_code),
+            response,
+            typeof response.request_id === 'string' ? response.request_id : null,
+          ),
+        );
+        void this.close();
       }
       return;
     }
@@ -709,9 +735,10 @@ class Connection {
   }
 
   #failAll(error: Error): void {
+    this.#error ??= error;
     for (const stream of this.#streams.values()) {
       if (!stream.waiter.done) {
-        stream.waiter.reject(error);
+        stream.waiter.reject(this.#error);
       }
     }
     this.#streams.clear();
