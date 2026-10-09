@@ -6,6 +6,7 @@ import { AgentServer, ServerOptions } from './worker.js';
 
 vi.mock('./inference/_warmup.js', () => ({
   _getLocalInferenceModule: () => undefined,
+  _shouldPreloadLocalInference: () => true,
 }));
 
 describe('AgentServer connection failures', () => {
