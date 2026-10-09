@@ -1762,6 +1762,14 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
+    // Already wired: swap the source in place. AudioRecognition accepts its input stream once,
+    // so rebuilding this.audioStream here would leave recognition reading the closed one.
+    if (this.audioStreamId !== undefined) {
+      void this.audioStream.removeInputStream(this.audioStreamId);
+      this.audioStreamId = this.audioStream.addInputStream(audioStream);
+      return;
+    }
+
     void this.audioStream.close();
     this.audioStream = new MultiInputStream<AudioFrame>();
 
