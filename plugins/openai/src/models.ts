@@ -93,7 +93,7 @@ export type TelnyxChatModels =
   | 'meta-llama/Meta-Llama-3.1-8B-Instruct'
   | 'meta-llama/Meta-Llama-3.1-70B-Instruct';
 
-export type CerebrasChatModels = 'gpt-oss-120b' | 'zai-glm-4.7' | 'gemma-4-31b';
+export type CerebrasChatModels = 'gpt-oss-120b' | 'qwen-3.8-27b' | 'zai-glm-4.7' | 'gemma-4-31b';
 
 export type PerplexityChatModels =
   | 'llama-3.1-sonar-small-128k-online'

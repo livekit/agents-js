@@ -2,4 +2,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export type CerebrasChatModels = 'gpt-oss-120b' | 'zai-glm-4.7' | 'gemma-4-31b';
+export type CerebrasChatModels = 'gpt-oss-120b' | 'qwen-3.8-27b' | 'zai-glm-4.7' | 'gemma-4-31b';
