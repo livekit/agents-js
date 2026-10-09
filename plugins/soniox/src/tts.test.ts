@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIStatusError, tts } from '@livekit/agents';
+import { APIStatusError, Future, tts } from '@livekit/agents';
 import { once } from 'node:events';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
-import { TTS } from './tts.js';
+import { TTS, type TTSOptions, _Connection } from './tts.js';
 
 const servers: WebSocketServer[] = [];
 const synthesizers: TTS[] = [];
@@ -16,6 +16,7 @@ async function startServer(
     message: Record<string, unknown>,
     messages: Record<string, unknown>[],
   ) => void,
+  onConnection?: (authorization: string | undefined) => void,
 ): Promise<{ url: string; messages: Record<string, unknown>[] }> {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   servers.push(server);
@@ -27,7 +28,8 @@ async function startServer(
   }
 
   const messages: Record<string, unknown>[] = [];
-  server.on('connection', (socket) => {
+  server.on('connection', (socket, request) => {
+    onConnection?.(request.headers.authorization);
     socket.on('message', (raw) => {
       const message: Record<string, unknown> = JSON.parse(raw.toString());
       messages.push(message);
@@ -36,6 +38,17 @@ async function startServer(
   });
   return { url: `ws://127.0.0.1:${address.port}`, messages };
 }
+
+const testOptions: TTSOptions = {
+  apiKey: 'test-key',
+  websocketUrl: '',
+  model: 'tts-rt-v1-preview',
+  language: 'en',
+  voice: 'Maya',
+  audioFormat: 'pcm_s16le',
+  sampleRate: 24000,
+  speed: 1,
+};
 
 function createTTS(options: ConstructorParameters<typeof TTS>[0] = {}): TTS {
   const synthesizer = new TTS({ apiKey: 'test-key', ...options });
@@ -85,6 +98,110 @@ afterEach(async () => {
       for (const client of server.clients) client.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }),
+  );
+});
+
+describe('Soniox TTS WebSocket authentication', () => {
+  it('authenticates once for multiple streams and omits API keys from configs', async () => {
+    const authorizations: Array<string | undefined> = [];
+    const { url, messages } = await startServer(
+      (socket, message) => {
+        if (typeof message.stream_id === 'string' && typeof message.text === 'string') {
+          socket.send(
+            JSON.stringify({
+              stream_id: message.stream_id,
+              audio: Buffer.alloc(480).toString('base64'),
+              audio_end: true,
+              terminated: true,
+            }),
+          );
+        }
+      },
+      (authorization) => authorizations.push(authorization),
+    );
+    const synthesizer = createTTS({ websocketUrl: url });
+
+    await consume(synthesizer.synthesize('first'));
+    await consume(synthesizer.synthesize('second'));
+
+    expect(authorizations).toEqual(['Bearer test-key']);
+    const configs = messages.filter((message) => 'model' in message);
+    expect(configs).toHaveLength(2);
+    expect(configs.every((config) => !('api_key' in config))).toBe(true);
+    expect(configs.map((config) => config.model)).toEqual([synthesizer.model, synthesizer.model]);
+  });
+});
+
+describe('Soniox TTS connection errors', () => {
+  const cases = ([undefined, ''] as const).flatMap((streamId) =>
+    [401, 429].flatMap((statusCode) =>
+      [false, true].map((registerBeforeError) => ({
+        streamId,
+        statusCode,
+        registerBeforeError,
+      })),
+    ),
+  );
+
+  it.each(cases)(
+    'preserves $statusCode errors with stream ID "$streamId" when registerBeforeError=$registerBeforeError',
+    async ({ streamId, statusCode, registerBeforeError }) => {
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      servers.push(server);
+      await once(server, 'listening');
+      const address = server.address();
+      if (address === null || typeof address === 'string') {
+        throw new Error('expected a TCP address');
+      }
+      const socketPromise = once(server, 'connection').then(([socket]) => socket as WebSocket);
+      const connection = new _Connection(`ws://127.0.0.1:${address.port}`, testOptions.apiKey!);
+      await connection.connect();
+      const socket = await socketPromise;
+      const waiters: Future<void>[] = [];
+      const registerStream = (name: string) => {
+        const waiter = new Future<void>();
+        waiters.push(waiter);
+        connection.registerStream(name, {
+          opts: testOptions,
+          waiter,
+          pushAudio: () => {},
+          endAudio: () => {},
+        });
+      };
+
+      if (registerBeforeError) {
+        registerStream('first');
+        registerStream('second');
+      }
+      socket.send(
+        JSON.stringify({
+          error_code: statusCode,
+          error_message: 'Connection rejected',
+          request_id: 'test-request',
+          ...(streamId !== undefined ? { stream_id: streamId } : {}),
+        }),
+      );
+      await once(socket, 'close');
+      registerStream('closing');
+      registerStream('closed');
+
+      for (const waiter of waiters) {
+        const error = await waiter.await.then(
+          () => undefined,
+          (reason: unknown) => reason,
+        );
+        expect(error).toBeInstanceOf(APIStatusError);
+        expect(error).toMatchObject({
+          statusCode,
+          message: 'Connection rejected',
+          retryable: statusCode === 429,
+          requestId: 'test-request',
+        });
+      }
+      expect(connection.isCurrent).toBe(false);
+      expect(connection.closed).toBe(true);
+      await connection.close();
+    },
   );
 });
 

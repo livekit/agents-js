@@ -490,6 +490,42 @@ async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
 }
 
 describe('SpeechStream config', () => {
+  it('authenticates the WebSocket with a bearer header', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const requestPromise = new Promise<{
+      authorization: string | undefined;
+      config: Record<string, unknown>;
+    }>((resolve) => {
+      wss.on('connection', (ws, request) => {
+        ws.once('message', (data) => {
+          resolve({
+            authorization: request.headers.authorization,
+            config: JSON.parse(data.toString()) as Record<string, unknown>,
+          });
+          ws.send(JSON.stringify({ finished: true }));
+        });
+      });
+    });
+
+    try {
+      const soniox = new STT({ apiKey: 'test-key', baseUrl });
+      const stream = soniox.stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      const drain = consumeSpeechStream(stream);
+
+      const { authorization, config } = await requestPromise;
+      expect(authorization).toBe('Bearer test-key');
+      expect(config).not.toHaveProperty('api_key');
+      expect(config.model).toBe('stt-rt-v4');
+
+      stream.close();
+      await drain.catch(() => {});
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it.each([undefined, 0, 2])(
     'serializes endpoint latency adjustment level %s',
     async (endpointLatencyAdjustmentLevel) => {
@@ -533,6 +569,12 @@ describe('SpeechStream config', () => {
     },
   );
 });
+
+async function consumeSpeechStream(stream: AsyncIterable<stt.SpeechEvent>): Promise<void> {
+  for await (const _ of stream) {
+    // Consume all events.
+  }
+}
 
 describe('SpeechStream server errors', () => {
   it('surfaces a Soniox error frame as a non-retryable APIStatusError', async () => {
