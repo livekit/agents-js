@@ -14,6 +14,7 @@ import {
 } from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
+  APIConnectionError,
   APIStatusError,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
@@ -1119,8 +1120,23 @@ export class RealtimeSession extends llm.RealtimeSession {
                 }
               } else {
                 this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
+                if (!connected.session) {
+                  setupClosed.reject(
+                    new APIConnectionError({
+                      message: 'Gemini Live closed the connection before the session was set up',
+                    }),
+                  );
+                }
               }
-              this.markCurrentGenerationDone();
+              // A replaced socket's close must not end the reply on the socket
+              // that replaced it; the next generation finalizes its own.
+              if (
+                !this.activeSession ||
+                !connected.session ||
+                this.activeSession === connected.session
+              ) {
+                this.markCurrentGenerationDone();
+              }
             },
           },
           config,

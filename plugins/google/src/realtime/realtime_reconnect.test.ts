@@ -134,6 +134,15 @@ describe('Google Realtime dropped connections', () => {
     expect(opened.errors.map((error) => error.recoverable)).toEqual([true]);
   });
 
+  it('retries a setup the server closes normally instead of hanging', async () => {
+    const { connect } = fakeServer([{ refuse: { code: 1000, reason: '' } }, 'live']);
+    const opened = openSession();
+    session = opened.session;
+
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+    expect(opened.errors.map((error) => error.recoverable)).toEqual([true]);
+  });
+
   it('gives up once retries run out, without an unhandled rejection', async () => {
     const unhandled = vi.fn();
     process.on('unhandledRejection', unhandled);
@@ -180,5 +189,24 @@ describe('Google Realtime dropped connections', () => {
 
     expect(connect).toHaveBeenCalledTimes(2);
     expect(opened.errors).toHaveLength(1);
+  });
+
+  it('keeps a late close of a replaced socket from ending the reply on the new one', async () => {
+    const { sockets, connect } = fakeServer(['live', 'live']);
+    const opened = openSession();
+    session = opened.session;
+    const internals = session as unknown as { currentGeneration?: { _done: boolean } };
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    dropSocket({ socket: sockets[0]!, close: INTERNAL_ERROR });
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    sockets[1]!.callbacks.onmessage({
+      serverContent: { modelTurn: { parts: [{ text: 'Seven three five one.' }] } },
+    } as LiveServerMessage);
+    await vi.waitFor(() => expect(internals.currentGeneration?._done).toBe(false));
+    sockets[0]!.callbacks.onclose?.({ code: 1000, reason: '' } as CloseEvent);
+
+    expect(internals.currentGeneration?._done).toBe(false);
   });
 });
