@@ -336,6 +336,10 @@ export class LLM extends llm.LLM {
   /**
    * Create a new instance of PerplexityAI LLM.
    *
+   * @deprecated This helper uses Sonar Chat Completions. Install
+   * `@livekit/agents-plugin-perplexity` and use `perplexity.responses.LLM` for the Perplexity
+   * Agent API.
+   *
    * @remarks
    * `apiKey` must be set to your PerplexityAI API key, either using the argument or by setting the
    * `PERPLEXITY_API_KEY` environment variable.
@@ -350,6 +354,10 @@ export class LLM extends llm.LLM {
       client: OpenAI;
     }> = {},
   ): LLM {
+    console.warn(
+      '[Perplexity] openai.LLM.withPerplexity() uses Sonar Chat Completions and is deprecated. ' +
+        'Install @livekit/agents-plugin-perplexity and use responses.LLM for the Perplexity Agent API.',
+    );
     opts.apiKey = opts.apiKey || process.env.PERPLEXITY_API_KEY;
     if (opts.apiKey === undefined) {
       throw new Error(
@@ -358,7 +366,7 @@ export class LLM extends llm.LLM {
     }
 
     return new LLM({
-      model: 'llama-3.1-sonar-small-128k-chat',
+      model: 'sonar-pro',
       baseURL: 'https://api.perplexity.ai',
       ...opts,
     });
