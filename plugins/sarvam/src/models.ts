@@ -49,7 +49,13 @@ export type TTSV3Speakers =
 
 /** Speakers available on bulbul:v2 */
 export type TTSV2Speakers =
-  'anushka' | 'manisha' | 'vidya' | 'arya' | 'abhilash' | 'karun' | 'hitesh';
+  | 'anushka'
+  | 'manisha'
+  | 'vidya'
+  | 'arya'
+  | 'abhilash'
+  | 'karun'
+  | 'hitesh';
 
 /** Speakers available on bulbul:v4-flash. */
 export const BULBUL_V4_FLASH_SPEAKERS = [
