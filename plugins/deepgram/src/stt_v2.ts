@@ -600,6 +600,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
   }
 
   #onAudioDurationReport(duration: number) {
+    // a closed stream has no reader left for this report
+    if (this.queue.closed) return;
     const usageEvent: stt.SpeechEvent = {
       type: stt.SpeechEventType.RECOGNITION_USAGE,
       requestId: this.#requestId,
