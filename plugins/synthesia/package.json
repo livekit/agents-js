@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-synthesia",
-  "version": "1.8.1",
+  "version": "1.9.1",
   "description": "Synthesia interactive avatar plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
