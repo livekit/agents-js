@@ -32,6 +32,11 @@ export class RemoteChatContext {
     return this.idToItem[itemId] ?? null;
   }
 
+  /** ID of the last item, or undefined when the context is empty. */
+  get tailId(): string | undefined {
+    return this.tail?.item.id;
+  }
+
   /**
    * Insert `message` after the node with ID `previousItemId`.
    * If `previousItemId` is undefined, insert at the head.
