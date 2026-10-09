@@ -23,6 +23,9 @@ import {
 } from './utils.js';
 
 export type OpenAIModels =
+  | 'openai/gpt-5.6-luna'
+  | 'openai/gpt-5.6-sol'
+  | 'openai/gpt-5.6-terra'
   | 'openai/gpt-5.5'
   | 'openai/gpt-5.4'
   | 'openai/gpt-5.4-mini'
@@ -544,6 +547,7 @@ export class LLMStream extends llm.LLMStream {
               completionTokens: usage.completion_tokens || 0,
               promptTokens: usage.prompt_tokens || 0,
               promptCachedTokens: usage.prompt_tokens_details?.cached_tokens || 0,
+              reasoningTokens: usage.completion_tokens_details?.reasoning_tokens || 0,
               totalTokens: usage.total_tokens || 0,
             },
           });

@@ -152,9 +152,12 @@ export class Queue<T> {
   }
 
   async get(options: { signal?: AbortSignal } = {}): Promise<T> {
+    // Cancelled readers must leave buffered items for the next reader.
+    options.signal?.throwIfAborted();
     while (this.items.length === 0) {
       await once(this.#events, 'put', { signal: options.signal });
     }
+    options.signal?.throwIfAborted();
 
     const item = this.items.shift();
     this.#events.emit('get');
@@ -275,91 +278,6 @@ export class Event {
 
   clear(): void {
     this.#isSet = false;
-  }
-}
-
-/** @internal */
-export class CancellablePromise<T, E extends Error = Error> {
-  #promise: ThrowsPromise<T, E>;
-  #cancelFn: () => void;
-  #isCancelled: boolean = false;
-  #error: E | null = null;
-
-  constructor(
-    executor: (
-      resolve: (value: T | PromiseLike<T>) => void,
-      reject: (reason: E) => void,
-      onCancel: (cancelFn: () => void) => void,
-    ) => void,
-  ) {
-    let cancel: () => void;
-
-    this.#promise = new ThrowsPromise<T, E>((resolve, reject) => {
-      executor(
-        resolve,
-        (reason) => {
-          this.#error = reason;
-          reject(reason);
-        },
-        (cancelFn) => {
-          cancel = () => {
-            this.#isCancelled = true;
-            cancelFn();
-          };
-        },
-      );
-    });
-
-    this.#cancelFn = cancel!;
-  }
-
-  get isCancelled(): boolean {
-    return this.#isCancelled;
-  }
-
-  get error(): Error | null {
-    return this.#error;
-  }
-
-  then<TResult1 = T, TResult2 = never>(
-    onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null,
-    onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null,
-  ): Promise<TResult1 | TResult2> {
-    return this.#promise.then(onfulfilled, onrejected);
-  }
-
-  catch<TResult = never>(
-    onrejected?: ((reason: E) => TResult | Promise<TResult>) | null,
-  ): Promise<Throws<T | TResult | undefined, E>> {
-    return this.#promise.catch(onrejected);
-  }
-
-  finally(onfinally?: (() => void) | null): Promise<Throws<T, E>> {
-    return this.#promise.finally(onfinally);
-  }
-
-  cancel(): void {
-    this.#cancelFn();
-  }
-
-  static from<T, E extends Error = Error>(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>;
-  static from<T>(promise: Promise<T>): CancellablePromise<T>;
-  static from<T>(promise: Promise<T>): CancellablePromise<T> {
-    return new CancellablePromise<T>((resolve, reject) => {
-      promise.then(resolve).catch(reject);
-    });
-  }
-}
-
-/** @internal */
-export async function gracefullyCancel<T>(promise: CancellablePromise<T>): Promise<void> {
-  if (!promise.isCancelled) {
-    promise.cancel();
-  }
-  try {
-    await promise;
-  } catch (error) {
-    // Ignore the error, as it's expected due to cancellation
   }
 }
 
@@ -1046,6 +964,9 @@ export type Aborted<T> =
  * instead of catching. On abort it resolves `{ result: undefined, isAborted: true }`;
  * otherwise it resolves `{ result, isAborted: false }`. A rejection of the
  * underlying promise is propagated. The abort listener is always cleaned up.
+ *
+ * Each call uses a separate listener to avoid retaining prior results on a
+ * shared abort promise.
  *
  * An already-aborted signal short-circuits immediately to the abort result.
  *

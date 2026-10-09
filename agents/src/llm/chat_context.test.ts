@@ -8,6 +8,7 @@ import { INSTRUCTIONS_MESSAGE_ID, applyInstructionsModality } from '../voice/gen
 import { FakeLLM } from '../voice/testing/fake_llm.js';
 import {
   AgentConfigUpdate,
+  AgentHandoffItem,
   type AudioContent,
   ChatContext,
   type ChatItem,
@@ -17,6 +18,7 @@ import {
   type ImageContent,
   Instructions,
   ReadonlyChatContext,
+  chatItemFingerprint,
   concatInstructions,
   isInstructions,
   renderInstructions,
@@ -313,7 +315,7 @@ describe('ChatMessage text content', () => {
     'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
     '<expr type="prosody" label="whisper">keep it secret</expr>';
   const mixedClean =
-    ' Press [Enter] to see <b>bold</b>, ' +
+    'Press [Enter] to see <b>bold</b>, ' +
     'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
     'keep it secret';
 
@@ -1658,5 +1660,137 @@ describe('AgentConfigUpdate.toJSON', () => {
       instructions?: unknown;
     };
     expect(withoutInstructions).not.toHaveProperty('instructions');
+  });
+});
+
+function equivalenceItems(): ChatItem[] {
+  return [
+    new ChatMessage({ id: 'm', role: 'user', content: ['hi'] }),
+    new FunctionCall({ id: 'c', callId: '1', name: 'f', args: '{}' }),
+    new FunctionCallOutput({ id: 'o', callId: '1', name: 'f', output: 'ok', isError: false }),
+    new AgentHandoffItem({ id: 'h', newAgentId: 'b' }),
+  ];
+}
+
+describe('ChatItem essential fields and fingerprints', () => {
+  it.each([
+    [0, { role: 'assistant' }],
+    [0, { content: ['hello'] }],
+    [0, { interrupted: true }],
+    [1, { args: '{"x": 1}' }],
+    [1, { name: 'g' }],
+    [1, { thoughtSignature: 'signature' }],
+    [1, { groupId: 'g' }],
+    [1, { extra: { k: 1 } }],
+    [2, { output: 'nope' }],
+    [2, { isError: true }],
+  ] as const)(
+    'essential field change at item %i breaks equivalence and fingerprint',
+    (index, update) => {
+      const items = equivalenceItems();
+      const changed = [...items];
+      changed[index] = Object.assign(
+        Object.create(Object.getPrototypeOf(items[index]!)),
+        items[index],
+        update,
+      );
+
+      expect(new ChatContext(items).isEquivalent(new ChatContext(changed))).toBe(false);
+      expect(chatItemFingerprint(items[index]!)).not.toBe(chatItemFingerprint(changed[index]!));
+    },
+  );
+
+  it('metadata does not affect equivalence or fingerprints', () => {
+    const items = equivalenceItems();
+    const changed = items.map((item) =>
+      Object.assign(Object.create(Object.getPrototypeOf(item)), item),
+    );
+    Object.assign(changed[0]!, { createdAt: 0, transcriptConfidence: 0.5, extra: { k: 1 } });
+    Object.assign(changed[1]!, { createdAt: 0 });
+    Object.assign(changed[2]!, { createdAt: 0 });
+    Object.assign(changed[3]!, { newAgentId: 'c' });
+
+    expect(new ChatContext(items).isEquivalent(new ChatContext(changed))).toBe(true);
+    expect(items.map(chatItemFingerprint)).toEqual(changed.map(chatItemFingerprint));
+  });
+
+  it('detects changed inline image data without keeping it', () => {
+    const image = (id: string, data: string): ImageContent => ({
+      id,
+      type: 'image_content',
+      image: data,
+      inferenceDetail: 'auto',
+      _cache: {},
+    });
+    const message = (content: ImageContent) =>
+      new ChatMessage({ role: 'user', content: [content] });
+    const original = image('img', 'data:image/png;base64,AA');
+    const fingerprint = chatItemFingerprint(message(original));
+
+    // the same id and length with different data
+    expect(chatItemFingerprint(message(image('img', 'data:image/png;base64,BB')))).not.toBe(
+      fingerprint,
+    );
+    // the same data in another object
+    expect(chatItemFingerprint(message(image('img', 'data:image/png;base64,AA')))).toBe(
+      fingerprint,
+    );
+    // the data edited in place
+    original.image = 'data:image/png;base64,CC';
+    expect(chatItemFingerprint(message(original))).not.toBe(fingerprint);
+    expect(fingerprint).not.toContain('base64');
+  });
+
+  it('compares audio frames by identity', () => {
+    const audio = (frame: object): AudioContent =>
+      ({ type: 'audio_content', frame: [frame] }) as unknown as AudioContent;
+    const frame = {};
+    const message = (content: AudioContent) =>
+      new ChatMessage({ id: 'm', role: 'user', content: [content] });
+
+    expect(
+      new ChatContext([message(audio(frame))]).isEquivalent(
+        new ChatContext([message(audio(frame))]),
+      ),
+    ).toBe(true);
+    expect(
+      new ChatContext([message(audio(frame))]).isEquivalent(new ChatContext([message(audio({}))])),
+    ).toBe(false);
+  });
+
+  it('fingerprints function-call extra as plain data', () => {
+    // an object that looks like chat content, but is not in a message's content
+    const call = new FunctionCall({
+      callId: '1',
+      name: 'f',
+      args: '{}',
+      extra: { metadata: { type: 'audio_content' } },
+    });
+    expect(() => chatItemFingerprint(call)).not.toThrow();
+  });
+
+  it('tracks image URLs and inference settings', () => {
+    const image = (
+      url: string,
+      inferenceDetail: ImageContent['inferenceDetail'],
+    ): ImageContent => ({
+      id: 'img',
+      type: 'image_content',
+      image: url,
+      inferenceDetail,
+      _cache: {},
+    });
+    const a = new ChatMessage({ role: 'user', content: [image('https://a.example/img', 'auto')] });
+    const changedUrl = new ChatMessage({
+      role: 'user',
+      content: [image('https://b.example/img', 'auto')],
+    });
+    const changedDetail = new ChatMessage({
+      role: 'user',
+      content: [image('https://a.example/img', 'high')],
+    });
+
+    expect(chatItemFingerprint(a)).not.toBe(chatItemFingerprint(changedUrl));
+    expect(chatItemFingerprint(a)).not.toBe(chatItemFingerprint(changedDetail));
   });
 });

@@ -29,6 +29,39 @@ export function redactionEnabled(spanAttributes?: Attributes): boolean {
 
 export { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 
+const PARTICIPANT_KIND_NAMES: Record<number, string> = {
+  0: 'STANDARD',
+  1: 'INGRESS',
+  2: 'EGRESS',
+  3: 'SIP',
+  4: 'AGENT',
+  5: 'CONNECTOR',
+};
+
+/** The name a participant kind is reported under (`lk.participant_kind`). */
+export function participantKindName(kind: number | undefined): string {
+  if (kind === undefined) return 'STANDARD';
+  return PARTICIPANT_KIND_NAMES[kind] ?? String(kind);
+}
+
+/** Span attributes identifying a room participant (identity is tagged `lk.pii`). */
+export function participantAttributes(participant: {
+  sid?: string;
+  identity?: string;
+  kind?: number;
+  info?: { kind?: number };
+}): Attributes {
+  const attrs: Attributes = {};
+  if (participant.sid) attrs[traceTypes.ATTR_PARTICIPANT_ID] = participant.sid;
+  if (participant.identity !== undefined) {
+    attrs[traceTypes.ATTR_PARTICIPANT_IDENTITY] = participant.identity;
+  }
+  attrs[traceTypes.ATTR_PARTICIPANT_KIND] = participantKindName(
+    participant.kind ?? participant.info?.kind,
+  );
+  return attrs;
+}
+
 export interface RecordExceptionOptions {
   /**
    * Whether to omit exception messages and stack traces from telemetry. Defaults to the resolved

@@ -53,6 +53,7 @@ export interface RealtimeModelOptions {
   noInputPokeSec?: number;
   noInputPokeText?: string;
   noInputEndConversationSec?: number;
+  phonicModel?: 'phonic_v0_5' | 'phonic_v1' | 'phonic_v1_1';
   websocketTimeoutSec?: number;
   intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
   isWelcomeMessageInterruptible?: boolean;
@@ -232,11 +233,16 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       noInputEndConversationSec?: number;
       /**
+       * Phonic model version. Defaults server-side to `phonic_v0_5` when omitted; `phonic_v1` /
+       * `phonic_v1_1` select newer versions.
+       */
+      phonicModel?: 'phonic_v0_5' | 'phonic_v1' | 'phonic_v1_1';
+      /**
        * Seconds of inactivity before the Phonic websocket is closed
        */
       websocketTimeoutSec?: number;
       /**
-       * LLM intelligence level, `standard` or `high`
+       * Model intelligence level, `standard` or `high`
        */
       intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
       /**
@@ -372,6 +378,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       noInputPokeSec: options.noInputPokeSec,
       noInputPokeText: options.noInputPokeText,
       noInputEndConversationSec: options.noInputEndConversationSec,
+      phonicModel: options.phonicModel,
       websocketTimeoutSec: options.websocketTimeoutSec,
       intelligenceLevel: options.intelligenceLevel,
       isWelcomeMessageInterruptible: options.isWelcomeMessageInterruptible,
@@ -1241,6 +1248,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     toolsPayload: Phonic.ToolDefinition[];
   }): Phonic.ConfigOptions {
     return {
+      phonic_model: this.options.phonicModel,
       agent: this.options.phonicAgent,
       project: this.options.project,
       welcome_message: this.options.welcomeMessage,

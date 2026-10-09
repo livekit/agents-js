@@ -53,7 +53,8 @@ describe('extractAndStrip', () => {
   const strip = (text: string, tags: string[]) => extractAndStrip(text, tags)[0];
 
   it('removes a self-closing tag', () => {
-    expect(strip('<emotion value="happy"/> Hello!', ['emotion'])).toBe(' Hello!');
+    // a tag heading the text takes the space it stranded along
+    expect(strip('<emotion value="happy"/> Hello!', ['emotion'])).toBe('Hello!');
   });
 
   it('keeps the content of a wrapping tag', () => {
@@ -62,7 +63,7 @@ describe('extractAndStrip', () => {
 
   it('preserves unrelated tags', () => {
     const text = '<emotion value="happy"/> <custom>keep</custom>';
-    expect(strip(text, ['emotion'])).toBe(' <custom>keep</custom>');
+    expect(strip(text, ['emotion'])).toBe('<custom>keep</custom>');
   });
 
   it('is a no-op with an empty tag list', () => {
@@ -113,7 +114,7 @@ describe('extractAndStrip', () => {
       '<expression value="excited"/> Great! <expression value="sad">oh no</expression>',
       ['expression'],
     );
-    expect(clean).toBe(' Great! oh no');
+    expect(clean).toBe('Great! oh no');
     expect(tags).toEqual([
       ['expression', 'excited'],
       ['expression', 'oh no'],

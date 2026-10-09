@@ -16,7 +16,7 @@ sounds) that the TTS renders and the transcript never shows.
 - `prompt.ts` holds the persona only. It steers _what_ the agent says, and
   expressive mode owns _how_ it sounds, so the two never restate each other.
 
-The pipeline uses LiveKit Inference with Gemini 2.5 Flash, AssemblyAI Universal-3.5 Pro,
+The pipeline uses LiveKit Inference with Gemini 2.5 Flash, AssemblyAI Universal-3.6 Pro,
 Fish Audio S2.1 Pro, and the LiveKit turn detector.
 
 ## Run locally

@@ -33,6 +33,9 @@ import * as traceTypes from './trace_types.js';
 // matched on their own `type` discriminants instead.
 
 const FALSY = new Set(['0', 'false', 'no', 'off']);
+// the id `voice/generation.ts` gives the agent's instructions message; telemetry cannot import
+// from voice (voice imports telemetry), and a test keeps the two equal
+const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
 
 // the env var name the GenAI conventions standardise for this opt-in
 let captureContent = !FALSY.has(
@@ -49,6 +52,10 @@ let captureContent = !FALSY.has(
  */
 export function setCaptureContent(enabled: boolean): void {
   captureContent = enabled;
+}
+
+export function captureContentEnabled(): boolean {
+  return captureContent;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,11 +83,21 @@ const INFERENCE_RECORDED = Symbol('lkInferenceRecorded');
 
 export interface InferenceMarker {
   recorded: boolean;
+  /** Runs once, when the first `llm_request` span is created inside the tracked call. */
+  onRecorded?: () => void;
 }
 
-/** Runs `fn` with a marker that fills in if an `llm_request` span is created inside it. */
-export function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T): T {
-  const marker: InferenceMarker = { recorded: false };
+/**
+ * Runs `fn` with a marker that fills in if an `llm_request` span is created inside it.
+ * `onRecorded` runs at that moment: what the node knew before the request (its configured
+ * model and provider) is recorded before a fallback can overwrite the provider with the
+ * instance that actually served, and never afterwards.
+ */
+export function withInferenceTracking<T>(
+  fn: (marker: InferenceMarker) => T,
+  options: { onRecorded?: () => void } = {},
+): T {
+  const marker: InferenceMarker = { recorded: false, onRecorded: options.onRecorded };
   return otelContext.with(otelContext.active().setValue(INFERENCE_RECORDED, marker), () =>
     fn(marker),
   );
@@ -89,7 +106,9 @@ export function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T): T 
 /** Called where an `llm_request` span is created, so the enclosing node stands down. */
 export function markInferenceSpanRecorded(): void {
   const marker = otelContext.active().getValue(INFERENCE_RECORDED) as InferenceMarker | undefined;
-  if (marker) marker.recorded = true;
+  if (!marker || marker.recorded) return;
+  marker.recorded = true;
+  marker.onRecorded?.();
 }
 
 function textPart(content: string): MessagePart {
@@ -163,6 +182,22 @@ function itemsOf(chatCtx: ChatContext | undefined): readonly ChatItem[] {
   return Array.isArray(items) ? items : [];
 }
 
+function isSystemMessage(item: ChatItem): boolean {
+  return item.type === 'message' && (item.role === 'system' || item.role === 'developer');
+}
+
+/** @internal */
+export function splitInstructions(items: readonly ChatItem[]): [ChatItem[], ChatItem[]] {
+  const index = items.findIndex(
+    (item) => item.id === INSTRUCTIONS_MESSAGE_ID && isSystemMessage(item),
+  );
+  if (index !== -1) {
+    return [[items[index]!], [...items.slice(0, index), ...items.slice(index + 1)]];
+  }
+  if (items[0] && isSystemMessage(items[0])) return [[items[0]], [...items.slice(1)]];
+  return [[], [...items]];
+}
+
 /**
  * `gen_ai.system_instructions` — the agent instructions, as text parts.
  *
@@ -171,9 +206,24 @@ function itemsOf(chatCtx: ChatContext | undefined): readonly ChatItem[] {
  * so they are reported as instructions rather than history.
  */
 export function toSystemInstructions(chatCtx: ChatContext): MessagePart[] {
+  return instructionParts(splitInstructions(itemsOf(chatCtx))[0]);
+}
+
+/**
+ * `gen_ai.input.messages` — the conversation history, in the order it was sent.
+ *
+ * The canonical instructions message is reported in `gen_ai.system_instructions`; later
+ * `system`/`developer` messages remain in place. Non-conversational items are skipped.
+ */
+export function toInputMessages(chatCtx: ChatContext): ChatMessagePayload[] {
+  return conversationMessages(splitInstructions(itemsOf(chatCtx))[1]);
+}
+
+/** @internal */
+export function instructionParts(items: readonly ChatItem[]): MessagePart[] {
   const parts: MessagePart[] = [];
-  for (const item of itemsOf(chatCtx)) {
-    if (item.type === 'message' && (item.role === 'system' || item.role === 'developer')) {
+  for (const item of items) {
+    if (item.type === 'message') {
       const text = item.rawTextContent;
       if (text !== undefined) parts.push(textPart(text));
     }
@@ -181,45 +231,47 @@ export function toSystemInstructions(chatCtx: ChatContext): MessagePart[] {
   return parts;
 }
 
-/**
- * `gen_ai.input.messages` — the conversation history, in the order it was sent.
- *
- * `system`/`developer` messages are reported in `gen_ai.system_instructions` instead, and
- * non-conversational items (agent handoffs, config updates) are skipped.
- */
-export function toInputMessages(chatCtx: ChatContext): ChatMessagePayload[] {
+function messageRole(item: ChatItem): string | undefined {
+  if (item.type === 'message') return item.role === 'developer' ? 'system' : item.role;
+  if (item.type === 'function_call') return 'assistant';
+  if (item.type === 'function_call_output') return 'tool';
+  return undefined;
+}
+
+/** @internal */
+export function conversationMessages(items: readonly ChatItem[]): ChatMessagePayload[] {
   const messages: ChatMessagePayload[] = [];
-  for (const item of itemsOf(chatCtx)) {
-    let role: string;
-    if (item.type === 'message') {
-      if (item.role === 'system' || item.role === 'developer') continue;
-      role = item.role;
-    } else if (item.type === 'function_call') {
-      role = 'assistant';
-    } else if (item.type === 'function_call_output') {
-      role = 'tool';
-    } else {
-      continue;
-    }
-
+  const layout = messageLayout(items);
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index]!;
+    const placement = layout[index]!;
+    if (placement === 'skipped') continue;
     const parts = messageParts(item);
-    if (!parts.length) continue;
-
-    // consecutive tool calls from one assistant turn belong to a single message
-    const last = messages[messages.length - 1];
-    if (
-      last &&
-      last.role === 'assistant' &&
-      role === 'assistant' &&
-      item.type === 'function_call'
-    ) {
-      last.parts.push(...parts);
-      continue;
+    if (placement === 'merged') {
+      messages[messages.length - 1]!.parts.push(...parts);
+    } else {
+      messages.push({ role: messageRole(item)!, parts });
     }
-
-    messages.push({ role, parts });
   }
   return messages;
+}
+
+/** @internal */
+export function messageLayout(items: readonly ChatItem[]): Array<'new' | 'merged' | 'skipped'> {
+  const layout: Array<'new' | 'merged' | 'skipped'> = [];
+  let lastRole: string | undefined;
+  for (const item of items) {
+    const role = messageRole(item);
+    if (role === undefined || messageParts(item).length === 0) {
+      layout.push('skipped');
+    } else if (lastRole === 'assistant' && role === 'assistant' && item.type === 'function_call') {
+      layout.push('merged');
+    } else {
+      layout.push('new');
+      lastRole = role;
+    }
+  }
+  return layout;
 }
 
 export interface ToolCallLike {
@@ -341,7 +393,8 @@ export function setContentAttributes(
 export function setRequestAttributes(
   span: Span,
   params: {
-    operation: string;
+    /** Absent for a delegating span: the nested provider request owns the operation. */
+    operation: string | undefined;
     provider?: string;
     model?: string;
     stream?: boolean;
@@ -350,7 +403,9 @@ export function setRequestAttributes(
 ): void {
   if (!span.isRecording()) return;
 
-  const attrs: Attributes = { [traceTypes.ATTR_GEN_AI_OPERATION_NAME]: params.operation };
+  const attrs: Attributes = {};
+  if (params.operation !== undefined)
+    attrs[traceTypes.ATTR_GEN_AI_OPERATION_NAME] = params.operation;
   const provider = traceTypes.genAIProviderName(params.provider);
   if (provider) attrs[traceTypes.ATTR_GEN_AI_PROVIDER_NAME] = provider;
   if (params.model) attrs[traceTypes.ATTR_GEN_AI_REQUEST_MODEL] = params.model;
@@ -437,6 +492,11 @@ export function realtimeUsageAttributes(metrics: RealtimeModelMetrics): Attribut
     [traceTypes.ATTR_GEN_AI_USAGE_AUDIO_OUTPUT_TOKENS]: metrics.outputTokenDetails.audioTokens,
     [traceTypes.ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS]: metrics.inputTokenDetails.cachedTokens,
   };
+  if (metrics.reasoningTokens !== undefined) {
+    attrs[traceTypes.ATTR_GEN_AI_USAGE_REASONING_OUTPUT_TOKENS] = metrics.reasoningTokens;
+    // unofficial spelling recognised by Langfuse, kept alongside the standard one
+    attrs[traceTypes.ATTR_GEN_AI_USAGE_REASONING_TOKENS] = metrics.reasoningTokens;
+  }
   return attrs;
 }
 

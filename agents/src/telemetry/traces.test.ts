@@ -507,13 +507,13 @@ describe('setupCloudTracer with a user-configured provider', () => {
     // No span is created/ended here so the newly attached cloud BatchSpanProcessor has
     // nothing to flush over the network on shutdown.
     expect(tracer.getProvider()).toBe(userProvider);
-    // setTracerProvider registers the user metadata processor and the in-process PII
-    // stripper; setupCloudTracer registers the session metadata processor plus the built-in
-    // (SDK 2.x) cloud exporter.
-    expect(registeredProcessors).toHaveLength(4);
+    // setTracerProvider registers the user metadata processor, the in-process PII stripper
+    // and the loop monitor's blocked-span tracker; setupCloudTracer registers the session
+    // metadata processor plus the built-in (SDK 2.x) cloud exporter.
+    expect(registeredProcessors).toHaveLength(5);
     expect(registeredProcessors[1]).toBeInstanceOf(PIIFilteringSpanProcessor);
     const setAttributes = vi.fn();
-    registeredProcessors[2]!.onStart({ setAttributes } as never, otelContext.active());
+    registeredProcessors[3]!.onStart({ setAttributes } as never, otelContext.active());
     // agent_name rides the session metadata so spans (and logs) carry it even on
     // the custom-provider path, where the resource is left untouched.
     expect(setAttributes).toHaveBeenCalledWith({
@@ -521,7 +521,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
       job_id: 'job1',
       'lk.agent_name': 'my-agent',
     });
-    expect(registeredProcessors[3]).toBeInstanceOf(BatchSpanProcessor);
+    expect(registeredProcessors[4]).toBeInstanceOf(BatchSpanProcessor);
   });
 
   it('passes the gated exporter to a user-supplied cloud processor factory', async () => {
@@ -545,10 +545,11 @@ describe('setupCloudTracer with a user-configured provider', () => {
     });
 
     expect(createCloudSpanProcessor).toHaveBeenCalledOnce();
-    // the PII stripper, the session metadata processor, then the factory's cloud processor
-    expect(registeredProcessors).toHaveLength(3);
+    // the PII stripper, the loop monitor's blocked-span tracker, the session metadata
+    // processor, then the factory's cloud processor
+    expect(registeredProcessors).toHaveLength(4);
     expect(registeredProcessors[0]).toBeInstanceOf(PIIFilteringSpanProcessor);
-    expect(registeredProcessors[2]).toBe(factoryProcessor);
+    expect(registeredProcessors[3]).toBe(factoryProcessor);
   });
 
   it('requires registerSpanProcessor and never calls addSpanProcessor', async () => {

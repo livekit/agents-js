@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type ChatModels =
+  | 'gpt-5.6-luna'
+  | 'gpt-5.6-sol'
+  | 'gpt-5.6-terra'
+  | 'gpt-5.5'
   | 'gpt-5.4'
   | 'gpt-5.4-mini'
   | 'gpt-5.3-chat-latest'
@@ -211,6 +215,10 @@ export type Reasoning = { effort?: ReasoningEffort | null; [key: string]: unknow
 
 export function supportsReasoningEffort(model: ChatModels | string): boolean {
   return [
+    'gpt-5.6-luna',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.5',
     'gpt-5.4',
     'gpt-5.4-mini',
     'gpt-5.2',
@@ -226,7 +234,18 @@ export function defaultReasoningEffort(model: ChatModels | string): ReasoningEff
     return undefined;
   }
 
-  if (['gpt-5.1', 'gpt-5.2', 'gpt-5.4', 'gpt-5.4-mini'].includes(model)) {
+  if (
+    [
+      'gpt-5.1',
+      'gpt-5.2',
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5.5',
+      'gpt-5.6-luna',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+    ].includes(model)
+  ) {
     return 'none';
   }
 

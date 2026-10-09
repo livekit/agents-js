@@ -31,7 +31,7 @@ import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-import { genAI, traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, inputDelta, traceTypes, tracer } from '../telemetry/index.js';
 import { stripAllMarkup } from '../tts/provider_format.js';
 import {
   type FlushSentinel,
@@ -101,6 +101,9 @@ export function _injectRunningToolCalls(
       chatCtx.insert(
         FunctionCall.create({
           ...runningCall,
+          // an id of its own, stable across turns: input-delta telemetry tells items apart by
+          // id, so the copy matches itself while the tool runs and never the real call
+          id: `${runningCall.id}_running`,
           extra: { ...runningCall.extra, [RUNNING_TOOL_PLACEHOLDER_KEY]: true },
         }),
       );
@@ -631,28 +634,33 @@ export function performLLMInference(
   const toolCallWriter = toolCallStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
+  // the configured model and provider describe the inference only once it is known that this
+  // LLM served it: they go on the node span the moment the nested `llm_request` span is created
+  // (see withInferenceTracking), so a fallback that failed over can then name the serving
+  // provider on top of them rather than be overwritten by them when the node completes
+  const recordConfiguredModel = (span: Span) => {
+    if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+    const normalizedProvider = traceTypes.genAIProviderName(provider);
+    if (normalizedProvider) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, normalizedProvider);
+    }
+  };
+
   const _performLLMInferenceImpl = async (
     signal: AbortSignal,
     span: Span,
     inference: genAI.InferenceMarker,
   ) => {
+    const delta = inputDelta.compute(inputDelta.LLM_NODE, chatCtx, span);
     span.setAttribute(
       traceTypes.ATTR_CHAT_CTX,
       // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
       // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
-      JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
+      JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
     );
+    inputDelta.setAttributes(span, delta);
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
-    // the configured model and provider describe the inference only once it is known that
-    // this LLM served it; that is decided below, when the nested span is (or is not) there
-    const recordConfiguredModel = () => {
-      if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
-      const normalizedProvider = traceTypes.genAIProviderName(provider);
-      if (normalizedProvider) {
-        span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, normalizedProvider);
-      }
-    };
     let nodeError: Error | string | undefined;
 
     // the GenAI inference attributes belong to the nested `llm_request` span, which is the
@@ -773,9 +781,7 @@ export function performLLMInference(
       }
       // a custom node may have generated this itself, with no nested `llm_request` span to
       // carry the convention's attributes; when there was one, they are already recorded
-      if (inference.recorded) {
-        recordConfiguredModel();
-      } else {
+      if (!inference.recorded) {
         // a third-party engine served this, so the configured model and provider are left
         // off rather than crediting it with a call it never made
         genAI.setRequestAttributes(span, {
@@ -793,8 +799,8 @@ export function performLLMInference(
           timeToFirstChunk: data.ttft,
         });
         genAI.setContentAttributes(span, {
-          systemInstructions: genAI.toSystemInstructions(chatCtx),
-          inputMessages: genAI.toInputMessages(chatCtx),
+          systemInstructions: delta.systemInstructions(),
+          inputMessages: delta.inputMessages(),
           toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
           outputMessages: genAI.toOutputMessages({
             text: data.generatedText,
@@ -816,7 +822,9 @@ export function performLLMInference(
   const inferenceTask = async (signal: AbortSignal) =>
     tracer.startActiveSpan(
       async (span) =>
-        genAI.withInferenceTracking((marker) => _performLLMInferenceImpl(signal, span, marker)),
+        genAI.withInferenceTracking((marker) => _performLLMInferenceImpl(signal, span, marker), {
+          onRecorded: () => recordConfiguredModel(span),
+        }),
       { name: 'llm_node', context: currentContext },
     );
 
@@ -1498,7 +1506,7 @@ export function performToolExecutions({
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              const runCtx = new RunContext(session, speechHandle, toolCall);
+              const runCtx = new RunContext(session, speechHandle, toolCall, activity);
               const mock = getMockTool(session.currentAgent, toolCall.name);
               const toolToExecute = mock
                 ? {

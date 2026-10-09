@@ -561,7 +561,13 @@ describe('FallbackSpeechStream lifecycle', () => {
 
   it('transfers the recovery probe through an AgentTask handoff', async () => {
     const beginHandoff = new Future<void>();
-    const task = AgentTask.create<void>({ instructions: 'question' });
+    // a custom sttNode makes the handoff recreate the STT pipeline (the default node is
+    // reused across a handoff), which is the transfer this test exercises
+    const task = AgentTask.create<void>({
+      instructions: 'question',
+      sttNode: (ctx, audio, modelSettings) =>
+        Agent.default.sttNode(ctx.agent, audio, modelSettings),
+    });
     const parent = Agent.create({
       instructions: 'parent',
       onEnter: async () => {
@@ -603,7 +609,13 @@ describe('FallbackSpeechStream lifecycle', () => {
 
   it('preserves recovery through an AgentTask handoff', async () => {
     const beginHandoff = new Future<void>();
-    const task = AgentTask.create<void>({ instructions: 'question' });
+    // a custom sttNode makes the handoff recreate the STT pipeline (the default node is
+    // reused across a handoff), which is the transfer this test exercises
+    const task = AgentTask.create<void>({
+      instructions: 'question',
+      sttNode: (ctx, audio, modelSettings) =>
+        Agent.default.sttNode(ctx.agent, audio, modelSettings),
+    });
     const parent = Agent.create({
       instructions: 'parent',
       onEnter: async () => {

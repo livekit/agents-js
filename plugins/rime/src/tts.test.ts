@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger, log } from '@livekit/agents';
+import { type APIError, initializeLogger, log } from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts } from '@livekit/agents-plugins-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -34,6 +34,123 @@ describe('Rime TTS streaming', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  it.each([
+    { status: 401, maxRetry: 2, attempts: 1 },
+    { status: 503, maxRetry: 2, attempts: 3 },
+    { status: 503, maxRetry: 0, attempts: 1 },
+  ])(
+    'reports terminal HTTP $status once after $attempts attempts',
+    async ({ status, maxRetry, attempts }) => {
+      const fetch = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async () => new Response(null, { status }));
+      const value = new TTS({ apiKey: 'test-key' });
+      const errors: unknown[] = [];
+      value.on('error', (event) => errors.push(event));
+      const stream = value.synthesize('Hello.', { maxRetry, timeoutMs: 100, retryIntervalMs: 0 });
+      const frames = [];
+      for await (const frame of stream) frames.push(frame);
+      // Let any rejected background task reach the test runner.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(frames).toEqual([]);
+      expect(fetch).toHaveBeenCalledTimes(attempts);
+      expect(errors).toEqual([
+        expect.objectContaining({
+          label: value.label,
+          recoverable: false,
+          error: expect.objectContaining({ statusCode: status }),
+        }),
+      ]);
+      await value.close();
+    },
+  );
+
+  it('retries after a body timeout even when HTTP cancellation does not settle', async () => {
+    let finishCancellation!: () => void;
+    const cancellation = new Promise<void>((resolve) => {
+      finishCancellation = resolve;
+    });
+    let requestSignal: AbortSignal | undefined;
+    const cancel = vi.fn(() => {
+      expect(requestSignal?.aborted).toBe(true);
+      return cancellation;
+    });
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(async (_url, init) => {
+        requestSignal = init?.signal ?? undefined;
+        return new Response(body);
+      })
+      .mockImplementationOnce(async () => {
+        expect(requestSignal?.aborted).toBe(true);
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(body.locked).toBe(false);
+        return new Response(Buffer.from(pcmChunk(9600)));
+      });
+    const value = new TTS({ apiKey: 'test-key' });
+    const errors: APIError[] = [];
+    value.on('error', (event) => errors.push(event.error as APIError));
+    const stream = value.synthesize('Hello.', {
+      maxRetry: 1,
+      retryIntervalMs: 0,
+      timeoutMs: 30,
+    });
+    const completed = (async () => {
+      let frames = 0;
+      for await (const frame of stream) {
+        void frame;
+        frames++;
+      }
+      return frames;
+    })();
+    try {
+      const result = await withTimeout(completed, 1000);
+      expect(result).not.toBe('timeout');
+      expect(result).toBeGreaterThan(0);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(errors).toHaveLength(0);
+      expect(body.locked).toBe(false);
+    } finally {
+      finishCancellation();
+      await completed;
+      await value.close();
+    }
+  });
+
+  it.each(['body failure', 'timeout'])(
+    'does not retry HTTP %s after audio delivery',
+    async (mode) => {
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      const body = new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+      });
+      const fetch = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(body))
+        .mockImplementation(async () => new Response(Buffer.from(pcmChunk(9600))));
+      const value = new TTS({ apiKey: 'test-key' });
+      const errors: APIError[] = [];
+      value.on('error', (event) => errors.push(event.error as APIError));
+      const stream = value.synthesize('Hello.', {
+        maxRetry: 2,
+        retryIntervalMs: 0,
+        timeoutMs: 100,
+      });
+      controller.enqueue(pcmChunk(9600));
+      expect((await stream.next()).done).toBe(false);
+      if (mode === 'body failure') controller.error(new Error('private provider error'));
+      for await (const frame of stream) void frame;
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.retryable).toBe(false);
+      expect(String(errors[0])).not.toContain('private provider error');
+      await value.close();
+    },
+  );
 
   it('preserves model-specific default speakers', () => {
     const defaultTTS = new TTS({ apiKey: 'test-rime-key' });
@@ -79,6 +196,7 @@ describe('Rime TTS streaming', () => {
     const rimeTTS = new TTS({
       apiKey: 'test-rime-key',
       baseURL: 'https://rime.test/v1/rime-tts',
+      allowCustomEndpoint: true,
       modelId: 'coda',
       samplingRate: 16000,
       repetition_penalty: 1.1,

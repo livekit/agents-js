@@ -81,6 +81,7 @@ export function convertJSONSchemaToOpenAPISchema(jsonSchema: JSONSchema7Definiti
       },
       {} as Record<string, unknown>,
     );
+    result.propertyOrdering = Object.keys(properties);
   }
 
   if (items) {
@@ -138,7 +139,10 @@ function isEmptyObjectSchema(jsonSchema: JSONSchema7Definition): boolean {
   );
 }
 
-export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclaration[] {
+export function toFunctionDeclarations(
+  toolCtx: llm.ToolContext,
+  useParametersJsonSchema = true,
+): FunctionDeclaration[] {
   const functionDeclarations: FunctionDeclaration[] = [];
 
   // Provider tools are not supported by the Gemini schema; `sortedToolEntries` yields only
@@ -150,11 +154,16 @@ export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclar
     // Create a deep copy to prevent the Google GenAI library from mutating the schema
     const schemaCopy = JSON.parse(JSON.stringify(jsonSchema));
 
-    functionDeclarations.push({
+    const declaration: FunctionDeclaration = {
       name,
       description,
-      parameters: convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema,
-    });
+    };
+    if (useParametersJsonSchema) {
+      declaration.parametersJsonSchema = isEmptyObjectSchema(schemaCopy) ? undefined : schemaCopy;
+    } else {
+      declaration.parameters = convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema;
+    }
+    functionDeclarations.push(declaration);
   }
 
   return functionDeclarations;
@@ -165,17 +174,19 @@ export function toToolsConfig({
   geminiTools,
   toolBehavior,
   allowMixedTools = true,
+  useParametersJsonSchema = true,
 }: {
   toolCtx?: llm.ToolContext;
   geminiTools?: LLMTools;
   toolBehavior?: types.Behavior;
   allowMixedTools?: boolean;
+  useParametersJsonSchema?: boolean;
 }): [types.Tool[] | undefined, boolean] {
   const tools: types.Tool[] = [];
   let hasFunctionTools = false;
 
   if (toolCtx) {
-    const functionDeclarations = toFunctionDeclarations(toolCtx);
+    const functionDeclarations = toFunctionDeclarations(toolCtx, useParametersJsonSchema);
     if (functionDeclarations.length > 0) {
       hasFunctionTools = true;
       tools.push({

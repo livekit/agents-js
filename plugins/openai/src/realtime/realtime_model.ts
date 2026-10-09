@@ -396,9 +396,7 @@ export function processBaseURL({
   azureDeployment?: string;
   apiVersion?: string;
 }): string {
-  // Azure GA (no apiVersion) uses /v1/realtime; legacy preview uses /realtime
-  const realtimePath = isAzure && !apiVersion ? 'v1/realtime' : 'realtime';
-  const url = new URL([baseURL, realtimePath].join('/'));
+  const url = new URL(baseURL);
 
   if (url.protocol === 'https:') {
     url.protocol = 'wss:';
@@ -406,11 +404,21 @@ export function processBaseURL({
     url.protocol = 'ws:';
   }
 
-  // ensure "/realtime" is added if the path is empty OR "/v1"
-  if (!url.pathname || ['', '/v1', '/openai'].includes(url.pathname.replace(/\/$/, ''))) {
-    url.pathname = url.pathname.replace(/\/$/, '') + '/realtime';
-  } else {
-    url.pathname = url.pathname.replace(/\/$/, '');
+  const pathStripped = url.pathname.replace(/\/$/, '');
+  if (isAzure) {
+    if (['', '/openai'].includes(pathStripped)) {
+      // Azure GA (no apiVersion) uses /v1/realtime; legacy preview uses /realtime.
+      url.pathname = pathStripped + (apiVersion ? '/realtime' : '/v1/realtime');
+    } else if (pathStripped === '/openai/v1') {
+      url.pathname = '/openai/v1/realtime';
+    }
+  } else if (!url.pathname || ['', '/v1', '/openai', '/openai/v1'].includes(pathStripped)) {
+    url.pathname = pathStripped + '/realtime';
+  }
+
+  if (isAzure) {
+    // remove from endpoint URL if present
+    url.searchParams.delete('api-version');
   }
 
   const queryParams: Record<string, string> = {};
@@ -422,12 +430,14 @@ export function processBaseURL({
     }
   } else if (isAzure) {
     // GA Azure: /v1/realtime?model=<deployment>
-    if (azureDeployment) {
+    if (!url.searchParams.has('model') && azureDeployment) {
       queryParams['model'] = azureDeployment;
     }
   } else {
     // Standard OpenAI: /realtime?model=<model>
-    queryParams['model'] = model;
+    if (!url.searchParams.has('model')) {
+      queryParams['model'] = model;
+    }
   }
 
   for (const [key, value] of Object.entries(queryParams)) {
@@ -467,6 +477,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
   private chatCtxEventFutures: { [id: string]: Future } = {};
+  private sentChatCtxEvents: { [id: string]: api_proto.ClientEvent } = {};
+  private replayItemCreateEventIds: { [id: string]: string[] } = {};
+  private replayItemCreateEventItems: { [eventId: string]: string } = {};
 
   private inputTranscriptAccumulators = new Map<string, Map<number, string>>();
 
@@ -621,6 +634,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const ownedCreateFutures: { [id: string]: Future<void> } = {};
       const ownedDeleteFutures: { [id: string]: Future<void> } = {};
       const ownedEventFutures: { [id: string]: Future<void> } = {};
+      this.sentChatCtxEvents = {};
 
       const cleanupFutures = () => {
         for (const [itemId, future] of Object.entries(ownedDeleteFutures)) {
@@ -694,6 +708,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
       } finally {
         cleanupFutures();
+        this.sentChatCtxEvents = {};
         if (!timeoutController.signal.aborted) {
           timeoutController.abort();
         }
@@ -1155,17 +1170,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         'Reconnecting to OpenAI Realtime API',
       );
 
-      // Clean up pending futures from old connection to prevent memory leaks
-      for (const fut of Object.values(this.itemCreateFutures)) {
-        if (!fut.done) fut.reject(new Error('Session reconnected'));
-      }
-      this.itemCreateFutures = {};
-
-      for (const fut of Object.values(this.itemDeleteFutures)) {
-        if (!fut.done) fut.reject(new Error('Session reconnected'));
-      }
-      this.itemDeleteFutures = {};
-
       this.rejectResponseCreatedFutures('Session reconnected');
       this.discardedEventIds.clear();
       this.closeCurrentGeneration('session reconnection');
@@ -1185,15 +1189,62 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
 
       // chat context
-      const chatCtx = this.chatCtx.copy({
-        excludeFunctionCall: true,
+      const fullChatCtx = this.chatCtx;
+      const chatCtx = fullChatCtx.copy({
         excludeInstructions: true,
         excludeEmptyMessage: true,
       });
 
       const oldChatCtx = this.remoteChatCtx;
       this.remoteChatCtx = new llm.RemoteChatContext();
-      events.push(...(await this.createChatCtxUpdateEvents(chatCtx)));
+      const replayEvents = await this.createChatCtxUpdateEvents(chatCtx);
+      events.push(...replayEvents);
+
+      const availableItemIds = new Set(
+        replayEvents
+          .filter((event) => event.type === 'conversation.item.create')
+          .map((event) => event.item.id),
+      );
+      this.replayItemCreateEventIds = {};
+      this.replayItemCreateEventItems = {};
+      for (const event of replayEvents) {
+        if (
+          event.type === 'conversation.item.create' &&
+          event.event_id &&
+          this.itemCreateFutures[event.item.id]
+        ) {
+          (this.replayItemCreateEventIds[event.item.id] ??= []).push(event.event_id);
+          this.replayItemCreateEventItems[event.event_id] = event.item.id;
+        }
+      }
+
+      // The replay holds only confirmed items. Resend events the lost connection never
+      // confirmed so their confirmations settle the original updateChatCtx waiter.
+      for (const [eventId, event] of Object.entries(this.sentChatCtxEvents)) {
+        const future = this.chatCtxEventFutures[eventId];
+        if (!future || future.done) continue;
+
+        if (event.type === 'conversation.item.create') {
+          let previousItemId = event.previous_item_id;
+          if (previousItemId && !availableItemIds.has(previousItemId)) {
+            const previousIndex = fullChatCtx.indexById(previousItemId);
+            previousItemId = undefined;
+            if (previousIndex !== undefined) {
+              for (let i = previousIndex - 1; i >= 0; i--) {
+                const candidateId = fullChatCtx.items[i]!.id;
+                if (availableItemIds.has(candidateId)) {
+                  previousItemId = candidateId;
+                  break;
+                }
+              }
+            }
+          }
+          events.push({ ...event, previous_item_id: previousItemId });
+          availableItemIds.add(event.item.id);
+        } else {
+          events.push(event);
+        }
+      }
 
       try {
         for (const ev of events) {
@@ -1306,6 +1357,9 @@ export class RealtimeSession extends llm.RealtimeSession {
             normalizeAzureClientEvent(event as unknown as Record<string, unknown>);
           }
           wsConn.send(JSON.stringify(event));
+          if (event.event_id && this.chatCtxEventFutures[event.event_id]) {
+            this.sentChatCtxEvents[event.event_id] = event;
+          }
         } catch (error) {
           break;
         }
@@ -1491,6 +1545,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
     this.itemDeleteFutures = {};
+    this.replayItemCreateEventIds = {};
+    this.replayItemCreateEventItems = {};
 
     this.inputTranscriptAccumulators.clear();
 
@@ -1626,7 +1682,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     const serverEventType = event.type as string;
     const incomingItem = openAIItemToLivekitItem(event.item);
     const existingItem = this.remoteChatCtx.get(event.item.id);
-    const pendingCreateFuture = this.itemCreateFutures[event.item.id];
+    const replayConfirmation = this.consumeReplayItemCreate(event.item.id);
+    const pendingCreateFuture = replayConfirmation
+      ? undefined
+      : this.itemCreateFutures[event.item.id];
     if (existingItem && serverEventType === 'conversation.item.added' && !pendingCreateFuture) {
       // The server may emit a later input-audio-backed view of a user item whose
       // transcribed text variant we already inserted locally under the same ID.
@@ -1917,6 +1976,15 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
+    // conversation.item.added carries a function call before its arguments are generated;
+    // retain the completed arguments so a reconnection can replay them.
+    if (event.item.type === 'function_call') {
+      const remoteItem = this.remoteChatCtx.get(event.item.id);
+      if (remoteItem?.item instanceof llm.FunctionCall) {
+        remoteItem.item.args = event.item.arguments;
+      }
+    }
+
     if (this.currentGeneration instanceof DiscardedGeneration) return;
 
     if (!this.currentGeneration) {
@@ -2091,6 +2159,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   private handleError(event: api_proto.ErrorEvent): void {
     const eventId = event.error.event_id;
     if (eventId) {
+      const replayItemId = this.replayItemCreateEventItems[eventId];
+      if (replayItemId) {
+        this.consumeReplayItemCreate(replayItemId, eventId);
+      }
+
       const future = this.chatCtxEventFutures[eventId];
       if (future) {
         delete this.chatCtxEventFutures[eventId];
@@ -2124,6 +2197,19 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw error;
     }
     this.emitError({ error, recoverable: true });
+  }
+
+  private consumeReplayItemCreate(itemId: string, eventId?: string): boolean {
+    const eventIds = this.replayItemCreateEventIds[itemId];
+    if (!eventIds?.length) return false;
+
+    const index = eventId ? eventIds.indexOf(eventId) : 0;
+    if (index === -1) return false;
+
+    const [consumedEventId] = eventIds.splice(index, 1);
+    if (consumedEventId) delete this.replayItemCreateEventItems[consumedEventId];
+    if (eventIds.length === 0) delete this.replayItemCreateEventIds[itemId];
+    return true;
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {

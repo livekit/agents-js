@@ -457,6 +457,11 @@ describe('AgentActivity - mainTask', () => {
   it('does not end paused agent speech twice when cancelling it', async () => {
     const handle = SpeechHandle.create({ allowInterruptions: true });
     handle._authorizeGeneration();
+    const onEndOfAgentSpeech = (
+      AgentActivity.prototype as unknown as {
+        onEndOfAgentSpeech: (endedAt: number) => Promise<void>;
+      }
+    ).onEndOfAgentSpeech;
 
     const fakeActivity = {
       cancelSpeechPauseTask: undefined,
@@ -473,6 +478,7 @@ describe('AgentActivity - mainTask', () => {
       audioRecognition: {
         onEndOfAgentSpeech: vi.fn(async () => {}),
       },
+      onEndOfAgentSpeech,
       agentSession: {
         sessionOptions: {
           turnHandling: {
@@ -847,6 +853,11 @@ describe('AgentActivity - speech completion', () => {
       _currentSpeech: speechHandle,
       activeAgentStateLease: undefined as unknown,
       audioRecognition,
+      onEndOfAgentSpeech: (
+        AgentActivity.prototype as unknown as {
+          onEndOfAgentSpeech: (endedAt: number) => Promise<void>;
+        }
+      ).onEndOfAgentSpeech,
       agentSession: {
         get _activity() {
           return fakeActivity;
@@ -905,7 +916,12 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
   };
 
   const generateReply = vi.fn(
-    () => ({ id: 'speech_fake', _cancel: () => {} }) as unknown as SpeechHandle,
+    () =>
+      ({
+        id: 'speech_fake',
+        _cancel: () => {},
+        _takeAgentTurn: () => undefined,
+      }) as unknown as SpeechHandle,
   );
   const cancelPreemptiveGeneration = vi.fn();
 
@@ -1872,6 +1888,48 @@ describe('AgentActivity - transcriptsEquivalent', () => {
       first: 'BOOK   A ROOM',
       second: 'book a room.',
       expected: true,
+    },
+    {
+      name: 'ASCII casing and punctuation',
+      first: 'hello how are you',
+      second: 'Hello, how are you?',
+      expected: true,
+    },
+    {
+      name: 'Arabic comma and question mark',
+      first: 'مرحبا كيف حالك',
+      second: 'مرحبا، كيف حالك؟',
+      expected: true,
+    },
+    {
+      name: 'Arabic comma and semicolon',
+      first: 'نعم أريد الحجز',
+      second: 'نعم، أريد الحجز؛',
+      expected: true,
+    },
+    {
+      name: 'Urdu full stop',
+      first: 'آپ کیسے ہیں',
+      second: 'آپ کیسے ہیں۔',
+      expected: true,
+    },
+    {
+      name: 'Devanagari danda',
+      first: 'आप कैसे हैं',
+      second: 'आप कैसे हैं।',
+      expected: true,
+    },
+    {
+      name: 'CJK punctuation',
+      first: '你好 我很好',
+      second: '你好，我很好。',
+      expected: true,
+    },
+    {
+      name: 'different Arabic words',
+      first: 'مرحبا كيف حالك',
+      second: 'مرحبا كيف حالكم؟',
+      expected: false,
     },
     // A changed word must invalidate it (Python: test_changed_words_invalidate_preemptive_generation).
     { name: 'a changed word', first: 'book a', second: 'book a room', expected: false },

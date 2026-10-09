@@ -16,6 +16,7 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import type { Context } from '@opentelemetry/api';
 import {
   ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID,
@@ -23,6 +24,7 @@ import {
   TOPIC_TRANSCRIPTION,
 } from '../../constants.js';
 import { log } from '../../log.js';
+import { traceTypes, tracer } from '../../telemetry/index.js';
 import {
   type ExpressiveTag,
   TranscriptMarkupStripper,
@@ -575,8 +577,17 @@ export class ParticipantAudioOutput extends AudioOutput {
     this.dryAt = undefined;
   }
 
-  async start(signal: AbortSignal): Promise<void> {
-    await this.publishTrack(signal);
+  async start(signal: AbortSignal, traceContext?: Context): Promise<void> {
+    // detached: publishing spawns the track's tasks, which must not inherit this span
+    await tracer.detachedSpan(
+      async (span) => {
+        await this.publishTrack(signal);
+        if (this.publication?.sid) {
+          span.setAttribute(traceTypes.ATTR_TRACK_SID, this.publication.sid);
+        }
+      },
+      { name: 'publish_audio_output', context: traceContext },
+    );
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
