@@ -14,7 +14,6 @@ import {
 } from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
-  APIConnectionError,
   APIStatusError,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
@@ -49,6 +48,8 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
+// Gemini Live closes with 1007 when the session's context is exhausted.
+const WS_CLOSE_CONTEXT_EXHAUSTED = 1007;
 
 const KNOWN_VERTEXAI_MODELS = new Set(['gemini-3.8-live', 'gemini-live-2.5-flash-native-audio']);
 
@@ -550,6 +551,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   #task: Promise<void>;
   #logger = log();
   #closed = false;
+  // An abnormal close of the live socket, rethrown by the main loop so it is
+  // retried on a fresh socket like a failed connect.
+  #sessionError?: Error;
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
@@ -1050,18 +1054,23 @@ export class RealtimeSession extends llm.RealtimeSession {
       await this.closeActiveSession();
 
       this.sessionShouldClose.clear();
+      this.#sessionError = undefined;
       const config = this.buildConnectConfig();
+      // The SDK forwards the queued setupComplete message before connect()
+      // returns, so onmessage can fire before we hold the session. Ignoring
+      // those changes nothing: onReceiveMessage already dropped anything
+      // arriving before activeSession was set. `stale` keeps a late close of
+      // this attempt's socket from restarting the next one.
+      const connected: { session?: types.Session; stale?: boolean } = {};
 
       try {
         this.#logger.debug('Connecting to Gemini Realtime API...');
 
         const sessionOpened = new Event();
-        // The SDK forwards the queued setupComplete message before connect()
-        // returns, so this callback can fire before we hold the session. Ignoring
-        // those changes nothing: onReceiveMessage already dropped anything
-        // arriving before activeSession was set, a few lines below.
-        const connected: { session?: types.Session } = {};
-        const session = await this.#client.live.connect({
+        // The SDK's connect() never settles when the server closes the socket
+        // before setupComplete, so a close during setup rejects it here.
+        const setupClosed = new Future<never>();
+        const connecting = this.#client.live.connect({
           model: this.options.model,
           callbacks: {
             onopen: () => sessionOpened.set(),
@@ -1090,19 +1099,24 @@ export class RealtimeSession extends llm.RealtimeSession {
                 const errorMsg = event.reason || `WebSocket closed with code ${event.code}`;
                 this.#logger.error(`Gemini Live session error: ${errorMsg}${truncationNote}`);
 
-                this.emitError(
-                  new APIStatusError({
-                    message: `${errorMsg}${truncationNote}`,
-                    options: {
-                      statusCode: event.code,
-                      retryable: false,
-                      body: event.reason
-                        ? { reason: event.reason, code: event.code, truncated: isTruncated }
-                        : null,
-                    },
-                  }),
-                  false,
-                );
+                const error = new APIStatusError({
+                  message: `${errorMsg}${truncationNote}`,
+                  options: {
+                    statusCode: event.code,
+                    retryable: false,
+                    body: event.reason
+                      ? { reason: event.reason, code: event.code, truncated: isTruncated }
+                      : null,
+                  },
+                });
+                if (!connected.session) {
+                  setupClosed.reject(error);
+                } else if (!connected.stale && !this.#closed) {
+                  // The main loop reconnects and replays the chat context, the
+                  // way the Python plugin recovers from a dropped session.
+                  this.#sessionError = error;
+                  this.markRestartNeeded();
+                }
               } else {
                 this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
               }
@@ -1111,6 +1125,10 @@ export class RealtimeSession extends llm.RealtimeSession {
           },
           config,
         });
+        // Keeps a setup failure that lands after the race settled from
+        // surfacing as an unhandled rejection.
+        setupClosed.await.catch(() => {});
+        const session = await Promise.race([connecting, setupClosed.await]);
         connected.session = session;
 
         await sessionOpened.wait();
@@ -1149,24 +1167,39 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
 
         await cancelAndWait([sendTask, restartWaitTask], 2000);
+
+        const sessionError = this.#sessionError;
+        if (sessionError) {
+          this.#sessionError = undefined;
+          throw sessionError;
+        }
       } catch (error) {
         this.#logger.error(`Gemini Realtime API error: ${error}`);
 
         if (this.#closed) break;
 
+        // Nothing awaits this task, so the final error is emitted rather than
+        // thrown: a throw here would surface as an unhandled rejection.
         if (maxRetries === 0) {
+          this.#logger.error('Failed to connect to Gemini Live');
           this.emitError(error as Error, false);
-          throw new APIConnectionError({
-            message: 'Failed to connect to Gemini Live',
-          });
+          return;
         }
 
         if (this.numRetries >= maxRetries) {
+          this.#logger.error(`Failed to connect to Gemini Live after ${maxRetries} attempts`);
           this.emitError(error as Error, false);
-          throw new APIConnectionError({
-            message: `Failed to connect to Gemini Live after ${maxRetries} attempts`,
-          });
+          return;
         }
+
+        // Reconnecting would replay the same oversized chat context and fail
+        // the same way.
+        if (error instanceof APIStatusError && error.statusCode === WS_CLOSE_CONTEXT_EXHAUSTED) {
+          this.emitError(error, false);
+          return;
+        }
+
+        this.emitError(error as Error, true);
 
         const retryInterval =
           this.numRetries === 100 ? 0 : this.options.connOptions.retryIntervalMs;
@@ -1182,6 +1215,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         await delay(retryInterval);
         this.numRetries++;
       } finally {
+        connected.stale = true;
         await this.closeActiveSession();
       }
     }
@@ -1376,7 +1410,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.handleGoAway(response.goAway);
       }
 
-      if (this.numRetries > 0) {
+      // Only a real exchange proves the socket works: a server that sends a
+      // resumption update and then drops every fresh socket must still run
+      // out of retries.
+      if (this.numRetries > 0 && (response.serverContent || response.toolCall)) {
         this.numRetries = 0;
       }
     } catch (e) {
