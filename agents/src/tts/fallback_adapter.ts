@@ -27,6 +27,8 @@ import {
 interface TTSStatus {
   available: boolean;
   recoveringTask: Task<void> | null;
+  /** User attempts in flight; recovery probes discard their audio, so their notices aren't forwarded. */
+  serving: number;
 }
 
 /**
@@ -145,6 +147,7 @@ export class FallbackAdapter extends TTS {
     this._status = opts.ttsInstances.map(() => ({
       available: true,
       recoveringTask: null,
+      serving: 0,
     }));
     this.setupEventForwarding();
   }
@@ -173,16 +176,21 @@ export class FallbackAdapter extends TTS {
    */
   private readonly absorbChildError = () => {};
 
-  private readonly forwardFallbackActivated = (event: FallbackActivatedEvent) => {
-    this.emit('fallback_activated', event);
-  };
+  private readonly fallbackForwarders: ((event: FallbackActivatedEvent) => void)[] = [];
 
   private setupEventForwarding(): void {
-    for (const tts of this.ttsInstances) {
+    this.ttsInstances.forEach((tts, i) => {
+      const status = this._status[i]!;
+      const forwardFallbackActivated = (event: FallbackActivatedEvent) => {
+        if (status.serving > 0) {
+          this.emit('fallback_activated', event);
+        }
+      };
+      this.fallbackForwarders.push(forwardFallbackActivated);
       tts.on('metrics_collected', this.forwardMetrics);
       tts.on('error', this.absorbChildError);
-      tts.on('fallback_activated', this.forwardFallbackActivated);
-    }
+      tts.on('fallback_activated', forwardFallbackActivated);
+    });
   }
 
   /**
@@ -337,11 +345,11 @@ export class FallbackAdapter extends TTS {
 
     // Remove only our own listeners: the instances belong to the caller, who
     // may have subscribed to them directly.
-    for (const tts of this.ttsInstances) {
+    this.ttsInstances.forEach((tts, i) => {
       tts.off('metrics_collected', this.forwardMetrics);
       tts.off('error', this.absorbChildError);
-      tts.off('fallback_activated', this.forwardFallbackActivated);
-    }
+      tts.off('fallback_activated', this.fallbackForwarders[i]!);
+    });
 
     // Close all TTS instances
     await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.close()));
@@ -449,6 +457,7 @@ class FallbackChunkedStream extends ChunkedStream {
       // 0.13.25) could otherwise mask a silent failure as a success.
       let sawRawAudio = false;
 
+      status.serving++;
       try {
         this._logger.debug({ tts: tts.label }, 'attempting TTS synthesis');
         const connOptions: APIConnectOptions = {
@@ -536,6 +545,7 @@ class FallbackChunkedStream extends ChunkedStream {
           throw error;
         }
       } finally {
+        status.serving--;
         resampler?.close();
       }
     }
@@ -619,6 +629,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       // back to another TTS (markStarted only takes effect once).
       let captureStartedTime: () => void = () => {};
 
+      status.serving++;
       try {
         this._logger.debug({ tts: originalTts.label }, 'attempting TTS stream');
 
@@ -784,6 +795,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           throw error;
         }
       } finally {
+        status.serving--;
         // the stream may have received text and failed before emitting audio;
         // its started time must still anchor the fallback's ttfb
         captureStartedTime();
