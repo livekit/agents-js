@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["./src"],
+  "exclude": ["./src/**/*.test.ts"],
+  "compilerOptions": {
+    "rootDir": "./src",
+    "declarationDir": "./dist",
+    "outDir": "./dist"
+  },
+  "typedocOptions": {
+    "name": "plugins/agents-plugin-nabrah",
+    "entryPointStrategy": "resolve",
+    "entryPoints": ["src/index.ts"]
+  }
+}
