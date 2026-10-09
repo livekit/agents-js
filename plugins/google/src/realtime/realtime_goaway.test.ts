@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { LiveCallbacks, LiveServerGoAway, Session } from '@google/genai';
-import { Live } from '@google/genai';
+import { FunctionResponseScheduling, Live } from '@google/genai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RealtimeModel, type RealtimeSession } from './realtime_api.js';
 
@@ -15,6 +15,7 @@ type GoAwayInternals = {
   inUserActivity: boolean;
   handleGoAway(goAway: LiveServerGoAway): void;
   markRestartNeeded(): void;
+  sendClientEvent(event: unknown): void;
 };
 
 const fakeSocket = (): Session =>
@@ -103,5 +104,24 @@ describe('Google Realtime goAway restart', () => {
     expect(opened.restarts()).toBe(0);
 
     await vi.waitFor(() => expect(opened.restarts()).toBe(1), { timeout: 2_000 });
+  });
+
+  it.each([
+    [FunctionResponseScheduling.WHEN_IDLE, true],
+    [FunctionResponseScheduling.SILENT, false],
+  ])('after a blocking %s tool result, waits for a reply: %s', async (scheduling, waits) => {
+    const opened = await openSession();
+    session = opened.session;
+
+    opened.internals.sendClientEvent({
+      type: 'tool_response',
+      value: {
+        functionResponses: [{ id: 'call_1', name: 'lookup', response: {}, scheduling }],
+      },
+    });
+
+    await vi.waitFor(() => expect(opened.internals.awaitingToolReply).toBe(waits));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(opened.internals.awaitingToolReply).toBe(waits);
   });
 });

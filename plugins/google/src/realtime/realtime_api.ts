@@ -1243,9 +1243,14 @@ export class RealtimeSession extends llm.RealtimeSession {
                 await session.sendToolResponse({
                   functionResponses,
                 });
+                // A SILENT result gets no reply, so there is nothing to wait for.
                 if (
                   !this.isNonBlockingToolBehavior() &&
-                  functionResponses.some((response) => response.willContinue !== true)
+                  functionResponses.some(
+                    (response) =>
+                      response.willContinue !== true &&
+                      response.scheduling !== types.FunctionResponseScheduling.SILENT,
+                  )
                 ) {
                   this.awaitingToolReply = true;
                 }
