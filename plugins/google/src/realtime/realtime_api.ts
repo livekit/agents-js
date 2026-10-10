@@ -1045,9 +1045,24 @@ export class RealtimeSession extends llm.RealtimeSession {
   async #mainTask(): Promise<void> {
     const maxRetries = this.options.connOptions.maxRetry;
 
+    let firstConnect = true;
     while (!this.#closed) {
       // previous session might not be closed yet, we'll do it here.
       await this.closeActiveSession();
+
+      if (firstConnect) {
+        firstConnect = false;
+        // The framework configures a new session right after creating it:
+        // instructions, chat context and tools, through awaits that settle
+        // within the current task. Yielding once lets them land before the
+        // setup frame is built, so the first connect carries the tools instead
+        // of being replaced by a reconnect, and the restart they request is
+        // absorbed by the clear below.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (this.#closed) {
+          break;
+        }
+      }
 
       this.sessionShouldClose.clear();
 
