@@ -171,6 +171,8 @@ export interface _TTSGenerationData {
   timedTextsFut: Future<ReadableStream<TimedString> | null, never>;
   /** Time to first byte (set when first audio frame is received) */
   ttfb?: number;
+  /** The error that ended TTS inference, if any. */
+  error: unknown | null;
 }
 
 // TODO(brian): remove this class in favor of ToolOutput
@@ -883,6 +885,7 @@ export function performTTSInference(
     audioStream: audioOutputStream,
     timedTextsFut,
     ttfb: undefined,
+    error: null,
   };
 
   const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
@@ -959,6 +962,8 @@ export function performTTSInference(
       } else if (error instanceof DOMException && error.name === 'AbortError') {
         return;
       } else {
+        // Set this before closing the audio stream so forwarding knows it was truncated.
+        genData.error = error;
         throw error;
       }
     } finally {
@@ -1099,6 +1104,7 @@ async function forwardAudio(
   out: _AudioOut,
   reconcilePlayoutPause: () => void,
   idleTimeout: number,
+  ttsData: _TTSGenerationData | null,
   signal?: AbortSignal,
 ): Promise<void> {
   const logger = log();
@@ -1185,6 +1191,9 @@ async function forwardAudio(
     // listener's lifetime.
     signal?.removeEventListener('abort', cancelReader);
     reader?.releaseLock();
+    if (!signal?.aborted && ttsData?.error != null) {
+      audioOutput._markInputTruncated();
+    }
     audioOutput.flush();
     if (signal?.aborted) {
       audioOutput.clearBuffer();
@@ -1199,6 +1208,7 @@ export function performAudioForwarding(
   controller: AbortController,
   reconcilePlayoutPause: () => void,
   idleTimeout: number = DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS,
+  ttsData: _TTSGenerationData | null = null,
 ): [Task<void>, _AudioOut] {
   const out: _AudioOut = {
     firstFrameFut: new Future<number>(),
@@ -1238,6 +1248,7 @@ export function performAudioForwarding(
           out,
           reconcilePlayoutPause,
           idleTimeout,
+          ttsData,
           controller.signal,
         ),
       controller,

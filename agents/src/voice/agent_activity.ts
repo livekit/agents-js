@@ -309,6 +309,8 @@ export interface ForwardOutput {
   synchronizedTranscript?: string;
   audioOut: _AudioOut | null;
   playbackPositionInS: number;
+  /** The segment's TTS failed; whatever audio it made still played out. */
+  ttsFailed?: boolean;
 }
 
 /**
@@ -3639,6 +3641,7 @@ export class AgentActivity implements RecognitionHooks {
           replyAbortController,
           () => this.reconcilePlayoutPause(speechHandle),
           this.agentSession.sessionOptions.forwardAudioIdleTimeout,
+          ttsGenData,
         );
         tasks.push(forwardTask);
         audioOut = _audioOut;
@@ -3849,20 +3852,27 @@ export class AgentActivity implements RecognitionHooks {
     const deltaScope = this.agentSession.sessionOptions.recordingOptions.inputDelta
       ? this.inputDeltaTracker.begin()
       : undefined;
-    const startInference = () =>
+    const llmAbortController = new AbortController();
+    const abortLlm = () => llmAbortController.abort();
+    if (replyAbortController.signal.aborted) {
+      abortLlm();
+    } else {
+      replyAbortController.signal.addEventListener('abort', abortLlm, { once: true });
+    }
+    const startLlmInference = () =>
       performLLMInference(
-        // preserve  `this` context in llmNode
+        // preserve `this` context in llmNode
         (...args) => this.agent.llmNode(...args),
         chatCtx,
         toolCtx,
         modelSettings,
-        replyAbortController,
+        llmAbortController,
         this.llm?.model,
         this.llm?.provider,
       );
     const [llmTask, llmGenData] = deltaScope
-      ? inputDelta.runWithScope(deltaScope, startInference)
-      : startInference();
+      ? inputDelta.runWithScope(deltaScope, startLlmInference)
+      : startLlmInference();
     tasks.push(llmTask);
     // as python's _on_llm_task_done: a genuine LLM failure (not a cancellation) fails the
     // speech, through exception() and the agent_turn span. Nothing else awaits this task's
@@ -3914,6 +3924,10 @@ export class AgentActivity implements RecognitionHooks {
           );
           tasks.push(ttsTask);
           prevTtsTask = ttsTask;
+          void ttsTask.result.catch(() => {
+            // Nothing generated past a failed TTS can be spoken, so stop the LLM there.
+            if (!ttsTask.cancelled) llmTask.cancel();
+          });
           segment.ttsTextWriter = ttsInput.writable.getWriter();
           segment.ttsTask = ttsTask;
           segment.ttsGenData = ttsGenData;
@@ -4072,6 +4086,7 @@ export class AgentActivity implements RecognitionHooks {
             segmentAbortController,
             () => this.reconcilePlayoutPause(speechHandle),
             this.agentSession.sessionOptions.forwardAudioIdleTimeout,
+            segment.ttsGenData,
           );
           forwardTasks.push(forwardTask);
           output.audioOut = audioOut;
@@ -4141,7 +4156,16 @@ export class AgentActivity implements RecognitionHooks {
         }
 
         if (audioOutput && playbackEv) {
-          output.played = 'full';
+          output.ttsFailed = segment.ttsGenData?.error != null;
+          if (
+            output.ttsFailed &&
+            (!output.audioOut ||
+              audioOutput.capturedPlayoutSegments <= output.audioOut.capturedSegmentsBefore)
+          ) {
+            // No audio from this segment played, so the event belongs to an earlier segment.
+            return output;
+          }
+          output.played = output.ttsFailed ? 'partial' : 'full';
           output.playbackPositionInS = playbackEv.playbackPosition;
           output.synchronizedTranscript = playbackEv.synchronizedTranscript;
         } else if (output.textOut?.text) {
@@ -4294,12 +4318,14 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
+    const ttsFailed = segmentOutputs.some((output) => output.ttsFailed);
     if (forwardedText) {
       hasSpeechMessage = true;
       const message = ChatMessage.create({
         role: 'assistant',
         id: llmGenData.id,
-        interrupted: false,
+        // A reply cut short by failed TTS reads as interrupted to the LLM.
+        interrupted: ttsFailed,
         createdAt: replyStartedAt,
         content: forwardedText,
         metrics: assistantMetrics,

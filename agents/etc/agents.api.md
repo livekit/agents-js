@@ -1704,6 +1704,8 @@ export abstract class AudioOutput extends EventEmitter_2 {
     flush(): void;
     // (undocumented)
     protected logger: Logger;
+    // @internal (undocumented)
+    _markInputTruncated(): void;
     // (undocumented)
     protected readonly nextInChain?: AudioOutput | undefined;
     // (undocumented)
