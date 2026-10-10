@@ -15,7 +15,7 @@
  * There are intentionally no public `prewarm*` helpers: EOT auto-warms via
  * the inference runner's `initialize()` at proc startup, and the VAD lazy-
  * loads on first stream. `LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE=0` defers
- * both native binding loads and the EOT warm-up until first use.
+ * the job-process binding preload and EOT warm-up until first use.
  */
 import { createRequire } from 'node:module';
 import { log } from '../log.js';

@@ -21,7 +21,7 @@ import { APIStatusError } from './_exceptions.js';
 import { ATTRIBUTE_AGENT_NAME } from './constants.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
-import { _getLocalInferenceModule, _shouldPreloadLocalInference } from './inference/_warmup.js';
+import { _getLocalInferenceModule } from './inference/_warmup.js';
 import { EOT_INFERENCE_METHOD } from './inference/eot/runner.js';
 import { InferenceRunner } from './inference_runner.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
@@ -51,14 +51,15 @@ const WORKER_PROTOCOL_VERSION = 1;
 let localEotRunnerRegistered = false;
 /**
  * Register the local audio-EOT inference runner so it runs in the shared
- * inference process. Idempotent and, when preloading is enabled, guarded by
- * native-binding availability so the worker still starts on unsupported platforms.
+ * inference process. Idempotent and guarded by native-binding availability;
+ * a no-op (with a one-time warning) when `@livekit/local-inference` can't be
+ * loaded so the worker still starts on unsupported platforms.
  */
 function maybeRegisterLocalEotRunner(): void {
   if (localEotRunnerRegistered) return;
   localEotRunnerRegistered = true;
   if (InferenceRunner.registeredRunners[EOT_INFERENCE_METHOD]) return;
-  if (_shouldPreloadLocalInference() && _getLocalInferenceModule() === undefined) {
+  if (_getLocalInferenceModule() === undefined) {
     log().warn(
       '@livekit/local-inference native binding unavailable; local audio EOT disabled ' +
         '(predictions will degrade to a positive default). cloud EOT and other turn ' +
