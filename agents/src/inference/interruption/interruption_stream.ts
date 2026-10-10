@@ -57,10 +57,6 @@ export class InterruptionStreamSentinel {
   static overlapSpeechEnded(endedAt: number, agentEnded = false): OverlapSpeechEnded {
     return { type: 'overlap-speech-ended', endedAt, agentEnded };
   }
-
-  static flush(): Flush {
-    return { type: 'flush' };
-  }
 }
 
 function updateUserSpeakingSpan(span: Span, entry: InterruptionCacheEntry) {
@@ -302,8 +298,6 @@ export class InterruptionStreamBase {
               accumulatedSamples = 0;
             }
             this.overlapSpeechStartedAt = undefined;
-          } else if (chunk.type === 'flush') {
-            // no-op
           }
         },
       },
@@ -394,16 +388,6 @@ export class InterruptionStreamBase {
     } else {
       await this.inputStream.write(frame);
     }
-  }
-
-  async flush(): Promise<void> {
-    this.ensureStreamsNotEnded();
-    await this.inputStream.write(InterruptionStreamSentinel.flush());
-  }
-
-  async endInput(): Promise<void> {
-    await this.flush();
-    await this.inputStream.close();
   }
 
   async close(): Promise<void> {
