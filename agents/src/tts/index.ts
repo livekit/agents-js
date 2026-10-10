@@ -10,6 +10,12 @@ export {
   SynthesizeStream,
   ChunkedStream,
 } from './tts.js';
+export {
+  AudioEmitter,
+  type AudioEmitterDestination,
+  type AudioEmitterInitializeOptions,
+  type AudioEmitterOptions,
+} from './audio_emitter.js';
 export { StreamAdapter, StreamAdapterWrapper } from './stream_adapter.js';
 export { FallbackAdapter, type AvailabilityChangedEvent } from './fallback_adapter.js';
 export {

@@ -20,6 +20,7 @@ import {
 } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
 import type { TimedString } from '../voice/io.js';
+import { AudioEmitter } from './audio_emitter.js';
 import {
   type MarkupInfo,
   type SpeechSteeringOptions,
@@ -534,6 +535,21 @@ export abstract class SynthesizeStream
   }
 
   /**
+   * Create an {@link AudioEmitter} that writes into this stream's output.
+   *
+   * The emitter handles decoding, framing, segment tracking and `final` tagging, so a plugin
+   * pushes provider bytes and never constructs {@link SynthesizedAudio} itself. Call this inside
+   * {@link run}: each retry attempt writes to a fresh queue, and the emitter binds to whichever
+   * one is current.
+   *
+   * The returned emitter is not yet initialized — call
+   * {@link AudioEmitter.initialize} once the response format is known.
+   */
+  protected createAudioEmitter(): AudioEmitter {
+    return new AudioEmitter({ label: this.label, destination: this.queue });
+  }
+
+  /**
    * Mark the time at which text was first sent to the TTS provider for the
    * current segment. Used as the anchor for TTFB so upstream latency (LLM
    * streaming, sentence tokenization) is not attributed to the TTS. Only the
@@ -950,6 +966,21 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       error,
       recoverable,
     });
+  }
+
+  /**
+   * Create an {@link AudioEmitter} that writes into this stream's output.
+   *
+   * The emitter handles decoding, framing, segment tracking and `final` tagging, so a plugin
+   * pushes provider bytes and never constructs {@link SynthesizedAudio} itself. Call this inside
+   * {@link run}: each retry attempt writes to a fresh queue, and the emitter binds to whichever
+   * one is current.
+   *
+   * The returned emitter is not yet initialized — call
+   * {@link AudioEmitter.initialize} once the response format is known.
+   */
+  protected createAudioEmitter(): AudioEmitter {
+    return new AudioEmitter({ label: this.label, destination: this.queue });
   }
 
   protected abstract run(): Promise<void>;

@@ -1597,11 +1597,21 @@ export const ATTRIBUTE_TRANSCRIPTION_EXPRESSION = "lk.expression";
 type AudioBuffer_2 = AudioFrame[] | AudioFrame;
 export { AudioBuffer_2 as AudioBuffer }
 
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioFrame"
+//
 // @public
 export class AudioByteStream {
-    constructor(sampleRate: number, numChannels: number, samplesPerChannel?: number | null);
-    // (undocumented)
+    constructor(sampleRate: number, numChannels: number, samplesPerChannel?: number | null, progressive?: boolean);
+    get bufferedDuration(): number;
+    clear(): void;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "write"
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "resetProgressive"
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "clear"
     flush(): AudioFrame[];
+    static readonly MIN_PROGRESSIVE_MS = 20;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "write"
+    push(data: ArrayBufferLike | ArrayBufferView): AudioFrame[];
+    resetProgressive(): void;
     // (undocumented)
     write(data: ArrayBufferLike | ArrayBufferView): AudioFrame[];
 }
@@ -1635,6 +1645,69 @@ export interface AudioDecodeOptions {
     numChannels?: number;
     // (undocumented)
     sampleRate?: number;
+}
+
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SynthesizedAudio"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "initialize"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "push"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "startSegment"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "endSegment"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "endInput"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "join"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
+//
+// @public
+class AudioEmitter {
+    constructor(opts: AudioEmitterOptions);
+    aclose(): Promise<void>;
+    endInput(): void;
+    endSegment(): void;
+    flush(): void;
+    // (undocumented)
+    initialize(opts: AudioEmitterInitializeOptions): void;
+    join(): Promise<void>;
+    get numSegments(): number;
+    push(data: Uint8Array): void;
+    pushedDuration(idx?: number): number;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "push"
+    pushFrame(frame: AudioFrame): void;
+    pushTimedTranscript(delta: TimedString | TimedString[]): void;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "initialize"
+    get started(): boolean;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "initialize"
+    startSegment(opts: {
+        segmentId: string;
+    }): void;
+}
+
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioEmitter"
+//
+// @public
+interface AudioEmitterDestination {
+    // (undocumented)
+    readonly closed: boolean;
+    // (undocumented)
+    put(audio: SynthesizedAudio): void;
+}
+
+// @public (undocumented)
+interface AudioEmitterInitializeOptions {
+    frameSizeMs?: number;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioStreamDecoder"
+    mimeType: string;
+    numChannels: number;
+    requestId: string;
+    sampleRate: number;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioEmitter"
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioEmitter"
+    stream?: boolean;
+}
+
+// @public (undocumented)
+interface AudioEmitterOptions {
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SynthesizedAudio"
+    destination: AudioEmitterDestination;
+    label: string;
 }
 
 // Warning: (ae-internal-missing-underscore) The name "AudioEnergyFilter" should be prefixed with an underscore because the declaration is marked as @internal
@@ -1747,6 +1820,27 @@ export class AudioSegmentEnd {
 
 // @public (undocumented)
 export type AudioSourceType = string | BuiltinAudioClip | AsyncIterable<AudioFrame>;
+
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioFrame"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "push"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "endInput"
+//
+// @public
+class AudioStreamDecoder implements AsyncIterable<AudioFrame> {
+    // (undocumented)
+    [Symbol.asyncIterator](): AsyncIterableIterator<AudioFrame>;
+    constructor(opts: AudioStreamDecoderOptions);
+    aclose(): Promise<void>;
+    endInput(): void;
+    push(data: Uint8Array): void;
+}
+
+// @public (undocumented)
+interface AudioStreamDecoderOptions {
+    format?: string;
+    numChannels: number;
+    sampleRate: number;
+}
 
 // @public
 export enum AutoSubscribe {
@@ -2360,6 +2454,11 @@ abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> 
     // (undocumented)
     protected closed: boolean;
     collect(): Promise<AudioFrame>;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioEmitter"
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SynthesizedAudio"
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "run"
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioEmitter"
+    protected createAudioEmitter(): AudioEmitter;
     protected emitMetrics: boolean;
     // @internal
     get error(): Error | undefined;
@@ -2504,6 +2603,15 @@ interface CloudTransportOptions {
     baseUrl: string;
     // (undocumented)
     connOptions: APIConnectOptions;
+}
+
+declare namespace codecs {
+    export {
+        AudioStreamDecoder,
+        AudioStreamDecoderOptions,
+        isRawPcm,
+        mimeToFormat
+    }
 }
 
 // @public (undocumented)
@@ -4485,6 +4593,9 @@ export const isPending: (promise: Promise<unknown>) => Promise<Throws<boolean, E
 export function isProviderTool(tool: any): tool is ProviderTool;
 
 // @public
+function isRawPcm(mimeType: string | undefined): boolean;
+
+// @public
 export function isStreamClosedError(error: unknown): boolean;
 
 // @public
@@ -5248,6 +5359,9 @@ export interface MetricsReport {
     // (undocumented)
     ttsNodeTtfb?: number;
 }
+
+// @public
+function mimeToFormat(mimeType: string | undefined): string | undefined;
 
 // @public
 export class MissingCredentialsError extends Error {
@@ -7362,6 +7476,11 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     protected closed: boolean;
     // (undocumented)
     protected connOptions: APIConnectOptions;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioEmitter"
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SynthesizedAudio"
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "run"
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioEmitter"
+    protected createAudioEmitter(): AudioEmitter;
     protected emitMetrics: boolean;
     // (undocumented)
     static readonly END_OF_STREAM: unique symbol;
@@ -8249,6 +8368,10 @@ declare namespace tts {
         TTSMarkup,
         SynthesizeStream,
         ChunkedStream,
+        AudioEmitter,
+        AudioEmitterDestination,
+        AudioEmitterInitializeOptions,
+        AudioEmitterOptions,
         StreamAdapter_2 as StreamAdapter,
         StreamAdapterWrapper_2 as StreamAdapterWrapper,
         FallbackAdapter_3 as FallbackAdapter,
@@ -9223,11 +9346,11 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:404:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1070:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:405:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1076:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1792:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1792:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1792:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
