@@ -48,12 +48,7 @@ const defaultVADOptions: VADOptions = {
 
 export class VAD extends BaseVAD {
   protected _opts: VADOptions;
-  protected _model: VADModels;
   label = 'inference.VAD';
-  // Live streams, tracked weakly so they don't outlive their consumers. JS
-  // `WeakSet` isn't iterable, so we hold `WeakRef`s in a `Set` and prune dead
-  // entries on iteration.
-  #streams = new Set<WeakRef<InferenceVADStream>>();
 
   constructor(opts: Partial<VADOptions> & { model?: VADModels } = {}) {
     super({ updateInterval: 32 });
@@ -64,7 +59,6 @@ export class VAD extends BaseVAD {
     if (opts.deactivationThreshold !== undefined && opts.deactivationThreshold <= 0) {
       throw new Error('deactivationThreshold must be greater than 0');
     }
-    this._model = model;
     const activation = opts.activationThreshold ?? defaultVADOptions.activationThreshold;
     this._opts = {
       ...defaultVADOptions,
@@ -74,37 +68,12 @@ export class VAD extends BaseVAD {
     };
   }
 
-  get model(): string {
-    return this._model;
-  }
-
-  get provider(): string {
-    return 'livekit-local-inference';
-  }
-
   override get minSilenceDuration(): number {
     return this._opts.minSilenceDuration;
   }
 
-  /** Update one or more knobs at runtime, propagating to live streams. */
-  updateOptions(opts: Partial<VADOptions>): void {
-    this._opts = { ...this._opts, ...opts };
-    for (const ref of this.#streams) {
-      const stream = ref.deref();
-      if (stream === undefined) {
-        this.#streams.delete(ref);
-        continue;
-      }
-      stream.updateOptions(opts);
-    }
-  }
-
   stream(): BaseVADStream {
-    // Each stream owns its own options snapshot so its `updateOptions` can read
-    // the prior `maxBufferedSpeech` before this VAD's copy is mutated.
-    const stream = new InferenceVADStream(this, { ...this._opts });
-    this.#streams.add(new WeakRef(stream));
-    return stream;
+    return new InferenceVADStream(this, { ...this._opts });
   }
 }
 
@@ -141,32 +110,6 @@ class InferenceVADStream extends BaseVADStream {
         'VAD pump failed',
       );
     });
-  }
-
-  /**
-   * Apply updated options to this live stream. Once the input sample rate is
-   * known, recomputes the prefix-padding pre-roll and resizes the speech
-   * buffer in place, preserving any audio already accumulated.
-   */
-  updateOptions(opts: Partial<VADOptions>): void {
-    const oldMaxBufferedSpeech = this._opts.maxBufferedSpeech;
-    this._opts = { ...this._opts, ...opts };
-
-    if (this._inputSampleRate && this._speechBuffer !== null) {
-      this._prefixPaddingSamples = Math.trunc(
-        (this._opts.prefixPaddingDuration * this._inputSampleRate) / 1000,
-      );
-      const bufferSize =
-        Math.trunc((this._opts.maxBufferedSpeech * this._inputSampleRate) / 1000) +
-        this._prefixPaddingSamples;
-      const resized = new Int16Array(bufferSize);
-      resized.set(this._speechBuffer.subarray(0, Math.min(this._speechBuffer.length, bufferSize)));
-      this._speechBuffer = resized;
-
-      if (this._opts.maxBufferedSpeech > oldMaxBufferedSpeech) {
-        this._speechBufferMaxReached = false;
-      }
-    }
   }
 
   private async _pump(): Promise<void> {
