@@ -61,6 +61,7 @@ import type { AgentSession } from './agent_session.js';
 import {
   AudioOutput,
   type LLMNode,
+  type PlaybackFinishedEvent,
   type TTSNode,
   type TextOutput,
   type TimedString,
@@ -1080,6 +1081,27 @@ export interface _AudioOut {
    * e.g. `ParticipantAudioOutput`, without ever being counted.)
    */
   capturedSegmentsBefore: number;
+}
+
+/**
+ * The playback-aligned transcript carried by an interrupted segment's playout event, or
+ * `undefined` when that event is not this segment's own.
+ *
+ * `waitForPlayout()` returns the last finish the output reported. When this segment never
+ * bumped the output's segment count (`capturedSegmentsBefore`), that finish settled a
+ * previous segment, e.g. one the transcription synchronizer rotated out when this reply's
+ * text arrived, and its transcript is that segment's text. Committing it would record the
+ * previous reply again as this one (#2566), so the caller falls back to its own text.
+ */
+export function ownSynchronizedTranscript(
+  ev: PlaybackFinishedEvent,
+  audioOut: _AudioOut | null | undefined,
+  audioOutput: AudioOutput,
+): string | undefined {
+  if (!audioOut || audioOutput.capturedPlayoutSegments <= audioOut.capturedSegmentsBefore) {
+    return undefined;
+  }
+  return ev.synchronizedTranscript;
 }
 
 /**
