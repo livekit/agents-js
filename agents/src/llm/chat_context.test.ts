@@ -1606,6 +1606,49 @@ ${new Instructions({ audio: 'shared note', text: 'shared note' })}`;
   });
 });
 
+describe('ChatContext.truncate', () => {
+  it('keeps only the instruction when maxItems is zero', () => {
+    const ctx = new ChatContext(
+      (['system', 'user', 'assistant', 'user'] as const).map((role) =>
+        ChatMessage.create({ role, content: [`msg-${role}`] }),
+      ),
+    );
+
+    ctx.truncate(0);
+
+    expect(ctx.items.map((item) => (item as ChatMessage).role)).toEqual(['system']);
+  });
+
+  it('keeps no items when maxItems is zero and there is no instruction', () => {
+    const ctx = new ChatContext(
+      (['user', 'assistant', 'user'] as const).map((role) =>
+        ChatMessage.create({ role, content: [`msg-${role}`] }),
+      ),
+    );
+
+    ctx.truncate(0);
+
+    expect(ctx.items).toEqual([]);
+  });
+
+  it('rejects a negative maxItems and leaves the context untouched', () => {
+    const ctx = new ChatContext(
+      (['developer', 'user', 'assistant', 'user'] as const).map((role) =>
+        ChatMessage.create({ role, content: [`msg-${role}`] }),
+      ),
+    );
+
+    expect(() => ctx.truncate(-2)).toThrowError(RangeError);
+    expect(() => ctx.truncate(-2)).toThrowError('maxItems must be non-negative');
+    expect(ctx.items.map((item) => (item as ChatMessage).role)).toEqual([
+      'developer',
+      'user',
+      'assistant',
+      'user',
+    ]);
+  });
+});
+
 describe('ChatContext.copy with toolCtx filter', () => {
   it('drops function calls / outputs whose tool is not in the supplied ToolContext', () => {
     const known = tool({ name: 'known', description: 'k', execute: async () => 'ok' });
