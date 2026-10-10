@@ -321,6 +321,11 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   /** @deprecated use top-level SessionOptions fields instead */
   voiceOptions?: Partial<VoiceOptions>;
 
+  /**
+   * Maximum consecutive tool calls per LLM turn. Not enforced for realtime models that generate
+   * the tool reply server-side.
+   * @defaultValue 3
+   */
   maxToolSteps?: number;
   /**
    * @deprecated Use `turnHandling.preemptiveGeneration` instead.

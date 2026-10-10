@@ -485,23 +485,10 @@ export function continueDiscardedTurn(
 }
 
 /**
- * A realtime tool reply runs on a new speech handle after the tool calls of `speech`; Python
- * runs it on the same handle as its next step. The reply continues the tool call's open
- * `agent_turn`, with its generation numbered after (and parented to) the tool call's, so the
- * trace shows one turn either way. Module-level like `continueDiscardedTurn`.
- * @internal
- */
-export function continueToolReplyTurn(speech: SpeechHandle, reply: SpeechHandle): void {
-  if (speech === reply) return;
-  const carry = speech._takeAgentTurn();
-  if (carry !== undefined) reply._continueAgentTurn(carry, speech, 'tool_reply');
-}
-
-/**
  * The turn of a realtime tool call whose reply the model generates on its own
  * (`autoToolReplyGeneration`): held open past the tool call's speech until the model's next
- * generation adopts it (see {@link continueToolReplyTurn}), or ended after `timeout` ms when
- * none comes (the user spoke first, the model declined). Module-level like the helpers above.
+ * generation adopts it, or ended after `timeout` ms when none comes (the user spoke first, the
+ * model declined). Module-level like the helpers above.
  * @internal
  */
 export class AutoToolReplyTurnHold {
@@ -3770,7 +3757,7 @@ export class AgentActivity implements RecognitionHooks {
   }): Promise<void> => {
     const { speechHandle } = stateLease;
 
-    // the turn's id, not this step's handle: a tool reply on a new handle continues its parent
+    // the turn's id, not this step's handle: a model-generated tool reply continues its parent
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle._turnSpeechId);
     if (instructions) {
       span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, renderInstructions(instructions));
@@ -4538,7 +4525,7 @@ export class AgentActivity implements RecognitionHooks {
   }): Promise<void> {
     const { speechHandle } = stateLease;
 
-    // the turn's id, not this step's handle: a tool reply on a new handle continues its parent
+    // the turn's id, not this step's handle: a model-generated tool reply continues its parent
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle._turnSpeechId);
 
     const localParticipant = this.agentSession._roomIO?.localParticipant;
@@ -5006,13 +4993,8 @@ export class AgentActivity implements RecognitionHooks {
 
     // important: no agent ouput should be used after this point
     const { maxToolSteps } = this.agentSession.sessionOptions;
-    if (speechHandle.numSteps >= maxToolSteps + 1) {
-      this.logger.warn(
-        { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
-        'maximum number of function calls steps reached',
-      );
-      return;
-    }
+    const maxStepsReached = speechHandle.numSteps >= maxToolSteps + 1;
+    speechHandle._numSteps += 1;
 
     const { functionToolsExecutedEvent, shouldGenerateToolReply, newAgentTask, ignoreTaskSwitch } =
       this.summarizeToolExecutionOutput(toolOutput, speechHandle);
@@ -5120,24 +5102,17 @@ export class AgentActivity implements RecognitionHooks {
 
     realtimeSession.interrupt();
 
-    const replySpeechHandle = SpeechHandle.create({
-      allowInterruptions: speechHandle.allowInterruptions,
-      stepIndex: speechHandle.numSteps + 1,
-      parent: speechHandle,
-    });
-    // one agent_turn for the tool call and its reply, as when they share a handle
-    continueToolReplyTurn(speechHandle, replySpeechHandle);
-    this.agentSession.emit(
-      AgentSessionEventTypes.SpeechCreated,
-      createSpeechCreatedEvent({
-        userInitiated: false,
-        source: 'tool_response',
-        speechHandle: replySpeechHandle,
-      }),
-    );
+    if (maxStepsReached) {
+      this.logger.warn(
+        { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
+        "maximum number of function calls steps reached, generating final response with toolChoice = 'none'",
+      );
+    }
 
-    const toolChoice = schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
-    const replyLease = this.createAgentStateLease(replySpeechHandle);
+    const toolChoice =
+      maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+    // the reply is the next step of the same handle, as in the pipeline path
+    const replyLease = this.createAgentStateLease(speechHandle);
     this.createSpeechTask({
       taskFn: (abortController: AbortController) =>
         this.realtimeReplyTask({
@@ -5145,11 +5120,11 @@ export class AgentActivity implements RecognitionHooks {
           modelSettings: { toolChoice },
           abortController,
         }),
-      ownedSpeechHandle: replySpeechHandle,
+      ownedSpeechHandle: speechHandle,
       name: 'AgentActivity.realtime_reply',
     });
 
-    this.scheduleSpeech(replySpeechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+    this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
   }
 
   /**
