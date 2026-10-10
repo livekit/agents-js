@@ -259,6 +259,24 @@ describe('supervised process shutdown', () => {
     await close;
   });
 
+  it('join waits for a started process to exit', async () => {
+    const { child, proc } = await createProc();
+    const joined = vi.fn();
+    const joinPromise = proc.join().then(joined);
+
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(joined).not.toHaveBeenCalled();
+    } finally {
+      child.connected = false;
+      child.exitCode = 0;
+      child.emit('exit', 0, null);
+      await joinPromise;
+    }
+
+    expect(joined).toHaveBeenCalledOnce();
+  });
+
   it('sends the session end timeout in the typed initialize request', async () => {
     const { child, proc, sendSpy } = await createProc();
 
