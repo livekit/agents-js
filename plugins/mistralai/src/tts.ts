@@ -12,6 +12,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Mistral } from '@mistralai/mistralai';
+import { mistralAPIError } from './errors.js';
 import type { MistralTTSModels, MistralTTSVoices } from './models.js';
 
 const SAMPLE_RATE = 24000;
@@ -198,32 +199,11 @@ export class ChunkedStream extends tts.ChunkedStream {
         throw error;
       }
 
-      const err = error as { statusCode?: number; status?: number; message?: string };
-      const statusCode = err.statusCode ?? err.status;
-
-      if (statusCode !== undefined) {
-        if (statusCode === 429) {
-          throw new APIStatusError({
-            message: `Mistral TTS: rate limit error - ${err.message ?? 'unknown error'}`,
-            options: { statusCode, retryable: true },
-          });
-        }
-        if (statusCode >= 400 && statusCode < 500) {
-          throw new APIStatusError({
-            message: `Mistral TTS: client error (${statusCode}) - ${err.message ?? 'unknown error'}`,
-            options: { statusCode, retryable: false },
-          });
-        }
-        if (statusCode >= 500) {
-          throw new APIStatusError({
-            message: `Mistral TTS: server error (${statusCode}) - ${err.message ?? 'unknown error'}`,
-            options: { statusCode, retryable: true },
-          });
-        }
-      }
+      const apiError = mistralAPIError(error);
+      if (apiError) throw apiError;
 
       throw new APIConnectionError({
-        message: `Mistral TTS: connection error - ${err.message ?? 'unknown error'}`,
+        message: `Mistral TTS: connection error - ${error instanceof Error ? error.message : String(error)}`,
         options: { retryable: true },
       });
     }
