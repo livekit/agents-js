@@ -91,7 +91,10 @@ class DelayedCleanupAudioOutput extends AudioOutput {
 class FakeRealtimeSession extends RealtimeSession {
   private _chatCtx = ChatContext.empty();
   private _tools = ToolContext.empty();
+  private toolChoice: ToolChoice | null = null;
+  private generationCount = 0;
   includeTool = true;
+  readonly generatedToolChoices: (ToolChoice | null)[] = [];
 
   get chatCtx(): ChatContext {
     return this._chatCtx;
@@ -106,7 +109,9 @@ class FakeRealtimeSession extends RealtimeSession {
   async updateTools(tools: ToolContext): Promise<void> {
     this._tools = tools.copy();
   }
-  updateOptions(_options: { toolChoice?: ToolChoice | null }): void {}
+  updateOptions(options: { toolChoice?: ToolChoice | null }): void {
+    if (options.toolChoice !== undefined) this.toolChoice = options.toolChoice;
+  }
   pushAudio(_frame: AudioFrame): void {}
   async commitAudio(): Promise<void> {}
   async clearAudio(): Promise<void> {}
@@ -114,18 +119,27 @@ class FakeRealtimeSession extends RealtimeSession {
   async truncate(): Promise<void> {}
 
   async generateReply(): Promise<GenerationCreatedEvent> {
+    const generation = this.generationCount++;
+    this.generatedToolChoices.push(this.toolChoice);
     return {
       messageStream: stream({
-        messageId: 'message-1',
+        messageId: `message-${generation}`,
         textStream: stream('Let me check that.'),
         audioStream: stream<AudioFrame>(),
         modalities: Promise.resolve(['text']),
       }),
-      functionStream: this.includeTool
-        ? stream(FunctionCall.create({ callId: TOOL_CALL_ID, name: 'lookup_order', args: '{}' }))
-        : stream<FunctionCall>(),
-      userInitiated: true,
-      responseId: 'response-1',
+      functionStream:
+        this.includeTool && this.toolChoice !== 'none'
+          ? stream(
+              FunctionCall.create({
+                callId: generation === 0 ? TOOL_CALL_ID : `${TOOL_CALL_ID}-${generation}`,
+                name: 'lookup_order',
+                args: '{}',
+              }),
+            )
+          : stream<FunctionCall>(),
+      userInitiated: generation === 0,
+      responseId: `response-${generation}`,
     };
   }
 }
@@ -133,13 +147,13 @@ class FakeRealtimeSession extends RealtimeSession {
 class FakeRealtimeModel extends RealtimeModel {
   readonly activeSession = new FakeRealtimeSession(this);
 
-  constructor() {
+  constructor(autoToolReplyGeneration = true) {
     // autoToolReplyGeneration keeps the run to a single generation.
     super({
       messageTruncation: false,
       turnDetection: false,
       userTranscription: false,
-      autoToolReplyGeneration: true,
+      autoToolReplyGeneration,
       audioOutput: false,
       manualFunctionCalls: false,
       midSessionChatCtxUpdate: true,
@@ -156,6 +170,35 @@ class FakeRealtimeModel extends RealtimeModel {
 }
 
 describe('Realtime tool output commit', () => {
+  it('disables tools after the maximum framework-driven realtime tool steps', async () => {
+    const model = new FakeRealtimeModel(false);
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      maxToolSteps: 3,
+      turnHandling: { turnDetection: null },
+    });
+    const agent = new Agent({
+      instructions: 'test',
+      tools: { lookup_order: tool({ description: 'x', execute: async () => 'ships tomorrow' }) },
+    });
+
+    await session.start({ agent });
+    try {
+      session.generateReply();
+      await vi.waitFor(() =>
+        expect(model.activeSession.generatedToolChoices.slice(1)).toEqual([
+          'auto',
+          'auto',
+          'auto',
+          'none',
+        ]),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
   it('restores audio interruption after a reply without tools', async () => {
     const model = new FakeRealtimeModel();
     model.activeSession.includeTool = false;

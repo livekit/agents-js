@@ -4980,7 +4980,7 @@ export class AgentActivity implements RecognitionHooks {
 
     // important: no agent ouput should be used after this point
     const { maxToolSteps } = this.agentSession.sessionOptions;
-    const maxStepsReached = speechHandle.numSteps >= maxToolSteps + 1;
+    const maxStepsReached = speechHandle._stepIndex >= maxToolSteps;
 
     const { functionToolsExecutedEvent, shouldGenerateToolReply, newAgentTask, ignoreTaskSwitch } =
       this.summarizeToolExecutionOutput(toolOutput, speechHandle);
@@ -5097,7 +5097,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const replySpeechHandle = SpeechHandle.create({
       allowInterruptions: speechHandle.allowInterruptions,
-      stepIndex: speechHandle.numSteps + 1,
+      stepIndex: speechHandle._stepIndex + 1,
       parent: speechHandle,
     });
     // one agent_turn for the tool call and its reply, as when they share a handle
