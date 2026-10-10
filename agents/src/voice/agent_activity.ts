@@ -2093,12 +2093,15 @@ export class AgentActivity implements RecognitionHooks {
       name: 'AgentActivity.realtimeGeneration',
     });
 
+    // a generation scheduled while a run is open belongs to that run, whichever activity
+    // ran the tool it continues from and whether or not a placeholder waits for it
+    const runState = this.agentSession._globalRunState;
+    if (runState && !runState.done()) {
+      runState._watchHandle(handle);
+    }
+
     const fut = this.pendingAutoToolReplyFut;
     if (fut && !fut.done) {
-      const runState = this.agentSession._globalRunState;
-      if (runState && !runState.done()) {
-        runState._watchHandle(handle);
-      }
       this.pendingAutoToolReplyFut = undefined;
       fut.resolve();
     }
