@@ -123,28 +123,20 @@ const defaultToolResultResolver: MCPToolResultResolver = ({ result }) => {
   return JSON.stringify(result.content.length === 1 ? result.content[0] : result.content);
 };
 
-function isMissingMCPPackage(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    'code' in error &&
-    error.code === 'ERR_MODULE_NOT_FOUND' &&
-    error.message.includes(MCP_SDK_PACKAGE)
-  );
-}
-
 async function loadMCPModule<T>(load: () => Promise<T>): Promise<T> {
   try {
     return await load();
   } catch (error) {
-    if (isMissingMCPPackage(error)) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'ERR_MODULE_NOT_FOUND' &&
+      error.message.includes(MCP_SDK_PACKAGE)
+    ) {
       throw new Error(MCP_SDK_INSTALL_MESSAGE, { cause: error });
     }
     throw error;
   }
-}
-
-async function loadMCPClient(): Promise<typeof Client> {
-  return (await loadMCPModule(() => import('@modelcontextprotocol/sdk/client/index.js'))).Client;
 }
 
 function isConnectionError(error: unknown): boolean {
@@ -245,7 +237,6 @@ export abstract class MCPServer {
   private initializing?: { generation: number; promise: Promise<void> };
   private connectionGeneration = 0;
   private cachedTools?: MCPToolDescriptor[];
-  private toolsDirty = true;
   private toolListGeneration = 0;
   private listeners = new Set<() => void | Promise<void>>();
   private readonly clientSessionTimeout: number | null;
@@ -267,7 +258,7 @@ export abstract class MCPServer {
   }
 
   invalidateCache(): void {
-    this.toolsDirty = true;
+    this.cachedTools = undefined;
     this.toolListGeneration += 1;
   }
 
@@ -308,7 +299,9 @@ export abstract class MCPServer {
       const entry = {
         generation: connectionGeneration,
         promise: (async () => {
-          const ClientCtor = await loadMCPClient();
+          const { Client: ClientCtor } = await loadMCPModule(
+            () => import('@modelcontextprotocol/sdk/client/index.js'),
+          );
           const clientOptions: ClientOptions = {
             listChanged: {
               tools: {
@@ -381,7 +374,7 @@ export abstract class MCPServer {
   private async listRawTools(): Promise<MCPToolDescriptor[]> {
     const client = this.client;
     if (!client) throw new Error('MCPServer is not initialized');
-    if (!this.toolsDirty && this.cachedTools) return this.cachedTools;
+    if (this.cachedTools) return this.cachedTools;
 
     try {
       const toolListGeneration = this.toolListGeneration;
@@ -398,7 +391,6 @@ export abstract class MCPServer {
 
       if (toolListGeneration === this.toolListGeneration) {
         this.cachedTools = tools;
-        this.toolsDirty = false;
       }
       return tools;
     } catch (error) {
@@ -522,7 +514,6 @@ export abstract class MCPServer {
 
   private resetConnection(): void {
     this.client = null;
-    this.cachedTools = undefined;
     this.invalidateCache();
   }
 
@@ -696,15 +687,15 @@ export class MCPToolset extends AsyncToolset {
       }
       await this.closeServerIfUnused();
       await this.settleRefresh();
-      await super.aclose();
-      return;
     }
 
     try {
       await super.aclose();
     } finally {
-      await this.closeServerIfUnused();
-      await this.settleRefresh();
+      if (this.server._hasBoundedRequests) {
+        await this.closeServerIfUnused();
+        await this.settleRefresh();
+      }
     }
   }
 
