@@ -351,72 +351,47 @@ describe('MCPServer', () => {
     expect(callTool).toHaveBeenCalledTimes(2);
   });
 
-  it('wraps a result resolver error without disconnecting the client', async () => {
-    const callTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
-    const server = new TestServer({
-      toolResultResolver: () => {
-        throw new Error('resolver failed with bearer secret');
+  it.each([
+    [
+      'thrown Error',
+      () => {
+        throw new Error('resolver secret');
       },
-    });
-    await attachClient(server, {
-      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
-      callTool,
-    });
-
-    const [lookup] = await server.listTools();
-    const error = await lookup!
-      .execute({}, { ctx: {}, toolCallId: 'first', abortSignal: new AbortController().signal })
-      .catch((error: unknown) => error);
-    expect(error).toBeInstanceOf(ToolError);
-    expect(error).toHaveProperty('message', 'MCP tool result processing failed unexpectedly.');
-    expect(error).not.toHaveProperty('cause');
-    await expect(
-      lookup!.execute(
-        {},
-        { ctx: {}, toolCallId: 'second', abortSignal: new AbortController().signal },
-      ),
-    ).rejects.toThrow('MCP tool result processing failed unexpectedly.');
-
-    expect(callTool).toHaveBeenCalledTimes(2);
-  });
-
-  it('wraps an Error returned by a result resolver', async () => {
-    const server = new TestServer({
-      toolResultResolver: () => new Error('returned error with bearer secret'),
-    });
-    await attachClient(server, {
-      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
-      callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }),
-    });
-
-    const [lookup] = await server.listTools();
-    await expect(
-      lookup!.execute(
-        {},
-        { ctx: {}, toolCallId: 'call', abortSignal: new AbortController().signal },
-      ),
-    ).rejects.toThrow('MCP tool result processing failed unexpectedly.');
-  });
-
-  it('does not expose a custom resolver ToolError', async () => {
-    const server = new TestServer({
-      toolResultResolver: () => {
+    ],
+    ['returned Error', () => new Error('resolver secret')],
+    [
+      'custom ToolError',
+      () => {
         throw new ToolError('resolver secret');
       },
-    });
-    await attachClient(server, {
-      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
-      callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }),
-    });
+    ],
+  ])(
+    'wraps a resolver %s without disconnecting or exposing its contents',
+    async (_name, toolResultResolver) => {
+      const callTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+      const server = new TestServer({ toolResultResolver });
+      await attachClient(server, {
+        listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+        callTool,
+      });
 
-    const [lookup] = await server.listTools();
-    await expect(
-      lookup!.execute(
-        {},
-        { ctx: {}, toolCallId: 'call', abortSignal: new AbortController().signal },
-      ),
-    ).rejects.toThrow('MCP tool result processing failed unexpectedly.');
-  });
+      const [lookup] = await server.listTools();
+      const error = await lookup!
+        .execute({}, { ctx: {}, toolCallId: 'first', abortSignal: new AbortController().signal })
+        .catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(ToolError);
+      expect(error).toHaveProperty('message', 'MCP tool result processing failed unexpectedly.');
+      expect(error).not.toHaveProperty('cause');
+      await expect(
+        lookup!.execute(
+          {},
+          { ctx: {}, toolCallId: 'second', abortSignal: new AbortController().signal },
+        ),
+      ).rejects.toThrow('MCP tool result processing failed unexpectedly.');
+
+      expect(callTool).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it('resets the client after an MCP SDK connection error', async () => {
     const sdkConnectionError = Object.assign(new Error('connection closed'), {
@@ -909,13 +884,26 @@ describe('MCPServer', () => {
     ).toBe(true);
   });
 
-  it('delivers an MCP error after a progress update', async () => {
-    const server = new TestServer();
+  it.each([
+    ['MCP error', 'not found'],
+    ['SDK failure', 'MCP tool call failed unexpectedly.'],
+    ['resolver failure', 'MCP tool result processing failed unexpectedly.'],
+  ])('delivers a terminal %s after a progress update', async (failure, message) => {
+    const server = new TestServer(
+      failure === 'resolver failure'
+        ? {
+            toolResultResolver: () => {
+              throw new Error('credential-bearing resolver failure');
+            },
+          }
+        : {},
+    );
     await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
       callTool: vi.fn(async (_params, _schema, options) => {
         await options?.onprogress?.({ progress: 0, message: 'working' });
-        return { isError: true, content: [{ type: 'text', text: 'not found' }] };
+        if (failure === 'SDK failure') throw new Error('credential-bearing request failure');
+        return { isError: failure === 'MCP error', content: [{ type: 'text', text: 'not found' }] };
       }),
     });
     const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
@@ -927,32 +915,9 @@ describe('MCPServer', () => {
     ).resolves.toContain('working');
     await toolset._executor.waitForAll();
     expect(history.items.filter((item) => item.type === 'function_call_output')).toMatchObject([
-      { callId: 'call_lookup_final', output: 'not found', isError: true },
+      { callId: 'call_lookup_final', output: message, isError: true },
     ]);
-    await toolset.aclose();
-  });
-
-  it('delivers a sanitized SDK failure after a progress update', async () => {
-    const server = new TestServer();
-    await attachClient(server, {
-      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
-      callTool: vi.fn(async (_params, _schema, options) => {
-        await options?.onprogress?.({ progress: 0, message: 'working' });
-        throw new Error('credential-bearing request failure');
-      }),
-    });
-    const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
-    const [lookup] = await server.listTools({ lookup: { reportProgress: true } });
-    const { runCtx, history } = buildRunContext('lookup');
-
-    await expect(
-      toolset._executor.execute({ tool: lookup!, runCtx, rawArguments: {} }),
-    ).resolves.toContain('working');
-    await toolset._executor.waitForAll();
-    expect(history.items.filter((item) => item.type === 'function_call_output')).toMatchObject([
-      { callId: 'call_lookup_final', output: 'MCP tool call failed unexpectedly.', isError: true },
-    ]);
-    expect(JSON.stringify(history.items)).not.toContain('credential-bearing request failure');
+    expect(JSON.stringify(history.items)).not.toContain('credential-bearing');
     await toolset.aclose();
   });
 
