@@ -6,13 +6,14 @@ import {
   APIConnectionError,
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
+  log,
   tts,
 } from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts as testTts } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { TTS } from './tts.js';
 
@@ -382,5 +383,30 @@ describe('Cartesia streaming pool', () => {
     } finally {
       await closeWebSocketServer(wss);
     }
+  });
+});
+
+describe('Cartesia generation config warnings', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('points speed and emotion on an older model to sonic-3 generation_config', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new TTS({ apiKey: 'test-key', model: 'sonic-2', speed: 'fast', emotion: ['positivity:high'] });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]?.[1]);
+    expect(message).toContain('generation_config');
+    expect(message).not.toContain('sonic-2-2025-03-07');
+  });
+
+  it('does not warn for speed, emotion and volume within range on sonic-3', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new TTS({ apiKey: 'test-key', model: 'sonic-3', speed: 1.2, emotion: ['calm'], volume: 1.1 });
+
+    expect(warn).not.toHaveBeenCalled();
   });
 });
