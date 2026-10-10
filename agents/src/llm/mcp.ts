@@ -3,7 +3,8 @@
 import type { Client, ClientOptions } from '@modelcontextprotocol/sdk/client/index.js';
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { JSONSchema7, JSONSchema7Definition } from 'json-schema';
+import type { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
+import type { JSONSchema7 } from 'json-schema';
 import { log } from '../log.js';
 import { AsyncToolset, type AsyncToolsetCreateOptions } from './async_toolset.js';
 import {
@@ -66,59 +67,6 @@ const DEFAULT_TOOL_OPTIONS: Required<MCPToolOptions> = {
   onDuplicate: 'allow',
   reportProgress: false,
 };
-const JSON_SCHEMA_STRING_KEYS = new Set([
-  '$id',
-  '$ref',
-  '$schema',
-  '$comment',
-  'pattern',
-  'format',
-  'contentMediaType',
-  'contentEncoding',
-  'title',
-  'description',
-]);
-const JSON_SCHEMA_NUMBER_KEYS = new Set([
-  'multipleOf',
-  'maximum',
-  'exclusiveMaximum',
-  'minimum',
-  'exclusiveMinimum',
-  'maxLength',
-  'minLength',
-  'maxItems',
-  'minItems',
-  'maxProperties',
-  'minProperties',
-]);
-const JSON_SCHEMA_BOOLEAN_KEYS = new Set(['uniqueItems', 'readOnly', 'writeOnly']);
-const JSON_SCHEMA_DEFINITION_KEYS = new Set([
-  'additionalItems',
-  'contains',
-  'additionalProperties',
-  'propertyNames',
-  'if',
-  'then',
-  'else',
-  'not',
-]);
-const JSON_SCHEMA_DEFINITION_MAP_KEYS = new Set([
-  'properties',
-  'patternProperties',
-  'definitions',
-  '$defs',
-]);
-const JSON_SCHEMA_DEFINITION_ARRAY_KEYS = new Set(['allOf', 'anyOf', 'oneOf']);
-const JSON_SCHEMA_TYPE_NAMES = new Set([
-  'array',
-  'boolean',
-  'integer',
-  'null',
-  'number',
-  'object',
-  'string',
-]);
-const JSON_SCHEMA_VALUE_KEYS = new Set(['const', 'default', 'examples']);
 const defaultToolResultResolver: MCPToolResultResolver = ({ result }) => {
   return JSON.stringify(result.content.length === 1 ? result.content[0] : result.content);
 };
@@ -175,58 +123,18 @@ function isTransport(value: unknown): value is Transport {
   );
 }
 
-function isJSONValue(value: unknown): boolean {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
-  if (typeof value === 'number') return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(isJSONValue);
-  return isRecord(value) && Object.values(value).every(isJSONValue);
-}
-
-function isJSONSchemaDefinition(value: unknown): value is JSONSchema7Definition {
-  return typeof value === 'boolean' || isJSONSchema(value);
-}
-
-function isJSONSchema(value: unknown): value is JSONSchema7 {
-  if (!isRecord(value)) return false;
-  return Object.entries(value).every(([key, field]) => {
-    if (field === undefined) return true;
-    if (JSON_SCHEMA_STRING_KEYS.has(key)) return typeof field === 'string';
-    if (JSON_SCHEMA_NUMBER_KEYS.has(key)) return typeof field === 'number';
-    if (JSON_SCHEMA_BOOLEAN_KEYS.has(key)) return typeof field === 'boolean';
-    if (JSON_SCHEMA_DEFINITION_KEYS.has(key)) return isJSONSchemaDefinition(field);
-    if (JSON_SCHEMA_DEFINITION_MAP_KEYS.has(key)) {
-      return isRecord(field) && Object.values(field).every(isJSONSchemaDefinition);
-    }
-    if (JSON_SCHEMA_DEFINITION_ARRAY_KEYS.has(key)) {
-      return Array.isArray(field) && field.every(isJSONSchemaDefinition);
-    }
-    if (key === 'type') {
-      return typeof field === 'string'
-        ? JSON_SCHEMA_TYPE_NAMES.has(field)
-        : Array.isArray(field) && field.every((name) => JSON_SCHEMA_TYPE_NAMES.has(name));
-    }
-    if (key === 'required') {
-      return Array.isArray(field) && field.every((name) => typeof name === 'string');
-    }
-    if (key === 'items') {
-      return Array.isArray(field)
-        ? field.every(isJSONSchemaDefinition)
-        : isJSONSchemaDefinition(field);
-    }
-    if (key === 'dependencies') {
-      return (
-        isRecord(field) &&
-        Object.values(field).every((dependency) =>
-          Array.isArray(dependency)
-            ? dependency.every((name) => typeof name === 'string')
-            : isJSONSchemaDefinition(dependency),
-        )
-      );
-    }
-    if (key === 'enum') return Array.isArray(field) && field.every(isJSONValue);
-    if (JSON_SCHEMA_VALUE_KEYS.has(key)) return isJSONValue(field);
+function isMCPInputSchema(value: unknown, validator: AjvJsonSchemaValidator): value is JSONSchema7 {
+  if (!isRecord(value) || value.type !== 'object') return false;
+  try {
+    const validateSchema = validator.getValidator({
+      $ref: 'http://json-schema.org/draft-07/schema#',
+    });
+    if (!validateSchema(value).valid) return false;
+    validator.getValidator(value);
     return true;
-  });
+  } catch {
+    return false;
+  }
 }
 
 export abstract class MCPServer {
@@ -360,8 +268,10 @@ export abstract class MCPServer {
 
   async listTools(options: Record<string, MCPToolOptions> = {}): Promise<FunctionTool[]> {
     const descriptors = this.filterTools(await this.listRawTools());
-    return descriptors.map((descriptor) =>
-      this.makeTool(descriptor, { ...DEFAULT_TOOL_OPTIONS, ...options[descriptor.name] }),
+    return Promise.all(
+      descriptors.map((descriptor) =>
+        this.makeTool(descriptor, { ...DEFAULT_TOOL_OPTIONS, ...options[descriptor.name] }),
+      ),
     );
   }
 
@@ -402,12 +312,16 @@ export abstract class MCPServer {
     }
   }
 
-  private makeTool(
+  private async makeTool(
     descriptor: MCPToolDescriptor,
     options: Required<MCPToolOptions>,
-  ): FunctionTool<JSONObject> {
+  ): Promise<FunctionTool<JSONObject>> {
     const { name } = descriptor;
-    if (!isJSONSchema(descriptor.inputSchema) || descriptor.inputSchema.type !== 'object') {
+    const { AjvJsonSchemaValidator } = await loadMCPModule(
+      () => import('@modelcontextprotocol/sdk/validation/ajv'),
+    );
+    // Each tool gets its own cache so reused $ids cannot mask changed schemas.
+    if (!isMCPInputSchema(descriptor.inputSchema, new AjvJsonSchemaValidator())) {
       throw new ToolError(`Tool '${name}' has an invalid input schema.`);
     }
     return tool({
