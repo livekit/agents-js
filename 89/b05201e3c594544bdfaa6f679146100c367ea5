@@ -1,0 +1,26 @@
+agents/src/ipc/supervised_proc.test.ts
+  s_8794414bb54ce5::t_35eff3ba146d5c 262-279
+.changeset/quiet-workers-drain.md
+  s_8794414bb54ce5::t_103634c4f43555 1-5
+agents/src/worker.test.ts
+  s_8794414bb54ce5::t_35eff3ba146d5c 4-5,7-10,40-103
+  s_8794414bb54ce5::t_b318d14fa46316 104-105
+agents/src/ipc/supervised_proc.ts
+  s_8794414bb54ce5::t_e175d220d18967 199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89b05201e3c594544bdfaa6f679146100c367ea5",
+  "prompts": {},
+  "sessions": {
+    "s_8794414bb54ce5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a125b8-eb30-7293-8657-ffcfc5cf139b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
