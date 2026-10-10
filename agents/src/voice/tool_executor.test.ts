@@ -4,8 +4,9 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { ChatContext, FunctionCall } from '../llm/chat_context.js';
-import { ToolFlag, tool } from '../llm/tool_context.js';
+import { ToolError, ToolFlag, tool } from '../llm/tool_context.js';
 import { Future } from '../utils.js';
+import { StopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import { RunContext } from './run_context.js';
 import { SpeechHandle } from './speech_handle.js';
@@ -96,6 +97,68 @@ describe('ToolExecutor', () => {
 
     expect(history.items.some((item) => item.type === 'function_call_output')).toBe(true);
     expect(agent.chatCtx.items.some((item) => item.type === 'function_call_output')).toBe(true);
+  });
+
+  it.each([
+    ['ToolError', new ToolError('lookup failed'), 'lookup failed'],
+    [
+      'unexpected error',
+      new Error('secret credential'),
+      'An internal error occurred while executing the tool.',
+    ],
+    [
+      'non-Error throw',
+      'secret credential',
+      'An internal error occurred while executing the tool.',
+    ],
+  ])('delivers a terminal failure after progress for %s', async (_name, error, message) => {
+    const executor = new ToolExecutor();
+    const { runCtx, history, agent } = buildRunContext();
+    const release = new Future<void>();
+    const lookup = tool({
+      name: 'slow_lookup',
+      description: '',
+      execute: async (_, { ctx }) => {
+        await ctx.update('working');
+        await release.await;
+        throw error;
+      },
+    });
+    await expect(executor.execute({ tool: lookup, runCtx, rawArguments: {} })).resolves.toContain(
+      'working',
+    );
+    release.resolve();
+    await executor.waitForAll();
+
+    for (const items of [history.items, agent.chatCtx.items]) {
+      const outputs = items.filter((item) => item.type === 'function_call_output');
+      expect(outputs).toHaveLength(1);
+      expect(outputs[0]).toMatchObject({
+        callId: 'call_slow_lookup_final',
+        output: message,
+        isError: true,
+      });
+      expect(JSON.stringify(items)).not.toContain('secret credential');
+    }
+    expect(runCtx.updates.at(-1)?.[1].isError).toBe(true);
+    expect(executor.hasRunningTasks).toBe(false);
+  });
+
+  it('preserves StopResponse suppression after progress', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx, history } = buildRunContext();
+    const lookup = tool({
+      name: 'slow_lookup',
+      description: '',
+      execute: async (_, { ctx }) => {
+        await ctx.update('working');
+        throw new StopResponse();
+      },
+    });
+    await executor.execute({ tool: lookup, runCtx, rawArguments: {} });
+    await executor.waitForAll();
+    expect(history.items).toHaveLength(0);
+    expect(executor.hasRunningTasks).toBe(false);
   });
 
   it('rejects duplicate calls when onDuplicate is reject', async () => {
