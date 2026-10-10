@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { AsyncIterableQueue as Queue } from '@livekit/agents';
 import { EventEmitter } from 'node:events';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebSocket } from 'ws';
 import { HEARTBEAT_INTERVAL_MS, PONG_TIMEOUT_MS, startWebSocketHeartbeat } from './_utils.js';
 
@@ -85,6 +86,16 @@ describe('startWebSocketHeartbeat', () => {
 });
 
 describe('abandoned queue reads', () => {
+  // Resolved once in a hook that carries its own timeout. This import costs seconds on a
+  // cold cache, and paying it inside whichever test happened to run first pushed that
+  // test past vitest's 5s default whenever the suite was under load. It stays a dynamic
+  // import because a top-level one resolves down a path this package cannot satisfy.
+  let AsyncIterableQueue: new <T>() => Queue<T>;
+
+  beforeAll(async () => {
+    ({ AsyncIterableQueue } = await import('@livekit/agents'));
+  }, 30_000);
+
   // The send loops hand `input.next()` an AbortSignal and cancel it when an attempt
   // ends. This pins why: an abandoned read stays parked inside the queue and shifts
   // the next frame off it for a promise nobody awaits, so a sender left over from a
@@ -92,7 +103,6 @@ describe('abandoned queue reads', () => {
   const tick = () => new Promise((r) => setImmediate(r));
 
   it('steals the next item when the read is merely raced away', async () => {
-    const { AsyncIterableQueue } = await import('@livekit/agents');
     const queue = new AsyncIterableQueue<string>();
 
     void queue.next(); // the previous attempt's sender, abandoned by a Promise.race
@@ -111,7 +121,6 @@ describe('abandoned queue reads', () => {
   });
 
   it('leaves the next item alone when the read is cancelled', async () => {
-    const { AsyncIterableQueue } = await import('@livekit/agents');
     const queue = new AsyncIterableQueue<string>();
 
     const attempt = new AbortController();
