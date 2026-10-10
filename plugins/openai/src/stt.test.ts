@@ -84,14 +84,19 @@ describe('OpenAI STT options', () => {
     expect(() => openai.stream()).toThrow(/useRealtime/i);
   });
 
-  it('keeps Groq and OVHcloud helper instances in batch mode', () => {
+  it('keeps Groq, OVHcloud and uRun helper instances in batch mode', () => {
     const groq = STT.withGroq({ apiKey: 'test-key' });
     const ovhcloud = STT.withOVHcloud({ apiKey: 'test-key' });
+    const urun = STT.withUrun({ apiKey: 'test-key' });
 
     expect(groq.capabilities.streaming).toBe(false);
     expect(() => groq.stream()).toThrow(/useRealtime/i);
     expect(ovhcloud.capabilities.streaming).toBe(false);
     expect(() => ovhcloud.stream()).toThrow(/useRealtime/i);
+    expect(urun.model).toBe('nemotron-3.5-asr:fp16');
+    expect(urun.provider).toBe('inference.urun.sh');
+    expect(urun.capabilities.streaming).toBe(false);
+    expect(() => urun.stream()).toThrow(/useRealtime/i);
   });
 
   it('preserves the current model when updateOptions enables realtime without a model', () => {

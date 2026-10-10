@@ -852,6 +852,14 @@ export class LLM extends llm.LLM {
         temperature?: number;
         client: OpenAI;
     }>): LLM;
+    static withUrun(opts?: Partial<{
+        model: string | UrunChatModels;
+        apiKey?: string;
+        baseURL?: string;
+        user?: string;
+        temperature?: number;
+        client: OpenAI;
+    }>): LLM;
     static withXAI(opts?: Partial<{
         model: string | XAIChatModels;
         apiKey?: string;
@@ -2038,6 +2046,14 @@ export class STT extends stt_2.STT {
         language: string | string[];
         detectLanguage: boolean;
     }>): STT;
+    static withUrun(opts?: Partial<{
+        model: string | UrunSTTModels;
+        apiKey?: string;
+        baseURL?: string;
+        client: OpenAI;
+        language: string | string[];
+        detectLanguage: boolean;
+    }>): STT;
 }
 
 // Warning: (ae-missing-release-tag) "STTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -2235,6 +2251,16 @@ type TurnDetectionType = {
     create_response?: boolean;
     interrupt_response?: boolean;
 };
+
+// Warning: (ae-missing-release-tag) "UrunChatModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type UrunChatModels = 'qwen3.8-27b:nvfp4' | 'agents-a1:fp8' | 'diffusiongemma-26b:bf16';
+
+// Warning: (ae-missing-release-tag) "UrunSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type UrunSTTModels = 'nemotron-3.5-asr:fp16';
 
 // Warning: (ae-missing-release-tag) "UserItem" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
