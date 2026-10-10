@@ -920,15 +920,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     options.signal?.addEventListener('abort', onAbort, { once: true });
 
-    if (this.inUserActivity) {
-      this.sendClientEvent({
-        type: 'realtime_input',
-        value: {
-          activityEnd: {},
-        },
-      });
-      this.inUserActivity = false;
-    }
+    this.endUserActivity();
 
     const turns: types.Content[] = [];
     if (instructions !== undefined) {
@@ -989,6 +981,24 @@ export class RealtimeSession extends llm.RealtimeSession {
         },
       });
     }
+  }
+
+  /**
+   * With manual activity detection, ends the user activity opened by `startUserActivity()`.
+   * Gemini replies to `activityEnd` on its own, so don't call `generateReply()` after this.
+   */
+  endUserActivity(): void {
+    if (!this.inUserActivity) {
+      return;
+    }
+
+    this.inUserActivity = false;
+    this.sendClientEvent({
+      type: 'realtime_input',
+      value: {
+        activityEnd: {},
+      },
+    });
   }
 
   private generationHasOutput(gen: ResponseGeneration): boolean {
@@ -1961,8 +1971,16 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.sessionShouldClose.set();
   }
 
+  /**
+   * No-op: Gemini replies as soon as it gets `activityEnd`, and the agent calls this before
+   * `onUserTurnCompleted`, so ending the activity here would reply twice. `generateReply()`
+   * ends it instead; use `endUserActivity()` to close a turn yourself.
+   */
   async commitAudio() {}
 
+  /**
+   * Not supported: Gemini Live cannot drop audio that has already been streamed.
+   */
   async clearAudio() {}
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
