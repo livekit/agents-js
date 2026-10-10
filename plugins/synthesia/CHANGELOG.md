@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-synthesia
 
+## 1.9.3
+
+### Patch Changes
+
+- Updated dependencies [[`21d2456`](https://github.com/livekit/agents-js/commit/21d245648d7c73ab3af7c4635024a2247de87d35), [`bae7759`](https://github.com/livekit/agents-js/commit/bae775993e1517918cdf8b04bdbc068bee1ee578), [`3de8f13`](https://github.com/livekit/agents-js/commit/3de8f13b9ce2638261a2400846cff738f575e787), [`9ebffb7`](https://github.com/livekit/agents-js/commit/9ebffb79fc7d4c1092951d243a990c45352408fc), [`b6928f1`](https://github.com/livekit/agents-js/commit/b6928f158518d7db23bbe1647af426ab0eaf65e0)]:
+  - @livekit/agents@1.9.3
+
 ## 1.9.2
 
 ### Patch Changes

@@ -1,5 +1,19 @@
 # @livekit/agents
 
+## 1.9.3
+
+### Patch Changes
+
+- Avoid delaying TTS text after stray Markdown emphasis and link delimiters. - [#2614](https://github.com/livekit/agents-js/pull/2614) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve active jobs during drain when an unstarted prewarm process is in the pool. - [#2691](https://github.com/livekit/agents-js/pull/2691) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- fix(voice): store only the spoken part of replies when TTS fails - [#2672](https://github.com/livekit/agents-js/pull/2672) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Diff chat contexts in O(n log n) when their item IDs are unique. - [#2673](https://github.com/livekit/agents-js/pull/2673) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Allow `LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE=0` to skip the job-process local inference binding preload and shared EOT model warm-up while preserving lazy first-use initialization. - [#2674](https://github.com/livekit/agents-js/pull/2674) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.9.2
 
 ### Patch Changes
