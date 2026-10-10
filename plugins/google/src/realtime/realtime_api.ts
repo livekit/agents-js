@@ -164,6 +164,7 @@ interface RealtimeOptions {
   thinkingConfig?: types.ThinkingConfig;
   toolBehavior?: types.Behavior;
   toolResponseScheduling?: types.FunctionResponseScheduling;
+  sessionResumption: boolean;
 }
 
 /**
@@ -382,12 +383,33 @@ export class RealtimeModel extends llm.RealtimeModel {
        * responsible for avoiding this parameter when using Vertex AI.
        */
       toolResponseScheduling?: types.FunctionResponseScheduling;
+
+      /**
+       * Whether a reconnect resumes the server-side session with the last
+       * resumption handle. Defaults to `true`. With `false` every reconnect
+       * starts a fresh session and the plugin replays the chat context, which
+       * is what restores seeded history when a resumed session drops it.
+       *
+       * The replay carries what the chat context holds: messages, including
+       * spoken turns once their input transcription arrives, but not tool
+       * calls or their results. After a fresh reconnect the model knows what
+       * was said about a tool's result, not the result itself. Spoken turns
+       * need `inputAudioTranscription` enabled to be replayed at all.
+       */
+      sessionResumption?: boolean;
     } = {},
   ) {
     const inputAudioTranscription =
       options.inputAudioTranscription === undefined ? {} : options.inputAudioTranscription;
     const outputAudioTranscription =
       options.outputAudioTranscription === undefined ? {} : options.outputAudioTranscription;
+
+    if (options.sessionResumption === false && inputAudioTranscription === null) {
+      log().warn(
+        'sessionResumption is off and inputAudioTranscription is disabled: spoken turns never ' +
+          'enter the chat context, so a reconnect loses them.',
+      );
+    }
 
     let serverTurnDetection = true;
     if (options.realtimeInputConfig?.automaticActivityDetection?.disabled) {
@@ -465,6 +487,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       geminiTools: options.geminiTools,
       thinkingConfig: options.thinkingConfig,
       toolBehavior: options.toolBehavior,
+      sessionResumption: options.sessionResumption ?? true,
       toolResponseScheduling: options.toolResponseScheduling,
     };
   }
@@ -1348,6 +1371,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
     if (response.sessionResumptionUpdate) {
       if (
+        this.options.sessionResumption &&
         response.sessionResumptionUpdate.resumable &&
         response.sessionResumptionUpdate.newHandle
       ) {
@@ -1547,9 +1571,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       tools,
       inputAudioTranscription: opts.inputAudioTranscription,
       outputAudioTranscription: opts.outputAudioTranscription,
-      sessionResumption: this.sessionResumptionHandle
-        ? { handle: this.sessionResumptionHandle }
-        : {},
+      sessionResumption: !opts.sessionResumption
+        ? undefined
+        : this.sessionResumptionHandle
+          ? { handle: this.sessionResumptionHandle }
+          : {},
     };
 
     // Add generation fields at TOP LEVEL (NO generationConfig!)
