@@ -18,6 +18,7 @@ import {
   normalizeLanguage,
   stt,
   waitForAbort,
+  waitUntilAborted,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { RawData } from 'ws';
@@ -567,14 +568,17 @@ export class SpeechStream extends stt.SpeechStream {
       const samplesPerBuffer = Math.floor((this.#opts.sampleRate * this.#opts.bufferSizeMs) / 1000);
       const audioStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerBuffer);
 
-      const abortPromise = waitForAbort(this.abortSignal);
-      const sessionAbort = waitForAbort(sessionController.signal);
-
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise, sessionAbort]);
+          // The read is scoped to this connection and cancelled when it ends. Merely racing it
+          // against an abort would leave it parked in the queue, where it takes the next audio
+          // frame for a promise nobody awaits and starves the sender of the next connection.
+          const { result, isAborted } = await waitUntilAborted(
+            this.input.next({ signal: sessionController.signal }),
+            this.abortSignal,
+          );
 
-          if (result === undefined) return; // aborted
+          if (isAborted) return; // stream aborted
           if (result.done) break;
 
           const data = result.value;
@@ -595,6 +599,9 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(frame.data.buffer);
           }
         }
+      } catch (e) {
+        if (sessionController.signal.aborted) return; // teardown, not a failure of this send
+        throw e;
       } finally {
         closing = true;
         try {
