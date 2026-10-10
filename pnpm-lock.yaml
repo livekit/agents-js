@@ -317,6 +317,9 @@ importers:
       '@livekit/agents-plugin-livekit':
         specifier: workspace:*
         version: link:../plugins/livekit
+      '@livekit/agents-plugin-microsoft':
+        specifier: workspace:*
+        version: link:../plugins/microsoft
       '@livekit/agents-plugin-minimax':
         specifier: workspace:*
         version: link:../plugins/minimax
@@ -1020,6 +1023,34 @@ importers:
 
   plugins/meta:
     dependencies:
+      ws:
+        specifier: 'catalog:'
+        version: 8.21.3
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 1.1.0
+      '@microsoft/api-extractor':
+        specifier: ^7.58.12
+        version: 7.58.12(@types/node@25.6.0)
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.1
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.58.12(@types/node@25.6.0))(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
+  plugins/microsoft:
+    dependencies:
+      dotenv:
+        specifier: ^17.2.3
+        version: 17.2.3
       ws:
         specifier: 'catalog:'
         version: 8.21.3
