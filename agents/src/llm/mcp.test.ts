@@ -925,14 +925,10 @@ describe('MCPServer', () => {
     await expect(
       toolset._executor.execute({ tool: lookup!, runCtx, rawArguments: {} }),
     ).resolves.toContain('working');
-    await vi.waitFor(() =>
-      expect(
-        history.items.some(
-          (item) =>
-            item.type === 'function_call_output' && String(item.output).includes('not found'),
-        ),
-      ).toBe(true),
-    );
+    await toolset._executor.waitForAll();
+    expect(history.items.filter((item) => item.type === 'function_call_output')).toMatchObject([
+      { callId: 'call_lookup_final', output: 'not found', isError: true },
+    ]);
     await toolset.aclose();
   });
 
@@ -952,15 +948,10 @@ describe('MCPServer', () => {
     await expect(
       toolset._executor.execute({ tool: lookup!, runCtx, rawArguments: {} }),
     ).resolves.toContain('working');
-    await vi.waitFor(() =>
-      expect(
-        history.items.some(
-          (item) =>
-            item.type === 'function_call_output' &&
-            String(item.output).includes('MCP tool call failed unexpectedly.'),
-        ),
-      ).toBe(true),
-    );
+    await toolset._executor.waitForAll();
+    expect(history.items.filter((item) => item.type === 'function_call_output')).toMatchObject([
+      { callId: 'call_lookup_final', output: 'MCP tool call failed unexpectedly.', isError: true },
+    ]);
     expect(JSON.stringify(history.items)).not.toContain('credential-bearing request failure');
     await toolset.aclose();
   });

@@ -424,14 +424,8 @@ export abstract class MCPServer {
       parameters: descriptor.inputSchema,
       flags: options.flags,
       onDuplicate: options.onDuplicate,
-      execute: async (args, { ctx, abortSignal }) => {
-        try {
-          return await this.executeTool(name, args, options, ctx, abortSignal);
-        } catch (error) {
-          if (!ctx.updates?.length || abortSignal.aborted) throw error;
-          await ctx.update(error instanceof ToolError ? error.message : MCP_TOOL_CALL_FAILED);
-        }
-      },
+      execute: (args, { ctx, abortSignal }) =>
+        this.executeTool(name, args, options, ctx, abortSignal),
     });
   }
 
