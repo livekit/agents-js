@@ -6,7 +6,8 @@ import { readStream } from '../../utils.js';
 
 export type BuiltinTextTransform = 'filter_markdown' | 'filter_emoji';
 export type TextTransform =
-  BuiltinTextTransform | ((text: ReadableStream<string>) => ReadableStream<string>);
+  | BuiltinTextTransform
+  | ((text: ReadableStream<string>) => ReadableStream<string>);
 
 const linePatterns: Array<[RegExp, string]> = [
   [/^#{1,6}\s+/gm, ''],
