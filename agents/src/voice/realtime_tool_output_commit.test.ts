@@ -92,6 +92,7 @@ class FakeRealtimeSession extends RealtimeSession {
   private _chatCtx = ChatContext.empty();
   private _tools = ToolContext.empty();
   includeTool = true;
+  toolArgs = '{}';
 
   get chatCtx(): ChatContext {
     return this._chatCtx;
@@ -122,7 +123,13 @@ class FakeRealtimeSession extends RealtimeSession {
         modalities: Promise.resolve(['text']),
       }),
       functionStream: this.includeTool
-        ? stream(FunctionCall.create({ callId: TOOL_CALL_ID, name: 'lookup_order', args: '{}' }))
+        ? stream(
+            FunctionCall.create({
+              callId: TOOL_CALL_ID,
+              name: 'lookup_order',
+              args: this.toolArgs,
+            }),
+          )
         : stream<FunctionCall>(),
       userInitiated: true,
       responseId: 'response-1',
@@ -321,5 +328,43 @@ describe('Realtime tool output commit', () => {
     expect(output?.output).toBe(JSON.stringify('ships tomorrow'));
     // The output must follow its call so summarization renders them in order.
     expect(items.indexOf(output!)).toBeGreaterThan(items.indexOf(call!));
+    expect(session.history.items.filter((item) => item.type === 'function_call')).toHaveLength(1);
+  });
+
+  it('records the call of a realtime tool that never ran', async () => {
+    const model = new FakeRealtimeModel();
+    model.activeSession.toolArgs = '[1, 2, 3]';
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    const agent = new Agent({
+      instructions: 'test',
+      tools: { lookup_order: tool({ description: 'x', execute: async () => 'unreachable' }) },
+    });
+
+    await session.start({ agent });
+    try {
+      await session.generateReply().waitForPlayout();
+      await vi.waitFor(() =>
+        expect(agent.chatCtx.items.some((item) => item.type === 'function_call_output')).toBe(true),
+      );
+    } finally {
+      await session.close();
+    }
+
+    for (const ctx of [agent.chatCtx, session.history]) {
+      const calls = ctx.items.filter((item) => item.type === 'function_call');
+      const outputs = ctx.items.filter((item) => item.type === 'function_call_output');
+      expect(calls.map((item) => item.callId)).toEqual([TOOL_CALL_ID]);
+      expect(outputs.map((item) => item.callId)).toEqual([TOOL_CALL_ID]);
+      expect(outputs[0]?.isError).toBe(true);
+    }
+
+    const copied = agent.chatCtx.copy({ toolCtx: agent.toolCtx });
+    expect(
+      copied.items.filter((item) => item.type.startsWith('function_call')).map((item) => item.type),
+    ).toEqual(['function_call', 'function_call_output']);
   });
 });
