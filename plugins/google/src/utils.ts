@@ -195,8 +195,10 @@ export function toFunctionDeclarations(
       if (useParametersJsonSchema) {
         declaration.parametersJsonSchema = isEmptyObjectSchema(schemaCopy) ? undefined : schemaCopy;
       } else {
-        validateGeminiSchema(jsonSchema);
         declaration.parameters = convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema;
+        if (declaration.parameters) {
+          validateGeminiSchema(declaration.parameters as JSONSchema7Definition);
+        }
       }
       functionDeclarations.push(declaration);
     } catch (cause) {
