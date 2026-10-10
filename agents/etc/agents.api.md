@@ -1000,6 +1000,7 @@ export interface AsyncToolOptions {
 
 // @public (undocumented)
 export class AsyncToolset extends Toolset {
+    protected constructor(input: AsyncToolsetCreateOptions);
     // (undocumented)
     aclose(): Promise<void>;
     // (undocumented)
@@ -4796,7 +4797,22 @@ declare namespace llm {
         SerializedImage,
         FallbackAdapter,
         AvailabilityChangedEvent,
-        FallbackAdapterOptions
+        FallbackAdapterOptions,
+        MCPServer,
+        MCPServerHTTP,
+        MCPServerStdio,
+        MCPToolset,
+        MCPHTTPTransportType,
+        MCPServerHTTPOptions,
+        MCPServerOptions,
+        MCPServerStdioOptions,
+        MCPToolCallResult,
+        MCPToolContent,
+        MCPToolDescriptor,
+        MCPToolResultContext,
+        MCPToolResultResolver,
+        MCPToolOptions,
+        MCPToolsetOptions
     }
 }
 
@@ -5123,6 +5139,171 @@ const MAX_SPANS_PER_MINUTE = 6;
 
 // @public
 function maxInputLen(provider: string): number | undefined;
+
+// @public (undocumented)
+export type MCPHTTPTransportType = 'sse' | 'streamable_http';
+
+// @public (undocumented)
+export abstract class MCPServer {
+    constructor(options?: MCPServerOptions);
+    // (undocumented)
+    aclose(): Promise<void>;
+    // (undocumented)
+    protected abstract createTransport(): Promise<unknown>;
+    // (undocumented)
+    protected filterTools(tools: readonly MCPToolDescriptor[]): readonly MCPToolDescriptor[];
+    // @internal
+    get _hasBoundedRequests(): boolean;
+    // (undocumented)
+    initialize(): Promise<void>;
+    // (undocumented)
+    get initialized(): boolean;
+    // (undocumented)
+    invalidateCache(): void;
+    // (undocumented)
+    listTools(options?: Record<string, MCPToolOptions>): Promise<FunctionTool[]>;
+    // (undocumented)
+    protected logger: Logger;
+    // (undocumented)
+    protected notifyToolsChanged(): Promise<void>;
+    // (undocumented)
+    onToolsChanged(listener: () => void | Promise<void>): () => void;
+}
+
+// @public (undocumented)
+export class MCPServerHTTP extends MCPServer {
+    constructor(options: MCPServerHTTPOptions);
+    // (undocumented)
+    protected createTransport(): Promise<unknown>;
+    // (undocumented)
+    protected filterTools(tools: readonly MCPToolDescriptor[]): readonly MCPToolDescriptor[];
+    // (undocumented)
+    readonly transportType: MCPHTTPTransportType;
+    // (undocumented)
+    readonly url: string;
+}
+
+// @public (undocumented)
+export interface MCPServerHTTPOptions extends MCPServerOptions {
+    // (undocumented)
+    allowedTools?: string[];
+    allowInsecureHttp?: boolean;
+    // (undocumented)
+    headers?: Record<string, string>;
+    // (undocumented)
+    transportType?: MCPHTTPTransportType;
+    // (undocumented)
+    url: string;
+}
+
+// @public (undocumented)
+export interface MCPServerOptions {
+    // (undocumented)
+    clientSessionTimeout?: number | null;
+    // (undocumented)
+    toolResultResolver?: MCPToolResultResolver;
+}
+
+// @public (undocumented)
+export class MCPServerStdio extends MCPServer {
+    constructor(options: MCPServerStdioOptions);
+    // (undocumented)
+    readonly args: string[];
+    // (undocumented)
+    readonly command: string;
+    // (undocumented)
+    protected createTransport(): Promise<unknown>;
+    // (undocumented)
+    readonly cwd?: string;
+    // (undocumented)
+    readonly env?: Record<string, string>;
+}
+
+// @public (undocumented)
+export interface MCPServerStdioOptions extends MCPServerOptions {
+    // (undocumented)
+    args?: string[];
+    // (undocumented)
+    command: string;
+    // (undocumented)
+    cwd?: string;
+    // (undocumented)
+    env?: Record<string, string>;
+}
+
+// @public (undocumented)
+export interface MCPToolCallResult {
+    // (undocumented)
+    [key: string]: unknown;
+    // (undocumented)
+    content: MCPToolContent[];
+    // (undocumented)
+    isError?: boolean;
+    // (undocumented)
+    structuredContent?: unknown;
+}
+
+// @public (undocumented)
+export type MCPToolContent = {
+    type: string;
+    [key: string]: unknown;
+};
+
+// @public (undocumented)
+export interface MCPToolDescriptor {
+    // (undocumented)
+    description?: string;
+    // (undocumented)
+    inputSchema: Record<string, unknown>;
+    // (undocumented)
+    _meta?: Record<string, unknown>;
+    // (undocumented)
+    name: string;
+}
+
+// @public (undocumented)
+export interface MCPToolOptions {
+    // (undocumented)
+    flags?: number;
+    // (undocumented)
+    onDuplicate?: DuplicateMode;
+    // (undocumented)
+    reportProgress?: boolean;
+}
+
+// @public (undocumented)
+export interface MCPToolResultContext {
+    // (undocumented)
+    arguments: JSONObject;
+    // (undocumented)
+    result: MCPToolCallResult;
+    // (undocumented)
+    toolName: string;
+}
+
+// @public (undocumented)
+export type MCPToolResultResolver = (ctx: MCPToolResultContext) => unknown | Promise<unknown>;
+
+// @public (undocumented)
+export class MCPToolset extends AsyncToolset {
+    constructor(input: MCPToolsetOptions);
+    // (undocumented)
+    aclose(): Promise<void>;
+    // (undocumented)
+    setup(ctx: ToolsetContext): Promise<void>;
+}
+
+// @public (undocumented)
+export interface MCPToolsetOptions {
+    // (undocumented)
+    id: string;
+    // (undocumented)
+    mcpServer: MCPServer;
+    // (undocumented)
+    toolHandling?: AsyncToolsetCreateOptions['toolHandling'];
+    // (undocumented)
+    toolOptions?: Record<string, MCPToolOptions>;
+}
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioFrame"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioFrame"
@@ -9223,11 +9404,11 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:404:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1070:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:405:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1078:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1794:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1794:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1794:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
