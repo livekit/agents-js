@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import type { Client, ClientOptions } from '@modelcontextprotocol/sdk/client/index.js';
-import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
+import type {
+  Client,
+  ClientOptions,
+  RequestOptions,
+  Transport,
+} from '@modelcontextprotocol/client';
+import type { AjvJsonSchemaValidator } from '@modelcontextprotocol/client/validators/ajv';
 import type { JSONSchema7 } from 'json-schema';
 import { log } from '../log.js';
 import { AsyncToolset, type AsyncToolsetCreateOptions } from './async_toolset.js';
@@ -56,8 +59,7 @@ const MCP_SERVER_UNAVAILABLE =
   'MCP server connection is unavailable. Please check that the MCP server is still running.';
 const MCP_TOOL_CALL_FAILED = 'MCP tool call failed unexpectedly.';
 const MCP_TOOL_RESULT_PROCESSING_FAILED = 'MCP tool result processing failed unexpectedly.';
-const MCP_CONNECTION_CLOSED = -32000;
-const MCP_SDK_PACKAGE = '@modelcontextprotocol/sdk';
+const MCP_SDK_PACKAGE = '@modelcontextprotocol/client';
 const MCP_SDK_INSTALL_MESSAGE =
   `The '${MCP_SDK_PACKAGE}' package is required to use MCP servers. ` +
   `Install it with: pnpm add ${MCP_SDK_PACKAGE}`;
@@ -89,9 +91,10 @@ async function loadMCPModule<T>(load: () => Promise<T>): Promise<T> {
 
 function isConnectionError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  if (error.name === 'McpError') {
-    return 'code' in error && error.code === MCP_CONNECTION_CLOSED;
+  if (error.name === 'SdkError') {
+    return 'code' in error && error.code === 'CONNECTION_CLOSED';
   }
+  if (error.name === 'ProtocolError') return false;
   return /(?:connection|transport|stream|resource).*(?:closed|broken)|(?:closed|broken).*(?:connection|transport|stream|resource)/i.test(
     `${error.name}: ${error.message}`,
   );
@@ -126,8 +129,11 @@ function isTransport(value: unknown): value is Transport {
 function isMCPInputSchema(value: unknown, validator: AjvJsonSchemaValidator): value is JSONSchema7 {
   if (!isRecord(value) || value.type !== 'object') return false;
   try {
+    const dialect = value.$schema ?? 'https://json-schema.org/draft/2020-12/schema';
+    if (typeof dialect !== 'string') return false;
     const validateSchema = validator.getValidator({
-      $ref: 'http://json-schema.org/draft-07/schema#',
+      $schema: dialect,
+      $ref: dialect,
     });
     if (!validateSchema(value).valid) return false;
     validator.getValidator(value);
@@ -141,6 +147,7 @@ export abstract class MCPServer {
   protected logger = log();
   private client: Client | null = null;
   private connectingClient: Client | null = null;
+  private connectingTransport: Transport | null = null;
   private reconnectOnNextCall = false;
   private initializing?: { generation: number; promise: Promise<void> };
   private connectionGeneration = 0;
@@ -208,9 +215,10 @@ export abstract class MCPServer {
         generation: connectionGeneration,
         promise: (async () => {
           const { Client: ClientCtor } = await loadMCPModule(
-            () => import('@modelcontextprotocol/sdk/client/index.js'),
+            () => import('@modelcontextprotocol/client'),
           );
           const clientOptions: ClientOptions = {
+            versionNegotiation: { mode: 'auto' },
             listChanged: {
               tools: {
                 autoRefresh: false,
@@ -228,7 +236,9 @@ export abstract class MCPServer {
             const transport = await this.createTransport();
             if (!isTransport(transport)) throw new Error('Invalid MCP transport');
             if (connectionGeneration !== this.connectionGeneration) return;
-            await client.connect(transport);
+            // Discovery probes precede Client's transport attachment; close them explicitly.
+            this.connectingTransport = transport;
+            await client.connect(transport, this.requestOptions());
             if (connectionGeneration !== this.connectionGeneration) {
               return;
             }
@@ -236,6 +246,7 @@ export abstract class MCPServer {
           } finally {
             if (this.connectingClient === client) {
               this.connectingClient = null;
+              this.connectingTransport = null;
               if (this.client !== client) await this.closeClient(client);
             }
           }
@@ -255,11 +266,14 @@ export abstract class MCPServer {
     const initializing = this.initializing?.promise;
     const client = this.client;
     const connectingClient = this.connectingClient;
+    const connectingTransport = this.connectingTransport;
     this.connectingClient = null;
+    this.connectingTransport = null;
     this.resetConnection();
-    if (connectingClient) {
-      await this.closeClient(connectingClient);
-    }
+    await Promise.all([
+      ...(connectingTransport ? [this.closeClient(connectingTransport)] : []),
+      ...(connectingClient ? [this.closeClient(connectingClient)] : []),
+    ]);
     await initializing?.catch(() => undefined);
     if (client && client !== connectingClient) {
       await this.closeClient(client);
@@ -291,10 +305,10 @@ export abstract class MCPServer {
       const tools: MCPToolDescriptor[] = [];
       let cursor: string | undefined;
       do {
-        const page = await client.listTools(
-          cursor === undefined ? undefined : { cursor },
-          this.requestOptions(),
-        );
+        const page = await client.listTools(cursor === undefined ? undefined : { cursor }, {
+          ...this.requestOptions(),
+          cacheMode: 'refresh',
+        });
         tools.push(...page.tools);
         cursor = page.nextCursor;
       } while (cursor !== undefined);
@@ -318,7 +332,7 @@ export abstract class MCPServer {
   ): Promise<FunctionTool<JSONObject>> {
     const { name } = descriptor;
     const { AjvJsonSchemaValidator } = await loadMCPModule(
-      () => import('@modelcontextprotocol/sdk/validation/ajv'),
+      () => import('@modelcontextprotocol/client/validators/ajv'),
     );
     // Each tool gets its own cache so reused $ids cannot mask changed schemas.
     if (!isMCPInputSchema(descriptor.inputSchema, new AjvJsonSchemaValidator())) {
@@ -361,7 +375,6 @@ export abstract class MCPServer {
     try {
       response = await client.callTool(
         { name, arguments: args },
-        undefined,
         this.requestOptions(
           options.reportProgress
             ? ({ message }) => {
@@ -438,7 +451,7 @@ export abstract class MCPServer {
     await this.closeClient(client);
   }
 
-  private async closeClient(client: Client): Promise<void> {
+  private async closeClient(client: Pick<Client, 'close'>): Promise<void> {
     try {
       await client.close();
     } catch (error) {
@@ -486,12 +499,12 @@ export class MCPServerHTTP extends MCPServer {
     const requestInit: RequestInit = { headers: this.headers };
     if (this.transportType === 'streamable_http') {
       const { StreamableHTTPClientTransport } = await loadMCPModule(
-        () => import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
+        () => import('@modelcontextprotocol/client'),
       );
       return new StreamableHTTPClientTransport(new URL(this.url), { requestInit });
     }
     const { SSEClientTransport } = await loadMCPModule(
-      () => import('@modelcontextprotocol/sdk/client/sse.js'),
+      () => import('@modelcontextprotocol/client'),
     );
     return new SSEClientTransport(new URL(this.url), { requestInit });
   }
@@ -526,7 +539,7 @@ export class MCPServerStdio extends MCPServer {
 
   protected override async createTransport(): Promise<unknown> {
     const { StdioClientTransport } = await loadMCPModule(
-      () => import('@modelcontextprotocol/sdk/client/stdio.js'),
+      () => import('@modelcontextprotocol/client/stdio'),
     );
     return new StdioClientTransport({
       command: this.command,

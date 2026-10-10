@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { ClientOptions } from '@modelcontextprotocol/sdk/client/index.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { ClientOptions, Transport } from '@modelcontextprotocol/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Agent } from '../voice/agent.js';
 import { AgentActivity } from '../voice/agent_activity.js';
@@ -15,9 +14,10 @@ import { ToolError } from './tool_context.js';
 
 const clientMock = vi.hoisted<{ client?: object; options?: ClientOptions }>(() => ({}));
 
-vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
+vi.mock('@modelcontextprotocol/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   Client: class {
-    constructor(_info: unknown, options: unknown) {
+    constructor(_info: unknown, options: ClientOptions) {
       if (!clientMock.client) throw new Error('MCP client mock was not configured');
       clientMock.options = options;
       return clientMock.client;
@@ -210,6 +210,8 @@ describe('MCPServer', () => {
     { type: 'object', properties: { query: { anyOf: [{ type: 42 }] } } },
     { type: 'object', properties: { query: { $ref: '#/$defs/missing' } } },
     { type: 'object', properties: { query: { $ref: 'https://example.com/query-schema' } } },
+    { type: 'object', properties: { query: { prefixItems: [{ type: 42 }] } } },
+    { type: 'object', properties: { query: { unevaluatedProperties: 'no' } } },
   ])('rejects malformed or unresolvable MCP input schema %j', async (inputSchema) => {
     const server = new TestServer();
     await attachClient(server, {
@@ -237,6 +239,16 @@ describe('MCPServer', () => {
       type: 'object',
       $defs: { query: { type: 'string' } },
       properties: { query: { $ref: '#/$defs/query' } },
+    },
+    {
+      $schema: 'https://json-schema.org/draft/2019-09/schema',
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      unevaluatedProperties: false,
+    },
+    {
+      type: 'object',
+      properties: { query: { type: 'array', prefixItems: [{ type: 'string' }], items: false } },
     },
     { type: 'object', properties: { child: { $ref: '#' } } },
     {
@@ -315,7 +327,7 @@ describe('MCPServer', () => {
     const [lookup] = await server.listTools();
     await lookup!.execute({}, { ctx: {}, toolCallId: 'call', abortSignal: controller.signal });
 
-    expect(callTool.mock.calls[0]?.[2]).toMatchObject({ signal: controller.signal });
+    expect(callTool.mock.calls[0]?.[1]).toMatchObject({ signal: controller.signal });
   });
 
   it('logs only safe metadata when reporting progress fails', async () => {
@@ -323,7 +335,7 @@ describe('MCPServer', () => {
     const warn = server.spyOnWarn();
     await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
-      callTool: vi.fn(async (_params, _schema, options) => {
+      callTool: vi.fn(async (_params, options) => {
         options?.onprogress?.({ progress: 1, message: 'working' });
         return { content: [{ type: 'text', text: 'ok' }] };
       }),
@@ -466,10 +478,37 @@ describe('MCPServer', () => {
     },
   );
 
+  it.each([
+    { name: 'ProtocolError', code: -32602 },
+    { name: 'SdkError', code: 'INVALID_RESULT' },
+  ])('does not disconnect for non-connection SDK errors %j', async (errorType) => {
+    const error = Object.assign(new Error('remote database connection closed'), errorType);
+    const server = new TestServer();
+    const close = vi.fn().mockResolvedValue(undefined);
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
+      callTool: vi.fn().mockRejectedValue(error),
+      close,
+    });
+    const [lookup] = await server.listTools();
+    await expect(
+      lookup!.execute(
+        {},
+        {
+          ctx: {},
+          toolCallId: 'call',
+          abortSignal: new AbortController().signal,
+        },
+      ),
+    ).rejects.toThrow('MCP tool call failed unexpectedly.');
+    expect(server.initialized).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+  });
+
   it('resets the client after an MCP SDK connection error', async () => {
-    const sdkConnectionError = Object.assign(new Error('connection closed'), {
-      name: 'McpError',
-      code: -32000,
+    const sdkConnectionError = Object.assign(new Error('opaque transport failure'), {
+      name: 'SdkError',
+      code: 'CONNECTION_CLOSED',
     });
     const server = new TestServer();
     const close = vi.fn().mockResolvedValue(undefined);
@@ -492,8 +531,8 @@ describe('MCPServer', () => {
 
   it('reconnects a disconnected toolset on the next call and publishes fresh tools', async () => {
     const connectionError = Object.assign(new Error('connection closed'), {
-      name: 'McpError',
-      code: -32000,
+      name: 'SdkError',
+      code: 'CONNECTION_CLOSED',
     });
     const oldClient = {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
@@ -577,6 +616,7 @@ describe('MCPServer', () => {
     expect((await server.listTools()).map((tool) => tool.name)).toEqual(['lookup']);
 
     const options = clientMock.options;
+    expect(options.versionNegotiation).toEqual({ mode: 'auto' });
     expect(options.listChanged?.tools?.autoRefresh).toBe(false);
     options?.listChanged?.tools?.onChanged(null, null);
 
@@ -795,7 +835,7 @@ describe('MCPServer', () => {
     const stalled = deferred<{ content: { type: string; text: string }[] }>();
     const callTool = vi
       .fn()
-      .mockImplementationOnce(async (_params, _schema, options) => {
+      .mockImplementationOnce(async (_params, options) => {
         await options?.onprogress?.({ progress: 0, message: 'working' });
         return new Promise((resolve, reject) => {
           options?.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
@@ -854,7 +894,7 @@ describe('MCPServer', () => {
     const server = new TestServer();
     await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
-      callTool: vi.fn(async (_params, _schema, options) => {
+      callTool: vi.fn(async (_params, options) => {
         await options?.onprogress?.({ progress: 0, message: 'working' });
         return result.promise;
       }),
@@ -889,7 +929,7 @@ describe('MCPServer', () => {
     const server = new TestServer();
     await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
-      callTool: vi.fn(async (_params, _schema, options) => {
+      callTool: vi.fn(async (_params, options) => {
         await options?.onprogress?.({ progress: 0, message: 'working' });
         return result.promise;
       }),
@@ -924,7 +964,7 @@ describe('MCPServer', () => {
     const server = new TestServer({ toolResultResolver: () => resolvedResult.promise });
     await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
-      callTool: vi.fn(async (_params, _schema, options) => {
+      callTool: vi.fn(async (_params, options) => {
         await options?.onprogress?.({ progress: 0, message: 'working' });
         return { content: [{ type: 'text', text: 'raw result' }] };
       }),
@@ -973,7 +1013,7 @@ describe('MCPServer', () => {
     );
     await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({ tools: [descriptor] }),
-      callTool: vi.fn(async (_params, _schema, options) => {
+      callTool: vi.fn(async (_params, options) => {
         await options?.onprogress?.({ progress: 0, message: 'working' });
         if (failure === 'SDK failure') throw new Error('credential-bearing request failure');
         return { isError: failure === 'MCP error', content: [{ type: 'text', text: 'not found' }] };
