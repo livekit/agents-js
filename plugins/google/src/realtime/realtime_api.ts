@@ -883,11 +883,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     instructions?: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<llm.GenerationCreatedEvent> {
-    if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate) {
-      this.#logger.warn(
-        `generateReply is not compatible with '${this.options.model}' and will be ignored.`,
+    if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate && instructions !== undefined) {
+      throw new Error(
+        `generateReply with 'instructions' is not compatible with '${this.options.model}'`,
       );
-      throw new Error(`generateReply is not compatible with '${this.options.model}'`);
     }
 
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
