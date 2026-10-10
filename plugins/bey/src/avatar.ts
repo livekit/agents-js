@@ -224,7 +224,7 @@ export class AvatarSession extends voice.AvatarSession {
         if (attempt === AVATAR_JOIN_WAIT_MAX_ATTEMPTS) throw err;
         this.#logger.warn(
           {
-            'lk.pii.destination_identity': this.avatarParticipantIdentity,
+            destinationIdentity: this.avatarParticipantIdentity,
             'lk.pii.error': String(err),
             attempt,
           },

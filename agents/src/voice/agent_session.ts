@@ -18,6 +18,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
+import { isAPIError } from '../_exceptions.js';
 import type { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import {
   LLM as InferenceLLM,
@@ -81,7 +82,7 @@ import {
   type SessionConnectOptions,
   recordingEnabled,
 } from '../types.js';
-import { Event, Task, asError } from '../utils.js';
+import { Event, Task, asError, waitUntilAborted } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type Agent, AgentTask } from './agent.js';
 import {
@@ -158,9 +159,10 @@ export interface AgentSessionUsage {
 /**
  * Granular control over which recording features are active.
  *
- * Recording keys default to `true` when omitted, so `{ logs: false }` means "record
- * everything except logs". Redaction defaults to the project setting; `false` is ignored when
- * redaction is enabled globally for the project. Pass to {@link AgentSession.start} as `record`:
+ * Content recording keys default to `true` when omitted, so `{ logs: false }` means "record
+ * everything except logs". Input deltas are opt-in. Redaction defaults to the project setting;
+ * `false` is ignored when redaction is enabled globally for the project. Pass to
+ * {@link AgentSession.start} as `record`:
  *
  * - `record: true` — all on (backward compatible)
  * - `record: false` — all off (backward compatible)
@@ -178,6 +180,13 @@ export interface RecordingOptions {
   transcript?: boolean;
   /** Enable redaction. `false` does not disable project redaction. */
   redaction?: boolean;
+  /**
+   * Record only input changes on successive LLM trace spans. The model still receives the full
+   * input. Delta spans link to `lk.input.base_span_id`; reconstruct the record by removing its
+   * last `lk.input.dropped_from_base` entries and appending the delta. Unchanged system
+   * instructions are inherited from the base span. Defaults to `false`.
+   */
+  inputDelta?: boolean;
 }
 
 /** @internal Recording options with every category resolved to a boolean. */
@@ -189,6 +198,7 @@ const RECORDING_ALL_ON: ResolvedRecordingOptions = {
   logs: true,
   transcript: true,
   redaction: false,
+  inputDelta: false,
 };
 
 const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
@@ -197,14 +207,15 @@ const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
   logs: false,
   transcript: false,
   redaction: false,
+  inputDelta: false,
 };
 
 const idleHoldStorage = new AsyncLocalStorage<boolean>();
 
 /**
  * Resolve a `record` argument into explicit per-category flags. A boolean turns
- * every category on or off; a partial object is merged onto all-on so omitted
- * keys default to `true`.
+ * every content category on or off; a partial object is merged onto those defaults.
+ * Input deltas remain off unless explicitly enabled.
  *
  * @internal
  */
@@ -555,6 +566,7 @@ export class AgentSession<
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
   private readonly _aecWarmupDurationExplicit: boolean;
+  private _isSimulation = false;
 
   /**
    * The session's expressive setting, as the user passed it.
@@ -895,6 +907,7 @@ export class AgentSession<
     const tasks: Promise<void>[] = [];
 
     const jobCtx = getJobContext(false);
+    this._isSimulation = jobCtx?.simulationContext() !== undefined;
     if (jobCtx) {
       span.setAttributes({
         [traceTypes.ATTR_ROOM_NAME]: jobCtx.job.room?.name ?? '',
@@ -1010,14 +1023,19 @@ export class AgentSession<
       }),
     );
 
-    const startupResults = await ThrowsPromise.allSettled(tasks);
-    for (const result of startupResults) {
+    const startup = await waitUntilAborted(
+      ThrowsPromise.allSettled(tasks),
+      this.closingController.signal,
+    );
+    if (startup.isAborted) throw asError(this.closingController.signal.reason);
+    for (const result of startup.result) {
       if (result.status === 'rejected') throw result.reason;
     }
 
     if (this.sessionHost) {
       await this.sessionHost.start();
     }
+    this.closingController.signal.throwIfAborted();
 
     // Log used IO configuration
     this.logger.debug(
@@ -1792,7 +1810,11 @@ export class AgentSession<
     // Track error counts per type to implement max_unrecoverable_errors logic
     if (error.type === 'stt_error') {
       this.sttErrorCounts += 1;
-      if (this.sttErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
+      // The STT pipeline only recreates streams after API errors.
+      if (
+        isAPIError(error.error) &&
+        this.sttErrorCounts <= this._connOptions.maxUnrecoverableErrors
+      ) {
         return;
       }
     } else if (error.type === 'llm_error') {
@@ -1810,6 +1832,13 @@ export class AgentSession<
     this.logger.error(error, 'AgentSession is closing due to an unrecoverable error');
 
     this.closingTask = (async () => {
+      this.closing = true;
+      // Publish closingTask before abort callbacks can call close() again.
+      await Promise.resolve();
+      this.closingController.abort(error.error);
+      // Wait for activity creation, without waiting for the room connection.
+      const unlock = await this.activityLock.lock();
+      unlock();
       await this.closeImpl(CloseReason.ERROR, error);
     })().then(() => {
       this.closingTask = null;
@@ -2034,10 +2063,15 @@ export class AgentSession<
 
     const isOutboundSip =
       participant.info.kind === ParticipantKind.SIP && !participant.attributes[SIP_RULE_ID_ATTR];
-    this.sessionOptions.aecWarmupDuration = isOutboundSip ? null : DEFAULT_AEC_WARMUP_DURATION;
+    // A simulator publishes synthesized audio, so the agent's speech never echoes back.
+    const noWarmup =
+      isOutboundSip ||
+      this._isSimulation ||
+      getJobContext(false)?.simulationContext() !== undefined;
+    this.sessionOptions.aecWarmupDuration = noWarmup ? null : DEFAULT_AEC_WARMUP_DURATION;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
 
-    if (isOutboundSip && this._aecWarmupTimer !== null) {
+    if (noWarmup && this._aecWarmupTimer !== null) {
       clearTimeout(this._aecWarmupTimer);
       this._aecWarmupTimer = null;
     }

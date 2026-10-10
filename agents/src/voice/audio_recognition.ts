@@ -41,7 +41,7 @@ import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import type { Future } from '../utils.js';
-import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
+import { Task, cancelAndWait, delay, readStream, toError, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import {
@@ -186,17 +186,28 @@ export class STTPipeline {
 
   private sttNode: STTNode;
   private isClosing: () => boolean;
+  private onError?: (error: Error) => void;
   private _audioChannel: StreamChannel<AudioFrame> = createStreamChannel();
   private _eventChannel: StreamChannel<SpeechEvent> = createStreamChannel();
   private _pumpTask: Task<void>;
   /** Wall-clock anchor for this stream, used for STT-derived turn metrics. */
   inputStartedAt?: number;
 
-  constructor(sttNode: STTNode, opts: { isClosing?: () => boolean } = {}) {
+  constructor(
+    sttNode: STTNode,
+    opts: { isClosing?: () => boolean; onError?: (error: Error) => void } = {},
+  ) {
     this.sttNode = sttNode;
     // a closing session must not recreate provider connections that are torn down at once
     this.isClosing = opts.isClosing ?? (() => false);
+    this.onError = opts.onError;
     this._pumpTask = Task.from(({ signal }) => this.sttPump(signal));
+    this._pumpTask.result.catch((error) => {
+      if (!this._pumpTask.cancelled) {
+        log().error({ err: error }, 'STT pipeline failed');
+        if (!this.isClosing()) this.onError?.(toError(error));
+      }
+    });
     this._pumpTask.addDoneCallback(() => {
       this._eventChannel.close().catch((error) => {
         log().error(error, 'Error closing STT event channel');
@@ -216,8 +227,9 @@ export class STTPipeline {
    * The pipeline outlives the agent that created it (reused across handoff); a recreated
    * stream must come from the active agent's node, not the torn-down previous one.
    */
-  rebindNode(sttNode: STTNode) {
+  rebindNode(sttNode: STTNode, onError?: (error: Error) => void) {
     this.sttNode = sttNode;
+    this.onError = onError;
   }
 
   /**
@@ -226,10 +238,11 @@ export class STTPipeline {
    */
   private async sttPump(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
-      const node = await this.sttNode(this._audioChannel.stream(), {});
-      if (node === null) return;
-
+      let node: Awaited<ReturnType<STTNode>> | undefined;
       try {
+        node = await this.sttNode(this._audioChannel.stream(), {});
+        if (node === null) return;
+
         for await (const value of readStream(node, signal)) {
           if (typeof value === 'string') {
             throw new Error(`STT node must yield SpeechEvent, got: ${typeof value}`);
@@ -244,9 +257,12 @@ export class STTPipeline {
         // any other error propagates and stops the pump
         if (!isAPIError(e)) throw e;
         if (this.isClosing()) return;
+        // Startup failures have no provider stream to emit and count the error.
+        if (node === undefined) this.onError?.(e);
+        if (this.isClosing()) return;
         log().warn({ err: e }, 'STT stream ended on an unrecoverable error, recreating');
       } finally {
-        await node.cancel().catch(() => {});
+        await node?.cancel().catch(() => {});
       }
 
       await delay(STT_RECONNECT_INTERVAL_MS, { signal }).catch(() => {});
@@ -280,6 +296,8 @@ export interface AudioRecognitionOptions {
   stt?: STTNode;
   /** Whether the owning session is closing; a closing session does not recreate its STT stream. */
   isClosing?: () => boolean;
+  /** Reports node startup failures and terminal pipeline errors. */
+  onSttError?: (error: Error) => void;
   /** Voice activity detection. */
   vad?: VAD;
   /** Turn detector for end-of-turn prediction. Accepts text-based detectors
@@ -340,6 +358,7 @@ export class AudioRecognition {
   private hooks: RecognitionHooks;
   private stt?: STTNode;
   private isClosing?: () => boolean;
+  private onSttError?: (error: Error) => void;
   private sttPipeline?: STTPipeline;
   private vad?: VAD;
   private turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
@@ -413,6 +432,11 @@ export class AudioRecognition {
   // `user_turn` span when it ends so we can correlate traces with the
   // provider's logs for debugging.
   private sttRequestIds: string[] = [];
+  private sttEvents: Array<{
+    received_at: number;
+    type: 'interim_transcript' | 'preflight_transcript' | 'final_transcript';
+    transcript_length: number;
+  }> = [];
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
@@ -471,6 +495,7 @@ export class AudioRecognition {
     this.hooks = opts.recognitionHooks;
     this.stt = opts.stt;
     this.isClosing = opts.isClosing;
+    this.onSttError = opts.onSttError;
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
     this.checkVadSilenceRequirement();
@@ -1188,6 +1213,24 @@ export class AudioRecognition {
       createdAt: input.createdAt ?? Date.now(),
     };
 
+    if (
+      ev.type === SpeechEventType.INTERIM_TRANSCRIPT ||
+      ev.type === SpeechEventType.PREFLIGHT_TRANSCRIPT ||
+      ev.type === SpeechEventType.FINAL_TRANSCRIPT
+    ) {
+      const type =
+        ev.type === SpeechEventType.INTERIM_TRANSCRIPT
+          ? 'interim_transcript'
+          : ev.type === SpeechEventType.PREFLIGHT_TRANSCRIPT
+            ? 'preflight_transcript'
+            : 'final_transcript';
+      this.sttEvents.push({
+        received_at: ev.createdAt,
+        type,
+        transcript_length: Array.from(ev.alternatives?.[0]?.text ?? '').length,
+      });
+    }
+
     const firstAlternative = ev.alternatives?.[0];
     if (
       ev.speechEndTime === undefined &&
@@ -1591,6 +1634,10 @@ export class AudioRecognition {
         speechStartTime: number | undefined,
       ) =>
       async (controller: AbortController) => {
+        // Match asyncio.create_task: finish synchronous STT replay before starting EOU work.
+        await Promise.resolve();
+        if (controller.signal.aborted) return;
+
         let endpointingDelay = this.endpointing.minDelay;
 
         // a turn created here (no VAD/start-of-speech opened it) starts at the earliest
@@ -2005,8 +2052,10 @@ export class AudioRecognition {
   private startSttTasks(reusePipeline?: STTPipeline) {
     if (!this.stt) return;
 
-    reusePipeline?.rebindNode(this.stt);
-    this.sttPipeline = reusePipeline ?? new STTPipeline(this.stt, { isClosing: this.isClosing });
+    reusePipeline?.rebindNode(this.stt, this.onSttError);
+    this.sttPipeline =
+      reusePipeline ??
+      new STTPipeline(this.stt, { isClosing: this.isClosing, onError: this.onSttError });
 
     this.transcriptBuffer = [];
     this.sttOwnershipTransferred = false;
@@ -2655,6 +2704,9 @@ export class AudioRecognition {
     // a wait still open here never reached a decision (teardown, clearUserTurn, ...); a wait
     // opened after the decided one is a later bounce's to decide
     if (decided === undefined || this.eouWaitSpan === decided.wait) this.endEouWaitSpan('dropped');
+    if (this.sttEvents.length && !this.userTurnSpan) {
+      this.ensureUserTurnSpan(this.sttEvents[0]!.received_at);
+    }
     if (this.userTurnSpan && info) {
       // the instance that transcribed the turn, after any failover during it
       this.stampSttIdentity(this.userTurnSpan);
@@ -2668,6 +2720,7 @@ export class AudioRecognition {
         this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
       }
     }
+    this.stampSttEvents();
     if (this.userTurnSpan?.isRecording()) {
       this.stampUserTurnResumes(this.userTurnSpan);
       if (!info?.keepOpen) {
@@ -2677,6 +2730,14 @@ export class AudioRecognition {
     this.userTurnSpan = undefined;
     this.userTurnStart = undefined;
     this.sttRequestIds = [];
+  }
+
+  private stampSttEvents(): void {
+    const events = this.sttEvents;
+    this.sttEvents = [];
+    if (events.length && this.userTurnSpan?.isRecording()) {
+      this.userTurnSpan.setAttribute(traceTypes.ATTR_STT_EVENTS, JSON.stringify(events));
+    }
   }
 
   private stampUserTurnResumes(userTurnSpan: Span): void {

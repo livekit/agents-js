@@ -31,7 +31,7 @@ import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-import { genAI, traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, inputDelta, traceTypes, tracer } from '../telemetry/index.js';
 import { stripAllMarkup } from '../tts/provider_format.js';
 import {
   type FlushSentinel,
@@ -101,6 +101,9 @@ export function _injectRunningToolCalls(
       chatCtx.insert(
         FunctionCall.create({
           ...runningCall,
+          // an id of its own, stable across turns: input-delta telemetry tells items apart by
+          // id, so the copy matches itself while the tool runs and never the real call
+          id: `${runningCall.id}_running`,
           extra: { ...runningCall.extra, [RUNNING_TOOL_PLACEHOLDER_KEY]: true },
         }),
       );
@@ -168,6 +171,8 @@ export interface _TTSGenerationData {
   timedTextsFut: Future<ReadableStream<TimedString> | null, never>;
   /** Time to first byte (set when first audio frame is received) */
   ttfb?: number;
+  /** The error that ended TTS inference, if any. */
+  error: unknown | null;
 }
 
 // TODO(brian): remove this class in favor of ToolOutput
@@ -648,12 +653,14 @@ export function performLLMInference(
     span: Span,
     inference: genAI.InferenceMarker,
   ) => {
+    const delta = inputDelta.compute(inputDelta.LLM_NODE, chatCtx, span);
     span.setAttribute(
       traceTypes.ATTR_CHAT_CTX,
       // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
       // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
-      JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
+      JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
     );
+    inputDelta.setAttributes(span, delta);
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
     let nodeError: Error | string | undefined;
@@ -794,8 +801,8 @@ export function performLLMInference(
           timeToFirstChunk: data.ttft,
         });
         genAI.setContentAttributes(span, {
-          systemInstructions: genAI.toSystemInstructions(chatCtx),
-          inputMessages: genAI.toInputMessages(chatCtx),
+          systemInstructions: delta.systemInstructions(),
+          inputMessages: delta.inputMessages(),
           toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
           outputMessages: genAI.toOutputMessages({
             text: data.generatedText,
@@ -878,6 +885,7 @@ export function performTTSInference(
     audioStream: audioOutputStream,
     timedTextsFut,
     ttfb: undefined,
+    error: null,
   };
 
   const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
@@ -954,6 +962,8 @@ export function performTTSInference(
       } else if (error instanceof DOMException && error.name === 'AbortError') {
         return;
       } else {
+        // Set this before closing the audio stream so forwarding knows it was truncated.
+        genData.error = error;
         throw error;
       }
     } finally {
@@ -1094,6 +1104,7 @@ async function forwardAudio(
   out: _AudioOut,
   reconcilePlayoutPause: () => void,
   idleTimeout: number,
+  ttsData: _TTSGenerationData | null,
   signal?: AbortSignal,
 ): Promise<void> {
   const logger = log();
@@ -1180,6 +1191,9 @@ async function forwardAudio(
     // listener's lifetime.
     signal?.removeEventListener('abort', cancelReader);
     reader?.releaseLock();
+    if (!signal?.aborted && ttsData?.error != null) {
+      audioOutput._markInputTruncated();
+    }
     audioOutput.flush();
     if (signal?.aborted) {
       audioOutput.clearBuffer();
@@ -1194,6 +1208,7 @@ export function performAudioForwarding(
   controller: AbortController,
   reconcilePlayoutPause: () => void,
   idleTimeout: number = DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS,
+  ttsData: _TTSGenerationData | null = null,
 ): [Task<void>, _AudioOut] {
   const out: _AudioOut = {
     firstFrameFut: new Future<number>(),
@@ -1233,6 +1248,7 @@ export function performAudioForwarding(
           out,
           reconcilePlayoutPause,
           idleTimeout,
+          ttsData,
           controller.signal,
         ),
       controller,

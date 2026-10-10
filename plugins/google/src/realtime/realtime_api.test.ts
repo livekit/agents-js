@@ -2,10 +2,178 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { LiveServerContent, UsageMetadata } from '@google/genai';
-import { Behavior, FunctionResponseScheduling } from '@google/genai';
-import { llm } from '@livekit/agents';
+import { Behavior, FunctionResponseScheduling, ThinkingLevel } from '@google/genai';
+import { llm, log } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
-import { RealtimeSession, toClientContentParams } from './realtime_api.js';
+import { RealtimeModel, RealtimeSession, toClientContentParams } from './realtime_api.js';
+
+const compatibleModels = [
+  ['gemini-3.8-live', false],
+  ['gemini-3.8-live', true],
+  ['gemini-3.8-live-extended-thinking', false],
+  ['gemini-3.1-flash-live-preview', false],
+  ['gemini-2.5-flash-native-audio-preview-12-2025', false],
+  ['gemini-live-2.5-flash-native-audio', true],
+  ['models/gemini-3.8-live', false],
+  ['models/gemini-3.8-live', true],
+  ['google/gemini-3.8-live', true],
+  ['publishers/google/models/gemini-3.8-live', true],
+  ['projects/test-project/locations/eu/publishers/google/models/gemini-3.8-live', true],
+  ['future-live-model', false],
+  ['future-live-model', true],
+  ['models/future-live-model', false],
+  ['models/future-live-model', true],
+  ['other/gemini-3.8-live-extended-thinking', true],
+  ['publishers/other/models/gemini-3.8-live-extended-thinking', true],
+  [
+    'projects/test-project/locations/eu/publishers/other/models/gemini-3.8-live-extended-thinking',
+    true,
+  ],
+] as const;
+
+const mismatchedModels = [
+  ['gemini-3.8-live-extended-thinking', true],
+  ['gemini-3.1-flash-live-preview', true],
+  ['gemini-2.5-flash-native-audio-preview-12-2025', true],
+  ['gemini-live-2.5-flash-native-audio', false],
+  ['models/gemini-3.8-live-extended-thinking', true],
+  ['google/gemini-3.8-live-extended-thinking', true],
+  ['publishers/google/models/gemini-3.8-live-extended-thinking', true],
+  [
+    'projects/test-project/locations/eu/publishers/google/models/gemini-3.8-live-extended-thinking',
+    true,
+  ],
+  ['models/gemini-live-2.5-flash-native-audio', false],
+  ['google/gemini-live-2.5-flash-native-audio', false],
+  ['publishers/google/models/gemini-live-2.5-flash-native-audio', false],
+  [
+    'projects/test-project/locations/eu/publishers/google/models/gemini-live-2.5-flash-native-audio',
+    false,
+  ],
+] as const;
+
+describe('Google Realtime model API compatibility', () => {
+  it.each(compatibleModels)('accepts %s with vertexai=%s', (model, vertexai) => {
+    const warn = vi.spyOn(log(), 'warn').mockClear();
+    const realtimeModel = new RealtimeModel({
+      model,
+      vertexai,
+      apiKey: 'fake-key',
+      project: 'test-project',
+      location: 'eu',
+    });
+
+    expect(realtimeModel.model).toBe(model);
+    expect(realtimeModel.provider).toBe(vertexai ? 'Vertex AI' : 'Gemini');
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it.each(mismatchedModels)('warns for %s with vertexai=%s', (model, vertexai) => {
+    const warn = vi.spyOn(log(), 'warn').mockClear();
+    const realtimeModel = new RealtimeModel({
+      model,
+      vertexai,
+      apiKey: 'fake-key',
+      project: 'test-project',
+      location: 'eu',
+    });
+
+    expect(realtimeModel.model).toBe(model);
+    expect(realtimeModel.provider).toBe(vertexai ? 'Vertex AI' : 'Gemini');
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(`Model '${model}' may not be available`),
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`vertexai=${vertexai}`));
+    warn.mockRestore();
+  });
+
+  it.each([false, true])('accepts the shared model from the environment (%s)', (vertexai) => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', String(vertexai));
+    const model = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      apiKey: 'fake-key',
+      project: 'test-project',
+      location: 'eu',
+    });
+
+    expect(model.provider).toBe(vertexai ? 'Vertex AI' : 'Gemini');
+    vi.unstubAllEnvs();
+  });
+});
+
+describe('Google Realtime thinking configuration', () => {
+  it.each(['gemini-3.8-live', 'models/gemini-3.8-live'])(
+    'rejects thinkingLevel for %s on the Gemini API',
+    (model) => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+
+      expect(
+        () =>
+          new RealtimeModel({
+            model,
+            vertexai: false,
+            apiKey: 'fake-key',
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          }),
+      ).toThrow(/does not support thinkingLevel on the Gemini API/);
+      vi.unstubAllEnvs();
+    },
+  );
+
+  it.each([
+    ['gemini-3.8-live', true],
+    ['publishers/google/models/gemini-3.8-live', true],
+    ['gemini-3.8-live-extended-thinking', false],
+    ['models/gemini-3.8-live-extended-thinking', false],
+    ['gemini-3.1-flash-live-preview', false],
+  ] as const)('passes thinkingLevel to the connect config for %s', (model, vertexai) => {
+    const thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+    const realtimeModel = new RealtimeModel({
+      model,
+      vertexai,
+      apiKey: 'fake-key',
+      project: 'test-project',
+      location: 'eu',
+      thinkingConfig,
+    });
+    const session = Object.create(RealtimeSession.prototype) as {
+      options: typeof realtimeModel._options;
+      _tools: llm.ToolContext;
+      buildConnectConfig(): { thinkingConfig?: typeof thinkingConfig };
+    };
+    session.options = realtimeModel._options;
+    session._tools = llm.ToolContext.empty();
+
+    expect(session.buildConnectConfig().thinkingConfig).toBe(thinkingConfig);
+  });
+
+  it('allows an empty thinking config for gemini-3.8-live', () => {
+    expect(
+      () =>
+        new RealtimeModel({
+          model: 'gemini-3.8-live',
+          vertexai: false,
+          apiKey: 'fake-key',
+          thinkingConfig: {},
+        }),
+    ).not.toThrow();
+  });
+
+  it('allows thinkingLevel with Vertex AI selected from the environment', () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+    const model = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      project: 'test-project',
+      location: 'eu',
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+    });
+
+    expect(model.provider).toBe('Vertex AI');
+    vi.unstubAllEnvs();
+  });
+});
 
 type ToolCallStatus = {
   name: string;
@@ -15,6 +183,9 @@ type ToolCallStatus = {
 };
 
 type RealtimeSessionInternals = {
+  _chatCtx: llm.ChatContext;
+  _realtimeModel: { capabilities: { midSessionChatCtxUpdate: boolean } };
+  activeSession?: Record<string, never>;
   options: {
     toolBehavior?: Behavior;
     toolResponseScheduling?: FunctionResponseScheduling;
@@ -27,8 +198,11 @@ type RealtimeSessionInternals = {
     };
   };
   pendingToolCallIds: Set<string>;
+  syntheticCallIds: Set<string>;
   toolCallStatuses: Map<string, ToolCallStatus>;
   toolResponseCallIds: WeakMap<Record<string, unknown>, string>;
+  sessionLock: { lock(): Promise<() => void> };
+  pendingInterruptText: boolean;
   sendClientEvent: ReturnType<typeof vi.fn>;
   markCurrentGenerationDone: ReturnType<typeof vi.fn>;
   getToolResultsForRealtime(
@@ -42,7 +216,7 @@ type RealtimeSessionInternals = {
       args?: Record<string, unknown>;
     }>;
   }): void;
-  clearPendingToolCallIdsForResponses(functionResponses: Array<Record<string, unknown>>): void;
+  updateChatCtx(chatCtx: llm.ChatContext): Promise<void>;
 };
 
 const schedulingModes = [
@@ -60,9 +234,15 @@ function createSessionForTest(
     toolResponseScheduling,
     vertexai: false,
   };
+  session._chatCtx = llm.ChatContext.empty();
+  session._realtimeModel = { capabilities: { midSessionChatCtxUpdate: true } };
+  session.activeSession = {};
   session.pendingToolCallIds = new Set();
+  session.syntheticCallIds = new Set();
   session.toolCallStatuses = new Map();
   session.toolResponseCallIds = new WeakMap();
+  session.sessionLock = { lock: async () => () => {} };
+  session.pendingInterruptText = false;
   session.sendClientEvent = vi.fn();
   session.markCurrentGenerationDone = vi.fn();
   session.currentGeneration = {
@@ -152,9 +332,44 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     },
   );
 
-  it('clears pending tool calls for VertexAI responses without ids', () => {
+  it.each([false, true])(
+    'includes the call id in outbound tool responses with vertexai=%s',
+    async (vertexai) => {
+      const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+      session.options.vertexai = vertexai;
+      session.options.toolBehavior = Behavior.BLOCKING;
+
+      const ctx = session._chatCtx.copy();
+      ctx.insert(
+        llm.FunctionCallOutput.create({
+          callId: 'call_123',
+          name: 'getWeather',
+          output: 'The weather in Seattle is sunny today.',
+          isError: false,
+        }),
+      );
+
+      await session.updateChatCtx(ctx);
+
+      expect(session.sendClientEvent).toHaveBeenCalledWith({
+        type: 'tool_response',
+        value: {
+          functionResponses: [
+            {
+              id: 'call_123',
+              name: 'getWeather',
+              response: { output: 'The weather in Seattle is sunny today.' },
+              ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
+            },
+          ],
+        },
+      });
+    },
+  );
+
+  it.each([false, true])('includes scheduling only with vertexai=%s', (vertexai) => {
     const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
-    session.pendingToolCallIds.add('call_123');
+    session.options.vertexai = vertexai;
 
     const ctx = llm.ChatContext.empty();
     ctx.insert(
@@ -166,19 +381,58 @@ describe('Google Realtime non-blocking tool scheduling', () => {
       }),
     );
 
-    const result = session.getToolResultsForRealtime(ctx, true);
+    const response = session.getToolResultsForRealtime(ctx, vertexai)?.functionResponses[0];
 
-    expect(result?.functionResponses).toEqual([
+    expect(response?.scheduling).toBe(vertexai ? undefined : FunctionResponseScheduling.WHEN_IDLE);
+  });
+
+  it.each([false, true])('omits synthetic ids with vertexai=%s', (vertexai) => {
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    session.options.vertexai = vertexai;
+
+    session.handleToolCall({
+      functionCalls: [{ name: 'getWeather', args: { location: 'Seattle' } }],
+    });
+
+    expect(session.sendClientEvent).toHaveBeenCalledWith({
+      type: 'tool_response',
+      value: {
+        functionResponses: [
+          {
+            id: undefined,
+            name: 'getWeather',
+            response: {},
+            ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
+            willContinue: true,
+          },
+        ],
+      },
+    });
+
+    const callId = (
+      session.currentGeneration?.functionChannel.write.mock.calls[0]?.[0] as { callId: string }
+    ).callId;
+    expect(callId).toBeDefined();
+
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(
+      llm.FunctionCallOutput.create({
+        callId,
+        name: 'getWeather',
+        output: 'The weather in Seattle is sunny today.',
+        isError: false,
+      }),
+    );
+
+    expect(session.getToolResultsForRealtime(ctx, vertexai)?.functionResponses).toEqual([
       {
+        id: undefined,
         name: 'getWeather',
         response: { output: 'The weather in Seattle is sunny today.' },
-        scheduling: FunctionResponseScheduling.WHEN_IDLE,
+        ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
+        willContinue: false,
       },
     ]);
-
-    session.clearPendingToolCallIdsForResponses(result?.functionResponses ?? []);
-
-    expect(session.pendingToolCallIds.has('call_123')).toBe(false);
   });
 });
 

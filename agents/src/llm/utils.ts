@@ -11,7 +11,7 @@ import type { ChatContext } from './chat_context.js';
 import {
   type ChatContent,
   type ChatItem,
-  FunctionCall,
+  type FunctionCall,
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
@@ -289,25 +289,6 @@ export const oaiParams = (schema: any, isOpenai: boolean = true): OpenAIFunction
     required,
     additionalProperties,
   };
-};
-
-/** @internal */
-export const oaiBuildFunctionInfo = (
-  toolCtx: ToolContext,
-  toolCallId: string,
-  toolName: string,
-  rawArgs: string,
-): FunctionCall => {
-  const tool = toolCtx.getFunctionTool(toolName);
-  if (!tool) {
-    throw new Error(`AI tool ${toolName} not found`);
-  }
-
-  return FunctionCall.create({
-    callId: toolCallId,
-    name: toolName,
-    args: rawArgs,
-  });
 };
 
 const templateTokenPatterns = [
@@ -965,14 +946,20 @@ function indentBlock(text: string, indent: string): string {
 }
 
 /**
- * Standard dynamic-programming LCS to get the common subsequence
- * of IDs (in order) that appear in both old_ids and new_ids.
+ * Get the longest common subsequence of IDs (in order) that appear in both
+ * oldIds and newIds.
  *
  * @param oldIds - The old list of IDs.
  * @param newIds - The new list of IDs.
  * @returns The longest common subsequence of the two lists of IDs.
  */
 function computeLCS(oldIds: string[], newIds: string[]): string[] {
+  const uniqueIdsLCS = computeUniqueIdsLCS(oldIds, newIds);
+  if (uniqueIdsLCS !== undefined) {
+    return uniqueIdsLCS;
+  }
+
+  // Standard dynamic-programming LCS, O(n*m), for IDs that repeat.
   const n = oldIds.length;
   const m = newIds.length;
   const dp: number[][] = Array(n + 1)
@@ -1008,6 +995,58 @@ function computeLCS(oldIds: string[], newIds: string[]): string[] {
 
   return lcsIds.reverse();
 }
+
+function computeUniqueIdsLCS(oldIds: string[], newIds: string[]): string[] | undefined {
+  const newIndex = new Map(newIds.map((itemId, index) => [itemId, index]));
+  if (newIndex.size !== newIds.length || new Set(oldIds).size !== oldIds.length) {
+    return undefined;
+  }
+
+  const positions = oldIds.flatMap((itemId) => {
+    const position = newIndex.get(itemId);
+    return position === undefined ? [] : [position];
+  });
+  // tails[k] is the smallest last position of an increasing run of length
+  // k + 1, and tailAt[k] is the index in `positions` that ends that run.
+  const tails: number[] = [];
+  const tailAt: number[] = [];
+  const previous = Array<number>(positions.length).fill(-1);
+  for (const [at, position] of positions.entries()) {
+    let low = 0;
+    let high = tails.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (tails[middle]! < position) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+
+    const k = low;
+    if (k > 0) {
+      previous[at] = tailAt[k - 1]!;
+    }
+    if (k === tails.length) {
+      tails.push(position);
+      tailAt.push(at);
+    } else {
+      tails[k] = position;
+      tailAt[k] = at;
+    }
+  }
+
+  const lcsIds: string[] = [];
+  let at = tailAt.at(-1) ?? -1;
+  while (at !== -1) {
+    lcsIds.push(newIds[positions[at]!]!);
+    at = previous[at]!;
+  }
+  return lcsIds.reverse();
+}
+
+// Internal test hook; intentionally not exported from the package entry point.
+export const _computeLCS = computeLCS;
 
 interface DiffOps {
   toRemove: string[];

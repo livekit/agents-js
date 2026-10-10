@@ -14,12 +14,23 @@
  *
  * There are intentionally no public `prewarm*` helpers: EOT auto-warms via
  * the inference runner's `initialize()` at proc startup, and the VAD lazy-
- * loads on first stream.
+ * loads on first stream. `LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE=0` defers
+ * the job-process binding preload and EOT warm-up until first use.
  */
 import { createRequire } from 'node:module';
 import { log } from '../log.js';
 
 const cjsRequire = createRequire(import.meta.url);
+
+export const ENV_PRELOAD_LOCAL_INFERENCE = 'LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE';
+
+const FALSY_ENV_VALUES = new Set(['0', 'false', 'no', 'off']);
+
+/** @internal Whether local inference should be loaded ahead of its first use. */
+export function _shouldPreloadLocalInference(): boolean {
+  const value = process.env[ENV_PRELOAD_LOCAL_INFERENCE];
+  return value === undefined || !FALSY_ENV_VALUES.has(value.trim().toLowerCase());
+}
 
 let nativeMod: typeof import('@livekit/local-inference') | undefined;
 let triedLoad = false;

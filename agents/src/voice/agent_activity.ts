@@ -72,6 +72,7 @@ import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import {
   genAI,
+  inputDelta,
   recordException,
   recordRealtimeMetrics,
   redactionEnabled,
@@ -194,9 +195,6 @@ export const onEnterStorage = new AsyncLocalStorage<OnEnterData>();
  * regex carries the `g` flag, which is safe here only because `String.prototype.match` resets
  * `lastIndex` before iterating — switching to `.exec()` or `.test()` would silently break it.
  *
- * Full-width CJK punctuation (e.g. `。`) is not stripped by either implementation. This is a
- * shared upstream limitation, not a JS-only defect — do not "fix" it on the JS side alone.
- *
  * `toLowerCase()` is a weaker fold than Python's `casefold()`. Do not replace it with
  * `casefold()` or add Unicode NFKC normalization: differential execution over 18 inputs found
  * 15 agree and 3 diverge (`STRASSE`/`straße`, `ΟΔΟΣ`/`οδοσ`, `ﬁle`/`file`), and in every
@@ -311,6 +309,8 @@ export interface ForwardOutput {
   synchronizedTranscript?: string;
   audioOut: _AudioOut | null;
   playbackPositionInS: number;
+  /** The segment's TTS failed; whatever audio it made still played out. */
+  ttsFailed?: boolean;
 }
 
 /**
@@ -570,6 +570,7 @@ export class AgentActivity implements RecognitionHooks {
   private inlineTaskLock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
+  private readonly inputDeltaTracker = new inputDelta.InputDeltaTracker();
 
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
@@ -1023,6 +1024,14 @@ export class AgentActivity implements RecognitionHooks {
       // Disable stt node if stt is not provided
       stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
       isClosing: () => this.agentSession._closing,
+      onSttError: (error) =>
+        this.onError({
+          type: 'stt_error',
+          timestamp: Date.now(),
+          label: this.stt?.label ?? 'sttNode',
+          error,
+          recoverable: false,
+        }),
       vad: recognitionVad,
       turnDetector:
         typeof this._resolvedTurnDetection === 'string' ? undefined : this._resolvedTurnDetection,
@@ -1933,6 +1942,8 @@ export class AgentActivity implements RecognitionHooks {
 
   private onError(ev: RealtimeModelError | STTError | TTSError | LLMError): void {
     try {
+      if (this.agentSession.listenerCount(AgentSessionEventTypes.Error) === 0) return;
+
       if (ev.type === 'realtime_model_error') {
         const errorEvent = createErrorEvent(ev, this.llm);
         this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
@@ -1946,6 +1957,8 @@ export class AgentActivity implements RecognitionHooks {
         const errorEvent = createErrorEvent(ev, this.llm);
         this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
       }
+    } catch (error) {
+      this.logger.error({ err: error }, 'Error in session error listener');
     } finally {
       this.agentSession._onError(ev);
     }
@@ -3628,6 +3641,7 @@ export class AgentActivity implements RecognitionHooks {
           replyAbortController,
           () => this.reconcilePlayoutPause(speechHandle),
           this.agentSession.sessionOptions.forwardAudioIdleTimeout,
+          ttsGenData,
         );
         tasks.push(forwardTask);
         audioOut = _audioOut;
@@ -3835,16 +3849,30 @@ export class AgentActivity implements RecognitionHooks {
     const runningCalls = getRunningTasks(this.agentSession);
     _injectRunningToolCalls(chatCtx, runningCalls);
     const tasks: Array<Task<void>> = [];
-    const [llmTask, llmGenData] = performLLMInference(
-      // preserve  `this` context in llmNode
-      (...args) => this.agent.llmNode(...args),
-      chatCtx,
-      toolCtx,
-      modelSettings,
-      replyAbortController,
-      this.llm?.model,
-      this.llm?.provider,
-    );
+    const deltaScope = this.agentSession.sessionOptions.recordingOptions.inputDelta
+      ? this.inputDeltaTracker.begin()
+      : undefined;
+    const llmAbortController = new AbortController();
+    const abortLlm = () => llmAbortController.abort();
+    if (replyAbortController.signal.aborted) {
+      abortLlm();
+    } else {
+      replyAbortController.signal.addEventListener('abort', abortLlm, { once: true });
+    }
+    const startLlmInference = () =>
+      performLLMInference(
+        // preserve `this` context in llmNode
+        (...args) => this.agent.llmNode(...args),
+        chatCtx,
+        toolCtx,
+        modelSettings,
+        llmAbortController,
+        this.llm?.model,
+        this.llm?.provider,
+      );
+    const [llmTask, llmGenData] = deltaScope
+      ? inputDelta.runWithScope(deltaScope, startLlmInference)
+      : startLlmInference();
     tasks.push(llmTask);
     // as python's _on_llm_task_done: a genuine LLM failure (not a cancellation) fails the
     // speech, through exception() and the agent_turn span. Nothing else awaits this task's
@@ -3896,6 +3924,10 @@ export class AgentActivity implements RecognitionHooks {
           );
           tasks.push(ttsTask);
           prevTtsTask = ttsTask;
+          void ttsTask.result.catch(() => {
+            // Nothing generated past a failed TTS can be spoken, so stop the LLM there.
+            if (!ttsTask.cancelled) llmTask.cancel();
+          });
           segment.ttsTextWriter = ttsInput.writable.getWriter();
           segment.ttsTask = ttsTask;
           segment.ttsGenData = ttsGenData;
@@ -3947,6 +3979,8 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
+
+    if (deltaScope && speechHandle.scheduled) deltaScope.commit();
 
     let userMetrics: MetricsReport | undefined = _previousUserMetrics;
     // Add new message to actual chat context if the speech is scheduled
@@ -4052,6 +4086,7 @@ export class AgentActivity implements RecognitionHooks {
             segmentAbortController,
             () => this.reconcilePlayoutPause(speechHandle),
             this.agentSession.sessionOptions.forwardAudioIdleTimeout,
+            segment.ttsGenData,
           );
           forwardTasks.push(forwardTask);
           output.audioOut = audioOut;
@@ -4121,7 +4156,16 @@ export class AgentActivity implements RecognitionHooks {
         }
 
         if (audioOutput && playbackEv) {
-          output.played = 'full';
+          output.ttsFailed = segment.ttsGenData?.error != null;
+          if (
+            output.ttsFailed &&
+            (!output.audioOut ||
+              audioOutput.capturedPlayoutSegments <= output.audioOut.capturedSegmentsBefore)
+          ) {
+            // No audio from this segment played, so the event belongs to an earlier segment.
+            return output;
+          }
+          output.played = output.ttsFailed ? 'partial' : 'full';
           output.playbackPositionInS = playbackEv.playbackPosition;
           output.synchronizedTranscript = playbackEv.synchronizedTranscript;
         } else if (output.textOut?.text) {
@@ -4274,12 +4318,14 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
+    const ttsFailed = segmentOutputs.some((output) => output.ttsFailed);
     if (forwardedText) {
       hasSpeechMessage = true;
       const message = ChatMessage.create({
         role: 'assistant',
         id: llmGenData.id,
-        interrupted: false,
+        // A reply cut short by failed TTS reads as interrupted to the LLM.
+        interrupted: ttsFailed,
         createdAt: replyStartedAt,
         content: forwardedText,
         metrics: assistantMetrics,

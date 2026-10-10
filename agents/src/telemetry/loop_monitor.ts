@@ -69,9 +69,9 @@ export type LoopStallCause = 'code' | 'host';
 export type LoopCpuScope = 'thread' | 'process';
 
 /**
- * When the loop thread's stack is sampled (see loop_stack_sampler): `adaptive` from the
- * process's first code-caused stall on (a healthy process never enables the debugger domain),
- * `always` from the start, `never` not at all.
+ * When the loop thread's stack is sampled (see loop_stack_sampler): `never` (default) not at
+ * all, `adaptive` from the process's first code-caused stall on (a healthy process never enables
+ * the debugger domain), `always` from the start.
  */
 export type StackSamplingMode = 'adaptive' | 'always' | 'never';
 
@@ -168,9 +168,10 @@ export interface EventLoopMonitorOptions {
   watchdog?: boolean;
   /**
    * When to sample the loop thread's stack through the inspector (see `loop_stack_sampler`):
-   * `adaptive` (default) after the process's first code-caused stall, `always` from the start,
-   * `never` not at all. The sampler runs on the watchdog thread, so `watchdog: false` means
-   * `never`. Sampling is not started, and is stopped, while an inspector is attached to the
+   * `never` (default, or from `LIVEKIT_AGENTS_LOOP_BLOCK_STACKS`) not at all, `adaptive` after
+   * the process's first code-caused stall, `always` from the start. Sampling crashes V8 before
+   * Node 26.10 (see `loop_stack_sampler`). The sampler runs on the watchdog thread, so
+   * `watchdog: false` means `never`. Sampling is not started, and is stopped, while an inspector is attached to the
    * process: its pauses would land in the debugger's session.
    */
   stacks?: StackSamplingMode;

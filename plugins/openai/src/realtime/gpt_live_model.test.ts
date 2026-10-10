@@ -440,6 +440,47 @@ describe('GPTLiveModel', () => {
     expect(reconnected).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps the input muted across a reconnect', async () => {
+    const session = create();
+    await ready(session);
+
+    session.muteInput();
+    await waitCount(2);
+    expect(server.events().map((event) => event.type)).toEqual([
+      'session.start',
+      'session.input_audio.mute',
+    ]);
+
+    server.sockets[0]!.terminate();
+    await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+
+    // A replacement session starts unmuted, so restore the mute before queued input.
+    expect(server.events(1).map((event) => event.type)).toEqual([
+      'session.start',
+      'session.input_audio.mute',
+    ]);
+  });
+
+  it('does not mute an unmuted session again on reconnect', async () => {
+    const session = create();
+    await ready(session);
+
+    session.muteInput();
+    session.unmuteInput();
+    await waitCount(3);
+    expect(server.events().map((event) => event.type)).toEqual([
+      'session.start',
+      'session.input_audio.mute',
+      'session.input_audio.unmute',
+    ]);
+
+    server.sockets[0]!.terminate();
+    await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+
+    // The app's last request wins; a reconnect must not restore a stale mute.
+    expect(server.events(1).map((event) => event.type)).toEqual(['session.start']);
+  });
+
   it('delivers client delegations with the pending transcript and answers by id', async () => {
     const session = create({ delegation: 'client' });
     const delegations: GPTLiveDelegation[] = [];

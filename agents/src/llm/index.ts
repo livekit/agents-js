@@ -112,7 +112,6 @@ export {
   createToolOptions,
   executeToolCall,
   formatChatHistory,
-  oaiBuildFunctionInfo,
   oaiParams,
   serializeImage,
   toJsonSchema,

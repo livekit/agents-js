@@ -46,8 +46,13 @@ const inlinePatterns: Array<[RegExp, string]> = [
 
 const inlineSplitTokens = ' ,.?!;，。？！；';
 const inlineMarkers = /[*_`~\[]/;
-const completeLinksPattern = /\[[^\]]*\]\([^)]*\)/g;
-const completeImagesPattern = /!\[[^\]]*\]\([^)]*\)/g;
+
+// A run that could still open emphasis; `5 * 3` or `a_b@x.com` never can.
+const asteriskOpener = new RegExp(String.raw`(?<!${intraword})(?<!\*)\*{1,3}(?![\s*])`, 'u');
+const underscoreOpener = /(?<![\p{L}\p{N}_])_{1,3}(?![\s_])/u;
+
+// A link or image still being written; `[1]` followed by text is not one.
+const pendingLink = /\[[^\]]*(?:\]|\]\([^)]*)?$/;
 const emojiPattern =
   /[\u{1f000}-\u{1fbff}]|[\u{2600}-\u{26ff}]|[\u{2700}-\u{27bf}]|[\u{2b00}-\u{2bff}]|[\u{fe00}-\u{fe0f}]|\u{200d}|\u{20e3}+/gu;
 
@@ -66,20 +71,15 @@ function streamFromAsyncIterable<T>(iterable: AsyncIterable<T>): ReadableStream<
   });
 }
 
-function countMatches(text: string, pattern: RegExp): number {
-  return Array.from(text.matchAll(pattern)).length;
-}
-
 function countOccurrences(text: string, token: string): number {
   return text.split(token).length - 1;
 }
 
-// Delimiters are literals, so counting by split keeps callers free of regex escaping
-// and compiles no pattern per buffer on the streaming path.
-function unbalanced(buffer: string, delimiter: string): boolean {
-  const doubles = countOccurrences(buffer, delimiter.repeat(2));
-  if (doubles % 2 === 1) return true;
-  return (countOccurrences(buffer, delimiter) - doubles * 2) % 2 === 1;
+function pendingEmphasis(buffer: string): boolean {
+  for (const pattern of [asteriskEmphasis, underscoreEmphasis, asteriskEmphasis]) {
+    buffer = buffer.replace(pattern, '$2');
+  }
+  return asteriskOpener.test(buffer) || underscoreOpener.test(buffer);
 }
 
 function hasIncompletePattern(buffer: string): boolean {
@@ -87,18 +87,14 @@ function hasIncompletePattern(buffer: string): boolean {
     return true;
   }
 
-  if (unbalanced(buffer, '*') || unbalanced(buffer, '_')) return true;
+  if (pendingEmphasis(buffer)) return true;
 
   // incomplete code (`text`) or strikethrough (~~text~~)
   if (countOccurrences(buffer, '`') % 2 === 1 || countOccurrences(buffer, '~~') % 2 === 1) {
     return true;
   }
 
-  const openBrackets = countMatches(buffer, /\[/g);
-  const completeLinks = countMatches(buffer, completeLinksPattern);
-  const completeImages = countMatches(buffer, completeImagesPattern);
-
-  return openBrackets - completeLinks - completeImages > 0;
+  return pendingLink.test(buffer);
 }
 
 function processCompleteText(text: string, isNewline: boolean, isLineEnd: boolean): string {

@@ -122,4 +122,42 @@ describe('Gemini function declarations', () => {
     const fields = schemaProperty(declaration?.parametersJsonSchema, 'fields');
     expect(fields.additionalProperties).toEqual({ type: 'string' });
   });
+
+  it('names a tool whose schema Gemini rejects', () => {
+    const bad = llm.tool({
+      name: 'bad',
+      description: 'd',
+      parameters: {
+        type: 'object',
+        properties: { a: { type: 'string', minLength: 'many' } },
+      } as never,
+      execute: async () => {},
+    });
+
+    expect(() =>
+      toToolsConfig({
+        toolCtx: new llm.ToolContext([bad]),
+        useParametersJsonSchema: false,
+      }),
+    ).toThrow('tool bad has a schema Gemini rejected');
+  });
+
+  it('keeps a tool whose dropped keyword is not a number', () => {
+    const t = llm.tool({
+      name: 'pick',
+      description: 'd',
+      parameters: {
+        type: 'object',
+        properties: { n: { type: 'integer', maximum: '10' } },
+      } as never,
+      execute: async () => {},
+    });
+
+    expect(() =>
+      toToolsConfig({
+        toolCtx: new llm.ToolContext([t]),
+        useParametersJsonSchema: false,
+      }),
+    ).not.toThrow();
+  });
 });
