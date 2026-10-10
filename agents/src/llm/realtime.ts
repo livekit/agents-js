@@ -48,6 +48,8 @@ export interface RealtimeCapabilities {
   messageTruncation: boolean;
   /** Whether the model emits server-side speech start and stop events for turn taking. */
   turnDetection: boolean;
+  /** Whether client-side turn handling may disable the model's default server turn detection. */
+  canDisableTurnDetection?: boolean;
   /** Whether the model may speak over the caller and decides when to yield. Defaults to false. */
   supportsOverlappingSpeech?: boolean;
   /** Whether the model emits user audio transcription events. */
@@ -125,7 +127,7 @@ export abstract class RealtimeModel {
     return 'RealtimeModel';
   }
 
-  abstract session(): RealtimeSession;
+  abstract session(options?: { turnDetectionDisabled?: boolean }): RealtimeSession;
 
   abstract close(): Promise<void>;
 }

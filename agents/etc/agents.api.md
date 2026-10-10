@@ -10,6 +10,7 @@ import { Attributes } from '@opentelemetry/api';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
+import { default as default_2 } from 'ws';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
@@ -617,6 +618,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     tts?: TTS;
     // (undocumented)
     turnDetection?: TurnDetectionMode;
+    // @internal
+    _turnDetectionExplicit: boolean;
     // Warning: (ae-forgotten-export) The symbol "ActivityTransitionOptions" needs to be exported by the entry point index.d.ts
     //
     // @internal (undocumented)
@@ -4071,11 +4074,14 @@ declare namespace inference {
         LLMStream_2 as LLMStream,
         ChatCompletionOptions,
         GatewayOptions,
-        InferenceClass,
         InferenceLLMOptions,
         LLMModels,
         XAIModels,
         ZAIModels,
+        InferenceClass,
+        RealtimeModel_2 as RealtimeModel,
+        RealtimeSession_3 as RealtimeSession,
+        RealtimeModelOptions,
         normalizeSTTFallback,
         parseSTTModelString,
         STT_2 as STT,
@@ -4102,6 +4108,7 @@ declare namespace inference {
         XaiTTSModels,
         XaiTTSOptions,
         llm_3 as llm,
+        realtime,
         stt_2 as stt,
         tts_2 as tts
     }
@@ -4116,7 +4123,7 @@ interface InferenceExecutor {
     doInference(method: string, data: unknown): Promise<unknown>;
 }
 
-// @public (undocumented)
+// @public
 interface InferenceLLMOptions {
     // (undocumented)
     apiKey: string;
@@ -4850,7 +4857,6 @@ declare namespace llm_3 {
         XAIModels,
         ChatCompletionOptions,
         LLMModels,
-        InferenceClass,
         InferenceLLMOptions,
         GatewayOptions,
         LLM_2 as LLM,
@@ -5687,10 +5693,19 @@ export type QueueAudioOutputItem = AudioFrame | AudioSegmentEnd;
 // @public
 export function readStream<T>(stream: ReadableStream_2<T>, signal?: AbortSignal): AsyncGenerator<T>;
 
+declare namespace realtime {
+    export {
+        RealtimeModelOptions,
+        RealtimeModel_2 as RealtimeModel,
+        RealtimeSession_3 as RealtimeSession
+    }
+}
+
 // @public (undocumented)
 export interface RealtimeCapabilities {
     audioOutput: boolean;
     autoToolReplyGeneration: boolean;
+    canDisableTurnDetection?: boolean;
     manualFunctionCalls: boolean;
     messageTruncation: boolean;
     midSessionChatCtxUpdate?: boolean;
@@ -5722,7 +5737,28 @@ export abstract class RealtimeModel {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    abstract session(): RealtimeSession;
+    abstract session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession;
+}
+
+// Warning: (ae-forgotten-export) The symbol "RealtimeModel_3" needs to be exported by the entry point index.d.ts
+//
+// @public
+class RealtimeModel_2 extends RealtimeModel_3 {
+    constructor(options: RealtimeModelOptions);
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    readonly _inferenceOptions: InferenceOptions;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession_3;
 }
 
 // @public (undocumented)
@@ -5760,6 +5796,44 @@ export type RealtimeModelMetrics = {
     outputTokenDetails: RealtimeModelMetricsOutputTokenDetails;
     metadata?: MetricsMetadata;
 };
+
+// @public (undocumented)
+interface RealtimeModelOptions {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    // (undocumented)
+    inferenceClass?: InferenceClass;
+    // (undocumented)
+    inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
+    // (undocumented)
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+    // (undocumented)
+    maxSessionDuration?: number | null;
+    // (undocumented)
+    modalities?: api_proto.Modality[];
+    // (undocumented)
+    model: string;
+    // (undocumented)
+    provider?: string;
+    // (undocumented)
+    reasoning?: api_proto.Reasoning;
+    // (undocumented)
+    speed?: number;
+    // (undocumented)
+    toolChoice?: ToolChoice;
+    // (undocumented)
+    tracing?: api_proto.TracingConfig | null;
+    // (undocumented)
+    turnDetection?: api_proto.TurnDetectionType | null;
+    // (undocumented)
+    voice?: string;
+}
 
 // @public (undocumented)
 export abstract class RealtimeSession extends EventEmitter {
@@ -5806,6 +5880,25 @@ export abstract class RealtimeSession extends EventEmitter {
     _updateSession(instructions?: string, chatCtx?: ChatContext, tools?: ToolContext): Promise<void>;
     // (undocumented)
     abstract updateTools(tools: ToolContext): Promise<void>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+class RealtimeSession_3 extends RealtimeSession_2 {
+    constructor(realtimeModel: RealtimeModel_2, options?: {
+        turnDetectionDisabled?: boolean;
+    });
+    // Warning: (ae-forgotten-export) The symbol "api_proto" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected createSessionUpdateEvent(): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createToolsUpdateEvent(tools: ToolContext): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createWsConn(): Promise<default_2>;
+    // (undocumented)
+    protected isFatalError(error: unknown): boolean;
 }
 
 // @public (undocumented)
@@ -9223,11 +9316,11 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:404:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1070:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1786:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:405:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1084:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1801:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1801:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1801:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
