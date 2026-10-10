@@ -1169,13 +1169,23 @@ export class AudioRecognition {
     return sent;
   }
 
-  private ensureUserTurnSpan(startTime?: number): Span {
+  private markSpeechOnset(startTime: number): void {
+    this.userTurnStart ??= startTime;
+  }
+
+  /**
+   * @param startOfSpeech - Whether `startTime` is the onset of user speech. Callers that only need
+   * a span for a late or trailing event (e.g. VAD end of speech) pass `false` so the span start
+   * is not mistaken for the turn's speech onset. A span opened that way leaves `userTurnStart`
+   * unset, and the next start of speech records it through `markSpeechOnset`.
+   */
+  private ensureUserTurnSpan(startTime?: number, startOfSpeech = true): Span {
     if (this.userTurnSpan && this.userTurnSpan.isRecording()) {
       return this.userTurnSpan;
     }
 
     startTime ??= Date.now();
-    if (this.userTurnStart === undefined) {
+    if (startOfSpeech && this.userTurnStart === undefined) {
       this.userTurnStart = startTime;
     }
 
@@ -1453,6 +1463,7 @@ export class AudioRecognition {
           const speechStartTime = Date.now();
           this.endEouWaitSpan('user_resumed', speechStartTime);
           const span = this.ensureUserTurnSpan(speechStartTime);
+          this.markSpeechOnset(speechStartTime);
           const ctx = this.userTurnContext(span);
           this.endpointing.onStartOfSpeech(speechStartTime, this.isAgentSpeaking);
           this.turnBackchannelOverAgent = false;
@@ -1481,7 +1492,7 @@ export class AudioRecognition {
         if (this.turnDetectionMode !== 'stt') break;
         {
           const speechEndTime = Date.now();
-          const span = this.ensureUserTurnSpan();
+          const span = this.ensureUserTurnSpan(undefined, false);
           const ctx = this.userTurnContext(span);
           if (this.speaking) {
             this.endpointing.onEndOfSpeech(speechEndTime, this.interruptionDetected);
@@ -2146,6 +2157,7 @@ export class AudioRecognition {
               }
               this.endEouWaitSpan('user_resumed', startTime);
               const span = this.ensureUserTurnSpan(startTime);
+              this.markSpeechOnset(startTime);
               const ctx = this.userTurnContext(span);
               this.endpointing.onStartOfSpeech(startTime, this.isAgentSpeaking);
               this.turnBackchannelOverAgent = false;
@@ -2208,7 +2220,7 @@ export class AudioRecognition {
             const vadSpeechStarted = this.vadSpeechStarted;
             {
               const endTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
-              const span = this.ensureUserTurnSpan();
+              const span = this.ensureUserTurnSpan(undefined, false);
               const ctx = this.userTurnContext(span);
               if (this.speaking) {
                 this.endpointing.onEndOfSpeech(endTime, this.interruptionDetected);
