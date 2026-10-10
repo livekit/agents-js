@@ -201,16 +201,89 @@ describe('MCPServer', () => {
     ).rejects.toThrow("Tool 'lookup' completed without producing a result.");
   });
 
-  it('rejects malformed input schemas from an MCP server', async () => {
+  it.each([
+    { type: 'string' },
+    { type: 'object', description: 42 },
+    { type: 'object', required: 'query' },
+    { type: 'object', properties: { query: { type: 42 } } },
+    { type: 'object', properties: { query: { type: 'string', minLength: 'one' } } },
+    { type: 'object', properties: { query: { anyOf: [{ type: 42 }] } } },
+    { type: 'object', properties: { query: { $ref: '#/$defs/missing' } } },
+    { type: 'object', properties: { query: { $ref: 'https://example.com/query-schema' } } },
+  ])('rejects malformed or unresolvable MCP input schema %j', async (inputSchema) => {
     const server = new TestServer();
     await attachClient(server, {
       listTools: vi.fn().mockResolvedValue({
-        tools: [
-          { name: 'lookup', inputSchema: { type: 'object', properties: { query: { type: 42 } } } },
-        ],
+        tools: [{ name: 'lookup', inputSchema }],
       }),
     });
 
+    await expect(server.listTools()).rejects.toThrow("Tool 'lookup' has an invalid input schema.");
+  });
+
+  it.each([
+    {
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      type: 'object',
+      properties: { query: { type: 'string', format: 'date-time' } },
+    },
+    {
+      type: 'object',
+      definitions: { query: { type: 'string' } },
+      properties: { query: { $ref: '#/definitions/query' } },
+    },
+    {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'object',
+      $defs: { query: { type: 'string' } },
+      properties: { query: { $ref: '#/$defs/query' } },
+    },
+    { type: 'object', properties: { child: { $ref: '#' } } },
+    {
+      type: 'object',
+      properties: { query: { allOf: [{ type: 'number', minimum: 0 }, { maximum: 10 }] } },
+      additionalProperties: false,
+    },
+    {
+      type: 'object',
+      properties: { query: { type: ['string', 'null'], default: null } },
+      'x-mcp-extension': { value: true },
+    },
+  ])('preserves supported MCP schema %j without mutating it', async (schema) => {
+    const inputSchema = structuredClone(schema);
+    const server = new TestServer();
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [{ name: 'lookup', inputSchema }] }),
+    });
+    const [lookup] = await server.listTools();
+    expect(lookup?.parameters).toBe(inputSchema);
+    expect(inputSchema).toEqual(schema);
+  });
+
+  it('does not reuse a cached validator when a refreshed schema keeps its $id', async () => {
+    const listTools = vi
+      .fn()
+      .mockResolvedValueOnce({
+        tools: [
+          { name: 'lookup', inputSchema: { $id: 'https://example.com/lookup', type: 'object' } },
+        ],
+      })
+      .mockResolvedValueOnce({
+        tools: [
+          {
+            name: 'lookup',
+            inputSchema: {
+              $id: 'https://example.com/lookup',
+              type: 'object',
+              properties: { query: { type: 42 } },
+            },
+          },
+        ],
+      });
+    const server = new TestServer();
+    await attachClient(server, { listTools });
+    await server.listTools();
+    server.invalidateCache();
     await expect(server.listTools()).rejects.toThrow("Tool 'lookup' has an invalid input schema.");
   });
 
