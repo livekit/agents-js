@@ -17,7 +17,7 @@ export const splitSentences = (
     /(Mr|Mrs|Ms|Dr|Prof|Capt|Cpt|Lt|He\s|She\s|It\s|They\s|Their\s|Our\s|We\s|But\s|However\s|That\s|This\s|Wherever)/g;
   const acronyms = /([A-Z][.][A-Z][.](?:[A-Z][.])?)/g;
   const websites = /(\w+\.)+(com|net|org|io|gov|edu|me)/g;
-  const digits = /([0-9])/g;
+  const digits = /[0-9]/g;
   const dots = /\.{2,}/g;
 
   if (retainFormat) {
@@ -28,7 +28,9 @@ export const splitSentences = (
 
   text = text.replaceAll(prefixes, '$1<prd>');
   text = text.replace(websites, (match) => match.replaceAll('.', '<prd>'));
-  text = text.replaceAll(new RegExp(`${digits.source}[.]${digits.source}`, 'g'), '$1<prd>$2');
+  // A number can hold several dot-separated groups ("1.2.3", "192.168.1.1"), and
+  // replaceAll skips overlapping matches, so protect every inner dot by lookaround.
+  text = text.replaceAll(new RegExp(`(?<=${digits.source})\\.(?=${digits.source})`, 'g'), '<prd>');
   text = text.replaceAll(dots, (match) => '<prd>'.repeat(match.length));
   text = text.replaceAll('Ph.D.', 'Ph<prd>D<prd>');
   text = text.replaceAll(new RegExp(`\\s${alphabets.source}[.] `, 'g'), ' $1<prd> ');
