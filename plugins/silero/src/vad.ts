@@ -428,6 +428,7 @@ export class VADStream extends baseStream {
       }
     };
     this.#task = runInference()
+      .then(() => this.closeOutput())
       .catch((error) => {
         this.#logger.error(error, 'Error in VAD inference task');
         if (!this.closed) this.close();
