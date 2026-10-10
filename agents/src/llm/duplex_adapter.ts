@@ -179,10 +179,13 @@ class Burst {
   readonly audio = new AsyncIterableQueue<AudioFrame>();
   readonly openedAt = Date.now();
   anchorMs?: number;
+  heardMs: number;
   transcript = '';
   private lastAnnotationInS = 0;
 
-  constructor(readonly audioStartMs: number) {}
+  constructor(readonly audioStartMs: number) {
+    this.heardMs = audioStartMs;
+  }
 
   attach(fragment: DuplexOutputTranscriptDelta): void {
     this.transcript += fragment.text;
@@ -201,11 +204,20 @@ class Burst {
     if (!this.text.closed) this.text.put(text);
   }
 
-  close(): void {
+  close(): ChatMessage | undefined {
     this.text.close();
     this.audio.close();
     this.functions.close();
     this.messages.close();
+    if (this.transcript) {
+      return ChatMessage.create({
+        id: this.id,
+        role: 'assistant',
+        content: this.transcript,
+        createdAt: this.openedAt,
+      });
+    }
+    return undefined;
   }
 }
 
@@ -271,6 +283,8 @@ export class DuplexRealtimeAdapter extends RealtimeModel {
 /** @internal */
 export class DuplexRealtimeSession extends RealtimeSession {
   private burst?: Burst;
+  // Its anchor distinguishes late text for audio already played from the next utterance's text.
+  private lastBurst?: Burst;
   private audioMs = 0;
   private fragments: DuplexOutputTranscriptDelta[] = [];
   private waitingSinceMs = 0;
@@ -289,15 +303,13 @@ export class DuplexRealtimeSession extends RealtimeSession {
     private readonly audioTimeout: number,
   ) {
     super(adapter);
-    this.listen('transcript_delta', (ev) => {
-      if (!this.fragments.length) this.waitingSinceMs = this.audioMs;
-      this.fragments.push(ev);
-    });
+    this.listen('transcript_delta', (ev) => this.onTranscriptDelta(ev));
     this.listen('function_call', (ev) => this.onFunctionCall(ev));
     this.listen('input_audio_transcription_completed', (ev) => this.onInputTranscription(ev));
     this.listen('session_reconnected', (ev) => {
       this.fragments = [];
       this.closeBurst();
+      this.lastBurst = undefined;
       this.failPendingReply('the session reconnected before the model replied');
       this.emit('session_reconnected', ev);
     });
@@ -359,17 +371,12 @@ export class DuplexRealtimeSession extends RealtimeSession {
   private onAudioFrame(output: DuplexAudioFrame): void {
     if (output.startMs !== undefined) this.audioMs = output.startMs;
     if (this.gate.update(output.frame)) {
-      const burst = !this.burst || this.burst.audio.closed ? this.openBurst() : this.burst;
+      const burst = (this.burst =
+        !this.burst || this.burst.audio.closed ? this.openBurst() : this.burst);
       burst.audio.put(output.frame);
       this.audioMs += Math.round(calculateAudioDurationSeconds(output.frame) * 1000);
-      while (this.fragments.length) {
-        const fragment = this.fragments[0]!;
-        if (fragment.startMs !== undefined) {
-          burst.anchorMs ??= fragment.startMs - burst.audioStartMs;
-          if (fragment.startMs - burst.anchorMs > this.audioMs + ATTACH_LEAD_MS) break;
-        }
-        burst.attach(this.fragments.shift()!);
-      }
+      burst.heardMs = this.audioMs;
+      this.attachFragments(burst);
       return;
     }
 
@@ -384,26 +391,27 @@ export class DuplexRealtimeSession extends RealtimeSession {
         { 'lk.pii.transcript': this.fragments.map((fragment) => fragment.text).join('') },
         'duplex transcript outlived the audio it describes',
       );
-      const burst = this.openBurst();
+      const burst = this.openBurst('text');
       while (this.fragments.length) burst.attach(this.fragments.shift()!);
-      this.closeBurst();
+      const message = burst.close();
+      if (message) this._chatCtx.insert(message);
     }
   }
 
-  private openBurst(message = true): Burst {
-    const burst = (this.burst = new Burst(this.audioMs));
+  private openBurst(kind: 'speech' | 'text' | 'tool' = 'speech'): Burst {
+    const burst = new Burst(this.audioMs);
     const ev: GenerationCreatedEvent = {
       messageStream: toStream(burst.messages),
       functionStream: toStream(burst.functions),
       userInitiated: false,
       responseId: burst.id,
     };
-    if (message && this.pendingReply && !this.pendingReply.done) {
+    if (kind === 'speech' && this.pendingReply && !this.pendingReply.done) {
       ev.userInitiated = true;
       this.pendingReply.resolve(ev);
     }
     this.emit('generation_created', ev);
-    if (message) {
+    if (kind !== 'tool') {
       burst.messages.put({
         messageId: burst.id,
         textStream: toStream(burst.text),
@@ -419,19 +427,44 @@ export class DuplexRealtimeSession extends RealtimeSession {
     this.burst = undefined;
     this.gate.deactivate();
     if (burst) {
-      burst.close();
-      if (burst.transcript) {
-        this._chatCtx.insert(
-          ChatMessage.create({
-            id: burst.id,
-            role: 'assistant',
-            content: burst.transcript,
-            createdAt: burst.openedAt,
-          }),
-        );
-      }
+      this.attachFragments(burst);
+      const message = burst.close();
+      if (message) this._chatCtx.insert(message);
     }
     this.waitingSinceMs = this.audioMs;
+  }
+
+  private attachFragments(burst: Burst): void {
+    while (this.fragments.length) {
+      const fragment = this.fragments[0]!;
+      if (fragment.startMs !== undefined) {
+        if (burst.anchorMs === undefined) {
+          burst.anchorMs = fragment.startMs - burst.audioStartMs;
+          this.lastBurst = burst;
+        }
+        if (fragment.startMs - burst.anchorMs > burst.heardMs + ATTACH_LEAD_MS) break;
+      }
+      burst.attach(this.fragments.shift()!);
+    }
+  }
+
+  private onTranscriptDelta(ev: DuplexOutputTranscriptDelta): void {
+    if (!this.fragments.length) this.waitingSinceMs = this.audioMs;
+    this.fragments.push(ev);
+
+    const last = this.lastBurst;
+    if (!last || last === this.burst || last.anchorMs === undefined) return;
+    let late = 0;
+    for (const fragment of this.fragments) {
+      if (fragment.startMs === undefined || fragment.startMs - last.anchorMs > last.heardMs) break;
+      late += 1;
+    }
+    if (late) {
+      const burst = this.openBurst('text');
+      for (let i = 0; i < late; i++) burst.attach(this.fragments.shift()!);
+      const message = burst.close();
+      if (message) this._chatCtx.insert(message);
+    }
   }
 
   private onInputTranscription(ev: InputTranscriptionCompleted): void {
@@ -455,8 +488,9 @@ export class DuplexRealtimeSession extends RealtimeSession {
       this.burst.functions.put(call);
       return;
     }
-    this.openBurst(false).functions.put(call);
-    this.closeBurst();
+    const burst = this.openBurst('tool');
+    burst.functions.put(call);
+    burst.close();
   }
 
   get chatCtx(): ChatContext {
