@@ -3821,11 +3821,6 @@ interface FunctionCallOutputEvent {
     type: 'function_call_output';
 }
 
-// @public
-export class FunctionExistsError extends Error {
-    constructor(msg?: string);
-}
-
 // @public (undocumented)
 export interface FunctionTool<Parameters extends JSONObject = JSONObject, UserData = UnknownUserData, Result = unknown> extends Tool {
     // (undocumented)
@@ -4512,7 +4507,6 @@ export type JobAcceptArguments = {
 // @public
 export class JobContext<ProcessUserData = Record<string, unknown>> {
     constructor(proc: JobProcess<ProcessUserData>, info: RunningJobInfo, room: Room, onConnect: () => void, onShutdown: (s: string) => void, inferenceExecutor: InferenceExecutor);
-    addParticipantEntrypoint(callback: (job: JobContext<ProcessUserData>, p: RemoteParticipant) => Promise<void>): void;
     addShutdownCallback(callback: () => Promise<void>): void;
     // (undocumented)
     get agent(): LocalParticipant | undefined;
@@ -4537,8 +4531,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     makeSessionReport(session?: AgentSession): SessionReport;
     // @internal
     _onCleanup(): void;
-    // @internal (undocumented)
-    onParticipantConnected(p: RemoteParticipant): void;
     // (undocumented)
     _onSessionEnd(): Promise<void>;
     // @internal (undocumented)
