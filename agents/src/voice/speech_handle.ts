@@ -184,8 +184,8 @@ export class SpeechHandle {
   _numSteps = 1;
   /**
    * @internal Generation ids continue another speech's numbering when this speech carries on
-   * its turn (a realtime tool reply, which the framework runs on a new handle): the base id and
-   * the step the other speech had reached.
+   * its turn (a tool reply a realtime model generates itself, which arrives on a new handle):
+   * the base id and the step the other speech had reached.
    */
   _generationBaseId?: string;
   /** @internal */
@@ -293,7 +293,7 @@ export class SpeechHandle {
 
   /**
    * @internal The speech id the turn is filed under: the root speech's when this handle
-   * continues its turn (a realtime tool reply runs on a new handle), else its own.
+   * continues its turn (a model-generated realtime tool reply), else its own.
    */
   get _turnSpeechId(): string {
     return this._generationBaseId ?? this._id;
@@ -653,10 +653,10 @@ export class SpeechHandle {
    * - `preemptive_discarded` (the default): `from` was a preemptive attempt dropped for this
    *   speech; the span records that and takes this speech's id. Generation ids stay this
    *   speech's own, as in Python.
-   * - `tool_reply`: this speech is the realtime tool reply the framework runs on a new handle
-   *   after `from`'s tool calls; Python runs it on the same handle as its next step. The turn
-   *   keeps `from`'s speech id and this speech's generations continue `from`'s numbering, so the
-   *   trace reads as Python's: one turn, the reply's generation parented to the tool call's.
+   * - `tool_reply`: this speech is the tool reply a realtime model generated on its own after
+   *   `from`'s tool calls, which arrives on a new handle. The turn keeps `from`'s speech id
+   *   and this speech's generations continue `from`'s numbering, so the trace shows one turn,
+   *   the reply's generation parented to the tool call's.
    */
   _continueAgentTurn(
     carry: AgentTurnCarry,
