@@ -407,6 +407,11 @@ export class AudioRecognition {
   private speechStartTime: number | undefined;
   private userTurnStart: number | undefined;
   private userTurnCommitted = false;
+  // Set on the STT's own END_OF_SPEECH and cleared on its START_OF_SPEECH, in every turn
+  // detection mode, so a final that arrives after its END_OF_SPEECH was already consumed by an
+  // earlier EOU run still ends the turn. Unlike `speaking`, a local VAD going quiet mid-utterance
+  // doesn't set it.
+  private sttSpeechEnded = false;
   private speaking = false;
   private activeUserSpeakingSpan?: Span;
   private vadSpeechStarted = false;
@@ -1318,6 +1323,12 @@ export class AudioRecognition {
       (this.turnDetectionMode === 'stt' &&
         (hasAbsoluteSpeechEndTime || hasSTTEndTime || ev.type === SpeechEventType.END_OF_SPEECH));
 
+    if (ev.type === SpeechEventType.START_OF_SPEECH) {
+      this.sttSpeechEnded = false;
+    } else if (ev.type === SpeechEventType.END_OF_SPEECH) {
+      this.sttSpeechEnded = true;
+    }
+
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
         const transcript = ev.alternatives?.[0]?.text ?? '';
@@ -1357,7 +1368,8 @@ export class AudioRecognition {
 
         this.checkUserTurnLimit(transcript);
 
-        if (this.vadBaseTurnDetection || this.userTurnCommitted) {
+        const sttTurnEnded = this.turnDetectionMode === 'stt' && this.sttSpeechEnded;
+        if (this.vadBaseTurnDetection || this.userTurnCommitted || sttTurnEnded) {
           if (transcriptChanged) {
             this.logger.debug(
               { 'lk.pii.transcript': this.audioTranscript },
@@ -2444,6 +2456,7 @@ export class AudioRecognition {
     this.vadSpeechStarted = false;
     this.speaking = false;
     this.userTurnCommitted = false;
+    this.sttSpeechEnded = false;
     this.userTurnTracker = { words: 0, transcript: '' };
     this.resetTranscriptionTimeout();
     // New turn → allow the next window's prediction to emit.
