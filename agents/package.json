@@ -42,6 +42,7 @@
   "devDependencies": {
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.58.12",
+    "@modelcontextprotocol/client": "^2.3.1",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^22.5.5",
@@ -91,11 +92,11 @@
   },
   "peerDependencies": {
     "@livekit/rtc-node": "catalog:",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/client": "^2.3.1",
     "zod": "^3.25.76 || ^4.1.8"
   },
   "peerDependenciesMeta": {
-    "@modelcontextprotocol/sdk": {
+    "@modelcontextprotocol/client": {
       "optional": true
     }
   }
