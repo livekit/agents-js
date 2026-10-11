@@ -956,6 +956,16 @@ export class ChatContext {
     } = options;
     const items: ChatItem[] = [];
 
+    // FunctionCallOutput.name is optional, so pair a nameless output with its call by callId.
+    const validCallIds = new Set(
+      this._items
+        .filter(
+          (item): item is FunctionCall =>
+            item.type === 'function_call' && toolCtx?.hasTool(item.name) === true,
+        )
+        .map((item) => item.callId),
+    );
+
     const isToolCallOrOutput = (item: ChatItem): item is FunctionCall | FunctionCallOutput =>
       ['function_call', 'function_call_output'].includes(item.type);
     const isChatMessage = (item: ChatItem): item is ChatMessage => item.type === 'message';
@@ -985,8 +995,16 @@ export class ChatContext {
         continue;
       }
 
-      if (toolCtx !== undefined && isToolCallOrOutput(item) && !toolCtx.hasTool(item.name)) {
-        continue;
+      if (toolCtx !== undefined) {
+        if (item.type === 'function_call' && !toolCtx.hasTool(item.name)) {
+          continue;
+        }
+        if (
+          item.type === 'function_call_output' &&
+          (item.name ? !toolCtx.hasTool(item.name) : !validCallIds.has(item.callId))
+        ) {
+          continue;
+        }
       }
 
       items.push(item);
@@ -1342,6 +1360,24 @@ export class ChatContext {
   get readonly(): boolean {
     return false;
   }
+}
+
+/** @internal Update an item with the same ID, or insert it by creation time. */
+export function _upsertChatItem(
+  chatCtx: ChatContext,
+  item: ChatItem,
+  options: { allowTypeMismatch?: boolean } = {},
+): void {
+  const idx = chatCtx.indexById(item.id);
+  if (idx === undefined) {
+    chatCtx.insert(item);
+    return;
+  }
+
+  if (!options.allowTypeMismatch && chatCtx.items[idx]!.type !== item.type) {
+    throw new Error(`Item type mismatch: ${item.type} != ${chatCtx.items[idx]!.type}`);
+  }
+  chatCtx.items[idx] = item;
 }
 
 function toAttrsStr(attrs?: Record<string, unknown>): string | undefined {
