@@ -7,6 +7,7 @@ import {
   APIStatusError,
   APITimeoutError,
   DEFAULT_API_CONNECT_OPTIONS,
+  inference,
   llm,
   log,
   toError,
@@ -207,7 +208,9 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         ? toResponsesTools(this.toolCtx, this.strictToolSchema)
         : undefined;
 
-      const requestOptions: Record<string, unknown> = { ...this.modelOptions };
+      // Responses sends effort as `reasoning.effort`, not `reasoning_effort`.
+      // Unlike chat completions, it supports reasoning effort with tools.
+      const requestOptions = inference.dropUnsupportedParams(this.model, this.modelOptions);
       if (!tools) {
         delete requestOptions.tool_choice;
       }

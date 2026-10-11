@@ -7,7 +7,7 @@ import { type JobContext, runWithJobContextAsync } from '../job.js';
 import { ChatContext } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
-import { type InferenceClass, LLM } from './llm.js';
+import { type InferenceClass, LLM, dropUnsupportedParams } from './llm.js';
 import { describeLiveKitInference } from './test_utils.js';
 
 beforeAll(() => {
@@ -488,6 +488,164 @@ describe('inference.LLM reasoning markers', () => {
     );
 
     expect(chunks.map((chunk) => chunk.delta?.content).join('')).toBe('beforeanswer');
+  });
+});
+
+describe('dropUnsupportedParams', () => {
+  it('keeps sampling params for gpt-5.6 at reasoning effort none', () => {
+    expect(
+      dropUnsupportedParams('openai/gpt-5.6-luna', {
+        temperature: 0.2,
+        top_p: 0.9,
+        reasoning_effort: 'none',
+      }),
+    ).toEqual({ temperature: 0.2, top_p: 0.9, reasoning_effort: 'none' });
+  });
+
+  it('keeps temperature for gpt-5.1 at reasoning effort none', () => {
+    expect(
+      dropUnsupportedParams('gpt-5.1', { temperature: 0.2, reasoning_effort: 'none' }),
+    ).toEqual({ temperature: 0.2, reasoning_effort: 'none' });
+  });
+
+  it('strips sampling params for gpt-5.6 at reasoning effort low', () => {
+    expect(
+      dropUnsupportedParams('openai/gpt-5.6-luna', {
+        temperature: 0.2,
+        top_p: 0.9,
+        reasoning_effort: 'low',
+      }),
+    ).toEqual({ reasoning_effort: 'low' });
+  });
+
+  it('strips sampling params for gpt-5.6 when reasoning effort is omitted', () => {
+    expect(dropUnsupportedParams('openai/gpt-5.6-luna', { temperature: 0.2, top_p: 0.9 })).toEqual(
+      {},
+    );
+  });
+
+  it('strips other reasoning params for gpt-5.6 at reasoning effort none', () => {
+    expect(
+      dropUnsupportedParams('openai/gpt-5.6-luna', {
+        temperature: 0.2,
+        frequency_penalty: 0.5,
+        logit_bias: { 5: 1 },
+        reasoning_effort: 'none',
+      }),
+    ).toEqual({ temperature: 0.2, reasoning_effort: 'none' });
+  });
+
+  it('strips sampling params for original gpt-5 at its lowest effort', () => {
+    expect(
+      dropUnsupportedParams('openai/gpt-5', {
+        temperature: 0.2,
+        top_p: 0.9,
+        reasoning_effort: 'minimal',
+      }),
+    ).toEqual({ reasoning_effort: 'minimal' });
+  });
+
+  it('strips temperature for gpt-5-mini without reasoning effort', () => {
+    expect(dropUnsupportedParams('openai/gpt-5-mini', { temperature: 0.2 })).toEqual({});
+  });
+
+  it('continues stripping sampling params for o-series models', () => {
+    expect(
+      dropUnsupportedParams('openai/o3', {
+        temperature: 0.2,
+        top_p: 0.9,
+        reasoning_effort: 'none',
+      }),
+    ).toEqual({ reasoning_effort: 'none' });
+  });
+
+  it('keeps sampling params for non-reasoning models', () => {
+    expect(dropUnsupportedParams('openai/gpt-4o', { temperature: 0.2, top_p: 0.9 })).toEqual({
+      temperature: 0.2,
+      top_p: 0.9,
+    });
+  });
+
+  it('keeps temperature for gpt-5.6 with tools at reasoning effort none', () => {
+    expect(
+      dropUnsupportedParams('openai/gpt-5.6-luna', { temperature: 0.2, reasoning_effort: 'none' }, [
+        {},
+      ]),
+    ).toEqual({ temperature: 0.2, reasoning_effort: 'none' });
+  });
+
+  it('strips reasoning effort for gpt-5.2 with tools', () => {
+    expect(
+      dropUnsupportedParams('openai/gpt-5.2', { temperature: 0.2, reasoning_effort: 'low' }, [{}]),
+    ).toEqual({});
+  });
+
+  it('strips temperature for gpt-5.2 with tools even at reasoning effort none', () => {
+    expect(
+      dropUnsupportedParams('openai/gpt-5.2', { temperature: 0.2, reasoning_effort: 'none' }, [{}]),
+    ).toEqual({});
+  });
+
+  it('keeps temperature for gpt-5.4-nano at reasoning effort none', () => {
+    expect(
+      dropUnsupportedParams('openai/gpt-5.4-nano', {
+        temperature: 0.2,
+        reasoning_effort: 'none',
+      }),
+    ).toEqual({ temperature: 0.2, reasoning_effort: 'none' });
+  });
+
+  it('continues stripping temperature for chat-latest variants', () => {
+    expect(
+      dropUnsupportedParams('openai/gpt-5.1-chat-latest', {
+        temperature: 0.2,
+        reasoning_effort: 'none',
+      }),
+    ).toEqual({ reasoning_effort: 'none' });
+  });
+
+  it('keeps sampling params for xAI reasoning models', () => {
+    expect(
+      dropUnsupportedParams('grok-4.20-multi-agent', {
+        temperature: 0.2,
+        top_p: 0.9,
+        frequency_penalty: 0.5,
+      }),
+    ).toEqual({ temperature: 0.2, top_p: 0.9 });
+  });
+
+  it('keeps sampling params for the Responses shape at reasoning effort none', () => {
+    expect(
+      dropUnsupportedParams('gpt-5.6-luna', {
+        temperature: 0.2,
+        top_p: 0.9,
+        reasoning: { effort: 'none' },
+      }),
+    ).toEqual({ temperature: 0.2, top_p: 0.9, reasoning: { effort: 'none' } });
+  });
+
+  it('strips temperature for the Responses shape at reasoning effort low', () => {
+    expect(
+      dropUnsupportedParams('gpt-5.6-luna', {
+        temperature: 0.2,
+        reasoning: { effort: 'low' },
+      }),
+    ).toEqual({ reasoning: { effort: 'low' } });
+  });
+
+  it('strips temperature for the Responses shape when reasoning effort is omitted', () => {
+    expect(dropUnsupportedParams('gpt-5.6-luna', { temperature: 0.2, reasoning: {} })).toEqual({
+      reasoning: {},
+    });
+  });
+
+  it('strips temperature for original gpt-5 in the Responses shape at effort none', () => {
+    expect(
+      dropUnsupportedParams('gpt-5', {
+        temperature: 0.2,
+        reasoning: { effort: 'none' },
+      }),
+    ).toEqual({ reasoning: { effort: 'none' } });
   });
 });
 
