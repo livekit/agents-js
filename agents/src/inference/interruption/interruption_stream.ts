@@ -81,9 +81,6 @@ export class InterruptionStreamBase {
 
   private resampler?: AudioResampler;
 
-  // Closing a resampler with buffered input can corrupt a replacement in rtc-node.
-  private retiredResamplers: AudioResampler[] = [];
-
   private numRequests = 0;
 
   private userSpeakingSpan: Span | undefined;
@@ -379,7 +376,7 @@ export class InterruptionStreamBase {
   }
 
   private resetResampler(): void {
-    if (this.resampler) this.retiredResamplers.push(this.resampler);
+    this.resampler?.close();
     this.resampler = undefined;
   }
 
@@ -423,8 +420,6 @@ export class InterruptionStreamBase {
     } finally {
       this.wsClose?.();
       this.resampler?.close();
-      for (const resampler of this.retiredResamplers) resampler.close();
-      this.retiredResamplers.length = 0;
       this.model.removeStream(this);
     }
   }
