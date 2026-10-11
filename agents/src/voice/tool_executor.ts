@@ -15,12 +15,14 @@ import {
   ToolFlag,
   Toolset,
   isFunctionTool,
+  isToolError,
   tool,
 } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { Future } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import type { PromptTemplate, RunContext, UpdatePromptArgs } from './run_context.js';
+import { isStopResponse } from './stop_response.js';
 
 // Upper bound on how long `drain()` waits for in-flight tool promises to settle
 // after the executor has signalled abort.
@@ -509,6 +511,7 @@ export class ToolExecutor {
     }
 
     if (exception !== undefined) {
+      if (isStopResponse(exception)) return;
       log().error(
         {
           function: runCtx.functionCall.name,
@@ -517,7 +520,9 @@ export class ToolExecutor {
         },
         'exception occurred while executing tool after a progress update',
       );
-      return;
+      output = isToolError(exception)
+        ? exception.message
+        : 'An internal error occurred while executing the tool.';
     }
     if (output === undefined || output === null) {
       return;
@@ -526,6 +531,7 @@ export class ToolExecutor {
       return;
     }
     const pair = runCtx._makeUpdatePair(output, '_final');
+    pair[1].isError = exception !== undefined;
     runCtx._recordUpdatePair(pair);
     await this.enqueueReply(runCtx, pair);
   }

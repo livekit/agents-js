@@ -108,27 +108,7 @@ export function _setActivityTaskInfo<T>(
 export function _getActivityTaskInfo<T>(task: Task<T>): _ActivityTaskInfo | undefined {
   return activityTaskInfoStorage.get(task);
 }
-export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
-
-export class StopResponse extends Error {
-  constructor() {
-    super();
-    this.name = 'StopResponse';
-
-    Object.defineProperty(this, STOP_RESPONSE_SYMBOL, {
-      value: true,
-    });
-  }
-}
-
-export function isStopResponse(value: unknown): value is StopResponse {
-  return (
-    value !== undefined &&
-    value !== null &&
-    typeof value === 'object' &&
-    STOP_RESPONSE_SYMBOL in value
-  );
-}
+export { STOP_RESPONSE_SYMBOL, StopResponse, isStopResponse } from './stop_response.js';
 
 export interface ModelSettings {
   /** The tool choice to use when calling the LLM. */
