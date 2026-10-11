@@ -450,7 +450,7 @@ export class STT extends stt.STT {
       );
       if (response.status !== 200) {
         const text = await response.text();
-        let body: unknown = text;
+        let body: object | string | number | boolean | null = text;
         try {
           body = JSON.parse(text);
         } catch {
@@ -464,7 +464,7 @@ export class STT extends stt.STT {
             : detail;
         throw new APIStatusError({
           message: String(message || text || 'Unknown ElevenLabs error'),
-          options: { statusCode: response.status, requestId: null, body: body as object },
+          options: { statusCode: response.status, requestId: null, body },
         });
       }
       const responseJson = parseBatchResponse(await response.json());
