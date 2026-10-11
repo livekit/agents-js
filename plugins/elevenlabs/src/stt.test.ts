@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { log, mergeFrames, stt as sttLib } from '@livekit/agents';
+import { APIStatusError, log, mergeFrames, stt as sttLib } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
@@ -612,6 +612,37 @@ describe('ElevenLabs STT', () => {
         'bonjour',
         'livekit',
       ]);
+    } finally {
+      await closeHttpServer(server);
+    }
+  });
+
+  it.each([
+    {
+      body: JSON.stringify({
+        detail: { code: 'invalid_api_key', message: 'Invalid API key' },
+      }),
+      message: 'Invalid API key',
+      parsed: { detail: { code: 'invalid_api_key', message: 'Invalid API key' } },
+    },
+    { body: '', message: 'Unknown ElevenLabs error', parsed: '' },
+    { body: '{not json', message: '{not json', parsed: '{not json' },
+  ])('does not retry a client error with body $body', async ({ body, message, parsed }) => {
+    let requests = 0;
+    const { server, baseURL } = await startHttpServer((_req, res) => {
+      requests += 1;
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(body);
+    });
+
+    try {
+      const eleven = new STT({ apiKey: 'bad-key', baseURL });
+      eleven.on('error', () => {});
+      const error = await eleven.recognize(makeFrame()).catch((error: unknown) => error);
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect(error).toMatchObject({ statusCode: 401, message, body: parsed });
+      expect(requests).toBe(1);
     } finally {
       await closeHttpServer(server);
     }

@@ -448,13 +448,26 @@ export class STT extends stt.STT {
           signal: abortSignal ?? null,
         },
       );
-      const responseJson = parseBatchResponse(await response.json());
       if (response.status !== 200) {
+        const text = await response.text();
+        let body: object | string | number | boolean | null = text;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          // Error responses may be empty or not JSON.
+        }
+        const detail =
+          typeof body === 'object' && body !== null && 'detail' in body ? body.detail : undefined;
+        const message =
+          typeof detail === 'object' && detail !== null && 'message' in detail
+            ? detail.message
+            : detail;
         throw new APIStatusError({
-          message: responseJson.detail ?? 'Unknown ElevenLabs error',
-          options: { statusCode: response.status, requestId: null, body: responseJson },
+          message: String(message || text || 'Unknown ElevenLabs error'),
+          options: { statusCode: response.status, requestId: null, body },
         });
       }
+      const responseJson = parseBatchResponse(await response.json());
 
       const words = responseJson.words ?? [];
       const speakerId = words.length > 0 ? words[0]?.speaker_id ?? null : null;
@@ -477,7 +490,7 @@ export class STT extends stt.STT {
         throw error;
       }
       if (error instanceof APIStatusError) {
-        throw new APIConnectionError({ message: error.message });
+        throw error;
       }
       if (error instanceof Error && error.name === 'AbortError') {
         throw new APITimeoutError({});
