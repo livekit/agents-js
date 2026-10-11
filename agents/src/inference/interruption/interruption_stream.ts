@@ -81,6 +81,9 @@ export class InterruptionStreamBase {
 
   private resampler?: AudioResampler;
 
+  // Closing a resampler with buffered input can corrupt a replacement in rtc-node.
+  private retiredResamplers: AudioResampler[] = [];
+
   private numRequests = 0;
 
   private userSpeakingSpan: Span | undefined;
@@ -375,6 +378,11 @@ export class InterruptionStreamBase {
     return this.resampler;
   }
 
+  private resetResampler(): void {
+    if (this.resampler) this.retiredResamplers.push(this.resampler);
+    this.resampler = undefined;
+  }
+
   stream(): ReadableStream<OverlappingSpeechEvent> {
     return this.eventStream;
   }
@@ -382,6 +390,9 @@ export class InterruptionStreamBase {
   async pushFrame(frame: InterruptionSentinel | AudioFrame): Promise<void> {
     this.ensureStreamsNotEnded();
     if (!(frame instanceof AudioFrame)) {
+      if (frame.type === 'agent-speech-started' || frame.type === 'agent-speech-ended') {
+        this.resetResampler();
+      }
       return this.inputStream.write(frame);
     } else if (this.options.sampleRate !== frame.sampleRate) {
       const resampler = this.getResamplerFor(frame.sampleRate);
@@ -412,6 +423,8 @@ export class InterruptionStreamBase {
     } finally {
       this.wsClose?.();
       this.resampler?.close();
+      for (const resampler of this.retiredResamplers) resampler.close();
+      this.retiredResamplers.length = 0;
       this.model.removeStream(this);
     }
   }
