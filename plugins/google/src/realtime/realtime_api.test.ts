@@ -564,6 +564,52 @@ describe('Google Realtime usage metadata', () => {
   });
 });
 
+type GenerationStartSessionInternals = {
+  _realtimeModel: { capabilities: { audioOutput: boolean } };
+  options: { realtimeInputConfig: { automaticActivityDetection: { disabled: boolean } } };
+  emit: ReturnType<typeof vi.fn>;
+  startNewGeneration(): void;
+};
+
+function createGenerationStartSession({
+  manualActivity,
+}: {
+  manualActivity: boolean;
+}): GenerationStartSessionInternals {
+  const session = Object.create(RealtimeSession.prototype) as GenerationStartSessionInternals;
+  session._realtimeModel = { capabilities: { audioOutput: true } };
+  session.options = {
+    realtimeInputConfig: { automaticActivityDetection: { disabled: manualActivity } },
+  };
+  session.emit = vi.fn();
+  return session;
+}
+
+describe('Google Realtime agent-initiated generation', () => {
+  it('does not emit input_speech_started with manual activity detection', () => {
+    const session = createGenerationStartSession({ manualActivity: true });
+
+    session.startNewGeneration();
+
+    expect(session.emit.mock.calls.map(([event]) => event)).toEqual(['generation_created']);
+    expect(session.emit).toHaveBeenCalledWith(
+      'generation_created',
+      expect.objectContaining({ userInitiated: false }),
+    );
+  });
+
+  it('emits input_speech_started first with automatic activity detection', () => {
+    const session = createGenerationStartSession({ manualActivity: false });
+
+    session.startNewGeneration();
+
+    expect(session.emit.mock.calls.map(([event]) => event)).toEqual([
+      'input_speech_started',
+      'generation_created',
+    ]);
+  });
+});
+
 describe('Google Realtime client content params', () => {
   it('omits an empty turns array so the SDK sends a bare turnComplete', () => {
     // generateReply() sends no turns on models that take no placeholder user
