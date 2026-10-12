@@ -40,6 +40,9 @@ import type { LiveAPIModels, Voice } from './api_proto.js';
 // Input audio constants (matching Python)
 const INPUT_AUDIO_SAMPLE_RATE = 16000;
 const INPUT_AUDIO_CHANNELS = 1;
+// In 50 ms chunks: 3 s held between user activities, the last 1.5 s opens one started mid-speech.
+const PRE_ACTIVITY_AUDIO_CHUNKS = 60;
+const ACTIVITY_LEAD_CHUNKS = 30;
 
 // Output audio constants (matching Python)
 const OUTPUT_AUDIO_SAMPLE_RATE = 24000;
@@ -535,6 +538,11 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private sessionResumptionHandle?: string;
   private inUserActivity = false;
+  // With manual activity, audio sent outside a user activity is dropped or kept
+  // unpredictably, and the activity opens a beat after the user starts speaking.
+  // Between activities the input is held here and sent once one opens, so each
+  // word reaches Gemini once.
+  private preActivityAudio: string[] = [];
   private sessionLock = new Mutex();
   private numRetries = 0;
   private hasReceivedAudioInput = false;
@@ -849,6 +857,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   pushAudio(frame: AudioFrame): void {
     if (this.shouldBlockRealtimeInputForPendingTools()) {
+      this.preActivityAudio = [];
       return;
     }
 
@@ -857,10 +866,18 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     for (const f of this.resampleAudio(frame)) {
       for (const nf of this.bstream.write(f.data.buffer as ArrayBuffer)) {
+        const data = Buffer.from(nf.data.buffer).toString('base64');
+        if (this.manualActivityDetection && !this.inUserActivity) {
+          this.preActivityAudio.push(data);
+          if (this.preActivityAudio.length > PRE_ACTIVITY_AUDIO_CHUNKS) {
+            this.preActivityAudio.shift();
+          }
+          continue;
+        }
         const realtimeInput: types.LiveClientRealtimeInput = {
           audio: {
             mimeType: 'audio/pcm',
-            data: Buffer.from(nf.data.buffer).toString('base64'),
+            data,
           },
         };
         this.sendClientEvent({
@@ -971,6 +988,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   startUserActivity(): void {
+    this.openUserActivity(this.preActivityAudio.slice(-ACTIVITY_LEAD_CHUNKS));
+  }
+
+  private openUserActivity(heldAudio: string[]): void {
     if (!this.manualActivityDetection) {
       return;
     }
@@ -987,6 +1008,13 @@ export class RealtimeSession extends llm.RealtimeSession {
           activityStart: {},
         },
       });
+      for (const data of heldAudio) {
+        this.sendClientEvent({
+          type: 'realtime_input',
+          value: { audio: { mimeType: 'audio/pcm', data } },
+        });
+      }
+      this.preActivityAudio = [];
     }
   }
 
@@ -1008,8 +1036,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.earlyCompletionPending = true;
         this.markCurrentGenerationDone();
       }
+      // Only a reply in progress opens an activity: one without speech gets
+      // transcribed as a stray user turn, so no held audio goes in either.
+      this.openUserActivity([]);
     }
-    this.startUserActivity();
   }
 
   async truncate(_options: { messageId: string; audioEndMs: number; audioTranscript?: string }) {
@@ -1960,9 +1990,17 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.sessionShouldClose.set();
   }
 
-  async commitAudio() {}
+  async commitAudio() {
+    // A turn too short to open an activity while spoken (a one-word answer) is
+    // still held: it goes to Gemini as its own activity.
+    if (this.preActivityAudio.length > 0) {
+      this.openUserActivity(this.preActivityAudio);
+    }
+  }
 
-  async clearAudio() {}
+  async clearAudio() {
+    this.preActivityAudio = [];
+  }
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
     if (this.inputResampler) {
