@@ -51,6 +51,8 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 const WS_CLOSE_NORMAL = 1000;
 
 const GO_AWAY_RESTART_MARGIN_MS = 10_000;
+// A goAway restart is armed only for the last part of the time the server grants.
+const GO_AWAY_RESTART_WINDOW_MS = 30_000;
 const GO_AWAY_IDLE_POLL_MS = 250;
 
 /** `goAway.timeLeft` is a protobuf Duration string such as "300s". */
@@ -1981,12 +1983,14 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private handleGoAway(goAway: types.LiveServerGoAway): void {
     this.#logger.warn({ timeLeft: goAway.timeLeft }, 'Gemini server indicates disconnection soon.');
-    // Restart between turns: restarting mid-generation cuts the reply the user
-    // is hearing, and the time the server grants is enough to let it finish.
-    // The deadline keeps a generation that never completes from outliving the
-    // connection.
-    const deadline =
-      Date.now() + Math.max(0, goAwayTimeLeftMs(goAway.timeLeft) - GO_AWAY_RESTART_MARGIN_MS);
+    // Most sessions end before the connection does, so a goAway only arms a
+    // restart for the last 30 s of the time the server grants. Inside that
+    // window the restart waits for a gap between turns: restarting
+    // mid-generation cuts the reply the user is hearing. The deadline keeps a
+    // generation that never completes from outliving the connection.
+    const timeLeftMs = goAwayTimeLeftMs(goAway.timeLeft);
+    const windowStart = Date.now() + Math.max(0, timeLeftMs - GO_AWAY_RESTART_WINDOW_MS);
+    const deadline = Date.now() + Math.max(0, timeLeftMs - GO_AWAY_RESTART_MARGIN_MS);
     // A config update can restart the session before this fires; the notice
     // belongs to the connection that received it.
     const session = this.activeSession;
@@ -2006,11 +2010,16 @@ export class RealtimeSession extends llm.RealtimeSession {
         !this.shouldBlockRealtimeInputForPendingTools() &&
         !this.awaitingToolReply &&
         !this.inUserActivity;
-      if (idle || Date.now() >= deadline) {
+      const now = Date.now();
+      if ((idle && now >= windowStart) || now >= deadline) {
         this.sessionShouldClose.set();
         return;
       }
-      setTimeout(restartWhenIdle, GO_AWAY_IDLE_POLL_MS);
+      // Unref'd: a pending check must not keep a finished job process alive.
+      setTimeout(
+        restartWhenIdle,
+        now < windowStart ? windowStart - now : GO_AWAY_IDLE_POLL_MS,
+      ).unref?.();
     };
     restartWhenIdle();
   }

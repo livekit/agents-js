@@ -61,9 +61,21 @@ describe('Google Realtime goAway restart', () => {
     const opened = await openSession();
     session = opened.session;
 
-    opened.internals.handleGoAway({ timeLeft: '60s' });
+    opened.internals.handleGoAway({ timeLeft: '30.1s' });
 
     await vi.waitFor(() => expect(opened.restarts()).toBe(1));
+  });
+
+  it('waits for the last 30 s of the time the server grants', async () => {
+    const opened = await openSession();
+    session = opened.session;
+
+    // 30.6 s left: the restart window opens in 0.6 s.
+    opened.internals.handleGoAway({ timeLeft: '30.6s' });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(opened.restarts()).toBe(0);
+
+    await vi.waitFor(() => expect(opened.restarts()).toBe(1), { timeout: 2_000 });
   });
 
   it('waits for the reply to a blocking tool result', async () => {
@@ -71,7 +83,7 @@ describe('Google Realtime goAway restart', () => {
     session = opened.session;
     opened.internals.awaitingToolReply = true;
 
-    opened.internals.handleGoAway({ timeLeft: '60s' });
+    opened.internals.handleGoAway({ timeLeft: '30.1s' });
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(opened.restarts()).toBe(0);
 
@@ -83,7 +95,7 @@ describe('Google Realtime goAway restart', () => {
     const opened = await openSession();
     session = opened.session;
     opened.internals.inUserActivity = true;
-    opened.internals.handleGoAway({ timeLeft: '60s' });
+    opened.internals.handleGoAway({ timeLeft: '30.1s' });
 
     // A config update, such as updateTools(), reconnects first.
     opened.internals.markRestartNeeded();
