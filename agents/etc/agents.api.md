@@ -1957,6 +1957,12 @@ declare namespace beta {
     }
 }
 
+declare namespace blingfire {
+    export {
+        SentenceTokenizer_3 as SentenceTokenizer
+    }
+}
+
 // @public (undocumented)
 interface BlockedReport {
     cause: LoopStallCause;
@@ -6519,6 +6525,16 @@ class SentenceTokenizer_2 extends tokenizer.SentenceTokenizer {
 }
 
 // @public (undocumented)
+class SentenceTokenizer_3 extends tokenizer.SentenceTokenizer {
+    // Warning: (ae-forgotten-export) The symbol "TokenizerOptions_2" needs to be exported by the entry point index.d.ts
+    constructor(options?: Partial<TokenizerOptions_2>);
+    // (undocumented)
+    stream(language?: string): tokenizer.SentenceStream;
+    // (undocumented)
+    tokenize(text: string, language?: string): string[];
+}
+
+// @public (undocumented)
 export interface SerializedImage {
     // (undocumented)
     base64Data?: string;
@@ -8009,7 +8025,8 @@ declare namespace tokenize {
         BufferedSentenceStream,
         BufferedTokenStream,
         BufferedWordStream,
-        basic
+        basic,
+        blingfire
     }
 }
 

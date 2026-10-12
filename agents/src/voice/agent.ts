@@ -31,7 +31,7 @@ import {
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
-import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
+import { SentenceTokenizer as BlingfireSentenceTokenizer } from '../tokenize/blingfire.js';
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
@@ -628,11 +628,11 @@ export class Agent<UserData = any> {
       if (!activity.tts.capabilities.streaming) {
         wrappedTts = new TTSStreamAdapter(
           wrappedTts,
-          // markup only exists in the stream when expressive is active. Python also
-          // passes retain_format here, but that predates expressive mode and is a
-          // separate gap — turning it on would change tokenization for every
-          // non-streaming TTS plugin.
-          new BasicSentenceTokenizer({ xmlAware: expressiveActive }),
+          new BlingfireSentenceTokenizer({
+            retainFormat: true,
+            // markup only exists in the stream when expressive is active
+            xmlAware: expressiveActive,
+          }),
         );
       }
 
