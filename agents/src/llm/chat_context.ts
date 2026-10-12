@@ -1307,10 +1307,8 @@ export class ChatContext {
     const preserved: ChatItem[] = [];
     for (const it of headItems) {
       if (it.type === 'message' && (it.role === 'user' || it.role === 'assistant')) {
-        continue;
-      }
-
-      if (it.type === 'function_call' || it.type === 'function_call_output') {
+        if (it.extra?.is_summary !== true) continue;
+      } else if (it.type === 'function_call' || it.type === 'function_call_output') {
         continue;
       }
 
