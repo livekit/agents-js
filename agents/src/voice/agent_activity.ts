@@ -309,6 +309,8 @@ export interface ForwardOutput {
   synchronizedTranscript?: string;
   audioOut: _AudioOut | null;
   playbackPositionInS: number;
+  /** The segment's TTS failed; whatever audio it made still played out. */
+  ttsFailed?: boolean;
 }
 
 /**
@@ -483,23 +485,10 @@ export function continueDiscardedTurn(
 }
 
 /**
- * A realtime tool reply runs on a new speech handle after the tool calls of `speech`; Python
- * runs it on the same handle as its next step. The reply continues the tool call's open
- * `agent_turn`, with its generation numbered after (and parented to) the tool call's, so the
- * trace shows one turn either way. Module-level like `continueDiscardedTurn`.
- * @internal
- */
-export function continueToolReplyTurn(speech: SpeechHandle, reply: SpeechHandle): void {
-  if (speech === reply) return;
-  const carry = speech._takeAgentTurn();
-  if (carry !== undefined) reply._continueAgentTurn(carry, speech, 'tool_reply');
-}
-
-/**
  * The turn of a realtime tool call whose reply the model generates on its own
  * (`autoToolReplyGeneration`): held open past the tool call's speech until the model's next
- * generation adopts it (see {@link continueToolReplyTurn}), or ended after `timeout` ms when
- * none comes (the user spoke first, the model declined). Module-level like the helpers above.
+ * generation adopts it, or ended after `timeout` ms when none comes (the user spoke first, the
+ * model declined). Module-level like the helpers above.
  * @internal
  */
 export class AutoToolReplyTurnHold {
@@ -3639,6 +3628,7 @@ export class AgentActivity implements RecognitionHooks {
           replyAbortController,
           () => this.reconcilePlayoutPause(speechHandle),
           this.agentSession.sessionOptions.forwardAudioIdleTimeout,
+          ttsGenData,
         );
         tasks.push(forwardTask);
         audioOut = _audioOut;
@@ -3767,7 +3757,7 @@ export class AgentActivity implements RecognitionHooks {
   }): Promise<void> => {
     const { speechHandle } = stateLease;
 
-    // the turn's id, not this step's handle: a tool reply on a new handle continues its parent
+    // the turn's id, not this step's handle: a model-generated tool reply continues its parent
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle._turnSpeechId);
     if (instructions) {
       span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, renderInstructions(instructions));
@@ -3849,20 +3839,27 @@ export class AgentActivity implements RecognitionHooks {
     const deltaScope = this.agentSession.sessionOptions.recordingOptions.inputDelta
       ? this.inputDeltaTracker.begin()
       : undefined;
-    const startInference = () =>
+    const llmAbortController = new AbortController();
+    const abortLlm = () => llmAbortController.abort();
+    if (replyAbortController.signal.aborted) {
+      abortLlm();
+    } else {
+      replyAbortController.signal.addEventListener('abort', abortLlm, { once: true });
+    }
+    const startLlmInference = () =>
       performLLMInference(
-        // preserve  `this` context in llmNode
+        // preserve `this` context in llmNode
         (...args) => this.agent.llmNode(...args),
         chatCtx,
         toolCtx,
         modelSettings,
-        replyAbortController,
+        llmAbortController,
         this.llm?.model,
         this.llm?.provider,
       );
     const [llmTask, llmGenData] = deltaScope
-      ? inputDelta.runWithScope(deltaScope, startInference)
-      : startInference();
+      ? inputDelta.runWithScope(deltaScope, startLlmInference)
+      : startLlmInference();
     tasks.push(llmTask);
     // as python's _on_llm_task_done: a genuine LLM failure (not a cancellation) fails the
     // speech, through exception() and the agent_turn span. Nothing else awaits this task's
@@ -3914,6 +3911,10 @@ export class AgentActivity implements RecognitionHooks {
           );
           tasks.push(ttsTask);
           prevTtsTask = ttsTask;
+          void ttsTask.result.catch(() => {
+            // Nothing generated past a failed TTS can be spoken, so stop the LLM there.
+            if (!ttsTask.cancelled) llmTask.cancel();
+          });
           segment.ttsTextWriter = ttsInput.writable.getWriter();
           segment.ttsTask = ttsTask;
           segment.ttsGenData = ttsGenData;
@@ -4072,6 +4073,7 @@ export class AgentActivity implements RecognitionHooks {
             segmentAbortController,
             () => this.reconcilePlayoutPause(speechHandle),
             this.agentSession.sessionOptions.forwardAudioIdleTimeout,
+            segment.ttsGenData,
           );
           forwardTasks.push(forwardTask);
           output.audioOut = audioOut;
@@ -4141,7 +4143,16 @@ export class AgentActivity implements RecognitionHooks {
         }
 
         if (audioOutput && playbackEv) {
-          output.played = 'full';
+          output.ttsFailed = segment.ttsGenData?.error != null;
+          if (
+            output.ttsFailed &&
+            (!output.audioOut ||
+              audioOutput.capturedPlayoutSegments <= output.audioOut.capturedSegmentsBefore)
+          ) {
+            // No audio from this segment played, so the event belongs to an earlier segment.
+            return output;
+          }
+          output.played = output.ttsFailed ? 'partial' : 'full';
           output.playbackPositionInS = playbackEv.playbackPosition;
           output.synchronizedTranscript = playbackEv.synchronizedTranscript;
         } else if (output.textOut?.text) {
@@ -4294,12 +4305,14 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
+    const ttsFailed = segmentOutputs.some((output) => output.ttsFailed);
     if (forwardedText) {
       hasSpeechMessage = true;
       const message = ChatMessage.create({
         role: 'assistant',
         id: llmGenData.id,
-        interrupted: false,
+        // A reply cut short by failed TTS reads as interrupted to the LLM.
+        interrupted: ttsFailed,
         createdAt: replyStartedAt,
         content: forwardedText,
         metrics: assistantMetrics,
@@ -4512,7 +4525,7 @@ export class AgentActivity implements RecognitionHooks {
   }): Promise<void> {
     const { speechHandle } = stateLease;
 
-    // the turn's id, not this step's handle: a tool reply on a new handle continues its parent
+    // the turn's id, not this step's handle: a model-generated tool reply continues its parent
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle._turnSpeechId);
 
     const localParticipant = this.agentSession._roomIO?.localParticipant;
@@ -4980,13 +4993,8 @@ export class AgentActivity implements RecognitionHooks {
 
     // important: no agent ouput should be used after this point
     const { maxToolSteps } = this.agentSession.sessionOptions;
-    if (speechHandle.numSteps >= maxToolSteps + 1) {
-      this.logger.warn(
-        { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
-        'maximum number of function calls steps reached',
-      );
-      return;
-    }
+    const maxStepsReached = speechHandle.numSteps >= maxToolSteps + 1;
+    speechHandle._numSteps += 1;
 
     const { functionToolsExecutedEvent, shouldGenerateToolReply, newAgentTask, ignoreTaskSwitch } =
       this.summarizeToolExecutionOutput(toolOutput, speechHandle);
@@ -5094,24 +5102,17 @@ export class AgentActivity implements RecognitionHooks {
 
     realtimeSession.interrupt();
 
-    const replySpeechHandle = SpeechHandle.create({
-      allowInterruptions: speechHandle.allowInterruptions,
-      stepIndex: speechHandle.numSteps + 1,
-      parent: speechHandle,
-    });
-    // one agent_turn for the tool call and its reply, as when they share a handle
-    continueToolReplyTurn(speechHandle, replySpeechHandle);
-    this.agentSession.emit(
-      AgentSessionEventTypes.SpeechCreated,
-      createSpeechCreatedEvent({
-        userInitiated: false,
-        source: 'tool_response',
-        speechHandle: replySpeechHandle,
-      }),
-    );
+    if (maxStepsReached) {
+      this.logger.warn(
+        { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
+        "maximum number of function calls steps reached, generating final response with toolChoice = 'none'",
+      );
+    }
 
-    const toolChoice = schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
-    const replyLease = this.createAgentStateLease(replySpeechHandle);
+    const toolChoice =
+      maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+    // the reply is the next step of the same handle, as in the pipeline path
+    const replyLease = this.createAgentStateLease(speechHandle);
     this.createSpeechTask({
       taskFn: (abortController: AbortController) =>
         this.realtimeReplyTask({
@@ -5119,11 +5120,11 @@ export class AgentActivity implements RecognitionHooks {
           modelSettings: { toolChoice },
           abortController,
         }),
-      ownedSpeechHandle: replySpeechHandle,
+      ownedSpeechHandle: speechHandle,
       name: 'AgentActivity.realtime_reply',
     });
 
-    this.scheduleSpeech(replySpeechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+    this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
   }
 
   /**

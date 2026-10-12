@@ -891,11 +891,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     instructions?: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<llm.GenerationCreatedEvent> {
-    if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate) {
-      this.#logger.warn(
-        `generateReply is not compatible with '${this.options.model}' and will be ignored.`,
+    if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate && instructions !== undefined) {
+      throw new Error(
+        `generateReply with 'instructions' is not compatible with '${this.options.model}'`,
       );
-      throw new Error(`generateReply is not compatible with '${this.options.model}'`);
     }
 
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
@@ -1059,7 +1058,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       this.sessionShouldClose.clear();
       this.#sessionError = undefined;
-      const config = this.buildConnectConfig();
       // The SDK forwards the queued setupComplete message before connect()
       // returns, so onmessage can fire before we hold the session. Ignoring
       // those changes nothing: onReceiveMessage already dropped anything
@@ -1068,6 +1066,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const connected: { session?: types.Session; stale?: boolean } = {};
 
       try {
+        const config = this.buildConnectConfig();
         this.#logger.debug('Connecting to Gemini Realtime API...');
 
         const sessionOpened = new Event();

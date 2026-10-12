@@ -206,6 +206,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private usageSeconds = 0;
   private sessionStartSent = false;
   private sessionStarted = false;
+  // The mute state requested by the app, re-applied to each session a reconnect opens.
+  private inputMuted = false;
   private closing = false;
   private audioClosed = false;
   private queued: {
@@ -544,6 +546,12 @@ export class GPTLiveSession extends llm.DuplexSession<{
       case 'session.started':
         this._sessionId = event.session?.id ?? this._sessionId;
         this.sessionStarted = true;
+        // A new session starts unmuted, so restore the requested state before queued input.
+        if (this.inputMuted)
+          this.wsSend(this.ws!, {
+            type: 'session.input_audio.mute',
+            event_id: shortuuid('mute_'),
+          } satisfies ClientEvent);
         this.flushQueued();
         break;
       case 'session.output_audio.delta': {
@@ -898,8 +906,12 @@ export class GPTLiveSession extends llm.DuplexSession<{
       options.persist ? content : undefined,
     );
   }
-  /** Replace microphone input with silence while the model continues speaking. */
+  /**
+   * Replace microphone input with silence while the model continues speaking.
+   * The state is remembered and re-applied to any session a reconnect opens.
+   */
   muteInput(): void {
+    this.inputMuted = true;
     this.sendEvent({
       type: 'session.input_audio.mute',
       event_id: shortuuid('mute_'),
@@ -907,6 +919,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
   }
   /** Restore microphone input. */
   unmuteInput(): void {
+    this.inputMuted = false;
     this.sendEvent({
       type: 'session.input_audio.unmute',
       event_id: shortuuid('unmute_'),
