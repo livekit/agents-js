@@ -30,6 +30,14 @@ function isGemini3Model(model: string): boolean {
   return modelLower.includes('gemini-3');
 }
 
+function isGemma4Model(model: string): boolean {
+  return model.toLowerCase().includes('gemma-4-');
+}
+
+function supportsThinkingLevel(model: string): boolean {
+  return isGemini3Model(model) || isGemma4Model(model);
+}
+
 function toFunctionCallingConfig(
   toolChoice: llm.ToolChoice | undefined,
   toolCtx: llm.ToolContext | undefined,
@@ -207,6 +215,19 @@ export class LLM extends llm.LLM {
       }
     }
 
+    if (
+      thinkingConfig?.thinkingLevel !== undefined &&
+      isGemma4Model(model) &&
+      ![ThinkingLevel.MINIMAL, ThinkingLevel.HIGH].includes(
+        thinkingConfig.thinkingLevel.toUpperCase() as ThinkingLevel,
+      )
+    ) {
+      throw new Error(
+        `Model ${model} only supports thinkingLevel 'minimal' (thinking off) ` +
+          `or 'high' (thinking on), got ${JSON.stringify(thinkingConfig.thinkingLevel)}.`,
+      );
+    }
+
     const clientOptions: types.GoogleGenAIOptions = useVertexAI
       ? {
           vertexai: true,
@@ -332,19 +353,23 @@ export class LLM extends llm.LLM {
     if (this.#opts.thinkingConfig !== undefined) {
       const { includeThoughts, thinkingBudget, thinkingLevel } = this.#opts.thinkingConfig;
 
-      if (isGemini3Model(this.#opts.model)) {
-        // Gemini 3: only supports thinkingLevel
+      if (supportsThinkingLevel(this.#opts.model)) {
+        // Gemini 3 and Gemma 4 configure thinking with a level, not a token budget.
         if (thinkingBudget !== undefined && thinkingLevel === undefined) {
           log().warn(
-            `Model ${this.#opts.model} is Gemini 3 which does not support thinkingBudget. ` +
-              `Please use thinkingLevel ('low' or 'high') instead. Ignoring thinkingBudget.`,
+            `Model ${this.#opts.model} does not support thinkingBudget. ` +
+              `Please use thinkingLevel instead. Ignoring thinkingBudget.`,
           );
         }
         extras.thinkingConfig = {
           includeThoughts,
           thinkingLevel:
             thinkingLevel ??
-            (isGemini3FlashModel(this.#opts.model) ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW),
+            (isGemini3Model(this.#opts.model)
+              ? isGemini3FlashModel(this.#opts.model)
+                ? ThinkingLevel.MINIMAL
+                : ThinkingLevel.LOW
+              : undefined),
         };
       } else {
         // Gemini 2.5 and earlier: only supports thinkingBudget

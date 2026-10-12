@@ -126,11 +126,11 @@ Plugin capabilities by type:
 
 - **LLM**: openai, google, baseten, mistralai
 - **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai, inworld, cartesia
-- **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3), mistralai, fishaudio, hume
+- **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3), mistralai, fishaudio, hume, speechify
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
 - **Realtime**: openai (+ responses/, ws/ modules), google, xai, phonic
-- **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar, did, protoface
+- **Avatar**: trugen, lemonslice, bey, anam, liveavatar, did, protoface
 - **Test mocks**: test (private, for unit tests)
 
 ### AsyncLocalStorage Patterns
@@ -143,6 +143,8 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 
 ## Code Conventions
 
+- **Lifecycle changes**: Follow the [lifecycle review checklist](CONTRIBUTING.md#review-lifecycle-changes)
+  for session helpers, shutdown, and cleanup. Apply it to Python ports too.
 - **License header** required on every new file:
   ```
   // SPDX-FileCopyrightText: 2026 LiveKit, Inc.

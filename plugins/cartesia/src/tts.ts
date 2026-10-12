@@ -241,6 +241,11 @@ export class TTS extends tts.TTS {
     this.#pool.prewarm();
   }
 
+  /** Release pooled connections; an in-flight synthesis keeps its until it finishes. */
+  override async releaseIdleConnections(): Promise<void> {
+    await this.#pool.releaseIdle();
+  }
+
   override async close(): Promise<void> {
     this.#closed = true;
     await this.#pool.close();
@@ -551,6 +556,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
 
           const segmentId = serverMsg.context_id;
+
+          // A pooled websocket may still hold audio/done from an interrupted
+          // previous context; ignore messages tagged with another context id.
+          if (segmentId !== requestId) continue;
 
           // Handle error frames first. 4xx (e.g. empty-transcript on
           // function-call turns) is non-fatal — log and fall through so an

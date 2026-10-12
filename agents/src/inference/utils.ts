@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AccessToken } from 'livekit-server-sdk';
+import type { IncomingMessage } from 'node:http';
 import { WebSocket } from 'ws';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { getJobContext } from '../job.js';
@@ -57,6 +58,7 @@ export async function createAccessToken(
  * Build metadata headers for inference requests.
  * Includes SDK version/platform, and optionally room/job/agent IDs from the current job context.
  * Includes X-LiveKit-Worker-Token when LIVEKIT_WORKER_TOKEN is set (hosted agents).
+ * The job context's {@link JobContext.inferenceHeaders} are merged last and win.
  */
 export function buildMetadataHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -83,6 +85,9 @@ export function buildMetadataHeaders(): Record<string, string> {
     if (ctx.room.isConnected && agentSid) {
       headers['X-LiveKit-Agent-Id'] = agentSid;
     }
+    // merged last: what the job asserts about itself outranks what an individual
+    // model was configured with.
+    Object.assign(headers, ctx.inferenceHeaders);
   }
 
   return headers;
@@ -109,18 +114,21 @@ export async function connectWs(
       resolve(socket);
     };
 
-    const onError = (err: unknown) => {
+    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+      const statusCode = response.statusCode ?? -1;
       clearTimeout(timeout);
-      if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
-        reject(
-          new APIStatusError({
-            message: 'LiveKit gateway quota exceeded',
-            options: { statusCode: 429 },
-          }),
-        );
-      } else {
-        reject(new APIConnectionError({ message: 'Error connecting to LiveKit WebSocket' }));
-      }
+      reject(
+        new APIStatusError({
+          message: `Unexpected server response: ${statusCode}`,
+          options: { statusCode },
+        }),
+      );
+      socket.terminate();
+    };
+
+    const onError = () => {
+      clearTimeout(timeout);
+      reject(new APIConnectionError({ message: 'Error connecting to LiveKit WebSocket' }));
     };
 
     const onClose = () => {
@@ -134,6 +142,7 @@ export async function connectWs(
       }
     };
     socket.once('open', onOpen);
+    socket.once('unexpected-response', onUnexpectedResponse);
     socket.once('error', onError);
     socket.once('close', onClose);
   });

@@ -38,6 +38,7 @@ export enum AgentSessionEventTypes {
   /** Audio EOT detector emitted a per-turn prediction. */
   EotPrediction = 'eot_prediction',
   Error = 'error',
+  /** Emitted after activity teardown, when the session is no longer running. */
   Close = 'close',
 }
 

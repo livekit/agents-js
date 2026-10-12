@@ -42,6 +42,7 @@ function baseOptions(): ReportOptions {
       logs: false,
       transcript: false,
       redaction: false,
+      inputDelta: false,
     },
   };
 }
@@ -450,6 +451,7 @@ describe('createSessionReport recordingOptions', () => {
       logs: true,
       transcript: false,
       redaction: true,
+      inputDelta: false,
     };
     const report = makeReport(recordingOptions);
     expect(report.options.recordingOptions).toEqual(recordingOptions);

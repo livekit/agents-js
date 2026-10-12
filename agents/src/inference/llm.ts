@@ -23,6 +23,9 @@ import {
 } from './utils.js';
 
 export type OpenAIModels =
+  | 'openai/gpt-5.6-luna'
+  | 'openai/gpt-5.6-sol'
+  | 'openai/gpt-5.6-terra'
   | 'openai/gpt-5.5'
   | 'openai/gpt-5.4'
   | 'openai/gpt-5.4-mini'
@@ -478,7 +481,6 @@ export class LLMStream extends llm.LLMStream {
       }
 
       const extraHeaders: Record<string, string> = {
-        ...buildMetadataHeaders(),
         ...((requestOptions.extra_headers as Record<string, string> | undefined) ?? {}),
       };
       const extraBody = requestOptions.extra_body as Record<string, unknown> | undefined;
@@ -489,6 +491,9 @@ export class LLMStream extends llm.LLMStream {
       if (this.inferenceClass !== undefined) {
         extraHeaders[INFERENCE_PRIORITY_HEADER] = this.inferenceClass;
       }
+      // Job metadata is merged last so a job's own assertions (e.g. a text
+      // simulation forcing low priority) outrank the model's configured class.
+      Object.assign(extraHeaders, buildMetadataHeaders());
       delete requestOptions.extra_headers;
       delete requestOptions.extra_body;
       delete requestOptions.extra_query;
@@ -542,6 +547,7 @@ export class LLMStream extends llm.LLMStream {
               completionTokens: usage.completion_tokens || 0,
               promptTokens: usage.prompt_tokens || 0,
               promptCachedTokens: usage.prompt_tokens_details?.cached_tokens || 0,
+              reasoningTokens: usage.completion_tokens_details?.reasoning_tokens || 0,
               totalTokens: usage.total_tokens || 0,
             },
           });

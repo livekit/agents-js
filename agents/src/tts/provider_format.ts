@@ -16,6 +16,7 @@
  * - xAI: https://docs.x.ai/developers/model-capabilities/audio/text-to-speech
  * - xAI: https://docs.x.ai/developers/model-capabilities/audio/voice
  * - Fish Audio: https://docs.fish.audio/developer-guide/core-features/emotions
+ * - Gemini: https://ai.google.dev/gemini-api/docs/speech-generation#controllable
  */
 import { ATTRIBUTE_TRANSCRIPTION_EXPRESSION } from '../constants.js';
 import { basic as tokenizeBasic } from '../tokenize/index.js';
@@ -23,11 +24,13 @@ import type { SentenceTokenizer } from '../tokenize/tokenizer.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   LEADING_WS,
+  MID_LINE,
   convertExpressionTags,
   dedupRemovalSpace,
   escapeRegExp,
   extractAndStrip,
   replaceWithGroups,
+  stripOne,
 } from './markup_utils.js';
 import { matchMood } from './mood.js';
 
@@ -246,6 +249,58 @@ function fishaudioBreakToBracket(_match: string, time: string): string {
   // Fish has two pause levels ([break], [long-break]); use the longer past ~1s
   return parseDurationSeconds(time) >= 1 ? '[long-break]' : '[break]';
 }
+
+// Gemini TTS (the 3.8 family), from Gemini's controllable speech generation docs
+// (https://ai.google.dev/gemini-api/docs/speech-generation#controllable).
+//
+// Direction is split across two channels, so the expr dialect lowers onto both.
+// Sustained direction rides `speech_metadata.style` beside the words; a discrete vocal
+// event is an inline tag where it happens:
+//
+//     {"parts": [{"text": "\"<chuckle> What's on your mind?\"",
+//                 "speech_metadata": {"style": "Wistful, British accent"}}]}
+//
+// So an <expr type="expression"/> marker is not lowered at all — convertMarkup leaves it
+// for the plugin to lift out — while sound, break and emphasis lower to the inline tags.
+// The native names stay in GEMINI_TAGS so a hallucinated one is stripped from transcripts.
+// Style labels are free-form natural language, not a closed set.
+// square brackets work too, but the docs measured angle brackets as more reliable
+const GEMINI_SOUNDS = [
+  // the model's own documented list
+  'laugh',
+  'chuckle',
+  'sigh',
+  'breath',
+  'cough',
+  'argh',
+  // named by the general TTS docs, which also warn there is no exhaustive list; the rest
+  // of what they name (amazed, curious, sarcastic, whispers, ...) is sustained delivery,
+  // and belongs in the style field rather than inline
+  'gasp',
+  'giggle',
+  'cry',
+];
+// Gemini documents one pause length, so every break duration lowers to the same tag
+const GEMINI_PAUSE = 'short pause';
+const GEMINI_TAGS = [...GEMINI_SOUNDS, GEMINI_PAUSE];
+
+// expr labels that differ from Gemini's native tag names
+const GEMINI_SOUND_ALIASES: Record<string, string> = {
+  breathe: 'breath',
+  laughing: 'laugh',
+  laughs: 'laugh',
+  chuckling: 'chuckle',
+  sighing: 'sigh',
+  sighs: 'sigh',
+  groan: 'argh',
+  groaning: 'argh',
+  giggles: 'giggle',
+  giggling: 'giggle',
+  gasping: 'gasp',
+  crying: 'cry',
+  sob: 'cry',
+  sobbing: 'cry',
+};
 
 // --- LiveKit expression markers (expr) ---
 // The LLM emits a single marker tag, <expr type="..." label="..."/>, instead of
@@ -639,12 +694,117 @@ English — labels are a fixed vocabulary, never translated.`,
   return parts.join('\n\n');
 }
 
+const GEMINI_EXAMPLES = [
+  '<expr type="expression" label="Thoughtful, Quiet"/> Sienna? <expr type="expression" label="Wistful"/> What\'s on your mind?',
+  '<expr type="expression" label="Warm, Welcoming"/> Hey, good to hear from you. <expr type="expression" label="Gently curious"/> What can I help you with today?',
+  '<expr type="expression" label="Sincere, Subdued"/> Oh no, I\'m really sorry. <expr type="break" label="300ms"/> <expr type="expression" label="Calm, Steady"/> Let me see what I can do about it.',
+  '<expr type="expression" label="Gently amused"/> Okay, why did the burger go to the gym? <expr type="expression" label="Bright, Playful"/> Because it wanted better buns! <expr type="sound" label="laugh"/>',
+  '<expr type="expression" label="Easygoing, Warm"/> Yeah, <expr type="sound" label="chuckle"/> I get that a lot.',
+  '<expr type="expression" label="Measured, Clear"/> Your confirmation code is <expr type="prosody" label="emphasis">B four J seven</expr>.',
+];
+
+const GEMINI_DELIVERY = `Delivery - the style this sentence is spoken in. Self-closing; \
+place before EVERY sentence.
+   <expr type="expression" label="DESCRIPTORS"/>
+   The label is free-form natural language, not a fixed vocabulary — it is read as a \
+stage direction. Write one to three descriptors, comma-separated and capitalized, like \
+"Thoughtful, Quiet", "Wistful", "Warm, Unhurried", "Bright, Eager", "Measured, Clear".
+   Use ADJECTIVES — name the feeling or the manner ("Gently amused", "Subdued, \
+Sincere"). A mechanical direction ("rising tone", "120 words per minute") steers far \
+worse than the mood that would produce it.
+   Make the descriptors agree with each other. Clashing ones ("Calm, Excited") cancel \
+out and flatten the delivery into neither.
+   Match the label to the sentence's punctuation: an exclamation needs a bright or \
+eager descriptor, and a calm label flattens the "!". Never lead an exclamatory sentence \
+with a subdued tag.
+   Put each question in its own sentence — write "Welcome back. What can I do for \
+you?", not "Welcome back, what can I do for you?" — so the question gets its own style \
+instead of inheriting the statement's. Never put "Questioning" in a label; the question \
+mark already carries the intonation.
+   A style applies to exactly the sentence it precedes and does NOT carry over, so an \
+untagged sentence is spoken flat. Tag every one.
+   Carry your persona into the labels — they should read like this character's stage \
+directions, not generic ones. A relaxed persona tags with "Easygoing, Amiable"; a \
+formal one tags the same sentence "Courteous, Composed".
+   Rotate the descriptors — don't reuse the same label twice in a row. A starting \
+palette:
+     greeting: "Warm, Welcoming" / "Bright, Glad" / "Easygoing, Friendly"
+     asking a question: "Gently curious" / "Open, Attentive" / "Interested, Light"
+     good news: "Delighted" / "Bright, Pleased" / "Buoyant"
+     reassuring: "Calm, Steady" / "Grounded, Confident" / "Unhurried, Kind"
+     bad news or empathy: "Sincere, Subdued" / "Soft, Caring" / "Quiet, Gentle"
+     reading back a total, date, or code: "Measured, Clear"`;
+
+const GEMINI_ACCENT = `Accent - OPTIONAL last descriptor, written "<PLACE> accent" \
+("American accent", "British accent", "Irish accent").
+   <expr type="expression" label="Thoughtful, Quiet, American accent"/>
+   An accent is who the speaker IS, not how they feel, so use the SAME accent in every \
+tag for the whole conversation. Switching it mid-conversation swaps the speaker \
+out from under the listener. If you are not deliberately playing an accent, leave it \
+out entirely rather than naming a different one each turn.`;
+
+/**
+ * Instruction block for Gemini's two direction channels.
+ *
+ * The `expression` label becomes the part's `speech_metadata.style`, so its label space is
+ * Gemini's own natural-language style prompt, not a vocabulary of ours.
+ */
+function geminiExprLlmInstructions(sounds: string[]): string {
+  const sections = [GEMINI_DELIVERY, GEMINI_ACCENT];
+  if (sounds.length) {
+    sections.push(`Sounds - one non-verbal sound, at the exact point it happens. \
+Self-closing.
+   <expr type="sound" label="${sounds[0]}"/>
+   Labels are a fixed vocabulary: ${sounds.join(', ')}.
+   Unlike the delivery style, which colours a whole sentence, a sound is a single event: \
+put the marker where the sound belongs, mid-sentence if that is where it lands.
+   Keep it clear of punctuation: put it after the mark that ends the sentence, never \
+between a word and that mark. "Better buns! <expr type="sound" label="${sounds[0]}"/>", \
+not "Better buns <expr type="sound" label="${sounds[0]}"/>!".
+   ${soundGuidance(sounds)}`);
+  }
+  sections.push(`Pauses - a beat of silence. Self-closing.
+   <expr type="break" label="500ms"/>
+   Gemini has ONE pause length, so the duration is only a hint that a beat belongs here.
+   A period or an ellipsis (...) already creates a pause, so don't put a break marker \
+right next to one — pick one or the other.`);
+  sections.push(`Emphasis - stresses the words it wraps.
+   <expr type="prosody" label="emphasis">one word</expr>
+   Use it on a single word, rarely — at most once in a turn, and not every turn. It is \
+the only in-text prosody this voice has; pace, pitch and volume all belong in the \
+delivery label instead.`);
+
+  return [
+    EXPR_PREAMBLE,
+    numberedSections(sections),
+    'There are no other marker types for this voice — no spell marker, and no ' +
+      "wrapping prosody beyond emphasis. Don't invent one.",
+    'Write the whole turn as one continuous line. A marker goes immediately ' +
+      "before the words it governs, not at the head of a new line — don't put each " +
+      'sentence on its own line. This is speech, so line breaks buy nothing and a ' +
+      "marker heading a line reads as a pause that isn't there.",
+    'Write for the EAR, not the page: no em or en dashes anywhere in spoken text — ' +
+      'use a comma or a period for a short beat, or a break marker for a real pause. ' +
+      'Avoid semicolons, mid-sentence colons, and parenthetical asides; rewrite them ' +
+      'as separate sentences or commas.',
+    'When the conversation is in another language, still write every label in ' +
+      'English — the style descriptions and sound names steer the voice and are never ' +
+      "translated. Name that language's accent only if you are deliberately playing " +
+      'one.',
+    'Examples:\n' +
+      soundExamples(GEMINI_EXAMPLES, sounds, GEMINI_SOUNDS)
+        .map((ex) => `  ${ex}`)
+        .join('\n'),
+  ].join('\n\n');
+}
+
 // Every provider's full expr sound vocabulary (the advertised labels before any
 // speechSteering filtering). Providers absent here have no non-verbal sounds.
 const PROVIDER_SOUNDS: Record<string, string[]> = {
   inworld: INWORLD_SOUNDS,
   xai: XAI_INLINE,
   fishaudio: FISHAUDIO_SOUNDS,
+  gemini: GEMINI_SOUNDS,
 };
 
 type NonverbalTable = Record<string, Partial<Record<NonverbalField, string[]>>>;
@@ -737,6 +897,15 @@ const NONVERBAL_SOUND_LABELS: NonverbalTable = {
     mouthSounds: [],
     reflexSounds: ['clear throat', 'yawning'],
   },
+  gemini: {
+    laughing: ['laugh', 'chuckle', 'giggle'],
+    breathing: ['breath', 'gasp'],
+    sighing: ['sigh'],
+    crying: ['cry'],
+    vocalizing: ['argh'],
+    mouthSounds: [],
+    reflexSounds: ['cough'],
+  },
 };
 
 // NonverbalOptions field -> the provider's wrapping-prosody labels it governs.
@@ -790,6 +959,10 @@ const SOUND_USAGE_HINTS: Record<string, string> = {
   tsk: 'a tsk for mock-disapproval',
   'clear throat': 'a clear-throat when shifting to a new step or topic',
   groaning: 'a groan at a groan-worthy pun or an unwelcome chore',
+  argh: 'a groan at a groan-worthy pun or an unwelcome chore',
+  cough: 'a cough only when a cough is the point',
+  gasp: 'a gasp at a sudden shock or reveal',
+  cry: 'a sob reserved for real heartbreak',
   yawning: 'a yawn when tiredness itself is the topic',
   sobbing: 'a sob reserved for real heartbreak',
 };
@@ -916,6 +1089,8 @@ const EXPR_ATTR_RE = /([\w-]+)\s*=\s*"([^"]*)"/g;
 // any <expr ...> or <expr .../> tag (open or self-closing)
 const EXPR_OPEN_RE = new RegExp(LEADING_WS + '<expr\\b(?<attrs>[^>]*?)/?\\s*>', 'g');
 const EXPR_CLOSE_RE = new RegExp(LEADING_WS + '</expr\\s*>', 'g');
+// any expr marker, opening or self-closing or closing; `attrs` is undefined for a closing one
+const EXPR_ANY_RE = new RegExp(LEADING_WS + '(?:<expr\\b(?<attrs>[^>]*?)/?\\s*>|</expr\\s*>)', 'g');
 // self-closing markers only (the trailing / is required)
 const EXPR_SELF_RE = new RegExp(LEADING_WS + '<expr\\b(?<attrs>[^>]*?)/\\s*>', 'g');
 // a wrapping marker (prosody/spell) and its span; non-greedy, instructed not to nest.
@@ -973,22 +1148,84 @@ function exprAttrs(attrs: string): Record<string, string> {
  * words stay in the clean text — only the delimiters are removed — which also keeps
  * streaming safe when an open/close pair is split across chunks.
  */
-function splitExpr(text: string): [string, ExpressiveTag[]] {
+function splitExpr(
+  text: string,
+  options: { atLineStart?: boolean } = {},
+): [string, ExpressiveTag[]] {
   if (!text.includes('<expr') && !text.includes('</expr')) {
     return [text, []];
   }
 
+  const atLineStart = options.atLineStart ?? true;
   const tags: ExpressiveTag[] = [];
+  let out = atLineStart ? '' : MID_LINE;
+  let pos = 0;
 
-  let clean = replaceWithGroups(text, EXPR_OPEN_RE, ({ groups, match, offset, source }) => {
+  for (const m of text.matchAll(EXPR_ANY_RE)) {
+    out += text.slice(pos, m.index);
+    const attrs = m.groups?.attrs;
+    if (attrs !== undefined) {
+      const marker = exprAttrs(attrs);
+      tags.push({ type: marker.type ?? '', value: marker.label ?? '' });
+    }
+    let append: string;
+    [append, pos] = stripOne(out, text, m.index + m[0].length, m.groups?.pre ?? '', '');
+    out += append;
+  }
+
+  out += text.slice(pos);
+  return [atLineStart ? out : out.slice(MID_LINE.length), tags];
+}
+
+/**
+ * Lower expr markers onto Gemini's inline tags, leaving the delivery marker standing.
+ *
+ * A discrete event (sound, pause, emphasis) lowers here like any other provider's. The
+ * `expression` marker is not text at all — it rides `speech_metadata.style` — so it passes
+ * through for the plugin to lift out.
+ */
+function convertGeminiExpr(text: string): string {
+  if (!text.includes('<expr') && !text.includes('</expr')) {
+    return text;
+  }
+
+  let out = replaceWithGroups(text, EXPR_WRAP_RE, ({ groups, match, offset, source }) => {
     const attrs = exprAttrs(groups.attrs ?? '');
-    tags.push({ type: attrs.type ?? '', value: attrs.label ?? '' });
-    return dedupRemovalSpace(groups.pre ?? '', '', source, offset + match.length);
+    const inner = groups.inner ?? '';
+    const emphasis =
+      attrs.type === 'prosody' && (attrs.label ?? '').trim().toLowerCase() === 'emphasis';
+    // Gemini stresses a word by capitalizing it, its one in-text prosody control; spell,
+    // and prosody it has no control for, keep only their words
+    return dedupRemovalSpace(
+      groups.pre ?? '',
+      emphasis ? inner.toUpperCase() : inner,
+      source,
+      offset + match.length,
+    );
   });
-  clean = replaceWithGroups(clean, EXPR_CLOSE_RE, ({ groups, match, offset, source }) =>
+
+  out = replaceWithGroups(out, EXPR_SELF_RE, ({ groups, match, offset, source }) => {
+    const attrs = exprAttrs(groups.attrs ?? '');
+    const markerType = attrs.type ?? '';
+    if (markerType === 'expression') {
+      return match; // the style channel: not text, and not ours to remove
+    }
+    let kept = '';
+    if (markerType === 'sound') {
+      let label = (attrs.label ?? '').trim().toLowerCase();
+      label = GEMINI_SOUND_ALIASES[label] ?? label;
+      kept = GEMINI_SOUNDS.includes(label) ? `<${label}>` : '';
+    } else if (markerType === 'break') {
+      kept = `<${GEMINI_PAUSE}>`;
+    }
+    return dedupRemovalSpace(groups.pre ?? '', kept, source, offset + match.length);
+  });
+  // a stray unpaired wrapper (split across stream chunks) must never reach the TTS as
+  // literal text; the expression marker is self-closing, so this can't eat one
+  out = replaceWithGroups(out, EXPR_CLOSE_RE, ({ groups, match, offset, source }) =>
     dedupRemovalSpace(groups.pre ?? '', '', source, offset + match.length),
   );
-  return [clean, tags];
+  return out;
 }
 
 /**
@@ -1112,7 +1349,7 @@ function convertExpr(provider: string, text: string): string {
 // Providers with an expr instruction block. Kept as a set so "does this voice speak
 // markup?" is answerable without rendering the block — the answer is needed on the
 // per-segment speech path, and the blocks run to several kilobytes.
-const MARKUP_DIALECTS = new Set(['cartesia', 'inworld', 'xai', 'fishaudio']);
+const MARKUP_DIALECTS = new Set(['cartesia', 'inworld', 'xai', 'fishaudio', 'gemini']);
 
 /**
  * Whether `provider` has an expr instruction block, i.e. whether expressive can do
@@ -1158,6 +1395,9 @@ export function llmInstructions(
       steering?.disfluencies ?? true,
     );
   }
+  if (provider === 'gemini') {
+    return geminiExprLlmInstructions(allowedSounds(provider, steering));
+  }
   return undefined;
 }
 
@@ -1171,6 +1411,10 @@ const PROVIDER_MARKUP: Record<string, string[]> = {
   // fish's native dialect is square brackets, produced only by convertMarkup for the TTS;
   // these names exist to catch hallucinated XML natives in transcripts
   fishaudio: FISHAUDIO_TAGS,
+  // gemini has no native inline tags at all (its style rides out of band, on each part of
+  // the request); membership here is what marks it markup-capable for normalizeMarkup, and
+  // what tells convertMarkup to leave its markers in place
+  gemini: GEMINI_TAGS,
 };
 
 // Union of every provider's XML tag names — used by the transcript sinks to strip markup
@@ -1202,8 +1446,18 @@ const ATTRIBUTE_MARKUP_TAGS: ReadonlySet<string> = new Set([
  * Square-bracket spans are *not* stripped: the LLM only writes expr, so brackets in its
  * output are prose (a `[text](url)` link) that a strip would mangle. Provider-native
  * brackets never arrive here — {@link dropBracketCues} removes them at their source.
+ *
+ * @param options - `atLineStart`: whether `text` begins a line, so a marker heading it
+ *   takes the space after it along; `false` for a chunk picked up mid-line, where that
+ *   whitespace is a real separator between two words. `atTextEnd`: whether `text` really
+ *   ends here, so a marker ending it takes the space before it along (see
+ *   `dropTrailingSeparator`); `false` mid-stream, where that whitespace belongs to
+ *   words still arriving. Both default to `true`.
  */
-export function splitAllMarkup(text: string): [string, ExpressiveTag[]] {
+export function splitAllMarkup(
+  text: string,
+  options: { atLineStart?: boolean; atTextEnd?: boolean } = {},
+): [string, ExpressiveTag[]] {
   // every markup shape is angle-bracketed, so text without "<" cannot contain any. The
   // sinks call this per streamed chunk and expressive is off by default, making this the
   // overwhelmingly common case — skip the tag-union scan entirely
@@ -1211,9 +1465,26 @@ export function splitAllMarkup(text: string): [string, ExpressiveTag[]] {
     return [text, []];
   }
 
-  const [withoutExpr, exprTags] = splitExpr(text);
-  const [clean, rawTags] = extractAndStrip(withoutExpr, ALL_MARKUP_TAGS, ATTRIBUTE_MARKUP_TAGS);
-  return [clean, [...exprTags, ...rawTags.map(([type, value]) => ({ type, value }))]];
+  const atLineStart = options.atLineStart ?? true;
+  const [withoutExpr, exprTags] = splitExpr(text, { atLineStart });
+  const [stripped, rawTags] = extractAndStrip(withoutExpr, ALL_MARKUP_TAGS, ATTRIBUTE_MARKUP_TAGS, {
+    atLineStart,
+  });
+  const tags = [...exprTags, ...rawTags.map(([type, value]) => ({ type, value }))];
+  const atTextEnd = options.atTextEnd ?? true;
+  return [atTextEnd ? dropTrailingSeparator(stripped, tags.length > 0) : stripped, tags];
+}
+
+/**
+ * Drop the space a marker ending the text leaves with nothing to pair against.
+ *
+ * {@link splitExpr} handles the other three sides at the point of removal, where it still
+ * knows whether the marker headed a line. It cannot handle this one: mid-stream a trailing
+ * space is the separator for words still arriving, so only a caller holding the whole
+ * segment may drop it.
+ */
+function dropTrailingSeparator(clean: string, strippedAny: boolean): string {
+  return strippedAny ? trimEndSpaces(clean) : clean;
 }
 
 /** {@link splitAllMarkup} returning only the clean text (tags discarded). */
@@ -1222,13 +1493,20 @@ export function stripAllMarkup(text: string): string {
 }
 
 /**
- * Strip only the `<expr/>` dialect, leaving all other markup untouched.
+ * Strip only the `<expr/>` dialect, returning the clean text and its markers.
  *
- * Unlike {@link stripAllMarkup}, provider-native tags survive (both leave square-bracket
- * spans alone).
+ * Unlike {@link splitAllMarkup}, provider-native tags survive — what a provider whose
+ * direction is split across channels needs: Gemini's inline `<laugh>` stays in the words,
+ * while the `expression` marker beside it has to come out.
  */
+export function splitExprMarkup(text: string): [string, ExpressiveTag[]] {
+  const [clean, tags] = splitExpr(text);
+  return [dropTrailingSeparator(clean, tags.length > 0), tags];
+}
+
+/** {@link splitExprMarkup} returning only the clean text (markers discarded). */
 export function stripExprMarkup(text: string): string {
-  return splitExpr(text)[0];
+  return splitExprMarkup(text)[0];
 }
 
 /**
@@ -1261,7 +1539,9 @@ export class TranscriptMarkupStripper {
   #buf = '';
   #tags: ExpressiveTag[] = [];
   #seamAfterStrip = false;
-  #emittedVisible = false;
+  #eatLeadingWs = false;
+  // the next words open the segment's first line
+  #lineStart = true;
 
   /**
    * Strip `text`, record its tags, and keep a removed tag from doubling a space.
@@ -1273,33 +1553,38 @@ export class TranscriptMarkupStripper {
    */
   #consume(text: string, final: boolean): string {
     let input = text;
-    if (this.#seamAfterStrip && (input[0] === ' ' || input[0] === '\t')) {
+    if (this.#eatLeadingWs) {
+      // the chunk ended on a tag that headed a line, so the space it stranded is the one
+      // this chunk starts with
+      input = input.replace(/^[ \t]+/, '');
+    } else if (this.#seamAfterStrip && (input[0] === ' ' || input[0] === '\t')) {
       // a tag was stripped right at the held whitespace: collapse that whitespace with the
       // run following it, leaving the single separator the words need
       input = input[0] + input.slice(1).replace(/^[ \t]+/, '');
     }
 
-    const [clean, tags] = splitAllMarkup(input);
+    // atTextEnd is handled below against the segment's tags, not this chunk's: the flush
+    // that ends a segment often carries only held whitespace and no marker
+    const [stripped, tags] = splitAllMarkup(input, {
+      atLineStart: this.#lineStart,
+      atTextEnd: false,
+    });
     this.#tags.push(...tags);
+    const clean = final ? dropTrailingSeparator(stripped, this.#tags.length > 0) : stripped;
 
-    const trimmed = trimEndSpaces(clean);
-    const held = final ? '' : clean.slice(trimmed.length);
+    const held = final ? '' : clean.slice(trimEndSpaces(clean).length);
     this.#buf = held;
-    // the held whitespace only abuts a removal when this chunk *ended* on a tag; a tag
-    // stripped earlier in the chunk leaves whitespace the LLM itself wrote, which is
-    // passed through rather than collapsed
-    this.#seamAfterStrip = tags.length > 0 && held.length > 0 && trimEndSpaces(input).endsWith('>');
-
-    let emit = clean.slice(0, clean.length - held.length);
-    if (!this.#emittedVisible) {
-      // A marker opening the segment leaves the space that followed it behind: the dedup
-      // drops the whitespace *before* a removed tag, and at position 0 there is none. The
-      // instructions ask for a leading expression marker, so this is the common case —
-      // without this the transcript would open with a space on nearly every turn.
-      emit = emit.replace(/^\s+/, '');
+    const out = clean.slice(0, clean.length - held.length);
+    if (out) {
+      this.#lineStart = out.endsWith('\n'); // the next chunk heads a fresh line
     }
-    if (emit) this.#emittedVisible = true;
-    return emit;
+
+    // a tag only abuts the next chunk when this one *ended* on it; a tag stripped earlier
+    // leaves whitespace the LLM itself wrote, which is passed through
+    const endedOnTag = tags.length > 0 && trimEndSpaces(input).endsWith('>');
+    this.#seamAfterStrip = endedOnTag && held.length > 0;
+    this.#eatLeadingWs = endedOnTag && this.#lineStart;
+    return out;
   }
 
   #hasOpenTag(): boolean {
@@ -1461,6 +1746,9 @@ export function normalizeMarkup(provider: string, text: string): string {
 
 /** Convert framework-standard markup to a provider's native syntax. */
 export function convertMarkup(provider: string, text: string): string {
+  if (provider === 'gemini') {
+    return convertGeminiExpr(text);
+  }
   let out = text;
   if (provider in PROVIDER_MARKUP) {
     // lower expr markers first; the per-provider conversions below then handle the

@@ -8,7 +8,7 @@ import { ChatContext } from '../llm/chat_context.js';
 import { type RealtimeCapabilities, RealtimeModel, type RealtimeSession } from '../llm/realtime.js';
 import { initializeLogger, log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
-import { Agent, type ModelSettings } from './agent.js';
+import { Agent, AgentTask, type ModelSettings } from './agent.js';
 import {
   AgentActivity,
   type ReusableResources,
@@ -490,5 +490,47 @@ describe('cleanupReusableResources', () => {
     const resources: ReusableResources = {};
     await cleanupReusableResources(resources, log());
     // should not throw
+  });
+});
+
+describe('AgentActivity STT handoff reuse with Agent.create', () => {
+  it('reuses the pipeline between Agent.create agents without an sttNode hook', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldActivity = createFakeActivity(Agent.create({ instructions: 'a' }), sharedStt);
+    const newActivity = createFakeActivity(Agent.create({ instructions: 'b' }), sharedStt);
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
+  });
+
+  it('reuses the pipeline between a class agent and an AgentTask.create task', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldActivity = createFakeActivity(new Agent({ instructions: 'a' }), sharedStt);
+    const newActivity = createFakeActivity(
+      AgentTask.create<string>({ instructions: 'task' }),
+      sharedStt,
+    );
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
+  });
+
+  it('does not reuse the pipeline when an Agent.create agent provides an sttNode hook', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldActivity = createFakeActivity(new Agent({ instructions: 'a' }), sharedStt);
+    const newActivity = createFakeActivity(
+      Agent.create({
+        instructions: 'b',
+        sttNode: async function* () {},
+      }),
+      sharedStt,
+    );
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBeUndefined();
+    expect(oldActivity.activity.audioRecognition?.detachSttPipeline).not.toHaveBeenCalled();
   });
 });

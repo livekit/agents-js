@@ -4,7 +4,7 @@
 import { APIError, Future, Task, llm, stream } from '@livekit/agents';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WebSocketServer } from 'ws';
+import { type WebSocket, WebSocketServer } from 'ws';
 import type * as api_proto from './api_proto.js';
 import {
   RealtimeModel,
@@ -1096,6 +1096,38 @@ describe('RealtimeSession chat context update events', () => {
     expect((events[0] as api_proto.ConversationItemDeleteEvent).item_id).toBe('item_1');
     expect((events[1] as api_proto.ConversationItemCreateEvent).item.id).toBe('item_1');
   });
+
+  it('ignores session metadata when creating provider events', async () => {
+    const existingMessage = llm.ChatMessage.create({
+      id: 'item_1',
+      role: 'assistant',
+      content: ['What is two plus two?'],
+    });
+    const session = createChatCtxUpdateSession(existingMessage);
+
+    const events = await session.createChatCtxUpdateEvents(
+      new llm.ChatContext([
+        existingMessage,
+        new llm.AgentConfigUpdate({
+          id: 'item_config',
+          instructions: 'Ask the next math question.',
+        }),
+        new llm.AgentHandoffItem({
+          id: 'item_handoff',
+          oldAgentId: 'agent_1',
+          newAgentId: 'agent_2',
+        }),
+        llm.ChatMessage.create({ id: 'item_2', role: 'user', content: ['four'] }),
+      ]),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'conversation.item.create',
+      previous_item_id: 'item_1',
+      item: { id: 'item_2' },
+    });
+  });
 });
 
 describe('RealtimeSession.updateOptions', () => {
@@ -1220,6 +1252,18 @@ describe('processBaseURL', () => {
     expect(url.pathname).toBe('/v1/realtime');
   });
 
+  it('preserves custom wss baseURL paths and query params while adding model', () => {
+    expect(
+      processBaseURL({
+        baseURL: 'wss://livekit.ai/voice/v1/chat/voice?client=oai&enable_noise_suppression=true',
+        model: 'gpt-4',
+        isAzure: false,
+      }),
+    ).toBe(
+      'wss://livekit.ai/voice/v1/chat/voice?client=oai&enable_noise_suppression=true&model=gpt-4',
+    );
+  });
+
   it('passes through an already-ws baseURL unchanged', () => {
     const url = new URL(
       processBaseURL({
@@ -1232,4 +1276,190 @@ describe('processBaseURL', () => {
     expect(url.protocol).toBe('ws:');
     expect(url.pathname).toBe('/v1/realtime');
   });
+});
+
+type FunctionCallServerConnection = {
+  socket: WebSocket;
+  created: api_proto.ItemResource[];
+};
+
+async function startFunctionCallServer(
+  args: string,
+  options: { dropOnOutput?: boolean } = {},
+): Promise<{ server: WebSocketServer; connections: FunctionCallServerConnection[]; url: string }> {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(server, 'listening');
+  const address = server.address();
+  if (typeof address === 'string' || address === null) {
+    throw new Error('expected websocket server to listen on a TCP port');
+  }
+
+  const connections: FunctionCallServerConnection[] = [];
+  server.on('connection', (socket) => {
+    const connection: FunctionCallServerConnection = { socket, created: [] };
+    connections.push(connection);
+    let previousItemId: string | null = null;
+
+    socket.send(JSON.stringify({ type: 'session.created', event_id: 'ev_session', session: {} }));
+    socket.on('message', (data) => {
+      const event = JSON.parse(data.toString()) as api_proto.ClientEvent;
+      if (event.type === 'conversation.item.create') {
+        const item = event.item as api_proto.ItemResource;
+        connection.created.push(item);
+        if (
+          options.dropOnOutput &&
+          connections.length === 1 &&
+          item.type === 'function_call_output'
+        ) {
+          socket.close();
+          return;
+        }
+        socket.send(
+          JSON.stringify({
+            type: 'conversation.item.added',
+            event_id: `ev_${item.id}`,
+            previous_item_id: previousItemId,
+            item,
+          }),
+        );
+        previousItemId = item.id;
+      } else if (event.type === 'response.create') {
+        const response = {
+          id: 'resp_1',
+          object: 'realtime.response',
+          status: 'in_progress',
+          output: [],
+          metadata: event.response?.metadata,
+        };
+        const call: api_proto.FunctionCallItem = {
+          id: 'item_call',
+          object: 'realtime.item',
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'weather',
+          arguments: '',
+        };
+        const doneCall = { ...call, status: 'completed', arguments: args };
+        const serverEvents = [
+          { type: 'response.created', response },
+          {
+            type: 'response.output_item.added',
+            response_id: 'resp_1',
+            output_index: 0,
+            item: call,
+          },
+          {
+            type: 'conversation.item.added',
+            previous_item_id: previousItemId,
+            item: call,
+          },
+          {
+            type: 'response.output_item.done',
+            response_id: 'resp_1',
+            output_index: 0,
+            item: doneCall,
+          },
+          {
+            type: 'response.done',
+            response: { ...response, status: 'completed', output: [doneCall] },
+          },
+        ];
+        for (const serverEvent of serverEvents) {
+          socket.send(JSON.stringify({ event_id: `ev_${serverEvent.type}`, ...serverEvent }));
+        }
+        previousItemId = call.id;
+      }
+    });
+  });
+
+  return {
+    server,
+    connections,
+    url: `ws://127.0.0.1:${address.port}/v1`,
+  };
+}
+
+async function callWeather(session: RealtimeSession, args: string): Promise<llm.ChatContext> {
+  const chatCtx = llm.ChatContext.empty();
+  chatCtx.addMessage({
+    role: 'user',
+    content: "what's the weather in Tokyo?",
+    id: 'item_user',
+  });
+  await session.updateChatCtx(chatCtx);
+
+  const generation = await session.generateReply();
+  const calls: llm.FunctionCall[] = [];
+  for await (const call of generation.functionStream) calls.push(call);
+  expect(calls.map((call) => call.args)).toEqual([args]);
+
+  const updatedChatCtx = session.chatCtx.copy();
+  updatedChatCtx.items.push(
+    new llm.FunctionCallOutput({
+      id: 'item_output',
+      callId: 'call_1',
+      name: 'weather',
+      output: 'sunny',
+      isError: false,
+    }),
+  );
+  return updatedChatCtx;
+}
+
+const replayedCall = [
+  ['message', undefined],
+  ['function_call', 'call_1'],
+  ['function_call_output', 'call_1'],
+];
+
+it('replays function calls with their outputs on reconnect', async () => {
+  const args = '{"city": "Tokyo"}';
+  const { server, connections, url } = await startFunctionCallServer(args);
+  const model = new RealtimeModel({ apiKey: 'fake', baseURL: url, modalities: ['text'] });
+  const session = model.session();
+  try {
+    const chatCtx = await callWeather(session, args);
+    await session.updateChatCtx(chatCtx);
+
+    connections[0]!.socket.close();
+    await vi.waitFor(() => expect(connections[1]?.created).toHaveLength(3), { timeout: 5_000 });
+
+    const replayed = connections[1]!.created;
+    expect(
+      replayed.map((item) => [item.type, 'call_id' in item ? item.call_id : undefined]),
+    ).toEqual(replayedCall);
+    expect((replayed[1] as api_proto.FunctionCallItem).arguments).toBe(args);
+  } finally {
+    connections.forEach(({ socket }) => socket.terminate());
+    await session.close();
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+it('recreates an item the lost connection never confirmed', async () => {
+  const args = '{"city": "Tokyo"}';
+  const { server, connections, url } = await startFunctionCallServer(args, {
+    dropOnOutput: true,
+  });
+  const model = new RealtimeModel({ apiKey: 'fake', baseURL: url, modalities: ['text'] });
+  const session = model.session();
+  try {
+    const chatCtx = await callWeather(session, args);
+    await session.updateChatCtx(chatCtx);
+
+    expect(connections).toHaveLength(2);
+    const recreated = connections[1]!.created;
+    expect(
+      recreated.map((item) => [item.type, 'call_id' in item ? item.call_id : undefined]),
+    ).toEqual(replayedCall);
+    expect(session.chatCtx.getById('item_output')).toBeDefined();
+  } finally {
+    connections.forEach(({ socket }) => socket.terminate());
+    await session.close();
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
 });

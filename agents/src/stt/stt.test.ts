@@ -82,6 +82,30 @@ class AlwaysFailingSTT extends STT {
   }
 }
 
+class UntimestampedSTT extends STT {
+  label = 'untimestamped-stt';
+
+  constructor() {
+    super({ streaming: true, interimResults: false });
+  }
+
+  protected async _recognize(_frame: AudioBuffer): Promise<SpeechEvent> {
+    return { type: SpeechEventType.FINAL_TRANSCRIPT };
+  }
+
+  stream(): SpeechStream {
+    return new UntimestampedSpeechStream(this);
+  }
+}
+
+class UntimestampedSpeechStream extends SpeechStream {
+  label = 'untimestamped-speech-stream';
+
+  protected async run(): Promise<void> {
+    this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
+  }
+}
+
 class AlwaysFailingStream extends SpeechStream {
   label = 'always-failing-stream';
   runCount = 0;
@@ -96,6 +120,58 @@ class AlwaysFailingStream extends SpeechStream {
     throw new APIStatusError({
       message: 'still down',
       options: { statusCode: 503, body: null, retryable: true },
+    });
+  }
+}
+
+/**
+ * Connects, stays up past the connect timeout without ever hearing speech, then drops — the
+ * shape of Cartesia's `1001 Idle timeout` on a muted or silent caller.
+ */
+class IdleDropSTT extends STT {
+  label = 'idle-drop-stt';
+
+  constructor(
+    private readonly drops: number,
+    private readonly uptimeMs: number,
+  ) {
+    super({ streaming: true, interimResults: false });
+  }
+
+  protected async _recognize(_buffer: AudioBuffer): Promise<SpeechEvent> {
+    throw new APIConnectionError({ message: 'not used' });
+  }
+
+  override stream(options?: { connOptions?: APIConnectOptions }): IdleDropStream {
+    return new IdleDropStream(this, this.drops, this.uptimeMs, options?.connOptions);
+  }
+}
+
+class IdleDropStream extends SpeechStream {
+  label = 'idle-drop-stream';
+  runCount = 0;
+
+  constructor(
+    stt: STT,
+    private readonly drops: number,
+    private readonly uptimeMs: number,
+    connOptions?: APIConnectOptions,
+  ) {
+    super(stt, undefined, connOptions);
+  }
+
+  protected async run(): Promise<void> {
+    this.runCount += 1;
+    await delay(this.uptimeMs);
+    if (this.runCount > this.drops) {
+      for await (const _ of this.input) {
+        /* drain */
+      }
+      return;
+    }
+    throw new APIConnectionError({
+      message: 'connection closed unexpectedly (code=1001)',
+      options: { retryable: true },
     });
   }
 }
@@ -135,6 +211,21 @@ describe('SpeechStream retry budget', () => {
     await stream.close();
   });
 
+  it('resets after an attempt that outlived the connect timeout, without any transcript', async () => {
+    const stt = new IdleDropSTT(8, 30);
+    const stream = stt.stream({ connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 10 } });
+
+    const errors: { error: Error; recoverable: boolean }[] = [];
+    stt.on('error', (ev) => errors.push({ error: ev.error, recoverable: ev.recoverable }));
+
+    while (stream.runCount < 9) {
+      await delay(5);
+    }
+
+    expect(errors).toEqual([]);
+    await stream.close();
+  });
+
   it('still gives up after maxRetry consecutive failures with no transcript', async () => {
     const stt = new AlwaysFailingSTT();
     const stream = stt.stream({ connOptions });
@@ -149,7 +240,32 @@ describe('SpeechStream retry budget', () => {
     expect(stream.runCount).toBe(connOptions.maxRetry + 1);
     expect(errors.at(-1)!.error).toBeInstanceOf(APIStatusError);
     expect(errors.at(-1)!.recoverable).toBe(false);
+    expect(stream.terminalError).toBeInstanceOf(APIConnectionError);
 
     await stream.close();
+  });
+});
+
+describe('STT event timestamps', () => {
+  it('timestamps non-streaming recognition results', async () => {
+    const before = Date.now();
+    const event = await new UntimestampedSTT().recognize([]);
+
+    expect(event.createdAt).toBeGreaterThanOrEqual(before);
+    expect(event.createdAt).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('timestamps events before a speech stream delivers them', async () => {
+    const stream = new UntimestampedSTT().stream();
+    const before = Date.now();
+
+    try {
+      const { value } = await stream.next();
+
+      expect(value?.createdAt).toBeGreaterThanOrEqual(before);
+      expect(value?.createdAt).toBeLessThanOrEqual(Date.now());
+    } finally {
+      stream.close();
+    }
   });
 });

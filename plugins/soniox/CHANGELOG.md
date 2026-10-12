@@ -1,5 +1,44 @@
 # @livekit/agents-plugin-soniox
 
+## 1.9.2
+
+### Patch Changes
+
+- Authenticate Soniox STT and TTS WebSockets with bearer headers and preserve TTS connection errors. - [#2681](https://github.com/livekit/agents-js/pull/2681) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve the full timed token span in final transcripts when token timing arrives late or regresses. - [#2633](https://github.com/livekit/agents-js/pull/2633) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`6983459`](https://github.com/livekit/agents-js/commit/6983459517ccd4434c319375f3e2897d76d82e91), [`df97b86`](https://github.com/livekit/agents-js/commit/df97b867b3b16efbd348584c818cefc5536ef21a), [`361df82`](https://github.com/livekit/agents-js/commit/361df823ccc8bb00cafe682cfb46dcd7daf948ae), [`52e3a04`](https://github.com/livekit/agents-js/commit/52e3a04a12397e34cdd17f93b4cdece648769540), [`efd0f85`](https://github.com/livekit/agents-js/commit/efd0f851e0a13f52ee5ae8b7e617abc48ddc19b9), [`2c4d8c7`](https://github.com/livekit/agents-js/commit/2c4d8c7c3b8843a10086a0c351e79d641fe88eff), [`a3cd25b`](https://github.com/livekit/agents-js/commit/a3cd25bea26bf582796ada893fad8b47aaed6c89), [`f2d9487`](https://github.com/livekit/agents-js/commit/f2d9487b9c032b0183492f821644ea936a5385fb), [`7ca0d8c`](https://github.com/livekit/agents-js/commit/7ca0d8c5405a7b4d89cdb285dc87c882dd5292bf), [`ce9e830`](https://github.com/livekit/agents-js/commit/ce9e830305bf07b571c2c6f12884e0ab7100b52d), [`11e204f`](https://github.com/livekit/agents-js/commit/11e204f0eea5e5f057c1b10af27424c9b0cd87b8), [`573a31e`](https://github.com/livekit/agents-js/commit/573a31eed7389eada05c72a855a1da678333d215), [`7ca0d8c`](https://github.com/livekit/agents-js/commit/7ca0d8c5405a7b4d89cdb285dc87c882dd5292bf), [`0022fce`](https://github.com/livekit/agents-js/commit/0022fce99b7f879a8c14b5a2b6aaa7400df215c5)]:
+  - @livekit/agents@1.9.2
+
+## 1.9.1
+
+### Patch Changes
+
+- Updated dependencies [[`3b086bc`](https://github.com/livekit/agents-js/commit/3b086bc19a403cd1d622f8e458c744ad69fb48a5), [`72898e1`](https://github.com/livekit/agents-js/commit/72898e1e583874860b5a1d8d241195ecf8d99d54), [`f6ea8df`](https://github.com/livekit/agents-js/commit/f6ea8df234c9f4a992e67908f3f100c956a9acc0), [`7e23bc5`](https://github.com/livekit/agents-js/commit/7e23bc56364cdd411163e31fc0b74bafc75851c3), [`3a8b621`](https://github.com/livekit/agents-js/commit/3a8b6210cb0175c79d410afae5fe0bba0c19c08d), [`c9e1f26`](https://github.com/livekit/agents-js/commit/c9e1f26172681190257e8e01b86c7fe90e4e15dd), [`f6f9e7a`](https://github.com/livekit/agents-js/commit/f6f9e7ad1614d22c21b935ee4101a727eea1b145), [`d3a0abe`](https://github.com/livekit/agents-js/commit/d3a0abead85e7d9db79c355b345c515eb6aa42fe), [`21aa476`](https://github.com/livekit/agents-js/commit/21aa4763f2b89506fb1e56f6879b23e41a5bcfa6), [`38f65f8`](https://github.com/livekit/agents-js/commit/38f65f8a4c790f0bc4b62b1aba407cf1f95a2360), [`646f0bc`](https://github.com/livekit/agents-js/commit/646f0bc70f4a55d9b282dde8b25ebfb5be818fb7), [`1244049`](https://github.com/livekit/agents-js/commit/1244049976d3caea04debef32ad72e4785f20d99), [`1244049`](https://github.com/livekit/agents-js/commit/1244049976d3caea04debef32ad72e4785f20d99), [`1fc4290`](https://github.com/livekit/agents-js/commit/1fc429084d063d7b7fd4f61eec0df3378b066777), [`5287be1`](https://github.com/livekit/agents-js/commit/5287be114b12fb16f0a3eb6ccca4173e6e3eb219), [`d650cc0`](https://github.com/livekit/agents-js/commit/d650cc025c6322e0bc822a9ab6cace9d1fa29648), [`f089dc5`](https://github.com/livekit/agents-js/commit/f089dc52967ccab3f70db449dddc52af664dea61), [`40bf9b1`](https://github.com/livekit/agents-js/commit/40bf9b13f3b71fe50076f53609aa63af449737b4), [`1244049`](https://github.com/livekit/agents-js/commit/1244049976d3caea04debef32ad72e4785f20d99), [`b7ad990`](https://github.com/livekit/agents-js/commit/b7ad990c5faa424b31697bd2e868232f81f2bdf5), [`7ab8bd8`](https://github.com/livekit/agents-js/commit/7ab8bd801bc78d3c88c8b50904f1d90e81d976b8), [`b7ad990`](https://github.com/livekit/agents-js/commit/b7ad990c5faa424b31697bd2e868232f81f2bdf5), [`546dc33`](https://github.com/livekit/agents-js/commit/546dc3330d2543a61f3291b60e72e881d4b1e4b4), [`5481379`](https://github.com/livekit/agents-js/commit/5481379b435119aba4ae00779ce6f3c2e2e39977)]:
+  - @livekit/agents@1.9.1
+
+## 1.9.0
+
+### Patch Changes
+
+- Updated dependencies [[`d074b68`](https://github.com/livekit/agents-js/commit/d074b68b0fcb0f96768b425f27167a3c6ea2e5cd), [`3b068a5`](https://github.com/livekit/agents-js/commit/3b068a5679eae29ed114dfc7caa114dd9145accc), [`78dde70`](https://github.com/livekit/agents-js/commit/78dde705069bf38a3e9abcc6561c7163911b0ae7), [`931a217`](https://github.com/livekit/agents-js/commit/931a217014cd9425130d6580cc4cec2c44de96dc), [`c82fd8c`](https://github.com/livekit/agents-js/commit/c82fd8ca4046d3d03d235007953c17c19d9d766a)]:
+  - @livekit/agents@1.9.0
+
+## 1.8.1
+
+### Patch Changes
+
+- Updated dependencies [[`d92443a`](https://github.com/livekit/agents-js/commit/d92443a80be4db735e72d845129d4f99c7186374), [`679d044`](https://github.com/livekit/agents-js/commit/679d044a80c6e916f203f392098eaeb0549bb95d), [`b11b7b4`](https://github.com/livekit/agents-js/commit/b11b7b4d0d734082b3d2d21a447b0b093b4482fc), [`63d46a0`](https://github.com/livekit/agents-js/commit/63d46a03f1958cc9bec647a71b95517202ae2447), [`42ec937`](https://github.com/livekit/agents-js/commit/42ec937ca1882f1e826e8532dbb33e7623bfa9df), [`1f9f63a`](https://github.com/livekit/agents-js/commit/1f9f63ab737d59d31e5adb353bf56d835a102298), [`6b44bca`](https://github.com/livekit/agents-js/commit/6b44bcac254dcebb826d8cbeade4aae64d041b5f), [`2b93dbe`](https://github.com/livekit/agents-js/commit/2b93dbe8a4653f9bde0a2cf046a3c4ba64da39db), [`ced62f2`](https://github.com/livekit/agents-js/commit/ced62f2c7ad94dd87fb00b5752415c3cf95b2d2c), [`8ef21bf`](https://github.com/livekit/agents-js/commit/8ef21bf1e40a362b6d30b817e20500125859e23b), [`c69a50a`](https://github.com/livekit/agents-js/commit/c69a50a3542f99e4b7a62a36a70bf9eacd7b4b73), [`01094a6`](https://github.com/livekit/agents-js/commit/01094a691117a6d3d18954697bd52607211fcf5a), [`b4cadac`](https://github.com/livekit/agents-js/commit/b4cadacc6aa577a1aa0b017f8831e9ff0e2cb863)]:
+  - @livekit/agents@1.8.1
+
+## 1.8.0
+
+### Patch Changes
+
+- Updated dependencies [[`38243d9`](https://github.com/livekit/agents-js/commit/38243d90464519808ce7ce021642d2837c69a923), [`ba4a502`](https://github.com/livekit/agents-js/commit/ba4a5027df32c413e45966f353ece17eeb3d8d0c), [`30dbde5`](https://github.com/livekit/agents-js/commit/30dbde5f67204af045c989ed3a6f03c73e854234), [`0d9e641`](https://github.com/livekit/agents-js/commit/0d9e6416674c38cbf7737f20312bd37c867fa54d), [`af46117`](https://github.com/livekit/agents-js/commit/af4611720949cb124dad0ee6bcba010120fd3083), [`080db3e`](https://github.com/livekit/agents-js/commit/080db3e5a0ac13de00d30e4dd11ff4b2ae5fbd90), [`a001e13`](https://github.com/livekit/agents-js/commit/a001e13fa679f93060e06552a4e349e638207231), [`66bffa7`](https://github.com/livekit/agents-js/commit/66bffa7ec0f0d1ae653138c3b0ce2c7f9642e69f), [`4e405c4`](https://github.com/livekit/agents-js/commit/4e405c4470965e808d69604aff29d425bcbf465d), [`41bde92`](https://github.com/livekit/agents-js/commit/41bde92f00216d4d906b814c8962cb5ec59d595a), [`c5a205b`](https://github.com/livekit/agents-js/commit/c5a205b854e8224f8ab71373cf51bf100bcfe2a1), [`128f3f6`](https://github.com/livekit/agents-js/commit/128f3f6a230616e960325b112067861ce1f1a17f), [`5d0304a`](https://github.com/livekit/agents-js/commit/5d0304aae8e159b4c6b015f5e8fb3a80e58bf56b), [`cf73c13`](https://github.com/livekit/agents-js/commit/cf73c13d6c6837bf9afa9537d050293f7739bc6b), [`3ddd35e`](https://github.com/livekit/agents-js/commit/3ddd35ee1f0c4f2a502bc2ab95d9e5800e8f852a), [`316610c`](https://github.com/livekit/agents-js/commit/316610cbeb25815cb54cee6aeb21ef24f3f08e1a), [`ac882c0`](https://github.com/livekit/agents-js/commit/ac882c0ca2dcc7cdb39994a5443a82bc01dd3732), [`bb16578`](https://github.com/livekit/agents-js/commit/bb16578a0ee17a16a508fe05d162aad4bbac750b), [`2895612`](https://github.com/livekit/agents-js/commit/28956128d8bcb8c8fac8d53dbd1afcf3e114fa6e)]:
+  - @livekit/agents@1.8.0
+
 ## 1.7.1
 
 ### Patch Changes

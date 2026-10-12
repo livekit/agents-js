@@ -1,22 +1,30 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { RoomEvent } from '@livekit/rtc-node';
+import { ConnectionState, RoomEvent } from '@livekit/rtc-node';
 import type { Room } from '@livekit/rtc-node';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { JobContext, type JobProcess, type RunningJobInfo } from './job.js';
+import { log } from './log.js';
 import { SimulationContext, parseSimulationDispatch } from './simulation.js';
+import * as rpcTracing from './telemetry/rpc.js';
 
-const { deleteRoomMock, roomServiceClientMock } = vi.hoisted(() => ({
+const { deleteRoomMock, roomServiceClientMock, setupCloudTracerMock } = vi.hoisted(() => ({
   deleteRoomMock: vi.fn(async () => {}),
   roomServiceClientMock: vi.fn(function RoomServiceClient() {
     return { deleteRoom: deleteRoomMock };
   }),
+  setupCloudTracerMock: vi.fn(async () => {}),
 }));
 
 vi.mock('livekit-server-sdk', () => ({
   RoomServiceClient: roomServiceClientMock,
+}));
+
+vi.mock('./telemetry/index.js', () => ({
+  setupCloudTracer: setupCloudTracerMock,
+  uploadSessionReport: vi.fn(async () => {}),
 }));
 
 beforeEach(() => {
@@ -235,6 +243,32 @@ describe('JobContext.simulationContext', () => {
   });
 });
 
+describe('JobContext.inferenceHeaders', () => {
+  const dispatch = (mode: string) =>
+    JSON.stringify({ simulationRunId: 'SR_1', scenario: { label: 's' }, mode });
+
+  it('forces low inference priority under a text simulation', () => {
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { attributes: { 'lk.simulator.dispatch': dispatch('SIMULATION_MODE_TEXT') } },
+    );
+    expect(ctx.inferenceHeaders).toEqual({ 'X-LiveKit-Inference-Priority': 'low' });
+  });
+
+  it('leaves audio simulations at their configured priority', () => {
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { attributes: { 'lk.simulator.dispatch': dispatch('SIMULATION_MODE_AUDIO') } },
+    );
+    expect(ctx.inferenceHeaders).toEqual({});
+  });
+
+  it('is empty for an ordinary job', () => {
+    const { ctx } = createJobContextWithRoom();
+    expect(ctx.inferenceHeaders).toEqual({});
+  });
+});
+
 describe('simulator participant lifecycle', () => {
   it('shuts the job down when a participant with lk.simulator disconnects', () => {
     const { handlers, onShutdown } = createJobContextWithRoom();
@@ -340,4 +374,135 @@ describe('JobContext recording redaction', () => {
       ).rejects.toThrow('audio upload requires transcript upload when redaction is enabled');
     },
   );
+});
+
+describe('JobContext observability URL', () => {
+  const tracesOn = {
+    audio: false,
+    traces: true,
+    logs: false,
+    transcript: false,
+    redaction: false,
+  } as const;
+
+  let prevObservabilityUrl: string | undefined;
+
+  beforeEach(() => {
+    prevObservabilityUrl = process.env.LIVEKIT_OBSERVABILITY_URL;
+    delete process.env.LIVEKIT_OBSERVABILITY_URL;
+  });
+
+  afterEach(() => {
+    if (prevObservabilityUrl === undefined) {
+      delete process.env.LIVEKIT_OBSERVABILITY_URL;
+    } else {
+      process.env.LIVEKIT_OBSERVABILITY_URL = prevObservabilityUrl;
+    }
+  });
+
+  it('configures the cloud tracer with the LiveKit Cloud URL', async () => {
+    const ctx = createJobContext();
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://example.livekit.cloud' }),
+    );
+  });
+
+  it('skips the cloud tracer on a self-hosted URL', async () => {
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).not.toHaveBeenCalled();
+  });
+
+  it('uses LIVEKIT_OBSERVABILITY_URL on a self-hosted URL', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'https://obs.example.com:8443';
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://obs.example.com:8443' }),
+    );
+  });
+
+  it('preserves a plaintext scheme on LIVEKIT_OBSERVABILITY_URL', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'http://collector.internal';
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'http://collector.internal' }),
+    );
+  });
+
+  it('strips a trailing slash so endpoint paths do not double up', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'https://obs.example.com/';
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://obs.example.com' }),
+    );
+  });
+
+  it('prefers LIVEKIT_OBSERVABILITY_URL over the job Cloud URL', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'https://override.example.com';
+    const ctx = createJobContext();
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://override.example.com' }),
+    );
+  });
+
+  it('falls back to the Cloud URL when LIVEKIT_OBSERVABILITY_URL is not a valid URL', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'not a url';
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    const ctx = createJobContext();
+    await ctx.initRecording(tracesOn);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'not a url' }),
+      'invalid LIVEKIT_OBSERVABILITY_URL, falling back to the job URL',
+    );
+    expect(setupCloudTracerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ observabilityUrl: 'https://example.livekit.cloud' }),
+    );
+  });
+
+  it('does not enable the cloud tracer on a self-hosted URL when LIVEKIT_OBSERVABILITY_URL is invalid', async () => {
+    process.env.LIVEKIT_OBSERVABILITY_URL = 'not a url';
+    const ctx = createJobContext({ url: 'wss://selfhosted.example.com' });
+    await ctx.initRecording(tracesOn);
+    expect(setupCloudTracerMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobContext rpc tracing', () => {
+  it('installs rpc tracing whenever its room connects, however it was connected', () => {
+    // the entrypoint may connect ctx.room itself, with no session and no ctx.connect(): the
+    // job listens to its room, so the hook is there as long as the room is connected
+    const install = vi
+      .spyOn(rpcTracing, 'install')
+      .mockReturnValue({} as unknown as ReturnType<typeof rpcTracing.install>);
+    try {
+      const ctx = createJobContext();
+      const room = ctx.room as unknown as {
+        on: ReturnType<typeof vi.fn>;
+        isConnected: boolean;
+        localParticipant?: unknown;
+      };
+      const onConnectionState = room.on.mock.calls.find(
+        ([event]) => event === RoomEvent.ConnectionStateChanged,
+      )?.[1] as ((state: ConnectionState) => void) | undefined;
+      expect(onConnectionState).toBeDefined();
+
+      onConnectionState!(ConnectionState.CONN_DISCONNECTED);
+      expect(install).not.toHaveBeenCalled();
+
+      room.isConnected = true;
+      room.localParticipant = { identity: 'agent' };
+      onConnectionState!(ConnectionState.CONN_CONNECTED);
+      expect(install).toHaveBeenCalledWith(room.localParticipant, ctx);
+
+      onConnectionState!(ConnectionState.CONN_CONNECTED); // a reconnect installs again
+      expect(install).toHaveBeenCalledTimes(2);
+    } finally {
+      install.mockRestore();
+    }
+  });
 });

@@ -59,6 +59,20 @@ export default defineAgent({
 cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
 ```
 
+### Reusing tools with Phonic Responses
+
+Convert an existing LiveKit `ToolContext` into the schema-only definitions accepted by Phonic's
+Responses API:
+
+```typescript
+import * as phonic from '@livekit/agents-plugin-phonic';
+
+const toolDefinitions = phonic.realtime.toPhonicToolDefinitions(toolContext);
+```
+
+The executable functions remain in the `ToolContext`; only their names, descriptions, and parameter
+schemas are returned.
+
 ## Configuration
 
 Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `RealtimeModel`. All other options are optional.
@@ -68,7 +82,7 @@ Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `Rea
 | `apiKey`                             | `string`                                   | Phonic API key. Falls back to `PHONIC_API_KEY` environment variable                                                                                                                                                                                         |
 | `model`                              | `string`                                   | Model name (default: `merritt`)                                                                                                                                                                                                                             |
 | `phonicAgent`                        | `string`                                   | Phonic agent name. Options set explicitly here override agent settings                                                                                                                                                                                      |
-| `voice`                              | `string`                                   | Voice ID — `sabrina`, `grant`, `virginia`, `landon`, `eleanor`, `shelby`, `nolan`                                                                                                                                                                           |
+| `voice`                              | `string`                                   | Voice ID — see [available voices](https://docs.phonic.ai/docs/build/agents/voices)                                                                                                                                                                          |
 | `welcomeMessage`                     | `string`                                   | Message the agent says when the conversation starts. Ignored when `generateWelcomeMessage` is true                                                                                                                                                          |
 | `generateWelcomeMessage`             | `boolean`                                  | Auto-generate the welcome message (ignores `welcomeMessage`)                                                                                                                                                                                                |
 | `project`                            | `string`                                   | Project name (default: `main`)                                                                                                                                                                                                                              |
@@ -95,6 +109,7 @@ Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `Rea
 | `pronunciationDictionary`            | `{ word, pronunciation }[]`                | Pronunciation entries; words must be unique                                                                                                                                                                                                                 |
 | `templateVariables`                  | `Record<string, string>`                   | Variables substituted into the system prompt and welcome message                                                                                                                                                                                            |
 | `enableRedaction`                    | `boolean`                                  | Redact PII/PHI from transcripts and bleep it from audio after the conversation                                                                                                                                                                              |
+| `enableWatermarking`                 | `boolean`                                  | Embed an inaudible provenance watermark in generated audio. Adds a very small amount of latency                                                                                                                                                             |
 | `mcpServers`                         | `string[]`                                 | Names of pre-configured MCP servers to make available (must be unique)                                                                                                                                                                                      |
 | `observabilityIntegrations`          | `'braintrust'[]`                           | Observability integrations to forward traces to                                                                                                                                                                                                             |
 | `configurationEndpoint`              | `{ url, headers?, timeout_ms? }` \| `null` | Endpoint the agent calls to fetch per-conversation configuration                                                                                                                                                                                            |
@@ -121,10 +136,11 @@ new phonic.realtime.RealtimeModel({
 | `require_speech_before_tool_call` | `boolean` | `false` | Require the agent to speak before the tool can be called                                                                                                                |
 | `forbid_speech_after_tool_call`   | `boolean` | `false` | Suppress the auto-generated spoken reply after the tool. Use for tools that always hand off to another agent (a non-handoff tool set here would leave the agent silent) |
 | `forbid_tool_call_after_speech`   | `boolean` | `false` | Drop the tool call if the agent already spoke this turn                                                                                                                 |
+| `allow_tool_chaining`             | `boolean` | `false` | Allow another tool call immediately after this tool's output                                                                                                            |
 | `respond_after_sec`               | `number`  | —       | **`choose_not_to_respond` only.** Seconds to wait after the tool fires; if the user stays silent, the agent speaks a follow-up. Omit to keep the default (stay silent). |
 | `speech_before_tool_call`         | `string`  | —       | **`keypad_input` / `natural_conversation_ending` only.** `required` \| `optional` \| `suppressed`.                                                                      |
 
-The plugin always sends tool calls with `wait_for_speech_before_tool_call` on and `allow_tool_chaining` off; these are not configurable per tool.
+The plugin always sends tool calls with `wait_for_speech_before_tool_call` on; this is not configurable per tool.
 
 > **Deprecated:** the top-level `forbidSpeechAfterToolCall: string[]` option still works but is deprecated — it now folds each listed tool into `configsForTools` as `forbid_speech_after_tool_call: true` (an explicit `configsForTools` entry wins) and logs a warning. Prefer `configsForTools`.
 
