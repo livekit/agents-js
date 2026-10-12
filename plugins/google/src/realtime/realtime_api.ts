@@ -781,7 +781,13 @@ export class RealtimeSession extends llm.RealtimeSession {
       const toolResults = this.getToolResultsForRealtime(appendCtx, this.options.vertexai);
 
       if (turns.length > 0) {
-        const shouldSendRealtimeText = this.pendingInterruptText;
+        // A turn carrying images goes out whole on the content path: as realtime
+        // text its words reach Gemini ahead of the images and get answered alone.
+        const shouldSendRealtimeText =
+          this.pendingInterruptText &&
+          (turns as types.Content[]).every((turn) =>
+            (turn.parts || []).every((part) => part.text !== undefined),
+          );
 
         if (shouldSendRealtimeText) {
           for (const turn of turns as types.Content[]) {
