@@ -26,6 +26,7 @@ const DEFAULT_SAMPLE_RATE = 24000;
 const DEFAULT_SPEED = 1.0;
 const MIN_SPEED = 0.7;
 const MAX_SPEED = 1.3;
+const MODELS_WITHOUT_SILENCE_REDUCTION = new Set(['tts-rt-v1', 'tts-rt-v1-preview']);
 const KEEPALIVE_INTERVAL = 10000;
 const KEEPALIVE_MESSAGE = JSON.stringify({ keep_alive: true });
 
@@ -40,6 +41,8 @@ export interface TTSOptions {
   bitrate?: number | null;
   /** Speaking rate. 1.0 is normal; valid range is [0.7, 1.3]. */
   speed: number;
+  /** Shorten pauses between words. Only supported by models with silence reduction. */
+  reduceSilence: boolean;
   apiKey?: string;
   websocketUrl: string;
 }
@@ -51,6 +54,7 @@ const defaultTTSOptions: TTSOptions = {
   audioFormat: DEFAULT_AUDIO_FORMAT,
   sampleRate: DEFAULT_SAMPLE_RATE,
   speed: DEFAULT_SPEED,
+  reduceSilence: false,
   apiKey: process.env.SONIOX_API_KEY,
   websocketUrl: WEBSOCKET_URL,
 };
@@ -58,6 +62,16 @@ const defaultTTSOptions: TTSOptions = {
 const validateSpeed = (speed: number) => {
   if (!Number.isFinite(speed) || speed < MIN_SPEED || speed > MAX_SPEED) {
     throw new Error(`speed must be between ${MIN_SPEED} and ${MAX_SPEED}, but got ${speed}`);
+  }
+};
+
+const validateReduceSilence = (model: string, reduceSilence: boolean) => {
+  if (reduceSilence && MODELS_WITHOUT_SILENCE_REDUCTION.has(model)) {
+    throw new Error(
+      `reduceSilence is not supported on model '${model}'; use a model with ` +
+        'supports_silence_reduction (e.g. tts-rt-v2). ' +
+        'See https://soniox.com/docs/tts/concepts/reduce-silence',
+    );
   }
 };
 
@@ -102,6 +116,7 @@ export class TTS extends tts.TTS {
       throw new Error('Soniox API key is required. Set SONIOX_API_KEY or pass apiKey');
     }
     validateSpeed(merged.speed);
+    validateReduceSilence(merged.model, merged.reduceSilence);
     validateAudioFormat(merged.audioFormat);
 
     this.#opts = merged;
@@ -116,11 +131,13 @@ export class TTS extends tts.TTS {
     return 'Soniox';
   }
 
-  updateOptions(opts: Partial<Pick<TTSOptions, 'model' | 'language' | 'voice' | 'speed'>>): void {
-    if (opts.speed !== undefined) {
-      validateSpeed(opts.speed);
-    }
-    this.#opts = { ...this.#opts, ...opts };
+  updateOptions(
+    opts: Partial<Pick<TTSOptions, 'model' | 'language' | 'voice' | 'speed' | 'reduceSilence'>>,
+  ): void {
+    const merged = { ...this.#opts, ...opts };
+    validateSpeed(merged.speed);
+    validateReduceSilence(merged.model, merged.reduceSilence);
+    this.#opts = merged;
   }
 
   synthesize(
@@ -635,6 +652,9 @@ export class _Connection {
           };
           if (msg.opts.bitrate !== undefined && msg.opts.bitrate !== null) {
             config.bitrate = msg.opts.bitrate;
+          }
+          if (msg.opts.reduceSilence) {
+            config.reduce_silence = true;
           }
           this.#ws.send(JSON.stringify(config));
         } else if (msg.type === 'text') {

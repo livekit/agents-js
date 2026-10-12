@@ -196,7 +196,7 @@ export abstract class SupervisedProc {
 
   async join() {
     if (!this.#started) {
-      throw new Error('runner not started');
+      return;
     }
 
     await this.#join.await;

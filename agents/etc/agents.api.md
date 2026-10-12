@@ -891,7 +891,7 @@ export interface APIConnectOptions {
 export class APIError extends Error {
     constructor(message: string, input?: APIErrorOptions);
     // (undocumented)
-    readonly body: object | null;
+    readonly body: object | string | number | boolean | null;
     // (undocumented)
     readonly retryable: boolean;
     // (undocumented)
@@ -9233,7 +9233,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
 // src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/events.ts:424:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
-// src/voice/room_io/_output.ts:180:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
+// src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 
 ```
