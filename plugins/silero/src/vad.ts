@@ -123,6 +123,7 @@ export class VADStream extends baseStream {
   #model: OnnxModel;
   #inputSampleRate: number;
   #speechBuffer: Int16Array | null;
+  #speechBufferIndex: number;
   #speechBufferMaxReached: boolean;
   #prefixPaddingSamples: number;
   #task: Promise<void>;
@@ -136,15 +137,13 @@ export class VADStream extends baseStream {
     this.#model = model;
     this.#inputSampleRate = 0;
     this.#speechBuffer = null;
+    this.#speechBufferIndex = 0;
     this.#speechBufferMaxReached = false;
     this.#prefixPaddingSamples = 0;
 
     let resampler: AudioResampler | null = null;
     const runInference = async () => {
       let inferenceData = new Float32Array(this.#model.windowSizeSamples);
-
-      // a copy is exposed to the user in END_OF_SPEECH
-      let speechBufferIndex = 0;
 
       // "pub" means public, these values are exposed to the users through events
       let pubSpeaking = false;
@@ -165,7 +164,7 @@ export class VADStream extends baseStream {
         this.#model.reset();
         this.#expFilter = new ExpFilter(0.35);
 
-        speechBufferIndex = 0;
+        this.#speechBufferIndex = 0;
         this.#speechBufferMaxReached = false;
         this.#speechBuffer?.fill(0);
 
@@ -269,11 +268,14 @@ export class VADStream extends baseStream {
           inputCopyRemainingFrac = toCopy - toCopyInt;
 
           // copy the inference window to the speech buffer
-          const availableSpace = this.#speechBuffer.length - speechBufferIndex;
+          const availableSpace = this.#speechBuffer.length - this.#speechBufferIndex;
           const toCopyBuffer = Math.min(toCopyInt, availableSpace);
           if (toCopyBuffer > 0) {
-            this.#speechBuffer.set(inputFrame.data.subarray(0, toCopyBuffer), speechBufferIndex);
-            speechBufferIndex += toCopyBuffer;
+            this.#speechBuffer.set(
+              inputFrame.data.subarray(0, toCopyBuffer),
+              this.#speechBufferIndex,
+            );
+            this.#speechBufferIndex += toCopyBuffer;
           } else if (!this.#speechBufferMaxReached) {
             this.#speechBufferMaxReached = true;
             this.#logger.warn(
@@ -325,26 +327,26 @@ export class VADStream extends baseStream {
 
           const resetWriteCursor = () => {
             if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
-            if (speechBufferIndex <= this.#prefixPaddingSamples) {
+            if (this.#speechBufferIndex <= this.#prefixPaddingSamples) {
               return;
             }
 
             const paddingData = this.#speechBuffer.subarray(
-              speechBufferIndex - this.#prefixPaddingSamples,
-              speechBufferIndex,
+              this.#speechBufferIndex - this.#prefixPaddingSamples,
+              this.#speechBufferIndex,
             );
             this.#speechBuffer.set(paddingData, 0);
-            speechBufferIndex = this.#prefixPaddingSamples;
+            this.#speechBufferIndex = this.#prefixPaddingSamples;
             this.#speechBufferMaxReached = false;
           };
 
           const copySpeechBuffer = (): AudioFrame => {
             if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
             return new AudioFrame(
-              this.#speechBuffer.subarray(0, speechBufferIndex),
+              this.#speechBuffer.slice(0, this.#speechBufferIndex),
               this.#inputSampleRate,
               1,
-              speechBufferIndex,
+              this.#speechBufferIndex,
             );
           };
 
@@ -462,6 +464,9 @@ export class VADStream extends baseStream {
         this.#speechBuffer.subarray(0, Math.min(this.#speechBuffer.length, bufferSize)),
       );
       this.#speechBuffer = resizedBuffer;
+
+      // Resizing may discard samples that the write cursor still counted.
+      this.#speechBufferIndex = Math.min(this.#speechBufferIndex, this.#speechBuffer.length);
 
       // Determine if max has been reached
       if (this.#opts.maxBufferedSpeech > oldMaxBufferedSpeech) {
