@@ -51,9 +51,10 @@ export const splitSentences = (
   text = text.replaceAll('."', '".');
   text = text.replaceAll('!"', '"!');
   text = text.replaceAll('?"', '"?');
+  // Also recognize Arabic "؟", Urdu "۔", and the Devanagari/Bengali dandas "।" and "॥".
+  text = text.replace(/([!?。！？؟۔।॥])(["”])/g, '$1$2<stop>');
+  text = text.replace(/([!?。！？؟۔।॥])(?!["”])/g, '$1<stop>');
   text = text.replace(/\.(?=\s|$)/g, '.<stop>');
-  text = text.replaceAll('?', '?<stop>');
-  text = text.replaceAll('!', '!<stop>');
   text = text.replaceAll('<prd>', '.');
 
   if (retainFormat) {

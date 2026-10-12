@@ -30,6 +30,24 @@ const EXPECTED_MIN_20 = [
   'Hey! Hi! Hello!',
 ];
 
+const MULTILINGUAL_SENT_CASES: [string, string[]][] = [
+  // Arabic question mark
+  [
+    'هل تريد حجز موعد غداً؟ لدينا مواعيد متاحة في الصباح.',
+    ['هل تريد حجز موعد غداً؟', 'لدينا مواعيد متاحة في الصباح.'],
+  ],
+  // Urdu full stop
+  ['آپ کیسے ہیں۔ میں ٹھیک ہوں۔', ['آپ کیسے ہیں۔', 'میں ٹھیک ہوں۔']],
+  // Devanagari danda (Hindi)
+  ['आप कैसे हैं। मैं ठीक हूँ। धन्यवाद', ['आप कैसे हैं।', 'मैं ठीक हूँ।', 'धन्यवाद']],
+  // Devanagari double danda
+  ['श्लोक एक॥ श्लोक दो॥', ['श्लोक एक॥', 'श्लोक दो॥']],
+  // Bengali also uses the danda
+  ['আপনি কেমন আছেন। আমি ভালো আছি।', ['আপনি কেমন আছেন।', 'আমি ভালো আছি।']],
+  // The closing quote stays with the sentence it ends.
+  ['वह बोली “मैं ठीक हूँ।” अगला वाक्य।', ['वह बोली “मैं ठीक हूँ।”', 'अगला वाक्य।']],
+];
+
 const WORDS_TEXT = 'This is a test. Blabla another test! multiple consecutive spaces:     done';
 const WORDS_EXPECTED = [
   'This',
@@ -161,6 +179,32 @@ describe('tokenizer', () => {
           }
         });
       }
+    });
+
+    it.each(MULTILINGUAL_SENT_CASES)(
+      'should tokenize non-Latin sentence terminators in %s',
+      (text, expected) => {
+        const multilingualTokenizer = new SentenceTokenizer({ minSentenceLength: 1 });
+        expect(multilingualTokenizer.tokenize(text)).toEqual(expected);
+      },
+    );
+
+    it('should emit a Hindi sentence before the end of input', async () => {
+      const stream = new SentenceTokenizer().stream();
+      for (const word of 'आप कैसे हैं, आज का दिन कैसा रहा। मैं ठीक हूँ, धन्यवाद आपका'.split(' ')) {
+        stream.pushText(`${word} `);
+      }
+
+      let timeout: ReturnType<typeof setTimeout>;
+      const next = await Promise.race([
+        stream.next(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('timed out waiting for sentence')), 1000);
+        }),
+      ]);
+      clearTimeout(timeout!);
+      expect(next.value?.token).toBe('आप कैसे हैं, आज का दिन कैसा रहा।');
+      stream.close();
     });
   });
   describe('WordTokenizer', () => {
