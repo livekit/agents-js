@@ -124,6 +124,31 @@ describe('Google Realtime dropped connections', () => {
     expect(connect).toHaveBeenCalledTimes(1);
   });
 
+  it('ends the session at once when the connect config cannot be built', async () => {
+    const { sockets, connect } = fakeServer(['live', 'live']);
+    const opened = openSession();
+    session = opened.session;
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const bad = llm.tool({
+      name: 'bad',
+      description: 'd',
+      parameters: {
+        type: 'object',
+        properties: { a: { type: 'string', minLength: 'many' } },
+      } as never,
+      execute: async () => {},
+    });
+
+    await session.updateTools(new llm.ToolContext([bad]));
+
+    await vi.waitFor(() => expect(opened.errors).toHaveLength(1));
+    expect(opened.errors[0]!.recoverable).toBe(false);
+    expect(opened.errors[0]!.error.message).toContain('tool bad');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(opened.errors).toHaveLength(1);
+    expect(connect).toHaveBeenCalledTimes(1);
+  });
+
   it('retries a setup the server refuses instead of hanging', async () => {
     const { sockets, connect } = fakeServer([{ refuse: QUOTA }, 'live']);
     const opened = openSession();

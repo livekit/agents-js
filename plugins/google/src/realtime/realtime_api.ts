@@ -1064,9 +1064,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       // arriving before activeSession was set. `stale` keeps a late close of
       // this attempt's socket from restarting the next one.
       const connected: { session?: types.Session; stale?: boolean } = {};
+      let config: types.LiveConnectConfig | undefined;
 
       try {
-        const config = this.buildConnectConfig();
+        config = this.buildConnectConfig();
         this.#logger.debug('Connecting to Gemini Realtime API...');
 
         const sessionOpened = new Event();
@@ -1214,6 +1215,13 @@ export class RealtimeSession extends llm.RealtimeSession {
         // the same way.
         if (error instanceof APIStatusError && error.statusCode === WS_CLOSE_CONTEXT_EXHAUSTED) {
           this.emitError(error, false);
+          return;
+        }
+
+        // A config the plugin cannot build, such as a tool schema it cannot
+        // convert, fails the same way on every retry.
+        if (!config) {
+          this.emitError(error as Error, false);
           return;
         }
 
