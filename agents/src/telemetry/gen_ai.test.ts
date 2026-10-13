@@ -71,7 +71,12 @@ describe('gen_ai builders', () => {
       arguments: { loc: 'Paris' },
     });
     // a serialized payload is deserialized, as the convention asks of instrumentations
-    expect(messages[2]!.parts[0]!.response).toEqual({ temp: 14 });
+    expect(messages[2]!.parts[0]).toEqual({
+      type: 'tool_call_response',
+      id: 'call_1',
+      name: 'get_weather',
+      response: { temp: 14 },
+    });
 
     const output = genAI.toOutputMessages({
       text: 'one moment',

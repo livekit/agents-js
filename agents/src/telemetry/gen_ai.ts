@@ -165,6 +165,8 @@ function messageParts(item: ChatItem): MessagePart[] {
     parts.push({
       type: 'tool_call_response',
       id: item.callId,
+      // Optional extension: the OTel response-part schema permits extra fields.
+      ...(item.name ? { name: item.name } : {}),
       response: maybeJson(item.output),
     });
   }
