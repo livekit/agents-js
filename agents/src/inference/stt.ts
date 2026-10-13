@@ -230,7 +230,10 @@ export interface GoogleSTTOptions {
   custom_vocabulary?: string[];
 }
 
-/** OpenAI Realtime transcription session configuration. */
+/**
+ * OpenAI Realtime transcription session configuration.
+ * https://developers.openai.com/api/docs/guides/realtime-transcription
+ */
 export interface OpenAIOptions {
   /** Expected input languages. Overrides `language`. */
   languages?: string[];
