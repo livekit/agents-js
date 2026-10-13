@@ -40,9 +40,7 @@ export type DeepgramModels =
   | 'deepgram/nova-2-phonecall';
 
 export type DeepgramFluxModels =
-  | 'deepgram/flux-general'
-  | 'deepgram/flux-general-en'
-  | 'deepgram/flux-general-multi';
+  'deepgram/flux-general' | 'deepgram/flux-general-en' | 'deepgram/flux-general-multi';
 
 export type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 
@@ -56,13 +54,13 @@ export type AssemblyaiModels =
 export type XaiSTTModels = 'xai/stt-1';
 
 export type SpeechmaticsModels =
-  | 'speechmatics/enhanced'
-  | 'speechmatics/standard'
-  | 'speechmatics/linden-1';
+  'speechmatics/enhanced' | 'speechmatics/standard' | 'speechmatics/linden-1';
 
 export type InworldSTTModels = 'inworld/inworld-stt-1';
 
 export type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
+
+export type OpenAIModels = 'openai/gpt-live-transcribe';
 
 export interface CartesiaOptions {
   /** Minimum volume threshold. Ink Whisper only. Default: not specified. */
@@ -172,12 +170,7 @@ export interface SpeechmaticsOptions {
   max_delay_mode?: 'flexible' | 'fixed' | string;
   /** Enable diarization for modes other than "none". */
   diarization?:
-    | 'none'
-    | 'speaker'
-    | 'channel'
-    | 'channel_and_speaker_change'
-    | 'speaker_change'
-    | string;
+    'none' | 'speaker' | 'channel' | 'channel_and_speaker_change' | 'speaker_change' | string;
   /** Speaker diarization sensitivity. Valid range is 0.0-1.0. */
   speaker_sensitivity?: number;
   /** Maximum number of speakers to detect. */
@@ -228,17 +221,22 @@ export interface GoogleSTTOptions {
   custom_vocabulary?: string[];
 }
 
+/** OpenAI Realtime transcription session configuration. */
+export interface OpenAIOptions {
+  /** Expected input languages. Overrides `language`. */
+  languages?: string[];
+  /** Description of the recording or its setting, up to 1024 characters. */
+  prompt?: string;
+  /** Literal terms the audio may contain. */
+  keywords?: string[];
+  /** Latency versus accuracy preference. */
+  delay?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  /** Noise reduction mode. */
+  noise_reduction?: 'near_field' | 'far_field';
+}
+
 export type STTLanguages =
-  | 'multi'
-  | 'en'
-  | 'de'
-  | 'es'
-  | 'fr'
-  | 'ja'
-  | 'pt'
-  | 'zh'
-  | 'hi'
-  | AnyString;
+  'multi' | 'en' | 'de' | 'es' | 'fr' | 'ja' | 'pt' | 'zh' | 'hi' | AnyString;
 
 const DIARIZATION_EXTRA_KEYS = ['diarize', 'speaker_labels', 'diarization'] as const;
 
@@ -271,6 +269,15 @@ function supportsChatContext(model: string | undefined): boolean {
  * `undefined` if the model has no keyterm prompting, so
  * `keytermsExtraForModel(model) !== undefined` is also the capability check.
  */
+function keytermsKeyForModel(model: string | undefined): string | undefined {
+  if (typeof model !== 'string' || !model || model === 'speechmatics/linden-1') return undefined;
+  if (model.startsWith('speechmatics/')) return 'additional_vocab';
+  if (model.startsWith('deepgram/')) return 'keyterm';
+  if (model.startsWith('assemblyai/')) return 'keyterms_prompt';
+  if (isOpenAIModel(model)) return 'keywords';
+  return undefined;
+}
+
 function keytermsExtraForModel(
   model: string | undefined,
   opts?: {
@@ -278,35 +285,19 @@ function keytermsExtraForModel(
     sessionKeyterms?: string[];
   },
 ): Record<string, unknown> | undefined {
-  if (typeof model !== 'string' || !model) {
-    return undefined;
-  }
+  const key = keytermsKeyForModel(model);
+  if (key === undefined) return undefined;
 
   const extraKwargs = opts?.extraKwargs ?? {};
   const sessionKeyterms = opts?.sessionKeyterms ?? [];
 
-  if (model === 'speechmatics/linden-1') {
-    return undefined;
-  }
-
-  if (model.startsWith('speechmatics/')) {
+  if (key === 'additional_vocab') {
     // keep existing entries as-is (they may carry sounds_like etc.); append new session terms
-    const rawExisting = extraKwargs.additional_vocab;
+    const rawExisting = extraKwargs[key];
     const existing: Record<string, unknown>[] = Array.isArray(rawExisting) ? [...rawExisting] : [];
     const seen = new Set(existing.map((v) => v.content));
     const additions = sessionKeyterms.filter((term) => !seen.has(term));
-    return { additional_vocab: [...existing, ...additions.map((term) => ({ content: term }))] };
-  }
-
-  let key: string | undefined;
-  if (model.startsWith('deepgram/')) {
-    key = 'keyterm';
-  } else if (model.startsWith('assemblyai/')) {
-    key = 'keyterms_prompt';
-  }
-
-  if (key === undefined) {
-    return undefined;
+    return { [key]: [...existing, ...additions.map((term) => ({ content: term }))] };
   }
   // deepgram's keyterm may be a bare string; wrap it so it isn't splat char-by-char
   const rawUser = extraKwargs[key] ?? [];
@@ -355,7 +346,8 @@ type _STTModels =
   | XaiSTTModels
   | SpeechmaticsModels
   | InworldSTTModels
-  | GoogleSTTModels;
+  | GoogleSTTModels
+  | OpenAIModels;
 
 export type STTModels = _STTModels | 'auto' | AnyString;
 
@@ -377,7 +369,9 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxMo
               ? InworldSTTOptions
               : TModel extends GoogleSTTModels
                 ? GoogleSTTOptions
-                : Record<string, unknown>;
+                : TModel extends OpenAIModels
+                  ? OpenAIOptions
+                  : Record<string, unknown>;
 
 /** Inference Fallback Adapter: configuration for a fallback STT model that runs server-side in LiveKit Inference, providing automatic fallback between providers. Extra fields are passed through to the provider. */
 export interface STTFallbackModel {
@@ -416,18 +410,41 @@ export function normalizeSTTFallback(
   return [makeFallback(fallback)];
 }
 
-function isSpeechmaticsRTModel(model: string | undefined): boolean {
-  return (model?.startsWith('speechmatics/') && model !== 'speechmatics/linden-1') ?? false;
+function isOpenAIModel(model: string): boolean {
+  return model === 'openai' || model.startsWith('openai/');
+}
+
+function providerForModel(model: string | undefined): string | undefined {
+  return model?.split('/', 1)[0] || undefined;
+}
+
+function needsClientEndpointing(model: string | undefined): boolean {
+  if (model?.startsWith('speechmatics/')) return model !== 'speechmatics/linden-1';
+  return model !== undefined && isOpenAIModel(model);
+}
+
+function requiredSampleRate(model: string | undefined): number | undefined {
+  return model !== undefined && isOpenAIModel(model) ? 24000 : undefined;
+}
+
+function warnIfSampleRateRefused(model: string | undefined, sampleRate: number): void {
+  const required = requiredSampleRate(model);
+  if (required !== undefined && required !== sampleRate) {
+    log().warn(
+      { model, requiredSampleRate: required, sampleRate },
+      `model takes audio only at ${required} Hz; the gateway will refuse ${sampleRate} Hz`,
+    );
+  }
 }
 
 function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VAD | undefined {
-  const speechmaticsRT = isSpeechmaticsRTModel(model);
-  if (vad && !speechmaticsRT) {
+  const needsVAD = needsClientEndpointing(model);
+  if (vad && !needsVAD) {
     log().warn({ model }, '`vad` will be ignored: model handles endpointing server-side');
     return undefined;
   }
-  if (speechmaticsRT && vad === undefined) {
-    // Speechmatics RT doesn't endpoint server-side, so fall back to the in-tree
+  if (needsVAD && vad === undefined) {
+    // These models don't endpoint server-side, so fall back to the in-tree
     // local inference VAD rather than the deprecated silero plugin.
     return new InferenceVAD();
   }
@@ -456,6 +473,63 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
   connOptions?: APIConnectOptions;
 }
 
+async function connectInferenceSTT<TModel extends STTModels>(
+  opts: InferenceSTTOptions<TModel>,
+  sessionKeyterms: string[],
+  timeout: number,
+): Promise<WebSocket> {
+  const params = {
+    settings: {
+      sample_rate: String(opts.sampleRate),
+      encoding: opts.encoding,
+      extra: {
+        ...opts.modelOptions,
+        ...(keytermsExtraForModel(opts.model, {
+          extraKwargs: opts.modelOptions as Record<string, unknown>,
+          sessionKeyterms,
+        }) ?? {}),
+      },
+    },
+  } as Record<string, unknown>;
+
+  if (opts.model && opts.model !== 'auto') {
+    params.model = opts.model;
+  }
+
+  if (opts.language) {
+    (params.settings as Record<string, unknown>).language = opts.language;
+  }
+
+  if (opts.fallback?.length) {
+    params.fallback = {
+      models: opts.fallback.map((m) => ({
+        model: m.model,
+        extra: m.extraKwargs ?? {},
+      })),
+    };
+  }
+
+  if (opts.connOptions) {
+    params.connection = {
+      timeout: opts.connOptions.timeoutMs / 1000,
+      retries: opts.connOptions.maxRetry,
+    };
+  }
+
+  let baseURL = opts.baseURL;
+  if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
+    baseURL = baseURL.replace('http', 'ws');
+  }
+
+  const token = await createAccessToken(opts.apiKey, opts.apiSecret);
+  const url = `${baseURL}/stt?model=${encodeURIComponent(opts.model ?? 'auto')}`;
+  const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
+
+  const socket = await connectWs(url, headers, timeout);
+  socket.send(JSON.stringify({ ...params, type: 'session.create' }));
+  return socket;
+}
+
 /**
  * Livekit Cloud Inference STT
  */
@@ -464,6 +538,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   private streams: Set<SpeechStream<TModel>> = new Set();
   private vad?: VAD;
   private _vadPromise?: Promise<VAD | undefined>;
+  private readonly explicitSampleRate: boolean;
   /** framework-managed; merged into modelOptions @internal */
   _sessionKeyterms: string[] = [];
 
@@ -516,7 +591,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       language,
       baseURL,
       encoding = DEFAULT_ENCODING,
-      sampleRate = DEFAULT_SAMPLE_RATE,
+      sampleRate,
       apiKey,
       apiSecret,
       connOptions,
@@ -553,12 +628,15 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       }
     }
     this.vad = resolveVADForModel(nextModel, vad);
+    const resolvedSampleRate = sampleRate ?? requiredSampleRate(nextModel) ?? DEFAULT_SAMPLE_RATE;
+    warnIfSampleRateRefused(nextModel, resolvedSampleRate);
+    this.explicitSampleRate = sampleRate !== undefined;
 
     this.opts = {
       model: nextModel as TModel,
       language: nextLanguage ? normalizeLanguage(nextLanguage) : undefined,
       encoding,
-      sampleRate,
+      sampleRate: resolvedSampleRate,
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
@@ -592,6 +670,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   updateOptions(
     opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
   ): void {
+    const explicitLanguage = opts.language;
     const nextOpts = { ...opts };
     if (typeof nextOpts.model === 'string') {
       const [parsedModel, parsedLanguage] = parseSTTModelString(nextOpts.model);
@@ -616,6 +695,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     if (nextOpts.model !== undefined) {
       this.vad = resolveVADForModel(nextOpts.model, this.vad);
       this._vadPromise = undefined;
+      if (!this.explicitSampleRate) {
+        this.opts.sampleRate = requiredSampleRate(nextOpts.model) ?? DEFAULT_SAMPLE_RATE;
+      }
+      warnIfSampleRateRefused(nextOpts.model, this.opts.sampleRate);
       const alignmentModels = [
         this.opts.model,
         ...(this.opts.fallback?.map(({ model }) => model) ?? []),
@@ -631,24 +714,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       this.updateCapabilities({
         diarization: diarizationEnabled(this.opts.modelOptions as Record<string, unknown>),
       });
-      // re-apply the active session keyterms on top of the update sent to live streams,
-      // so a user extra update doesn't drop them. `this.opts.modelOptions` must stay a
-      // pure user baseline (no session terms baked in), or a later session-keyterm
-      // change could never remove previously applied terms.
-      const keytermExtra = keytermsExtraForModel(this.opts.model, {
-        extraKwargs: this.opts.modelOptions as Record<string, unknown>,
-        sessionKeyterms: this._sessionKeyterms,
-      });
-      if (keytermExtra !== undefined) {
-        nextOpts.modelOptions = {
-          ...nextOpts.modelOptions,
-          ...keytermExtra,
-        } as STTOptions<TModel>;
-      }
     }
 
     for (const stream of this.streams) {
-      stream.updateOptions(nextOpts);
+      stream.updateOptions({ ...nextOpts, language: explicitLanguage });
     }
   }
 
@@ -659,24 +728,14 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     ) {
       return;
     }
-    const keytermExtra = keytermsExtraForModel(this.opts.model, {
-      extraKwargs: this.opts.modelOptions as Record<string, unknown>,
-      sessionKeyterms: keyterms,
-    });
-    if (keytermExtra === undefined) {
+    if (keytermsExtraForModel(this.opts.model) === undefined) {
       super._updateSessionKeyterms(keyterms); // warn-and-skip for unsupported models
       return;
     }
 
     this._sessionKeyterms = [...keyterms];
-    // inference applies extra live via session.update; defer to END_OF_SPEECH since the
-    // gateway may reconnect upstream when the keyterms change
     for (const stream of this.streams) {
-      if (stream._speaking) {
-        stream._pendingExtra = keytermExtra;
-      } else {
-        stream.updateOptions({ modelOptions: keytermExtra as STTOptions<TModel> });
-      }
+      stream['onSessionKeytermsChanged']();
     }
   }
 
@@ -714,64 +773,13 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   }
 
   async connectWs(timeout: number): Promise<WebSocket> {
-    const params = {
-      settings: {
-        sample_rate: String(this.opts.sampleRate),
-        encoding: this.opts.encoding,
-        // the framework session keyterms into the user's extra_kwargs keyterm key)
-        extra: {
-          ...this.opts.modelOptions,
-          ...(keytermsExtraForModel(this.opts.model, {
-            extraKwargs: this.opts.modelOptions as Record<string, unknown>,
-            sessionKeyterms: this._sessionKeyterms,
-          }) ?? {}),
-        },
-      },
-    } as Record<string, unknown>;
-
-    if (this.opts.model && this.opts.model !== 'auto') {
-      params.model = this.opts.model;
-    }
-
-    if (this.opts.language) {
-      (params.settings as Record<string, unknown>).language = this.opts.language;
-    }
-
-    if (this.opts.fallback?.length) {
-      params.fallback = {
-        models: this.opts.fallback.map((m) => ({
-          model: m.model,
-          extra: m.extraKwargs ?? {},
-        })),
-      };
-    }
-
-    if (this.opts.connOptions) {
-      params.connection = {
-        timeout: this.opts.connOptions.timeoutMs / 1000,
-        retries: this.opts.connOptions.maxRetry,
-      };
-    }
-
-    let baseURL = this.opts.baseURL;
-    if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
-      baseURL = baseURL.replace('http', 'ws');
-    }
-
-    const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
-    const url = `${baseURL}/stt?model=${encodeURIComponent(this.model)}`;
-    const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
-
-    const socket = await connectWs(url, headers, timeout);
-    const msg = { ...params, type: 'session.create' };
-    socket.send(JSON.stringify(msg));
-
-    return socket;
+    return connectInferenceSTT(this.opts, this._sessionKeyterms, timeout);
   }
 }
 
 export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private opts: InferenceSTTOptions<TModel>;
+  private userModelOptions: STTOptions<TModel>;
   private requestId = shortuuid('stt_request_');
   private speaking = false;
   // keyterm extra set while the user is speaking; applied at END_OF_SPEECH (latest wins).
@@ -782,6 +790,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private stt: STT<TModel>;
   private connOptions: APIConnectOptions;
   private activeWs?: WebSocket;
+  private readonly vadPromise: Promise<VAD | undefined>;
 
   #logger = log();
 
@@ -792,8 +801,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   ) {
     super(sttImpl, opts.sampleRate, connOptions);
     this.opts = opts;
+    this.userModelOptions = { ...opts.modelOptions } as STTOptions<TModel>;
     this.stt = sttImpl;
     this.connOptions = connOptions;
+    // Snapshot the current VAD before the parent can switch models.
+    this.vadPromise = sttImpl.vadPromise;
   }
 
   get label(): string {
@@ -808,49 +820,105 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   updateOptions(
     opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
   ): void {
-    const mergedModelOptions = opts.modelOptions
-      ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as STTOptions<TModel>)
-      : this.opts.modelOptions;
-
-    this.opts = {
-      ...this.opts,
-      ...opts,
-      language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
-      modelOptions: mergedModelOptions,
-    };
-
-    if (opts.modelOptions !== undefined) {
-      this._pendingExtra = undefined;
-    }
-
-    // When the WebSocket is live, send a mid-stream session.update so providers
-    // that support it (e.g. AssemblyAI, Deepgram Flux) apply changes without
-    // reconnecting. Unsupported providers ignore the message.
-    if (this.activeWs && this.activeWs.readyState === 1) {
-      const settings: Record<string, unknown> = {};
-      if (opts.model !== undefined) settings.model = opts.model;
-      if (opts.language !== undefined) settings.language = normalizeLanguage(opts.language);
-      if (opts.modelOptions !== undefined) settings.extra = opts.modelOptions;
-      if (Object.keys(settings).length > 0) {
-        try {
-          this.activeWs.send(JSON.stringify({ type: 'session.update', settings }));
-        } catch (e) {
-          this.#logger.debug({ err: e }, 'failed to send session.update, ws may be closing');
-        }
+    let model = opts.model;
+    let language = opts.language;
+    let refused = false;
+    let changedProvider = false;
+    if (typeof model === 'string') {
+      const [parsedModel, parsedLanguage] = parseSTTModelString(model);
+      model = parsedModel as TModel;
+      const required = requiredSampleRate(model);
+      refused = required !== undefined && required !== this.opts.sampleRate;
+      if (refused) {
+        this.#logger.warn(
+          {
+            runningModel: this.opts.model,
+            model,
+            requiredSampleRate: required,
+            sampleRate: this.opts.sampleRate,
+          },
+          `live stream stays on its running model: requested model takes audio only at ${required} Hz, this stream was created at ${this.opts.sampleRate} Hz`,
+        );
+      }
+      changedProvider = providerForModel(model) !== providerForModel(this.opts.model);
+      if (parsedLanguage !== undefined && language === undefined && !refused && !changedProvider) {
+        language = parsedLanguage;
       }
     }
+
+    if (language !== undefined) this.opts.language = normalizeLanguage(language);
+
+    let forwardExtra: Record<string, unknown> | undefined;
+    if (opts.modelOptions !== undefined && !changedProvider) {
+      this.userModelOptions = {
+        ...this.userModelOptions,
+        ...opts.modelOptions,
+      } as STTOptions<TModel>;
+      forwardExtra = this.forwardExtra(opts.modelOptions as Record<string, unknown>);
+      this.opts.modelOptions = {
+        ...this.userModelOptions,
+        ...this.keytermPayload(),
+      } as STTOptions<TModel>;
+    }
+
+    this.sendLiveUpdate({ model, language, modelOptions: forwardExtra as STTOptions<TModel> });
+  }
+
+  private keytermPayload(): Record<string, unknown> {
+    return (
+      keytermsExtraForModel(this.opts.model, {
+        extraKwargs: this.userModelOptions as Record<string, unknown>,
+        sessionKeyterms: this.stt._sessionKeyterms,
+      }) ?? {}
+    );
+  }
+
+  private forwardExtra(extra: Record<string, unknown>): Record<string, unknown> {
+    const key = keytermsKeyForModel(this.opts.model);
+    if (key !== undefined && key in extra) {
+      this._pendingExtra = undefined;
+      return { ...extra, ...this.keytermPayload() };
+    }
+    return { ...extra };
+  }
+
+  private sendLiveUpdate(
+    opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
+  ): void {
+    if (!this.activeWs || this.activeWs.readyState !== 1) return;
+    const settings: Record<string, unknown> = {};
+    if (opts.model !== undefined) settings.model = opts.model;
+    if (opts.language !== undefined) settings.language = normalizeLanguage(opts.language);
+    if (opts.modelOptions !== undefined) settings.extra = opts.modelOptions;
+    if (Object.keys(settings).length === 0) return;
+    try {
+      this.activeWs.send(JSON.stringify({ type: 'session.update', settings }));
+    } catch (e) {
+      this.#logger.debug({ err: e }, 'failed to send session.update, ws may be closing');
+    }
+  }
+
+  private onSessionKeytermsChanged(): void {
+    const extra = this.keytermPayload();
+    if (Object.keys(extra).length === 0) return;
+    this.opts.modelOptions = {
+      ...this.userModelOptions,
+      ...extra,
+    } as STTOptions<TModel>;
+    if (this.speaking) this._pendingExtra = extra;
+    else this.sendLiveUpdate({ modelOptions: extra as STTOptions<TModel> });
   }
 
   private onEndOfSpeech(): void {
     if (this._pendingExtra !== undefined) {
-      this.updateOptions({ modelOptions: this._pendingExtra as STTOptions<TModel> });
+      this.sendLiveUpdate({ modelOptions: this._pendingExtra as STTOptions<TModel> });
       this._pendingExtra = undefined;
     }
   }
 
   protected async run(): Promise<void> {
     while (true) {
-      const vad = await this.stt.vadPromise;
+      const vad = await this.vadPromise;
       // Create fresh resources for each connection attempt
       let ws: WebSocket | null = null;
       let inputEnded = false;
@@ -1017,7 +1085,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         }
 
         inputEnded = true;
-        vadStream?.endInput();
+        try {
+          vadStream?.endInput();
+        } catch (e) {
+          this.#logger.debug({ err: e }, 'VAD stream already closed at input end');
+        }
         sendSessionFinalize(socket);
         scheduleFinalizationTimeout();
       };
@@ -1031,7 +1103,12 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           if (result.done) break;
           if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
           if (socket.readyState !== 1) return;
-          sendSessionFinalize(socket);
+          try {
+            sendSessionFinalize(socket);
+          } catch (e) {
+            this.#logger.debug({ err: e }, 'failed to send session.finalize from VAD');
+            return;
+          }
         }
       };
 
@@ -1126,7 +1203,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       try {
-        ws = await this.stt.connectWs(this.connOptions.timeoutMs);
+        ws =
+          this.stt.connectWs === STT.prototype.connectWs
+            ? await connectInferenceSTT(
+                this.opts,
+                this.stt._sessionKeyterms,
+                this.connOptions.timeoutMs,
+              )
+            : await this.stt.connectWs(this.connOptions.timeoutMs);
         // An abort that landed during connectWs has no listener yet: the socket would
         // otherwise idle until the finalization timeout, holding a gateway concurrency slot.
         if (this.abortController.signal.aborted) break;
@@ -1218,16 +1302,15 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         confidence: data.confidence,
         text,
         speakerId: data.speaker_id ?? undefined,
-        words: data.words.map(
-          (word): TimedString =>
-            createTimedString({
-              text: word.word,
-              startTime: word.start + this.startTimeOffset,
-              endTime: word.end + this.startTimeOffset,
-              startTimeOffset: this.startTimeOffset,
-              confidence: word.confidence,
-              speakerId: word.speaker_id ?? undefined,
-            }),
+        words: data.words.map((word): TimedString =>
+          createTimedString({
+            text: word.word,
+            startTime: word.start + this.startTimeOffset,
+            endTime: word.end + this.startTimeOffset,
+            startTimeOffset: this.startTimeOffset,
+            confidence: word.confidence,
+            speakerId: word.speaker_id ?? undefined,
+          }),
         ),
         metadata,
       };

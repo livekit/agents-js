@@ -4842,7 +4842,7 @@ class LLM_2 extends llm_2.LLM {
 
 declare namespace llm_3 {
     export {
-        OpenAIModels,
+        OpenAIModels_2 as OpenAIModels,
         GoogleModels,
         MoonshotModels,
         DeepSeekModels,
@@ -4898,7 +4898,7 @@ export type LLMMetrics = {
 // Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
-type LLMModels = OpenAIModels | GoogleModels | MoonshotModels | DeepSeekModels | ZAIModels | XAIModels | AnyString;
+type LLMModels = OpenAIModels_2 | GoogleModels | MoonshotModels | DeepSeekModels | ZAIModels | XAIModels | AnyString;
 
 // @public (undocumented)
 export type LLMModelUsage = {
@@ -5364,7 +5364,19 @@ export type OpenAIFunctionParameters = {
 };
 
 // @public (undocumented)
-type OpenAIModels = 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
+type OpenAIModels = 'openai/gpt-live-transcribe';
+
+// @public (undocumented)
+type OpenAIModels_2 = 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
+
+// @public
+interface OpenAIOptions {
+    delay?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+    keywords?: string[];
+    languages?: string[];
+    noise_reduction?: 'near_field' | 'far_field';
+    prompt?: string;
+}
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTaskOptions"
 //
@@ -7249,6 +7261,7 @@ declare namespace stt_2 {
         SpeechmaticsModels,
         InworldSTTModels,
         GoogleSTTModels,
+        OpenAIModels,
         CartesiaOptions,
         DeepgramOptions,
         DeepgramFluxOptions,
@@ -7257,6 +7270,7 @@ declare namespace stt_2 {
         SpeechmaticsOptions,
         InworldSTTOptions,
         GoogleSTTOptions,
+        OpenAIOptions,
         STTLanguages,
         STTModels,
         ModelWithLanguage,
@@ -7333,7 +7347,7 @@ export type STTModelUsage = {
 };
 
 // @public (undocumented)
-type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxModels ? DeepgramFluxOptions : TModel extends DeepgramModels ? DeepgramOptions : TModel extends CartesiaModels ? CartesiaOptions : TModel extends AssemblyaiModels ? AssemblyAIOptions : TModel extends XaiSTTModels ? XaiOptions : TModel extends SpeechmaticsModels ? SpeechmaticsOptions : TModel extends InworldSTTModels ? InworldSTTOptions : TModel extends GoogleSTTModels ? GoogleSTTOptions : Record<string, unknown>;
+type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxModels ? DeepgramFluxOptions : TModel extends DeepgramModels ? DeepgramOptions : TModel extends CartesiaModels ? CartesiaOptions : TModel extends AssemblyaiModels ? AssemblyAIOptions : TModel extends XaiSTTModels ? XaiOptions : TModel extends SpeechmaticsModels ? SpeechmaticsOptions : TModel extends InworldSTTModels ? InworldSTTOptions : TModel extends GoogleSTTModels ? GoogleSTTOptions : TModel extends OpenAIModels ? OpenAIOptions : Record<string, unknown>;
 
 // @public
 function supportedNonverbals(provider: string): Partial<Record<NonverbalField, string[]>>;
