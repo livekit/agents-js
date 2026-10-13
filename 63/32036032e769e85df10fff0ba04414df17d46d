@@ -1,0 +1,23 @@
+agents/src/telemetry/rpc.test.ts
+  s_daaaca85fe910b::t_a229c3d5872e75 127,228,242
+agents/src/job_lifecycle.ts
+  s_daaaca85fe910b::t_ce8e40378722de 146-149
+agents/src/job_lifecycle.test.ts
+  s_daaaca85fe910b::t_a229c3d5872e75 4-6,18-24,309,312-337
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6332036032e769e85df10fff0ba04414df17d46d",
+  "prompts": {},
+  "sessions": {
+    "s_daaaca85fe910b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a12fc9-50ad-7801-b00c-03537e9a2264",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
