@@ -65,7 +65,7 @@
   "dependencies": {
     "@bufbuild/protobuf": "^1.10.0",
     "@livekit/av": "^10.0.0",
-    "@livekit/blingfire": "^1.1.0",
+    "@livekit/blingfire": "^1.2.0",
     "@livekit/local-inference": "^0.2.7",
     "@livekit/mutex": "^1.1.1",
     "@livekit/protocol": "^1.50.4",

@@ -130,9 +130,6 @@ importers:
       '@livekit/av':
         specifier: ^10.0.0
         version: 10.0.0
-      '@livekit/blingfire':
-        specifier: ^1.1.0
-        version: 1.1.1
       '@livekit/local-inference':
         specifier: ^0.2.7
         version: 0.2.7
@@ -2384,35 +2381,6 @@ packages:
 
   '@livekit/av@10.0.0':
     resolution: {integrity: sha512-i39au9JY9qqZ9b0yKa5+2E3BQD9JtbGlCxqDbSvFjxprdHTdP96NgsLHOViwLk84J+eCLIyNzcGw5G3zIK2ZhQ==}
-    engines: {node: '>=18.0.0'}
-
-  '@livekit/blingfire-darwin-arm64@1.1.1':
-    resolution: {integrity: sha512-Ugulxc7kd0qsg80VYYqOzg88yVF7GXRxjc0ViFFpt96r1YuxoX4qyPy73qrWR2crtyLwxjhEX0xFLX/ZQmVTVg==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@livekit/blingfire-darwin-x64@1.1.1':
-    resolution: {integrity: sha512-iI4rNvwyq58HpNP/X70LwiIMbQniFzo6RwU9v3A4Aqs7AHSkkUg3Uc8BWX0m8qHiZM0ZnSG7wJ93rBuuzlGhfw==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@livekit/blingfire-linux-arm64-gnu@1.1.1':
-    resolution: {integrity: sha512-0u7tsLnZn5GdyJyO5LAIl5P7yH+EvDzQDAUoWk3h9w4oV/16O3Q7D8auJ1j60Broq9QVa+QE7yvb3tsfFh2Cpg==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@livekit/blingfire-linux-x64-gnu@1.1.1':
-    resolution: {integrity: sha512-i5YK21WAj52LuPNyk5rsi5TuGnPb2mZPwf11zazfw4argql6f8bBnbYpEppBdiqKRtQshA6kvCdBjqyYt2KaUA==}
-    cpu: [x64]
-    os: [linux]
-
-  '@livekit/blingfire-win32-x64-msvc@1.1.1':
-    resolution: {integrity: sha512-WyKuzo+QZAYP4vre0B026xvMSkbBF84/5JWm5v8gwhOKpdwCTbSYvemhbWP+2sjWrWMWC+Ti3w+ctz3KyUCj8w==}
-    cpu: [x64]
-    os: [win32]
-
-  '@livekit/blingfire@1.1.1':
-    resolution: {integrity: sha512-4XUloHVIOla8ayEKC70vRtP8DZxZoevMy/CYCzM8aIRZa6TnamlwYIuPIQyU35zHgUTX1xnG7pQ7ia/WzL5tIg==}
     engines: {node: '>=18.0.0'}
 
   '@livekit/changesets-changelog-github@0.2.0':
@@ -6283,31 +6251,6 @@ snapshots:
       '@livekit/av-linux-arm64': 10.0.0
       '@livekit/av-linux-x64': 10.0.0
       '@livekit/av-win32-x64': 10.0.0
-
-  '@livekit/blingfire-darwin-arm64@1.1.1':
-    optional: true
-
-  '@livekit/blingfire-darwin-x64@1.1.1':
-    optional: true
-
-  '@livekit/blingfire-linux-arm64-gnu@1.1.1':
-    optional: true
-
-  '@livekit/blingfire-linux-x64-gnu@1.1.1':
-    optional: true
-
-  '@livekit/blingfire-win32-x64-msvc@1.1.1':
-    optional: true
-
-  '@livekit/blingfire@1.1.1':
-    dependencies:
-      node-gyp-build: 4.8.4
-    optionalDependencies:
-      '@livekit/blingfire-darwin-arm64': 1.1.1
-      '@livekit/blingfire-darwin-x64': 1.1.1
-      '@livekit/blingfire-linux-arm64-gnu': 1.1.1
-      '@livekit/blingfire-linux-x64-gnu': 1.1.1
-      '@livekit/blingfire-win32-x64-msvc': 1.1.1
 
   '@livekit/changesets-changelog-github@0.2.0':
     dependencies:
