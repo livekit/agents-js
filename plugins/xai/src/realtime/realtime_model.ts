@@ -31,7 +31,8 @@ export type GrokVoices = 'eve' | 'ara' | 'rex' | 'sal' | 'leo';
 export type GrokRealtimeModels =
   | 'grok-voice-fast-1.0'
   | 'grok-voice-think-fast-1.0'
-  | 'grok-voice-think-fast-2.0';
+  | 'grok-voice-think-fast-2.0'
+  | 'grok-voice-think-fast-3.0';
 
 export interface RealtimeModelOptions extends Omit<OpenAIRealtimeModelOptions, 'model'> {
   model?: GrokRealtimeModels | string;

@@ -161,8 +161,8 @@ export default defineAgent({
       // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
       turnDetection: new livekit.turnDetector.MultilingualModel(),
-      // To use hosted OpenAI Realtime, replace stt, llm, tts and vad with the following.
-      // Use openai.realtime.RealtimeModel instead when supplying OpenAI credentials directly.
+      // To use hosted OpenAI Realtime or xAI Grok Voice, replace stt, llm, tts and vad with the
+      // following. Use the provider plugin's RealtimeModel instead when supplying credentials directly.
       // llm: new inference.RealtimeModel({ model: 'openai/gpt-realtime' }),
     });
 

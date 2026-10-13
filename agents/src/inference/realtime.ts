@@ -33,10 +33,15 @@ const XAI_DEFAULT_TURN_DETECTION: apiProto.TurnDetectionType = {
 
 export interface RealtimeModelOptions {
   model: string;
+  /**
+   * Host that must serve the model, e.g. `'azure'` or `'openai'` for OpenAI models. The
+   * session is refused if no host in the region matches.
+   */
   provider?: string;
   baseURL?: string;
   apiKey?: string;
   apiSecret?: string;
+  /** Has no effect on realtime sessions. */
   inferenceClass?: InferenceClass;
   voice?: string;
   modalities?: apiProto.Modality[];
