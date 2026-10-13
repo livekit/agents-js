@@ -5199,9 +5199,10 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private createToolExecutionController(
-    speechHandle: SpeechHandle,
-  ): { controller: AbortController; detach: () => void } {
+  private createToolExecutionController(speechHandle: SpeechHandle): {
+    controller: AbortController;
+    detach: () => void;
+  } {
     const controller = new AbortController();
     const detach = speechHandle._addInterruptionTimeoutCallback(() => {
       setImmediate(() => controller.abort());
@@ -5244,10 +5245,7 @@ export class AgentActivity implements RecognitionHooks {
       try {
         await realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
-        this.logger.warn(
-          { error },
-          'failed to sync the tool results of an interrupted generation',
-        );
+        this.logger.warn({ error }, 'failed to sync the tool results of an interrupted generation');
       }
     } finally {
       unlock();

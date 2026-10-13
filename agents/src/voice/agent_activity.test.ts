@@ -1739,7 +1739,6 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle);
     expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
   });
-
 });
 
 /**
