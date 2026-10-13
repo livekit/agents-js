@@ -25,6 +25,7 @@ export function startJobSpan(
       [traceTypes.ATTR_AGENT_NAME]: job.agentName,
       [traceTypes.ATTR_ROOM_NAME]: job.room?.name ?? '',
       [traceTypes.ATTR_ROOM_SID]: job.room?.sid ?? '',
+      [traceTypes.ATTR_GEN_AI_CONVERSATION_ID]: job.room?.sid || undefined,
       [traceTypes.ATTR_DISPATCH_ID]: job.dispatchId,
       [traceTypes.ATTR_WORKER_ID]: info.workerId,
       [traceTypes.ATTR_JOB_AGENT_ID]: job.state?.agentId ?? '',
