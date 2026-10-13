@@ -14,7 +14,9 @@ import {
   ToolError,
   ToolFlag,
   Toolset,
+  isAgentHandoff,
   isFunctionTool,
+  isToolError,
   tool,
 } from '../llm/tool_context.js';
 import { log } from '../log.js';
@@ -419,12 +421,15 @@ export class ToolExecutor {
   async enqueueReply(
     ctx: RunContext<any>,
     items: [FunctionCall, FunctionCallOutput],
+    replyRequired: boolean = true,
   ): Promise<void> {
     const target = this.owningActivity?.agent ?? getCurrentAgent(ctx.session);
     const chatCtx = target.chatCtx.copy();
     chatCtx.insert(items);
     await target.updateChatCtx(chatCtx);
     ctx.session.history.insert(items);
+
+    if (!replyRequired) return;
 
     this.pendingUpdates.push({ ctx, items, target });
     if (this._replyTask === undefined || this._replyTaskDone) {
@@ -508,26 +513,45 @@ export class ToolExecutor {
       return;
     }
 
-    if (exception !== undefined) {
+    if (!this.runningTasks.has(runCtx.functionCall.callId)) {
+      return;
+    }
+
+    let finalValue = exception !== undefined ? exception : output;
+    if (finalValue instanceof Error && finalValue.name !== 'StopResponse') {
+      const context = {
+        function: runCtx.functionCall.name,
+        callId: runCtx.functionCall.callId,
+        error: finalValue,
+      };
+      if (isToolError(finalValue)) {
+        log().warn(context, 'ToolError while executing tool after a progress update');
+      } else {
+        log().error(context, 'exception occurred while executing tool after a progress update');
+      }
+    }
+
+    const handoff = isAgentHandoff(finalValue) ? finalValue : undefined;
+    let final = runCtx._makeUpdateOutput(handoff ? handoff.returns : finalValue, '_final', {
+      agentTask: handoff?.agent,
+      toolError: isToolError(finalValue),
+    });
+    if (final.agentTask !== undefined) {
       log().error(
         {
           function: runCtx.functionCall.name,
           callId: runCtx.functionCall.callId,
-          error: exception,
         },
-        'exception occurred while executing tool after a progress update',
+        `tool ${runCtx.functionCall.name} returned an Agent after ctx.update(); ` +
+          'agent handoff after a progress update is not supported',
       );
-      return;
+      finalValue = new ToolError('the agent handoff did not happen');
+      final = runCtx._makeUpdateOutput(finalValue, '_final', { toolError: true });
     }
-    if (output === undefined || output === null) {
-      return;
-    }
-    if (!this.runningTasks.has(runCtx.functionCall.callId)) {
-      return;
-    }
-    const pair = runCtx._makeUpdatePair(output, '_final');
+
+    const pair: [FunctionCall, FunctionCallOutput] = [final.toolCall, final.toolCallOutput!];
     runCtx._recordUpdatePair(pair);
-    await this.enqueueReply(runCtx, pair);
+    await this.enqueueReply(runCtx, pair, final.replyRequired);
   }
 
   private async checkDuplicate(
