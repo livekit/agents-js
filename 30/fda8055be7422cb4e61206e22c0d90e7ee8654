@@ -1,0 +1,22 @@
+agents/src/ipc/job_trace.test.ts
+  s_daaaca85fe910b::t_3cb567d1cd73f7 15,179,193,205-215
+  s_daaaca85fe910b::t_03641b66181056 216
+agents/src/ipc/job_trace.ts
+  s_daaaca85fe910b::t_548176c3af2d7f 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30fda8055be7422cb4e61206e22c0d90e7ee8654",
+  "prompts": {},
+  "sessions": {
+    "s_daaaca85fe910b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a12fc9-50ad-7801-b00c-03537e9a2264",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
