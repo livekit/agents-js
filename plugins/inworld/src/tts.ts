@@ -746,6 +746,8 @@ class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
     const sendPromise = sendLoop();
+    // Observed below once input ends; avoid an unhandled rejection if a send fails first.
+    sendPromise.catch(() => {});
 
     try {
       for await (const text of this.input) {
