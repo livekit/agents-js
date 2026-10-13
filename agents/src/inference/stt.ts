@@ -40,7 +40,9 @@ export type DeepgramModels =
   | 'deepgram/nova-2-phonecall';
 
 export type DeepgramFluxModels =
-  'deepgram/flux-general' | 'deepgram/flux-general-en' | 'deepgram/flux-general-multi';
+  | 'deepgram/flux-general'
+  | 'deepgram/flux-general-en'
+  | 'deepgram/flux-general-multi';
 
 export type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 
@@ -54,7 +56,9 @@ export type AssemblyaiModels =
 export type XaiSTTModels = 'xai/stt-1';
 
 export type SpeechmaticsModels =
-  'speechmatics/enhanced' | 'speechmatics/standard' | 'speechmatics/linden-1';
+  | 'speechmatics/enhanced'
+  | 'speechmatics/standard'
+  | 'speechmatics/linden-1';
 
 export type InworldSTTModels = 'inworld/inworld-stt-1';
 
@@ -170,7 +174,12 @@ export interface SpeechmaticsOptions {
   max_delay_mode?: 'flexible' | 'fixed' | string;
   /** Enable diarization for modes other than "none". */
   diarization?:
-    'none' | 'speaker' | 'channel' | 'channel_and_speaker_change' | 'speaker_change' | string;
+    | 'none'
+    | 'speaker'
+    | 'channel'
+    | 'channel_and_speaker_change'
+    | 'speaker_change'
+    | string;
   /** Speaker diarization sensitivity. Valid range is 0.0-1.0. */
   speaker_sensitivity?: number;
   /** Maximum number of speakers to detect. */
@@ -236,7 +245,16 @@ export interface OpenAIOptions {
 }
 
 export type STTLanguages =
-  'multi' | 'en' | 'de' | 'es' | 'fr' | 'ja' | 'pt' | 'zh' | 'hi' | AnyString;
+  | 'multi'
+  | 'en'
+  | 'de'
+  | 'es'
+  | 'fr'
+  | 'ja'
+  | 'pt'
+  | 'zh'
+  | 'hi'
+  | AnyString;
 
 const DIARIZATION_EXTRA_KEYS = ['diarize', 'speaker_labels', 'diarization'] as const;
 
@@ -1302,15 +1320,16 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         confidence: data.confidence,
         text,
         speakerId: data.speaker_id ?? undefined,
-        words: data.words.map((word): TimedString =>
-          createTimedString({
-            text: word.word,
-            startTime: word.start + this.startTimeOffset,
-            endTime: word.end + this.startTimeOffset,
-            startTimeOffset: this.startTimeOffset,
-            confidence: word.confidence,
-            speakerId: word.speaker_id ?? undefined,
-          }),
+        words: data.words.map(
+          (word): TimedString =>
+            createTimedString({
+              text: word.word,
+              startTime: word.start + this.startTimeOffset,
+              endTime: word.end + this.startTimeOffset,
+              startTimeOffset: this.startTimeOffset,
+              confidence: word.confidence,
+              speakerId: word.speaker_id ?? undefined,
+            }),
         ),
         metadata,
       };
