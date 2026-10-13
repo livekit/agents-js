@@ -1,0 +1,818 @@
+agents/src/voice/speech_handle.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5,8-10,95-131,175-176,185-196,198-202,205-217,284-308,383-386,391,401,493-499,505,560,613-614,625-708,711-718,724-728
+  s_daaaca85fe910b::t_9941fccdeeb667 729
+plugins/openai/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/sarvam/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-20
+plugins/deepgram/src/tts_v2.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 208-212
+plugins/speechify/src/tts.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-668
+plugins/xai/src/tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 206-210
+plugins/meta/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 29,351-375,589,592-594,652
+agents/src/telemetry/session_context.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4-18,20,26-32,36-69
+plugins/xai/etc/agents-plugin-xai.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 13,19,24,205
+plugins/assemblyai/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 7,192,262,439,529-538,554-558,715-717,752,781,803
+agents/src/ipc/supervised_proc.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 199
+plugins/speechify/api-extractor.json
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+examples/src/expressive-agent/README.md
+  s_daaaca85fe910b::t_1e93e2a897176a 19,40-43
+agents/src/telemetry/startup_spans.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-232
+plugins/meta/src/stt.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 355
+plugins/elevenlabs/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-22
+plugins/synthesia/api-extractor.json
+  s_daaaca85fe910b::t_1e93e2a897176a 1-8
+plugins/synthesia/etc/agents-plugin-synthesia.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-150
+agents/src/job.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,11,474-506
+  s_daaaca85fe910b::t_fc220f23610f30 507-508
+turbo.json
+  s_daaaca85fe910b::t_1e93e2a897176a 40,103-105,108-118
+.github/workflows/release-gate.yml
+  s_daaaca85fe910b::t_1e93e2a897176a 17
+agents/src/ipc/_preload.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-37
+agents/src/voice/audio_recognition_span.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 51,59-60,122,126-127,193-197,227-228,302-303,395-399,409-410
+plugins/anam/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+agents/src/telemetry/traces.otel2.type.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 174-176,178
+plugins/soniox/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/api-extractor.json
+  s_daaaca85fe910b::t_1e93e2a897176a 19-31
+plugins/neuphonic/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/voice/model_refs.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-46
+plugins/bey/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+plugins/speechify/src/index.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-19
+agents/src/voice/turn_config/utils.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 39
+plugins/lemonslice/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+agents/src/voice/avatar/avatar_session.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 227,254
+agents/src/inference/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 10,21,23,141,143-144,254-266,511,625,683-698,1130-1132,1156-1157,1163
+agents/src/inference/eot/detector.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 32-34
+agents/src/voice/audio_recognition_handoff.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 21-22,124-126
+plugins/elevenlabs/src/tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 25,32-33,60-64,138-142,163-166,191-207,218-236,318-319,346-348,370-371,381-382,386-391,408-450,452,456,462-465,481-495,501-503,511-519,525,527,532,538,542-543,546,549,556,573-575,600-602,607-610,614-617,625,633-651,658-660,666-675,694,713,729-736,739,747,765,767-768,778,783-807,809,811-812,815,824,834,837,911-934,993-994,1073-1104,1106,1219-1223,1378,1383
+plugins/runway/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/voice/audio_recognition_stt_recovery.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5,7,35,38-39,45,52-54,81-83,87,95-114
+.github/workflows/release.yml
+  s_daaaca85fe910b::t_1e93e2a897176a 35,70
+plugins/mistralai/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3,43
+plugins/sarvam/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/baseten/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+agents/src/telemetry/loop_monitor.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 10,15-29,32,39,57-58,71-77,83-86,111-119,169-177,195-204,233-238,259-263,275,278,283-314,330-331,347-353,358-364,373,375,381-410,415,436-438,440,442-444,446,451-455,464-467,477-479,481-485,493,499,501,514-516,549-555,571-608,619-629,632,659-660,668,671,675,678,704,730
+plugins/speechify/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-10
+examples/src/expressive-agent/expressive_agent.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 29
+plugins/synthesia/src/api.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-249
+agents/src/voice/agent.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1016,1019-1020,1032,1045,1057-1098
+  s_daaaca85fe910b::t_561c93a94be143 1099
+agents/src/tokenize/tokenizer.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 13-17
+plugins/cartesia/src/tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 244-248
+agents/src/voice/audio_recognition_interruption.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5,13-14,28,31,34-36,39-63,67-75,78-88,92-96,99-110,112,114,117-126,128-130,133-142,144-147,150-159,161-163,166-258,260-262,265-335,337-346,348-361,364-387,390-445
+plugins/deepgram/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/connection_pool.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 75-76,182-185,200-202,206-225,227-228,230-231,235-239,245-297,398-401
+agents/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-94
+agents/src/worker.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4-10,40-105
+examples/src/twilio_connector_warm_transfer.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-182
+.changeset/calm-vads-resize.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-6
+plugins/soniox/src/stt.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 91-156,493-528,573-577
+  s_daaaca85fe910b::t_55890a5bbad82f 578
+agents/src/voice/audio_recognition_transcription_timeout.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 20,28,35-36,113-114,117,125,128-132
+agents/src/tts/fallback_adapter.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 6,9-10,99-123,151-169,171-174,239-241,327-328,330-331,337-381,385,389-392,396-403,433-438,485,491-500,502-503,506-516,518-521,538,547-550,554-561,599,601-602,731,737-746,749-750,756,759-761,767,779-782
+plugins/openai/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-26
+agents/src/voice/room_io/_output.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 12,20,22,26,30,405-438,442-444,489-501,507-514,641-651
+plugins/protoface/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+agents/src/telemetry/testing/trace_schema.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-439
+examples/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 22,68
+agents/src/voice/audio_recognition_duplicate_commit.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 69-70
+agents/src/voice/realtime_overlapping_speech.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 12,15,168-259
+examples/src/connectors/twilio_connector.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-236
+agents/src/voice/agent.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 393-403,633
+agents/src/voice/room_io/_output.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4-10,13,20-24,1011-1294
+plugins/protoface/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/openai/src/realtime/gpt_live_model.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 443-483
+.github/workflows/build.yml
+  s_daaaca85fe910b::t_1e93e2a897176a 54
+plugins/baseten/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/telemetry/input_delta.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-680
+agents/src/inference/vad.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 121,167-169,190,195-196,199,206,241,244,316,319-323
+plugins/tavus/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/silero/src/vad.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 16,23-50,199-260
+  s_daaaca85fe910b::t_3e47eabefcc0a3 261-262
+agents/src/tts/markup_utils.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 99-142,175-177,183,185,210-212,216,235-248,250-251,262
+agents/src/job.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 13,15,26-35,126-139,161-169,211-221,252-259,262,382-415,421-436,501-524,568,570,749
+plugins/synthesia/README.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-46
+agents/src/inference/tts.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 505-536
+plugins/did/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/phonic/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/voice/report.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 45,454
+plugins/tavus/src/api.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 201,203,211,216-223,225,227-230,233-242,244-267,269,272-274
+agents/src/job_lifecycle.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,6,8-15,23,48-49,57-59,107-119,122-132,136-139,145-160,177-182
+  s_daaaca85fe910b::t_573eda11e2710b 183-185
+agents/src/ipc/proc_pool.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 94-95
+package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 34,52
+plugins/bey/src/avatar.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 227
+agents/src/voice/generation.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 34,104-106,174-175,639-650,656,661,663,786,804-805,827-829,888,965-966,1107,1194-1196,1211,1251,1520
+plugins/krisp/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+plugins/meta/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/resemble/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/test/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+agents/src/telemetry/utils.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 32-64,163-165
+agents/src/voice/session_lifecycle_span.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-368
+plugins/google/src/utils.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 142-175,185-206
+.github/workflows/test.yml
+  s_daaaca85fe910b::t_1e93e2a897176a 40
+plugins/cartesia/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/openai/src/realtime/realtime_model.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 480-482,637,711,1192-1193,1200-1247,1360-1362,1548-1549,1685-1688,1979-1987,2162-2166,2202-2212
+  s_daaaca85fe910b::t_fddcee52b9547e 2213-2214
+plugins/cerebras/src/llm.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 12,108-121
+plugins/elevenlabs/etc/agents-plugin-elevenlabs.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 12,37-41,240
+.changeset/tame-watchdogs-wake.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+plugins/did/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+agents/src/ipc/job_proc_lazy_main.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 6,22,30,34,36,135-137,151,159-181,192-218,220-222,224-228,230-239,241-265,267-269,271,331-333
+plugins/google/src/realtime/realtime_api.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 53,85-93,98-105,213-216,368,400-403,411-422,544,611,644-645,650-651,886-888,1054,1806-1808,1817,1822,1859,1876
+agents/src/voice/turn_config/interruption.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 52-53
+README.md
+  s_daaaca85fe910b::t_1e93e2a897176a 86
+.changeset/fresh-audio-resamplers.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+plugins/openai/src/ws/llm.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 127
+agents/src/telemetry/rpc.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-301
+plugins/deepgram/src/stt_recovery.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-63
+.changeset/tiny-flags-rest.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+agents/src/voice/audio_recognition_stt_events.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-225
+agents/src/telemetry/gen_ai.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 36-38,57-60,86-87,90-100,109-111,168-169,187-202,211,217-218,221-227,229-230,232-241,243-250,252-255,261-278,398-399,408-410
+agents/src/telemetry/trace_types.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 35,46-122,124-127,130-134,149-161,179,187,189-205,207-210,212,214,222,224,228-244,267,269-273,520-523
+agents/src/voice/audio_recognition_close.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 22-23
+agents/src/voice/running_tool_placeholders.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 29-33
+agents/src/voice/utils.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,6,30
+plugins/cerebras/src/models.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5
+plugins/openai/src/models.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 6-9,96,218-221,237-248
+plugins/speechify/etc/agents-plugin-speechify.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-83
+agents/src/inference/llm.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 26-28
+agents/src/telemetry/conversation_id.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-142
+agents/src/llm/chat_context.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5,14-16,747-861,1169-1170,1173,1191-1193
+agents/src/workflows/warm_transfer.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5-21,62-80,133-145,196-198,211,217-218,238-250,394,444,488-489,502-504,544,583-589,781-1132
+  s_daaaca85fe910b::t_e26b936293b562 1133
+plugins/rime/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/synthesia/src/errors.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-70
+agents/src/voice/run_context.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 63-66,71,95,97-101
+plugins/xai/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-22
+plugins/soniox/src/_internal.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 80-86,122-126,129
+plugins/anam/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/voice/realtime_adaptive_interruption.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5,11-12,93,101-126,142,158,160,167,175,185-187,191-192,195,228-514,599-604,610,613-614,620,623,630-635,641,644,651-653,657,660,679-680,703-704,721,725-762,765,771,778,786,793,823,833,838-840,862,870-928
+agents/src/telemetry/blocked_span_tracker.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-180
+plugins/test/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3,44
+agents/src/voice/agent_session_text_only.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 144
+examples/src/Dockerfile-example
+  s_daaaca85fe910b::t_1e93e2a897176a 73,75
+plugins/cerebras/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/llm/utils.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 14,949-950,957-962,999-1049
+  s_daaaca85fe910b::t_9a6ec0a9e3fea6 1050
+examples/src/connectors/README.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-122
+.changeset/bright-spans-correlate.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+.changeset/quiet-rivers-report.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+plugins/google/src/beta/gemini_tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 58-79,88-97,133-134,167-187,194-197,199-200,216-221,235,239-245,263,274-277,284,287,292,295-304,311,330,400-475,502-538
+  s_daaaca85fe910b::t_600edd0f6a8712 539
+agents/src/voice/io.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 243-247
+plugins/google/src/utils.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 125-162
+plugins/rime/etc/agents-plugin-rime.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 68
+plugins/resemble/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+agents/src/telemetry/testing/trace_schema.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-465
+agents/src/stt/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 122-123,218,290-298,468
+plugins/synthesia/src/api.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-226
+plugins/krisp/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/synthesia/src/index.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-28
+agents/src/telemetry/traces.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 613-616,619,627,651-653,655
+agents/src/inference/tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 517-521
+agents/src/voice/speech_handle.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 278-301
+plugins/synthesia/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-10
+plugins/synthesia/src/avatar.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-408
+plugins/deepgram/etc/agents-plugin-deepgram.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 312
+agents/src/tts/fallback_adapter.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5-7,9-15,18,20-21,59-73,80,109-110,118-136,145-148,154-155,169-170,173-181,184-254,497-1034
+agents/src/voice/agent_turn_span.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-482
+plugins/google/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-36
+plugins/speechify/src/sse.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-39
+plugins/openai/src/realtime/realtime_model.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 7,1280-1465
+agents/src/voice/agent_session_stt_recovery.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-373
+agents/src/voice/transcription/text_transforms.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 49-55,78-82,90,97
+agents/src/stt/fallback_adapter.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 159-166,168-176,180-182,184-190,585,652-653
+agents/src/telemetry/input_delta.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-282
+agents/src/inference/interruption/interruption_stream.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 378-382,390-392
+agents/src/_exceptions.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 36,47
+plugins/inworld/src/tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 567-570,734,791
+plugins/cartesia/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-20
+plugins/liveavatar/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+agents/etc/agents.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 18,22,28,38-39,53,55,82-84,184-185,457-458,581-582,894,950,1033,1096-1098,1102-1107,1111-1113,1117-1125,1129,1135,1147-1152,1156-1161,1168-1170,1183-1191,1339-1350,1363-1365,1372-1386,1390-1401,1408-1416,1426-1434,1454-1511,1514,1516-1517,1519-1520,1528-1530,1534-1536,1541,1544-1549,1570-1572,1707-1708,1962,1964,1967,1972,2048-2049,2363-2365,2384-2385,2392-2393,2538-2540,2560,2587-2589,2701,2703-2705,2909-2911,3233,3251,3489-3490,3517,3528-3531,3558-3560,3562,3572-3573,3663-3665,3887,3890,3893-3895,4141,4221-4291,4319-4321,4328-4330,4382-4384,4534-4535,4538-4539,4546-4549,4554-4555,4631,4861-4866,4944-4946,4963-4965,5074,5118-5120,5165-5167,5187-5189,5367-5378,5405-5414,5430,5605-5606,5608-5614,6024,6058-6065,6104,6159-6162,6214-6216,6483-6485,6502,6704,6735-6736,6738-6743,6747-6748,6752,6757-6761,6771-6774,6776-6783,6792,6795-6796,6813-6818,6827-6828,6834-6837,6841-6842,6854,6972-6975,6977,6979-6984,6988-6990,7001-7002,7016,7066,7072-7077,7083-7088,7108-7113,7148,7164,7227-7228,7369,7373-7374,7408-7409,7419-7420,7565,7568,7570,7573,7575,7585,8002,8010-8050,8053,8064-8066,8083-8089,8091,8102-8106,8187-8188,8192-8200,8231,8233,8243-8244,8274,8325,8538-8547,8549-8559,8854,9054-9055,9060,9081-9083,9176,9178,9180-9181,9223,9228-9234,9240
+plugins/baseten/src/stt_recovery.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-131
+agents/src/voice/keyterm_detection_span.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-170
+plugins/livekit/src/hf_utils.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 67
+agents/src/voice/audio_recognition_turn_detection.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 80-81
+agents/src/voice/keyterm_detection.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5,15,211-212,379-383,388,407-416,420-444,446-459,463-481
+plugins/baseten/etc/agents-plugin-baseten.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 11,14,27,159-161
+plugins/elevenlabs/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/silero/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+agents/src/voice/avatar/avatar_session.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 145,150
+agents/src/voice/transcription/text_transforms.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 119-126,161-194,206
+agents/src/llm/llm.ts
+  s_daaaca85fe910b::t_7beccdd5af9b62 10
+  s_daaaca85fe910b::t_1e93e2a897176a 250-276,280,286-294,296-297,300,438-439,455
+agents/src/telemetry/loop_monitor.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 26,103,308,346-357,434
+agents/src/voice/agent_session.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 6-7,59-111,148-169,215,223,234,243,261,263-264,349,356
+plugins/google/src/models.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 94-95
+plugins/google/src/realtime/realtime_api.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5-6,8-176,186-188,201,204-205,219,237-239,241,244-245,335-370,372,384-415,417-427,429,432-433
+plugins/inworld/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-20
+plugins/inworld/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 6-8,20,266,269,272-273,279-280,285-286,298-299,329-333,336-341,356,379-380,383-386,391,393,410-415,495-496,498-511
+plugins/perplexity/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+plugins/rime/src/connection.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 340-341,343
+plugins/trugen/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+plugins/speechify/src/sse.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-33
+plugins/liveavatar/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/fishaudio/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+plugins/fishaudio/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/neuphonic/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+agents/src/voice/room_io/room_io.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 19,26,171-173,216-232,238-244,252-253,258-260,299-304,313,354,513,550-556,579-580,698
+plugins/bey/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/inference/eot/runner.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 17,37-43,48-52,56,63
+plugins/soniox/src/tts.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,8,19,31-32,42-53,105-208,273-318
+  s_daaaca85fe910b::t_3dde4ed22a1df3 319
+agents/src/inference/stt.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 11,16,44-53,445-550,825-859,862-863
+  s_daaaca85fe910b::t_bc48e337371b14 860-861
+  s_daaaca85fe910b::t_79666430db0fd3 864
+agents/src/stt/fallback_adapter_lifecycle.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 564-570,612-618
+agents/src/voice/index.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 74
+plugins/minimax/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/fishaudio/etc/agents-plugin-fishaudio.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 57
+agents/src/stt/stream_adapter.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 112
+plugins/openai/src/realtime/gpt_live_model.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 209-210,549-554,909-912,914,922
+examples/src/connectors/connectors.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-141
+plugins/soniox/etc/agents-plugin-soniox.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 12,157,171
+agents/src/telemetry/redaction.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,126-168
+  s_daaaca85fe910b::t_dc16da2b65b3e4 169-170
+agents/src/telemetry/otel_http_exporter.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 129,139,181,185,201,209,215
+agents/src/voice/audio_recognition_eou.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 53-54
+plugins/openai/src/stt_recovery.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-190
+plugins/soniox/src/index.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 7
+plugins/soniox/src/tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 29,44-45,57,68-77,86-91,94,98-99,119,134-140,158-162,189,191,206-207,237,274,327,370,473-474,476,484,487,489,505-507,543-546,656-658,691,697-705,758,761
+agents/src/ipc/_preload.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-44
+plugins/mistralai/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-20
+.changeset/spoken-replies-listen.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+agents/src/inference/avatar.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 278-279
+agents/src/job_lifecycle.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 11,15,18-19,22,27,382-403
+  s_daaaca85fe910b::t_1c2098e724dba4 404
+agents/src/tts/provider_format.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 19,27,33,253-304,697-800,807,900-908,962-965,1092-1093,1151-1154,1159,1161-1174,1176-1192,1194-1221,1223-1225,1228,1352,1398-1400,1414-1417,1449-1455,1457-1460,1468-1487,1496,1498-1500,1502-1507,1509,1542-1544,1556-1560,1566-1571,1573,1575,1577-1579,1581-1587,1749-1751
+plugins/hume/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+plugins/azure/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 258,260-264,298,306
+agents/src/workflows/twilio_connector_warm_transfer_lifecycle.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-345
+agents/src/inference/_warmup.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 17-18,25-33
+  s_daaaca85fe910b::t_e34775fd323478 34
+plugins/livekit/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+agents/src/telemetry/trace_types.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 113-116,119,143,152-199,245-250,287-288
+plugins/tavus/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+plugins/sarvam/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 6-8,18,600,613-614,619-620,625-626,639-640,648-649,656-660,663-668,679,701-716,724-725,744,830-839,859-860,862,866,870,873-874
+plugins/deepgram/src/stt_v2.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 7,515,527-530,586
+plugins/google/src/beta/gemini_tts.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,7,51-372
+  s_daaaca85fe910b::t_8b3d906a965691 373
+agents/src/telemetry/traces.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 11,54-55,62-69,88-89,110-115,168,170,189-193,215-235,246-250,285-289,368-383,580,594-743,768-771,773,792-804,826,834,864
+.changeset/fix-stray-markdown-delimiters.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+agents/src/llm/chat_context.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 11,21,318,1665-1795
+  s_daaaca85fe910b::t_673a073168393f 1796
+plugins/anthropic/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+plugins/sarvam/src/stt_streaming.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-67
+plugins/cerebras/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-20
+agents/src/constants.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 21-28
+agents/src/telemetry/otel_metrics.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 6,8-10,12,14,16,18,20-28,31-38,40,48-70
+plugins/inworld/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/mistral/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/rime/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-29
+plugins/soniox/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 171-173
+examples/src/connectors/whatsapp_connector.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-376
+plugins/assemblyai/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/ipc/proc_pool.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 90,95-97
+agents/src/voice/audio_recognition.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 44,75-76,99-104,107-108,157-158,189,193,196-199,203,205-210,230,232,241,243-245,250,260-262,265,299-300,331-337,361,395-396,420-429,435-439,472-473,477,498,518-519,641-645,670-683,786-792,803-808,833,874,920,951,956,958-959,962-964,970,977-986,1015-1032,1037,1079-1083,1085-1086,1089-1099,1102,1104,1106-1108,1110-1116,1120-1122,1124-1125,1128-1132,1134,1136-1140,1193,1198-1204,1210-1247,1279-1283,1286-1289,1292-1295,1454,1543,1555-1559,1637-1640,1643-1656,1659-1664,1670-1732,1735-1736,1738-1739,1741-1743,1746-1752,1754-1764,1766-1785,1788-1806,1808-1810,1812-1821,1824-1844,1847-1854,1859-1860,1866-1870,1923,1931-1933,1936-1949,1971-1973,2055-2058,2142,2147,2220,2262,2333,2392,2678-2709,2711-2712,2716-2717,2723,2725-2728,2735-2859
+  s_daaaca85fe910b::t_9968be3ac0d0ae 2860
+agents/src/telemetry/index.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 27,30,33,36,38,50
+agents/src/voice/expressive_toggle.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 6-9,71-191
+agents/src/voice/playout_launch_pause.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 7,12-13,15,50,57,95-266,408-409
+plugins/elevenlabs/src/stt.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,620-645
+  s_daaaca85fe910b::t_e0dad1d9bda7a1 646-648
+  s_7d3e065768e896::t_e3368af237e8be 649-650
+plugins/xai/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 8,252-253,260-261,266-267,280-281,304-305,312,332-333,337,342,344,366-367,369-383,482-485
+agents/src/voice/coverage_spans.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-916
+plugins/silero/src/vad.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 126,140,167,271,274-278,330,335-336,339,346,349,468-469
+  s_daaaca85fe910b::t_5814da24545061 470
+.changeset/soft-pandas-pause.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+plugins/speechify/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 1-49
+plugins/speechify/src/tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-709
+plugins/speechify/tsup.config.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-7
+plugins/trugen/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/worker.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 250,254-256,300-301,718-719,847,868,914-916
+agents/src/voice/avatar/datastream_io.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-148
+plugins/azure/src/stt.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,14-15,75-80,92-94,129-130,135-157
+  s_daaaca85fe910b::t_bb2bb9a0f8b5ca 158-159
+plugins/deepgram/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-28
+agents/src/tts/provider_format.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 223,232-233,281-285,332,349-357,423,766-964
+plugins/minimax/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+.changeset/fresh-tools-report.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+agents/src/voice/agent_activity_tts_release.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-234
+plugins/assemblyai/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-22
+plugins/deepgram/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 342,467-469
+plugins/fishaudio/src/tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 370-374
+plugins/livekit/src/turn_detector/base.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 54
+plugins/synthesia/src/avatar.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-511
+plugins/azure/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/synthesia/src/errors.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-59
+agents/src/telemetry/loop_monitor_stacks.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-644
+.changeset/quiet-workers-drain.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+plugins/soniox/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-20
+plugins/speechify/src/models.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-11
+plugins/tavus/src/api.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,132-218
+  s_daaaca85fe910b::t_840f4d221fe7ec 219
+plugins/xai/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/workflows/index.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 11,13,15-16
+.changeset/legacy-transcription-gate.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+plugins/synthesia/src/types.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-53
+agents/src/llm/utils.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 19,73-110,568-608
+plugins/google/etc/agents-plugin-google.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 13,36,207,251,403-404,498-499,509,527-528,579
+agents/src/ipc/job_trace.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-93
+plugins/baseten/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5-7,15,89-90,101-102,128,133-134,157-158,187,216-217,224,327-329,333-340,345-346,348-357
+agents/src/telemetry/span_gate.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-117
+plugins/azure/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+plugins/inworld/src/stt_recovery.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-162
+plugins/synthesia/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 1-51
+agents/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3,82,88
+agents/src/voice/agent_activity_handoff.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 11,495-535
+  s_daaaca85fe910b::t_9c1bf5be75878b 536
+agents/src/connection_pool.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 366-504
+agents/src/voice/eou_wait_span.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-823
+.changeset/calm-lions-mute.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+plugins/lemonslice/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+plugins/runway/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-16
+agents/src/tts/index.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 30
+agents/src/voice/input_delta_session.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-147
+agents/src/telemetry/gen_ai.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 12-18,20,74-79,112-157
+agents/src/voice/agent_activity.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 460-464,481,856-860,919-924,1892-1933
+agents/src/voice/transcription/synchronizer.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 167-168,376-377,887-889
+  s_daaaca85fe910b::t_7991504b000adc 890-891
+agents/src/voice/amd.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1195-1196
+agents/src/voice/audio_recognition_backchannel.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 16-17,40-46,257-260,269-270,272-273,276-278
+plugins/livekit/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/voice/agent_v2.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 193-198,304-309,357-359
+  s_daaaca85fe910b::t_eaa64b9434610c 360
+plugins/rime/src/tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 58-59,71,89-94
+  s_daaaca85fe910b::t_d88e131d22bd46 95-96
+.changeset/realtime-tool-reply-same-handle.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+plugins/speechify/README.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-47
+agents/src/tts/tts.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 276-284,288-314,344-345,370,418-436,499,564-573,643-644,647-649,796-797,807,833-838,851-869,937,957-966,1011-1012,1017-1019,1024-1026
+agents/src/inference/avatar.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 407-408
+plugins/anthropic/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/voice/room_io/room_io.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5-7,14,529-566
+  s_daaaca85fe910b::t_4b9f9097c814b1 567-568
+plugins/anam/src/avatar.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 105-106
+agents/src/stt/fallback_adapter.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 553-556,575-577,580-607,648-715
+  s_daaaca85fe910b::t_f47663e134ce02 716
+plugins/openai/etc/agents-plugin-openai.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 118,123
+plugins/google/src/realtime/api_proto.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 17-18
+plugins/synthesia/tsup.config.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-9
+agents/src/telemetry/loop_stack_sampler.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-298
+agents/src/tokenize/basic/word.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,20-22,25-27
+agents/src/voice/audio_recognition_endpointing.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 13-14,52
+plugins/google/README.md
+  s_daaaca85fe910b::t_1e93e2a897176a 50-63
+plugins/meta/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-20
+plugins/mistral/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+agents/src/voice/agent_session.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 21,65-71,85,128,162-165,183-189,201,210,217-218,324-328,521-522,574,614-618,914-928,983-984,1024-1029,1031-1036,1043,1145-1154,1164-1166,1171-1172,1552-1553,1581-1595,1598-1605,1610,1655-1659,1661,1671-1673,1681,1818-1822,1840-1846,1902-1905,1947-1951,2047-2064,2071-2076,2079,2085-2098,2154-2156,2158-2159,2180,2187-2189,2199-2202,2204-2208,2220-2224,2232-2236,2239-2245,2249-2250,2252-2259,2262-2274,2276-2288,2290,2292-2324,2326-2329,2331-2334,2336-2342
+plugins/synthesia/src/index.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-23
+plugins/synthesia/src/log.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-7
+plugins/xai/src/stt_recovery.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-222
+agents/src/telemetry/rpc.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-184
+plugins/phonic/CHANGELOG.md
+  s_daaaca85fe910b::t_1e93e2a897176a 3-18
+agents/src/stt/stream_adapter.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-106
+plugins/elevenlabs/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 452-464,466-467,470,493
+agents/src/ipc/job_trace.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-228
+agents/src/ipc/supervised_proc.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 262-279
+agents/src/llm/fallback_adapter.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 267-342
+agents/src/tokenize/xml_markup.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 56-57,66,117
+agents/src/llm/fallback_adapter.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 5,8,108-130,173-187,195-198,229-263,432,455-456
+agents/src/voice/avatar/datastream_io.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 124,137,152,215-234,241-242,251,283-284,302-303,334-335
+agents/src/voice/room_io/_input.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 17,20,43-50,80,88,94,106,128-167,169,173,206-214,266,269-272,300,362
+agents/src/workflows/twilio_connector_warm_transfer.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-378
+agents/src/voice/audio_recognition_vad_reset.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 33-34
+plugins/elevenlabs/src/models.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 13-23
+plugins/perplexity/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/inference/vad.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,7,18,21-25,30-54,95-152
+  s_daaaca85fe910b::t_f30e5df37aeeae 153-155
+  s_7d3e065768e896::t_7e4ca6592532bd 156
+plugins/silero/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+agents/src/inference/eot/runner.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 11,14-24
+  s_daaaca85fe910b::t_638a503e2f6bdc 25
+CLAUDE.md
+  s_daaaca85fe910b::t_1e93e2a897176a 129
+examples/src/warm_transfer.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 168-171
+agents/src/stt/stt.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 85-108,248-270
+  s_daaaca85fe910b::t_c17ce5aebfbee2 271
+agents/src/inference/interruption/interruption_stream.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4-5,16-148,179-202
+plugins/cartesia/etc/agents-plugin-cartesia.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 104,156
+plugins/hume/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3
+.changeset/tiny-chats-diff.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+plugins/assemblyai/src/stt-recovery.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-187
+plugins/sarvam/src/stt_recovery.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-167
+agents/src/voice/audio_recognition_push_audio.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 15-16
+plugins/synthesia/tsconfig.json
+  s_daaaca85fe910b::t_1e93e2a897176a 1-15
+pnpm-workspace.yaml
+  s_daaaca85fe910b::t_1e93e2a897176a 27-28,31,41,48-49,52-53,59
+plugins/cerebras/etc/agents-plugin-cerebras.api.md
+  s_daaaca85fe910b::t_1e93e2a897176a 40
+agents/src/telemetry/prepared_tracer.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 1-347
+agents/src/voice/agent_session_handoff.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 86-94,171-174,203-206
+plugins/speechify/tsconfig.json
+  s_daaaca85fe910b::t_1e93e2a897176a 1-16
+plugins/google/package.json
+  s_daaaca85fe910b::t_1e93e2a897176a 3,47
+agents/src/voice/agent_activity.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 73-81,83,102,165-173,312-313,339-525,555,560,575-576,642-643,778-782,789,796-800,807,818,821-822,826,837-865,1007-1008,1014-1021,1032-1035,1088-1089,1161-1170,1353-1363,1375-1380,1523,1544-1546,1644-1646,1697-1702,1932-1933,1947-1948,1979-1980,2062-2064,2110-2114,2199-2218,2230,2270,2284,2289,2296,2298-2299,2303-2306,2308-2317,2434-2438,2472-2473,2566,2568,2573-2576,2580,2586-2589,2603,2626-2635,2763-2766,3023-3024,3044-3049,3059,3098-3100,3171,3176-3178,3183,3185,3189,3226,3265-3272,3325-3326,3338,3366-3395,3437,3468-3469,3482-3483,3510-3532,3551,3554,3631,3656,3658-3660,3668-3681,3713,3760-3761,3839-3862,3864-3869,3914-3917,3970-3971,3981,4004,4076,4146-4155,4243,4248-4254,4289,4308,4314-4315,4339,4344,4449-4476,4487-4489,4528-4529,4582,4585,4597-4599,4913,4935,4953,4973-4974,4978,4985-4986,4996-4997,5095-5099,5105-5110,5112-5115,5123,5127,5568-5572,5578,5640,5664-5669,5686-5701,5734-5735,5790-5805,5867-5886,5911,5994-5995,6029,6032-6033,6038,6053,6062
+.changeset/fuzzy-taxis-reply.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-5
+agents/src/tokenize/tokenizer.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 243-252
+agents/src/tts/stream_adapter.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 6,17-18,29,32-33,41-76,83-90,100-106,111,114-115,121-124,129-146,149-152,161,175-182,185,197,203,210-212,234
+plugins/assemblyai/src/stt-metadata.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 227-253
+.changeset/fail-fast-elevenlabs-stt.md
+  s_daaaca85fe910b::t_1e93e2a897176a 1-6
+plugins/elevenlabs/src/tts.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 4,7,9,72-74,94,110-113,135-138,274-671
+plugins/openai/src/stt.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 6-7,20-21,25,311,550,614,632,649-650,655,657-658,662-675,677,693,737,759-772,774-777,779-788,790-792,794-795,805-814,847-851,858-873,876-879,881-883,887-892,904-905,955-958,964,970-971,974-979,983-984,988-1003,1005-1010
+agents/src/voice/realtime_tool_output_commit.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 19,95-96,98,113-115,123-124,127,132-143,151,157,174-206
+agents/src/inference/interruption/interruption_failover.test.ts
+  s_daaaca85fe910b::t_1e93e2a897176a 30,344,359-417
+pnpm-lock.yaml
+  s_7d3e065768e896::t_c15689dad783f6 10-11,20,26-27,30-31,37,68-69,122-123,212-213,230-231,241,364,396-397,412-413,438,466,497,522,556,584,621,655,689,714,748,782,799-800,828,855,883,901,914,945,976,1032,1060,1085,1113,1124-1125,1144,1184,1215,1237,1259,1290,1333,1358,1392,1423,1451,1465-1513,1525,1548-1549,1556,1581,1618,2113-2114,2157-2158,2163-2164,2169-2170,2174-2175,2179-2180,2184-2185,2190-2191,2196-2197,2202-2203,2208-2209,2214-2215,2220-2221,2226-2227,2232-2233,2239-2240,2246-2247,2253-2254,2260-2261,2267-2268,2274-2275,2281-2282,2288-2289,2292-2293,2297-2298,2303-2304,2309-2310,2489-2491,2535-2538,3103-3104,3106-3107,3112-3113,3115-3116,3119,3126-3127,3129-3130,3132-3133,3135-3136,3138-3139,3225-3226,3402-3403,3405-3406,3934-3935,4399-4400,4490-4493,5073-5074,5450-5451,5458-5463,5466,5480-5483,5827,6037,6045,6072,6090,6092,6095,6097,6100,6102,6105,6108,6111,6114,6117,6120,6123,6126,6129,6132,6135,6137,6140,6142,6145,6147,6150,6152,6155,6157,6160,6162,6165,6167,6170,6172,6175,6180,6182,6185,6188,6191,6323,6326,6347-6350,6389-6397,7058,7061,7070,7072,7076-7077,7081,7083,7089,7091,7097,7101,7103,7106,7108-7109,7113,7115,7117,7164,7198,7205,7359,7364,7978,8044,8542,8634-8639,8723,8727,8731,8735,8837,9097,9264,9270-9294,9297,9303-9327,9727,9729-9735,9752,9756,9758-9764,9781
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "616d932d68bfa655fd0d4dd4386e2446305aa33f",
+  "prompts": {},
+  "sessions": {
+    "s_7d3e065768e896": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1352d-0abe-7133-a198-48832691fd81",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    },
+    "s_daaaca85fe910b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a12fc9-50ad-7801-b00c-03537e9a2264",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
