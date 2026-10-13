@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
+import { createHash } from 'node:crypto';
 import { stripExprMarkup } from '../tts/provider_format.js';
 import { createImmutableArray, shortuuid } from '../utils.js';
 import type { LLM } from './llm.js';
@@ -10,6 +11,9 @@ import type { JSONObject, JSONValue, ToolContext } from './tool_context.js';
 
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 export interface ImageContent {
+  /**
+   * Unique identifier for the image.
+   */
   id: string;
 
   type: 'image_content';
@@ -740,6 +744,121 @@ export type ChatItem =
   | AgentHandoffItem
   | AgentConfigUpdate;
 
+/**
+ * What identifies an item's content beyond its id and type: what {@link ChatContext.isEquivalent}
+ * compares and {@link chatItemFingerprint} hashes, so the two cannot drift apart. Timestamps,
+ * metrics and similar metadata are left out. `content` maps a message's content entries: as they
+ * are for equivalence, as media-safe stand-ins for the fingerprint.
+ */
+function essentialFields(
+  item: ChatItem,
+  content: (entry: ChatContent) => unknown = (entry) => entry,
+): unknown[] {
+  switch (item.type) {
+    case 'message':
+      return [item.role, item.interrupted, item.content.map(content)];
+    case 'function_call':
+      return [item.name, item.callId, item.args, item.thoughtSignature, item.groupId, item.extra];
+    case 'function_call_output':
+      return [item.name, item.callId, item.output, item.isError];
+    case 'agent_handoff':
+    case 'agent_config_update':
+      return [];
+  }
+}
+
+function contentEqual(a: ChatContent, b: ChatContent): boolean {
+  if (typeof a === 'string' || typeof b === 'string') return a === b;
+  if (isInstructions(a) || isInstructions(b)) {
+    return (
+      isInstructions(a) &&
+      isInstructions(b) &&
+      a.audio === b.audio &&
+      a.text === b.text &&
+      a.value === b.value
+    );
+  }
+  if (a.type === 'image_content' && b.type === 'image_content') {
+    return (
+      a.id === b.id &&
+      a.image === b.image &&
+      a.inferenceDetail === b.inferenceDetail &&
+      a.inferenceWidth === b.inferenceWidth &&
+      a.inferenceHeight === b.inferenceHeight &&
+      a.mimeType === b.mimeType
+    );
+  }
+  if (a.type === 'audio_content' && b.type === 'audio_content') {
+    return (
+      a.frame.length === b.frame.length &&
+      a.frame.every((frame, index) => frame === b.frame[index]) &&
+      a.transcript === b.transcript
+    );
+  }
+  return false;
+}
+
+function essentialFieldEqual(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return (
+      a.length === b.length &&
+      a.every((value, index) => contentEqual(value as ChatContent, b[index] as ChatContent))
+    );
+  }
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+  return a === b;
+}
+
+function digest(text: string): string {
+  return createHash('blake2b512').update(text).digest('hex').slice(0, 16);
+}
+
+// media payloads are never kept: a URL counts as itself, inline data by a digest computed once per
+// image object (and again when its data changes), and a video frame by its identity
+const imageSources = new WeakMap<ImageContent, { image: unknown; source: string | number }>();
+const frameTokens = new WeakMap<object, number>();
+let nextFrameToken = 0;
+
+function imageSource(content: ImageContent): string | number {
+  const image = content.image;
+  if (typeof image === 'string' && !image.startsWith('data:')) return image;
+  const cached = imageSources.get(content);
+  if (cached?.image === image) return cached.source;
+  let source: string | number;
+  if (typeof image === 'string') {
+    source = digest(image);
+  } else {
+    source = frameTokens.get(image) ?? nextFrameToken++;
+    frameTokens.set(image, source);
+  }
+  imageSources.set(content, { image, source });
+  return source;
+}
+
+function contentStandIn(entry: ChatContent): unknown {
+  if (typeof entry === 'string') return entry;
+  if (isInstructions(entry)) return ['instructions', entry.audio, entry.text, entry.value];
+  if (entry.type === 'image_content') {
+    return [
+      'image',
+      entry.id,
+      imageSource(entry),
+      entry.inferenceWidth,
+      entry.inferenceHeight,
+      entry.inferenceDetail,
+      entry.mimeType,
+    ];
+  }
+  return ['audio', entry.frame.length, entry.transcript];
+}
+
+/** @internal A short digest of an item's essential fields, to tell whether it changed. */
+export function chatItemFingerprint(item: ChatItem): string {
+  return digest(JSON.stringify([item.type, ...essentialFields(item, contentStandIn)]));
+}
+
 export class ChatContext {
   protected _items: ChatItem[];
 
@@ -1047,10 +1166,11 @@ export class ChatContext {
    *
    * Comparison rules:
    * - Messages: compares the full `content` list, `role` and `interrupted`.
-   * - Function calls: compares `name`, `callId`, and `args`.
+   * - Function calls: compares `name`, `callId`, `args`, `thoughtSignature`, `groupId` and
+   *   `extra`.
    * - Function call outputs: compares `name`, `callId`, `output`, and `isError`.
    *
-   * Does not consider timestamps or other metadata.
+   * Does not consider timestamps or other metadata. Item fingerprints hash the same fields.
    */
   isEquivalent(other: ChatContext): boolean {
     if (this === other) {
@@ -1068,101 +1188,10 @@ export class ChatContext {
       if (a.id !== b.id || a.type !== b.type) {
         return false;
       }
-
-      if (a.type === 'message' && b.type === 'message') {
-        if (
-          a.role !== b.role ||
-          a.interrupted !== b.interrupted ||
-          !this.compareContent(a.content, b.content)
-        ) {
-          return false;
-        }
-      } else if (a.type === 'function_call' && b.type === 'function_call') {
-        if (
-          a.name !== b.name ||
-          a.callId !== b.callId ||
-          a.args !== b.args ||
-          a.thoughtSignature !== b.thoughtSignature ||
-          a.groupId !== b.groupId ||
-          JSON.stringify(a.extra) !== JSON.stringify(b.extra)
-        ) {
-          return false;
-        }
-      } else if (a.type === 'function_call_output' && b.type === 'function_call_output') {
-        if (
-          a.name !== b.name ||
-          a.callId !== b.callId ||
-          a.output !== b.output ||
-          a.isError !== b.isError
-        ) {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Compare two content arrays for equality.
-   */
-  private compareContent(a: ChatContent[], b: ChatContent[]): boolean {
-    if (a.length !== b.length) {
-      return false;
-    }
-
-    for (let i = 0; i < a.length; i++) {
-      const contentA = a[i]!;
-      const contentB = b[i]!;
-
-      if (typeof contentA === 'string' && typeof contentB === 'string') {
-        if (contentA !== contentB) {
-          return false;
-        }
-        continue;
-      }
-
-      if (typeof contentA !== typeof contentB) {
+      const left = essentialFields(a);
+      const right = essentialFields(b);
+      if (!left.every((value, index) => essentialFieldEqual(value, right[index]))) {
         return false;
-      }
-
-      if (isInstructions(contentA) && isInstructions(contentB)) {
-        if (
-          contentA.audio !== contentB.audio ||
-          contentA.text !== contentB.text ||
-          contentA.value !== contentB.value
-        ) {
-          return false;
-        }
-        continue;
-      }
-
-      if (isInstructions(contentA) || isInstructions(contentB)) {
-        return false;
-      }
-
-      if (typeof contentA === 'object' && typeof contentB === 'object') {
-        if (contentA.type === 'image_content' && contentB.type === 'image_content') {
-          if (
-            contentA.id !== contentB.id ||
-            contentA.image !== contentB.image ||
-            contentA.inferenceDetail !== contentB.inferenceDetail ||
-            contentA.inferenceWidth !== contentB.inferenceWidth ||
-            contentA.inferenceHeight !== contentB.inferenceHeight ||
-            contentA.mimeType !== contentB.mimeType
-          ) {
-            return false;
-          }
-        } else if (contentA.type === 'audio_content' && contentB.type === 'audio_content') {
-          if (contentA.frame.length !== contentB.frame.length) {
-            return false;
-          }
-          if (contentA.transcript !== contentB.transcript) {
-            return false;
-          }
-        } else {
-          return false;
-        }
       }
     }
 

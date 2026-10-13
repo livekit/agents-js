@@ -255,11 +255,13 @@ export class SpeechStream extends stt.SpeechStream {
       const recognizer = createSpeechRecognizer(this._opts, pushStream);
       this.#connectRecognizerEvents(recognizer);
 
-      await new Promise<void>((resolve, reject) => {
-        recognizer.startContinuousRecognitionAsync(resolve, (error) => reject(new Error(error)));
-      });
-
+      let inputClosed = false;
       try {
+        await new Promise<void>((resolve, reject) => {
+          recognizer.startContinuousRecognitionAsync(resolve, (error) =>
+            reject(new APIConnectionError({ message: error })),
+          );
+        });
         await withTimeout(this._sessionStartedEvent.wait(), this.#connOptions.timeoutMs);
 
         const inputAbortController = new AbortController();
@@ -293,6 +295,7 @@ export class SpeechStream extends stt.SpeechStream {
           inputAbortController.abort();
           await inputTask;
           pushStream.close();
+          inputClosed = true;
         }
 
         if (inputEnded) {
@@ -300,6 +303,7 @@ export class SpeechStream extends stt.SpeechStream {
           break;
         }
       } finally {
+        if (!inputClosed) pushStream.close();
         await new Promise<void>((resolve) => {
           recognizer.stopContinuousRecognitionAsync(resolve, () => resolve());
         });

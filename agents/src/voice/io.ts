@@ -240,6 +240,11 @@ export abstract class AudioOutput extends EventEmitter {
     this._capturing = false;
   }
 
+  /** @internal */
+  _markInputTruncated(): void {
+    this.nextInChain?._markInputTruncated();
+  }
+
   /**
    * Forget the segment currently being captured, without treating it as a flush boundary.
    *

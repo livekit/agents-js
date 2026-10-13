@@ -9,9 +9,10 @@ import { ChatContext, type FunctionCall } from '../llm/chat_context.js';
 import { type GenerationCreatedEvent, RealtimeModel, RealtimeSession } from '../llm/realtime.js';
 import { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
-import { type VADEvent, VADEventType } from '../vad.js';
+import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
+import { AudioRecognition } from './audio_recognition.js';
 import { AudioOutput } from './io.js';
 
 class TracingAudioOutput extends AudioOutput {
@@ -164,6 +165,98 @@ async function start(overlap: boolean, turnDetection = true) {
 }
 
 describe('realtime overlapping speech', () => {
+  it('hands realtime playout from VAD to adaptive interruption after the start boundary', async () => {
+    class FakeVAD extends VAD {
+      label = 'fake';
+      constructor() {
+        super({ updateInterval: 32 });
+      }
+      stream(): VADStream {
+        throw new Error('recognition input tasks are disabled in this test');
+      }
+    }
+
+    vi.stubEnv('LIVEKIT_API_KEY', 'test');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'test');
+    // Drive recognition events directly while retaining its speech-boundary lifecycle.
+    const startRecognition = vi.spyOn(AudioRecognition.prototype, 'start').mockResolvedValue();
+    const model = new FakeRealtimeModel(false, false);
+    const session = new AgentSession({
+      llm: model,
+      vad: new FakeVAD(),
+      aecWarmupDuration: null,
+      turnHandling: {
+        turnDetection: 'vad',
+        interruption: { mode: 'adaptive', backchannelBoundary: [1000, 2000] },
+      },
+    });
+    const output = new TracingAudioOutput();
+    session.output.audio = output;
+    const agent = new Agent({ instructions: 'test' });
+    try {
+      await session.start({ agent });
+      const activity = agent.getActivityOrThrow();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const speech = session.generateReply();
+      await setImmediate();
+      expect(output.frames).toBeGreaterThan(0);
+      expect(activity.interruptionByAudioActivityEnabled).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(1001);
+      activity.onStartOfSpeech(speechStart);
+      activity.onVADInferenceDone({ ...speechStart, speechDuration: 600 });
+      expect(output.pauses).toBe(0);
+      expect(speech.interrupted).toBe(false);
+
+      activity.onEndOfSpeech();
+      activity.onOverlapSpeech({
+        type: 'overlapping_speech',
+        isInterruption: false,
+        agentEnded: false,
+        detectedAt: Date.now(),
+        totalDurationInS: 0.6,
+        predictionDurationInS: 0,
+        detectionDelayInS: 0,
+        probability: 0,
+        numRequests: 1,
+      });
+      expect(
+        await activity.onEndOfTurn({
+          newTranscript: '',
+          transcriptConfidence: 0,
+          transcriptionDelay: undefined,
+          endOfUtteranceDelay: undefined,
+          startedSpeakingAt: undefined,
+          stoppedSpeakingAt: undefined,
+          backchannelOverAgent: true,
+        }),
+      ).toBe(false);
+      expect(model.activeSession.asks).toBe(1);
+      expect(speech.interrupted).toBe(false);
+
+      activity.onStartOfSpeech(speechStart);
+      activity.onOverlapSpeech({
+        type: 'overlapping_speech',
+        isInterruption: true,
+        agentEnded: false,
+        detectedAt: Date.now(),
+        totalDurationInS: 0.6,
+        predictionDurationInS: 0,
+        detectionDelayInS: 0,
+        probability: 1,
+        numRequests: 1,
+      });
+      expect(output.pauses).toBe(1);
+      expect(session.agentState).toBe('listening');
+    } finally {
+      vi.useRealTimers();
+      model.activeSession?.endSpeech();
+      await session.close();
+      startRecognition.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.each([false, true])('handles server speech start with overlap=%s', async (overlap) => {
     const { model, session, output } = await start(overlap);
     try {

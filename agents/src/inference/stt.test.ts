@@ -8,10 +8,12 @@ import { WebSocketServer } from 'ws';
 import { APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
+import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, type VADStream } from '../vad.js';
+import { createConversationItemAddedEvent } from '../voice/events.js';
 import {
   SpeechStream as InferenceSpeechStream,
   STT,
@@ -37,6 +39,16 @@ function makeStt(overrides: Record<string, unknown> = {}) {
     baseURL: 'https://example.livekit.cloud',
   };
   return new STT({ ...defaults, ...overrides });
+}
+
+function makeAssemblyStt(overrides: Record<string, unknown> = {}) {
+  return makeStt({ model: 'assemblyai/universal-3-5-pro', ...overrides });
+}
+
+function assistantItemEvent(text: string) {
+  return createConversationItemAddedEvent(
+    ChatMessage.create({ role: 'assistant', content: [text] }),
+  );
 }
 
 function makeSpeechStream() {
@@ -430,6 +442,112 @@ describe('STT diarization capabilities', () => {
   });
 });
 
+describe('STT agent_context forwarding', () => {
+  it('enables chat context for AssemblyAI U3 Pro family models', () => {
+    for (const model of [
+      'assemblyai/u3-rt-pro',
+      'assemblyai/universal-3-5-pro',
+      'assemblyai/universal-3-6-pro',
+    ] as const) {
+      const stt = makeAssemblyStt({ model });
+      expect(stt.capabilities.chatContext).toBe(true);
+    }
+  });
+
+  it('disables chat context for unsupported AssemblyAI models', () => {
+    const stt = makeAssemblyStt({ model: 'assemblyai/universal-streaming' });
+
+    expect(stt.capabilities.chatContext).toBe(false);
+  });
+
+  it('disables chat context for non-AssemblyAI models', () => {
+    const stt = makeAssemblyStt({ model: 'deepgram/nova-3' });
+    expect(stt.capabilities.chatContext).toBe(false);
+  });
+
+  it('derives chatContext capability from model support only', () => {
+    const stt = makeAssemblyStt({ modelOptions: { previous_context_n_turns: 0 } });
+    expect(stt.capabilities.chatContext).toBe(true);
+  });
+
+  it('emits active carryover shaping in the session.update wire payload', () => {
+    const stt = makeAssemblyStt();
+    const stream = stt.stream();
+    const sent: string[] = [];
+    Reflect.set(stream, 'activeWs', {
+      readyState: 1,
+      send: (payload: string) => sent.push(payload),
+    });
+
+    stt._pushConversationItem(assistantItemEvent('Your room is booked for Tuesday.'));
+
+    expect(stt['opts'].modelOptions).toHaveProperty(
+      'agent_context',
+      'Your room is booked for Tuesday.',
+    );
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]!)).toMatchObject({
+      type: 'session.update',
+      settings: {
+        extra: {
+          agent_context: 'Your room is booked for Tuesday.',
+        },
+      },
+    });
+    stream.close();
+  });
+
+  it('truncates oversize replies keeping the tail', () => {
+    const text = 'a'.repeat(2000) + 'b'.repeat(1750);
+    const stt = makeAssemblyStt();
+    stt._pushConversationItem(assistantItemEvent(text));
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'b'.repeat(1750));
+  });
+
+  it('ignores non-assistant items', () => {
+    const stt = makeAssemblyStt();
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(ChatMessage.create({ role: 'user', content: ['hi there'] })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(ChatMessage.create({ role: 'assistant', content: [] })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('ignores agent handoff items', () => {
+    const stt = makeAssemblyStt();
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(AgentHandoffItem.create({ newAgentId: 'agent-2' })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('preserves explicit agent_context and later overwrites it with carryover', () => {
+    const stt = makeAssemblyStt({
+      modelOptions: { agent_context: 'The agent asked for a booking date.' },
+    });
+    expect(stt['opts'].modelOptions).toHaveProperty(
+      'agent_context',
+      'The agent asked for a booking date.',
+    );
+
+    stt._pushConversationItem(assistantItemEvent('And your zip code?'));
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'And your zip code?');
+  });
+
+  it('re-evaluates chat context capability on model update', () => {
+    const stt = makeAssemblyStt({ model: 'assemblyai/universal-streaming' });
+    expect(stt.capabilities.chatContext).toBe(false);
+
+    stt.updateOptions({ model: 'assemblyai/universal-3-5-pro' });
+    expect(stt.capabilities.chatContext).toBe(true);
+  });
+});
+
 describe('STT aligned transcript capability', () => {
   it('agrees with the Cartesia Ink-2 plugin capability', () => {
     const gatewayStt = makeStt({ model: 'cartesia/ink-2' });
@@ -699,6 +817,46 @@ describe('Inference STT connection lifecycle', () => {
     } finally {
       vi.useRealTimers();
       stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('closes the socket when the stream is closed while connecting', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    server.on('connection', (socket) => {
+      // The server sees the upgrade before the client's `open` fires, so this
+      // lands while connectWs is still pending.
+      stream.close();
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        messageTypes.push((JSON.parse(raw.toString()) as { type: string }).type);
+      });
+    });
+
+    try {
+      const closedInTime = await Promise.race([
+        socketClosed.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000)),
+      ]);
+
+      expect(closedInTime).toBe(true);
+      expect(messageTypes).toEqual(['session.create', 'session.close']);
+    } finally {
       for (const client of server.clients) client.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

@@ -29,7 +29,9 @@ export interface TurnDetectorOptions {
    * over the inference gateway; model name `'turn-detector-v1'`); `'v1-mini'`
    * is the local in-process model (`'turn-detector-v1-mini'`). When omitted,
    * auto-selects `'v1'` on hosted/dev environments (falling back to `'v1-mini'`
-   * if cloud creds are missing) and `'v1-mini'` otherwise.
+   * if cloud creds are missing) and `'v1-mini'` otherwise. The worker still
+   * preloads the mini weights unless `LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE=0`
+   * is set.
    */
   version?: TurnDetectorVersion;
   unlikelyThreshold?: number | Record<string, number>;

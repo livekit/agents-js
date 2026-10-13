@@ -91,6 +91,8 @@ export class ProcPool {
       await proc.start();
       await proc.initialize({ sessionEndTimeout: this.sessionEndTimeout });
     }
+    // dispatch timeline: a warm process is now handling this job
+    info.launchedAt = Date.now();
     await proc.launchJob(info);
   }
 

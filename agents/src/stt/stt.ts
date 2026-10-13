@@ -119,6 +119,8 @@ export interface SpeechEvent {
   speechEndTime?: number;
   requestId?: string;
   recognitionUsage?: RecognitionUsage;
+  /** Wall-clock time when this event was created, in milliseconds. STT boundaries populate it. */
+  createdAt?: number;
 }
 
 /**
@@ -213,6 +215,7 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   async recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<SpeechEvent> {
     const startTime = process.hrtime.bigint();
     const event = await this._recognize(frame, abortSignal);
+    event.createdAt ??= Date.now();
     const durationMs = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
     this.emit('metrics_collected', {
       type: 'stt_metrics',
@@ -283,6 +286,15 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
    * @param options - Optional configuration including connection options
    */
   abstract stream(options?: { connOptions?: APIConnectOptions }): SpeechStream;
+
+  /**
+   * Open the provider connection ahead of the first recognition. Best effort and non-blocking.
+   * Called by the framework when an agent starts or resumes. Providers without a persistent
+   * connection need not override this.
+   */
+  prewarm(): void {
+    return;
+  }
 
   async close(): Promise<void> {
     return;
@@ -453,6 +465,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected async monitorMetrics() {
     for await (const event of this.queue) {
+      event.createdAt ??= Date.now();
       if (!this.output.closed) {
         try {
           this.output.put(event);

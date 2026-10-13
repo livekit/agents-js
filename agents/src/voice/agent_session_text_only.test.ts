@@ -141,6 +141,7 @@ describe('AgentSession text-only gating', () => {
       logs: true,
       transcript: true,
       redaction: false,
+      inputDelta: false,
     });
     expect(initRecording).toHaveBeenCalledWith(session.sessionOptions.recordingOptions);
     await session.close();

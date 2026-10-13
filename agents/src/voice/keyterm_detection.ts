@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { type Attributes, type Context, context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import { LLM as InferenceLLM } from '../inference/llm.js';
@@ -11,6 +12,7 @@ import { tool } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import type { STT } from '../stt/stt.js';
+import { traceTypes, tracer } from '../telemetry/index.js';
 import { Task, delay } from '../utils.js';
 import { AgentSessionEventTypes, type ConversationItemAddedEvent } from './events.js';
 
@@ -206,6 +208,8 @@ const recordKeyterms = tool({
  */
 export interface KeytermDetectorSession {
   readonly history: ChatContext;
+  /** The session's root trace context: the pass nests here when no reply is current. */
+  readonly rootSpanContext?: Context;
   on(
     event: AgentSessionEventTypes.ConversationItemAdded,
     listener: (ev: ConversationItemAddedEvent) => void,
@@ -372,11 +376,16 @@ export class KeytermDetector extends (EventEmitter as new () => TypedEmitter<Key
       return;
     }
 
+    // under the agent_turn that answers this message when fired from its reply, else (a skipped
+    // reply, user code editing the history) under the session root
+    const parent = trace.getSpan(otelContext.active())?.isRecording()
+      ? otelContext.active()
+      : session.rootSpanContext;
     // snapshot the transcript now so the pass isn't affected by later turns
     const snapshot = KeytermDetector.snapshot(session);
     this._detectTask = Task.from(async (controller) => {
       try {
-        await this.runOnce(snapshot, controller.signal);
+        await this.runOnce(snapshot, controller.signal, parent);
       } catch (error) {
         this.#logger.child({ error }).error('keyterm detection pass failed');
         throw error;
@@ -395,31 +404,81 @@ export class KeytermDetector extends (EventEmitter as new () => TypedEmitter<Key
     });
   }
 
-  /** @internal exposed for tests */
-  async runOnce(chatCtx: ChatContext, abortSignal?: AbortSignal): Promise<void> {
-    if (!(this.llm instanceof LLM)) {
+  /**
+   * One detection pass, as its own `keyterm_detection` span (otherwise the LLM call reads as a
+   * second inference step of the reply). `parent` is the span to nest under; the ambient
+   * context when omitted.
+   *
+   * @internal exposed for tests
+   */
+  async runOnce(chatCtx: ChatContext, abortSignal?: AbortSignal, parent?: Context): Promise<void> {
+    const llm = this.llm;
+    if (!(llm instanceof LLM)) {
       return;
     }
 
-    // show static terms as applied too, or the LLM keeps re-proposing them
-    const current: [string, boolean][] = [
-      ...this.staticTerms.map((t): [string, boolean] => [t, true]),
-      ...this._detectedTerms.map((t): [string, boolean] => [t, true]),
-      ...[...this._pendingTerms.keys()].map((t): [string, boolean] => [t, false]),
-    ];
-    const [pending, confirm, remove] = await detectKeyterms(this.llm, chatCtx, {
-      currentKeyterms: current,
-      instructions: this.instructions,
-      timeout: this.detectionTimeout,
-      abortSignal,
-    });
-
-    // cancelled mid-flight (e.g. activity shutdown): don't touch keyterm state
-    if (abortSignal?.aborted) {
-      return;
+    const attributes: Attributes = { [traceTypes.ATTR_GEN_AI_REQUEST_MODEL]: llm.model };
+    const provider = traceTypes.genAIProviderName(llm.provider);
+    if (provider !== undefined) {
+      attributes[traceTypes.ATTR_GEN_AI_PROVIDER_NAME] = provider;
     }
-
     const before = this.keyterms;
+    const applied = await tracer.startActiveSpan(
+      async (span) => {
+        // show static terms as applied too, or the LLM keeps re-proposing them
+        const current: [string, boolean][] = [
+          ...this.staticTerms.map((t): [string, boolean] => [t, true]),
+          ...this._detectedTerms.map((t): [string, boolean] => [t, true]),
+          ...[...this._pendingTerms.keys()].map((t): [string, boolean] => [t, false]),
+        ];
+        const [pending, confirm, remove] = await detectKeyterms(llm, chatCtx, {
+          currentKeyterms: current,
+          instructions: this.instructions,
+          timeout: this.detectionTimeout,
+          abortSignal,
+        });
+
+        // cancelled mid-flight (e.g. activity shutdown): don't touch keyterm state
+        if (abortSignal?.aborted) {
+          return false;
+        }
+
+        this.applyPass(pending, confirm, remove);
+        const after = this.keyterms;
+        const beforeSet = new Set(before);
+        const afterSet = new Set(after);
+        span.setAttributes({
+          [traceTypes.ATTR_KEYTERMS_COUNT]: after.length,
+          [traceTypes.ATTR_KEYTERMS_ADDED]: after.filter((t) => !beforeSet.has(t)).length,
+          [traceTypes.ATTR_KEYTERMS_REMOVED]: before.filter((t) => !afterSet.has(t)).length,
+        });
+        return true;
+      },
+      { name: 'keyterm_detection', context: parent, attributes },
+    );
+    if (!applied) {
+      return;
+    }
+
+    // update the STT if the keyterms changed
+    const newKeyterms = this.keyterms;
+    if (
+      this.stt !== undefined &&
+      (newKeyterms.length !== before.length || newKeyterms.some((t, i) => t !== before[i]))
+    ) {
+      this.stt._updateSessionKeyterms(newKeyterms);
+      const beforeSet = new Set(before);
+      const newSet = new Set(newKeyterms);
+      this.#logger
+        .child({
+          added: newKeyterms.filter((t) => !beforeSet.has(t)),
+          removed: before.filter((t) => !newSet.has(t)),
+        })
+        .debug('keyterms changed');
+    }
+  }
+
+  private applyPass(pending: string[], confirm: string[], remove: string[]): void {
     this.tick += 1;
 
     // update the keyterm state
@@ -461,23 +520,6 @@ export class KeytermDetector extends (EventEmitter as new () => TypedEmitter<Key
       while (this._detectedTerms.length > this.maxKeyterms) {
         this._detectedTerms.shift();
       }
-    }
-
-    // update the STT if the keyterms changed
-    const newKeyterms = this.keyterms;
-    if (
-      this.stt !== undefined &&
-      (newKeyterms.length !== before.length || newKeyterms.some((t, i) => t !== before[i]))
-    ) {
-      this.stt._updateSessionKeyterms(newKeyterms);
-      const beforeSet = new Set(before);
-      const newSet = new Set(newKeyterms);
-      this.#logger
-        .child({
-          added: newKeyterms.filter((t) => !beforeSet.has(t)),
-          removed: before.filter((t) => !newSet.has(t)),
-        })
-        .debug('keyterms changed');
     }
   }
 }

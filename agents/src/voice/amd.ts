@@ -1192,8 +1192,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.span?.setAttribute(traceTypes.ATTR_AMD_CATEGORY, result.category);
     this.span?.setAttribute(traceTypes.ATTR_AMD_REASON, result.reason);
     this.span?.setAttribute(traceTypes.ATTR_AMD_IS_MACHINE, result.isMachine);
-    this.span?.setAttribute(traceTypes.ATTR_AMD_SPEECH_DURATION, result.speechDurationMs);
-    this.span?.setAttribute(traceTypes.ATTR_AMD_DELAY, result.delayMs);
+    this.span?.setAttribute(traceTypes.ATTR_AMD_SPEECH_DURATION, result.speechDurationMs / 1000);
+    this.span?.setAttribute(traceTypes.ATTR_AMD_DELAY, result.delayMs / 1000);
     this.span?.setAttribute(traceTypes.ATTR_AMD_TRANSCRIPT, result.transcript);
   }
 

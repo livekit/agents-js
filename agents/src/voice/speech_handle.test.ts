@@ -275,3 +275,27 @@ describe('SpeechHandle.exception', () => {
     expect(handle.exception()).toBe(error);
   });
 });
+
+describe('SpeechHandle queue wait', () => {
+  it('measures each generation from its own scheduling', () => {
+    const now = vi.spyOn(performance, 'now');
+    try {
+      const handle = SpeechHandle.create();
+      now.mockReturnValue(1_000);
+      handle._markScheduled();
+      now.mockReturnValue(1_010);
+      handle._authorizeGeneration();
+      expect(handle._queueWait()).toBe(10);
+
+      // the tool reply is scheduled on the same handle and waits behind other speech
+      now.mockReturnValue(2_000);
+      handle._markScheduled();
+      expect(handle._queueWait()).toBeUndefined();
+      now.mockReturnValue(2_800);
+      handle._authorizeGeneration();
+      expect(handle._queueWait()).toBe(800);
+    } finally {
+      now.mockRestore();
+    }
+  });
+});

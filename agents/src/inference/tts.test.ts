@@ -502,3 +502,35 @@ describeLiveKitInference('LiveKit Inference TTS integration', agents, async (har
     });
   }
 });
+
+describe('Inference TTS releaseIdleConnections', () => {
+  it('closes pooled sockets and reconnects on the next use', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const opened: WebSocket[] = [];
+    const closed: number[] = [];
+    server.on('connection', (socket) => {
+      opened.push(socket);
+      socket.on('close', (code) => closed.push(code));
+    });
+
+    const tts = makeTts({ baseURL: `http://127.0.0.1:${address.port}` });
+    try {
+      tts.prewarm();
+      await vi.waitFor(() => expect(opened).toHaveLength(1));
+
+      await tts.releaseIdleConnections();
+      await vi.waitFor(() => expect(closed).toHaveLength(1));
+      expect(closed[0]).not.toBe(1006);
+
+      // the pool is still usable
+      tts.prewarm();
+      await vi.waitFor(() => expect(opened).toHaveLength(2));
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await tts.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});

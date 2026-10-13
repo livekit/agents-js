@@ -205,6 +205,11 @@ export class TTSv2 extends tts.TTS {
     this.#pool.prewarm();
   }
 
+  /** Release pooled connections; an in-flight synthesis keeps its until it finishes. */
+  override async releaseIdleConnections(): Promise<void> {
+    await this.#pool.releaseIdle();
+  }
+
   override async close(): Promise<void> {
     this.#closed = true;
     await this.#pool.close();
