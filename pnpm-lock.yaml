@@ -796,8 +796,8 @@ importers:
   plugins/google:
     dependencies:
       '@google/genai':
-        specifier: ^2.24.0
-        version: 2.27.0
+        specifier: ^2.29.1
+        version: 2.29.1
       '@livekit/mutex':
         specifier: ^1.1.1
         version: 1.1.1
@@ -2110,8 +2110,8 @@ packages:
     resolution: {integrity: sha512-Ys+3g2TaW7gADOJzPt83SJtCDhMjndcDMFVQ/Tj9iA1BfJzFKD9mAUXT3OenpuPHbI6P/myECxRJrofUsDx/5g==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
 
-  '@google/genai@2.27.0':
-    resolution: {integrity: sha512-W6F9Y9d4h7cVQNa85IPCOVVP9PiUzve/ZQPBvQnBmnBJcLvxstEw+R2X/RyCH0SOe0HVDQzeKDpDUf6ZRtbmdQ==}
+  '@google/genai@2.29.1':
+    resolution: {integrity: sha512-keU+JsY11fT4ykdFA6Q8iQHBgOAAVssFLxPtXRjCIEr5Zt2GzE75c22bBmq87XbhgtpuKaObnSgsrG60rj0ZMA==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.2
@@ -6042,7 +6042,7 @@ snapshots:
 
   '@eslint/js@8.57.0': {}
 
-  '@google/genai@2.27.0':
+  '@google/genai@2.29.1':
     dependencies:
       google-auth-library: 10.6.2
       p-retry: 4.6.2

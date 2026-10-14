@@ -3990,7 +3990,7 @@ export function getLanguageRegion(language: string): string | undefined;
 function getMonitor(): EventLoopMonitor | undefined;
 
 // @public (undocumented)
-type GoogleModels = 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
+type GoogleModels = 'google/gemini-4-argon' | 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
 
 // @public (undocumented)
 type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
