@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import * as duplex from './duplex.js';
 import * as eot from './eot/index.js';
 import * as llm from './llm.js';
 import * as realtime from './realtime.js';
@@ -51,7 +52,6 @@ export {
   RealtimeModel,
   RealtimeSession,
   isRealtimeModel,
-  type GoogleRealtimeModels,
   type OpenAIRealtimeModels,
   type RealtimeModelOptions,
   type RealtimeModels,
@@ -59,11 +59,15 @@ export {
 } from './realtime.js';
 
 export {
-  GPTLiveModel,
-  GPTLiveSession,
-  type GPTLiveModelOptions,
-  type OpenAIGPTLiveModels,
-} from './gpt_live.js';
+  DuplexModel,
+  DuplexSession,
+  isDuplexModel,
+  type DuplexModelOptions,
+  type DuplexModels,
+  type DuplexOptions,
+  type OpenAIDuplexOptions,
+  type OpenAIResponsesOptions,
+} from './duplex.js';
 
 export {
   normalizeSTTFallback,
@@ -96,4 +100,4 @@ export {
   type XaiTTSOptions,
 } from './tts.js';
 
-export { llm, realtime, stt, tts };
+export { duplex, llm, realtime, stt, tts };

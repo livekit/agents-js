@@ -2925,6 +2925,20 @@ function dropBracketCues(tokens: TimedString[], held: TimedString[], options?: {
 // @public (undocumented)
 type DtmfEvent = (typeof DTMF_EVENTS)[number];
 
+declare namespace duplex {
+    export {
+        isDuplexModel,
+        OpenAIDuplexModels,
+        DuplexModels,
+        OpenAIResponsesOptions,
+        OpenAIDuplexOptions,
+        DuplexOptions,
+        DuplexModelOptions,
+        DuplexModel_2 as DuplexModel,
+        DuplexSession_2 as DuplexSession
+    }
+}
+
 // @public
 export interface DuplexAudioFrame {
     frame: AudioFrame;
@@ -2952,6 +2966,50 @@ export abstract class DuplexModel {
     get provider(): string;
     abstract session(): DuplexSession;
 }
+
+// Warning: (ae-forgotten-export) The symbol "GPTLiveModel" needs to be exported by the entry point index.d.ts
+//
+// @public
+class DuplexModel_2<TModel extends DuplexModels | AnyString = DuplexModels | AnyString> extends GPTLiveModel {
+    constructor(options: DuplexModelOptions<TModel>);
+    // (undocumented)
+    static fromModelString(model: string): DuplexModel_2;
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions_2" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    readonly _inferenceOptions: InferenceOptions_2;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(): DuplexSession_2;
+}
+
+// @public (undocumented)
+interface DuplexModelOptions<TModel extends DuplexModels | AnyString> {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    maxSessionDuration?: number | null;
+    model: TModel;
+    modelOptions?: DuplexOptions<TModel>;
+    provider?: string;
+    voice?: string;
+}
+
+// @public
+type DuplexModels = OpenAIDuplexModels;
+
+// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+type DuplexOptions<TModel extends DuplexModels | AnyString> = TModel extends OpenAIDuplexModels ? OpenAIDuplexOptions : Record<string, unknown>;
 
 // @public
 export interface DuplexOutputTranscriptDelta {
@@ -3009,6 +3067,24 @@ export abstract class DuplexSession<Events extends EventMap = Record<never, neve
     }): void;
     _updateSession(instructions?: string, chatCtx?: ChatContext, tools?: ToolContext): Promise<void>;
     abstract _updateTools(tools: ToolContext): Promise<void>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "GPTLiveSession" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+class DuplexSession_2 extends GPTLiveSession {
+    constructor(model: DuplexModel_2);
+    // (undocumented)
+    protected createWsUrlAndHeaders(): Promise<{
+        url: URL;
+        headers: Record<string, string>;
+    }>;
+    // Warning: (ae-forgotten-export) The symbol "ErrorBody" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected isFatalError(error: ErrorBody): boolean;
+    // (undocumented)
+    _updateTools(tools: ToolContext): Promise<void>;
 }
 
 // @public
@@ -4008,66 +4084,6 @@ interface GoogleSTTOptions {
     language_codes?: string[];
 }
 
-// Warning: (ae-forgotten-export) The symbol "GPTLiveModel_2" needs to be exported by the entry point index.d.ts
-//
-// @public
-class GPTLiveModel extends GPTLiveModel_2 {
-    constructor(options?: GPTLiveModelOptions_2);
-    // (undocumented)
-    static fromModelString(model: string): GPTLiveModel;
-    // Warning: (ae-forgotten-export) The symbol "InferenceOptions_2" needs to be exported by the entry point index.d.ts
-    //
-    // @internal (undocumented)
-    readonly _inferenceOptions: InferenceOptions_2;
-    // (undocumented)
-    label(): string;
-    // (undocumented)
-    get provider(): string;
-    // (undocumented)
-    session(): GPTLiveSession_2;
-}
-
-// @public (undocumented)
-interface GPTLiveModelOptions_2 {
-    // (undocumented)
-    apiKey?: string;
-    // (undocumented)
-    apiSecret?: string;
-    // (undocumented)
-    baseURL?: string;
-    // (undocumented)
-    connOptions?: APIConnectOptions;
-    // Warning: (ae-forgotten-export) The symbol "DelegationTarget" needs to be exported by the entry point index.d.ts
-    delegation?: DelegationTarget;
-    inferenceClass?: InferenceClass;
-    maxSessionDuration?: number | null;
-    // Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
-    model?: OpenAIGPTLiveModels | AnyString;
-    provider?: string;
-    // Warning: (ae-forgotten-export) The symbol "ResponsesDelegationOptions" needs to be exported by the entry point index.d.ts
-    responsesOptions?: ResponsesDelegationOptions;
-    // Warning: (ae-forgotten-export) The symbol "GPTLiveVoices" needs to be exported by the entry point index.d.ts
-    voice?: GPTLiveVoices | AnyString | Record<string, unknown>;
-}
-
-// Warning: (ae-forgotten-export) The symbol "GPTLiveSession" needs to be exported by the entry point index.d.ts
-//
-// @public (undocumented)
-class GPTLiveSession_2 extends GPTLiveSession {
-    constructor(model: GPTLiveModel);
-    // (undocumented)
-    protected createWsUrlAndHeaders(): Promise<{
-        url: URL;
-        headers: Record<string, string>;
-    }>;
-    // Warning: (ae-forgotten-export) The symbol "ErrorBody" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    protected isFatalError(error: ErrorBody): boolean;
-    // (undocumented)
-    _updateTools(tools: ToolContext): Promise<void>;
-}
-
 // @public (undocumented)
 export function handoff(options: {
     agent: Agent;
@@ -4147,15 +4163,18 @@ declare namespace inference {
         RealtimeModel_2 as RealtimeModel,
         RealtimeSession_3 as RealtimeSession,
         isRealtimeModel,
-        GoogleRealtimeModels,
         OpenAIRealtimeModels,
         RealtimeModelOptions,
         RealtimeModels,
         XAIRealtimeModels,
-        GPTLiveModel,
-        GPTLiveSession_2 as GPTLiveSession,
-        GPTLiveModelOptions_2 as GPTLiveModelOptions,
-        OpenAIGPTLiveModels,
+        DuplexModel_2 as DuplexModel,
+        DuplexSession_2 as DuplexSession,
+        isDuplexModel,
+        DuplexModelOptions,
+        DuplexModels,
+        DuplexOptions,
+        OpenAIDuplexOptions,
+        OpenAIResponsesOptions,
         normalizeSTTFallback,
         parseSTTModelString,
         STT_2 as STT,
@@ -4181,6 +4200,7 @@ declare namespace inference {
         TTSOptions,
         XaiTTSModels,
         XaiTTSOptions,
+        duplex,
         llm_3 as llm,
         realtime,
         stt_2 as stt,
@@ -4537,6 +4557,9 @@ export const isCloud: (url: URL) => boolean;
 export const isDevMode: () => boolean;
 
 // @public
+function isDuplexModel(model: string): model is DuplexModels;
+
+// @public
 export function isFfmpegTeardownError(error: unknown): boolean;
 
 // Warning: (ae-internal-missing-underscore) The name "isFlushSentinel" should be prefixed with an underscore because the declaration is marked as @internal
@@ -4566,7 +4589,7 @@ export const isPending: (promise: Promise<unknown>) => Promise<Throws<boolean, E
 export function isProviderTool(tool: any): tool is ProviderTool;
 
 // @public
-function isRealtimeModel(model: string): model is RealtimeModels;
+function isRealtimeModel(model: string): boolean;
 
 // @public
 export function isStreamClosedError(error: unknown): boolean;
@@ -4954,10 +4977,8 @@ export type LLMCallbacks = {
     ['error']: (error: LLMError) => void;
 };
 
-// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "GPTLiveModel"
-//
 // @public
-function llmFromModelString(model: string): LLM_2 | RealtimeModel_2 | GPTLiveModel;
+function llmFromModelString(model: string): LLM_2 | RealtimeModel_2 | DuplexModel_2;
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "convertMarkup"
 //
@@ -5440,6 +5461,15 @@ type ObservabilityEndpoint = {
     cloudHostname: string;
 };
 
+// @public (undocumented)
+type OpenAIDuplexModels = 'openai/gpt-live-1';
+
+// @public (undocumented)
+interface OpenAIDuplexOptions {
+    delegation?: 'responses' | 'client';
+    responsesOptions?: OpenAIResponsesOptions;
+}
+
 // @public
 export type OpenAIFunctionParameters = {
     type: 'object';
@@ -5450,14 +5480,16 @@ export type OpenAIFunctionParameters = {
     additionalProperties?: boolean;
 };
 
-// @public
-type OpenAIGPTLiveModels = 'openai/gpt-live-1';
-
 // @public (undocumented)
 type OpenAIModels = 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
 
 // @public (undocumented)
 type OpenAIRealtimeModels = 'openai/gpt-realtime' | 'openai/gpt-realtime-mini' | 'openai/gpt-realtime-2.1' | 'openai/gpt-realtime-2.1-mini';
+
+// Warning: (ae-forgotten-export) The symbol "ResponsesDelegationOptions" needs to be exported by the entry point index.d.ts
+//
+// @public
+type OpenAIResponsesOptions = Omit<ResponsesDelegationOptions, 'serviceTier'>;
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTaskOptions"
 //
@@ -5901,7 +5933,6 @@ interface RealtimeModelOptions {
     baseURL?: string;
     // (undocumented)
     connOptions?: APIConnectOptions;
-    inferenceClass?: InferenceClass;
     // (undocumented)
     inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
     // (undocumented)
@@ -5911,7 +5942,7 @@ interface RealtimeModelOptions {
     // (undocumented)
     modalities?: api_proto.Modality[];
     // (undocumented)
-    model: string;
+    model: RealtimeModels | AnyString;
     provider?: string;
     // (undocumented)
     reasoning?: api_proto.Reasoning;
@@ -5928,7 +5959,7 @@ interface RealtimeModelOptions {
 }
 
 // @public (undocumented)
-type RealtimeModels = OpenAIRealtimeModels | OpenAIGPTLiveModels | GoogleRealtimeModels | XAIRealtimeModels;
+type RealtimeModels = OpenAIRealtimeModels | GoogleRealtimeModels | XAIRealtimeModels;
 
 // @public (undocumented)
 export abstract class RealtimeSession extends EventEmitter {

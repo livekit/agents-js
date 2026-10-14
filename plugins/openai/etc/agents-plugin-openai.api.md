@@ -520,10 +520,10 @@ interface GPTLiveDelegation {
     pendingTranscript: string;
 }
 
-// Warning: (ae-forgotten-export) The symbol "GPTLiveModel_2" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GPTLiveModel" needs to be exported by the entry point index.d.ts
 //
 // @public
-class GPTLiveModel_3 extends GPTLiveModel_2 {
+class GPTLiveModel_2 extends GPTLiveModel {
     // Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
     //
     // @internal (undocumented)
@@ -550,7 +550,7 @@ class GPTLiveSession extends llm_2.DuplexSession<{
     openai_client_event_queued: (event: ClientEvent_2 | Record<string, unknown>) => void;
     delegation_created: (event: GPTLiveDelegation) => void;
 }> {
-    constructor(model: GPTLiveModel_2);
+    constructor(model: GPTLiveModel);
     appendCommentary(text: string, options?: {
         delegationId?: string | null;
     }): void;
@@ -1226,7 +1226,7 @@ declare namespace realtime {
         GPTLiveSession,
         GPTLiveVoices,
         ResponsesDelegationOptions,
-        GPTLiveModel_3 as GPTLiveModel
+        GPTLiveModel_2 as GPTLiveModel
     }
 }
 

@@ -12,7 +12,8 @@ import { RealtimeError } from '../llm/realtime.js';
 import { ProviderTool, ToolContext } from '../llm/tool_context.js';
 import { Agent } from '../voice/agent.js';
 import { AgentSession } from '../voice/agent_session.js';
-import { GPTLiveModel, type GPTLiveModelOptions, GPTLiveSession } from './gpt_live.js';
+import { DuplexModel, type DuplexModelOptions, DuplexSession } from './duplex.js';
+import type { OpenAIDuplexOptions, OpenAIResponsesOptions } from './duplex.js';
 import * as inference from './index.js';
 import { LLM, llmFromModelString } from './llm.js';
 import { RealtimeModel } from './realtime.js';
@@ -20,7 +21,7 @@ import * as inferenceUtils from './utils.js';
 
 const SECRET = 'secret-with-at-least-32-bytes-for-jwt';
 
-class TestSession extends GPTLiveSession {
+class TestSession extends DuplexSession {
   fatal(error: ErrorBody): boolean {
     return this.isFatalError(error);
   }
@@ -62,11 +63,16 @@ class Gateway {
   }
 }
 
-describe('inference GPTLiveModel', () => {
-  let sessions: GPTLiveSession[];
-  const model = (options: GPTLiveModelOptions = {}) =>
-    new GPTLiveModel({ apiKey: 'lk-key', apiSecret: SECRET, ...options });
-  const track = <T extends GPTLiveSession>(session: T): T => {
+describe('inference DuplexModel', () => {
+  let sessions: DuplexSession[];
+  const model = (options: Partial<DuplexModelOptions<'openai/gpt-live-1'>> = {}) =>
+    new DuplexModel({
+      model: 'openai/gpt-live-1',
+      apiKey: 'lk-key',
+      apiSecret: SECRET,
+      ...options,
+    });
+  const track = <T extends DuplexSession>(session: T): T => {
     session.on('error', () => {});
     sessions.push(session);
     return session;
@@ -86,8 +92,8 @@ describe('inference GPTLiveModel', () => {
 
   it('is publicly exported with its canonical label', () => {
     const live = model();
-    expect(inference.GPTLiveModel).toBe(GPTLiveModel);
-    expect(live.label()).toBe('inference.GPTLiveModel');
+    expect(inference.DuplexModel).toBe(DuplexModel);
+    expect(live.label()).toBe('inference.DuplexModel');
     expect(live.provider).toBe('livekit');
     expect(live.model).toBe('openai/gpt-live-1');
   });
@@ -137,9 +143,44 @@ describe('inference GPTLiveModel', () => {
   });
 
   it('accepts only the default delegation service tier', () => {
-    expect(() => model({ responsesOptions: {} })).not.toThrow();
-    expect(() => model({ responsesOptions: { serviceTier: 'default' } })).not.toThrow();
-    expect(() => model({ responsesOptions: { serviceTier: 'priority' } })).toThrow(/default tier/);
+    const tier = (serviceTier: string) =>
+      model({ modelOptions: { responsesOptions: { serviceTier } as OpenAIResponsesOptions } });
+    expect(() => model({ modelOptions: { responsesOptions: {} } })).not.toThrow();
+    expect(() => tier('default')).not.toThrow();
+    expect(() => tier('priority')).toThrow(/default tier/);
+  });
+
+  it('takes GPT-Live options through modelOptions', async () => {
+    const gateway = new Gateway();
+    await once(gateway.server, 'listening');
+    try {
+      const live = model({
+        baseURL: gateway.url,
+        voice: 'cedar',
+        modelOptions: {
+          delegation: 'responses',
+          responsesOptions: { model: 'gpt-4.1-mini', instructions: 'Be brief.' },
+        },
+      });
+      const session = track(live.session());
+      await session._updateSession();
+      await vi.waitFor(() => expect(gateway.starts).toHaveLength(1));
+
+      expect(gateway.starts[0]!.session.audio?.output?.voice).toBe('cedar');
+      expect(gateway.starts[0]!.session.delegation).toMatchObject({
+        type: 'responses',
+        responses: { model: 'gpt-4.1-mini', instructions: 'Be brief.' },
+      });
+    } finally {
+      await Promise.all(sessions.map((session) => session.close()));
+      await gateway.stop();
+    }
+  });
+
+  it('rejects modelOptions it does not know', () => {
+    expect(() =>
+      model({ modelOptions: { serviceTier: 'priority' } as unknown as OpenAIDuplexOptions }),
+    ).toThrow(/serviceTier/);
   });
 
   it.each(['invalid_model', 'unsupported_server_tool', 'unsupported_delegated_model', 'forbidden'])(
@@ -152,11 +193,13 @@ describe('inference GPTLiveModel', () => {
   );
 
   it('requires a provider-prefixed model', () => {
-    expect(() => model({ model: 'gpt-live-1' })).toThrow(/provider-prefixed/);
+    expect(
+      () => new DuplexModel({ model: 'gpt-live-1', apiKey: 'lk-key', apiSecret: SECRET }),
+    ).toThrow(/provider-prefixed/);
   });
 
   it('is what the openai/gpt-live-1 model string resolves to', () => {
-    expect(llmFromModelString('openai/gpt-live-1')).toBeInstanceOf(GPTLiveModel);
+    expect(llmFromModelString('openai/gpt-live-1')).toBeInstanceOf(DuplexModel);
     expect(llmFromModelString('openai/gpt-realtime-2.1')).toBeInstanceOf(RealtimeModel);
     expect(llmFromModelString('google/gemini-3.8-live')).toBeInstanceOf(RealtimeModel);
     expect(llmFromModelString('xai/grok-voice-3.0')).toBeInstanceOf(RealtimeModel);
@@ -173,6 +216,6 @@ describe('inference GPTLiveModel', () => {
   it('is not served by the realtime model class', () => {
     expect(
       () => new RealtimeModel({ model: 'openai/gpt-live-1', apiKey: 'lk-key', apiSecret: SECRET }),
-    ).toThrow(/inference.GPTLiveModel/);
+    ).toThrow(/inference.DuplexModel/);
   });
 });

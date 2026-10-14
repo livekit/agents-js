@@ -4,31 +4,31 @@
 import {
   GPTLiveModel as BaseGPTLiveModel,
   GPTLiveSession as BaseGPTLiveSession,
-  type GPTLiveVoices,
   type ResponsesDelegationOptions,
 } from '../llm/openai_realtime/gpt_live_model.js';
-import type { DelegationTarget, ErrorBody } from '../llm/openai_realtime/gpt_live_types.js';
+import type { ErrorBody } from '../llm/openai_realtime/gpt_live_types.js';
 import { RealtimeError } from '../llm/realtime.js';
 import { type ToolContext, isFunctionTool } from '../llm/tool_context.js';
 import type { APIConnectOptions } from '../types.js';
 import {
   type AnyString,
   INFERENCE_PROVIDER_HEADER,
-  type InferenceClass,
   buildMetadataHeaders,
   createAccessToken,
   getDefaultInferenceUrl,
   resolveCredentials,
 } from './utils.js';
 
-/** GPT-Live models served through LiveKit Inference. */
-export type OpenAIGPTLiveModels = 'openai/gpt-live-1';
+export type OpenAIDuplexModels = 'openai/gpt-live-1';
 
-const GPT_LIVE_MODELS: ReadonlySet<string> = new Set<OpenAIGPTLiveModels>(['openai/gpt-live-1']);
+/** Full-duplex voice models served through LiveKit Inference. */
+export type DuplexModels = OpenAIDuplexModels;
 
-/** Whether a LiveKit Inference model string names a GPT-Live model. */
-export function isGPTLiveModel(model: string): model is OpenAIGPTLiveModels {
-  return GPT_LIVE_MODELS.has(model);
+const DUPLEX_MODELS: ReadonlySet<string> = new Set<DuplexModels>(['openai/gpt-live-1']);
+
+/** Whether a LiveKit Inference model string names a full-duplex voice model. */
+export function isDuplexModel(model: string): model is DuplexModels {
+  return DUPLEX_MODELS.has(model);
 }
 
 // the gateway refuses a session.start it cannot run; reconnecting resends the same one
@@ -40,9 +40,30 @@ const FATAL_ERROR_CODES = new Set([
   'unsupported_delegated_model',
 ]);
 
-export interface GPTLiveModelOptions {
-  /** Provider-prefixed GPT-Live model. Defaults to openai/gpt-live-1. */
-  model?: OpenAIGPTLiveModels | AnyString;
+/** The backend Responses model GPT-Live delegates work to, under `delegation: 'responses'`. */
+export type OpenAIResponsesOptions = Omit<ResponsesDelegationOptions, 'serviceTier'>;
+
+export interface OpenAIDuplexOptions {
+  /** Fixed at startup, `responses` by default. Client delegation requires an agent with no tools. */
+  delegation?: 'responses' | 'client';
+  /**
+   * The backend Responses model when delegation is responses. Its model must be an OpenAI LLM
+   * LiveKit Inference serves.
+   */
+  responsesOptions?: OpenAIResponsesOptions;
+}
+
+const OPENAI_DUPLEX_OPTIONS: ReadonlySet<string> = new Set<keyof OpenAIDuplexOptions>([
+  'delegation',
+  'responsesOptions',
+]);
+
+export type DuplexOptions<TModel extends DuplexModels | AnyString> =
+  TModel extends OpenAIDuplexModels ? OpenAIDuplexOptions : Record<string, unknown>;
+
+export interface DuplexModelOptions<TModel extends DuplexModels | AnyString> {
+  /** Provider-prefixed duplex model, for example `openai/gpt-live-1`. */
+  model: TModel;
   /**
    * Host that must serve the model, e.g. `'openai'`. The session is refused if no host in the
    * region matches.
@@ -51,17 +72,13 @@ export interface GPTLiveModelOptions {
   baseURL?: string;
   apiKey?: string;
   apiSecret?: string;
-  /** Has no effect on GPT-Live sessions. */
-  inferenceClass?: InferenceClass;
-  /** A named voice (marin by default), or an authorized custom voice object. */
-  voice?: GPTLiveVoices | AnyString | Record<string, unknown>;
-  /** Fixed at startup. Client delegation requires an agent with no tools. */
-  delegation?: DelegationTarget;
+  /** Output voice, marin by default for GPT-Live. */
+  voice?: string;
   /**
-   * The backend Responses model when delegation is responses. Its model must be an OpenAI LLM
-   * LiveKit Inference serves, and only the default serviceTier is billed, so no other is accepted.
+   * Model-specific options; `OpenAIDuplexOptions` for GPT-Live. Delegated work runs on the
+   * default service tier only.
    */
-  responsesOptions?: ResponsesDelegationOptions;
+  modelOptions?: DuplexOptions<TModel>;
   /** Recycle the connection after this many milliseconds. */
   maxSessionDuration?: number | null;
   connOptions?: APIConnectOptions;
@@ -71,20 +88,29 @@ interface InferenceOptions {
   provider?: string;
   apiKey: string;
   apiSecret: string;
-  inferenceClass?: InferenceClass;
 }
 
-/** OpenAI GPT-Live full-duplex voice model, served through LiveKit Inference. */
-export class GPTLiveModel extends BaseGPTLiveModel {
+/** Full-duplex voice model, served through LiveKit Inference. */
+export class DuplexModel<
+  TModel extends DuplexModels | AnyString = DuplexModels | AnyString,
+> extends BaseGPTLiveModel {
   /** @internal */
   readonly _inferenceOptions: InferenceOptions;
 
-  constructor(options: GPTLiveModelOptions = {}) {
-    const model = options.model ?? 'openai/gpt-live-1';
+  constructor(options: DuplexModelOptions<TModel>) {
+    const { model } = options;
     if (!model.includes('/')) {
       throw new Error("model must be provider-prefixed, for example 'openai/gpt-live-1'");
     }
-    const serviceTier = options.responsesOptions?.serviceTier;
+    const modelOptions = (options.modelOptions ?? {}) as OpenAIDuplexOptions;
+    const unknown = Object.keys(modelOptions)
+      .filter((key) => !OPENAI_DUPLEX_OPTIONS.has(key))
+      .sort();
+    if (unknown.length) {
+      throw new Error(`unsupported modelOptions for ${model}: ${unknown.join(', ')}`);
+    }
+    const { delegation, responsesOptions } = modelOptions;
+    const serviceTier = (responsesOptions as ResponsesDelegationOptions | undefined)?.serviceTier;
     if (serviceTier !== undefined && serviceTier !== 'default') {
       throw new Error('LiveKit Inference runs GPT-Live delegation on the default tier only');
     }
@@ -93,10 +119,8 @@ export class GPTLiveModel extends BaseGPTLiveModel {
     super({
       model,
       ...(options.voice !== undefined ? { voice: options.voice } : {}),
-      ...(options.delegation !== undefined ? { delegation: options.delegation } : {}),
-      ...(options.responsesOptions !== undefined
-        ? { responsesOptions: options.responsesOptions }
-        : {}),
+      ...(delegation !== undefined ? { delegation } : {}),
+      ...(responsesOptions !== undefined ? { responsesOptions } : {}),
       ...(options.maxSessionDuration !== undefined
         ? { maxSessionDuration: options.maxSessionDuration }
         : {}),
@@ -108,12 +132,11 @@ export class GPTLiveModel extends BaseGPTLiveModel {
       provider: options.provider,
       apiKey: credentials.apiKey,
       apiSecret: credentials.apiSecret,
-      inferenceClass: options.inferenceClass,
     };
   }
 
-  static fromModelString(model: string): GPTLiveModel {
-    return new GPTLiveModel({ model });
+  static fromModelString(model: string): DuplexModel {
+    return new DuplexModel({ model });
   }
 
   override get provider(): string {
@@ -121,18 +144,18 @@ export class GPTLiveModel extends BaseGPTLiveModel {
   }
 
   override label(): string {
-    return 'inference.GPTLiveModel';
+    return 'inference.DuplexModel';
   }
 
-  override session(): GPTLiveSession {
-    return new GPTLiveSession(this);
+  override session(): DuplexSession {
+    return new DuplexSession(this);
   }
 }
 
-export class GPTLiveSession extends BaseGPTLiveSession {
-  private readonly inferenceModel: GPTLiveModel;
+export class DuplexSession extends BaseGPTLiveSession {
+  private readonly inferenceModel: DuplexModel;
 
-  constructor(model: GPTLiveModel) {
+  constructor(model: DuplexModel) {
     super(model);
     this.inferenceModel = model;
   }
@@ -142,7 +165,7 @@ export class GPTLiveSession extends BaseGPTLiveSession {
     const model = this.inferenceModel;
     const options = model._inferenceOptions;
     url.searchParams.set('model', model.model);
-    const headers = buildMetadataHeaders(options.inferenceClass);
+    const headers = buildMetadataHeaders();
     // signed per connection, so a reconnect never presents an expired token
     headers.Authorization = `Bearer ${await createAccessToken(options.apiKey, options.apiSecret)}`;
     if (options.provider) {

@@ -10,9 +10,16 @@ import {
   DiscardedGeneration,
   type ResponseGeneration,
 } from '../llm/openai_realtime/realtime_model.js';
+import { log } from '../log.js';
 import * as stream from '../stream/index.js';
 import { Future, Task, type TimedString } from '../utils.js';
-import { RealtimeModel, type RealtimeModelOptions, RealtimeSession } from './realtime.js';
+import { llmFromModelString } from './llm.js';
+import {
+  RealtimeModel,
+  type RealtimeModelOptions,
+  RealtimeSession,
+  isRealtimeModel,
+} from './realtime.js';
 import * as inferenceUtils from './utils.js';
 
 class TestRealtimeSession extends RealtimeSession {
@@ -60,6 +67,26 @@ describe('inference RealtimeModel', () => {
     expect(
       () => new RealtimeModel({ model: 'gpt-realtime', apiKey: 'key', apiSecret: 'secret' }),
     ).toThrow('provider-prefixed');
+  });
+
+  it('points duplex models at inference.DuplexModel', () => {
+    expect(
+      () => new RealtimeModel({ model: 'openai/gpt-live-1', apiKey: 'key', apiSecret: 'secret' }),
+    ).toThrow(/inference.DuplexModel/);
+  });
+
+  it.each([
+    ['openai/gpt-realtime-2', 'openai/gpt-realtime-2.1'],
+    ['openai/gpt-realtime-1.5', 'openai/gpt-realtime-2.1'],
+    ['xai/grok-voice-think-fast-2.0', 'xai/grok-voice-3.0'],
+  ])('keeps retired %s realtime and names %s', (model, replacement) => {
+    vi.stubEnv('LIVEKIT_API_KEY', 'key');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'secret');
+    const warn = vi.spyOn(log(), 'warn');
+
+    expect(isRealtimeModel(model)).toBe(true);
+    expect(llmFromModelString(model)).toBeInstanceOf(RealtimeModel);
+    expect(warn).toHaveBeenCalledWith(`${model} is deprecated, use ${replacement} instead`);
   });
 
   it.each([
@@ -136,7 +163,6 @@ describe('inference RealtimeModel', () => {
       baseURL: `http://127.0.0.1:${address.port}/v1`,
       apiKey: 'key',
       apiSecret: 'secret',
-      inferenceClass: 'priority',
     });
     const session = new TestRealtimeSession(model);
     const first = await session.connect();
@@ -146,7 +172,7 @@ describe('inference RealtimeModel', () => {
     await vi.waitFor(() => expect(authorizations).toHaveLength(2));
 
     expect(authorizations).toEqual(['Bearer token-one', 'Bearer token-two']);
-    expect(priorities).toEqual(['priority', 'priority']);
+    expect(priorities).toEqual([undefined, undefined]);
     expect(providers).toEqual(['openai', 'openai']);
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

@@ -13,7 +13,7 @@ import {
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
-import { GPTLiveModel, isGPTLiveModel } from './gpt_live.js';
+import { DuplexModel, isDuplexModel } from './duplex.js';
 import { RealtimeModel, isRealtimeModel } from './realtime.js';
 import {
   type AnyString,
@@ -719,11 +719,11 @@ export class LLMStream extends llm.LLMStream {
 }
 
 /**
- * Create the inference model an `llm` string names: a {@link GPTLiveModel} for GPT-Live
+ * Create the inference model an `llm` string names: a {@link DuplexModel} for duplex
  * models, a {@link RealtimeModel} for realtime models, or an {@link LLM} for everything else.
  */
-export function llmFromModelString(model: string): LLM | RealtimeModel | GPTLiveModel {
-  if (isGPTLiveModel(model)) return GPTLiveModel.fromModelString(model);
+export function llmFromModelString(model: string): LLM | RealtimeModel | DuplexModel {
+  if (isDuplexModel(model)) return DuplexModel.fromModelString(model);
   if (isRealtimeModel(model)) return RealtimeModel.fromModelString(model);
   return LLM.fromModelString(model);
 }

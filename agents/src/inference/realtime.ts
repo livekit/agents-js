@@ -13,10 +13,10 @@ import type { ToolChoice, ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { type OpenAIGPTLiveModels, isGPTLiveModel } from './gpt_live.js';
+import { isDuplexModel } from './duplex.js';
 import {
+  type AnyString,
   INFERENCE_PROVIDER_HEADER,
-  type InferenceClass,
   connectWs,
   createAccessToken,
   getDefaultInferenceUrl,
@@ -36,28 +36,33 @@ export type GoogleRealtimeModels =
 
 export type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0';
 
-export type RealtimeModels =
-  | OpenAIRealtimeModels
-  | OpenAIGPTLiveModels
-  | GoogleRealtimeModels
-  | XAIRealtimeModels;
+export type RealtimeModels = OpenAIRealtimeModels | GoogleRealtimeModels | XAIRealtimeModels;
 
-const REALTIME_MODEL_IDS: ReadonlySet<string> = new Set<RealtimeModels>([
-  'openai/gpt-realtime',
-  'openai/gpt-realtime-mini',
-  'openai/gpt-realtime-2.1',
-  'openai/gpt-realtime-2.1-mini',
-  'openai/gpt-live-1',
-  'google/gemini-3.8-live',
-  'google/gemini-3.8-live-extended-thinking',
-  'google/gemini-live',
-  'xai/grok-voice',
-  'xai/grok-voice-latest',
-  'xai/grok-voice-3.0',
+// retired ids the gateway still accepts; they stay realtime so `llm: '...'` keeps working
+const DEPRECATED_REALTIME_MODELS: ReadonlyMap<string, RealtimeModels> = new Map([
+  ['openai/gpt-realtime-2', 'openai/gpt-realtime-2.1'],
+  ['openai/gpt-realtime-1.5', 'openai/gpt-realtime-2.1'],
+  ['xai/grok-voice-think-fast-2.0', 'xai/grok-voice-3.0'],
+]);
+
+const REALTIME_MODEL_IDS: ReadonlySet<string> = new Set<string>([
+  ...([
+    'openai/gpt-realtime',
+    'openai/gpt-realtime-mini',
+    'openai/gpt-realtime-2.1',
+    'openai/gpt-realtime-2.1-mini',
+    'google/gemini-3.8-live',
+    'google/gemini-3.8-live-extended-thinking',
+    'google/gemini-live',
+    'xai/grok-voice',
+    'xai/grok-voice-latest',
+    'xai/grok-voice-3.0',
+  ] satisfies RealtimeModels[]),
+  ...DEPRECATED_REALTIME_MODELS.keys(),
 ]);
 
 /** Whether a LiveKit Inference model string names a realtime (speech-to-speech) model. */
-export function isRealtimeModel(model: string): model is RealtimeModels {
+export function isRealtimeModel(model: string): boolean {
   return REALTIME_MODEL_IDS.has(model);
 }
 
@@ -74,7 +79,7 @@ const XAI_DEFAULT_TURN_DETECTION: apiProto.TurnDetectionType = {
 };
 
 export interface RealtimeModelOptions {
-  model: string;
+  model: RealtimeModels | AnyString;
   /**
    * Host that must serve the model, e.g. `'azure'` or `'openai'` for OpenAI models. The
    * session is refused if no host in the region matches.
@@ -83,8 +88,6 @@ export interface RealtimeModelOptions {
   baseURL?: string;
   apiKey?: string;
   apiSecret?: string;
-  /** Has no effect on realtime sessions. */
-  inferenceClass?: InferenceClass;
   voice?: string;
   modalities?: apiProto.Modality[];
   inputAudioTranscription?: apiProto.InputAudioTranscription | null;
@@ -102,7 +105,6 @@ interface InferenceOptions {
   provider?: string;
   apiKey: string;
   apiSecret: string;
-  inferenceClass?: InferenceClass;
   isXAI: boolean;
 }
 
@@ -123,8 +125,12 @@ export class RealtimeModel extends OpenAIRealtimeModel {
     if (!options.model.includes('/')) {
       throw new Error("model must be provider-prefixed, for example 'openai/gpt-realtime'");
     }
-    if (isGPTLiveModel(options.model)) {
-      throw new Error(`${options.model} speaks the GPT-Live protocol; use inference.GPTLiveModel`);
+    if (isDuplexModel(options.model)) {
+      throw new Error(`${options.model} is a duplex model; use inference.DuplexModel`);
+    }
+    const replacement = DEPRECATED_REALTIME_MODELS.get(options.model);
+    if (replacement) {
+      log().warn(`${options.model} is deprecated, use ${replacement} instead`);
     }
 
     const credentials = resolveCredentials(options.apiKey, options.apiSecret);
@@ -167,7 +173,6 @@ export class RealtimeModel extends OpenAIRealtimeModel {
       provider: options.provider,
       apiKey: credentials.apiKey,
       apiSecret: credentials.apiSecret,
-      inferenceClass: options.inferenceClass,
       isXAI,
     };
   }
@@ -375,7 +380,6 @@ export class RealtimeSession extends OpenAIRealtimeSession {
       }),
       headers,
       model._options.connOptions.timeoutMs,
-      options.inferenceClass,
     );
   }
 
