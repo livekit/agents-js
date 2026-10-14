@@ -570,6 +570,41 @@ describe('SpeechStream config', () => {
   );
 });
 
+describe('SpeechStream flush', () => {
+  it('asks Soniox to finalize when the stream is flushed', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const finalizePromise = new Promise<Record<string, unknown>>((resolve) => {
+      wss.on('connection', (ws) => {
+        ws.on('message', (data, isBinary) => {
+          if (isBinary) return;
+          const message = JSON.parse(data.toString()) as Record<string, unknown>;
+          if (message.type !== 'finalize') return;
+          resolve(message);
+          ws.send(JSON.stringify({ finished: true }));
+        });
+      });
+    });
+
+    try {
+      const soniox = new STT({ apiKey: 'test-key', baseUrl });
+      const stream = soniox.stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      const drain = consumeSpeechStream(stream);
+
+      stream.pushFrame(new AudioFrame(new Int16Array(160), 16000, 1, 160));
+      stream.flush();
+
+      expect(await finalizePromise).toEqual({ type: 'finalize' });
+
+      stream.close();
+      await drain.catch(() => {});
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
 async function consumeSpeechStream(stream: AsyncIterable<stt.SpeechEvent>): Promise<void> {
   for await (const _ of stream) {
     // Consume all events.

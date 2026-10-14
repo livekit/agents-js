@@ -316,6 +316,9 @@ export class SpeechStream extends stt.SpeechStream {
 
       const data = result.value;
       if (data === SpeechStream.FLUSH_SENTINEL) {
+        // Ask Soniox for the final transcript of the audio so far, instead of waiting for its
+        // own endpoint detection (Soniox replies with a `<fin>` token, see isEndToken).
+        ws.send(JSON.stringify({ type: 'finalize' }));
         continue;
       }
       // Send only this frame's bytes. `data.data` may be a view into a larger
