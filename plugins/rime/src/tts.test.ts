@@ -244,7 +244,7 @@ describe('Rime TTS streaming', () => {
 
 if (hasRimeConfig) {
   describe('Rime TTS', async () => {
-    await tts(new TTS(), new STT(), { streaming: false });
+    await tts(new TTS({ websocketURL: 'wss://coda.api.rime.ai/ws', modelId: 'coda' }), new STT());
   });
 } else {
   describe('Rime TTS', () => {

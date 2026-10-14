@@ -24,15 +24,19 @@ Set `RIME_API_KEY` and pass the model endpoint in `websocketURL`:
 import { TTS } from '@livekit/agents-plugin-rime';
 
 const rime = new TTS({
-  websocketURL: 'wss://api.rime.ai/coda/ws',
+  websocketURL: 'wss://coda.api.rime.ai/ws',
+  modelId: 'coda',
   speaker: 'lyra',
 });
 ```
 
-The endpoint selects the model. Do not pass `modelId` for a route such as
-`/coda/ws` or `/mist/ws`. For a dedicated endpoint ending in `/ws`, pass `modelId`.
-The default speaker is `lyra` for Coda and `cove` for Mist. The public v1 endpoint
-currently supports Coda. The Mist route is `/mist/ws`.
+Pass the active model WebSocket endpoint explicitly. Public model endpoints use
+port 443 and the `/ws` path. Pass `modelId: 'coda'` for
+`wss://coda.api.rime.ai/ws`, which serves Coda v2. Pass `modelId: 'mistv3'` for
+`wss://mist.api.rime.ai/ws`. The model name is not inferred from the hostname.
+
+Dedicated deployment endpoints also require `modelId` when the path is `/ws`.
+The default speaker is `lyra` for Coda and `cove` for Mist.
 
 `websocketProtocol` defaults to `binary`, with the `rime.v1.binary` subprotocol.
 Set it to `json` for `rime.v1.json` and canonical protobuf JSON. Both modes use
@@ -68,6 +72,10 @@ The default format is `audio/pcm`. WebSocket v1 does not provide word timestamps
 Use `timeScaleFactor` for speed control. Legacy generation controls, `speedAlpha`,
 and WS3-only options are rejected in v1. Mist accepts `pauseBetweenBrackets` and
 `phonemizeBetweenBrackets`.
+
+The old `api.rime.ai/<model>` routes are scheduled for retirement. For compatibility,
+the plugin still reads the model from a path such as `/coda/ws`; omit `modelId` for
+those routes. Use the model hosts above for new configurations.
 
 The plugin sends the API key to the configured endpoint. It trusts `rime.ai` and
 its subdomains. Set `allowCustomEndpoint: true` to use another trusted host.

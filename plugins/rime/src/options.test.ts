@@ -17,8 +17,19 @@ it('derives v1 models and uses model-specific defaults', () => {
     audioFormat: 'audio/pcm',
   });
   expect(
-    resolveOptions({ apiKey: 'key', websocketURL: 'wss://api.rime.ai/ws', modelId: 'coda' }),
+    resolveOptions({
+      apiKey: 'key',
+      websocketURL: 'wss://coda.api.rime.ai/ws',
+      modelId: 'coda',
+    }),
   ).toMatchObject({ modelId: 'coda', speaker: 'lyra' });
+  expect(
+    resolveOptions({
+      apiKey: 'key',
+      websocketURL: 'wss://mist.api.rime.ai/ws',
+      modelId: 'mistv3',
+    }),
+  ).toMatchObject({ modelId: 'mistv3', speaker: 'cove' });
   expect(
     resolveOptions({
       apiKey: 'key',
@@ -63,6 +74,36 @@ it('allows explicit custom HTTPS hosts and loopback IPs', () => {
   expect(validateEndpoint('https://custom.example/tts', true).hostname).toBe('custom.example');
   expect(validateEndpoint('ws://127.0.0.1:8000/coda/ws', false, true).port).toBe('8000');
   expect(() => validateEndpoint('ws://localhost:8000/coda/ws', true, true)).toThrow();
+});
+
+it.each([
+  'wss://coda.api.rime.ai/ws',
+  'wss://mist.api.rime.ai:443/ws',
+  'wss://tigerstripe-dialpad.aws-us-east-1.whiteglove.rime.ai/ws',
+])('requires modelId for a dedicated /ws endpoint %s', (websocketURL) => {
+  expect(() => resolveOptions({ apiKey: 'key', websocketURL })).toThrow('modelId is required');
+});
+
+it.each([
+  ['wss://coda.api.rime.ai/ws', 'wss://mist.api.rime.ai/ws'],
+  [
+    'wss://coda.aws-us-east-1.whiteglove.rime.ai/ws',
+    'wss://mist.aws-us-east-1.whiteglove.rime.ai/ws',
+  ],
+])('allows a model change with a new endpoint', async (codaURL, mistURL) => {
+  const value = new TTS({ apiKey: 'key', websocketURL: codaURL, modelId: 'coda' });
+  value.updateOptions({
+    websocketURL: mistURL,
+    modelId: 'mistv3',
+    pauseBetweenBrackets: true,
+  });
+  expect(value.model).toBe('mistv3');
+  expect(value).toHaveProperty('opts.pauseBetweenBrackets', true);
+  expect(value).toHaveProperty('opts.websocketURL', mistURL);
+  expect(() => value.updateOptions({ websocketURL: mistURL, modelId: 'coda' })).toThrow(
+    'model endpoint',
+  );
+  await value.close();
 });
 
 it('binds model changes to a new endpoint and validates updates before applying them', async () => {
