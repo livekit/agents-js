@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { APIError, Future, Task, llm, stream } from '../../index.js';
@@ -1458,6 +1460,124 @@ it('recreates an item the lost connection never confirmed', async () => {
   } finally {
     connections.forEach(({ socket }) => socket.terminate());
     await session.close();
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+describe('RealtimeSession input audio', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function audioSession() {
+    stubTaskRuntime();
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session();
+    const sent: api_proto.ClientEvent[] = [];
+    session.sendEvent = (event) => sent.push(event);
+    return { session, sent };
+  }
+
+  function frames(value: number, ms: number, sampleRate = 24000, channels = 1): AudioFrame[] {
+    const samples = sampleRate / 100;
+    return Array.from(
+      { length: ms / 10 },
+      () =>
+        new AudioFrame(
+          new Int16Array(samples * channels).fill(value),
+          sampleRate,
+          channels,
+          samples,
+        ),
+    );
+  }
+
+  function appended(events: api_proto.ClientEvent[]): Int16Array {
+    const bytes = Buffer.concat(
+      events
+        .filter((event) => event.type === 'input_audio_buffer.append')
+        .map((event) => Buffer.from(event.audio, 'base64')),
+    );
+    return new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+  }
+
+  it('commits the partial frame with its turn', async () => {
+    const { session, sent } = audioSession();
+    frames(1, 250).forEach((frame) => session.pushAudio(frame));
+    await session.commitAudio();
+
+    const commit = sent.findIndex((event) => event.type === 'input_audio_buffer.commit');
+    expect(commit).toBeGreaterThan(-1);
+    expect(appended(sent.slice(0, commit))).toHaveLength(6000);
+  });
+
+  it('drops buffered audio on clear', async () => {
+    const { session, sent } = audioSession();
+    frames(1, 250).forEach((frame) => session.pushAudio(frame));
+    await session.clearAudio();
+    const cleared = sent.length;
+    frames(2, 200).forEach((frame) => session.pushAudio(frame));
+
+    expect(appended(sent.slice(cleared)).every((sample) => sample === 2)).toBe(true);
+  });
+
+  it('resamples input to 24 kHz', async () => {
+    const { session, sent } = audioSession();
+    frames(1000, 500, 48000).forEach((frame) => session.pushAudio(frame));
+    await session.commitAudio();
+
+    const samples = appended(sent).length;
+    expect(samples).toBeLessThanOrEqual(12000);
+    expect(samples).toBeGreaterThan(9600);
+  });
+
+  it('mixes stereo input to mono', async () => {
+    const { session, sent } = audioSession();
+    for (const frame of frames(0, 200, 24000, 2)) {
+      for (let i = 0; i < frame.data.length; i += 2) {
+        frame.data[i] = 100;
+        frame.data[i + 1] = 300;
+      }
+      session.pushAudio(frame);
+    }
+    await session.commitAudio();
+
+    const samples = appended(sent);
+    expect(samples).toHaveLength(4800);
+    expect(samples.every((sample) => sample === 200)).toBe(true);
+  });
+});
+
+it('retries a failed WebSocket handshake', async () => {
+  let handshakes = 0;
+  const server = new WebSocketServer({
+    host: '127.0.0.1',
+    port: 0,
+    verifyClient: (_info, done) => done(handshakes++ > 0, 503),
+  });
+  await once(server, 'listening');
+  const { port } = server.address() as AddressInfo;
+  const connected = once(server, 'connection');
+
+  const session = new RealtimeModel({
+    apiKey: 'test-key',
+    baseURL: `http://127.0.0.1:${port}/v1`,
+    connOptions: { maxRetry: 3, retryIntervalMs: 10, timeoutMs: 5000 },
+  }).session();
+  const errors: llm.RealtimeModelError[] = [];
+  session.on('error', (error) => errors.push(error));
+  const reconnected = vi.fn();
+  session.on('session_reconnected', reconnected);
+  try {
+    await connected;
+    expect(handshakes).toBe(2);
+    expect(errors.map((error) => error.recoverable)).toEqual([true]);
+    // nothing reached the server, so there is nothing to replay
+    expect(reconnected).not.toHaveBeenCalled();
+  } finally {
+    await session.close();
+    server.clients.forEach((socket) => socket.terminate());
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });

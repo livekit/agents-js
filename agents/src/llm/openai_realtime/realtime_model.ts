@@ -2,10 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
-import type { AudioResampler } from '@livekit/rtc-node';
-import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler, combineAudioFrames } from '@livekit/rtc-node';
 import { type MessageEvent, WebSocket } from 'ws';
-import { APIConnectionError, APIError, isAPIError } from '../../_exceptions.js';
+import {
+  APIConnectionError,
+  APIError,
+  APIStatusError,
+  APITimeoutError,
+  isAPIError,
+} from '../../_exceptions.js';
 import { AudioByteStream } from '../../audio.js';
 import { log } from '../../log.js';
 import type * as metrics from '../../metrics/index.js';
@@ -453,6 +458,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   protected remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
   private messageChannel = new Queue<api_proto.ClientEvent>();
   private inputResampler?: AudioResampler;
+  private inputRate?: number;
   private instructions?: string;
   private oaiRealtimeModel: RealtimeModel;
   // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py - 795-797 lines
@@ -889,18 +895,26 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   pushAudio(frame: AudioFrame): void {
     for (const f of this.resampleAudio(frame)) {
-      for (const nf of this.bstream.write(f.data.buffer as ArrayBuffer)) {
-        this.sendEvent({
-          type: 'input_audio_buffer.append',
-          audio: Buffer.from(nf.data.buffer).toString('base64'),
-        } as api_proto.InputAudioBufferAppendEvent);
-        // TODO(AJS-102): use frame.durationMs once available in rtc-node
-        this.pushedDurationMs += (nf.samplesPerChannel / nf.sampleRate) * 1000;
-      }
+      this.appendAudio(this.bstream.write(f.data));
+    }
+  }
+
+  private appendAudio(frames: AudioFrame[]): void {
+    for (const nf of frames) {
+      this.sendEvent({
+        type: 'input_audio_buffer.append',
+        audio: Buffer.from(nf.data.buffer, nf.data.byteOffset, nf.data.byteLength).toString(
+          'base64',
+        ),
+      } as api_proto.InputAudioBufferAppendEvent);
+      // TODO(AJS-102): use frame.durationMs once available in rtc-node
+      this.pushedDurationMs += (nf.samplesPerChannel / nf.sampleRate) * 1000;
     }
   }
 
   async commitAudio(): Promise<void> {
+    // the partial frame belongs to this turn, not the next
+    this.appendAudio(this.bstream.flush());
     if (this.pushedDurationMs > 100) {
       // OpenAI requires at least 100ms of audio
       this.sendEvent({
@@ -911,6 +925,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async clearAudio(): Promise<void> {
+    this.bstream.flush();
     this.sendEvent({
       type: 'input_audio_buffer.clear',
     } as api_proto.InputAudioBufferClearEvent);
@@ -1128,10 +1143,16 @@ export class RealtimeSession extends llm.RealtimeSession {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url, { headers });
       let waiting = true;
+      const fail = (error: APIConnectionError | APIStatusError) => {
+        if (!waiting) return;
+        waiting = false;
+        clearTimeout(timeout);
+        reject(error);
+      };
 
       const timeout = setTimeout(() => {
-        ws.close();
-        reject(new Error('WebSocket connection timeout'));
+        fail(new APITimeoutError({ message: 'OpenAI Realtime API connection timed out' }));
+        ws.terminate();
       }, this._options.connOptions.timeoutMs);
 
       ws.once('open', () => {
@@ -1141,11 +1162,28 @@ export class RealtimeSession extends llm.RealtimeSession {
         resolve(ws);
       });
 
+      ws.once('unexpected-response', (_request, response) => {
+        const statusCode = response.statusCode ?? -1;
+        fail(
+          new APIStatusError({
+            message: `OpenAI Realtime API refused the connection: ${statusCode}`,
+            options: { statusCode },
+          }),
+        );
+        ws.terminate();
+      });
+
+      // an unhandled handshake error would otherwise throw out of the process
+      ws.once('error', (error) => {
+        fail(
+          new APIConnectionError({
+            message: `OpenAI Realtime API connection failed: ${error.message}`,
+          }),
+        );
+      });
+
       ws.once('close', () => {
-        if (!waiting) return;
-        waiting = false;
-        clearTimeout(timeout);
-        reject(new Error('OpenAI Realtime API connection closed'));
+        fail(new APIConnectionError({ message: 'OpenAI Realtime API connection closed' }));
       });
     });
   }
@@ -1263,16 +1301,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     reconnecting = false;
     try {
       while (!this.#closed && !signal.aborted) {
-        this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
-        wsConn = await this.createWsConn();
-        if (signal.aborted) break;
-
         try {
+          this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
+          wsConn = await this.createWsConn();
+          if (signal.aborted) break;
+
           if (reconnecting) {
             await reconnect();
             if (signal.aborted) break;
-            numRetries = 0;
           }
+          numRetries = 0;
+          // a failed first handshake leaves the startup events queued, with nothing to replay
+          reconnecting = true;
 
           await this.runWs(wsConn);
           if (signal.aborted) break;
@@ -1315,8 +1355,6 @@ export class RealtimeSession extends llm.RealtimeSession {
           await delay(retryInterval);
           numRetries++;
         }
-
-        reconnecting = true;
       }
     } finally {
       this.closeCurrentGeneration('session close');
@@ -1532,6 +1570,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     super.close();
     this.#closed = true;
     await this.#task;
+    this.inputResampler?.close();
+    this.inputResampler = undefined;
 
     // Clean up pending futures to prevent memory leaks
     this.rejectResponseCreatedFutures('Session closed');
@@ -2243,7 +2283,29 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
-    yield frame;
+    if (frame.channels !== NUM_CHANNELS) {
+      const mono = new Int16Array(frame.samplesPerChannel);
+      for (let i = 0; i < mono.length; i++) {
+        let sum = 0;
+        for (let channel = 0; channel < frame.channels; channel++)
+          sum += frame.data[i * frame.channels + channel]!;
+        mono[i] = Math.round(sum / frame.channels);
+      }
+      frame = new AudioFrame(mono, frame.sampleRate, NUM_CHANNELS, mono.length);
+    }
+    if (this.inputRate !== frame.sampleRate) {
+      this.inputResampler?.close();
+      this.inputResampler =
+        frame.sampleRate === SAMPLE_RATE
+          ? undefined
+          : new AudioResampler(frame.sampleRate, SAMPLE_RATE, NUM_CHANNELS);
+      this.inputRate = frame.sampleRate;
+    }
+    if (this.inputResampler) {
+      yield* this.inputResampler.push(frame);
+    } else {
+      yield frame;
+    }
   }
 
   private createResponse({
