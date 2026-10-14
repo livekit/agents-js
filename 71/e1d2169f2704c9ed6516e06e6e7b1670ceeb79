@@ -1,0 +1,30 @@
+agents/src/telemetry/recording_upload.ts
+  s_3f5bca9945febe::t_ea24bd30dcc3cb 1-81,83-175,180-215
+  s_3f5bca9945febe::t_c59b4172c0a4e5 82,176-179
+agents/src/telemetry/traces.ts
+  s_3f5bca9945febe::t_d9fe3c540c9642 27,32,588-591,627
+agents/src/telemetry/traces.test.ts
+  s_3f5bca9945febe::t_c59b4172c0a4e5 7-8
+agents/src/telemetry/recording_upload.test.ts
+  s_3f5bca9945febe::t_91abe7c3a9b4af 64
+  s_3f5bca9945febe::t_d229dd7af49f12 146-148
+  s_3f5bca9945febe::t_f823d09873a1a9 1-63,65-145,149-229
+.changeset/retry-recording-upload.md
+  s_3f5bca9945febe::t_d08d88f94e25d7 5-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71e1d2169f2704c9ed6516e06e6e7b1670ceeb79",
+  "prompts": {},
+  "sessions": {
+    "s_3f5bca9945febe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a09c960c-621f-42ce-8fed-3454165bc4ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
