@@ -1,0 +1,45 @@
+agents/src/inference/eot/detector.ts
+  s_9911d0475236dc::t_3e5926fb8c509b 49-57,73,133-136,171,194,250,265,282,302,332-336,362,416-423,432
+agents/src/inference/eot/base.ts
+  s_9911d0475236dc::t_3e5926fb8c509b 181,252,292,319,508-516
+  s_830f5828c1b13b::t_021efa7edffe48 517
+.changeset/quiet-cloud-turns.md
+  s_9911d0475236dc::t_3e5926fb8c509b 1-5
+agents/src/inference/eot/detector.test.ts
+  s_9911d0475236dc::t_1cdd5eaa8d0baf 293-325,413-415,858-882,884-885
+  s_9911d0475236dc::t_eb11a38fbe93b6 29,39,112,142,339,341-372,375-387,389-412,416-422
+  s_9911d0475236dc::t_7a8156af833b04 209,212,225,241,883
+  s_9911d0475236dc::t_3d3520d994c2aa 326-327,334-335
+agents/etc/agents.api.md
+  s_9911d0475236dc::t_45a4d04617a3d3 8451-8452,8486,8506,8511-8512
+agents/src/inference/eot/transports.test.ts
+  s_9911d0475236dc::t_7a8156af833b04 22,69,105,196-218
+  s_9911d0475236dc::t_31f1c2731a85c6 219-221
+  s_9911d0475236dc::t_3637ea6cffb52b 222-224
+agents/src/telemetry/traces.test.ts
+  s_9911d0475236dc::t_eb11a38fbe93b6 94-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "546ea98d42d92414f91ee27ca2ca427f7a690e4a",
+  "prompts": {},
+  "sessions": {
+    "s_830f5828c1b13b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13b2e-a67c-7891-bf22-1744703f12a0",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    },
+    "s_9911d0475236dc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13b2d-f50c-7730-a0d8-fecc99b4107b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
