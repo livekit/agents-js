@@ -43,6 +43,7 @@ const FATAL_ERROR_CODES = new Set([
   'invalid_api_key',
   'account_deactivated',
   'billing_hard_limit_reached',
+  'forbidden',
 ]);
 
 /** Settings for the backend Responses model. Unset fields use the service defaults.
@@ -78,7 +79,7 @@ export interface GPTLiveDelegation {
 }
 
 /** Suggested GPT-Live voice names. Other supported names also pass through to the API. @public */
-export type GPTLiveVoices = 'aster' | 'beacon' | 'cinder' | 'marin' | 'stone' | 'vesper';
+export type GPTLiveVoices = 'beacon' | 'cedar' | 'cinder' | 'marin' | 'stone' | 'vesper';
 
 /** Options for the OpenAI GPT-Live full-duplex voice model.
  * @public

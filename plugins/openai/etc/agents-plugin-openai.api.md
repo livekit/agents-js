@@ -23,7 +23,7 @@ import { Participant } from '@livekit/rtc-node';
 import { ParticipantKind } from '@livekit/rtc-node';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
-import type { Reasoning as Reasoning_2 } from 'openai/resources/shared.js';
+import type { Reasoning as Reasoning_3 } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import { Span } from '@opentelemetry/api';
@@ -136,8 +136,13 @@ export class ChunkedStream extends tts_2.ChunkedStream {
     protected run(): Promise<void>;
 }
 
+// Warning: (ae-missing-release-tag) "ClientEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+type ClientEvent = SessionUpdateEvent | InputAudioBufferAppendEvent | InputAudioBufferCommitEvent | InputAudioBufferClearEvent | ConversationItemCreateEvent | ConversationItemTruncateEvent | ConversationItemDeleteEvent | ResponseCreateEvent | ResponseCancelEvent;
+
 // @public
-type ClientEvent = {
+type ClientEvent_2 = {
     event_id?: string;
 } & ({
     type: 'session.start';
@@ -160,11 +165,6 @@ type ClientEvent = {
     type: 'response.item.create';
     item: OpenAI.Responses.ResponseInputItem;
 });
-
-// Warning: (ae-missing-release-tag) "ClientEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
-type ClientEvent_2 = SessionUpdateEvent | InputAudioBufferAppendEvent | InputAudioBufferCommitEvent | InputAudioBufferClearEvent | ConversationItemCreateEvent | ConversationItemTruncateEvent | ConversationItemDeleteEvent | ResponseCreateEvent | ResponseCancelEvent;
 
 // Warning: (ae-missing-release-tag) "ClientEventType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -506,11 +506,11 @@ declare namespace GPTLive {
         ResponsesConfig,
         Delegation,
         SessionConfig,
-        ClientEvent,
+        ClientEvent_2 as ClientEvent,
         ResponseUsage,
         ResponsesEvent,
         ErrorBody,
-        ServerEvent
+        ServerEvent_2 as ServerEvent
     }
 }
 
@@ -546,8 +546,8 @@ interface GPTLiveModelOptions {
 //
 // @public
 class GPTLiveSession extends llm_2.DuplexSession<{
-    openai_server_event_received: (event: ServerEvent) => void;
-    openai_client_event_queued: (event: ClientEvent | Record<string, unknown>) => void;
+    openai_server_event_received: (event: ServerEvent_2) => void;
+    openai_client_event_queued: (event: ClientEvent_2 | Record<string, unknown>) => void;
     delegation_created: (event: GPTLiveDelegation) => void;
 }> {
     constructor(model: GPTLiveModel_2);
@@ -571,7 +571,7 @@ class GPTLiveSession extends llm_2.DuplexSession<{
     protected isFatalError(error: ErrorBody): boolean;
     muteInput(): void;
     pushAudio(frame: AudioFrame): void;
-    sendEvent(event: ClientEvent | Record<string, unknown>): void;
+    sendEvent(event: ClientEvent_2 | Record<string, unknown>): void;
     get sessionId(): string | undefined;
     get tools(): llm_2.ToolContext;
     unmuteInput(): void;
@@ -583,7 +583,7 @@ class GPTLiveSession extends llm_2.DuplexSession<{
 }
 
 // @public
-type GPTLiveVoices = 'aster' | 'beacon' | 'cinder' | 'marin' | 'stone' | 'vesper';
+type GPTLiveVoices = 'beacon' | 'cedar' | 'cinder' | 'marin' | 'stone' | 'vesper';
 
 // Warning: (ae-missing-release-tag) "GroqAudioModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1124,7 +1124,7 @@ declare namespace realtime {
         RealtimeModels,
         Model,
         ReasoningEffort_2 as ReasoningEffort,
-        Reasoning_3 as Reasoning,
+        Reasoning_2 as Reasoning,
         Voice,
         LegacyAudioFormat,
         Role,
@@ -1181,7 +1181,7 @@ declare namespace realtime {
         ConversationItemDeleteEvent,
         ResponseCreateEvent,
         ResponseCancelEvent,
-        ClientEvent_2 as ClientEvent,
+        ClientEvent,
         ErrorEvent_3 as ErrorEvent,
         SessionCreatedEvent,
         SessionUpdatedEvent,
@@ -1212,7 +1212,7 @@ declare namespace realtime {
         ResponseFunctionCallArgumentsDeltaEvent,
         ResponseFunctionCallArgumentsDoneEvent,
         RateLimitsUpdatedEvent,
-        ServerEvent_2 as ServerEvent,
+        ServerEvent,
         isFatalError,
         processBaseURL,
         livekitItemToOpenAIItem,
@@ -1428,7 +1428,7 @@ export type Reasoning = {
 // Warning: (ae-missing-release-tag) "Reasoning" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-interface Reasoning_3 {
+interface Reasoning_2 {
     // (undocumented)
     effort?: ReasoningEffort_2;
 }
@@ -1707,7 +1707,7 @@ interface ResponsesConfig {
     // (undocumented)
     parallel_tool_calls?: boolean;
     // (undocumented)
-    reasoning?: Reasoning_2;
+    reasoning?: Reasoning_3;
     // (undocumented)
     service_tier?: 'auto' | 'default' | 'flex' | 'priority';
     // (undocumented)
@@ -1853,8 +1853,13 @@ type Role = 'system' | 'assistant' | 'user' | 'tool';
 // @public (undocumented)
 const SAMPLE_RATE = 24000;
 
+// Warning: (ae-missing-release-tag) "ServerEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+type ServerEvent = ErrorEvent_3 | SessionCreatedEvent | SessionUpdatedEvent | ConversationCreatedEvent | InputAudioBufferCommittedEvent | InputAudioBufferClearedEvent | InputAudioBufferSpeechStartedEvent | InputAudioBufferSpeechStoppedEvent | ConversationItemCreatedEvent | ConversationItemAddedEvent_2 | ConversationItemInputAudioTranscriptionDeltaEvent | ConversationItemInputAudioTranscriptionCompletedEvent | ConversationItemInputAudioTranscriptionFailedEvent | ConversationItemTruncatedEvent | ConversationItemDeletedEvent | ResponseCreatedEvent | ResponseDoneEvent | ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent | ResponseContentPartAddedEvent | ResponseContentPartDoneEvent | ResponseTextDeltaEvent | ResponseTextDoneEvent | ResponseAudioTranscriptDeltaEvent | ResponseAudioTranscriptDoneEvent | ResponseAudioDeltaEvent | ResponseAudioDoneEvent | ResponseFunctionCallArgumentsDeltaEvent | ResponseFunctionCallArgumentsDoneEvent | RateLimitsUpdatedEvent;
+
 // @public
-type ServerEvent = {
+type ServerEvent_2 = {
     type: 'session.started';
     session?: {
         id?: string | null;
@@ -1904,11 +1909,6 @@ type ServerEvent = {
     type: 'session.instructions.appended' | 'session.thinking.appended' | 'session.commentary.appended';
     client_event_id?: string;
 };
-
-// Warning: (ae-missing-release-tag) "ServerEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
-type ServerEvent_2 = ErrorEvent_3 | SessionCreatedEvent | SessionUpdatedEvent | ConversationCreatedEvent | InputAudioBufferCommittedEvent | InputAudioBufferClearedEvent | InputAudioBufferSpeechStartedEvent | InputAudioBufferSpeechStoppedEvent | ConversationItemCreatedEvent | ConversationItemAddedEvent_2 | ConversationItemInputAudioTranscriptionDeltaEvent | ConversationItemInputAudioTranscriptionCompletedEvent | ConversationItemInputAudioTranscriptionFailedEvent | ConversationItemTruncatedEvent | ConversationItemDeletedEvent | ResponseCreatedEvent | ResponseDoneEvent | ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent | ResponseContentPartAddedEvent | ResponseContentPartDoneEvent | ResponseTextDeltaEvent | ResponseTextDoneEvent | ResponseAudioTranscriptDeltaEvent | ResponseAudioTranscriptDoneEvent | ResponseAudioDeltaEvent | ResponseAudioDoneEvent | ResponseFunctionCallArgumentsDeltaEvent | ResponseFunctionCallArgumentsDoneEvent | RateLimitsUpdatedEvent;
 
 // Warning: (ae-missing-release-tag) "ServerEventType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -2004,7 +2004,7 @@ interface SessionUpdateEvent extends BaseClientEvent {
         audio?: RealtimeAudioConfig;
         max_output_tokens?: number | 'inf';
         tracing?: TracingConfig | null;
-        reasoning?: Reasoning_3 | null;
+        reasoning?: Reasoning_2 | null;
         model: Model;
         instructions: string;
         tools: Tool_2[];

@@ -33,7 +33,7 @@ import type * as proto from '@livekit/protocol';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
-import type { Reasoning } from 'openai/resources/shared.js';
+import type { Reasoning as Reasoning_2 } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { RemoteTrackPublication } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
@@ -379,7 +379,7 @@ export interface AgentOptions<UserData> {
     // (undocumented)
     instructions: string | Instructions;
     // (undocumented)
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | OpenAIGPTLiveModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
     // (undocumented)
     minConsecutiveSpeechDelay?: number;
     // (undocumented)
@@ -703,7 +703,7 @@ export enum AgentSessionEventTypes {
 export type AgentSessionOptions<UserData = UnknownUserData> = {
     stt?: STT | ModelWithLanguage;
     vad?: VAD | null;
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | OpenAIGPTLiveModels;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels;
     tts?: TTS | ModelWithVoice;
     userData?: UserData;
     connOptions?: SessionConnectOptions;
@@ -783,7 +783,7 @@ export interface AgentTaskCreateOptions<ResultT = unknown, UserData = any> exten
 // @public
 export interface AgentUpdateOptions {
     expressive?: boolean | ExpressiveOptions;
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | OpenAIGPTLiveModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
     stt?: STT | ModelWithLanguage | null;
     tts?: TTS | ModelWithVoice | null;
     vad?: VAD | null;
@@ -3997,6 +3997,9 @@ function getMonitor(): EventLoopMonitor | undefined;
 type GoogleModels = 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
 
 // @public (undocumented)
+type GoogleRealtimeModels = 'google/gemini-3.8-live' | 'google/gemini-3.8-live-extended-thinking' | 'google/gemini-live';
+
+// @public (undocumented)
 type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
 
 // @public (undocumented)
@@ -4012,10 +4015,10 @@ class GPTLiveModel extends GPTLiveModel_2 {
     constructor(options?: GPTLiveModelOptions_2);
     // (undocumented)
     static fromModelString(model: string): GPTLiveModel;
-    // Warning: (ae-forgotten-export) The symbol "InferenceOptions" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions_2" needs to be exported by the entry point index.d.ts
     //
     // @internal (undocumented)
-    readonly _inferenceOptions: InferenceOptions;
+    readonly _inferenceOptions: InferenceOptions_2;
     // (undocumented)
     label(): string;
     // (undocumented)
@@ -4143,7 +4146,12 @@ declare namespace inference {
         InferenceClass,
         RealtimeModel_2 as RealtimeModel,
         RealtimeSession_3 as RealtimeSession,
+        isRealtimeModel,
+        GoogleRealtimeModels,
+        OpenAIRealtimeModels,
         RealtimeModelOptions,
+        RealtimeModels,
+        XAIRealtimeModels,
         GPTLiveModel,
         GPTLiveSession_2 as GPTLiveSession,
         GPTLiveModelOptions_2 as GPTLiveModelOptions,
@@ -4558,6 +4566,9 @@ export const isPending: (promise: Promise<unknown>) => Promise<Throws<boolean, E
 export function isProviderTool(tool: any): tool is ProviderTool;
 
 // @public
+function isRealtimeModel(model: string): model is RealtimeModels;
+
+// @public
 export function isStreamClosedError(error: unknown): boolean;
 
 // @public
@@ -4946,7 +4957,7 @@ export type LLMCallbacks = {
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "GPTLiveModel"
 //
 // @public
-function llmFromModelString(model: string): LLM_2 | GPTLiveModel;
+function llmFromModelString(model: string): LLM_2 | RealtimeModel_2 | GPTLiveModel;
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "convertMarkup"
 //
@@ -5445,6 +5456,9 @@ type OpenAIGPTLiveModels = 'openai/gpt-live-1';
 // @public (undocumented)
 type OpenAIModels = 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
 
+// @public (undocumented)
+type OpenAIRealtimeModels = 'openai/gpt-realtime' | 'openai/gpt-realtime-mini' | 'openai/gpt-realtime-2.1' | 'openai/gpt-realtime-2.1-mini';
+
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTaskOptions"
 //
 // @public
@@ -5768,6 +5782,11 @@ export function readStream<T>(stream: ReadableStream_2<T>, signal?: AbortSignal)
 
 declare namespace realtime {
     export {
+        isRealtimeModel,
+        OpenAIRealtimeModels,
+        GoogleRealtimeModels,
+        XAIRealtimeModels,
+        RealtimeModels,
         RealtimeModelOptions,
         RealtimeModel_2 as RealtimeModel,
         RealtimeSession_3 as RealtimeSession
@@ -5820,10 +5839,12 @@ export abstract class RealtimeModel {
 // @public
 class RealtimeModel_2 extends RealtimeModel_3 {
     constructor(options: RealtimeModelOptions);
-    // Warning: (ae-forgotten-export) The symbol "InferenceOptions_2" needs to be exported by the entry point index.d.ts
+    // (undocumented)
+    static fromModelString(model: string): RealtimeModel_2;
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions" needs to be exported by the entry point index.d.ts
     //
     // @internal (undocumented)
-    readonly _inferenceOptions: InferenceOptions_2;
+    readonly _inferenceOptions: InferenceOptions;
     // (undocumented)
     label(): string;
     // (undocumented)
@@ -5905,6 +5926,9 @@ interface RealtimeModelOptions {
     // (undocumented)
     voice?: string;
 }
+
+// @public (undocumented)
+type RealtimeModels = OpenAIRealtimeModels | OpenAIGPTLiveModels | GoogleRealtimeModels | XAIRealtimeModels;
 
 // @public (undocumented)
 export abstract class RealtimeSession extends EventEmitter {
@@ -9376,6 +9400,9 @@ interface XaiOptions {
     format?: boolean;
     interim_results?: boolean;
 }
+
+// @public (undocumented)
+type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-think-fast-3.0' | 'xai/grok-voice-think-fast-2.0';
 
 // @public (undocumented)
 type XaiSTTModels = 'xai/stt-1';

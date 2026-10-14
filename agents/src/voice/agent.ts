@@ -8,7 +8,7 @@ import {
   STT as InferenceSTT,
   TTS as InferenceTTS,
   type LLMModels,
-  type OpenAIGPTLiveModels,
+  type RealtimeModels,
   type STTModelString,
   type TTSModelString,
   llmFromModelString,
@@ -156,7 +156,7 @@ export interface AgentUpdateOptions {
    * Swapping to or from one while running throws because it replaces the whole pipeline.
    * Use `AgentSession.updateAgent()` for that.
    */
-  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | OpenAIGPTLiveModels | null;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
   /** New TTS model. Pass `null` to disable the agent TTS and override any session TTS. */
   tts?: TTS | TTSModelString | null;
   /** Expressive TTS delivery. Pass `false` to override and disable the session setting. */
@@ -170,7 +170,7 @@ export interface AgentOptions<UserData> {
   tools?: ToolContextLike<UserData>;
   stt?: STT | STTModelString | null;
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | OpenAIGPTLiveModels | null;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
   tts?: TTS | TTSModelString | null;
   /** Expressive TTS delivery. When set, overrides the session value for this agent. */
   expressive?: boolean | ExpressiveOptions;

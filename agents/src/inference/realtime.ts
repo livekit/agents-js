@@ -13,7 +13,7 @@ import type { ToolChoice, ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { isGPTLiveModel } from './gpt_live.js';
+import { type OpenAIGPTLiveModels, isGPTLiveModel } from './gpt_live.js';
 import {
   INFERENCE_PROVIDER_HEADER,
   type InferenceClass,
@@ -22,6 +22,49 @@ import {
   getDefaultInferenceUrl,
   resolveCredentials,
 } from './utils.js';
+
+export type OpenAIRealtimeModels =
+  | 'openai/gpt-realtime'
+  | 'openai/gpt-realtime-mini'
+  | 'openai/gpt-realtime-2.1'
+  | 'openai/gpt-realtime-2.1-mini';
+
+export type GoogleRealtimeModels =
+  | 'google/gemini-3.8-live'
+  | 'google/gemini-3.8-live-extended-thinking'
+  | 'google/gemini-live';
+
+export type XAIRealtimeModels =
+  | 'xai/grok-voice'
+  | 'xai/grok-voice-latest'
+  | 'xai/grok-voice-think-fast-3.0'
+  | 'xai/grok-voice-think-fast-2.0';
+
+export type RealtimeModels =
+  | OpenAIRealtimeModels
+  | OpenAIGPTLiveModels
+  | GoogleRealtimeModels
+  | XAIRealtimeModels;
+
+const REALTIME_MODEL_IDS: ReadonlySet<string> = new Set<RealtimeModels>([
+  'openai/gpt-realtime',
+  'openai/gpt-realtime-mini',
+  'openai/gpt-realtime-2.1',
+  'openai/gpt-realtime-2.1-mini',
+  'openai/gpt-live-1',
+  'google/gemini-3.8-live',
+  'google/gemini-3.8-live-extended-thinking',
+  'google/gemini-live',
+  'xai/grok-voice',
+  'xai/grok-voice-latest',
+  'xai/grok-voice-think-fast-3.0',
+  'xai/grok-voice-think-fast-2.0',
+]);
+
+/** Whether a LiveKit Inference model string names a realtime (speech-to-speech) model. */
+export function isRealtimeModel(model: string): model is RealtimeModels {
+  return REALTIME_MODEL_IDS.has(model);
+}
 
 const XAI_DEFAULT_INPUT_AUDIO_TRANSCRIPTION: apiProto.InputAudioTranscription = {
   model: 'grok-transcribe',
@@ -132,6 +175,10 @@ export class RealtimeModel extends OpenAIRealtimeModel {
       inferenceClass: options.inferenceClass,
       isXAI,
     };
+  }
+
+  static fromModelString(model: string): RealtimeModel {
+    return new RealtimeModel({ model });
   }
 
   override session(options?: { turnDetectionDisabled?: boolean }): RealtimeSession {

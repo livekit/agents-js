@@ -1697,8 +1697,18 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
+    let previousItemId: string | undefined = event.previous_item_id;
+    if (previousItemId && !this.remoteChatCtx.get(previousItemId)) {
+      // the server can anchor to an item it is no longer tracking; append at the tail instead
+      this.#logger.warn(
+        { itemId: event.item.id, previousItemId },
+        'Realtime API anchored an item to one it is no longer tracking, appending it instead',
+      );
+      previousItemId = this.remoteChatCtx.toChatCtx().items.at(-1)?.id;
+    }
+
     try {
-      this.remoteChatCtx.insert(event.previous_item_id, incomingItem);
+      this.remoteChatCtx.insert(previousItemId, incomingItem);
     } catch (error) {
       this.#logger.error({ error, itemId: event.item.id }, 'failed to insert conversation item');
     }

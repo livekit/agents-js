@@ -468,4 +468,49 @@ describe('inference RealtimeModel', () => {
     expect(generation._doneFut.done).toBe(true);
     expect(session.currentGeneration).toBeInstanceOf(DiscardedGeneration);
   });
+
+  it('appends items anchored to an unknown previous_item_id on non-xAI providers', () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({
+      model: 'google/gemini-3.8-live',
+      apiKey: 'key',
+      apiSecret: 'secret',
+    });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as {
+      handleConversationItemCreated: (event: apiProto.ConversationItemCreatedEvent) => void;
+      remoteChatCtx: llm.RemoteChatContext;
+    };
+    session.handleConversationItemCreated({
+      type: 'conversation.item.added',
+      event_id: 'evt1',
+      previous_item_id: 'root',
+      item: {
+        id: 'item_1',
+        object: 'realtime.item',
+        type: 'message',
+        status: 'completed',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'hello' }],
+      },
+    } as unknown as apiProto.ConversationItemCreatedEvent);
+    session.handleConversationItemCreated({
+      type: 'conversation.item.added',
+      event_id: 'evt2',
+      previous_item_id: 'deleted_item',
+      item: {
+        id: 'item_2',
+        object: 'realtime.item',
+        type: 'message',
+        status: 'completed',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'hi' }],
+      },
+    } as unknown as apiProto.ConversationItemCreatedEvent);
+
+    expect(session.remoteChatCtx.toChatCtx().items.map((item) => item.id)).toEqual([
+      'item_1',
+      'item_2',
+    ]);
+  });
 });

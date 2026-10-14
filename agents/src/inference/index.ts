@@ -47,7 +47,16 @@ export {
 
 export { type InferenceClass } from './utils.js';
 
-export { RealtimeModel, RealtimeSession, type RealtimeModelOptions } from './realtime.js';
+export {
+  RealtimeModel,
+  RealtimeSession,
+  isRealtimeModel,
+  type GoogleRealtimeModels,
+  type OpenAIRealtimeModels,
+  type RealtimeModelOptions,
+  type RealtimeModels,
+  type XAIRealtimeModels,
+} from './realtime.js';
 
 export {
   GPTLiveModel,

@@ -142,7 +142,7 @@ describe('inference GPTLiveModel', () => {
     expect(() => model({ responsesOptions: { serviceTier: 'priority' } })).toThrow(/default tier/);
   });
 
-  it.each(['invalid_model', 'unsupported_server_tool', 'unsupported_delegated_model'])(
+  it.each(['invalid_model', 'unsupported_server_tool', 'unsupported_delegated_model', 'forbidden'])(
     'does not retry a session the gateway refused with %s',
     (code) => {
       const session = track(new TestSession(model()));
@@ -157,12 +157,17 @@ describe('inference GPTLiveModel', () => {
 
   it('is what the openai/gpt-live-1 model string resolves to', () => {
     expect(llmFromModelString('openai/gpt-live-1')).toBeInstanceOf(GPTLiveModel);
+    expect(llmFromModelString('openai/gpt-realtime-2.1')).toBeInstanceOf(RealtimeModel);
+    expect(llmFromModelString('google/gemini-3.8-live')).toBeInstanceOf(RealtimeModel);
+    expect(llmFromModelString('xai/grok-voice-think-fast-3.0')).toBeInstanceOf(RealtimeModel);
     expect(llmFromModelString('openai/gpt-5.6-luna')).toBeInstanceOf(LLM);
 
     const session = new AgentSession({ llm: 'openai/gpt-live-1' });
     expect(session.llm).toBeInstanceOf(DuplexRealtimeAdapter);
     const agent = new Agent({ instructions: '', llm: 'openai/gpt-live-1' });
     expect(agent.llm).toBeInstanceOf(DuplexRealtimeAdapter);
+    const rtAgent = new Agent({ instructions: '', llm: 'google/gemini-3.8-live' });
+    expect(rtAgent.llm).toBeInstanceOf(RealtimeModel);
   });
 
   it('is not served by the realtime model class', () => {

@@ -26,7 +26,7 @@ import {
   TurnDetector as InferenceTurnDetector,
   VAD as InferenceVAD,
   type LLMModels,
-  type OpenAIGPTLiveModels,
+  type RealtimeModels,
   type STTModelString,
   type TTSModelString,
   llmFromModelString,
@@ -310,7 +310,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * one as absent). Pass `null` to opt out entirely.
    */
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | OpenAIGPTLiveModels;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
