@@ -1,13 +1,16 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import * as llm from '../llm/index.js';
 import type * as apiProto from '../llm/openai_realtime/api_proto.js';
 import {
+  DiscardedGeneration,
   RealtimeModel as OpenAIRealtimeModel,
   RealtimeSession as OpenAIRealtimeSession,
   processBaseURL,
 } from '../llm/openai_realtime/realtime_model.js';
 import type { ToolChoice, ToolContext } from '../llm/tool_context.js';
+import { log } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { isGPTLiveModel } from './gpt_live.js';
@@ -62,6 +65,7 @@ interface InferenceOptions {
   apiKey: string;
   apiSecret: string;
   inferenceClass?: InferenceClass;
+  isXAI: boolean;
 }
 
 /** OpenAI-compatible realtime model authenticated through LiveKit Inference. */
@@ -126,6 +130,7 @@ export class RealtimeModel extends OpenAIRealtimeModel {
       apiKey: credentials.apiKey,
       apiSecret: credentials.apiSecret,
       inferenceClass: options.inferenceClass,
+      isXAI,
     };
   }
 
@@ -135,8 +140,28 @@ export class RealtimeModel extends OpenAIRealtimeModel {
 }
 
 export class RealtimeSession extends OpenAIRealtimeSession {
+  private readonly isXAI: boolean;
+  private pendingTranscription?: apiProto.ConversationItemInputAudioTranscriptionCompletedEvent;
+  private responseSpoke = false;
+
   constructor(realtimeModel: RealtimeModel, options?: { turnDetectionDisabled?: boolean }) {
     super(realtimeModel, options);
+    this.isXAI = realtimeModel._inferenceOptions.isXAI;
+  }
+
+  protected override resetInputTurnState(): void {
+    if (this.isXAI) {
+      this.flushInputTranscription();
+    }
+    super.resetInputTurnState();
+    this.responseSpoke = false;
+  }
+
+  override async close(): Promise<void> {
+    if (this.isXAI) {
+      this.flushInputTranscription();
+    }
+    await super.close();
   }
 
   protected override createSessionUpdateEvent(): apiProto.SessionUpdateEvent {
@@ -149,6 +174,146 @@ export class RealtimeSession extends OpenAIRealtimeSession {
     const event = super.createToolsUpdateEvent(tools);
     delete event.session.model;
     return event;
+  }
+
+  protected override async createChatCtxUpdateEvents(
+    chatCtx: llm.ChatContext,
+    addMockAudio: boolean = false,
+  ): Promise<(apiProto.ConversationItemCreateEvent | apiProto.ConversationItemDeleteEvent)[]> {
+    const pending = this.isXAI ? this.pendingTranscription : undefined;
+    const node = pending ? this.remoteChatCtx.get(pending.item_id) : null;
+    if (node && !chatCtx.getById(node.item.id)) {
+      chatCtx = chatCtx.copy();
+      let index = 0;
+      let previous = node._prev;
+      while (previous) {
+        const previousIndex = chatCtx.indexById(previous.item.id);
+        if (previousIndex !== undefined) {
+          index = previousIndex + 1;
+          break;
+        }
+        previous = previous._prev;
+      }
+      chatCtx.items.splice(index, 0, node.item);
+    }
+
+    return super.createChatCtxUpdateEvents(chatCtx, addMockAudio);
+  }
+
+  private discardAbandonedResponse(): void {
+    if (
+      !this.currentGeneration ||
+      this.responseSpoke ||
+      this.currentGeneration instanceof DiscardedGeneration
+    ) {
+      return;
+    }
+
+    log().debug('discarding the response xAI left in flight');
+    this.closeCurrentGeneration();
+    this.currentGeneration = new DiscardedGeneration();
+  }
+
+  override async interrupt(): Promise<void> {
+    await super.interrupt();
+    if (this.isXAI) {
+      this.discardAbandonedResponse();
+    }
+  }
+
+  protected override handleResponseCreated(event: apiProto.ResponseCreatedEvent): void {
+    if (this.isXAI) {
+      this.discardAbandonedResponse();
+      this.closeCurrentGeneration();
+      this.responseSpoke = false;
+    }
+    super.handleResponseCreated(event);
+  }
+
+  protected override handleInputAudioBufferSpeechStarted(
+    event: apiProto.InputAudioBufferSpeechStartedEvent,
+  ): void {
+    if (
+      this.isXAI &&
+      this.pendingTranscription &&
+      this.pendingTranscription.item_id !== event.item_id
+    ) {
+      this.flushInputTranscription();
+    }
+    super.handleInputAudioBufferSpeechStarted(event);
+  }
+
+  protected override handleConversationItemCreated(
+    event: apiProto.ConversationItemCreatedEvent,
+  ): void {
+    if (!this.isXAI) {
+      super.handleConversationItemCreated(event);
+      return;
+    }
+
+    let previousItemId = event.previous_item_id;
+    if (previousItemId && !this.remoteChatCtx.get(previousItemId)) {
+      log().warn(
+        { itemId: event.item.id, previousItemId },
+        'xAI anchored an item to one it never announced, appending it instead',
+      );
+      previousItemId = '';
+    }
+
+    if (!previousItemId) {
+      previousItemId = this.remoteChatCtx.toChatCtx().items.at(-1)?.id ?? '';
+    }
+    super.handleConversationItemCreated({ ...event, previous_item_id: previousItemId });
+  }
+
+  protected override handleConversationItemInputAudioTranscriptionCompleted(
+    event: apiProto.ConversationItemInputAudioTranscriptionCompletedEvent,
+  ): void {
+    if (!this.isXAI) {
+      super.handleConversationItemInputAudioTranscriptionCompleted(event);
+      return;
+    }
+
+    if (event.status !== 'in_progress') {
+      if (this.pendingTranscription && this.pendingTranscription.item_id !== event.item_id) {
+        this.flushInputTranscription();
+      }
+      this.pendingTranscription = event;
+    }
+
+    this.emit('input_audio_transcription_completed', {
+      itemId: event.item_id,
+      transcript: event.transcript,
+      isFinal: false,
+    });
+  }
+
+  private flushInputTranscription(): void {
+    const event = this.pendingTranscription;
+    if (!event) return;
+    this.pendingTranscription = undefined;
+
+    const remoteItem = this.remoteChatCtx.get(event.item_id)?.item;
+    if (remoteItem instanceof llm.ChatMessage) {
+      remoteItem.content = remoteItem.content.filter((content) => typeof content !== 'string');
+    }
+    super.handleConversationItemInputAudioTranscriptionCompleted(event);
+  }
+
+  protected override handleResponseAudioDelta(event: apiProto.ResponseAudioDeltaEvent): void {
+    if (this.isXAI) {
+      this.responseSpoke = true;
+      this.flushInputTranscription();
+    }
+    super.handleResponseAudioDelta(event);
+  }
+
+  protected override handleResponseTextDelta(event: apiProto.ResponseTextDeltaEvent): void {
+    if (this.isXAI) {
+      this.responseSpoke = true;
+      this.flushInputTranscription();
+    }
+    super.handleResponseTextDelta(event);
   }
 
   protected override async createWsConn() {

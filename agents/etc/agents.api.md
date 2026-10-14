@@ -5960,6 +5960,10 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     constructor(realtimeModel: RealtimeModel_2, options?: {
         turnDetectionDisabled?: boolean;
     });
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    protected createChatCtxUpdateEvents(chatCtx: llm_2.ChatContext, addMockAudio?: boolean): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]>;
     // Warning: (ae-forgotten-export) The symbol "api_proto" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -5969,7 +5973,23 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     // (undocumented)
     protected createWsConn(): Promise<default_2>;
     // (undocumented)
+    protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void;
+    // (undocumented)
+    protected handleConversationItemInputAudioTranscriptionCompleted(event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent): void;
+    // (undocumented)
+    protected handleInputAudioBufferSpeechStarted(event: api_proto.InputAudioBufferSpeechStartedEvent): void;
+    // (undocumented)
+    protected handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void;
+    // (undocumented)
+    protected handleResponseCreated(event: api_proto.ResponseCreatedEvent): void;
+    // (undocumented)
+    protected handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void;
+    // (undocumented)
+    interrupt(): Promise<void>;
+    // (undocumented)
     protected isFatalError(error: unknown): boolean;
+    // (undocumented)
+    protected resetInputTurnState(): void;
 }
 
 // @public (undocumented)

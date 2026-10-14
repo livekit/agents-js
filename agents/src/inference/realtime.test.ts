@@ -4,8 +4,14 @@
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
+import * as llm from '../llm/index.js';
 import type * as apiProto from '../llm/openai_realtime/api_proto.js';
-import { Task } from '../utils.js';
+import {
+  DiscardedGeneration,
+  type ResponseGeneration,
+} from '../llm/openai_realtime/realtime_model.js';
+import * as stream from '../stream/index.js';
+import { Future, Task, type TimedString } from '../utils.js';
 import { RealtimeModel, type RealtimeModelOptions, RealtimeSession } from './realtime.js';
 import * as inferenceUtils from './utils.js';
 
@@ -236,5 +242,230 @@ describe('inference RealtimeModel', () => {
       temperature: 0.8,
     };
     expect(options).toHaveProperty('temperature', 0.8);
+  });
+
+  it('emits one final transcript per turn on hosted xAI sessions', () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({
+      model: 'xai/grok-voice-think-fast-3.0',
+      apiKey: 'key',
+      apiSecret: 'secret',
+    });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as {
+      currentGeneration?: ResponseGeneration | DiscardedGeneration;
+      handleConversationItemInputAudioTranscriptionCompleted: (
+        event: apiProto.ConversationItemInputAudioTranscriptionCompletedEvent,
+      ) => void;
+      handleResponseAudioDelta: (event: apiProto.ResponseAudioDeltaEvent) => void;
+      remoteChatCtx: llm.RemoteChatContext;
+    };
+    session.currentGeneration = new DiscardedGeneration();
+    session.remoteChatCtx.insert(
+      undefined,
+      new llm.ChatMessage({ id: 'item_1', role: 'user', content: [''] }),
+    );
+    const emitted: llm.InputTranscriptionCompleted[] = [];
+    realtimeSession.on('input_audio_transcription_completed', (event) => emitted.push(event));
+
+    session.handleConversationItemInputAudioTranscriptionCompleted({
+      type: 'conversation.item.input_audio_transcription.completed',
+      event_id: 'evt',
+      item_id: 'item_1',
+      content_index: 0,
+      transcript: 'Hello, how',
+      status: 'in_progress',
+    });
+    session.handleConversationItemInputAudioTranscriptionCompleted({
+      type: 'conversation.item.input_audio_transcription.completed',
+      event_id: 'evt',
+      item_id: 'item_1',
+      content_index: 0,
+      transcript: 'Hello, how are you? Last ones.',
+      status: 'completed',
+    });
+    session.handleConversationItemInputAudioTranscriptionCompleted({
+      type: 'conversation.item.input_audio_transcription.completed',
+      event_id: 'evt',
+      item_id: 'item_1',
+      content_index: 0,
+      transcript: 'Hello, how are you? Last once. I paid twice.',
+      status: 'completed',
+    });
+    expect(emitted.filter((event) => event.isFinal)).toEqual([]);
+
+    session.handleResponseAudioDelta({
+      type: 'response.audio.delta',
+      event_id: 'evt',
+      item_id: 'reply',
+      response_id: 'resp',
+      output_index: 0,
+      content_index: 0,
+      delta: '',
+    });
+
+    expect(
+      emitted.filter((event) => event.isFinal).map((event) => [event.itemId, event.transcript]),
+    ).toEqual([['item_1', 'Hello, how are you? Last once. I paid twice.']]);
+    const item = session.remoteChatCtx.get('item_1')?.item as llm.ChatMessage;
+    expect(item.content).toEqual(['Hello, how are you? Last once. I paid twice.']);
+  });
+
+  it('finalizes transcripts immediately on hosted OpenAI sessions', () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({
+      model: 'openai/gpt-realtime',
+      apiKey: 'key',
+      apiSecret: 'secret',
+    });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as {
+      handleConversationItemInputAudioTranscriptionCompleted: (
+        event: apiProto.ConversationItemInputAudioTranscriptionCompletedEvent,
+      ) => void;
+    };
+    const emitted: llm.InputTranscriptionCompleted[] = [];
+    realtimeSession.on('input_audio_transcription_completed', (event) => emitted.push(event));
+
+    session.handleConversationItemInputAudioTranscriptionCompleted({
+      type: 'conversation.item.input_audio_transcription.completed',
+      event_id: 'evt',
+      item_id: 'item_1',
+      content_index: 0,
+      transcript: 'what is the weather',
+    });
+
+    expect(emitted).toEqual([
+      {
+        itemId: 'item_1',
+        transcript: 'what is the weather',
+        isFinal: true,
+      },
+    ]);
+  });
+
+  it('preserves held turns in chat context updates and appends unanchored items on hosted xAI', async () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({
+      model: 'xai/grok-voice-think-fast-3.0',
+      apiKey: 'key',
+      apiSecret: 'secret',
+    });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as {
+      createChatCtxUpdateEvents: (
+        chatCtx: llm.ChatContext,
+      ) => Promise<(apiProto.ConversationItemCreateEvent | apiProto.ConversationItemDeleteEvent)[]>;
+      handleConversationItemCreated: (event: apiProto.ConversationItemCreatedEvent) => void;
+      handleConversationItemInputAudioTranscriptionCompleted: (
+        event: apiProto.ConversationItemInputAudioTranscriptionCompletedEvent,
+      ) => void;
+      remoteChatCtx: llm.RemoteChatContext;
+    };
+    session.remoteChatCtx.insert(
+      undefined,
+      new llm.ChatMessage({ id: 'earlier', role: 'assistant', content: ['hi'] }),
+    );
+    session.remoteChatCtx.insert(
+      'earlier',
+      new llm.ChatMessage({ id: 'item_1', role: 'user', content: [''] }),
+    );
+    session.remoteChatCtx.insert(
+      'item_1',
+      new llm.ChatMessage({ id: 'reply', role: 'assistant', content: ['the full reply'] }),
+    );
+    session.handleConversationItemInputAudioTranscriptionCompleted({
+      type: 'conversation.item.input_audio_transcription.completed',
+      event_id: 'evt',
+      item_id: 'item_1',
+      content_index: 0,
+      transcript: 'are you there',
+      status: 'completed',
+    });
+
+    const agentCtx = new llm.ChatContext([
+      new llm.ChatMessage({ id: 'earlier', role: 'assistant', content: ['hi'] }),
+      new llm.ChatMessage({ id: 'reply', role: 'assistant', content: ['the trunc'] }),
+    ]);
+    const events = await session.createChatCtxUpdateEvents(agentCtx);
+    const deleted = events
+      .filter(
+        (event): event is apiProto.ConversationItemDeleteEvent =>
+          event.type === 'conversation.item.delete',
+      )
+      .map((event) => event.item_id);
+    const created = Object.fromEntries(
+      events
+        .filter(
+          (event): event is apiProto.ConversationItemCreateEvent =>
+            event.type === 'conversation.item.create',
+        )
+        .map((event) => [event.item.id, event.previous_item_id]),
+    );
+    expect(deleted).not.toContain('item_1');
+    expect(created).toEqual({ reply: 'item_1' });
+
+    session.handleConversationItemCreated({
+      type: 'conversation.item.added',
+      event_id: 'evt',
+      previous_item_id: '',
+      item: {
+        id: 'tail_item',
+        object: 'realtime.item',
+        type: 'message',
+        status: 'in_progress',
+        role: 'assistant',
+        content: [],
+      },
+    } as unknown as apiProto.ConversationItemCreatedEvent);
+    expect(session.remoteChatCtx.toChatCtx().items.map((item) => item.id)).toEqual([
+      'earlier',
+      'item_1',
+      'reply',
+      'tail_item',
+    ]);
+  });
+
+  it('discards an interrupted response that never spoke on hosted xAI', async () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({
+      model: 'xai/grok-voice-think-fast-3.0',
+      apiKey: 'key',
+      apiSecret: 'secret',
+    });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as {
+      currentGeneration?: ResponseGeneration | DiscardedGeneration;
+      handleResponseCreated: (event: apiProto.ResponseCreatedEvent) => void;
+      remoteChatCtx: llm.RemoteChatContext;
+    };
+    session.handleResponseCreated({
+      type: 'response.created',
+      event_id: 'evt',
+      response: {
+        id: 'resp',
+        object: 'realtime.response',
+        status: 'in_progress',
+        status_details: 'in_progress',
+        output: [],
+      },
+    });
+    session.remoteChatCtx.insert(
+      undefined,
+      new llm.ChatMessage({ id: 'phantom', role: 'assistant', content: [] }),
+    );
+    const generation = session.currentGeneration as ResponseGeneration;
+    generation.messages.set('phantom', {
+      messageId: 'phantom',
+      textChannel: stream.createStreamChannel<string | TimedString>(),
+      audioChannel: stream.createStreamChannel(),
+      audioTranscript: '',
+      modalities: new Future<('text' | 'audio')[]>(),
+    });
+
+    await realtimeSession.interrupt();
+
+    expect(generation._doneFut.done).toBe(true);
+    expect(session.currentGeneration).toBeInstanceOf(DiscardedGeneration);
   });
 });
