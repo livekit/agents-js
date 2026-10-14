@@ -9,6 +9,7 @@ import {
   APITimeoutError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
+  log,
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
 
@@ -104,6 +105,9 @@ export class LLM extends llm.LLM {
    *   (required by Claude 3.5+).
    * - `function_call` items are mapped to Anthropic `tool_use` content blocks.
    * - `function_call_output` items are mapped to `tool_result` content blocks.
+   * - A `function_call` without a `function_call_output` (e.g. a tool still running when
+   *   another LLM takes over the turn), and an output without its call, are dropped:
+   *   Anthropic rejects any unpaired `tool_use` / `tool_result`.
    * - Consecutive same-role messages are merged to satisfy Anthropic's
    *   strict alternating-turn requirement.
    * - A dummy `(empty)` user message is injected if the conversation doesn't
@@ -118,6 +122,23 @@ export class LLM extends llm.LLM {
     const system: Anthropic.TextBlockParam[] = [];
     const rawMessages: Anthropic.MessageParam[] = [];
 
+    const callIds = new Set<string>();
+    const outputIds = new Set<string>();
+    for (const item of chatCtx.items) {
+      if (item.type === 'function_call') callIds.add(item.callId);
+      else if (item.type === 'function_call_output') outputIds.add(item.callId);
+    }
+    const isPaired = (item: llm.FunctionCall | llm.FunctionCallOutput) => {
+      if (callIds.has(item.callId) && outputIds.has(item.callId)) return true;
+      log().warn(
+        { callId: item.callId, toolName: item.name },
+        item.type === 'function_call'
+          ? 'function call missing the corresponding function output, ignoring'
+          : 'function output missing the corresponding function call, ignoring',
+      );
+      return false;
+    };
+
     for (const msg of chatCtx.items) {
       if (msg.type === 'message') {
         const textContent = msg.rawTextContent || '';
@@ -129,7 +150,7 @@ export class LLM extends llm.LLM {
             content: textContent,
           });
         }
-      } else if (msg.type === 'function_call') {
+      } else if (msg.type === 'function_call' && isPaired(msg)) {
         // Map to Anthropic's tool_use content block (assistant role)
         rawMessages.push({
           role: 'assistant',
@@ -142,7 +163,7 @@ export class LLM extends llm.LLM {
             },
           ],
         });
-      } else if (msg.type === 'function_call_output') {
+      } else if (msg.type === 'function_call_output' && isPaired(msg)) {
         // Map to Anthropic's tool_result content block (user role)
         rawMessages.push({
           role: 'user',
@@ -170,7 +191,12 @@ export class LLM extends llm.LLM {
         const curContent = Array.isArray(msg.content)
           ? msg.content
           : [{ type: 'text' as const, text: msg.content as string }];
-        prev.content = [...prevContent, ...curContent] as Anthropic.ContentBlockParam[];
+        const merged = [...prevContent, ...curContent] as Anthropic.ContentBlockParam[];
+        // tool_result blocks must come first in their user message
+        prev.content = [
+          ...merged.filter((block) => block.type === 'tool_result'),
+          ...merged.filter((block) => block.type !== 'tool_result'),
+        ];
       } else {
         messages.push({ ...msg });
       }
