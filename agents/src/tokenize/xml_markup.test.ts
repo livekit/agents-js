@@ -219,6 +219,23 @@ describe('streaming sentence tokenizer with markup', () => {
     assertWrappingTagIntact(await streamTokenize(makeTok(), text), 'outer');
   });
 
+  it('does not let a stray closing tag unbalance a later wrapping tag', async () => {
+    // Regression: a closing tag whose opener was already emitted (or never sent)
+    // drove the depth counter negative, so the next opening tag looked closed and
+    // its sentences were split across chunks.
+    expect(hasUnclosedXmlTags("</b> Now <emotion value='sad'>I am sorry.")).toBe(true);
+
+    const text = "Okay then.</b> Now <emotion value='sad'>I am sorry. Truly sorry.</emotion> Bye.";
+    const stream = makeTok().stream();
+    for (const word of text.split(' ')) {
+      stream.pushText(`${word} `);
+    }
+    stream.endInput();
+    const tokens: string[] = [];
+    for await (const ev of stream) tokens.push(ev.token);
+    assertWrappingTagIntact(tokens, 'emotion');
+  });
+
   it('never emits a tag-only chunk', async () => {
     const text =
       '<expression value="speak firmly with a sharp and serious tone"/> ' +
