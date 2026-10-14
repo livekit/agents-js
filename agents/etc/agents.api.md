@@ -9402,7 +9402,7 @@ interface XaiOptions {
 }
 
 // @public (undocumented)
-type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0' | 'xai/grok-voice-2.0' | 'xai/grok-voice-think-fast-3.0' | 'xai/grok-voice-think-fast-2.0';
+type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0';
 
 // @public (undocumented)
 type XaiSTTModels = 'xai/stt-1';

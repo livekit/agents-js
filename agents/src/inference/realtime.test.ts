@@ -247,7 +247,7 @@ describe('inference RealtimeModel', () => {
   it('emits one final transcript per turn on hosted xAI sessions', () => {
     stubTaskRuntime();
     const model = new RealtimeModel({
-      model: 'xai/grok-voice-think-fast-3.0',
+      model: 'xai/grok-voice-3.0',
       apiKey: 'key',
       apiSecret: 'secret',
     });
@@ -347,7 +347,7 @@ describe('inference RealtimeModel', () => {
   it('preserves held turns in chat context updates and appends unanchored items on hosted xAI', async () => {
     stubTaskRuntime();
     const model = new RealtimeModel({
-      model: 'xai/grok-voice-think-fast-3.0',
+      model: 'xai/grok-voice-3.0',
       apiKey: 'key',
       apiSecret: 'secret',
     });
@@ -429,7 +429,7 @@ describe('inference RealtimeModel', () => {
   it('discards an interrupted response that never spoke on hosted xAI', async () => {
     stubTaskRuntime();
     const model = new RealtimeModel({
-      model: 'xai/grok-voice-think-fast-3.0',
+      model: 'xai/grok-voice-3.0',
       apiKey: 'key',
       apiSecret: 'secret',
     });

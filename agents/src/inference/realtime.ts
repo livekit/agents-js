@@ -34,13 +34,7 @@ export type GoogleRealtimeModels =
   | 'google/gemini-3.8-live-extended-thinking'
   | 'google/gemini-live';
 
-export type XAIRealtimeModels =
-  | 'xai/grok-voice'
-  | 'xai/grok-voice-latest'
-  | 'xai/grok-voice-3.0'
-  | 'xai/grok-voice-2.0'
-  | 'xai/grok-voice-think-fast-3.0'
-  | 'xai/grok-voice-think-fast-2.0';
+export type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0';
 
 export type RealtimeModels =
   | OpenAIRealtimeModels
@@ -60,9 +54,6 @@ const REALTIME_MODEL_IDS: ReadonlySet<string> = new Set<RealtimeModels>([
   'xai/grok-voice',
   'xai/grok-voice-latest',
   'xai/grok-voice-3.0',
-  'xai/grok-voice-2.0',
-  'xai/grok-voice-think-fast-3.0',
-  'xai/grok-voice-think-fast-2.0',
 ]);
 
 /** Whether a LiveKit Inference model string names a realtime (speech-to-speech) model. */
