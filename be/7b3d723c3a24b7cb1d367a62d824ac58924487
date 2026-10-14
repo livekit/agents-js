@@ -1,0 +1,21 @@
+agents/src/telemetry/recording_upload.test.ts
+  s_3f5bca9945febe::t_33eaf40aa463d1 107
+agents/src/telemetry/recording_upload.ts
+  s_3f5bca9945febe::t_33eaf40aa463d1 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be7b3d723c3a24b7cb1d367a62d824ac58924487",
+  "prompts": {},
+  "sessions": {
+    "s_3f5bca9945febe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a09c960c-621f-42ce-8fed-3454165bc4ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
