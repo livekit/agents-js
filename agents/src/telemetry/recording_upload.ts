@@ -4,7 +4,6 @@
 import { Any, Duration, type Message, proto3 } from '@bufbuild/protobuf';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type FormData from 'form-data';
-import type { IncomingMessage } from 'node:http';
 import { log } from '../log.js';
 import { delay } from '../utils.js';
 
@@ -131,73 +130,59 @@ async function attemptUpload(
 function submitRecording(form: UploadForm, target: UploadTarget): Promise<UploadResponse> {
   return new ThrowsPromise<UploadResponse, RecordingUploadError>((resolve, reject) => {
     let connected = false;
-    let settled = false;
-    let response: IncomingMessage | undefined;
+
+    const request = form.submit({
+      protocol: 'https:',
+      host: target.host,
+      path: '/observability/recordings/v0',
+      method: 'POST',
+      headers: { Authorization: `Bearer ${target.jwt}` },
+    });
 
     const connectTimer = setTimeout(
       () => request.destroy(new ConnectTimeoutError()),
       CONNECT_TIMEOUT_MS,
     ).unref();
-    const totalTimer = setTimeout(() => {
-      const error = new Error('Session report upload timed out');
-      response?.destroy(error);
-      request.destroy(error);
-    }, TOTAL_TIMEOUT_MS).unref();
+    const totalTimer = setTimeout(
+      () => request.destroy(new Error('Session report upload timed out')),
+      TOTAL_TIMEOUT_MS,
+    ).unref();
 
     const markConnected = () => {
       connected = true;
       clearTimeout(connectTimer);
     };
-    const settle = (finish: () => void) => {
-      if (settled) return;
-      settled = true;
+    const fail = (error: Error) => {
       clearTimeout(connectTimer);
       clearTimeout(totalTimer);
-      finish();
-    };
-    const fail = (error: Error) => {
       const { code } = error as NodeJS.ErrnoException;
       const retryable =
         !connected &&
         (error instanceof ConnectTimeoutError ||
           (code !== undefined && RETRYABLE_CONNECT_CODES.has(code)));
-      settle(() => reject(new RecordingUploadError(error, retryable)));
+      reject(new RecordingUploadError(error, retryable));
     };
 
-    // form-data passes request errors to this callback, so it can run after the response.
-    const request = form.submit(
-      {
-        protocol: 'https:',
-        host: target.host,
-        path: '/observability/recordings/v0',
-        method: 'POST',
-        headers: { Authorization: `Bearer ${target.jwt}` },
-      },
-      (err, res) => {
-        if (err) {
-          fail(err);
-          return;
-        }
-        markConnected();
-        response = res;
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('error', fail);
-        res.on('end', () =>
-          settle(() =>
-            resolve({
-              statusCode: res.statusCode!,
-              statusMessage: res.statusMessage!,
-              body: Buffer.concat(chunks),
-            }),
-          ),
-        );
-      },
-    );
-
+    // Listen on the request instead of passing a submit callback. form-data removes its error
+    // listener when the response arrives, so a later timeout or reset would be uncaught.
+    request.on('error', fail);
     request.on('socket', (socket) => {
       if (request.reusedSocket) markConnected();
       else socket.once('secureConnect', markConnected);
+    });
+    request.once('response', (res) => {
+      markConnected();
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('error', fail);
+      res.on('end', () => {
+        clearTimeout(totalTimer);
+        resolve({
+          statusCode: res.statusCode!,
+          statusMessage: res.statusMessage!,
+          body: Buffer.concat(chunks),
+        });
+      });
     });
   });
 }
