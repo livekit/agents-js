@@ -453,6 +453,36 @@ describe('ElevenLabs text-to-dialogue', () => {
     );
   });
 
+  it('starts a dialogue turn at audio that arrives before its first characters', async () => {
+    const { events } = await synthesizeWithMessages(
+      (ws, messages) => {
+        if (messages.length === 2) {
+          const context_id = messages[0]?.context_id;
+          // 100 ms of audio with no characters, then the turn's first characters (from 0 ms)
+          ws.send(JSON.stringify({ context_id, audio }));
+          ws.send(
+            JSON.stringify({
+              context_id,
+              audio,
+              alignment: {
+                chars: [...'hello world.'],
+                char_start_times_ms: [...'hello world.'].map((_, i) => i * 10),
+                char_durations_ms: [...'hello world.'].map(() => 10),
+              },
+            }),
+          );
+          ws.send(JSON.stringify({ context_id, is_final: true }));
+        }
+      },
+      { model: 'eleven_v4_turbo' },
+    );
+
+    const words = (events as tts.SynthesizedAudio[]).flatMap(
+      (event) => event.timedTranscripts ?? [],
+    );
+    expect(words[0]?.startTime).toBeCloseTo(0);
+  });
+
   it('reports dialogue errors', async () => {
     const errorSpy = vi.spyOn(log(), 'error');
     await synthesizeWithMessages(

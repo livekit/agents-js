@@ -155,6 +155,8 @@ interface DialogueTiming {
   clockMs: number;
   /** The next characters open a turn (the context's first, or after `is_final_audio_for_turn`). */
   newTurn: boolean;
+  /** Where the open turn's audio began, when audio came before its first characters. */
+  turnOriginMs: number | null;
   /** The latest character start, so that times never go backwards. */
   lastStartMs: number;
 }
@@ -395,7 +397,7 @@ class Connection {
       startTimesMs: [],
       durationsMs: [],
       firstWordOffsetMs: null,
-      dialogueTiming: { audioMs: 0, clockMs: 0, newTurn: true, lastStartMs: 0 },
+      dialogueTiming: { audioMs: 0, clockMs: 0, newTurn: true, turnOriginMs: null, lastStartMs: 0 },
       timeoutMs,
       terminate,
     });
@@ -703,13 +705,16 @@ class Connection {
 
             // text-to-dialogue: the message's character times restart at 0. They follow on from the previous
             // message's last character, but a message never starts later than its own audio (when the audio
-            // duration is known), and a new turn starts where its audio does.
+            // duration is known), and a new turn starts where its audio does (including audio that arrived
+            // before its first characters).
             const timing = ctx.dialogueTiming;
             const audioKnown = this.#opts.encoding.startsWith('pcm_');
             let baseMs = 0;
             if (dialogue) {
-              if (timing.newTurn && audioKnown) timing.clockMs = timing.audioMs;
+              if (timing.newTurn && audioKnown)
+                timing.clockMs = timing.turnOriginMs ?? timing.audioMs;
               timing.newTurn = false;
+              timing.turnOriginMs = null;
               baseMs = audioKnown ? Math.min(timing.clockMs, timing.audioMs) : timing.clockMs;
             }
 
@@ -759,15 +764,15 @@ class Connection {
           }
         }
 
-        if (dialogue && data.is_final_audio_for_turn) {
-          ctx.dialogueTiming.newTurn = true;
-        }
-
         if (data.audio) {
           const audioData = Buffer.from(data.audio as string, 'base64');
           if (dialogue && this.#opts.encoding.startsWith('pcm_')) {
+            const timing = ctx.dialogueTiming;
+            // audio before a turn's first characters: the turn starts with it
+            if (timing.newTurn && timing.turnOriginMs === null)
+              timing.turnOriginMs = timing.audioMs;
             // 16-bit mono PCM
-            ctx.dialogueTiming.audioMs +=
+            timing.audioMs +=
               (audioData.length / 2 / sampleRateFromFormat(this.#opts.encoding)) * 1000;
           }
           stream.pushAudio(audioData);
@@ -779,6 +784,11 @@ class Connection {
             // the final response is still pending, keep the idle timeout active
             this.#startTimeoutTimer(contextId!);
           }
+        }
+
+        // after the message's audio, which still belongs to the turn that ends here
+        if (dialogue && data.is_final_audio_for_turn) {
+          ctx.dialogueTiming.newTurn = true;
         }
 
         if (data[dialogue ? 'is_final' : 'isFinal']) {
