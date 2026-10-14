@@ -95,7 +95,7 @@ describe('uploadRecording', () => {
     vi.useRealTimers();
   });
 
-  it.each(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET', 'EPIPE'])(
+  it.each(['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'EADDRNOTAVAIL', 'ENOTFOUND', 'EAI_FAIL'])(
     'retries %s before the TLS handshake completes',
     async (code) => {
       attempts((request) => request.emit('error', networkError(code)), succeed);
@@ -216,6 +216,7 @@ describe('uploadRecording', () => {
       'a TLS certificate failure',
       (request) => request.emit('error', networkError('INVALID_PURPOSE')),
     ],
+    ['a TLS protocol failure', (request) => request.emit('error', networkError('EPROTO'))],
   ])('does not retry %s', async (_name, action) => {
     attempts(action);
 

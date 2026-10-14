@@ -12,16 +12,41 @@ const CONNECT_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
-/** Error codes that mean the server did not receive the upload when they occur before TLS completes. */
+/**
+ * DNS and connection errors that Python retries as `aiohttp.ClientConnectorError`. Before TLS
+ * completes, the server has not received the upload. TLS errors such as `EPROTO` are excluded,
+ * as in Python.
+ */
 const RETRYABLE_CONNECT_CODES = new Set([
+  // Connection
+  'EACCES',
+  'EADDRNOTAVAIL',
+  'EAFNOSUPPORT',
+  'ECONNABORTED',
   'ECONNREFUSED',
   'ECONNRESET',
+  'EHOSTDOWN',
+  'EHOSTUNREACH',
+  'EMFILE',
+  'ENETDOWN',
+  'ENETRESET',
+  'ENETUNREACH',
+  'ENFILE',
+  'ENOBUFS',
+  'EPERM',
   'EPIPE',
   'ETIMEDOUT',
-  'ENOTFOUND',
+  // DNS
+  'EAI_ADDRFAMILY',
   'EAI_AGAIN',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
+  'EAI_BADFLAGS',
+  'EAI_FAIL',
+  'EAI_FAMILY',
+  'EAI_MEMORY',
+  'EAI_NODATA',
+  'EAI_SERVICE',
+  'EAI_SYSTEM',
+  'ENOTFOUND',
 ]);
 
 interface RetryInfo extends Message<RetryInfo> {
