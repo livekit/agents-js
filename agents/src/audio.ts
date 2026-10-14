@@ -139,15 +139,35 @@ export function audioFramesFromFile(
     .audioFrequency(sampleRate);
 
   let commandRunning = true;
+  let consumerGone = false;
 
-  const onClose = () => {
-    logger.debug('Audio file playback aborted');
-
-    channel.close();
+  const stopCommand = () => {
     if (commandRunning) {
       commandRunning = false;
       command.kill('SIGKILL');
     }
+  };
+
+  // Once the consumer cancels the stream (e.g. breaks out of `for await`), every write and
+  // close rejects. Stop decoding on the first rejection and keep the rest from going unhandled.
+  const writeFrame = (frame: AudioFrame) => {
+    if (consumerGone) {
+      return;
+    }
+    channel.write(frame).catch(() => {
+      consumerGone = true;
+      stopCommand();
+    });
+  };
+  const closeChannel = () => {
+    channel.close().catch(() => {});
+  };
+
+  const onClose = () => {
+    logger.debug('Audio file playback aborted');
+
+    closeChannel();
+    stopCommand();
   };
 
   command.on('error', (err: Error) => {
@@ -172,17 +192,17 @@ export function audioFramesFromFile(
 
     const frames = audioStream.write(arrayBuffer);
     for (const frame of frames) {
-      channel.write(frame);
+      writeFrame(frame);
     }
   });
 
   outputStream.on('end', () => {
     const frames = audioStream.flush();
     for (const frame of frames) {
-      channel.write(frame);
+      writeFrame(frame);
     }
     commandRunning = false;
-    channel.close();
+    closeChannel();
   });
 
   outputStream.on('error', (err: Error) => {
