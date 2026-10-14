@@ -21,14 +21,15 @@ import type { z } from 'zod';
 import { isAPIError } from '../_exceptions.js';
 import type { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import {
-  LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
   TurnDetector as InferenceTurnDetector,
   VAD as InferenceVAD,
   type LLMModels,
+  type OpenAIGPTLiveModels,
   type STTModelString,
   type TTSModelString,
+  llmFromModelString,
 } from '../inference/index.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
@@ -309,7 +310,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * one as absent). Pass `null` to opt out entirely.
    */
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | OpenAIGPTLiveModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
@@ -770,12 +771,11 @@ export class AgentSession<
       this.stt = stt;
     }
 
-    if (typeof llm === 'string') {
-      this.llm = InferenceLLM.fromModelString(llm);
-    } else if (llm instanceof DuplexModel) {
-      this.llm = new DuplexRealtimeAdapter(llm);
+    const resolvedLLM = typeof llm === 'string' ? llmFromModelString(llm) : llm;
+    if (resolvedLLM instanceof DuplexModel) {
+      this.llm = new DuplexRealtimeAdapter(resolvedLLM);
     } else {
-      this.llm = llm;
+      this.llm = resolvedLLM;
     }
 
     // Eagerly establish DNS/TLS to the LLM provider so the first inference request is faster.

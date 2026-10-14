@@ -164,6 +164,7 @@ export default defineAgent({
       // To use hosted OpenAI Realtime or xAI Grok Voice, replace stt, llm, tts and vad with the
       // following. Use the provider plugin's RealtimeModel instead when supplying credentials directly.
       // llm: new inference.RealtimeModel({ model: 'openai/gpt-realtime' }),
+      // or, for OpenAI's full-duplex GPT-Live: llm: 'openai/gpt-live-1',
     });
 
     await session.start({

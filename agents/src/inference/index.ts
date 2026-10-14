@@ -42,11 +42,19 @@ export {
   type LLMModels,
   type XAIModels,
   type ZAIModels,
+  llmFromModelString,
 } from './llm.js';
 
 export { type InferenceClass } from './utils.js';
 
 export { RealtimeModel, RealtimeSession, type RealtimeModelOptions } from './realtime.js';
+
+export {
+  GPTLiveModel,
+  GPTLiveSession,
+  type GPTLiveModelOptions,
+  type OpenAIGPTLiveModels,
+} from './gpt_live.js';
 
 export {
   normalizeSTTFallback,

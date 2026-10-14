@@ -33,6 +33,7 @@ import type * as proto from '@livekit/protocol';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Reasoning } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { RemoteTrackPublication } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
@@ -378,7 +379,7 @@ export interface AgentOptions<UserData> {
     // (undocumented)
     instructions: string | Instructions;
     // (undocumented)
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | OpenAIGPTLiveModels | null;
     // (undocumented)
     minConsecutiveSpeechDelay?: number;
     // (undocumented)
@@ -702,7 +703,7 @@ export enum AgentSessionEventTypes {
 export type AgentSessionOptions<UserData = UnknownUserData> = {
     stt?: STT | ModelWithLanguage;
     vad?: VAD | null;
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | OpenAIGPTLiveModels;
     tts?: TTS | ModelWithVoice;
     userData?: UserData;
     connOptions?: SessionConnectOptions;
@@ -782,7 +783,7 @@ export interface AgentTaskCreateOptions<ResultT = unknown, UserData = any> exten
 // @public
 export interface AgentUpdateOptions {
     expressive?: boolean | ExpressiveOptions;
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | OpenAIGPTLiveModels | null;
     stt?: STT | ModelWithLanguage | null;
     tts?: TTS | ModelWithVoice | null;
     vad?: VAD | null;
@@ -4004,6 +4005,66 @@ interface GoogleSTTOptions {
     language_codes?: string[];
 }
 
+// Warning: (ae-forgotten-export) The symbol "GPTLiveModel_2" needs to be exported by the entry point index.d.ts
+//
+// @public
+class GPTLiveModel extends GPTLiveModel_2 {
+    constructor(options?: GPTLiveModelOptions_2);
+    // (undocumented)
+    static fromModelString(model: string): GPTLiveModel;
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    readonly _inferenceOptions: InferenceOptions;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(): GPTLiveSession_2;
+}
+
+// @public (undocumented)
+interface GPTLiveModelOptions_2 {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    // Warning: (ae-forgotten-export) The symbol "DelegationTarget" needs to be exported by the entry point index.d.ts
+    delegation?: DelegationTarget;
+    inferenceClass?: InferenceClass;
+    maxSessionDuration?: number | null;
+    // Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
+    model?: OpenAIGPTLiveModels | AnyString;
+    provider?: string;
+    // Warning: (ae-forgotten-export) The symbol "ResponsesDelegationOptions" needs to be exported by the entry point index.d.ts
+    responsesOptions?: ResponsesDelegationOptions;
+    // Warning: (ae-forgotten-export) The symbol "GPTLiveVoices" needs to be exported by the entry point index.d.ts
+    voice?: GPTLiveVoices | AnyString | Record<string, unknown>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "GPTLiveSession" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+class GPTLiveSession_2 extends GPTLiveSession {
+    constructor(model: GPTLiveModel);
+    // (undocumented)
+    protected createWsUrlAndHeaders(): Promise<{
+        url: URL;
+        headers: Record<string, string>;
+    }>;
+    // Warning: (ae-forgotten-export) The symbol "ErrorBody" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected isFatalError(error: ErrorBody): boolean;
+    // (undocumented)
+    _updateTools(tools: ToolContext): Promise<void>;
+}
+
 // @public (undocumented)
 export function handoff(options: {
     agent: Agent;
@@ -4078,10 +4139,15 @@ declare namespace inference {
         LLMModels,
         XAIModels,
         ZAIModels,
+        llmFromModelString,
         InferenceClass,
         RealtimeModel_2 as RealtimeModel,
         RealtimeSession_3 as RealtimeSession,
         RealtimeModelOptions,
+        GPTLiveModel,
+        GPTLiveSession_2 as GPTLiveSession,
+        GPTLiveModelOptions_2 as GPTLiveModelOptions,
+        OpenAIGPTLiveModels,
         normalizeSTTFallback,
         parseSTTModelString,
         STT_2 as STT,
@@ -4849,6 +4915,7 @@ class LLM_2 extends llm_2.LLM {
 
 declare namespace llm_3 {
     export {
+        llmFromModelString,
         OpenAIModels,
         GoogleModels,
         MoonshotModels,
@@ -4876,6 +4943,11 @@ export type LLMCallbacks = {
     ['error']: (error: LLMError) => void;
 };
 
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "GPTLiveModel"
+//
+// @public
+function llmFromModelString(model: string): LLM_2 | GPTLiveModel;
+
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "convertMarkup"
 //
 // @public
@@ -4901,8 +4973,6 @@ export type LLMMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
-//
 // @public (undocumented)
 type LLMModels = OpenAIModels | GoogleModels | MoonshotModels | DeepSeekModels | ZAIModels | XAIModels | AnyString;
 
@@ -5369,6 +5439,9 @@ export type OpenAIFunctionParameters = {
     additionalProperties?: boolean;
 };
 
+// @public
+type OpenAIGPTLiveModels = 'openai/gpt-live-1';
+
 // @public (undocumented)
 type OpenAIModels = 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
 
@@ -5747,10 +5820,10 @@ export abstract class RealtimeModel {
 // @public
 class RealtimeModel_2 extends RealtimeModel_3 {
     constructor(options: RealtimeModelOptions);
-    // Warning: (ae-forgotten-export) The symbol "InferenceOptions" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions_2" needs to be exported by the entry point index.d.ts
     //
     // @internal (undocumented)
-    readonly _inferenceOptions: InferenceOptions;
+    readonly _inferenceOptions: InferenceOptions_2;
     // (undocumented)
     label(): string;
     // (undocumented)
@@ -9314,7 +9387,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:410:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts

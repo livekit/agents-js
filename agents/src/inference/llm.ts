@@ -13,6 +13,7 @@ import {
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
+import { GPTLiveModel, isGPTLiveModel } from './gpt_live.js';
 import {
   type AnyString,
   INFERENCE_PRIORITY_HEADER,
@@ -714,4 +715,12 @@ export class LLMStream extends llm.LLMStream {
     }
     return undefined;
   }
+}
+
+/**
+ * Create the inference model an `llm` string names: a {@link GPTLiveModel} for GPT-Live
+ * models, an {@link LLM} for everything else.
+ */
+export function llmFromModelString(model: string): LLM | GPTLiveModel {
+  return isGPTLiveModel(model) ? GPTLiveModel.fromModelString(model) : LLM.fromModelString(model);
 }

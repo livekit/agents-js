@@ -10,6 +10,7 @@ import {
 import type { ToolChoice, ToolContext } from '../llm/tool_context.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { isGPTLiveModel } from './gpt_live.js';
 import {
   INFERENCE_PROVIDER_HEADER,
   type InferenceClass,
@@ -79,6 +80,9 @@ export class RealtimeModel extends OpenAIRealtimeModel {
   constructor(options: RealtimeModelOptions) {
     if (!options.model.includes('/')) {
       throw new Error("model must be provider-prefixed, for example 'openai/gpt-realtime'");
+    }
+    if (isGPTLiveModel(options.model)) {
+      throw new Error(`${options.model} speaks the GPT-Live protocol; use inference.GPTLiveModel`);
     }
 
     const credentials = resolveCredentials(options.apiKey, options.apiSecret);
