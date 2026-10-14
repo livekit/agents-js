@@ -104,7 +104,7 @@ describe('uploadRecording', () => {
     vi.useRealTimers();
   });
 
-  it.each(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET'])(
+  it.each(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET', 'EPIPE'])(
     'retries %s before the TLS handshake completes',
     async (code) => {
       attempts((_request, cb) => cb(networkError(code)), succeed);
