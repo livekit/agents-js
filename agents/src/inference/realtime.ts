@@ -37,6 +37,8 @@ export type GoogleRealtimeModels =
 export type XAIRealtimeModels =
   | 'xai/grok-voice'
   | 'xai/grok-voice-latest'
+  | 'xai/grok-voice-3.0'
+  | 'xai/grok-voice-2.0'
   | 'xai/grok-voice-think-fast-3.0'
   | 'xai/grok-voice-think-fast-2.0';
 
@@ -57,6 +59,8 @@ const REALTIME_MODEL_IDS: ReadonlySet<string> = new Set<RealtimeModels>([
   'google/gemini-live',
   'xai/grok-voice',
   'xai/grok-voice-latest',
+  'xai/grok-voice-3.0',
+  'xai/grok-voice-2.0',
   'xai/grok-voice-think-fast-3.0',
   'xai/grok-voice-think-fast-2.0',
 ]);

@@ -41,7 +41,7 @@ import { z } from 'zod';
 // Warning: (ae-missing-release-tag) "GrokRealtimeModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type GrokRealtimeModels = 'grok-voice-fast-1.0' | 'grok-voice-think-fast-1.0' | 'grok-voice-think-fast-2.0' | 'grok-voice-think-fast-3.0';
+type GrokRealtimeModels = 'grok-voice-latest' | 'grok-voice-3.0' | 'grok-voice-2.0' | 'grok-voice-fast-1.0' | 'grok-voice-think-fast-1.0' | 'grok-voice-think-fast-2.0' | 'grok-voice-think-fast-3.0';
 
 // Warning: (ae-missing-release-tag) "GrokVoices" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
