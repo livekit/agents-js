@@ -583,3 +583,61 @@ describe('Google Realtime client content params', () => {
     });
   });
 });
+
+type UserActivitySessionInternals = {
+  options: { realtimeInputConfig?: { automaticActivityDetection?: { disabled?: boolean } } };
+  pendingToolCallIds: Set<string>;
+  inUserActivity: boolean;
+  sendClientEvent: ReturnType<typeof vi.fn>;
+  startUserActivity(): void;
+  endUserActivity(): void;
+  commitAudio(): Promise<void>;
+};
+
+function createUserActivitySession(manual: boolean): UserActivitySessionInternals {
+  const session = Object.create(RealtimeSession.prototype) as UserActivitySessionInternals;
+  session.options = {
+    realtimeInputConfig: { automaticActivityDetection: { disabled: manual } },
+  };
+  session.pendingToolCallIds = new Set();
+  session.inUserActivity = false;
+  session.sendClientEvent = vi.fn();
+  return session;
+}
+
+describe('Google Realtime manual activity detection', () => {
+  it('endUserActivity ends the user activity opened by startUserActivity', () => {
+    const session = createUserActivitySession(true);
+
+    session.startUserActivity();
+    session.endUserActivity();
+    session.endUserActivity();
+
+    expect(session.sendClientEvent.mock.calls).toEqual([
+      [{ type: 'realtime_input', value: { activityStart: {} } }],
+      [{ type: 'realtime_input', value: { activityEnd: {} } }],
+    ]);
+    expect(session.inUserActivity).toBe(false);
+  });
+
+  it('endUserActivity sends nothing with automatic activity detection', () => {
+    const session = createUserActivitySession(false);
+
+    session.startUserActivity();
+    session.endUserActivity();
+
+    expect(session.sendClientEvent).not.toHaveBeenCalled();
+  });
+
+  it('commitAudio leaves the user activity open', async () => {
+    const session = createUserActivitySession(true);
+
+    session.startUserActivity();
+    await session.commitAudio();
+
+    expect(session.sendClientEvent.mock.calls).toEqual([
+      [{ type: 'realtime_input', value: { activityStart: {} } }],
+    ]);
+    expect(session.inUserActivity).toBe(true);
+  });
+});
