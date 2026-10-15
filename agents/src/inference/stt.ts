@@ -190,13 +190,13 @@ export interface SpeechmaticsOptions {
   enable_entities?: boolean;
   /** Punctuation override configuration. */
   punctuation_overrides?: Record<string, unknown>;
-  /** Additional vocabulary entries for custom dictionary support. RT only. */
+  /** Additional vocabulary entries in the form `{ content, sounds_like? }`. */
   additional_vocab?: Array<Record<string, unknown>>;
   /** Seconds of silence before finalizing an utterance. RT only. */
   end_of_utterance_silence_trigger?: number;
   /** Audio filtering configuration. RT only. */
   audio_filtering_config?: Record<string, unknown>;
-  /** Transcript filtering configuration. RT only. */
+  /** Transcript filtering configuration. */
   transcript_filtering_config?: Record<string, unknown>;
 }
 
@@ -284,10 +284,6 @@ function keytermsExtraForModel(
 
   const extraKwargs = opts?.extraKwargs ?? {};
   const sessionKeyterms = opts?.sessionKeyterms ?? [];
-
-  if (model === 'speechmatics/linden-1') {
-    return undefined;
-  }
 
   if (model.startsWith('speechmatics/')) {
     // keep existing entries as-is (they may carry sounds_like etc.); append new session terms
