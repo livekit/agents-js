@@ -425,6 +425,55 @@ describe('Google Gemini 4 stream checkpoints', () => {
     expect(configs[1]?.continuationToken).toBe('ckpt');
   });
 
+  it('does not replay output that arrived after the last checkpoint', async () => {
+    const configs: LongDecodeConfig[] = [];
+    generateContentStreamMock.mockImplementation(
+      async ({ config }: { config: LongDecodeConfig }) => {
+        configs.push(structuredClone(config));
+        return (async function* () {
+          yield response({ text: 'A', continuationToken: 'c1' });
+          yield response({ text: 'B' });
+          throw new Error('connection reset');
+        })();
+      },
+    );
+    const model = google();
+    const error = new Promise<Error>((resolve) => {
+      model.once('error', (event) => resolve(event.error));
+    });
+    const result = await model.chat({ chatCtx: llm.ChatContext.empty() }).collect();
+    expect(result.text).toBe('AB');
+    expect(configs).toHaveLength(1);
+    await expect(error).resolves.toMatchObject({
+      message: expect.stringContaining('connection reset'),
+    });
+  });
+
+  it('does not replay output after a continuation without a fresh token', async () => {
+    const streams = new FakeStreams([
+      [
+        response({ text: 'A', continuationToken: 'c1' }),
+        response({ text: 'B', finishReason: CONTINUATION }),
+      ],
+      [response({ text: 'B', finishReason: FinishReason.STOP })],
+    ]);
+    expect(await collect(google(), streams)).toEqual(['A', 'B']);
+    expect(streams.configs).toHaveLength(1);
+  });
+
+  it('resumes when the checkpoint covers everything emitted', async () => {
+    const streams = new FakeStreams([
+      [
+        response({ text: 'A', continuationToken: 'c1' }),
+        response({ text: 'B', continuationToken: 'c2' }),
+        response({ finishReason: CONTINUATION }),
+      ],
+      [response({ text: 'C', finishReason: FinishReason.STOP })],
+    ]);
+    expect(await collect(google(), streams)).toEqual(['A', 'B', 'C']);
+    expect(streams.configs[1]?.continuationToken).toBe('c2');
+  });
+
   it('keeps a stream that stops with nothing to resume from', async () => {
     const streams = new FakeStreams([[response({ text: 'all there was' })]]);
     expect(await collect(google(), streams)).toEqual(['all there was']);
@@ -528,6 +577,48 @@ describe('Google Gemini 4 extraKwargs', () => {
     expect(config.temperature).toBeUndefined();
     expect(config.topP).toBeUndefined();
     expect(config.topK).toBeUndefined();
+  });
+
+  it('cancels requests on close when extraKwargs carries its own abort signal', async () => {
+    const external = new AbortController();
+    let signal: AbortSignal | undefined;
+    let started!: () => void;
+    const requestStarted = new Promise<void>((resolve) => (started = resolve));
+    generateContentStreamMock.mockImplementation(
+      async ({ config }: { config: LongDecodeConfig }) => {
+        signal = config.abortSignal;
+        started();
+        return (async function* () {
+          await new Promise((resolve) => signal?.addEventListener('abort', resolve));
+        })();
+      },
+    );
+    const stream = google().chat({
+      chatCtx: llm.ChatContext.empty(),
+      extraKwargs: { abortSignal: external.signal },
+    });
+    await requestStarted;
+    expect(signal?.aborted).toBe(false);
+    stream.close();
+    expect(signal?.aborted).toBe(true);
+    expect(external.signal.aborted).toBe(false);
+  });
+
+  it('cancels requests when the abort signal from extraKwargs fires', async () => {
+    const external = new AbortController();
+    const seen: boolean[] = [];
+    generateContentStreamMock.mockImplementation(
+      async ({ config }: { config: LongDecodeConfig }) => {
+        seen.push(config.abortSignal?.aborted ?? false);
+        external.abort();
+        seen.push(config.abortSignal?.aborted ?? false);
+        return responses([response({ text: 'ok', finishReason: FinishReason.STOP })]);
+      },
+    );
+    await google()
+      .chat({ chatCtx: llm.ChatContext.empty(), extraKwargs: { abortSignal: external.signal } })
+      .collect();
+    expect(seen).toEqual([false, true]);
   });
 
   it('does not allow extraKwargs to hand control back to the SDK loop', async () => {

@@ -576,7 +576,11 @@ export class LLMStream extends llm.LLMStream {
         timeout: this.#extraKwargs.httpOptions?.timeout ?? Math.floor(timeout),
       };
       requestConfig.httpOptions = httpOptions;
-      requestConfig.abortSignal ??= this.abortController.signal;
+      // a caller's signal must not stand in for the stream's own: closing the stream has to
+      // cancel every request, continuation hops included
+      requestConfig.abortSignal = requestConfig.abortSignal
+        ? AbortSignal.any([requestConfig.abortSignal, this.abortController.signal])
+        : this.abortController.signal;
       if (longDecode) {
         requestConfig.automaticContinuation = false;
       }
@@ -600,6 +604,9 @@ export class LLMStream extends llm.LLMStream {
             : { ...requestConfig, continuationToken, maxOutputTokens };
         let terminal: types.Candidate | undefined;
         let checkpoint: string | undefined;
+        // output already handed to the caller that the checkpoint does not cover; resuming
+        // from it would generate that output again
+        let emittedSinceCheckpoint = false;
         let hopUsage: llm.CompletionUsage | undefined;
         let streamError: unknown;
 
@@ -648,9 +655,6 @@ export class LLMStream extends llm.LLMStream {
             }
 
             const candidate = chunk.candidates[0];
-            if (candidate.continuationToken) {
-              checkpoint = candidate.continuationToken;
-            }
             if (candidate.finishReason !== undefined) {
               terminal = candidate;
               if (BLOCKED_REASONS.includes(candidate.finishReason)) {
@@ -666,8 +670,14 @@ export class LLMStream extends llm.LLMStream {
               if (chatChunk) {
                 responseGenerated = true;
                 retryable = false;
+                emittedSinceCheckpoint = true;
                 this.queue.put(chatChunk);
               }
+            }
+            // a token marks the stream up to and including the chunk that carries it
+            if (candidate.continuationToken) {
+              checkpoint = candidate.continuationToken;
+              emittedSinceCheckpoint = false;
             }
           }
         } catch (error: unknown) {
@@ -694,7 +704,12 @@ export class LLMStream extends llm.LLMStream {
         }
 
         const unfinished = terminal === undefined || terminal.finishReason === 'CONTINUATION';
-        if (longDecode && checkpoint && unfinished) {
+        if (longDecode && checkpoint && unfinished && emittedSinceCheckpoint) {
+          this.logger.warn(
+            { model: this.#model },
+            'gemini llm: output arrived after the last checkpoint, not resuming so it is not repeated',
+          );
+        } else if (longDecode && checkpoint && unfinished) {
           if (streamError !== undefined) {
             this.logger.warn(
               { model: this.#model, error: String(streamError) },
