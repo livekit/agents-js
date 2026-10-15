@@ -76,7 +76,7 @@ export interface CartesiaOptions {
 }
 
 export interface DeepgramTTSOptions {
-  /** Default: false. */
+  /** Always true: LiveKit Inference forces it on and ignores this value. */
   mip_opt_out?: boolean;
 }
 

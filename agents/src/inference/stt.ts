@@ -102,7 +102,7 @@ export interface DeepgramOptions {
   profanity_filter?: boolean;
   /** Convert spoken numbers to numerals. */
   numerals?: boolean;
-  /** Opt out of model improvement program. */
+  /** Always true: LiveKit Inference forces it on and ignores this value. */
   mip_opt_out?: boolean;
   /** Enable speaker diarization. Default: false. */
   diarize?: boolean;
@@ -117,7 +117,7 @@ export interface DeepgramFluxOptions {
   eot_timeout_ms?: number;
   /** Key terms for recognition. */
   keyterm?: string | string[];
-  /** Opt out of model improvement program. Default: false. */
+  /** Always true: LiveKit Inference forces it on and ignores this value. */
   mip_opt_out?: boolean;
   /** Language hint. */
   language_hint?: string;
