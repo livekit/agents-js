@@ -528,17 +528,35 @@ class GPTLiveModel extends llm.DuplexModel {
     close(): Promise<void>;
     get model(): string;
     // @internal (undocumented)
-    readonly _opts: Required<GPTLiveModelOptions>;
+    readonly _opts: Omit<Required<GPTLiveModelOptions>, 'apiKey' | 'azureDeployment' | 'entraToken'> & {
+        apiKey?: string;
+        entraToken?: string;
+        isAzure: boolean;
+    };
     get provider(): string;
     session(): GPTLiveSession;
+    static withAzure(input: {
+        azureDeployment: string;
+        azureEndpoint?: string;
+        apiKey?: string;
+        entraToken?: string;
+        baseURL?: string;
+        voice?: GPTLiveModelOptions['voice'];
+        delegation?: DelegationTarget;
+        responsesOptions?: ResponsesDelegationOptions;
+        maxSessionDuration?: number | null;
+        connOptions?: APIConnectOptions;
+    }): GPTLiveModel;
 }
 
 // @public
 interface GPTLiveModelOptions {
     apiKey?: string;
+    azureDeployment?: string;
     baseURL?: string;
     connOptions?: APIConnectOptions;
     delegation?: DelegationTarget;
+    entraToken?: string;
     maxSessionDuration?: number | null;
     model?: string;
     responsesOptions?: ResponsesDelegationOptions;
@@ -743,6 +761,9 @@ type LegacyAudioFormat = 'pcm16';
 //
 // @internal
 function livekitItemToOpenAIItem(item: llm.ChatItem): Promise<api_proto.ItemResource>;
+
+// @internal (undocumented)
+function liveSessionsURL(baseURL: string, isAzure: boolean): URL;
 
 // Warning: (ae-missing-release-tag) "LLM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1204,6 +1225,7 @@ declare namespace realtime {
         DiscardedGeneration,
         RealtimeModel_2 as RealtimeModel,
         RealtimeSession_2 as RealtimeSession,
+        liveSessionsURL,
         ResponsesDelegationOptions,
         GPTLiveDelegation,
         GPTLiveVoices,
