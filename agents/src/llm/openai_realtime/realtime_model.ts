@@ -469,8 +469,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
   private discardedEventIds = new Set<string>();
 
-  private textModeRecoveryRetries: number = 0;
-
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
   private chatCtxEventFutures: { [id: string]: Future } = {};
@@ -948,7 +946,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       instructions: responseInstructions,
       userInitiated: true,
     });
-    this.textModeRecoveryRetries = 0;
 
     const onAbort = () => {
       const eventId = Object.entries(this.responseCreatedFutures).find(
@@ -1684,7 +1681,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (itemType !== 'message') {
       // non-message items (e.g. function calls) don't need additional handling here
       // the generation event was already emitted in handleResponseCreated
-      this.textModeRecoveryRetries = 0;
       return;
     }
 
@@ -1913,8 +1909,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
-
-    // TODO(shubhra): handle text mode recovery
   }
 
   protected handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
