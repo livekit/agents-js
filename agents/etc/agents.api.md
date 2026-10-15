@@ -9308,6 +9308,7 @@ interface WarmTransferTaskOptions {
     tts?: TTS | ModelWithVoice | null;
     // (undocumented)
     turnDetection?: TurnDetectionMode | null;
+    turnHandling?: TurnHandlingOptions;
     // (undocumented)
     vad?: VAD | null;
 }
