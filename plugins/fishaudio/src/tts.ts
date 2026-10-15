@@ -30,6 +30,7 @@ const connectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
 /** @public */
 export interface TTSOptions {
   apiKey?: string;
+  /** TTS model to use: `s1`, `s2-pro`, `s2.1-pro`, or `drama-3`. Defaults to `s2.1-pro`. */
   model?: TTSModels | string;
   voiceId?: string;
   sampleRate?: number;
