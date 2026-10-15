@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
 import ffmpeg from 'fluent-ffmpeg';
-import type { ReadableStream } from 'node:stream/web';
+import { ReadableStream } from 'node:stream/web';
 import { configureFfmpeg } from './ffmpeg.js';
 import { log } from './log.js';
 import { createStreamChannel } from './stream/stream_channel.js';
@@ -211,7 +211,24 @@ export function audioFramesFromFile(
     onClose();
   });
 
-  return channel.stream();
+  // Stop ffmpeg as soon as the consumer cancels, even if no further frame is written to
+  // surface the cancellation (e.g. the input stalls or ends mid-frame).
+  const reader = channel.stream().getReader();
+  return new ReadableStream<AudioFrame>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        controller.close();
+      } else {
+        controller.enqueue(value);
+      }
+    },
+    cancel(reason) {
+      consumerGone = true;
+      stopCommand();
+      return reader.cancel(reason);
+    },
+  });
 }
 
 /**
