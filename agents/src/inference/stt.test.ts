@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -9,13 +10,14 @@ import { APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { VAD, type VADStream } from '../vad.js';
+import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import { createConversationItemAddedEvent } from '../voice/events.js';
 import {
   SpeechStream as InferenceSpeechStream,
+  type OpenAIOptions,
   STT,
   type STTFallbackModel,
   type STTModels,
@@ -724,6 +726,535 @@ describe('STT VAD handling for Speechmatics models', () => {
 
     stt.updateOptions({ model: 'speechmatics/enhanced' });
     expect(stt['vad']).toBeInstanceOf(InferenceVAD);
+  });
+});
+
+class TestVAD extends VAD {
+  label = 'test';
+  readonly streams: TestVADStream[] = [];
+
+  constructor(
+    private readonly emitEndOfSpeech = false,
+    private readonly alreadyClosed = false,
+  ) {
+    super({ updateInterval: 0 });
+  }
+
+  stream(): VADStream {
+    const stream = new TestVADStream(this.emitEndOfSpeech, this.alreadyClosed);
+    this.streams.push(stream);
+    return stream as unknown as VADStream;
+  }
+}
+
+class TestVADStream implements AsyncIterableIterator<VADEvent> {
+  private events: Array<IteratorResult<VADEvent>> = [];
+  private waiters: Array<(event: IteratorResult<VADEvent>) => void> = [];
+  private emitted = false;
+
+  constructor(
+    private readonly emitEndOfSpeech: boolean,
+    private readonly alreadyClosed: boolean,
+  ) {
+    if (alreadyClosed) this.emit({ done: true, value: undefined });
+  }
+
+  pushFrame(_frame: AudioFrame): void {
+    if (!this.emitEndOfSpeech || this.emitted) return;
+    this.emitted = true;
+    this.emit({
+      done: false,
+      value: {
+        type: VADEventType.END_OF_SPEECH,
+        samplesIndex: 0,
+        timestamp: Date.now(),
+        speechDuration: 50,
+        silenceDuration: 50,
+        frames: [],
+        probability: 0,
+        inferenceDuration: 0,
+        speaking: false,
+        rawAccumulatedSilence: 0,
+        rawAccumulatedSpeech: 0,
+      },
+    });
+  }
+
+  endInput(): void {
+    if (this.alreadyClosed) throw new Error('Stream is closed');
+    this.emit({ done: true, value: undefined });
+  }
+
+  close(): void {
+    this.emit({ done: true, value: undefined });
+  }
+
+  next(): Promise<IteratorResult<VADEvent>> {
+    const event = this.events.shift();
+    if (event) return Promise.resolve(event);
+    return new Promise((resolve) => this.waiters.push(resolve));
+  }
+
+  [Symbol.asyncIterator](): AsyncIterableIterator<VADEvent> {
+    return this;
+  }
+
+  private emit(event: IteratorResult<VADEvent>): void {
+    const waiter = this.waiters.shift();
+    if (waiter) waiter(event);
+    else this.events.push(event);
+  }
+}
+
+async function openSttGateway(onEvent?: (event: Record<string, unknown>) => void) {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(server, 'listening');
+  const { port } = server.address() as AddressInfo;
+  const messages: Array<Record<string, unknown>> = [];
+  server.on('connection', (socket) => {
+    socket.on('message', (raw) => {
+      const event = JSON.parse(raw.toString()) as Record<string, unknown>;
+      messages.push(event);
+      onEvent?.(event);
+    });
+  });
+  return {
+    baseURL: `http://127.0.0.1:${port}`,
+    messages,
+    server,
+    async close(stream?: InferenceSpeechStream<STTModels>) {
+      stream?.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+async function waitForLive(stream: InferenceSpeechStream<STTModels>): Promise<void> {
+  await vi.waitFor(() => expect(stream['activeWs']?.readyState).toBe(1));
+}
+
+function silence(sampleRate: number, durationMs: number): AudioFrame {
+  const samples = Math.floor((sampleRate * durationMs) / 1000);
+  return new AudioFrame(new Int16Array(samples), sampleRate, 1, samples);
+}
+
+describe('Inference STT OpenAI live transcription', () => {
+  const openAIModel = 'openai/gpt-live-transcribe' as const;
+
+  it.each([openAIModel, `${openAIModel}:en`, 'openai'])(
+    'adds a default VAD for %s',
+    async (model) => {
+      const stt = makeStt({ model });
+      expect(stt['vad']).toBeInstanceOf(InferenceVAD);
+      await expect(stt.vadPromise).resolves.toBe(stt['vad']);
+    },
+  );
+
+  it('keeps a passed VAD', () => {
+    const vad = new TestVAD();
+    expect(makeStt({ model: openAIModel, vad })['vad']).toBe(vad);
+  });
+
+  it.each([
+    ['speechmatics/enhanced', true],
+    ['speechmatics/linden-1', false],
+    ['deepgram/nova-3', false],
+  ] as const)('preserves the endpointing gate for %s', (model, getsVad) => {
+    expect(makeStt({ model })['vad'] instanceof InferenceVAD).toBe(getsVad);
+  });
+
+  it('drops a passed VAD for a server-endpointing model', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    try {
+      expect(makeStt({ model: 'deepgram/nova-3', vad: new TestVAD() })['vad']).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        { model: 'deepgram/nova-3' },
+        expect.stringContaining('`vad` will be ignored'),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('adds a VAD when switching to OpenAI', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    stt.updateOptions({ model: openAIModel });
+    expect(stt['vad']).toBeInstanceOf(InferenceVAD);
+  });
+
+  it.each([openAIModel, `${openAIModel}:en`, 'openai'])('defaults %s to 24 kHz', (model) => {
+    expect(makeStt({ model })['opts'].sampleRate).toBe(24000);
+  });
+
+  it('parses a model suffix before choosing the rate', () => {
+    const stt = makeStt({ model: `${openAIModel}:en` });
+    expect(stt['opts']).toMatchObject({ model: openAIModel, language: 'en', sampleRate: 24000 });
+  });
+
+  it('keeps 16 kHz for other models', () => {
+    expect(makeStt({ model: 'deepgram/nova-3' })['opts'].sampleRate).toBe(16000);
+  });
+
+  it('keeps an explicit incompatible rate', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    try {
+      expect(makeStt({ model: openAIModel, sampleRate: 16000 })['opts'].sampleRate).toBe(16000);
+      expect(warn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('takes audio only at 24000 Hz'),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('re-resolves a default rate as models change', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    stt.updateOptions({ model: openAIModel });
+    expect(stt['opts'].sampleRate).toBe(24000);
+    stt.updateOptions({ model: 'deepgram/nova-3' });
+    expect(stt['opts'].sampleRate).toBe(16000);
+    expect(stt['vad']).toBeUndefined();
+  });
+
+  it('does not re-resolve an explicit rate on a model switch', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3', sampleRate: 16000 });
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    try {
+      stt.updateOptions({ model: openAIModel });
+      expect(stt['opts'].sampleRate).toBe(16000);
+      expect(warn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('takes audio only at 24000 Hz'),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('maps framework keyterms to OpenAI keywords', () => {
+    const stt = makeStt({ model: openAIModel, modelOptions: { keywords: 'LiveKit' } });
+    const stream = stt.stream();
+    expect(stt.capabilities.keyterms).toBe(true);
+
+    stt._updateSessionKeyterms(['LiveKit', 'Aura']);
+
+    expect(stream['opts'].modelOptions).toEqual({ keywords: ['LiveKit', 'Aura'] });
+    stream.close();
+  });
+
+  it('accepts OpenAIOptions through the typed constructor', () => {
+    const modelOptions: OpenAIOptions = { keywords: ['LiveKit'], delay: 'low' };
+    const stt = new STT({
+      model: openAIModel,
+      modelOptions,
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+    });
+    expect(stt['opts'].modelOptions).toEqual(modelOptions);
+  });
+
+  it('finalizes on VAD end-of-speech while input remains open and resamples to 24 kHz', async () => {
+    let audioBytes = 0;
+    const gateway: Awaited<ReturnType<typeof openSttGateway>> = await openSttGateway((event) => {
+      if (event.type === 'input_audio') {
+        audioBytes += Buffer.from(event.audio as string, 'base64').byteLength;
+      }
+      if (event.type === 'session.finalize') {
+        const socket = [...gateway.server.clients][0];
+        socket?.send(
+          JSON.stringify({ type: 'final_transcript', transcript: 'hello', language: 'en' }),
+        );
+        socket?.send(JSON.stringify({ type: 'session.finalized' }));
+      }
+    });
+    const stt = makeStt({ model: openAIModel, baseURL: gateway.baseURL, vad: new TestVAD(true) });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      stream.pushFrame(silence(48000, 100));
+      let final: SpeechEvent | undefined;
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          final = event;
+          break;
+        }
+      }
+      expect(final?.alternatives?.[0]?.text).toBe('hello');
+      const created = gateway.messages.find(({ type }) => type === 'session.create')!;
+      expect(created.model).toBe(openAIModel);
+      expect(created.settings).toMatchObject({ sample_rate: '24000' });
+      expect(audioBytes).toBeGreaterThan(0);
+      expect(audioBytes).toBeLessThanOrEqual(24000 * 2 * 0.1);
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it('keeps the stream VAD when the parent switches off client endpointing', async () => {
+    const gateway = await openSttGateway();
+    const vad = new TestVAD(true);
+    const stt = makeStt({
+      model: 'speechmatics/enhanced',
+      sampleRate: 24000,
+      baseURL: gateway.baseURL,
+      vad,
+    });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stt.updateOptions({ model: 'deepgram/nova-3' });
+      stream.pushFrame(silence(48000, 100));
+      await vi.waitFor(() =>
+        expect(gateway.messages.map(({ type }) => type)).toContain('session.finalize'),
+      );
+      await expect(stream['vadPromise']).resolves.toBe(vad);
+      expect(stt['vad']).toBeUndefined();
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it('does not add a VAD to an existing server-endpointed stream', async () => {
+    const gateway = await openSttGateway();
+    const stt = makeStt({ model: 'deepgram/nova-3', baseURL: gateway.baseURL });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stt.updateOptions({ model: openAIModel });
+      await expect(stream['vadPromise']).resolves.toBeUndefined();
+      expect(stream['opts'].model).toBe('deepgram/nova-3');
+      expect(stt['opts'].model).toBe(openAIModel);
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it('keeps a live model and rate when an OpenAI switch requires another rate', async () => {
+    const gateway = await openSttGateway();
+    const stt = makeStt({ model: 'deepgram/nova-3', baseURL: gateway.baseURL });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    try {
+      await waitForLive(stream);
+      stt.updateOptions({ model: openAIModel });
+      expect(stt['opts']).toMatchObject({ model: openAIModel, sampleRate: 24000 });
+      expect(stream['opts']).toMatchObject({ model: 'deepgram/nova-3', sampleRate: 16000 });
+      expect(warn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('takes audio only at 24000 Hz'),
+      );
+    } finally {
+      warn.mockRestore();
+      await gateway.close(stream);
+    }
+  });
+
+  it('applies a suffix language only with a compatible running model', async () => {
+    const gateway = await openSttGateway();
+    const stt = makeStt({ model: 'deepgram/nova-3', baseURL: gateway.baseURL });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stt.updateOptions({ model: `${openAIModel}:fr` });
+      expect(stt['opts'].language).toBe('fr');
+      expect(stream['opts'].language).toBeUndefined();
+      expect(gateway.messages.every((message) => !('language' in (message.settings ?? {})))).toBe(
+        true,
+      );
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it('still forwards an explicit language to a live stream', async () => {
+    const gateway = await openSttGateway();
+    const stt = makeStt({ model: 'deepgram/nova-3', baseURL: gateway.baseURL });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stt.updateOptions({ model: 'deepgram/nova-3', language: 'fr' });
+      await vi.waitFor(() =>
+        expect(gateway.messages).toContainEqual(
+          expect.objectContaining({ settings: expect.objectContaining({ language: 'fr' }) }),
+        ),
+      );
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it('formats keyterms for the running stream model after a provider switch', async () => {
+    const gateway = await openSttGateway();
+    const stt = makeStt({ model: 'deepgram/nova-3', baseURL: gateway.baseURL });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stt.updateOptions({ model: openAIModel });
+      stt._updateSessionKeyterms(['Acme']);
+      await vi.waitFor(() =>
+        expect(gateway.messages).toContainEqual(
+          expect.objectContaining({
+            settings: expect.objectContaining({ extra: { keyterm: ['Acme'] } }),
+          }),
+        ),
+      );
+      const extras = gateway.messages.flatMap((message) => {
+        const settings = message.settings as Record<string, unknown> | undefined;
+        return settings?.extra ? [settings.extra] : [];
+      });
+      expect(extras).toContainEqual({ keyterm: ['Acme'] });
+      expect(extras).not.toContainEqual(expect.objectContaining({ keywords: expect.anything() }));
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it('sends a cleared keyterm list to the live session', async () => {
+    const gateway = await openSttGateway();
+    const stt = makeStt({ model: 'deepgram/nova-3', baseURL: gateway.baseURL });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stt._updateSessionKeyterms(['Acme']);
+      stt._updateSessionKeyterms([]);
+      await vi.waitFor(() =>
+        expect(gateway.messages.filter(({ type }) => type === 'session.update')).toHaveLength(2),
+      );
+      const updates = gateway.messages
+        .filter(({ type }) => type === 'session.update')
+        .map(
+          (message) => (message.settings as { extra?: { keyterm?: string[] } } | undefined)?.extra,
+        )
+        .flatMap((extra) => (extra?.keyterm ? [extra.keyterm] : extra ? [[]] : []));
+      expect(updates).toEqual([['Acme'], []]);
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it('passes through an own-provider option update', async () => {
+    const gateway = await openSttGateway();
+    const stt = makeStt({ model: 'deepgram/nova-3', baseURL: gateway.baseURL });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stt.updateOptions({ modelOptions: { keywords: [['LiveKit', 2]] } });
+      await vi.waitFor(() =>
+        expect(gateway.messages).toContainEqual(
+          expect.objectContaining({
+            settings: expect.objectContaining({ extra: { keywords: [['LiveKit', 2]] } }),
+          }),
+        ),
+      );
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it('still finalizes input when the VAD stream is already closed', async () => {
+    const gateway: Awaited<ReturnType<typeof openSttGateway>> = await openSttGateway((event) => {
+      if (event.type !== 'session.finalize') return;
+      const socket = [...gateway.server.clients][0];
+      socket?.send(
+        JSON.stringify({ type: 'final_transcript', transcript: 'hello', language: 'en' }),
+      );
+      socket?.send(JSON.stringify({ type: 'session.closed' }));
+    });
+    const stt = makeStt({
+      model: openAIModel,
+      baseURL: gateway.baseURL,
+      vad: new TestVAD(false, true),
+    });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stream.endInput();
+      const transcripts: string[] = [];
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0]!.text);
+        }
+      }
+      expect(gateway.messages.map(({ type }) => type)).toContain('session.finalize');
+      expect(transcripts).toEqual(['hello']);
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it('does not flush deferred keyterms on an unrelated update', async () => {
+    const gateway = await openSttGateway();
+    const stt = makeStt({ model: 'deepgram/nova-3', baseURL: gateway.baseURL });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stream['speaking'] = true;
+      stt._updateSessionKeyterms(['Acme']);
+      stt.updateOptions({ language: 'fr' });
+      await vi.waitFor(() =>
+        expect(gateway.messages).toContainEqual(
+          expect.objectContaining({ settings: expect.objectContaining({ language: 'fr' }) }),
+        ),
+      );
+      const updatesBeforeEnd = gateway.messages.filter(({ type }) => type === 'session.update');
+      expect(updatesBeforeEnd).not.toContainEqual(
+        expect.objectContaining({
+          settings: expect.objectContaining({ extra: expect.anything() }),
+        }),
+      );
+      stream['speaking'] = false;
+      stream['onEndOfSpeech']();
+      await vi.waitFor(() =>
+        expect(gateway.messages).toContainEqual(
+          expect.objectContaining({
+            settings: expect.objectContaining({ extra: { keyterm: ['Acme'] } }),
+          }),
+        ),
+      );
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it.each([
+    [16000, 'refused rate'],
+    [24000, 'provider switch'],
+  ] as const)('does not apply a direct suffix language across a %s', async (sampleRate) => {
+    const gateway = await openSttGateway();
+    const stt = makeStt({ model: 'deepgram/nova-3', sampleRate, baseURL: gateway.baseURL });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stream.updateOptions({ model: `${openAIModel}:fr` });
+      expect(stream['opts'].model).toBe('deepgram/nova-3');
+      expect(stream['opts'].language).toBeUndefined();
+      expect(gateway.messages.every((message) => !('language' in (message.settings ?? {})))).toBe(
+        true,
+      );
+    } finally {
+      await gateway.close(stream);
+    }
+  });
+
+  it('does not send another provider options alongside a model switch', async () => {
+    const gateway = await openSttGateway();
+    const stt = makeStt({ model: 'deepgram/nova-3', baseURL: gateway.baseURL });
+    const stream = stt.stream() as InferenceSpeechStream<STTModels>;
+    try {
+      await waitForLive(stream);
+      stt.updateOptions({ model: openAIModel, modelOptions: { keywords: ['Acme'] } });
+      expect(
+        gateway.messages.some((message) => {
+          const settings = message.settings as { extra?: Record<string, unknown> } | undefined;
+          return settings?.extra && 'keywords' in settings.extra;
+        }),
+      ).toBe(false);
+      expect(stt['opts'].modelOptions).toEqual({ keywords: ['Acme'] });
+    } finally {
+      await gateway.close(stream);
+    }
   });
 });
 
