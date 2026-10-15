@@ -5,7 +5,12 @@ import type { LiveServerContent, UsageMetadata } from '@google/genai';
 import { Behavior, FunctionResponseScheduling, ThinkingLevel } from '@google/genai';
 import { llm, log } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
-import { RealtimeModel, RealtimeSession, toClientContentParams } from './realtime_api.js';
+import {
+  RealtimeModel,
+  RealtimeSession,
+  replyTurns,
+  toClientContentParams,
+} from './realtime_api.js';
 
 const compatibleModels = [
   ['gemini-3.8-live', false],
@@ -581,5 +586,34 @@ describe('Google Realtime client content params', () => {
       turns,
       turnComplete: false,
     });
+  });
+});
+
+describe('Google Realtime reply instructions', () => {
+  // Without the placeholder, a trailing model turn is continued rather than answered, and
+  // an unwrapped user turn is later recalled as something the user said.
+  it.each([
+    ['gemini-3.8-live', [['user', '<instructions>\nGreet the guest.\n</instructions>']]],
+    [
+      'gemini-3.1-flash-live-preview',
+      [['user', '<instructions>\nGreet the guest.\n</instructions>']],
+    ],
+    [
+      'gemini-2.5-flash-native-audio-preview-12-2025',
+      [
+        ['model', 'Greet the guest.'],
+        ['user', '.'],
+      ],
+    ],
+  ])('%s', (model, expected) => {
+    const turns = replyTurns(model, 'Greet the guest.');
+    expect(turns.map((t) => [t.role, t.parts?.[0]?.text])).toEqual(expected);
+  });
+
+  it('sends no instruction turn when none are given', () => {
+    expect(replyTurns('gemini-3.8-live')).toEqual([]);
+    expect(replyTurns('gemini-2.5-flash-native-audio-preview-12-2025')).toEqual([
+      { parts: [{ text: '.' }], role: 'user' },
+    ]);
   });
 });

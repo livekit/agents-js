@@ -60,11 +60,34 @@ const KNOWN_GEMINI_API_MODELS = new Set([
 ]);
 
 // generateReply() appends a "." user turn so Gemini sees a completed turn. These models
-// answer that placeholder with an empty turn instead, so they must not get it.
+// answer that placeholder with an empty turn instead, so they must not get it, and take
+// reply instructions as a user turn instead.
 const MODELS_WITHOUT_REPLY_PLACEHOLDER = ['3.1', '3.8'];
 
 function needsReplyPlaceholder(model: string): boolean {
   return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
+}
+
+/** The turns generateReply() sends to request a reply, with optional instructions. */
+export function replyTurns(model: string, instructions?: string): types.Content[] {
+  const placeholder = needsReplyPlaceholder(model);
+  const turns: types.Content[] = [];
+  if (instructions !== undefined) {
+    if (placeholder) {
+      turns.push({ parts: [{ text: instructions }], role: 'model' });
+    } else {
+      // A trailing model turn is continued: these models speak their reasoning or
+      // stay silent. Unwrapped, they later quote it back as the user's words.
+      turns.push({
+        parts: [{ text: `<instructions>\n${instructions}\n</instructions>` }],
+        role: 'user',
+      });
+    }
+  }
+  if (placeholder) {
+    turns.push({ parts: [{ text: '.' }], role: 'user' });
+  }
+  return turns;
 }
 
 /**
@@ -929,19 +952,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.inUserActivity = false;
     }
 
-    const turns: types.Content[] = [];
-    if (instructions !== undefined) {
-      turns.push({
-        parts: [{ text: instructions }],
-        role: 'model',
-      });
-    }
-    if (needsReplyPlaceholder(this.options.model)) {
-      turns.push({
-        parts: [{ text: '.' }],
-        role: 'user',
-      });
-    }
+    const turns = replyTurns(this.options.model, instructions);
 
     this.sendClientEvent({
       type: 'content',

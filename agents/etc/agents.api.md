@@ -10,6 +10,7 @@ import { Attributes } from '@opentelemetry/api';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
+import { default as default_2 } from 'ws';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
@@ -32,6 +33,7 @@ import type * as proto from '@livekit/protocol';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Reasoning as Reasoning_2 } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { RemoteTrackPublication } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
@@ -377,7 +379,7 @@ export interface AgentOptions<UserData> {
     // (undocumented)
     instructions: string | Instructions;
     // (undocumented)
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
     // (undocumented)
     minConsecutiveSpeechDelay?: number;
     // (undocumented)
@@ -617,6 +619,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     tts?: TTS;
     // (undocumented)
     turnDetection?: TurnDetectionMode;
+    // @internal
+    _turnDetectionExplicit: boolean;
     // Warning: (ae-forgotten-export) The symbol "ActivityTransitionOptions" needs to be exported by the entry point index.d.ts
     //
     // @internal (undocumented)
@@ -699,7 +703,7 @@ export enum AgentSessionEventTypes {
 export type AgentSessionOptions<UserData = UnknownUserData> = {
     stt?: STT | ModelWithLanguage;
     vad?: VAD | null;
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels;
     tts?: TTS | ModelWithVoice;
     userData?: UserData;
     connOptions?: SessionConnectOptions;
@@ -779,7 +783,7 @@ export interface AgentTaskCreateOptions<ResultT = unknown, UserData = any> exten
 // @public
 export interface AgentUpdateOptions {
     expressive?: boolean | ExpressiveOptions;
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
     stt?: STT | ModelWithLanguage | null;
     tts?: TTS | ModelWithVoice | null;
     vad?: VAD | null;
@@ -2921,6 +2925,20 @@ function dropBracketCues(tokens: TimedString[], held: TimedString[], options?: {
 // @public (undocumented)
 type DtmfEvent = (typeof DTMF_EVENTS)[number];
 
+declare namespace duplex {
+    export {
+        isDuplexModel,
+        OpenAIDuplexModels,
+        DuplexModels,
+        OpenAIResponsesOptions,
+        OpenAIDuplexOptions,
+        DuplexOptions,
+        DuplexModelOptions,
+        DuplexModel_2 as DuplexModel,
+        DuplexSession_2 as DuplexSession
+    }
+}
+
 // @public
 export interface DuplexAudioFrame {
     frame: AudioFrame;
@@ -2948,6 +2966,50 @@ export abstract class DuplexModel {
     get provider(): string;
     abstract session(): DuplexSession;
 }
+
+// Warning: (ae-forgotten-export) The symbol "GPTLiveModel" needs to be exported by the entry point index.d.ts
+//
+// @public
+class DuplexModel_2<TModel extends DuplexModels | AnyString = DuplexModels | AnyString> extends GPTLiveModel {
+    constructor(options: DuplexModelOptions<TModel>);
+    // (undocumented)
+    static fromModelString(model: string): DuplexModel_2;
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions_2" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    readonly _inferenceOptions: InferenceOptions_2;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(): DuplexSession_2;
+}
+
+// @public (undocumented)
+interface DuplexModelOptions<TModel extends DuplexModels | AnyString> {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    maxSessionDuration?: number | null;
+    model: TModel;
+    modelOptions?: DuplexOptions<TModel>;
+    provider?: string;
+    voice?: string;
+}
+
+// @public
+type DuplexModels = OpenAIDuplexModels;
+
+// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+type DuplexOptions<TModel extends DuplexModels | AnyString> = TModel extends OpenAIDuplexModels ? OpenAIDuplexOptions : Record<string, unknown>;
 
 // @public
 export interface DuplexOutputTranscriptDelta {
@@ -3005,6 +3067,24 @@ export abstract class DuplexSession<Events extends EventMap = Record<never, neve
     }): void;
     _updateSession(instructions?: string, chatCtx?: ChatContext, tools?: ToolContext): Promise<void>;
     abstract _updateTools(tools: ToolContext): Promise<void>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "GPTLiveSession" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+class DuplexSession_2 extends GPTLiveSession {
+    constructor(model: DuplexModel_2);
+    // (undocumented)
+    protected createWsUrlAndHeaders(): Promise<{
+        url: URL;
+        headers: Record<string, string>;
+    }>;
+    // Warning: (ae-forgotten-export) The symbol "ErrorBody" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected isFatalError(error: ErrorBody): boolean;
+    // (undocumented)
+    _updateTools(tools: ToolContext): Promise<void>;
 }
 
 // @public
@@ -3993,6 +4073,9 @@ function getMonitor(): EventLoopMonitor | undefined;
 type GoogleModels = 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
 
 // @public (undocumented)
+type GoogleRealtimeModels = 'google/gemini-3.8-live' | 'google/gemini-3.8-live-extended-thinking' | 'google/gemini-live';
+
+// @public (undocumented)
 type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
 
 // @public (undocumented)
@@ -4071,11 +4154,27 @@ declare namespace inference {
         LLMStream_2 as LLMStream,
         ChatCompletionOptions,
         GatewayOptions,
-        InferenceClass,
         InferenceLLMOptions,
         LLMModels,
         XAIModels,
         ZAIModels,
+        llmFromModelString,
+        InferenceClass,
+        RealtimeModel_2 as RealtimeModel,
+        RealtimeSession_3 as RealtimeSession,
+        isRealtimeModel,
+        OpenAIRealtimeModels,
+        RealtimeModelOptions,
+        RealtimeModels,
+        XAIRealtimeModels,
+        DuplexModel_2 as DuplexModel,
+        DuplexSession_2 as DuplexSession,
+        isDuplexModel,
+        DuplexModelOptions,
+        DuplexModels,
+        DuplexOptions,
+        OpenAIDuplexOptions,
+        OpenAIResponsesOptions,
         normalizeSTTFallback,
         parseSTTModelString,
         STT_2 as STT,
@@ -4101,7 +4200,9 @@ declare namespace inference {
         TTSOptions,
         XaiTTSModels,
         XaiTTSOptions,
+        duplex,
         llm_3 as llm,
+        realtime,
         stt_2 as stt,
         tts_2 as tts
     }
@@ -4116,7 +4217,7 @@ interface InferenceExecutor {
     doInference(method: string, data: unknown): Promise<unknown>;
 }
 
-// @public (undocumented)
+// @public
 interface InferenceLLMOptions {
     // (undocumented)
     apiKey: string;
@@ -4456,6 +4557,9 @@ export const isCloud: (url: URL) => boolean;
 export const isDevMode: () => boolean;
 
 // @public
+function isDuplexModel(model: string): model is DuplexModels;
+
+// @public
 export function isFfmpegTeardownError(error: unknown): boolean;
 
 // Warning: (ae-internal-missing-underscore) The name "isFlushSentinel" should be prefixed with an underscore because the declaration is marked as @internal
@@ -4483,6 +4587,9 @@ export const isPending: (promise: Promise<unknown>) => Promise<Throws<boolean, E
 
 // @public (undocumented)
 export function isProviderTool(tool: any): tool is ProviderTool;
+
+// @public
+function isRealtimeModel(model: string): boolean;
 
 // @public
 export function isStreamClosedError(error: unknown): boolean;
@@ -4842,6 +4949,7 @@ class LLM_2 extends llm_2.LLM {
 
 declare namespace llm_3 {
     export {
+        llmFromModelString,
         OpenAIModels,
         GoogleModels,
         MoonshotModels,
@@ -4850,7 +4958,6 @@ declare namespace llm_3 {
         XAIModels,
         ChatCompletionOptions,
         LLMModels,
-        InferenceClass,
         InferenceLLMOptions,
         GatewayOptions,
         LLM_2 as LLM,
@@ -4869,6 +4976,9 @@ export type LLMCallbacks = {
     ['metrics_collected']: (metrics: LLMMetrics) => void;
     ['error']: (error: LLMError) => void;
 };
+
+// @public
+function llmFromModelString(model: string): LLM_2 | RealtimeModel_2 | DuplexModel_2;
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "convertMarkup"
 //
@@ -4895,8 +5005,6 @@ export type LLMMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
-//
 // @public (undocumented)
 type LLMModels = OpenAIModels | GoogleModels | MoonshotModels | DeepSeekModels | ZAIModels | XAIModels | AnyString;
 
@@ -5353,6 +5461,15 @@ type ObservabilityEndpoint = {
     cloudHostname: string;
 };
 
+// @public (undocumented)
+type OpenAIDuplexModels = 'openai/gpt-live-1';
+
+// @public (undocumented)
+interface OpenAIDuplexOptions {
+    delegation?: 'responses' | 'client';
+    responsesOptions?: OpenAIResponsesOptions;
+}
+
 // @public
 export type OpenAIFunctionParameters = {
     type: 'object';
@@ -5365,6 +5482,14 @@ export type OpenAIFunctionParameters = {
 
 // @public (undocumented)
 type OpenAIModels = 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
+
+// @public (undocumented)
+type OpenAIRealtimeModels = 'openai/gpt-realtime' | 'openai/gpt-realtime-mini' | 'openai/gpt-realtime-2.1' | 'openai/gpt-realtime-2.1-mini';
+
+// Warning: (ae-forgotten-export) The symbol "ResponsesDelegationOptions" needs to be exported by the entry point index.d.ts
+//
+// @public
+type OpenAIResponsesOptions = Omit<ResponsesDelegationOptions, 'serviceTier'>;
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTaskOptions"
 //
@@ -5687,10 +5812,24 @@ export type QueueAudioOutputItem = AudioFrame | AudioSegmentEnd;
 // @public
 export function readStream<T>(stream: ReadableStream_2<T>, signal?: AbortSignal): AsyncGenerator<T>;
 
+declare namespace realtime {
+    export {
+        isRealtimeModel,
+        OpenAIRealtimeModels,
+        GoogleRealtimeModels,
+        XAIRealtimeModels,
+        RealtimeModels,
+        RealtimeModelOptions,
+        RealtimeModel_2 as RealtimeModel,
+        RealtimeSession_3 as RealtimeSession
+    }
+}
+
 // @public (undocumented)
 export interface RealtimeCapabilities {
     audioOutput: boolean;
     autoToolReplyGeneration: boolean;
+    canDisableTurnDetection?: boolean;
     manualFunctionCalls: boolean;
     messageTruncation: boolean;
     midSessionChatCtxUpdate?: boolean;
@@ -5722,7 +5861,30 @@ export abstract class RealtimeModel {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    abstract session(): RealtimeSession;
+    abstract session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession;
+}
+
+// Warning: (ae-forgotten-export) The symbol "RealtimeModel_3" needs to be exported by the entry point index.d.ts
+//
+// @public
+class RealtimeModel_2 extends RealtimeModel_3 {
+    constructor(options: RealtimeModelOptions);
+    // (undocumented)
+    static fromModelString(model: string): RealtimeModel_2;
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    readonly _inferenceOptions: InferenceOptions;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession_3;
 }
 
 // @public (undocumented)
@@ -5760,6 +5922,44 @@ export type RealtimeModelMetrics = {
     outputTokenDetails: RealtimeModelMetricsOutputTokenDetails;
     metadata?: MetricsMetadata;
 };
+
+// @public (undocumented)
+interface RealtimeModelOptions {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    // (undocumented)
+    inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
+    // (undocumented)
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+    // (undocumented)
+    maxSessionDuration?: number | null;
+    // (undocumented)
+    modalities?: api_proto.Modality[];
+    // (undocumented)
+    model: RealtimeModels | AnyString;
+    provider?: string;
+    // (undocumented)
+    reasoning?: api_proto.Reasoning;
+    // (undocumented)
+    speed?: number;
+    // (undocumented)
+    toolChoice?: ToolChoice;
+    // (undocumented)
+    tracing?: api_proto.TracingConfig | null;
+    // (undocumented)
+    turnDetection?: api_proto.TurnDetectionType | null;
+    // (undocumented)
+    voice?: string;
+}
+
+// @public (undocumented)
+type RealtimeModels = OpenAIRealtimeModels | GoogleRealtimeModels | XAIRealtimeModels;
 
 // @public (undocumented)
 export abstract class RealtimeSession extends EventEmitter {
@@ -5806,6 +6006,45 @@ export abstract class RealtimeSession extends EventEmitter {
     _updateSession(instructions?: string, chatCtx?: ChatContext, tools?: ToolContext): Promise<void>;
     // (undocumented)
     abstract updateTools(tools: ToolContext): Promise<void>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+class RealtimeSession_3 extends RealtimeSession_2 {
+    constructor(realtimeModel: RealtimeModel_2, options?: {
+        turnDetectionDisabled?: boolean;
+    });
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    protected createChatCtxUpdateEvents(chatCtx: llm_2.ChatContext, addMockAudio?: boolean): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]>;
+    // Warning: (ae-forgotten-export) The symbol "api_proto" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected createSessionUpdateEvent(): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createToolsUpdateEvent(tools: ToolContext): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createWsConn(): Promise<default_2>;
+    // (undocumented)
+    protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void;
+    // (undocumented)
+    protected handleConversationItemInputAudioTranscriptionCompleted(event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent): void;
+    // (undocumented)
+    protected handleInputAudioBufferSpeechStarted(event: api_proto.InputAudioBufferSpeechStartedEvent): void;
+    // (undocumented)
+    protected handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void;
+    // (undocumented)
+    protected handleResponseCreated(event: api_proto.ResponseCreatedEvent): void;
+    // (undocumented)
+    protected handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void;
+    // (undocumented)
+    interrupt(): Promise<void>;
+    // (undocumented)
+    protected isFatalError(error: unknown): boolean;
+    // (undocumented)
+    protected resetInputTurnState(): void;
 }
 
 // @public (undocumented)
@@ -9194,6 +9433,9 @@ interface XaiOptions {
 }
 
 // @public (undocumented)
+type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0';
+
+// @public (undocumented)
 type XaiSTTModels = 'xai/stt-1';
 
 // @public (undocumented)
@@ -9223,11 +9465,11 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:410:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1083:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1799:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1799:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1799:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"

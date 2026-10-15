@@ -767,6 +767,7 @@ describe('AgentActivity - false interruption resume', () => {
 
   it('keeps the resume armed when the realtime server owns turn detection', async () => {
     const activity = endOfTurnActivity(new ServerTurnRealtimeModel());
+    Object.assign(activity, { rtTurnDetectionEnabled: true });
     activity.startFalseInterruptionTimer(300);
 
     expect(await activity.onEndOfTurn(endOfTurnInfo())).toBe(true);
