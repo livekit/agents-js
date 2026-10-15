@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-azure
 
+## 1.9.3
+
+### Patch Changes
+
+- Updated dependencies [[`6f29065`](https://github.com/livekit/agents-js/commit/6f290656d1c8008fd56d2cdfce5307d8830c771c), [`86b27fd`](https://github.com/livekit/agents-js/commit/86b27fd5a586fcfe15b431e79a59d2322b63dd13), [`5c63848`](https://github.com/livekit/agents-js/commit/5c6384841f46790cae78052d782fbcb08d8d1707), [`a98e389`](https://github.com/livekit/agents-js/commit/a98e389923422b7a4cba24eb16fdd6791c0c6cc6), [`21d2456`](https://github.com/livekit/agents-js/commit/21d245648d7c73ab3af7c4635024a2247de87d35), [`0cd613a`](https://github.com/livekit/agents-js/commit/0cd613ab064d3e3e6296059000cfc6975c5ab7f4), [`540837b`](https://github.com/livekit/agents-js/commit/540837b7e1194c09aeaef53fc95b9e224add2b75), [`edc9275`](https://github.com/livekit/agents-js/commit/edc92751fabe84f68307d0582bedf3f7b3e7e122), [`dcd8879`](https://github.com/livekit/agents-js/commit/dcd88795f714325cd01e0b7dc61252fd35827e54), [`bae7759`](https://github.com/livekit/agents-js/commit/bae775993e1517918cdf8b04bdbc068bee1ee578), [`c433a25`](https://github.com/livekit/agents-js/commit/c433a259309ea5e3d6004ae461e41cba43145b37), [`212a7b0`](https://github.com/livekit/agents-js/commit/212a7b0aa838d55d2f6adb75dbd4f14d02598bf5), [`3de8f13`](https://github.com/livekit/agents-js/commit/3de8f13b9ce2638261a2400846cff738f575e787), [`8ba33de`](https://github.com/livekit/agents-js/commit/8ba33deddeaa586f89a0f943fb1593fd925f6024), [`9ebffb7`](https://github.com/livekit/agents-js/commit/9ebffb79fc7d4c1092951d243a990c45352408fc), [`b6928f1`](https://github.com/livekit/agents-js/commit/b6928f158518d7db23bbe1647af426ab0eaf65e0)]:
+  - @livekit/agents@1.9.3
+
 ## 1.9.2
 
 ### Patch Changes

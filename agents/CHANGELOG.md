@@ -1,5 +1,41 @@
 # @livekit/agents
 
+## 1.9.3
+
+### Patch Changes
+
+- Correlate telemetry spans from the same agent conversation with the LiveKit room SID. - [#2641](https://github.com/livekit/agents-js/pull/2641) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Ignore stray closing XML tags when checking whether a later wrapping tag remains open. - [#2731](https://github.com/livekit/agents-js/pull/2731) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Clamp VAD speech buffer cursors after runtime option updates resize the buffer. - [#2698](https://github.com/livekit/agents-js/pull/2698) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fail fast on ElevenLabs STT client errors while preserving status and response details. - [#2695](https://github.com/livekit/agents-js/pull/2695) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Avoid delaying TTS text after stray Markdown emphasis and link delimiters. - [#2614](https://github.com/livekit/agents-js/pull/2614) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Discard interruption audio resampler history when resetting the audio buffer. - [#2697](https://github.com/livekit/agents-js/pull/2697) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Include tool names in telemetry result parts. - [#2642](https://github.com/livekit/agents-js/pull/2642) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add Gemini 4 Argon support with bounded long-decode continuation. - [#2719](https://github.com/livekit/agents-js/pull/2719) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Stop publishing the deprecated `Transcription` data packet when every client rebuilds transcription events from `lk.transcription` text streams. Port of python `livekit/agents#7240`. Agents previously published every transcription twice over the reliable data channel, which saturates it and delays unrelated reliable traffic. The legacy packet is now skipped once every remote STANDARD participant advertises `clientProtocol >= 3` (`CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS`); SIP, ingress, agent, connector and bridge participants never render legacy transcripts and so do not hold it open, and the session's own avatar worker is excluded. The `lk.transcription` stream is unaffected and still reaches every participant. - [#2526](https://github.com/livekit/agents-js/pull/2526) ([@1egoman](https://github.com/1egoman))
+
+- Preserve active jobs during drain when an unstarted prewarm process is in the pool. - [#2691](https://github.com/livekit/agents-js/pull/2691) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Run realtime and full-duplex voice models through LiveKit Inference: `inference.RealtimeModel` for OpenAI Realtime, Gemini Live, and Grok Voice, and `inference.DuplexModel` (or `llm: 'openai/gpt-live-1'`) for OpenAI GPT-Live. The OpenAI Realtime and GPT-Live clients move into agents core; `openai.realtime.RealtimeModel` and `openai.realtime.GPTLiveModel` keep working with direct OpenAI credentials. Gemini 3.x `generateReply` instructions are sent as a wrapped user turn instead of a trailing model turn the model continued. `GrokRealtimeModels` replaces `grok-voice-think-fast-2.0` with `grok-voice-3.0` and `grok-voice-latest`. OpenAI Realtime sessions now retry a refused or failed WebSocket handshake instead of crashing or ending the session, resample and downmix input that isn't 24 kHz mono, and keep a committed turn's trailing audio out of the next turn. - [#2532](https://github.com/livekit/agents-js/pull/2532) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Run framework-generated realtime tool replies on the same speech handle and enforce `maxToolSteps` on them. - [#2689](https://github.com/livekit/agents-js/pull/2689) ([@longcw](https://github.com/longcw))
+
+- fix(voice): store only the spoken part of replies when TTS fails - [#2672](https://github.com/livekit/agents-js/pull/2672) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Count watchdog starvation when its last wake happened inside the event-loop stall window. - [#2700](https://github.com/livekit/agents-js/pull/2700) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Diff chat contexts in O(n log n) when their item IDs are unique. - [#2673](https://github.com/livekit/agents-js/pull/2673) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Allow `LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE=0` to skip the job-process local inference binding preload and shared EOT model warm-up while preserving lazy first-use initialization. - [#2674](https://github.com/livekit/agents-js/pull/2674) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.9.2
 
 ### Patch Changes
