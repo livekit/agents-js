@@ -34,11 +34,9 @@ import {
 import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
 
 export type CartesiaModels =
+  | 'cartesia/sonic-3.6'
   | 'cartesia/sonic-3.5'
   | 'cartesia/sonic-3'
-  | 'cartesia/sonic-2'
-  | 'cartesia/sonic-turbo'
-  | 'cartesia/sonic'
   | 'cartesia/sonic-3-latest'
   | 'cartesia/sonic-latest';
 
@@ -213,7 +211,7 @@ export function hasAlignedTranscript(
 
 /** Inference Fallback Adapter: configuration for a fallback TTS model that runs server-side in LiveKit Inference, providing automatic fallback between providers. */
 export interface TTSFallbackModel {
-  /** Model name (e.g. "cartesia/sonic", "deepgram/aura-2", "rime/coda"). */
+  /** Model name (e.g. "cartesia/sonic-3.6", "deepgram/aura-2", "rime/coda"). */
   model: string;
   /** Voice to use for the model. */
   voice: string;
