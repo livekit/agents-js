@@ -99,6 +99,42 @@ describe('ToolExecutor', () => {
     expect(agent.chatCtx.items.some((item) => item.type === 'function_call_output')).toBe(true);
   });
 
+  it.each([null, undefined])(
+    'delivers an empty final return after progress (%s)',
+    async (output) => {
+      const executor = new ToolExecutor();
+      const { runCtx, history, agent } = buildRunContext();
+      const release = new Future<void>();
+      const lookup = tool({
+        name: 'slow_lookup',
+        description: '',
+        execute: async (_, { ctx }) => {
+          await ctx.update('working');
+          await release.await;
+          return output;
+        },
+      });
+
+      await expect(executor.execute({ tool: lookup, runCtx, rawArguments: {} })).resolves.toContain(
+        'working',
+      );
+      release.resolve();
+      await executor.waitForAll();
+
+      for (const items of [history.items, agent.chatCtx.items]) {
+        const outputs = items.filter((item) => item.type === 'function_call_output');
+        expect(outputs).toHaveLength(1);
+        expect(outputs[0]).toMatchObject({
+          callId: 'call_slow_lookup_final',
+          output: '',
+          isError: false,
+        });
+      }
+      expect(runCtx.updates.at(-1)?.[1].output).toBe('');
+      expect(executor.hasRunningTasks).toBe(false);
+    },
+  );
+
   it.each([
     ['ToolError', new ToolError('lookup failed'), 'lookup failed'],
     [
