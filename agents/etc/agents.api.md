@@ -5150,8 +5150,6 @@ export abstract class MCPServer {
     protected abstract createTransport(): Promise<unknown>;
     // (undocumented)
     protected filterTools(tools: readonly MCPToolDescriptor[]): readonly MCPToolDescriptor[];
-    // @internal
-    get _hasBoundedRequests(): boolean;
     // (undocumented)
     initialize(): Promise<void>;
     // (undocumented)
@@ -5175,6 +5173,8 @@ export class MCPServerHTTP extends MCPServer {
     protected createTransport(): Promise<unknown>;
     // (undocumented)
     protected filterTools(tools: readonly MCPToolDescriptor[]): readonly MCPToolDescriptor[];
+    get headers(): Readonly<Record<string, string>>;
+    set headers(headers: Record<string, string>);
     // (undocumented)
     readonly transportType: MCPHTTPTransportType;
     // (undocumented)
@@ -5196,8 +5196,7 @@ export interface MCPServerHTTPOptions extends MCPServerOptions {
 
 // @public (undocumented)
 export interface MCPServerOptions {
-    // (undocumented)
-    clientSessionTimeout?: number | null;
+    clientSessionTimeout?: number;
     // (undocumented)
     toolResultResolver?: MCPToolResultResolver;
 }
@@ -5287,6 +5286,8 @@ export class MCPToolset extends AsyncToolset {
     constructor(input: MCPToolsetOptions);
     // (undocumented)
     aclose(): Promise<void>;
+    filterTools(predicate: (tool: FunctionTool) => boolean): this;
+    refresh(): Promise<void>;
     // (undocumented)
     setup(ctx: ToolsetContext): Promise<void>;
 }
