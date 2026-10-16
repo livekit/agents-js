@@ -260,6 +260,34 @@ describe('Silero VADStream buffer resize', () => {
   });
 });
 
+describe('Silero VADStream remainder frames', () => {
+  it('runs every complete window when frames are not window-aligned', async () => {
+    const runSpy = vi.spyOn(OnnxModel.prototype, 'run').mockResolvedValue(0);
+    const vad = new VAD({} as InferenceSession, {
+      minSpeechDuration: 32,
+      minSilenceDuration: 31,
+      prefixPaddingDuration: 64,
+      maxBufferedSpeech: 256,
+      activationThreshold: 0.5,
+      sampleRate: TARGET_SAMPLE_RATE,
+      forceCPU: true,
+    });
+    const stream = vad.stream();
+
+    try {
+      // Five 20ms frames hold 1600 samples: three complete 512-sample windows and a 64-sample
+      // tail. The tail is carried over as a frame, so its sample count must not be halved.
+      for (let i = 0; i < 5; i++) {
+        stream.pushFrame(new AudioFrame(new Int16Array(320), TARGET_SAMPLE_RATE, 1, 320));
+      }
+      await vi.waitFor(() => expect(runSpy).toHaveBeenCalledTimes(3));
+    } finally {
+      stream.close();
+      runSpy.mockRestore();
+    }
+  });
+});
+
 // The plugin and inference.VAD ship the model separately, so this prevents them from drifting.
 describe('Silero VAD checkpoint', () => {
   it('matches inference.VAD window by window', { timeout: 30000 }, async () => {
