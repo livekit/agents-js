@@ -8687,6 +8687,8 @@ class TurnDetector extends BaseStreamingTurnDetector {
     describeOptions(): Readonly<Record<string, unknown>>;
     // (undocumented)
     protected _executor: InferenceExecutor | undefined;
+    // (undocumented)
+    protected _localFallback: boolean;
     get model(): TurnDetectorModel;
     // (undocumented)
     protected _model: TurnDetectorModel;
@@ -8720,6 +8722,7 @@ interface TurnDetectorOptions {
     // (undocumented)
     connOptions?: APIConnectOptions;
     executor?: InferenceExecutor;
+    localFallback?: boolean;
     sampleRate?: number;
     // (undocumented)
     unlikelyThreshold?: number | Record<string, number>;
@@ -8739,11 +8742,13 @@ class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
     // (undocumented)
     protected _executor: InferenceExecutor | undefined;
     // @internal
-    _fallBackToLocal(reason: Error): void;
+    _fallBackToLocal(reason: Error): boolean;
     // (undocumented)
     get isFallback(): boolean;
     // (undocumented)
     protected _isFallback: boolean;
+    // (undocumented)
+    protected _localFallback: boolean;
     get model(): TurnDetectorModel;
     // (undocumented)
     protected _model: TurnDetectorModel;
