@@ -9,6 +9,7 @@ import type {
 import type { AjvJsonSchemaValidator } from '@modelcontextprotocol/client/validators/ajv';
 import type { JSONSchema7 } from 'json-schema';
 import { log } from '../log.js';
+import { isStopResponse } from '../voice/stop_response.js';
 import { AsyncToolset, type AsyncToolsetCreateOptions } from './async_toolset.js';
 import {
   type DuplicateMode,
@@ -18,6 +19,7 @@ import {
   ToolFlag,
   type ToolOptions,
   type ToolsetContext,
+  isToolError,
   tool,
 } from './tool_context.js';
 
@@ -51,7 +53,8 @@ export interface MCPToolOptions {
   reportProgress?: boolean;
 }
 export interface MCPServerOptions {
-  clientSessionTimeout?: number | null;
+  /** Per-request timeout in milliseconds, from 1 to 2,147,483,647. Defaults to 5000. */
+  clientSessionTimeout?: number;
   toolResultResolver?: MCPToolResultResolver;
 }
 
@@ -154,22 +157,26 @@ export abstract class MCPServer {
   private cachedTools?: MCPToolDescriptor[];
   private toolListGeneration = 0;
   private listeners = new Set<() => void | Promise<void>>();
-  private readonly clientSessionTimeout: number | null;
+  private readonly clientSessionTimeout: number;
   private readonly toolResultResolver: MCPToolResultResolver;
 
   constructor(options: MCPServerOptions = {}) {
     this.clientSessionTimeout =
       options.clientSessionTimeout === undefined ? 5000 : options.clientSessionTimeout;
+    if (
+      !Number.isInteger(this.clientSessionTimeout) ||
+      this.clientSessionTimeout < 1 ||
+      this.clientSessionTimeout > 2_147_483_647
+    ) {
+      throw new RangeError(
+        'clientSessionTimeout must be an integer from 1 to 2147483647 milliseconds',
+      );
+    }
     this.toolResultResolver = options.toolResultResolver ?? defaultToolResultResolver;
   }
 
   get initialized(): boolean {
     return this.client !== null;
-  }
-
-  /** @internal Whether every MCP request has a finite client-side timeout. */
-  get _hasBoundedRequests(): boolean {
-    return this.clientSessionTimeout !== null;
   }
 
   invalidateCache(): void {
@@ -421,7 +428,8 @@ export abstract class MCPServer {
       });
       if (resolved instanceof Error) throw resolved;
       return resolved;
-    } catch {
+    } catch (error) {
+      if (isToolError(error) || isStopResponse(error)) throw error;
       throw new ToolError(MCP_TOOL_RESULT_PROCESSING_FAILED);
     }
   }
@@ -429,14 +437,8 @@ export abstract class MCPServer {
   private requestOptions(
     onprogress?: RequestOptions['onprogress'],
     signal?: AbortSignal,
-  ): RequestOptions | undefined {
-    return this.clientSessionTimeout === null && !onprogress && !signal
-      ? undefined
-      : {
-          ...(this.clientSessionTimeout === null ? {} : { timeout: this.clientSessionTimeout }),
-          onprogress,
-          signal,
-        };
+  ): RequestOptions {
+    return { timeout: this.clientSessionTimeout, onprogress, signal };
   }
 
   private resetConnection(): void {
@@ -473,7 +475,8 @@ export interface MCPServerHTTPOptions extends MCPServerOptions {
 export class MCPServerHTTP extends MCPServer {
   readonly url: string;
   readonly transportType: MCPHTTPTransportType;
-  private readonly headers: Record<string, string>;
+  private _headers: Record<string, string> = {};
+  private readonly requestInit: RequestInit = {};
   private readonly allowed?: Set<string>;
 
   constructor(options: MCPServerHTTPOptions) {
@@ -495,8 +498,18 @@ export class MCPServerHTTP extends MCPServer {
       (url.pathname.replace(/\/$/, '').endsWith('/mcp') ? 'streamable_http' : 'sse');
   }
 
+  /** Headers for future requests. Assign a new object to rotate credentials without reconnecting. */
+  get headers(): Readonly<Record<string, string>> {
+    return { ...this._headers };
+  }
+
+  set headers(headers: Record<string, string>) {
+    this._headers = { ...headers };
+    this.requestInit.headers = this._headers;
+  }
+
   protected override async createTransport(): Promise<unknown> {
-    const requestInit: RequestInit = { headers: this.headers };
+    const requestInit = this.requestInit;
     if (this.transportType === 'streamable_http') {
       const { StreamableHTTPClientTransport } = await loadMCPModule(
         () => import('@modelcontextprotocol/client'),
@@ -570,7 +583,8 @@ export class MCPToolset extends AsyncToolset {
   private refreshRequested = false;
   private refreshGeneration = 0;
   private context?: ToolsetContext;
-  private readonly activeCalls = new Set<AbortController>();
+  private availableTools: FunctionTool[] = [];
+  private toolFilter?: (tool: FunctionTool) => boolean;
   private closed = false;
   private closePromise?: Promise<void>;
 
@@ -598,6 +612,21 @@ export class MCPToolset extends AsyncToolset {
     return this.closePromise;
   }
 
+  /** Reload tools from the server. The toolset must be active in an agent session. */
+  async refresh(): Promise<void> {
+    if (!this.context || this.closed) throw new Error('MCPToolset is not active');
+    this.server.invalidateCache();
+    await this.requestRefresh();
+  }
+
+  /** Replace the tool filter. It applies immediately and persists across refreshes and reconnects. */
+  filterTools(predicate: (tool: FunctionTool) => boolean): this {
+    const tools = this.availableTools.filter(predicate);
+    this.toolFilter = predicate;
+    this.context?.updateTools(tools);
+    return this;
+  }
+
   private async close(): Promise<void> {
     this.closed = true;
     this.context = undefined;
@@ -607,22 +636,13 @@ export class MCPToolset extends AsyncToolset {
     this.unsubscribe = undefined;
     const owners = this.serverOwners();
     owners.toolsets.delete(this);
-    // An unbounded request must be interrupted so executor drain cannot block shutdown forever.
-    if (!this.server._hasBoundedRequests) {
-      if (owners.toolsets.size > 0) {
-        for (const controller of this.activeCalls) controller.abort();
-      }
-      await this.closeServerIfUnused();
-      await this.settleRefresh();
-    }
+    this.availableTools = [];
 
     try {
       await super.aclose();
     } finally {
-      if (this.server._hasBoundedRequests) {
-        await this.closeServerIfUnused();
-        await this.settleRefresh();
-      }
+      await this.closeServerIfUnused();
+      await this.settleRefresh();
     }
   }
 
@@ -667,7 +687,12 @@ export class MCPToolset extends AsyncToolset {
         await this.server.initialize();
         const tools = await this.server.listTools(this.options);
         if (context === this.context && generation === this.refreshGeneration) {
-          context.updateTools(tools.map((tool) => this.scopeTool(tool)));
+          const availableTools = tools.map((tool) => this.scopeTool(tool));
+          const filtered = this.toolFilter
+            ? availableTools.filter(this.toolFilter)
+            : availableTools;
+          this.availableTools = availableTools;
+          context.updateTools(filtered);
         }
       } catch (error) {
         if (context === this.context && generation === this.refreshGeneration) throw error;
@@ -680,16 +705,7 @@ export class MCPToolset extends AsyncToolset {
       ...tool,
       execute: async (args, options) => {
         if (this.closed) throw new ToolError(MCP_SERVER_UNAVAILABLE);
-        const controller = new AbortController();
-        this.activeCalls.add(controller);
-        try {
-          return await tool.execute(args, {
-            ...options,
-            abortSignal: AbortSignal.any([options.abortSignal, controller.signal]),
-          });
-        } finally {
-          this.activeCalls.delete(controller);
-        }
+        return tool.execute(args, options);
       },
     };
   }
