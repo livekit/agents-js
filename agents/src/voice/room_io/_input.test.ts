@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AudioTrackFeature } from '@livekit/protocol';
 import {
   AudioFrame,
   type FrameProcessor,
@@ -258,8 +259,7 @@ describe('ParticipantAudioInputStream', () => {
         : undefined;
       const { input, participant, publication } = createParticipantInput(frameProcessor);
       publication.info = {
-        // 5 = AudioTrackFeature.TF_ENHANCED_NOISE_CANCELLATION
-        audioFeatures: clientNc ? [5] : [],
+        audioFeatures: clientNc ? [AudioTrackFeature.TF_ENHANCED_NOISE_CANCELLATION] : [],
       } as unknown as RemoteTrackPublication['info'];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const warn = vi.spyOn((input as any).logger, 'warn');

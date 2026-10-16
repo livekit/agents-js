@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AudioTrackFeature } from '@livekit/protocol';
 import {
   type AudioFrame,
   AudioStream,
@@ -20,9 +21,6 @@ import { log } from '../../log.js';
 import { traceTypes, tracer } from '../../telemetry/index.js';
 import { resampleStream } from '../../utils.js';
 import { AudioInput } from '../io.js';
-
-// livekit.proto.AudioTrackFeature.TF_ENHANCED_NOISE_CANCELLATION, not re-exported by rtc-node
-const TF_ENHANCED_NOISE_CANCELLATION = 5;
 
 export class ParticipantAudioInputStream extends AudioInput {
   private room: Room;
@@ -342,7 +340,9 @@ export class ParticipantAudioInputStream extends AudioInput {
   private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
     if (
       (this.frameProcessor || this.noiseCancellation) &&
-      this.publication?.info?.audioFeatures.includes(TF_ENHANCED_NOISE_CANCELLATION)
+      this.publication?.info?.audioFeatures.includes(
+        AudioTrackFeature.TF_ENHANCED_NOISE_CANCELLATION,
+      )
     ) {
       this.logger.warn(
         { participant: this.participantIdentity, trackId: track.sid },
