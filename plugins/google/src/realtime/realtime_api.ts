@@ -1888,6 +1888,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.toolCallStatuses.set(id, status);
       }
     }
+    if (this.pendingToolCallIds.size === 0) {
+      this.flushHeldInputTranscription();
+    }
   }
 
   private clearPendingToolCallIdsForResponses(functionResponses: types.FunctionResponse[]): void {

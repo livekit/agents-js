@@ -157,20 +157,19 @@ describe('Google Realtime input transcription during a blocking tool call', () =
     expect(diff.toCreate.map(([, id]) => id)).not.toContain(final!.itemId);
   });
 
-  it('hands it over before the next generation when the call ends without a result', async () => {
+  it('hands it over when the call is cancelled, and only once', async () => {
     const opened = await openSession();
     session = opened.session;
     opened.receive(toolCall());
     await vi.waitFor(() => expect(opened.events.generations).toBe(1));
     opened.receive(lateTranscript());
     opened.receive({ toolCallCancellation: { ids: ['call_1'] } } as LiveServerMessage);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(opened.events.finals).toEqual([]);
+
+    await vi.waitFor(() => expect(opened.events.finals).toHaveLength(1));
 
     opened.receive({
       serverContent: { outputTranscription: { text: 'Sure.' } },
     } as LiveServerMessage);
-
     await vi.waitFor(() => expect(opened.events.generations).toBe(2));
     expect(opened.events.finals).toHaveLength(1);
   });
