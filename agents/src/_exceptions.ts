@@ -7,6 +7,17 @@
 // streams, fetch, and the broader Web API ecosystem.
 
 /**
+ * Raised when the model behaves in a way the run cannot recover from.
+ */
+export class UnexpectedModelBehavior extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'UnexpectedModelBehavior';
+    Error.captureStackTrace(this, UnexpectedModelBehavior);
+  }
+}
+
+/**
  * Raised when accepting a job but not receiving an assignment within the specified timeout.
  * The server may have chosen another worker to handle this job.
  */
@@ -22,7 +33,7 @@ export class AssignmentTimeoutError extends Error {
  * Interface for API error options
  */
 interface APIErrorOptions {
-  body?: object | null;
+  body?: object | string | number | boolean | null;
   retryable?: boolean;
 }
 
@@ -33,7 +44,7 @@ const API_ERROR_SYMBOL = Symbol('APIError');
  * This is used on our TTS/STT/LLM plugins.
  */
 export class APIError extends Error {
-  readonly body: object | null;
+  readonly body: object | string | number | boolean | null;
   readonly retryable: boolean;
 
   constructor(message: string, { body = null, retryable = true }: APIErrorOptions = {}) {
@@ -79,10 +90,12 @@ export class APIStatusError extends APIError {
     options?: APIStatusErrorOptions;
   }) {
     const statusCode = options.statusCode ?? -1;
-    // 408/429 are transient even though they are 4xx, so keep them retryable by default.
-    const isRetryable =
-      options.retryable ??
-      (statusCode === 408 || statusCode === 429 || !(statusCode >= 400 && statusCode < 500));
+    let isRetryable = options.retryable ?? true;
+    // 408/429/499 are transient even though they are 4xx. Other 4xx client errors
+    // are not retryable, even if a caller asks to retry them.
+    if (statusCode >= 400 && statusCode < 500 && ![408, 429, 499].includes(statusCode)) {
+      isRetryable = false;
+    }
 
     super(message, { body: options.body, retryable: isRetryable });
     this.name = 'APIStatusError';

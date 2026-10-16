@@ -6,21 +6,73 @@ import type {
   E2EEOptions,
   LocalParticipant,
   RemoteParticipant,
+  RemoteTrackPublication,
   Room,
   RtcConfiguration,
 } from '@livekit/rtc-node';
-import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
+import { ConnectionState, ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import type { Context } from '@opentelemetry/api';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { mkdir, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from 'pino';
+import { INFERENCE_PRIORITY_HEADER } from './inference/utils.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
-import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
+import { SimulationContext, SimulationMode, parseSimulationDispatch } from './simulation.js';
+import {
+  discardPreparedCloudTracer,
+  participantAttributes,
+  prepareCloudTracer,
+  setupCloudTracer,
+  traceTypes,
+  uploadSessionReport,
+} from './telemetry/index.js';
+import * as rpcTracing from './telemetry/rpc.js';
+import { sessionSpan } from './telemetry/session_context.js';
+import {
+  ATTRIBUTE_REDACTION_ENABLED,
+  ATTRIBUTE_SIMULATION_ENABLED,
+  ATTRIBUTE_SIMULATION_JOB_ID,
+  ATTRIBUTE_SIMULATION_RUN_ID,
+  ATTRIBUTE_SIMULATOR,
+  ATTRIBUTE_SIMULATOR_DISPATCH,
+  recordingEnabled,
+} from './types.js';
 import { isCloud } from './utils.js';
-import type { AgentSession } from './voice/agent_session.js';
-import { type SessionReport, createSessionReport } from './voice/report.js';
+import type { AgentSession, ResolvedRecordingOptions } from './voice/agent_session.js';
+import { AgentsConsole } from './voice/console_io.js';
+import { type SessionReport, createSessionReport, sessionReportToJSON } from './voice/report.js';
+
+/**
+ * Base URL for LiveKit Cloud observability (`LIVEKIT_OBSERVABILITY_URL`, else the Cloud job URL).
+ * Consumers append their endpoint path, so the override keeps its scheme, port, and any base path.
+ * Invalid overrides are logged and ignored.
+ */
+function observabilityUrl(livekitUrl: string): string | undefined {
+  const override = process.env.LIVEKIT_OBSERVABILITY_URL;
+  if (override) {
+    try {
+      new URL(override);
+      return override.replace(/\/+$/, '');
+    } catch (error) {
+      log().warn(
+        { error, url: override },
+        'invalid LIVEKIT_OBSERVABILITY_URL, falling back to the job URL',
+      );
+    }
+  }
+
+  try {
+    const url = new URL(livekitUrl);
+    return url.hostname && isCloud(url) ? `https://${url.hostname}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // AsyncLocalStorage for job context, similar to Python's contextvars
 const jobContextStorage = new AsyncLocalStorage<JobContext<unknown>>();
@@ -29,7 +81,7 @@ const jobContextStorage = new AsyncLocalStorage<JobContext<unknown>>();
  * Returns the current job context.
  *
  * @param required - If true (default), throws when no context is found. If false, returns undefined.
- * @throws {Error} if no job context is found and required is true
+ * @throws Error if no job context is found and required is true
  */
 export function getJobContext<ProcessUserData = Record<string, unknown>>(
   required?: true,
@@ -71,6 +123,20 @@ export enum AutoSubscribe {
   AUDIO_ONLY,
 }
 
+/** The Python SDK's spelling of the mode, for the `lk.room.auto_subscribe` attribute. */
+function autoSubscribeName(mode: AutoSubscribe): string {
+  switch (mode) {
+    case AutoSubscribe.SUBSCRIBE_ALL:
+      return 'subscribe_all';
+    case AutoSubscribe.SUBSCRIBE_NONE:
+      return 'subscribe_none';
+    case AutoSubscribe.VIDEO_ONLY:
+      return 'video_only';
+    case AutoSubscribe.AUDIO_ONLY:
+      return 'audio_only';
+  }
+}
+
 export type JobAcceptArguments = {
   name: string;
   identity: string;
@@ -84,6 +150,23 @@ export type RunningJobInfo = {
   url: string;
   token: string;
   workerId: string;
+  apiKey?: string;
+  apiSecret?: string;
+  /**
+   * A locally-synthesized job that is not backed by a LiveKit room (e.g. the
+   * `console` CLI runner). Room-bound operations (`connect`, `deleteRoom`,
+   * recording uploads) become no-ops. Mirrors python `RunningJobInfo.fake_job`.
+   */
+  fakeJob?: boolean;
+  // dispatch timeline, epoch milliseconds; undefined when unknown (simulation, console)
+  /** The worker received the availability request. */
+  receivedAt?: number;
+  /** The request handler accepted the job. */
+  acceptedAt?: number;
+  /** The server's assignment (room token) arrived. */
+  assignedAt?: number;
+  /** A process was acquired from the pool and handed the job. */
+  launchedAt?: number;
 };
 
 /** Attempted to add a function callback, but the function already exists. */
@@ -122,6 +205,28 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** @internal */
   _sessionDirectory: string;
 
+  /** @internal */
+  _redactionEnabled: boolean;
+
+  /** @internal whether initRecording reached the cloud tracer (the job "registered") */
+  _recordingInitialized = false;
+
+  /**
+   * The trace context carrying the job's root span (`job_entrypoint`), for work that reaches
+   * the job from a task whose own context predates it (an RPC dispatched by the SDK, a stall
+   * reported by the loop monitor) and has no session to nest under.
+   * @internal
+   */
+  _jobSpanContext?: Context;
+
+  // Lazily built from the job's simulation attributes; undefined when not
+  // under a simulation. #simulationResolved guards the one-time parse.
+  #simulationCtx?: SimulationContext;
+  #simulationResolved = false;
+  /** @internal onSimulationEnd callback, injected by the job runner from the
+   * agent definition. */
+  _simulationEndFnc?: (ctx: SimulationContext) => unknown;
+
   private connected: boolean = false;
 
   constructor(
@@ -139,12 +244,31 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#onShutdown = onShutdown;
     this.onParticipantConnected = this.onParticipantConnected.bind(this);
     this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
+    this.onParticipantDisconnected = this.onParticipantDisconnected.bind(this);
+    // Registered unconditionally: a simulator participant identifies itself by
+    // its lk.simulator attribute, and gating on simulationContext() here would
+    // miss user-token runs where no dispatch rides the job.
+    this.#room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+    // RPC tracing goes in whenever the room is connected, whether by connect() below, by a
+    // session, or by the entrypoint connecting ctx.room itself. On the SDK's event path the job
+    // is passed explicitly: there is no AsyncLocalStorage there
+    this.#room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
+      if (state === ConnectionState.CONN_CONNECTED && this.#room.isConnected) {
+        rpcTracing.install(this.#room.localParticipant, this as JobContext<unknown> as JobContext);
+      }
+    });
     this.#logger = log().child({
       jobId: this.#info.job.id,
       roomName: this.#info.job.room?.name,
     });
     this.#inferenceExecutor = inferenceExecutor;
-    this._sessionDirectory = path.join(os.tmpdir(), 'livekit-agents', `job-${this.#info.job.id}`);
+    this._redactionEnabled = Boolean(info.job.enableRedaction);
+    // In console mode, recordings land in a local user-visible directory
+    // (mirrors python's AgentsConsole); real jobs use a temp dir.
+    const agentsConsole = AgentsConsole.getInstance();
+    this._sessionDirectory = agentsConsole.enabled
+      ? agentsConsole.sessionDirectory
+      : path.join(os.tmpdir(), 'livekit-agents', `job-${this.#info.job.id}`);
   }
 
   get proc(): JobProcess<ProcessUserData> {
@@ -153,6 +277,66 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
   get job(): proto.Job {
     return this.#info.job;
+  }
+
+  /** Returns the {@link SimulationContext} when this job is running under a
+   * simulation, or `undefined` for a normal/production session.
+   *
+   * Resolved once and cached. The framework hands it to `onSimulationEnd`
+   * when the run finishes; read it earlier (e.g. from the entrypoint) to
+   * reach `scenario.userdata` for seeding mocks. Resolves synchronously from
+   * the job's `lk.simulator.dispatch` attribute (a protojson
+   * `SimulationDispatch`), available as soon as the job starts. */
+  simulationContext(): SimulationContext | undefined {
+    if (this.#simulationResolved) {
+      return this.#simulationCtx;
+    }
+    // The simulation attributes ride the agent dispatch and land on the job
+    // delivered to the agent.
+    this.#simulationResolved = true;
+    const raw = this.#info.job.attributes?.[ATTRIBUTE_SIMULATOR_DISPATCH] ?? '';
+    if (!raw) {
+      return undefined;
+    }
+
+    let dispatch;
+    try {
+      dispatch = parseSimulationDispatch(raw);
+    } catch (error) {
+      this.#logger.warn({ error }, 'failed to parse the simulation dispatch job attribute');
+      return undefined;
+    }
+    if (!dispatch.simulationRunId) {
+      this.#logger.warn('simulation dispatch attribute has no simulation_run_id, ignoring');
+      return undefined;
+    }
+
+    this.#simulationCtx = new SimulationContext(
+      dispatch,
+      this as JobContext<unknown> as JobContext,
+    );
+    return this.#simulationCtx;
+  }
+
+  /** Headers this job asserts about itself on every inference request.
+   *
+   * Merged last by `buildMetadataHeaders`, so what the job asserts about
+   * itself outranks what an individual model was configured with. Empty for
+   * an ordinary job. */
+  get inferenceHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+
+    // A text simulation is batch load: a run fans out many jobs at once and nobody
+    // is waiting on the answers, so it must not compete with live traffic for
+    // gateway capacity, and it must not be able to ask for priority either. Audio
+    // simulations are excluded: they run in real time against the audio pipeline,
+    // so their latency has to stay representative of production.
+    const sim = this.simulationContext();
+    if (sim !== undefined && sim.simulationMode === SimulationMode.TEXT) {
+      headers[INFERENCE_PRIORITY_HEADER] = 'low';
+    }
+
+    return headers;
   }
 
   get workerId(): string {
@@ -166,6 +350,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
   get info(): RunningJobInfo {
     return this.#info;
+  }
+
+  /** @returns Whether this job is a locally-synthesized fake job (e.g. console mode). */
+  get isFakeJob(): boolean {
+    return this.#info.fakeJob ?? false;
   }
 
   /** @returns The agent's participant if connected to the room, otherwise `undefined` */
@@ -190,11 +379,61 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.shutdownCallbacks.push(callback);
   }
 
+  /**
+   * Have the cloud trace pipeline up before the job's first span; whether anything is uploaded
+   * is decided in {@link initRecording}, and the job's spans are held until then.
+   *
+   * @internal
+   */
+  async _prepareTelemetry(): Promise<void> {
+    if (this.isFakeJob) return;
+    const observabilityBaseUrl = observabilityUrl(this.#info.url);
+    if (!observabilityBaseUrl) return;
+    try {
+      await prepareCloudTracer({
+        roomId: this.job.room?.sid ?? '',
+        jobId: this.job.id,
+        agentName: this.job.agentName,
+        observabilityUrl: observabilityBaseUrl,
+      });
+    } catch (error) {
+      this.#logger.error({ error }, 'failed to prepare the cloud trace pipeline');
+    }
+  }
+
+  /**
+   * Per-job telemetry teardown: a job that never registered still had spans held for it by the
+   * gate, which are dropped here.
+   *
+   * @internal
+   */
+  _onCleanup(): void {
+    if (!this._recordingInitialized) {
+      discardPreparedCloudTracer(this.job.id);
+    }
+  }
+
   async waitForParticipant(identity?: string): Promise<RemoteParticipant> {
     if (!this.#room.isConnected) {
       throw new Error('room is not connected');
     }
 
+    // nests under session_start when the session is starting, else the ambient context
+    return sessionSpan(
+      'wait_for_participant',
+      async (span) => {
+        const participant = await this.#waitForParticipant(identity);
+        span.setAttributes(participantAttributes(participant));
+        return participant;
+      },
+      {
+        attributes: { [traceTypes.ATTR_ROOM_IO_PARTICIPANT_FILTER]: identity !== undefined },
+        jobCtx: this as JobContext<unknown> as JobContext,
+      },
+    );
+  }
+
+  async #waitForParticipant(identity?: string): Promise<RemoteParticipant> {
     for (const p of this.#room.remoteParticipants.values()) {
       if ((!identity || p.identity === identity) && p.info.kind != ParticipantKind.AGENT) {
         return p;
@@ -245,6 +484,13 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
+    if (this.isFakeJob) {
+      this.#logger.debug('job_ctx.connect() is a no-op in console mode');
+      this.#onConnect();
+      this.connected = true;
+      return;
+    }
+
     const opts = {
       e2ee,
       autoSubscribe: autoSubscribe == AutoSubscribe.SUBSCRIBE_ALL,
@@ -252,24 +498,77 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       dynacast: false,
     };
 
-    await this.#room.connect(this.#info.url, this.#info.token, opts);
+    // room_connect: under job_entrypoint when called from the entrypoint, under session_start
+    // when the session is starting. Never made current: room.connect() spawns the room's event
+    // tasks, which live for the whole session.
+    await sessionSpan(
+      'room_connect',
+      async (span) => {
+        await this.#room.connect(this.#info.url, this.#info.token, opts);
+        const local = this.#room.localParticipant;
+        span.setAttributes({
+          ...(local?.sid ? { [traceTypes.ATTR_PARTICIPANT_ID]: local.sid } : {}),
+          ...(local?.identity ? { [traceTypes.ATTR_PARTICIPANT_IDENTITY]: local.identity } : {}),
+          [traceTypes.ATTR_ROOM_REMOTE_PARTICIPANT_COUNT]: this.#room.remoteParticipants.size,
+        });
+      },
+      {
+        attributes: {
+          [traceTypes.ATTR_ROOM_NAME]: this.#info.job.room?.name ?? '',
+          [traceTypes.ATTR_ROOM_SID]: this.#info.job.room?.sid ?? '',
+          [traceTypes.ATTR_ROOM_AUTO_SUBSCRIBE]: autoSubscribeName(autoSubscribe),
+          [traceTypes.ATTR_ROOM_E2EE]: e2ee !== undefined,
+        },
+        jobCtx: this as JobContext<unknown> as JobContext,
+      },
+    );
     this.#onConnect();
 
     this.#room.remoteParticipants.forEach(this.onParticipantConnected);
 
     if ([AutoSubscribe.AUDIO_ONLY, AutoSubscribe.VIDEO_ONLY].includes(autoSubscribe)) {
+      const desiredKind =
+        autoSubscribe === AutoSubscribe.AUDIO_ONLY ? TrackKind.KIND_AUDIO : TrackKind.KIND_VIDEO;
+      const subscribeIfMatch = (pub: RemoteTrackPublication) => {
+        if (pub.kind === desiredKind) {
+          pub.setSubscribed(true);
+        }
+      };
+
+      // Subscribe to tracks already published at connect time.
       this.#room.remoteParticipants.forEach((p) => {
-        p.trackPublications.forEach((pub) => {
-          if (
-            (autoSubscribe === AutoSubscribe.AUDIO_ONLY && pub.kind === TrackKind.KIND_AUDIO) ||
-            (autoSubscribe === AutoSubscribe.VIDEO_ONLY && pub.kind === TrackKind.KIND_VIDEO)
-          ) {
-            pub.setSubscribed(true);
-          }
-        });
+        p.trackPublications.forEach(subscribeIfMatch);
       });
+
+      // Server-side autosubscribe is disabled for AUDIO_ONLY/VIDEO_ONLY, so
+      // subscribe to matching tracks published AFTER connect as well (e.g. a
+      // participant that unmutes or joins later). Without this, late-published
+      // tracks are never subscribed. Mirrors Python's _apply_auto_subscribe_opts.
+      this.#room.on(RoomEvent.TrackPublished, subscribeIfMatch);
     }
     this.connected = true;
+  }
+
+  /** Deletes the room and disconnects all participants. */
+  async deleteRoom(roomName?: string): Promise<void> {
+    if (this.isFakeJob) {
+      this.#logger.warn('job_ctx.deleteRoom() is not executed in console mode');
+      return;
+    }
+
+    const targetRoomName = roomName ?? this.#room.name;
+    if (!targetRoomName) {
+      this.#logger.warn('cannot delete room because room name is missing');
+      return;
+    }
+
+    try {
+      const client = new RoomServiceClient(this.#info.url, this.#info.apiKey, this.#info.apiSecret);
+      await client.deleteRoom(targetRoomName);
+      this.#logger.info({ roomName: targetRoomName }, 'room deleted');
+    } catch (error) {
+      this.#logger.warn({ error, roomName: targetRoomName }, 'error while deleting room');
+    }
   }
 
   makeSessionReport(session?: AgentSession): SessionReport {
@@ -306,29 +605,54 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
+    const recorderIO = session._recorderIO;
+    if (recorderIO?.recording) {
+      this.#logger.warn('recorder_io is still recording at session end, closing it');
+      await recorderIO.close();
+    }
+
     const report = this.makeSessionReport(session);
 
-    // TODO(brian): Implement CLI/console
-
-    // Upload session report to LiveKit Cloud if enabled
-    const url = new URL(this.#info.url);
-
-    if (report.enableRecording && isCloud(url)) {
+    // Console recording: dump the session report to a local file (mirrors python).
+    const agentsConsole = AgentsConsole.getInstance();
+    if (agentsConsole.enabled && agentsConsole.record) {
       try {
-        await uploadSessionReport({
-          agentName: this.job.agentName,
-          cloudHostname: url.hostname,
-          report,
-        });
-        this.#logger.info(
-          {
-            jobId: report.jobId,
-            roomId: report.roomId,
-          },
-          'Session report uploaded to LiveKit Cloud',
+        await mkdir(this._sessionDirectory, { recursive: true });
+        await writeFile(
+          path.join(this._sessionDirectory, 'session_report.json'),
+          JSON.stringify(sessionReportToJSON(report), null, 2),
         );
       } catch (error) {
-        this.#logger.error({ error }, 'Failed to upload session report');
+        this.#logger.error({ error }, 'failed to save the session report');
+      }
+    }
+
+    // Upload session report to LiveKit Cloud if enabled. A fake job (console
+    // mode) has no backing cloud URL, so skip the upload entirely.
+    if (!this.isFakeJob) {
+      const observabilityBaseUrl = observabilityUrl(this.#info.url);
+
+      if (
+        (recordingEnabled(report.options.recordingOptions) || report.enableRecording) &&
+        observabilityBaseUrl
+      ) {
+        try {
+          await uploadSessionReport({
+            agentName: this.job.agentName,
+            observabilityUrl: observabilityBaseUrl,
+            report,
+            metadata: this._otelMetadata(report.options.recordingOptions),
+          });
+          this.#logger.info(
+            {
+              jobId: report.jobId,
+              roomId: report.roomId,
+            },
+            'Session report uploaded to LiveKit Cloud',
+          );
+        } catch (error) {
+          this.#logger.error({ error }, 'Failed to upload session report');
+        }
       }
     }
 
@@ -343,12 +667,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
     // Explicitly clear the recorded events to avoid leaking memory
     session._recordedEvents = [];
-
-    try {
-      await flushOtelLogs();
-    } catch (error) {
-      this.#logger.error({ error }, 'Failed to flush OTEL logs');
-    }
   }
 
   /**
@@ -356,8 +674,16 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
    *
    * @param reason - Optional reason for shutdown
    */
-  shutdown(reason = '') {
+  shutdown(reason = 'user requested') {
     this.#onShutdown(reason);
+  }
+
+  private onParticipantDisconnected(p: RemoteParticipant): void {
+    if (!(ATTRIBUTE_SIMULATOR in (p.attributes ?? {}))) {
+      return;
+    }
+    this.#logger.debug('simulator disconnected, shutting down the job');
+    this.shutdown('simulation completed');
   }
 
   /** @internal */
@@ -370,7 +696,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
         );
       }
       const result = callback(this, p);
-      result.finally(() => delete this.#participantTasks[p.identity!]);
+      result.finally(() => {
+        if (this.#participantTasks[p.identity!]?.result === result) {
+          delete this.#participantTasks[p.identity!];
+        }
+      });
       this.#participantTasks[p.identity!] = { callback, result };
     }
   }
@@ -390,18 +720,61 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#participantEntrypoints.push(callback);
   }
 
-  async initRecording() {
-    const url = new URL(this.#info.url);
-    if (!isCloud(url)) {
+  async initRecording(options: ResolvedRecordingOptions) {
+    if (this.isFakeJob) {
       return;
     }
 
-    this.#logger.debug({ hostname: url.hostname }, 'Configuring session recording (cloud tracer)');
+    const redactionEnabled = Boolean(this.job.enableRedaction || options.redaction);
+    if (redactionEnabled && options.audio && !options.transcript) {
+      throw new Error('audio upload requires transcript upload when redaction is enabled');
+    }
+    this._redactionEnabled = redactionEnabled;
+
+    const observabilityBaseUrl = observabilityUrl(this.#info.url);
+    if (!observabilityBaseUrl) {
+      return;
+    }
+
+    // The cloud tracer handles trace spans and OTel logs; only configure it
+    // when at least one of those categories is enabled.
+    if (!options.traces && !options.logs) {
+      return;
+    }
+
+    this.#logger.debug(
+      { url: observabilityBaseUrl },
+      'Configuring session recording (cloud tracer)',
+    );
+    this._recordingInitialized = true;
     await setupCloudTracer({
       roomId: this.job.room!.sid,
       jobId: this.job.id,
-      cloudHostname: url.hostname,
+      observabilityUrl: observabilityBaseUrl,
+      agentName: this.job.agentName,
+      enableTraces: options.traces,
+      enableLogs: options.logs,
+      metadata: this._otelMetadata(options),
     });
+  }
+
+  /** @internal */
+  _otelMetadata(options?: ResolvedRecordingOptions): Record<string, boolean | string> | undefined {
+    const metadata: Record<string, boolean | string> = {};
+    const simulation = this.simulationContext();
+    if (simulation) {
+      metadata[ATTRIBUTE_SIMULATION_ENABLED] = true;
+      if (simulation.simulationRunId) {
+        metadata[ATTRIBUTE_SIMULATION_RUN_ID] = simulation.simulationRunId;
+      }
+      if (simulation.simulationJobId) {
+        metadata[ATTRIBUTE_SIMULATION_JOB_ID] = simulation.simulationJobId;
+      }
+    }
+    if (this._redactionEnabled || options?.redaction) {
+      metadata[ATTRIBUTE_REDACTION_ENABLED] = true;
+    }
+    return Object.keys(metadata).length > 0 ? metadata : undefined;
   }
 }
 

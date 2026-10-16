@@ -26,13 +26,13 @@
  *   - onEnter() signals readiness instead of awaiting generateReply()
  *   - Tasks tested in isolation and as a group
  */
-import { Future, asError, beta, initializeLogger, llm, voice } from '@livekit/agents';
+import { Future, asError, initializeLogger, llm, voice, workflows } from '@livekit/agents';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-const { TaskGroup } = beta;
-type TaskGroupResult = beta.TaskGroupResult;
-type TaskCompletedEvent = beta.TaskCompletedEvent;
+const { TaskGroup } = workflows;
+type TaskGroupResult = workflows.TaskGroupResult;
+type TaskCompletedEvent = workflows.TaskCompletedEvent;
 
 initializeLogger({ pretty: true, level: 'warn' });
 
@@ -82,8 +82,9 @@ class CollectNameTask extends voice.AgentTask<string> {
     super({
       instructions:
         'Collect the user name from the latest user message. As soon as you have it, call save_name.',
-      tools: {
-        save_name: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'save_name',
           description: 'Save the user name.',
           parameters: z.object({ name: z.string().describe('The user name') }),
           execute: async ({ name }) => {
@@ -91,7 +92,7 @@ class CollectNameTask extends voice.AgentTask<string> {
             return `Saved name: ${name}`;
           },
         }),
-      },
+      ],
     });
     this.ready = ready;
   }
@@ -108,8 +109,9 @@ class CollectEmailTask extends voice.AgentTask<string> {
     super({
       instructions:
         'Collect the user email from the latest user message. As soon as you have it, call save_email.',
-      tools: {
-        save_email: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'save_email',
           description: 'Save the user email.',
           parameters: z.object({ email: z.string().describe('The user email') }),
           execute: async ({ email }) => {
@@ -117,7 +119,7 @@ class CollectEmailTask extends voice.AgentTask<string> {
             return `Saved email: ${email}`;
           },
         }),
-      },
+      ],
     });
     this.ready = ready;
   }
@@ -436,7 +438,28 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
           toolCalls: [{ name: 'save_email', args: { email: 'charlie@test.com' } }],
         },
         {
-          input: 'Conversation to summarize:\n\nuser: My name is Charlie.\nuser: charlie@test.com',
+          input: [
+            'Conversation to summarize:',
+            '',
+            '<user>',
+            'My name is Charlie.',
+            '</user>',
+            '<function_call name="save_name" call_id="fake_call_0">',
+            '{"name":"Charlie"}',
+            '</function_call>',
+            '<function_call_output name="save_name" call_id="fake_call_0">',
+            '"Saved name: Charlie"',
+            '</function_call_output>',
+            '<user>',
+            'charlie@test.com',
+            '</user>',
+            '<function_call name="save_email" call_id="fake_call_0">',
+            '{"email":"charlie@test.com"}',
+            '</function_call>',
+            '<function_call_output name="save_email" call_id="fake_call_0">',
+            '"Saved email: charlie@test.com"',
+            '</function_call_output>',
+          ].join('\n'),
           content: 'Summary: name=Charlie, email=charlie@test.com.',
         },
       ]);
@@ -461,7 +484,7 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
       );
       expect(summaryMsg).toBeDefined();
       if (summaryMsg && summaryMsg.type === 'message') {
-        expect(summaryMsg.textContent).toContain('[history summary]');
+        expect(summaryMsg.textContent).toContain('<chat_history_summary>');
       }
     });
   });

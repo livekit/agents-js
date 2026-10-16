@@ -4,72 +4,79 @@
 import {
   type JobContext,
   ServerOptions,
-  beta,
   cli,
   defineAgent,
   llm,
   voice,
+  workflows,
 } from '@livekit/agents';
 // import * as phonic from '@livekit/agents-plugin-phonic';
-import { access, appendFile } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-type SurveyUserData = {
+export type SurveyUserData = {
   filename: string;
   candidateName: string;
   taskResults: Record<string, unknown>;
 };
 
-type IntroResults = {
+export type IntroResults = {
   name: string;
   intro: string;
 };
 
-type EmailResults = {
+export type EmailResults = {
   email: string;
 };
 
-type CommuteResults = {
+export type CommuteResults = {
   canCommute: boolean;
   commuteMethod: 'driving' | 'bus' | 'subway' | 'none';
 };
 
-type ExperienceResults = {
+export type ExperienceResults = {
   yearsOfExperience: number;
   experienceDescription: string;
 };
 
-type BehavioralResults = {
+export type BehavioralResults = {
   strengths: string;
   weaknesses: string;
   workStyle: 'independent' | 'team_player';
 };
 
+const CSV_COLUMNS = [
+  'name',
+  'intro_task',
+  'email_task',
+  'commute_task',
+  'experience_task',
+  'behavioral_task',
+  'summary',
+  'disqualificationReason',
+] as const;
+
 function toCsvValue(value: unknown): string {
+  if (value === undefined || value === null) return '';
   const raw = typeof value === 'string' ? value : JSON.stringify(value);
   return `"${raw.replace(/"/g, '""')}"`;
 }
 
 async function writeCsvRow(path: string, data: Record<string, unknown>): Promise<void> {
-  let hasFile = true;
+  const fh = await open(path, 'a');
   try {
-    await access(path);
-  } catch {
-    hasFile = false;
+    const header = (await fh.stat()).size === 0 ? CSV_COLUMNS.join(',') + '\n' : '';
+    const row = CSV_COLUMNS.map((key) => toCsvValue(data[key])).join(',') + '\n';
+    await fh.appendFile(header + row, 'utf8');
+  } finally {
+    await fh.close();
   }
-
-  const keys = Object.keys(data);
-  const row = keys.map((key) => toCsvValue(data[key])).join(',') + '\n';
-
-  if (!hasFile) {
-    await appendFile(path, keys.join(',') + '\n', 'utf8');
-  }
-  await appendFile(path, row, 'utf8');
 }
 
 function disqualifyTool() {
   return llm.tool({
+    name: 'disqualify',
     description:
       'End the interview if the candidate refuses to cooperate, provides inappropriate answers, or is not a fit.',
     parameters: z.object({
@@ -90,13 +97,14 @@ function disqualifyTool() {
   });
 }
 
-class IntroTask extends voice.AgentTask<IntroResults> {
+export class IntroTask extends voice.AgentTask<IntroResults, SurveyUserData> {
   constructor() {
     super({
       instructions:
         'You are Alex, an interviewer screening a software engineer candidate. Gather the candidate name and short self-introduction.',
-      tools: {
-        saveIntro: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'saveIntro',
           description: 'Save candidate name and intro notes.',
           parameters: z.object({
             name: z.string().describe('Candidate name'),
@@ -108,7 +116,7 @@ class IntroTask extends voice.AgentTask<IntroResults> {
             return `Saved intro for ${name}.`;
           },
         }),
-      },
+      ],
     });
   }
 
@@ -120,15 +128,16 @@ class IntroTask extends voice.AgentTask<IntroResults> {
   }
 }
 
-class EmailTask extends voice.AgentTask<EmailResults> {
+export class EmailTask extends voice.AgentTask<EmailResults, SurveyUserData> {
   constructor() {
     const disqualify = disqualifyTool();
     super({
       instructions:
         'Collect a valid email address. If the candidate refuses, call disqualify immediately.',
-      tools: {
+      tools: [
         disqualify,
-        saveEmail: llm.tool({
+        llm.tool({
+          name: 'saveEmail',
           description: 'Save candidate email address.',
           parameters: z.object({
             email: z.string().describe('Candidate email'),
@@ -138,7 +147,7 @@ class EmailTask extends voice.AgentTask<EmailResults> {
             return `Saved email: ${email}`;
           },
         }),
-      },
+      ],
     });
   }
 
@@ -149,15 +158,16 @@ class EmailTask extends voice.AgentTask<EmailResults> {
   }
 }
 
-class CommuteTask extends voice.AgentTask<CommuteResults> {
+export class CommuteTask extends voice.AgentTask<CommuteResults, SurveyUserData> {
   constructor() {
     const disqualify = disqualifyTool();
     super({
       instructions:
         'Collect commute flexibility. The role expects office attendance three days per week.',
-      tools: {
+      tools: [
         disqualify,
-        saveCommute: llm.tool({
+        llm.tool({
+          name: 'saveCommute',
           description: 'Save candidate commute information.',
           parameters: z.object({
             canCommute: z.boolean().describe('Whether the candidate can commute to office'),
@@ -170,7 +180,7 @@ class CommuteTask extends voice.AgentTask<CommuteResults> {
             return 'Saved commute flexibility.';
           },
         }),
-      },
+      ],
     });
   }
 
@@ -182,15 +192,16 @@ class CommuteTask extends voice.AgentTask<CommuteResults> {
   }
 }
 
-class ExperienceTask extends voice.AgentTask<ExperienceResults> {
+export class ExperienceTask extends voice.AgentTask<ExperienceResults, SurveyUserData> {
   constructor() {
     const disqualify = disqualifyTool();
     super({
       instructions:
         'Collect years of experience and a concise timeline of previous roles relevant to software engineering.',
-      tools: {
+      tools: [
         disqualify,
-        saveExperience: llm.tool({
+        llm.tool({
+          name: 'saveExperience',
           description: 'Save candidate experience details.',
           parameters: z.object({
             yearsOfExperience: z
@@ -203,7 +214,7 @@ class ExperienceTask extends voice.AgentTask<ExperienceResults> {
             return 'Saved experience details.';
           },
         }),
-      },
+      ],
     });
   }
 
@@ -215,7 +226,7 @@ class ExperienceTask extends voice.AgentTask<ExperienceResults> {
   }
 }
 
-class BehavioralTask extends voice.AgentTask<BehavioralResults> {
+export class BehavioralTask extends voice.AgentTask<BehavioralResults, SurveyUserData> {
   private partial: Partial<BehavioralResults> = {};
 
   constructor() {
@@ -223,9 +234,10 @@ class BehavioralTask extends voice.AgentTask<BehavioralResults> {
     super({
       instructions:
         'Collect strengths, weaknesses, and work style. Keep a natural conversational tone and avoid bullet lists.',
-      tools: {
+      tools: [
         disqualify,
-        saveStrengths: llm.tool({
+        llm.tool({
+          name: 'saveStrengths',
           description: "Save a concise summary of the candidate's strengths.",
           parameters: z.object({
             strengths: z.string().describe('Strengths summary'),
@@ -236,7 +248,8 @@ class BehavioralTask extends voice.AgentTask<BehavioralResults> {
             return 'Saved strengths.';
           },
         }),
-        saveWeaknesses: llm.tool({
+        llm.tool({
+          name: 'saveWeaknesses',
           description: "Save a concise summary of the candidate's weaknesses.",
           parameters: z.object({
             weaknesses: z.string().describe('Weaknesses summary'),
@@ -247,7 +260,8 @@ class BehavioralTask extends voice.AgentTask<BehavioralResults> {
             return 'Saved weaknesses.';
           },
         }),
-        saveWorkStyle: llm.tool({
+        llm.tool({
+          name: 'saveWorkStyle',
           description: "Save candidate's work style.",
           parameters: z.object({
             workStyle: z.enum(['independent', 'team_player']).describe('Primary work style'),
@@ -258,7 +272,7 @@ class BehavioralTask extends voice.AgentTask<BehavioralResults> {
             return 'Saved work style.';
           },
         }),
-      },
+      ],
     });
   }
 
@@ -269,7 +283,7 @@ class BehavioralTask extends voice.AgentTask<BehavioralResults> {
     });
   }
 
-  private checkCompletion() {
+  protected checkCompletion() {
     if (this.partial.strengths && this.partial.weaknesses && this.partial.workStyle) {
       this.complete({
         strengths: this.partial.strengths,
@@ -286,25 +300,26 @@ class BehavioralTask extends voice.AgentTask<BehavioralResults> {
   }
 }
 
-class SurveyAgent extends voice.Agent<SurveyUserData> {
+export class SurveyAgent extends voice.Agent<SurveyUserData> {
   constructor() {
     super({
       instructions:
         'You are a survey interviewer for a software engineer screening. Be concise, professional, and natural. Call endScreening when the process is complete.',
-      tools: {
-        endScreening: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'endScreening',
           description: 'End interview and hang up.',
           execute: async (_, { ctx }: llm.ToolOptions<SurveyUserData>) => {
             ctx.session.shutdown();
             return 'Interview concluded.';
           },
         }),
-      },
+      ],
     });
   }
 
   async onEnter() {
-    const group = new beta.TaskGroup({
+    const group = new workflows.TaskGroup({
       summarizeChatCtx: false,
     });
 
@@ -340,6 +355,7 @@ class SurveyAgent extends voice.Agent<SurveyUserData> {
     }
 
     const mergedResults: Record<string, unknown> = {
+      name: this.session.userData.candidateName,
       ...result.taskResults,
       summary: summaryText,
     };
@@ -372,4 +388,8 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+// Only run CLI when executed directly, not when imported for testing.
+// eslint-disable-next-line turbo/no-undeclared-env-vars
+if (process.env.VITEST === undefined) {
+  cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+}

@@ -1,239 +1,276 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Any, Duration, ScalarType, proto3 } from '@bufbuild/protobuf';
+import { Any, Duration, type Message, proto3 } from '@bufbuild/protobuf';
+import FormData from 'form-data';
 import { EventEmitter } from 'node:events';
+import type { ClientRequest, IncomingMessage } from 'node:http';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { initializeLogger } from '../log.js';
 import { uploadRecording } from './recording_upload.js';
+import { uploadGate } from './upload_gate.js';
 
-type Action = (request: MockRequest) => void;
-
-/** Like `ClientRequest`, an `'error'` event without a listener throws. */
-class MockRequest extends EventEmitter {
-  reusedSocket = false;
-
-  destroy(error?: Error): this {
-    if (error) queueMicrotask(() => this.emit('error', error));
-    return this;
-  }
+function fakeClientRequest(): ClientRequest {
+  const request = new EventEmitter() as ClientRequest;
+  request.destroy = vi.fn(() => request);
+  return request;
 }
 
-class MockResponse extends EventEmitter {
-  constructor(
-    readonly statusCode: number,
-    readonly statusMessage: string,
-  ) {
-    super();
-  }
+interface TestRetryInfo extends Message<TestRetryInfo> {
+  retryDelay?: Duration;
 }
 
-const RetryInfo = proto3.makeMessageType('google.rpc.RetryInfo', [
+const TestRetryInfo = proto3.makeMessageType<TestRetryInfo>('google.rpc.RetryInfo', () => [
   { no: 1, name: 'retry_delay', kind: 'message', T: Duration },
 ]);
 
-const RpcStatus = proto3.makeMessageType('google.rpc.Status', [
-  { no: 1, name: 'code', kind: 'scalar', T: ScalarType.INT32 },
-  { no: 2, name: 'message', kind: 'scalar', T: ScalarType.STRING },
+interface TestRpcStatus extends Message<TestRpcStatus> {
+  details: Any[];
+}
+
+const TestRpcStatus = proto3.makeMessageType<TestRpcStatus>('google.rpc.Status', () => [
   { no: 3, name: 'details', kind: 'message', T: Any, repeated: true },
 ]);
 
-function statusBody(...details: Any[]): Buffer {
-  return Buffer.from(new RpcStatus({ code: 14, message: 'unavailable', details }).toBinary());
+function retryInfoBody(delaySeconds = 0): Buffer {
+  const retryInfo = new TestRetryInfo({
+    retryDelay: new Duration({ seconds: BigInt(delaySeconds) }),
+  });
+  return Buffer.from(new TestRpcStatus({ details: [Any.pack(retryInfo)] }).toBinary());
 }
 
-function networkError(code: string, message = code): NodeJS.ErrnoException {
-  return Object.assign(new Error(message), { code });
-}
+type FormSubmitOutcome =
+  | { error: Error }
+  | { hangConnection: true }
+  | {
+      statusCode: number;
+      body?: Buffer;
+      hangResponse?: boolean;
+      responseError?: Error;
+      onResponse?: () => void;
+    };
 
-/** Emit a fresh socket that finishes its TLS handshake. */
-function connect(request: MockRequest): void {
-  const socket = new EventEmitter();
-  request.emit('socket', socket);
-  socket.emit('secureConnect');
-}
+function mockFormSubmitSequence(outcomes: FormSubmitOutcome[]) {
+  let attempt = 0;
+  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit(_opts, cb) {
+    const request = fakeClientRequest();
+    const outcome = outcomes[Math.min(attempt, outcomes.length - 1)]!;
+    attempt += 1;
 
-function respond(request: MockRequest, statusCode = 200, body: Buffer = Buffer.alloc(0)): void {
-  const response = new MockResponse(statusCode, statusCode < 400 ? 'OK' : 'Service Unavailable');
-  request.emit('response', response);
-  queueMicrotask(() => {
-    if (body.length > 0) response.emit('data', body);
-    response.emit('end');
+    if ('hangConnection' in outcome) return request;
+
+    queueMicrotask(() => {
+      if ('error' in outcome) {
+        cb?.(outcome.error, undefined as never);
+        return;
+      }
+
+      const response = new PassThrough() as PassThrough & IncomingMessage;
+      response.statusCode = outcome.statusCode;
+      response.statusMessage = outcome.statusCode < 400 ? 'OK' : 'Service Unavailable';
+      cb?.(null, response);
+      outcome.onResponse?.();
+
+      if (outcome.hangResponse) return;
+      queueMicrotask(() => {
+        if (outcome.responseError) {
+          response.emit('error', outcome.responseError);
+          return;
+        }
+        response.end(outcome.body ?? Buffer.alloc(0));
+      });
+    });
+
+    return request;
   });
 }
 
-const succeed: Action = (request) => {
-  connect(request);
-  respond(request);
-};
-
-const submit = vi.fn();
-
-/** Queue one action per attempt. The last action repeats. */
-function attempts(...actions: Action[]): void {
-  submit.mockReset();
-  for (const [i, action] of actions.entries()) {
-    const impl = () => {
-      const request = new MockRequest();
-      queueMicrotask(() => action(request));
-      return request;
-    };
-    if (i === actions.length - 1) submit.mockImplementation(impl);
-    else submit.mockImplementationOnce(impl);
-  }
+function upload(observabilityUrl = 'https://example.livekit.cloud'): Promise<void> {
+  return uploadRecording({
+    observabilityUrl,
+    jwt: 'token',
+    createFormData: () => {
+      const formData = new FormData();
+      formData.append('header', Buffer.from('header'), {
+        contentType: 'application/protobuf',
+        filename: 'header.binpb',
+      });
+      return formData;
+    },
+  });
 }
 
-function upload(): Promise<void> {
-  return uploadRecording(() => ({ submit }), { host: 'cloud.example.com', jwt: 'jwt' });
-}
-
-describe('uploadRecording', () => {
+describe('recording upload transport', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    initializeLogger({ pretty: false, level: 'silent' });
+    uploadGate.reset();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
   });
 
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it.each(['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'EADDRNOTAVAIL', 'ENOTFOUND', 'EAI_FAIL'])(
-    'retries %s before the TLS handshake completes',
-    async (code) => {
-      attempts((request) => request.emit('error', networkError(code)), succeed);
-
-      const uploading = upload();
-      await vi.runAllTimersAsync();
-      await uploading;
-
-      expect(submit).toHaveBeenCalledTimes(2);
-    },
-  );
-
-  it('retries when the connection does not complete within 30s', async () => {
-    attempts((request) => request.emit('socket', new EventEmitter()), succeed);
-
-    const uploading = upload();
-    await vi.advanceTimersByTimeAsync(29_999);
-    expect(submit).toHaveBeenCalledTimes(1);
-
-    await vi.runAllTimersAsync();
-    await uploading;
-    expect(submit).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not apply the connection timeout after the TLS handshake', async () => {
-    attempts((request) => {
-      connect(request);
-      setTimeout(() => respond(request), 60_000);
-    });
-
-    const uploading = upload();
-    await vi.advanceTimersByTimeAsync(60_000);
-    await uploading;
-
-    expect(submit).toHaveBeenCalledTimes(1);
-  });
-
-  it('waits for the RetryInfo delay before retrying', async () => {
-    const retryInfo = new RetryInfo({
-      retryDelay: new Duration({ seconds: 1n, nanos: 500_000_000 }),
-    });
-    attempts((request) => {
-      connect(request);
-      respond(request, 503, statusBody(Any.pack(retryInfo)));
-    }, succeed);
-
-    const uploading = upload();
-    await vi.advanceTimersByTimeAsync(1_499);
-    expect(submit).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(1);
-    await uploading;
-    expect(submit).toHaveBeenCalledTimes(2);
+    uploadGate.reset();
+    vi.restoreAllMocks();
   });
 
   it.each([
-    ['an empty RetryInfo', Any.pack(new RetryInfo())],
-    [
-      'a RetryInfo with a custom type URL host',
-      new Any({ typeUrl: 'example.com/google.rpc.RetryInfo' }),
-    ],
-  ])('retries %s immediately', async (_name, detail) => {
-    attempts((request) => {
-      connect(request);
-      respond(request, 503, statusBody(detail));
-    }, succeed);
+    {
+      name: 'default https port',
+      url: 'https://example.livekit.cloud',
+      expected: { protocol: 'https:', host: 'example.livekit.cloud' },
+    },
+    {
+      name: 'explicit port kept out of the hostname',
+      url: 'https://obs.example.com:8443',
+      expected: { protocol: 'https:', host: 'obs.example.com', port: 8443 },
+    },
+    {
+      name: 'plaintext scheme',
+      url: 'http://collector.internal',
+      expected: { protocol: 'http:', host: 'collector.internal' },
+    },
+  ])('targets the observability URL with a $name', async ({ url, expected }) => {
+    const submitSpy = mockFormSubmitSequence([{ statusCode: 200 }]);
 
-    const uploading = upload();
-    await vi.advanceTimersByTimeAsync(0);
-    await uploading;
+    await upload(url);
 
-    expect(submit).toHaveBeenCalledTimes(2);
+    const options = submitSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(options).toMatchObject({ path: '/observability/recordings/v0', ...expected });
+    // Node resolves `host` as a domain name, so a port must never be glued to it.
+    expect(options.host).not.toContain(':');
   });
 
-  it('does not retry a response without RetryInfo', async () => {
-    attempts((request) => {
-      connect(request);
-      respond(request, 503, statusBody());
+  it('preserves a base path on the observability URL', async () => {
+    const submitSpy = mockFormSubmitSequence([{ statusCode: 200 }]);
+
+    await upload('https://obs.example.com/lk');
+
+    expect(submitSpy.mock.calls[0]![0]).toMatchObject({
+      host: 'obs.example.com',
+      path: '/lk/observability/recordings/v0',
     });
-
-    await expect(upload()).rejects.toThrow('503 Service Unavailable');
-    expect(submit).toHaveBeenCalledTimes(1);
   });
 
-  it.each<[string, Action]>([
-    ['a total timeout', (request) => connect(request)],
-    [
-      'a total timeout while reading the response',
-      (request) => {
-        connect(request);
-        request.emit('response', new MockResponse(200, 'OK'));
-      },
-    ],
-    [
-      'a disconnect after the TLS handshake',
-      (request) => {
-        connect(request);
-        request.emit('error', networkError('ECONNRESET', 'response lost'));
-      },
-    ],
-    [
-      'a disconnect while reading the response',
-      (request) => {
-        connect(request);
-        request.emit('response', new MockResponse(200, 'OK'));
-        request.emit('error', networkError('ECONNRESET'));
-      },
-    ],
-    [
-      'a disconnect on a reused socket',
-      (request) => {
-        request.reusedSocket = true;
-        request.emit('socket', new EventEmitter());
-        request.emit('error', networkError('ECONNRESET', 'response lost'));
-      },
-    ],
-    [
-      'a TLS certificate failure',
-      (request) => request.emit('error', networkError('INVALID_PURPOSE')),
-    ],
-    ['a TLS protocol failure', (request) => request.emit('error', networkError('EPROTO'))],
-  ])('does not retry %s', async (_name, action) => {
-    attempts(action);
+  it('retries connection failures and rebuilds the multipart body', async () => {
+    const connectionError = Object.assign(new Error('connection failed'), {
+      code: 'ECONNREFUSED',
+    });
+    const submitSpy = mockFormSubmitSequence([{ error: connectionError }, { statusCode: 200 }]);
 
-    const rejection = expect(upload()).rejects.toThrow();
+    await upload();
+
+    expect(submitSpy).toHaveBeenCalledTimes(2);
+    expect(submitSpy.mock.instances[0]).not.toBe(submitSpy.mock.instances[1]);
+  });
+
+  it('stops after the initial connection attempt and three retries', async () => {
+    const connectionError = Object.assign(new Error('secret upstream address'), {
+      code: 'ETIMEDOUT',
+    });
+    const submitSpy = mockFormSubmitSequence([{ error: connectionError }]);
+    const error = await upload().then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('ETIMEDOUT');
+    expect((error as Error).message).not.toContain('secret upstream address');
+    expect(error).not.toHaveProperty('cause');
+    expect(submitSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNKNOWN_NETWORK_ERROR'])(
+    'does not retry non-allowlisted failure %s',
+    async (code) => {
+      const connectionError = Object.assign(new Error('connection failed'), { code });
+      const submitSpy = mockFormSubmitSequence([{ error: connectionError }]);
+
+      await expect(upload()).rejects.toThrow(code);
+
+      expect(submitSpy).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('retries an error response only when it contains RetryInfo', async () => {
+    const submitSpy = mockFormSubmitSequence([
+      { statusCode: 503, body: retryInfoBody() },
+      { statusCode: 200 },
+    ]);
+
+    await upload();
+
+    expect(submitSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry an ordinary error response', async () => {
+    const submitSpy = mockFormSubmitSequence([
+      { statusCode: 503, body: Buffer.from('secret customer response') },
+    ]);
+    const error = await upload().then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('status 503');
+    expect((error as Error).message).not.toContain('secret customer response');
+    expect(error).not.toHaveProperty('cause');
+    expect(submitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a response-body failure', async () => {
+    const submitSpy = mockFormSubmitSequence([
+      { statusCode: 200, responseError: new Error('secret response stream detail') },
+    ]);
+    const error = await upload().then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('response body error (status 200)');
+    expect((error as Error).message).not.toContain('secret response stream detail');
+    expect(error).not.toHaveProperty('cause');
+    expect(submitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries when connection setup exceeds 30 seconds', async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    const timeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((callback, timeout, ...args) =>
+        realSetTimeout(callback, timeout === 30_000 ? 0 : timeout, ...args),
+      );
+    const submitSpy = mockFormSubmitSequence([{ hangConnection: true }, { statusCode: 200 }]);
+
+    await upload();
+
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 30_000);
+    expect(submitSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails without retry when the full request exceeds 900 seconds', async () => {
+    vi.useFakeTimers();
+    let markResponseStarted!: () => void;
+    const responseStarted = new Promise<void>((resolve) => {
+      markResponseStarted = resolve;
+    });
+    const submitSpy = mockFormSubmitSequence([
+      { statusCode: 200, hangResponse: true, onResponse: markResponseStarted },
+    ]);
+    const resultPromise = upload().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    await responseStarted;
     await vi.advanceTimersByTimeAsync(900_000);
-    await rejection;
+    const error = await resultPromise;
 
-    expect(submit).toHaveBeenCalledTimes(1);
-  });
-
-  it('stops after 3 retries and throws the last error', async () => {
-    attempts((request) => request.emit('error', networkError('ETIMEDOUT', 'connection timed out')));
-
-    const rejection = expect(upload()).rejects.toThrow('connection timed out');
-    await vi.runAllTimersAsync();
-    await rejection;
-
-    expect(submit).toHaveBeenCalledTimes(4);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('request timed out after 900 seconds');
+    expect(submitSpy).toHaveBeenCalledTimes(1);
   });
 });

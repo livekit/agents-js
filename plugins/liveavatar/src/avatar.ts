@@ -80,7 +80,7 @@ export interface StartOptions {
  *
  * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py
  */
-export class AvatarSession {
+export class AvatarSession extends voice.AvatarSession {
   private avatarId: string | null;
   private apiUrl?: string;
   private apiKey: string;
@@ -117,6 +117,7 @@ export class AvatarSession {
   #logger = log();
 
   constructor(options: AvatarSessionOptions = {}) {
+    super();
     this.avatarId = options.avatarId ?? process.env.LIVEAVATAR_AVATAR_ID ?? null;
     this.apiUrl = options.apiUrl;
     this.apiKey = options.apiKey ?? process.env.LIVEAVATAR_API_KEY ?? '';
@@ -133,6 +134,14 @@ export class AvatarSession {
     });
   }
 
+  override get avatarIdentity(): string {
+    return this.avatarParticipantIdentity;
+  }
+
+  override get provider(): string {
+    return 'liveavatar';
+  }
+
   /**
    * Start the avatar session and wire it into the agent session's audio output.
    *
@@ -143,6 +152,8 @@ export class AvatarSession {
     room: Room,
     options: StartOptions = {},
   ): Promise<void> {
+    await super.start(agentSession, room);
+
     this.agentSession = agentSession;
     this.room = room;
 
@@ -172,7 +183,7 @@ export class AvatarSession {
     }
 
     const at = new AccessToken(livekitApiKey, livekitApiSecret, {
-      identity: this.avatarParticipantIdentity,
+      identity: this.avatarIdentity,
       name: this.avatarParticipantName,
     });
     at.kind = 'agent';
@@ -235,16 +246,6 @@ export class AvatarSession {
     this.mainTaskPromise = this.mainTask().catch((e) => {
       this.#logger.warn({ error: String(e) }, 'LiveAvatar main task failed');
     });
-
-    // Best-effort cleanup on job shutdown.
-    try {
-      const jobCtx = getJobContext();
-      jobCtx.addShutdownCallback(async () => {
-        await this.aclose();
-      });
-    } catch {
-      // No active job context — caller is expected to manage lifecycle.
-    }
   }
 
   /**
@@ -263,6 +264,7 @@ export class AvatarSession {
         // logged in mainTask
       }
     }
+    await super.aclose();
   }
 
   /**

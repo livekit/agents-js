@@ -1,8 +1,24 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
+import { AudioFrame } from '@livekit/rtc-node';
+import { ROOT_CONTEXT, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { EventEmitter } from 'node:events';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as jobModule from '../../job.js';
+import { RealtimeModel } from '../../llm/index.js';
+import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
+import { setTracerProvider, tracer } from '../../telemetry/index.js';
+import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
+import { AgentSessionEventTypes, CloseReason, createCloseEvent } from '../events.js';
+import { AudioInput, AudioOutput, TextOutput } from '../io.js';
+import type { TimedString } from '../io.js';
+import { RoomIO } from './room_io.js';
+
+type RoomIOArgs = ConstructorParameters<typeof RoomIO>[0];
 
 /**
  * Regression tests proving WritableStream.close() rejects when the writer is
@@ -34,5 +50,519 @@ describe('RoomIO WritableStream close guard', () => {
 
     // Proves the bug: close() on errored writer rejects — RoomIO.close() must guard this.
     await expect(writer.close()).rejects.toThrow();
+  });
+});
+
+function createFakeRoom() {
+  const emitter = new EventEmitter();
+
+  return {
+    name: 'test-room',
+    isConnected: false,
+    remoteParticipants: new Map(),
+    localParticipant: { identity: 'agent' },
+    on: vi.fn((event: string | symbol, listener: (...args: unknown[]) => void) => {
+      emitter.on(event, listener);
+      return emitter;
+    }),
+    off: vi.fn((event: string | symbol, listener: (...args: unknown[]) => void) => {
+      emitter.off(event, listener);
+      return emitter;
+    }),
+    registerTextStreamHandler: vi.fn(),
+    unregisterTextStreamHandler: vi.fn(),
+  };
+}
+
+type FakeSession = {
+  input: { audio: AudioInput | null };
+  output: { audio: AudioOutput | null; transcription: TextOutput | null };
+  currentAgent?: { llm?: RealtimeModel };
+  llm?: RealtimeModel;
+  on: ReturnType<typeof vi.fn>;
+  off: ReturnType<typeof vi.fn>;
+  emit: (event: string | symbol, value: unknown) => boolean;
+  _closeSoon: ReturnType<typeof vi.fn>;
+};
+
+function createFakeSession(llm?: RealtimeModel): FakeSession {
+  const emitter = new EventEmitter();
+
+  return {
+    input: { audio: null },
+    output: { audio: null, transcription: null },
+    currentAgent: undefined,
+    llm,
+    on: vi.fn((event: string | symbol, listener: (...args: unknown[]) => void) => {
+      emitter.on(event, listener);
+      return emitter;
+    }),
+    off: vi.fn((event: string | symbol, listener: (...args: unknown[]) => void) => {
+      emitter.off(event, listener);
+      return emitter;
+    }),
+    emit: (event: string | symbol, value: unknown) => emitter.emit(event, value),
+    _closeSoon: vi.fn(),
+  };
+}
+
+describe('RoomIO agent state attributes', () => {
+  it('handles a failed update and publishes later state changes', async () => {
+    const error = new Error('attribute update failed');
+    const setAttributes = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined);
+    const room = {
+      ...createFakeRoom(),
+      localParticipant: { identity: 'agent', setAttributes },
+    };
+    const session = createFakeSession();
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false },
+      outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+    });
+    const errorSpy = vi.spyOn(log(), 'error');
+
+    try {
+      roomIO.start();
+      room.isConnected = true;
+      session.emit(AgentSessionEventTypes.AgentStateChanged, {
+        oldState: 'listening',
+        newState: 'speaking',
+      });
+      await vi.waitFor(() => {
+        expect(errorSpy).toHaveBeenCalledWith(error, 'Failed to update agent state attributes');
+      });
+
+      session.emit(AgentSessionEventTypes.AgentStateChanged, {
+        oldState: 'speaking',
+        newState: 'listening',
+      });
+      expect(setAttributes).toHaveBeenNthCalledWith(1, { 'lk.agent.state': 'speaking' });
+      expect(setAttributes).toHaveBeenNthCalledWith(2, { 'lk.agent.state': 'listening' });
+    } finally {
+      await roomIO.close();
+      errorSpy.mockRestore();
+    }
+
+    session.emit(AgentSessionEventTypes.AgentStateChanged, { newState: 'speaking' });
+    expect(setAttributes).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('RoomIO native audio output', () => {
+  it('uses a 200ms source queue by default', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false },
+      outputOptions: { transcriptionEnabled: false },
+    });
+
+    roomIO.start();
+
+    const participantAudioOutput = Reflect.get(roomIO, 'participantAudioOutput');
+    expect(Reflect.get(participantAudioOutput, 'options').queueSizeMs).toBe(200);
+    expect(Reflect.get(participantAudioOutput, 'audioSource').queueSize).toBe(200);
+
+    await roomIO.close();
+  });
+});
+
+class ExternalAudioOutput extends AudioOutput {
+  readonly capturedFrames: AudioFrame[] = [];
+  readonly close = vi.fn(async () => {});
+
+  constructor() {
+    super(24000);
+  }
+
+  override async captureFrame(frame: AudioFrame): Promise<void> {
+    await super.captureFrame(frame);
+    this.capturedFrames.push(frame);
+  }
+
+  clearBuffer(): void {}
+}
+
+describe('RoomIO external audio output', () => {
+  it('preserves synchronized external audio without taking ownership', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const externalOutput = new ExternalAudioOutput();
+    session.output.audio = externalOutput;
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false },
+    });
+
+    roomIO.start();
+
+    expect(Reflect.get(roomIO, 'participantAudioOutput')).toBeUndefined();
+    expect(session.output.audio).not.toBe(externalOutput);
+    const frame = new AudioFrame(new Int16Array(240), 24000, 1, 240);
+    await session.output.audio!.captureFrame(frame);
+    expect(externalOutput.capturedFrames).toEqual([frame]);
+
+    await roomIO.close();
+    expect(externalOutput.close).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { transcriptionEnabled: false, syncTranscription: true },
+    { transcriptionEnabled: true, syncTranscription: false },
+  ])(
+    'preserves external audio unchanged when transcription=$transcriptionEnabled and sync=$syncTranscription',
+    async ({ transcriptionEnabled, syncTranscription }) => {
+      const room = createFakeRoom();
+      const session = createFakeSession();
+      const externalOutput = new ExternalAudioOutput();
+      session.output.audio = externalOutput;
+      const roomIO = new RoomIO({
+        agentSession: session as unknown as RoomIOArgs['agentSession'],
+        room: room as unknown as RoomIOArgs['room'],
+        inputOptions: { audioEnabled: false, textEnabled: false },
+        outputOptions: { transcriptionEnabled, syncTranscription },
+      });
+
+      roomIO.start();
+
+      expect(session.output.audio).toBe(externalOutput);
+      expect(Reflect.get(roomIO, 'participantAudioOutput')).toBeUndefined();
+
+      await roomIO.close();
+      expect(externalOutput.close).not.toHaveBeenCalled();
+    },
+  );
+});
+
+class ExternalAudioInput extends AudioInput {
+  override close = vi.fn(async () => {});
+}
+
+class ExternalTextOutput extends TextOutput {
+  readonly captured: (string | TimedString)[] = [];
+
+  async captureText(text: string | TimedString): Promise<void> {
+    this.captured.push(text);
+  }
+
+  flush(): void {}
+}
+
+describe('RoomIO external audio input', () => {
+  it('preserves a pre-set input.audio without creating a participant input', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const externalInput = new ExternalAudioInput();
+    session.input.audio = externalInput;
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { textEnabled: false },
+      outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+    });
+
+    roomIO.start();
+
+    expect(Reflect.get(roomIO, 'audioInput')).toBeUndefined();
+    expect(session.input.audio).toBe(externalInput);
+
+    await roomIO.close();
+    expect(externalInput.close).not.toHaveBeenCalled();
+  });
+});
+
+describe('RoomIO external transcription output', () => {
+  it('preserves a pre-set output.transcription and skips the room transcription outputs', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const externalText = new ExternalTextOutput();
+    session.output.transcription = externalText;
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false },
+      outputOptions: { audioEnabled: false },
+    });
+
+    roomIO.start();
+
+    expect(session.output.transcription).toBe(externalText);
+    expect(Reflect.get(roomIO, 'userTranscriptOutput')).toBeUndefined();
+    expect(Reflect.get(roomIO, 'agentTranscriptOutput')).toBeUndefined();
+    expect(Reflect.get(roomIO, 'transcriptionSynchronizer')).toBeUndefined();
+
+    await roomIO.close();
+  });
+});
+
+class FakeRealtimeModel extends RealtimeModel {
+  constructor(nativeTranscriptSync?: boolean) {
+    super({
+      messageTruncation: true,
+      turnDetection: true,
+      userTranscription: true,
+      autoToolReplyGeneration: true,
+      audioOutput: true,
+      manualFunctionCalls: true,
+      nativeTranscriptSync,
+    });
+  }
+
+  get model(): string {
+    return 'fake-realtime';
+  }
+
+  session(): never {
+    throw new Error('not used');
+  }
+
+  async close(): Promise<void> {}
+}
+
+describe('RoomIO native transcript synchronization', () => {
+  it('disables SDK synchronization when the initial realtime model synchronizes natively', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession(new FakeRealtimeModel(true));
+    const roomIO = new RoomIO({
+      // @ts-expect-error This focused test uses the minimal AgentSession surface RoomIO consumes.
+      agentSession: session,
+      // @ts-expect-error This focused test uses the minimal Room surface RoomIO consumes.
+      room,
+      inputOptions: { audioEnabled: false, textEnabled: false },
+    });
+
+    roomIO.start();
+
+    const synchronizer = Reflect.get(roomIO, 'transcriptionSynchronizer');
+    expect(synchronizer.enabled).toBe(false);
+    await roomIO.close();
+  });
+
+  it.each([false, undefined])(
+    'keeps SDK synchronization enabled when native synchronization is %s',
+    async (nativeTranscriptSync) => {
+      const room = createFakeRoom();
+      const session = createFakeSession(new FakeRealtimeModel(nativeTranscriptSync));
+      const roomIO = new RoomIO({
+        // @ts-expect-error This focused test uses the minimal AgentSession surface RoomIO consumes.
+        agentSession: session,
+        // @ts-expect-error This focused test uses the minimal Room surface RoomIO consumes.
+        room,
+        inputOptions: { audioEnabled: false, textEnabled: false },
+      });
+
+      roomIO.start();
+
+      const synchronizer = Reflect.get(roomIO, 'transcriptionSynchronizer');
+      expect(synchronizer.enabled).toBe(true);
+      await roomIO.close();
+    },
+  );
+
+  it.each([
+    { initial: true, handoff: false, expected: true },
+    { initial: false, handoff: true, expected: false },
+    { initial: true, handoff: undefined, expected: true },
+  ])(
+    'updates SDK synchronization after handoff from $initial to $handoff',
+    async ({ initial, handoff, expected }) => {
+      const room = createFakeRoom();
+      const session = createFakeSession(new FakeRealtimeModel(initial));
+      const roomIO = new RoomIO({
+        // @ts-expect-error This focused test uses the minimal AgentSession surface RoomIO consumes.
+        agentSession: session,
+        // @ts-expect-error This focused test uses the minimal Room surface RoomIO consumes.
+        room,
+        inputOptions: { audioEnabled: false, textEnabled: false },
+      });
+      roomIO.start();
+
+      session.currentAgent = { llm: new FakeRealtimeModel(handoff) };
+      session.emit(AgentSessionEventTypes.ConversationItemAdded, {
+        item: { type: 'agent_handoff' },
+      });
+
+      const synchronizer = Reflect.get(roomIO, 'transcriptionSynchronizer');
+      expect(synchronizer.enabled).toBe(expected);
+      await roomIO.close();
+    },
+  );
+});
+
+describe('RoomIO deleteRoomOnClose', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('does not delete the room by default when the session closes', async () => {
+    const deleteRoom = vi.fn(async () => {});
+    vi.spyOn(jobModule, 'getJobContext').mockReturnValue({
+      deleteRoom,
+    } as unknown as ReturnType<typeof jobModule.getJobContext>);
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: {
+        audioEnabled: false,
+        textEnabled: false,
+      },
+      outputOptions: {
+        audioEnabled: false,
+        transcriptionEnabled: false,
+      },
+    });
+
+    roomIO.start();
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+    await roomIO.close();
+
+    expect(deleteRoom).not.toHaveBeenCalled();
+  });
+
+  it('deletes the room once when deleteRoomOnClose is enabled and the session closes', async () => {
+    const deleteRoom = vi.fn(async () => {});
+    vi.spyOn(jobModule, 'getJobContext').mockReturnValue({
+      deleteRoom,
+    } as unknown as ReturnType<typeof jobModule.getJobContext>);
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: {
+        audioEnabled: false,
+        textEnabled: false,
+        deleteRoomOnClose: true,
+      },
+      outputOptions: {
+        audioEnabled: false,
+        transcriptionEnabled: false,
+      },
+    });
+
+    roomIO.start();
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+    await roomIO.close();
+
+    expect(deleteRoom).toHaveBeenCalledTimes(1);
+    expect(deleteRoom).toHaveBeenCalledWith(room.name);
+  });
+
+  it('uses the job context captured at construction when close runs outside job context', async () => {
+    const deleteRoom = vi.fn(async () => {});
+    vi.spyOn(jobModule, 'getJobContext')
+      .mockReturnValueOnce({
+        deleteRoom,
+      } as unknown as ReturnType<typeof jobModule.getJobContext>)
+      .mockReturnValue(undefined);
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: {
+        audioEnabled: false,
+        textEnabled: false,
+        deleteRoomOnClose: true,
+      },
+      outputOptions: {
+        audioEnabled: false,
+        transcriptionEnabled: false,
+      },
+    });
+
+    roomIO.start();
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+    await roomIO.close();
+
+    expect(deleteRoom).toHaveBeenCalledTimes(1);
+    expect(deleteRoom).toHaveBeenCalledWith(room.name);
+  });
+
+  it('waits up to the API timeout for an in-flight room deletion during close', async () => {
+    vi.useFakeTimers();
+    const deleteRoom = vi.fn(() => new Promise<void>(() => {}));
+    vi.spyOn(jobModule, 'getJobContext').mockReturnValue({
+      deleteRoom,
+    } as unknown as ReturnType<typeof jobModule.getJobContext>);
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: {
+        audioEnabled: false,
+        textEnabled: false,
+        deleteRoomOnClose: true,
+      },
+      outputOptions: {
+        audioEnabled: false,
+        transcriptionEnabled: false,
+      },
+    });
+
+    roomIO.start();
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+
+    let closed = false;
+    const closePromise = roomIO.close().then(() => {
+      closed = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_API_CONNECT_OPTIONS.timeoutMs - 1);
+    expect(closed).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await closePromise;
+    expect(closed).toBe(true);
+  });
+});
+
+describe('RoomIO participant switch tracing', () => {
+  it('parents a track wait started after startup to the session root', async () => {
+    // the startup link waits under session_start; a switch made later (a transfer, a tool)
+    // must still land under agent_session rather than become a root span, since the SDK's
+    // event paths carry no ambient context
+    const originalProvider = tracer.getProvider();
+    const exporter = new InMemorySpanExporter();
+    const provider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    setTracerProvider(provider);
+    const sessionSpan = provider.getTracer('test').startSpan('agent_session');
+    try {
+      const room = createFakeRoom();
+      const session = createFakeSession() as FakeSession & { rootSpanContext?: unknown };
+      session.rootSpanContext = trace.setSpan(ROOT_CONTEXT, sessionSpan);
+      const roomIO = new RoomIO({
+        agentSession: session as unknown as RoomIOArgs['agentSession'],
+        room: room as unknown as RoomIOArgs['room'],
+        inputOptions: { textEnabled: false },
+        outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+      });
+      roomIO.start();
+      expect(Reflect.get(roomIO, 'audioInput')).toBeDefined();
+
+      roomIO.setParticipant('bob');
+      roomIO.setParticipant(null); // ends the wait without a track
+      await roomIO.close();
+
+      const waits = exporter.getFinishedSpans().filter((s) => s.name === 'wait_for_audio_track');
+      expect(waits).toHaveLength(1);
+      expect(waits[0]!.parentSpanContext?.spanId).toBe(sessionSpan.spanContext().spanId);
+    } finally {
+      sessionSpan.end();
+      setTracerProvider(originalProvider);
+      await provider.shutdown();
+    }
   });
 });

@@ -77,6 +77,9 @@ export type TTSLanguages =
 /** Supported output sample rates in Hz */
 export type TTSSampleRates = 8000 | 16000 | 22050 | 24000 | 32000 | 44100 | 48000;
 
+/** Sarvam TTS output codecs supported by this plugin. */
+export type TTSOutputAudioCodec = 'wav' | 'linear16' | 'mulaw' | 'alaw';
+
 // ---------------------------------------------------------------------------
 // STT model types
 // ---------------------------------------------------------------------------

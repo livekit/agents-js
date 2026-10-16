@@ -506,8 +506,12 @@ For more information, read the example agent file under the `examples` directory
 
 ### Run an example agent under the `examples` directory
 
-`pnpm build && pnpm dlx tsx ./examples/src/my_agent.ts dev|download-files --log-level=debug|info(default)`
-
+```shell
+cd examples
+pnpm install
+npx livekit-agents download-files
+pnpm build && node ./examples/src/my_agent.ts dev
+```
 
 ## License
 
@@ -526,7 +530,7 @@ For plugin components such as STT, TTS, LLM. You can debug these individual comp
 
 When testing the inference LLM (`inference.LLM`):
 
-1. **Model Names**: Always use the full model names from `agents/src/inference/models.ts`. Use `'openai/gpt-4o-mini'` instead of just `'gpt-4o-mini'`.
+1. **Model Names**: Always use the full model names from `agents/src/inference/llm.ts`. Use `'openai/gpt-4o-mini'` instead of just `'gpt-4o-mini'`.
 
 2. **Logger Initialization**: Always initialize the logger before using any LLM functionality:
    ```typescript

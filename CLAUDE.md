@@ -16,10 +16,10 @@ LiveKit Agents for Node.js — a TypeScript framework for building realtime, mul
 
 - **`agents/`** — Core framework (`@livekit/agents`). Agent orchestration, LLM/STT/TTS abstractions, voice pipeline, metrics, telemetry, IPC/process pooling, and the CLI.
 - **`plugins/`** — Provider plugins (`@livekit/agents-plugin-*`). Each implements one or more of: LLM, STT, TTS, VAD, EOU (end-of-utterance), Realtime, or Avatar.
-- **`examples/`** — Example agents (private, not published). Run with `pnpm dlx tsx ./examples/src/<file>.ts dev`.
+- **`examples/`** — Example agents (private, not published). Run with `pnpm build && node ./examples/src/<file>.ts dev`.
 - **`tests/e2e/`** — End-to-end tests via Docker (separate from unit tests co-located in each package).
 
-**Tooling:** pnpm 9.7.0 workspaces, Turborepo for builds, tsup for bundling (CJS + ESM), TypeScript 5.4+, Vitest for tests, Changesets for versioning.
+**Tooling:** pnpm 11 workspaces, Turborepo for builds, tsup for bundling (CJS + ESM), TypeScript 5.4+, Vitest for tests, Changesets for versioning.
 
 ## Common Commands
 
@@ -29,8 +29,8 @@ pnpm build:agents           # Build only @livekit/agents and its deps
 pnpm build:plugins          # Build only plugins and their deps
 pnpm clean:build            # Clean dist/ dirs then rebuild
 pnpm test                   # Run all tests (vitest)
-pnpm test -- --testPathPattern=agents/src/llm  # Run tests by path
-pnpm test -- --testNamePattern="chat context"  # Run tests by name
+pnpm test agents/src/llm            # Run tests by path
+pnpm test -t "chat context"         # Run tests by name
 pnpm test:watch             # Watch mode
 pnpm lint                   # ESLint all packages
 pnpm lint:fix               # ESLint with auto-fix
@@ -43,10 +43,27 @@ pnpm api:update             # Update API declarations
 ### Running an example agent
 
 ```bash
-pnpm build && pnpm dlx tsx ./examples/src/basic_agent.ts dev --log-level=debug
+pnpm build && node ./examples/src/basic_agent.ts dev --log-level=debug
 ```
 
 Required env vars: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, plus provider keys (e.g. `OPENAI_API_KEY`).
+
+> **Rule (must follow before handing off to the user to run any example/agent file):**
+> Always run `pnpm build` first and iterate on TypeScript / dependency errors until it exits 0. Never tell the user to `node ./examples/src/<file>.ts` (or any `.ts` entrypoint) until the build succeeds — this includes after editing example files, after modifying framework code that breaks `tsc`, and after copy-pasting reproductions from external sources. If the build fails, fix the errors yourself (add missing deps, fix outdated API usage, update types) before asking the user to run anything.
+
+### Pre-downloading plugin assets (for Docker builds)
+
+`@livekit/agents` ships a `livekit-agents` bin with a `download-files` subcommand that discovers installed `@livekit/agents-plugin-*` packages from `node_modules` and runs each plugin's `downloadFiles()` (e.g. HuggingFace models for the turn detector) — without loading the user's agent code. Use it in Dockerfiles to separate dependency installation from app code so the download layer can be cached:
+
+```dockerfile
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+RUN npx livekit-agents download-files
+COPY src/ ./src
+RUN pnpm build
+```
+
+The `download-files` subcommand on `cli.runApp()` is deprecated for this purpose since it requires loading the agent file first.
 
 ### Debugging individual plugins
 
@@ -81,15 +98,15 @@ Subdirectories: `room_io/` (LiveKit Room I/O), `transcription/` (word-level sync
 
 - **`ChatContext`** — Chronologically ordered conversation state. Supports action-aware history summarization via `_summarize(llm, { keepLastTurns })` to compress old messages while preserving tool execution results.
 - **Tool system** — `llm.tool()` with Zod schemas for parameters. `handoff()` for multi-agent transfers.
-- **`FallbackAdapter`** — Multi-provider LLM failover with availability tracking.
-- **Provider format adapters** — `provider_format/openai.ts` and `provider_format/google.ts` for model-agnostic code.
+- **`FallbackAdapter`** — Agent-side multi-provider LLM failover with availability tracking.
+- **Provider format adapters** — `provider_format/openai.ts`, `provider_format/google.ts`, and `provider_format/mistralai.ts` for model-agnostic code.
 
 ### Other Core Modules
 
-- **STT** (`stt/`): `SpeechStream` with automatic retry. `StreamAdapter` converts non-streaming STT + VAD to streaming.
-- **TTS** (`tts/`): `SynthesizeStream`, `ChunkedStream`. `FallbackAdapter` for multi-provider failover. `StreamAdapter` for non-streaming providers.
+- **STT** (`stt/`): `SpeechStream` with automatic retry. `FallbackAdapter` for agent-side multi-provider failover. `StreamAdapter` converts non-streaming STT + VAD to streaming.
+- **TTS** (`tts/`): `SynthesizeStream`, `ChunkedStream`. `FallbackAdapter` for agent-side multi-provider failover. `StreamAdapter` for non-streaming providers.
 - **VAD** (`vad.ts`): Voice Activity Detection interface. Silero plugin is the primary implementation.
-- **Inference** (`inference/`): LiveKit Inference Gateway clients (LLM, STT, TTS). Always use full `provider/model` format (e.g., `'openai/gpt-4o-mini'`). Also includes `interruption/` for adaptive interruption detection via ML models.
+- **Inference** (`inference/`): LiveKit Inference Gateway clients (LLM, STT, TTS, realtime) with server-side fallback support. Always use full `provider/model` format (e.g., `'openai/gpt-4o-mini'`). Also includes `interruption/` for adaptive interruption detection via ML models.
 - **Stream** (`stream/`): Composable Web Streams API primitives (`StreamChannel`, `DeferredStream`, `MultiInputStream`).
 - **IPC** (`ipc/`): Process pool for running agents in child processes. Two-way IPC: child sends inference requests back to parent.
 - **Worker** (`worker.ts`): Main process connecting to LiveKit server, receives job assignments, spawns agent processes.
@@ -99,7 +116,7 @@ Subdirectories: `room_io/` (LiveKit Room I/O), `transcription/` (word-level sync
 
 ### Remote Sessions (`voice/remote_session.ts`)
 
-Wire protocol for distributed agents via LiveKit room message channels. `SessionTransport` abstraction with `RoomSessionTransport` implementation.
+Wire protocol for distributed agents. `SessionTransport` abstraction with `RoomSessionTransport` (LiveKit room channels) and `TcpSessionTransport` (raw TCP socket) implementations.
 
 ### Plugins (`plugins/`)
 
@@ -107,13 +124,13 @@ Each extends `Plugin` base class, auto-registers on import via `Plugin.registerP
 
 Plugin capabilities by type:
 
-- **LLM**: openai, google, baseten
-- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3)
-- **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3)
+- **LLM**: openai, google, baseten, mistralai
+- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai, inworld, cartesia
+- **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3), mistralai, fishaudio, hume, speechify
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
-- **Realtime**: openai (+ responses/, ws/ modules), google (beta), xai, phonic
-- **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar
+- **Realtime**: openai (+ responses/, ws/ modules), google, xai, phonic
+- **Avatar**: trugen, lemonslice, bey, anam, liveavatar, did, protoface
 - **Test mocks**: test (private, for unit tests)
 
 ### AsyncLocalStorage Patterns
@@ -126,6 +143,8 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 
 ## Code Conventions
 
+- **Lifecycle changes**: Follow the [lifecycle review checklist](CONTRIBUTING.md#review-lifecycle-changes)
+  for session helpers, shutdown, and cleanup. Apply it to Python ports too.
 - **License header** required on every new file:
   ```
   // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
@@ -144,8 +163,9 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 - **Framework**: Vitest with 5s default timeout.
 - **Pattern**: `*.test.ts` files co-located with source.
 - **Snapshots**: Used in LLM chat/tool context tests (`agents/src/llm/__snapshots__/`).
-- **Inference LLM tests**: Always use full model names from `agents/src/inference/models.ts` (e.g. `'openai/gpt-4o-mini'`, not `'gpt-4o-mini'`). Initialize logger first: `initializeLogger({ pretty: true })`.
+- **Inference LLM tests**: Always use full model names from `agents/src/inference/llm.ts` (e.g. `'openai/gpt-4o-mini'`, not `'gpt-4o-mini'`). Initialize logger first: `initializeLogger({ pretty: true })`.
 - **Test plugin**: `@livekit/agents-plugins-test` provides mock LLM, STT, TTS for unit tests without external APIs.
+- **STT testing utilities**: `stt.testing.FakeSTT` (from `@livekit/agents`) provides a configurable test harness for unit testing STT infrastructure (e.g. `FallbackAdapter`) with scripted transcripts, exceptions, timeouts, and observability channels.
 - **PR validation for major changes**: Verify `restaurant_agent.ts` and `realtime_agent.ts` work properly in [Agent Playground](https://agents-playground.livekit.io).
 
 ## Porting from Python (`livekit-agents`)

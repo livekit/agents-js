@@ -9,6 +9,7 @@ import {
   ChatContext,
   FunctionCall,
   FunctionCallOutput,
+  Instructions,
 } from '../chat_context.js';
 import { serializeImage } from '../utils.js';
 import { toChatCtx, toResponsesChatCtx } from './openai.js';
@@ -52,6 +53,23 @@ describe('toChatCtx', () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ role: 'system', content: 'You are a helpful assistant' });
     expect(result[1]).toEqual({ role: 'user', content: 'Hello' });
+  });
+
+  it('should render Instructions as their resolved value', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'system',
+      content: [
+        new Instructions({ audio: 'audio instructions', text: 'text instructions' }).asModality(
+          'text',
+        ),
+      ],
+    });
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+
+    const result = await toChatCtx(ctx);
+
+    expect(result[0]).toEqual({ role: 'system', content: 'text instructions' });
   });
 
   it('should handle multi-line text content', async () => {
@@ -695,6 +713,38 @@ describe('toResponsesChatCtx', () => {
     expect(result[1]).toEqual({ role: 'assistant', content: 'Hi there!' });
   });
 
+  it('should resend the assistant phase captured from the Responses API', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'hello' });
+    ctx.addMessage({
+      role: 'assistant',
+      content: 'thinking out loud',
+      extra: { openai: { phase: 'commentary' } },
+    });
+    ctx.addMessage({
+      role: 'assistant',
+      content: 'the answer',
+      extra: { openai: { phase: 'final_answer' } },
+    });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    const assistantItems = result.filter((item) => item.role === 'assistant');
+    expect(assistantItems.map((item) => item.phase)).toEqual(['commentary', 'final_answer']);
+  });
+
+  it('should not add a phase key when the assistant message has no phase', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'hello' });
+    ctx.addMessage({ role: 'assistant', content: 'hi there' });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    const assistantItems = result.filter((item) => item.role === 'assistant');
+    expect(assistantItems).not.toHaveLength(0);
+    expect(assistantItems.every((item) => !('phase' in item))).toBe(true);
+  });
+
   it('should handle system messages', async () => {
     const ctx = ChatContext.empty();
     ctx.addMessage({ role: 'system', content: 'You are a helpful assistant' });
@@ -705,6 +755,23 @@ describe('toResponsesChatCtx', () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ role: 'system', content: 'You are a helpful assistant' });
     expect(result[1]).toEqual({ role: 'user', content: 'Hello' });
+  });
+
+  it('should render Instructions as their resolved value', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'system',
+      content: [
+        new Instructions({ audio: 'audio instructions', text: 'text instructions' }).asModality(
+          'text',
+        ),
+      ],
+    });
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result[0]).toEqual({ role: 'system', content: 'text instructions' });
   });
 
   it('should handle multi-line text content', async () => {

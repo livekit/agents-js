@@ -9,6 +9,7 @@ import {
   LocalAudioTrack,
   type LocalTrackPublication,
   type Participant,
+  ParticipantKind,
   type RemoteTrackPublication,
   type Room,
   RoomEvent,
@@ -16,16 +17,40 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import type { Context } from '@opentelemetry/api';
 import {
+  ATTRIBUTE_PUBLISH_ON_BEHALF,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
+  CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS,
   TOPIC_TRANSCRIPTION,
 } from '../../constants.js';
 import { log } from '../../log.js';
+import { traceTypes, tracer } from '../../telemetry/index.js';
+import {
+  type ExpressiveTag,
+  TranscriptMarkupStripper,
+  expressionAttribute,
+  splitAllMarkup,
+  stripAllMarkup,
+} from '../../tts/provider_format.js';
 import { Future, Task, shortuuid } from '../../utils.js';
 import { AudioOutput, TextOutput, type TimedString, isTimedString } from '../io.js';
 import { findMicrophoneTrackId } from '../transcription/index.js';
+
+export interface TranscriptionOutputOptions {
+  /**
+   * Whether expressive markup may be present in the text reaching this sink.
+   *
+   * Evaluated per chunk, because the session latches it on the first turn that injects
+   * the markup guide — after this sink is constructed. Defaults to "never", so a session
+   * that doesn't use expressive mode publishes its transcript untouched: the strip works
+   * off the union of every provider's tag names, and an agent that legitimately writes
+   * `<break time="1s"/>` should not have it silently deleted.
+   */
+  expressiveEnabled?: () => boolean;
+}
 
 abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected room: Room;
@@ -36,11 +61,18 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected latestText: string = '';
   protected currentId: string = this.generateCurrentId();
   protected logger = log();
+  protected expressiveEnabled: () => boolean;
 
-  constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null) {
+  constructor(
+    room: Room,
+    isDeltaStream: boolean,
+    participant: Participant | string | null,
+    options: TranscriptionOutputOptions = {},
+  ) {
     super();
     this.room = room;
     this.isDeltaStream = isDeltaStream;
+    this.expressiveEnabled = options.expressiveEnabled ?? (() => false);
 
     this.room.on(RoomEvent.TrackPublished, this.onTrackPublished);
     this.room.on(RoomEvent.LocalTrackPublished, this.onLocalTrackPublished);
@@ -131,7 +163,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected abstract handleFlush(): void;
 }
 
-export interface ParticipantTranscriptionOutputOptions {
+export interface ParticipantTranscriptionOutputOptions extends TranscriptionOutputOptions {
   /** When true, each chunk sent on the `lk.transcription` datastream topic is serialized
    *  as a JSON object with `text`, and `start_time`/`end_time`/`confidence`/
    *  `start_time_offset` when the captured value is a TimedString. Each object is
@@ -143,6 +175,13 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   private writer: TextStreamWriter | null = null;
   private flushTask: Task<void> | null = null;
   private jsonFormat: boolean;
+  /**
+   * Per-segment markup stripping: delta streams strip incrementally (buffering a tag split
+   * across chunks); non-delta streams re-strip the full text each time and keep the latest
+   * tags in {@link segmentTags} for the expression attribute.
+   */
+  private stripper = new TranscriptMarkupStripper();
+  private segmentTags: ExpressiveTag[] = [];
 
   constructor(
     room: Room,
@@ -150,7 +189,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     participant: Participant | string | null,
     options: ParticipantTranscriptionOutputOptions = {},
   ) {
-    super(room, isDeltaStream, participant);
+    super(room, isDeltaStream, participant, options);
     this.jsonFormat = options.jsonFormat ?? false;
   }
 
@@ -159,30 +198,6 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       return;
     }
 
-    // latestText must hold the encoded payload so non-delta flush (FINAL=true) republishes the
-    // same newline-delimited JSON format as the interim chunks.
-    const payload = this.jsonFormat
-      ? this.encodeJsonChunk(text)
-      : isTimedString(text)
-        ? text.text
-        : text;
-    this.latestText = payload;
-    await this.handleCaptureText(payload);
-  }
-
-  private encodeJsonChunk(text: string | TimedString): string {
-    const isTimed = isTimedString(text);
-    const message = new pb.TimedString({
-      text: isTimed ? text.text : text,
-      startTime: isTimed ? text.startTime : undefined,
-      endTime: isTimed ? text.endTime : undefined,
-      confidence: isTimed ? text.confidence : undefined,
-      startTimeOffset: isTimed ? text.startTimeOffset : undefined,
-    });
-    return message.toJsonString({ useProtoFieldName: true }) + '\n';
-  }
-
-  protected async handleCaptureText(text: string): Promise<void> {
     if (this.flushTask && !this.flushTask.done) {
       await this.flushTask.result;
     }
@@ -192,17 +207,78 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       this.capturing = true;
     }
 
+    // the raw text (expressive markup intact) arrives here; publish only the visible text.
+    // Skip a chunk that strips to nothing (a partial tag still buffering, or a markup-only
+    // token) so the transcript cadence isn't disturbed. Without expressive there is no
+    // markup to remove, so the text is published exactly as it arrives.
+    const rawText = isTimedString(text) ? text.text : text;
+    let cleanText: string;
+    if (!this.expressiveEnabled()) {
+      cleanText = rawText;
+    } else if (this.isDeltaStream) {
+      cleanText = this.stripper.push(rawText);
+    } else {
+      [cleanText, this.segmentTags] = splitAllMarkup(rawText);
+      // a marker opening the segment leaves the space that followed it behind (see
+      // TranscriptMarkupStripper); this path re-strips the whole accumulation each time,
+      // so trimming the head is idempotent
+      cleanText = cleanText.replace(/^\s+/, '');
+    }
+    if (!cleanText) {
+      return;
+    }
+
+    // latestText must hold the encoded payload so non-delta flush (FINAL=true) republishes the
+    // same newline-delimited JSON format as the interim chunks.
+    const payload = this.encode(cleanText, text);
+    this.latestText = payload;
+    await this.publish(payload);
+  }
+
+  private encode(cleanText: string, timingSrc?: string | TimedString): string {
+    if (!this.jsonFormat) {
+      return cleanText;
+    }
+    const isTimed = timingSrc !== undefined && isTimedString(timingSrc);
+    const message = new pb.TimedString({
+      text: cleanText,
+      startTime: isTimed ? timingSrc.startTime : undefined,
+      endTime: isTimed ? timingSrc.endTime : undefined,
+      confidence: isTimed ? timingSrc.confidence : undefined,
+      startTimeOffset: isTimed ? timingSrc.startTimeOffset : undefined,
+    });
+    return message.toJsonString({ useProtoFieldName: true }) + '\n';
+  }
+
+  private async publish(payload: string): Promise<void> {
     try {
       if (this.room.isConnected) {
         if (this.isDeltaStream) {
           // reuse the existing writer
           if (this.writer === null) {
-            this.writer = await this.createTextWriter();
+            // Whatever markup was stripped ahead of the first visible text goes on the
+            // opening header — a frontend can't colour the turn until the agent stops
+            // talking otherwise. The instructions ask for a leading expression marker, so
+            // this is normally already populated.
+            //
+            // If the model puts prose before its first expression marker, the tag arrives
+            // after this header and the segment carries no lk.expression: rtc-node's
+            // `TextStreamWriter.close()` takes no attributes, so unlike Python (which
+            // passes them to `aclose()`) there is no trailing header to fall back on. The
+            // same limitation is why the delta path can't send lk.transcription_final
+            // either. Audio and transcript text are unaffected — only the UI hint.
+            this.writer = await this.createTextWriter(
+              undefined,
+              expressionAttribute(this.stripper.tags),
+            );
           }
-          await this.writer.write(text);
+          await this.writer.write(payload);
         } else {
-          const tmpWriter = await this.createTextWriter();
-          await tmpWriter.write(text);
+          const tmpWriter = await this.createTextWriter(
+            undefined,
+            expressionAttribute(this.segmentTags),
+          );
+          await tmpWriter.write(payload);
           await tmpWriter.close();
         }
       }
@@ -211,13 +287,33 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     }
   }
 
+  protected async handleCaptureText(_text: string): Promise<void> {
+    // captureText is overridden above; the base implementation is unused here.
+  }
+
   protected handleFlush() {
     const currWriter = this.writer;
     this.writer = null;
-    this.flushTask = Task.from((controller) => this.flushTaskImpl(currWriter, controller.signal));
+    const expressive = this.expressiveEnabled();
+    // visible text left in the strip buffer
+    const remaining = expressive && this.isDeltaStream ? this.stripper.flush() : '';
+    const tags = !expressive ? [] : this.isDeltaStream ? this.stripper.tags : this.segmentTags;
+    const pendingText = remaining ? this.encode(remaining) : '';
+    this.flushTask = Task.from((controller) =>
+      this.flushTaskImpl(currWriter, controller.signal, expressionAttribute(tags), pendingText),
+    );
   }
 
-  private async createTextWriter(attributes?: Record<string, string>): Promise<TextStreamWriter> {
+  protected override resetState() {
+    super.resetState();
+    this.stripper = new TranscriptMarkupStripper();
+    this.segmentTags = [];
+  }
+
+  private async createTextWriter(
+    attributes?: Record<string, string>,
+    extra?: Record<string, string>,
+  ): Promise<TextStreamWriter> {
     if (!this.participantIdentity) {
       throw new Error('participantIdentity not found');
     }
@@ -235,6 +331,11 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       }
     }
     attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = this.currentId;
+    // overlaid rather than replacing, so the caller can add a key without dropping the
+    // transcription attributes the protocol requires
+    if (extra) {
+      Object.assign(attributes, extra);
+    }
 
     return await this.room.localParticipant.streamText({
       topic: TOPIC_TRANSCRIPTION,
@@ -243,12 +344,20 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     });
   }
 
-  private async flushTaskImpl(writer: TextStreamWriter | null, signal: AbortSignal): Promise<void> {
+  private async flushTaskImpl(
+    writer: TextStreamWriter | null,
+    signal: AbortSignal,
+    extraAttributes?: Record<string, string>,
+    pendingText = '',
+  ): Promise<void> {
     const attributes: Record<string, string> = {
       [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'true',
     };
     if (this.trackId) {
       attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
+    }
+    for (const [key, value] of Object.entries(extraAttributes ?? {})) {
+      attributes[key] ??= value;
     }
 
     const abortPromise = new Promise<void>((resolve) => {
@@ -258,8 +367,22 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     try {
       if (this.room.isConnected) {
         if (this.isDeltaStream) {
-          if (writer) {
-            await Promise.race([writer.close(), abortPromise]);
+          // a segment whose every chunk was held back by the stripper (a tag-shaped "<"
+          // never resolves) reaches flush with text but no writer — open one here rather
+          // than dropping the transcript
+          let deltaWriter: TextStreamWriter | null = writer;
+          if (!deltaWriter && pendingText) {
+            const opened = await Promise.race([this.createTextWriter(attributes), abortPromise]);
+            if (signal.aborted || !opened) {
+              return;
+            }
+            deltaWriter = opened;
+          }
+          if (deltaWriter) {
+            if (pendingText) {
+              await Promise.race([deltaWriter.write(pendingText), abortPromise]);
+            }
+            await Promise.race([deltaWriter.close(), abortPromise]);
           }
         } else {
           const tmpWriter = await Promise.race([this.createTextWriter(attributes), abortPromise]);
@@ -279,9 +402,46 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   }
 }
 
+/**
+ * True while some remote participant may still rely on the deprecated `Transcription` data
+ * packet.
+ *
+ * `publishTranscription` has no destination parameter, so this is all-or-nothing for the room:
+ * the packet is dropped only once every considered participant advertises a client protocol at
+ * or above {@link CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS}, meaning it rebuilds transcription
+ * events from the `lk.transcription` stream channel instead.
+ *
+ * An absent `clientProtocol` counts as 0, i.e. a legacy client. The coalesce is load bearing:
+ * protobuf-es types the field as optional, and in JavaScript every comparison against
+ * `undefined` is false, so omitting it would read a missing field as modern and silently drop
+ * the transcripts of a client that still needs them.
+ *
+ * Only STANDARD participants -- user-created client SDK instances -- are considered. SIP,
+ * INGRESS, AGENT (including avatar workers), CONNECTOR and BRIDGE participants never render
+ * legacy transcripts, so their client protocol tells us nothing about whether the legacy packet
+ * is still necessary. Counting them would also keep legacy publishing alive in every telephony
+ * room for good: the Go SDK does not send a client protocol at all, so SIP and INGRESS
+ * participants report 0 permanently. EGRESS participants join hidden and never reach
+ * `remoteParticipants`.
+ */
+function legacyTranscriptionNeeded(room: Room): boolean {
+  const localIdentity = room.localParticipant?.identity ?? null;
+
+  return [...room.remoteParticipants.values()].some(
+    (p) =>
+      p.kind === ParticipantKind.STANDARD &&
+      (p.info.clientProtocol ?? 0) < CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS &&
+      // not our own avatar worker that joined as STANDARD rather than AGENT
+      p.attributes[ATTRIBUTE_PUBLISH_ON_BEHALF] !== localIdentity,
+  );
+}
+
 export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscriptionOutput {
   private pushedText: string = '';
   private flushTask: Promise<void> | null = null;
+  /** the last status written to the log, so only transitions are logged. This never takes part
+   * in the decision itself. */
+  private legacyStatusLogged: boolean | null = null;
 
   protected async handleCaptureText(text: string): Promise<void> {
     if (!this.trackId) {
@@ -303,7 +463,18 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
       this.pushedText = text;
     }
 
-    await this.publishTranscription(this.currentId, this.pushedText, false);
+    // pushedText keeps the raw text (markup intact); publish the visible text only.
+    // Stripping the whole accumulation each time avoids partial-tag edge cases; the
+    // expression is dropped here — the deprecated rtc Transcription API has no attribute
+    // channel (the stream-based output carries lk.expression instead).
+    await this.publishTranscription(this.currentId, this.visibleText(), false);
+  }
+
+  /** The raw accumulation, with markup removed only when expressive could have written it. */
+  private visibleText(): string {
+    if (!this.expressiveEnabled()) return this.pushedText;
+    // trimStart: a marker opening the segment leaves the space that followed it behind
+    return stripAllMarkup(this.pushedText).replace(/^\s+/, '');
   }
 
   protected handleFlush() {
@@ -311,12 +482,33 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
       return;
     }
 
-    this.flushTask = this.publishTranscription(this.currentId, this.pushedText, true);
+    this.flushTask = this.publishTranscription(this.currentId, this.visibleText(), true);
     this.resetState();
+  }
+
+  private shouldPublish(): boolean {
+    const needed = legacyTranscriptionNeeded(this.room);
+    if (needed !== this.legacyStatusLogged) {
+      this.legacyStatusLogged = needed;
+      this.logger.debug(
+        { 'lk.pii.participant': this.participantIdentity },
+        `legacy transcription publishing ${needed ? 'enabled' : 'disabled'}`,
+      );
+    }
+
+    return needed;
   }
 
   async publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal) {
     if (!this.participantIdentity || !this.trackId) {
+      return;
+    }
+
+    // Gate here, not in handleCaptureText: every legacy publish carries the whole accumulated
+    // segment under a stable id, so pushedText/currentId must stay warm. A legacy client that
+    // joins mid-segment then gets the complete segment on the very next publish, and a client
+    // that only ever sees the final=true packet still gets a complete, correctly-closed segment.
+    if (!this.shouldPublish()) {
       return;
     }
 
@@ -378,9 +570,24 @@ export class ParticipantAudioOutput extends AudioOutput {
 
   /** Duration of audio pushed to the source, in seconds */
   private pushedDuration: number = 0;
+  private sourcePushedDuration: number = 0;
+  private sourceDiscardedDuration: number = 0;
+  private interruptionGeneration: number = 0;
+  private forwardingCount: number = 0;
+  /** Resolved only while no capture is held or being submitted to AudioSource. */
+  private forwardingIdleFuture: Future<void> = new Future();
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
+  // playbackStarted fires once per segment; a mid-segment pause/resume does not re-arm this.
   private firstFrameEmitted: boolean = false;
+  /** Gate held closed while the output is paused; frame forwarding awaits it. */
+  private playbackEnabledFuture: Future<void> = new Future();
+  /**
+   * The playhead sits at `sourcePushedDuration` minus what the source still holds; `dryAt` is
+   * when the source runs out if nothing more is pushed, which dates a run that has ended.
+   */
+  private runOffset: number = 0;
+  private dryAt?: number;
 
   constructor(room: Room, options: AudioOutputOptions) {
     super(options.sampleRate, undefined, { pause: true });
@@ -391,67 +598,163 @@ export class ParticipantAudioOutput extends AudioOutput {
       options.numChannels,
       options.queueSizeMs,
     );
+    this.playbackEnabledFuture.resolve();
+    this.forwardingIdleFuture.resolve();
+  }
+
+  pause(): void {
+    if (this.playbackEnabledFuture.done) {
+      this.playbackEnabledFuture = new Future();
+    }
+    super.pause();
+  }
+
+  resume(): void {
+    if (!this.playbackEnabledFuture.done) {
+      this.playbackEnabledFuture.resolve();
+    }
+    super.resume();
   }
 
   get subscribed(): boolean {
     return this.startedFuture.done;
   }
 
-  async start(signal: AbortSignal): Promise<void> {
-    await this.publishTrack(signal);
+  /** Report the open run, and begin the next past any audio that never played. */
+  private reportRun(opts: { offset: number; endedAt: number; resumesAt?: number }): void {
+    const { offset, resumesAt } = opts;
+    // a run cannot outlast the audio the source held, however late the caller noticed
+    const endedAt = this.dryAt !== undefined ? Math.min(opts.endedAt, this.dryAt) : opts.endedAt;
+
+    const duration = offset - this.runOffset;
+    if (duration > 0) {
+      this.onPlaybackProgressed({
+        startedAt: endedAt - duration,
+        offset: this.runOffset,
+        duration,
+      });
+    }
+    this.runOffset = resumesAt ?? offset;
+    this.dryAt = undefined;
+  }
+
+  async start(signal: AbortSignal, traceContext?: Context): Promise<void> {
+    // detached: publishing spawns the track's tasks, which must not inherit this span
+    await tracer.detachedSpan(
+      async (span) => {
+        await this.publishTrack(signal);
+        if (this.publication?.sid) {
+          span.setAttribute(traceTypes.ATTR_TRACK_SID, this.publication.sid);
+        }
+      },
+      { name: 'publish_audio_output', context: traceContext },
+    );
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
-    await this.startedFuture.await;
-
-    super.captureFrame(frame);
-
-    if (!this.firstFrameEmitted) {
-      this.firstFrameEmitted = true;
-      this.onPlaybackStarted(Date.now());
+    const interruptionGeneration = this.interruptionGeneration;
+    if (!this.startedFuture.done) {
+      await this.startedFuture.await;
+      if (interruptionGeneration !== this.interruptionGeneration) {
+        return;
+      }
     }
 
-    // TODO(AJS-102): use frame.durationMs once available in rtc-node
-    this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
-    await this.audioSource.captureFrame(frame);
+    if (this.flushTask && !this.flushTask.done) {
+      this.logger.error('captureFrame called while flush is in progress');
+      await this.flushTask.result;
+    }
+    if (interruptionGeneration !== this.interruptionGeneration) {
+      return;
+    }
+
+    const segmentCapture = super.captureFrame(frame);
+    const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+    this.pushedDuration += frameDuration;
+    const interruptionFuture = this.interruptedFuture;
+    this.forwardingCount++;
+    if (this.forwardingCount === 1 && this.forwardingIdleFuture.done) {
+      this.forwardingIdleFuture = new Future();
+    }
+
+    try {
+      await segmentCapture;
+      if (interruptionGeneration !== this.interruptionGeneration || interruptionFuture.done) {
+        return;
+      }
+      while (!this.playbackEnabledFuture.done) {
+        const queuedDuration = this.audioSource.queuedDuration;
+        this.sourceDiscardedDuration += queuedDuration / 1000;
+        // the dropped queue never plays, so the next run resumes past it
+        this.reportRun({
+          offset: this.sourcePushedDuration * 1000 - queuedDuration,
+          endedAt: Date.now(),
+          resumesAt: this.sourcePushedDuration * 1000,
+        });
+        this.audioSource.clearQueue();
+        await Promise.race([this.playbackEnabledFuture.await, interruptionFuture.await]);
+        if (interruptionGeneration !== this.interruptionGeneration || interruptionFuture.done) {
+          return;
+        }
+      }
+
+      if (!this.firstFrameEmitted) {
+        this.firstFrameEmitted = true;
+        this.onPlaybackStarted(Date.now());
+      }
+
+      if (this.dryAt !== undefined && Date.now() >= this.dryAt) {
+        // the source ran out before this frame arrived
+        this.reportRun({ offset: this.sourcePushedDuration * 1000, endedAt: this.dryAt });
+      }
+
+      this.sourcePushedDuration += frameDuration;
+      await this.audioSource.captureFrame(frame);
+      this.dryAt = Date.now() + this.audioSource.queuedDuration;
+    } finally {
+      this.forwardingCount--;
+      if (this.forwardingCount === 0) {
+        this.forwardingIdleFuture.resolve();
+      }
+    }
   }
 
-  private async waitForPlayoutTask(abortController: AbortController): Promise<void> {
-    // Snapshot duration for this flush so overlapping next-segment frames are not erased on completion.
-    const accountedDuration = this.pushedDuration;
-    const abortFuture = new Future<boolean>();
+  private async waitForPlayoutTask(): Promise<void> {
+    const interruptionFuture = this.interruptedFuture;
 
-    const resolveAbort = () => {
-      if (!abortFuture.done) abortFuture.resolve(true);
+    const waitForForwardingAndPlayout = async () => {
+      await this.forwardingIdleFuture.await;
+      await this.audioSource.waitForPlayout();
     };
 
-    abortController.signal.addEventListener('abort', resolveAbort);
-
-    this.audioSource.waitForPlayout().finally(() => {
-      abortController.signal.removeEventListener('abort', resolveAbort);
-      if (!abortFuture.done) abortFuture.resolve(false);
-    });
-
-    const interrupted = await Promise.race([
-      abortFuture.await,
-      this.interruptedFuture.await.then(() => true),
-    ]);
-
-    let pushedDuration = accountedDuration;
+    await Promise.race([waitForForwardingAndPlayout(), interruptionFuture.await]);
+    const interrupted = interruptionFuture.done;
+    let pushedDuration = Math.max(this.sourcePushedDuration - this.sourceDiscardedDuration, 0);
 
     if (interrupted) {
-      pushedDuration = Math.max(accountedDuration - this.audioSource.queuedDuration / 1000, 0);
+      const queuedDuration = this.audioSource.queuedDuration;
+      pushedDuration = Math.max(pushedDuration - queuedDuration / 1000, 0);
+      // the playhead stops where the cleared queue begins
+      this.reportRun({
+        offset: this.sourcePushedDuration * 1000 - queuedDuration,
+        endedAt: Date.now(),
+      });
       this.audioSource.clearQueue();
+    } else {
+      // the source drained, so everything pushed has played
+      this.reportRun({ offset: this.sourcePushedDuration * 1000, endedAt: Date.now() });
     }
 
+    this.runOffset = 0;
     this.pushedDuration = 0;
-    this.interruptedFuture = new Future();
+    this.sourcePushedDuration = 0;
+    this.sourceDiscardedDuration = 0;
     this.firstFrameEmitted = false;
+    if (this.interruptedFuture === interruptionFuture) {
+      this.interruptedFuture = new Future();
+    }
 
-    this.onPlaybackFinished({
-      playbackPosition: pushedDuration,
-      interrupted,
-    });
+    this.onPlaybackFinished({ playbackPosition: pushedDuration, interrupted });
   }
 
   /**
@@ -465,26 +768,39 @@ export class ParticipantAudioOutput extends AudioOutput {
     }
 
     if (this.flushTask && !this.flushTask.done) {
-      this.logger.error('flush called while playback is in progress');
-      this.flushTask.cancel();
-    }
-
-    this.flushTask = Task.from((controller) => this.waitForPlayoutTask(controller));
-  }
-
-  clearBuffer(): void {
-    if (!this.pushedDuration) {
       return;
     }
 
-    this.interruptedFuture.resolve();
+    const flushTask = Task.from(() => this.waitForPlayoutTask());
+    this.flushTask = flushTask;
+    void flushTask.result.catch(() => {});
+  }
+
+  clearBuffer(): void {
+    this.interruptionGeneration++;
+    if (
+      this.interruptedFuture.done ||
+      (this.pushedDuration === 0 && this.pendingPlayoutSegments === 0)
+    ) {
+      return;
+    }
+    if (
+      (this.pushedDuration > 0 || this.pendingPlayoutSegments > 0) &&
+      (!this.flushTask || this.flushTask.done)
+    ) {
+      this.flush();
+    }
+    if (!this.interruptedFuture.done) {
+      this.interruptedFuture.resolve();
+    }
   }
 
   private async publishTrack(signal: AbortSignal) {
     const track = LocalAudioTrack.createAudioTrack('roomio_audio', this.audioSource);
     this.publication = await this.room.localParticipant?.publishTrack(
       track,
-      new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+      this.options.trackPublishOptions ??
+        new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
     );
 
     if (signal.aborted) {
@@ -499,7 +815,6 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   async close() {
-    // TODO(AJS-106): add republish track
     await this.audioSource.close();
   }
 }

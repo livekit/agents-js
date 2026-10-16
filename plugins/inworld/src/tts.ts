@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
+  APITimeoutError,
   AudioByteStream,
   type TimedString,
   asError,
@@ -20,11 +23,11 @@ const USER_AGENT = 'livekit-agents-js';
 
 const DEFAULT_BIT_RATE = 64000;
 const DEFAULT_ENCODING = 'PCM';
-const DEFAULT_MODEL = 'inworld-tts-1';
+const DEFAULT_MODEL = 'inworld-tts-2';
 const DEFAULT_SAMPLE_RATE = 24000;
 const DEFAULT_URL = 'https://api.inworld.ai/';
 const DEFAULT_WS_URL = 'wss://api.inworld.ai/';
-const DEFAULT_VOICE = 'Ashley';
+const DEFAULT_VOICE = 'Jason';
 const DEFAULT_TEMPERATURE = 1.1;
 const DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY = 'ASYNC';
 const DEFAULT_SPEAKING_RATE = 1.0;
@@ -32,6 +35,7 @@ const DEFAULT_BUFFER_CHAR_THRESHOLD = 100;
 const DEFAULT_MAX_BUFFER_DELAY_MS = 3000;
 const NUM_CHANNELS = 1;
 
+export type TTSModels = 'inworld-tts-2' | 'inworld-tts-1.5-max';
 export type Encoding = 'PCM' | 'LINEAR16';
 export type TimestampType = 'TIMESTAMP_TYPE_UNSPECIFIED' | 'WORD' | 'CHARACTER';
 export type TextNormalization = 'APPLY_TEXT_NORMALIZATION_UNSPECIFIED' | 'ON' | 'OFF';
@@ -39,18 +43,23 @@ export type TimestampTransportStrategy =
   | 'TIMESTAMP_TRANSPORT_STRATEGY_UNSPECIFIED'
   | 'SYNC'
   | 'ASYNC';
+export type DeliveryMode = 'DELIVERY_MODE_UNSPECIFIED' | 'STABLE' | 'BALANCED' | 'CREATIVE';
 
 export interface TTSOptions {
   apiKey?: string;
   voice: string;
-  model: string;
+  model: TTSModels | string;
   encoding: Encoding;
   bitRate: number;
   sampleRate: number;
   speakingRate: number;
   temperature: number;
+  /** BCP-47 language tag specifying the language the voice should speak in. */
+  language?: string;
   timestampType?: TimestampType;
   textNormalization?: TextNormalization;
+  /** Controls output variation on inworld-tts-2 only. */
+  deliveryMode?: DeliveryMode;
   timestampTransportStrategy?: TimestampTransportStrategy;
   bufferCharThreshold: number;
   maxBufferDelayMs: number;
@@ -74,8 +83,10 @@ interface SynthesizeRequest {
   modelId: string;
   audioConfig: AudioConfig;
   temperature: number;
+  language?: string;
   timestampType?: TimestampType;
   applyTextNormalization?: TextNormalization;
+  deliveryMode?: DeliveryMode;
   timestampTransportStrategy?: TimestampTransportStrategy;
 }
 
@@ -84,10 +95,12 @@ interface CreateContextConfig {
   modelId: string;
   audioConfig: AudioConfig;
   temperature: number;
+  language?: string;
   bufferCharThreshold: number;
   maxBufferDelayMs: number;
   timestampType?: TimestampType;
   applyTextNormalization?: TextNormalization;
+  deliveryMode?: DeliveryMode;
   timestampTransportStrategy?: TimestampTransportStrategy;
   autoMode?: boolean;
 }
@@ -158,8 +171,12 @@ const defaultTTSOptionsBase: Omit<TTSOptions, 'tokenizer'> = {
   wsURL: DEFAULT_WS_URL,
 };
 
-const MAX_RETRIES = 2;
-const BASE_DELAY_MS = 1000;
+const CONNECT_TIMEOUT_MS = 10_000; // WebSocket handshake timeout
+
+// Transient gRPC-style status codes worth retrying; everything else is treated as
+// a permanent request rejection. 4 = DEADLINE_EXCEEDED, 8 = RESOURCE_EXHAUSTED
+// (rate limit), 14 = UNAVAILABLE.
+const RETRYABLE_STATUS_CODES = new Set([4, 8, 14]);
 
 class WSConnectionPool {
   #ws?: WebSocket;
@@ -183,35 +200,11 @@ class WSConnectionPool {
       return this.#connecting;
     }
 
-    this.#connecting = this.#connectWithRetry();
+    // A single connection attempt. Retries are delegated to the framework's
+    // SynthesizeStream retry loop (off the synthesis hot path) by surfacing a
+    // retryable APIConnectionError/APITimeoutError on failure.
+    this.#connecting = this.#attemptConnection();
     return this.#connecting;
-  }
-
-  async #connectWithRetry(): Promise<WebSocket> {
-    let lastError: Error | undefined;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        return await this.#attemptConnection();
-      } catch (err) {
-        lastError = asError(err);
-        this.#connecting = undefined;
-
-        if (attempt < MAX_RETRIES) {
-          // Exponential backoff: 1s, 2s
-          const delayMs = BASE_DELAY_MS * Math.pow(2, attempt);
-          this.#logger.warn(
-            { error: lastError, attempt: attempt + 1, maxRetries: MAX_RETRIES + 1, delayMs },
-            `Failed to connect to Inworld, retrying in ${delayMs}ms`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-      }
-    }
-
-    throw new Error(
-      `Failed to connect to Inworld after ${MAX_RETRIES + 1} attempts: ${lastError?.message}`,
-    );
   }
 
   #attemptConnection(): Promise<WebSocket> {
@@ -227,9 +220,31 @@ class WSConnectionPool {
           'X-User-Agent': USER_AGENT,
           'X-Request-Id': requestId,
         },
+        // Backstop slightly above our own timer so the explicit timer below is
+        // the one that fires, yielding a semantically correct APITimeoutError.
+        handshakeTimeout: CONNECT_TIMEOUT_MS + 1_000,
       });
 
+      // Bound the handshake so a blackholed host fails fast with a retryable
+      // timeout rather than an unbounded OS-level hang.
+      let settled = false;
+      const handshakeTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this.#connecting = undefined;
+        ws.terminate();
+        reject(
+          new APITimeoutError({
+            message: `Inworld WebSocket handshake timed out after ${CONNECT_TIMEOUT_MS}ms`,
+          }),
+        );
+      }, CONNECT_TIMEOUT_MS);
+      handshakeTimer.unref?.();
+
       ws.on('open', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(handshakeTimer);
         this.#ws = ws;
         this.#connecting = undefined;
         this.#logger.debug({ requestId }, 'Established Inworld TTS WebSocket connection');
@@ -237,8 +252,15 @@ class WSConnectionPool {
       });
 
       ws.on('error', (err) => {
-        if (this.#connecting) {
-          reject(err);
+        if (!settled) {
+          settled = true;
+          clearTimeout(handshakeTimer);
+          this.#connecting = undefined;
+          reject(
+            new APIConnectionError({
+              message: `Failed to connect to Inworld: ${asError(err).message}`,
+            }),
+          );
         } else {
           this.#logger.error({ err, requestId }, 'Inworld WebSocket error');
         }
@@ -356,8 +378,8 @@ export class TTS extends tts.TTS {
     return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
   }
 
-  stream(): tts.SynthesizeStream {
-    return new SynthesizeStream(this, this.#opts);
+  stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
+    return new SynthesizeStream(this, this.#opts, options?.connOptions);
   }
 
   updateOptions(opts: Partial<TTSOptions>) {
@@ -406,8 +428,10 @@ class ChunkedStream extends tts.ChunkedStream {
       modelId: this.#opts.model,
       audioConfig: audioConfig,
       temperature: this.#opts.temperature,
+      language: this.#opts.language,
       timestampType: this.#opts.timestampType,
       applyTextNormalization: this.#opts.textNormalization,
+      deliveryMode: this.#opts.deliveryMode,
       timestampTransportStrategy: this.#opts.timestampTransportStrategy,
     };
 
@@ -488,7 +512,13 @@ class ChunkedStream extends tts.ChunkedStream {
               throw new Error(data.error.message);
             }
           } catch (e) {
-            log().warn({ error: e, line }, 'Failed to parse Inworld chunk');
+            log().warn(
+              {
+                error: e,
+                'lk.pii.line': line,
+              },
+              'Failed to parse Inworld chunk',
+            );
           }
         }
       }
@@ -518,15 +548,26 @@ class SynthesizeStream extends tts.SynthesizeStream {
   #generationEndTime: number = 0;
   label = 'inworld.SynthesizeStream';
 
-  constructor(ttsInstance: TTS, opts: TTSOptions) {
-    super(ttsInstance);
+  constructor(ttsInstance: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
+    super(ttsInstance, connOptions);
     this.#tts = ttsInstance;
     this.#opts = opts;
     this.#contextId = shortuuid();
   }
 
   protected async run() {
-    const ws = await this.#tts.pool.getConnection();
+    // The framework's retry loop re-invokes run() on the same instance, so reset
+    // per-attempt state: use a fresh context id (reusing one risks colliding with
+    // the failed attempt's server-side context or being resolved by its stale
+    // contextClosed) and zero the cumulative timestamp offsets.
+    this.#contextId = shortuuid();
+    this.#cumulativeTime = 0;
+    this.#generationEndTime = 0;
+
+    // one pool object for the whole stream: `updateOptions` can swap the TTS pool mid-synthesis,
+    // and the listener must be removed from the pool that holds it
+    const pool = this.#tts.pool;
+    const ws = await pool.getConnection();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const tokenizerStream = this.#opts.tokenizer!.stream();
 
@@ -536,6 +577,21 @@ class SynthesizeStream extends tts.SynthesizeStream {
       resolveProcessing = resolve;
       rejectProcessing = reject;
     });
+    // `processing` can be rejected (by onClose below, or a server status error)
+    // before it is awaited at the Promise.race() further down: if a send/flush
+    // throws first we jump straight to the catch block and skip the race. Attach
+    // a no-op handler so that early rejection is never an unhandled rejection
+    // (which aborts the process in Node >= 15). The real error still surfaces via
+    // the thrown send/flush/close, so retry behavior is unchanged.
+    processing.catch(() => {});
+
+    // If the shared socket drops mid-turn, fail the turn fast with a retryable
+    // error so the framework restarts it on a fresh connection, instead of
+    // waiting out the in-turn timeout below.
+    const onClose = () => {
+      rejectProcessing(new APIConnectionError({ message: 'Inworld WebSocket closed' }));
+    };
+    ws.on('close', onClose);
 
     let lastFrame: AudioFrame | undefined;
     let pendingTimedTranscripts: TimedString[] = [];
@@ -659,12 +715,23 @@ class SynthesizeStream extends tts.SynthesizeStream {
           }
         }
       } else if (result.status && result.status.code !== 0) {
-        const error = new Error(`Inworld stream error: ${result.status.message}`);
-        rejectProcessing(error);
+        // status.code is a gRPC-style code (0-16), not an HTTP status, so
+        // APIStatusError's 4xx heuristic can't classify it. Retry only transient
+        // codes (rate limit / unavailable / deadline); permanent request
+        // rejections (bad voice/params, auth) fail fast instead of retrying.
+        rejectProcessing(
+          new APIStatusError({
+            message: `Inworld stream error: ${result.status.message}`,
+            options: {
+              statusCode: result.status.code,
+              retryable: RETRYABLE_STATUS_CODES.has(result.status.code),
+            },
+          }),
+        );
       }
     };
 
-    this.#tts.pool.registerListener(this.#contextId, handleMessage);
+    pool.registerListener(this.#contextId, handleMessage);
 
     const sendLoop = async () => {
       for await (const ev of tokenizerStream) {
@@ -688,7 +755,27 @@ class SynthesizeStream extends tts.SynthesizeStream {
 
       await this.#flushContext(ws);
       await this.#closeContext(ws);
-      await processing;
+
+      // Wait for the server to finish the context, but bound it so a stalled
+      // server can't hang the turn forever. On timeout, throw a retryable
+      // APITimeoutError so the framework restarts the turn.
+      const waitTimeoutMs = this.connOptions.timeoutMs + 60_000;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new APITimeoutError({
+              message: `Inworld synthesis timed out after ${waitTimeoutMs}ms`,
+            }),
+          );
+        }, waitTimeoutMs);
+        timer.unref?.();
+      });
+      try {
+        await Promise.race([processing, timeout]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
 
       // Flush remaining frames
       for (const frame of bstream.flush()) {
@@ -700,19 +787,24 @@ class SynthesizeStream extends tts.SynthesizeStream {
       log().error({ error: e }, 'Error in SynthesizeStream run');
       throw e;
     } finally {
-      this.#tts.pool.unregisterListener(this.#contextId);
+      ws.off('close', onClose);
+      pool.unregisterListener(this.#contextId);
     }
   }
 
   #send(ws: WebSocket, data: object): Promise<void> {
     return new Promise((resolve, reject) => {
       if (ws.readyState !== WebSocket.OPEN) {
-        reject(new Error('WebSocket is not open'));
+        reject(new APIConnectionError({ message: 'Inworld WebSocket not open' }));
         return;
       }
       ws.send(JSON.stringify(data), (err) => {
         if (err) {
-          reject(err);
+          reject(
+            new APIConnectionError({
+              message: `Inworld WebSocket send failed: ${asError(err).message}`,
+            }),
+          );
         } else {
           resolve();
         }
@@ -731,10 +823,12 @@ class SynthesizeStream extends tts.SynthesizeStream {
         speakingRate: this.#opts.speakingRate,
       },
       temperature: this.#opts.temperature,
+      language: this.#opts.language,
       bufferCharThreshold: this.#opts.bufferCharThreshold,
       maxBufferDelayMs: this.#opts.maxBufferDelayMs,
       timestampType: this.#opts.timestampType,
       applyTextNormalization: this.#opts.textNormalization,
+      deliveryMode: this.#opts.deliveryMode,
       timestampTransportStrategy: this.#opts.timestampTransportStrategy,
       // Always enable auto_mode since we use sentence tokenizer and don't expose
       // mid-stream flush_context control to users yet
@@ -745,6 +839,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   #sendText(ws: WebSocket, text: string): Promise<void> {
+    this.markStarted();
     return this.#send(ws, {
       send_text: { text },
       contextId: this.#contextId,

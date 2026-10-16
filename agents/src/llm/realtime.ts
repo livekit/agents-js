@@ -44,23 +44,63 @@ export interface RealtimeModelError {
 }
 
 export interface RealtimeCapabilities {
+  /** Whether generated assistant messages can be truncated after interruption. */
   messageTruncation: boolean;
+  /** Whether the model emits server-side speech start and stop events for turn taking. */
   turnDetection: boolean;
+  /** Whether client-side turn handling may disable the model's default server turn detection. */
+  canDisableTurnDetection?: boolean;
+  /** Whether the model may speak over the caller and decides when to yield. Defaults to false. */
+  supportsOverlappingSpeech?: boolean;
+  /** Whether the model emits user audio transcription events. */
   userTranscription: boolean;
+  /** Whether the model automatically generates a reply after receiving tool results. */
   autoToolReplyGeneration: boolean;
+  /** Whether the model can produce audio output directly. */
   audioOutput: boolean;
+  /** Whether function call items already in the chat context can be resumed. */
   manualFunctionCalls: boolean;
+  /** Whether the chat context can be updated mid-session. */
   midSessionChatCtxUpdate?: boolean;
+  /** Whether the instructions can be updated mid-session. */
   midSessionInstructionsUpdate?: boolean;
+  /** Whether the tools can be updated mid-session. */
   midSessionToolsUpdate?: boolean;
+  /** Whether the tool and tool choice can be specified per response. */
   perResponseToolChoice?: boolean;
+  /**
+   * Whether the model synchronizes generated transcript timing natively.
+   * @deprecated Native transcript synchronization is no longer used by built-in models.
+   */
   nativeTranscriptSync?: boolean;
+}
+
+/**
+ * Error raised by a realtime provider when an operation fails or times out
+ * (for example a chat-context update or reply generation).
+ */
+export class RealtimeError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'RealtimeError';
+    Error.captureStackTrace(this, RealtimeError);
+  }
 }
 
 export interface InputTranscriptionCompleted {
   itemId: string;
   transcript: string;
   isFinal: boolean;
+  /** Confidence in the user transcript, when the provider supplies it. */
+  confidence?: number;
+  /**
+   * When the turn this transcript belongs to began, in milliseconds since epoch.
+   *
+   * A provider that withholds the final transcript until its reply has finished
+   * generating should set this, so the user message can be placed on the session
+   * timeline where the turn happened rather than where the transcript arrived.
+   */
+  turnStartedAt?: number;
 }
 
 export interface RealtimeSessionReconnectedEvent {}
@@ -83,7 +123,11 @@ export abstract class RealtimeModel {
     return 'unknown';
   }
 
-  abstract session(): RealtimeSession;
+  label(): string {
+    return 'RealtimeModel';
+  }
+
+  abstract session(options?: { turnDetectionDisabled?: boolean }): RealtimeSession;
 
   abstract close(): Promise<void>;
 }
@@ -125,7 +169,10 @@ export abstract class RealtimeSession extends EventEmitter {
   /**
    * @throws RealtimeError on Timeout
    */
-  abstract generateReply(instructions?: string): Promise<GenerationCreatedEvent>;
+  abstract generateReply(
+    instructions?: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<GenerationCreatedEvent>;
 
   /**
    * Commit the input audio buffer to the server

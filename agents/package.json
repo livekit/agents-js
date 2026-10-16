@@ -1,19 +1,34 @@
 {
   "name": "@livekit/agents",
-  "version": "1.3.2",
+  "version": "1.9.3",
   "description": "LiveKit Agents - Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
   "exports": {
-    "import": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     },
-    "require": {
-      "types": "./dist/index.d.cts",
-      "default": "./dist/index.cjs"
+    "./llm/openai_realtime/*": {
+      "import": {
+        "types": "./dist/llm/openai_realtime/*.d.ts",
+        "default": "./dist/llm/openai_realtime/*.js"
+      },
+      "require": {
+        "types": "./dist/llm/openai_realtime/*.d.cts",
+        "default": "./dist/llm/openai_realtime/*.cjs"
+      }
     }
+  },
+  "bin": {
+    "livekit-agents": "./dist/bin/livekit-agents.js"
   },
   "author": "LiveKit",
   "type": "module",
@@ -31,13 +46,14 @@
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
     "api:check": "api-extractor run --typescript-compiler-folder ../node_modules/typescript",
     "api:update": "api-extractor run --local --typescript-compiler-folder ../node_modules/typescript --verbose",
     "throws:check": "throws-check src/**/*.ts"
   },
   "devDependencies": {
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.12",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^22.5.5",
@@ -48,22 +64,25 @@
   },
   "dependencies": {
     "@bufbuild/protobuf": "^1.10.0",
-    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@livekit/av": "^10.0.0",
+    "@livekit/local-inference": "^0.2.7",
     "@livekit/mutex": "^1.1.1",
-    "@livekit/protocol": "^1.45.6",
-    "@livekit/typed-emitter": "^3.0.0",
+    "@livekit/protocol": "^1.50.4",
     "@livekit/throws-transformer": "0.1.8",
+    "@livekit/typed-emitter": "^3.0.0",
     "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/api-logs": "^0.54.0",
-    "@opentelemetry/core": "^2.2.0",
-    "@opentelemetry/exporter-logs-otlp-proto": "^0.54.0",
-    "@opentelemetry/exporter-trace-otlp-proto": "^0.54.0",
-    "@opentelemetry/instrumentation-pino": "^0.43.0",
-    "@opentelemetry/otlp-exporter-base": "^0.208.0",
-    "@opentelemetry/resources": "^1.28.0",
-    "@opentelemetry/sdk-logs": "^0.54.0",
-    "@opentelemetry/sdk-trace-base": "^1.28.0",
-    "@opentelemetry/sdk-trace-node": "^1.28.0",
+    "@opentelemetry/api-logs": "^0.220.0",
+    "@opentelemetry/core": "^2.8.0",
+    "@opentelemetry/exporter-logs-otlp-proto": "^0.220.0",
+    "@opentelemetry/exporter-metrics-otlp-proto": "^0.220.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0",
+    "@opentelemetry/instrumentation-pino": "^0.66.0",
+    "@opentelemetry/otlp-exporter-base": "^0.220.0",
+    "@opentelemetry/resources": "^2.8.0",
+    "@opentelemetry/sdk-logs": "^0.220.0",
+    "@opentelemetry/sdk-metrics": "^2.8.0",
+    "@opentelemetry/sdk-trace-base": "^2.8.0",
+    "@opentelemetry/sdk-trace-node": "^2.8.0",
     "@opentelemetry/semantic-conventions": "^1.28.0",
     "@types/pidusage": "^2.0.5",
     "commander": "^12.0.0",
@@ -71,14 +90,14 @@
     "form-data": "^4.0.5",
     "heap-js": "^2.6.0",
     "json-schema": "^0.4.0",
-    "livekit-server-sdk": "^2.14.1",
+    "jsonrepair": "^3.14.0",
+    "livekit-server-sdk": "^2.15.0",
     "ofetch": "^1.5.1",
     "openai": "^6.8.1",
     "pidusage": "^4.0.1",
     "pino": "^8.19.0",
     "pino-pretty": "^11.0.0",
-    "sharp": "0.34.5",
-    "uuid": "^14.0.0",
+    "sharp": "0.35.5",
     "ws": "catalog:",
     "zod-to-json-schema": "^3.24.6"
   },

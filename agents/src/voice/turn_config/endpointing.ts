@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ExpFilter } from '../../utils.js';
+
 /**
  * Configuration for endpointing, which determines when the user's turn is complete.
  */
@@ -13,21 +15,264 @@ export interface EndpointingOptions {
   mode: 'fixed' | 'dynamic';
   /**
    * Minimum time in milliseconds since the last detected speech before the agent declares the user's
-   * turn complete. In VAD mode this effectively behaves like `max(VAD silence, minDelay)`;
-   * in STT mode it is applied after the STT end-of-speech signal, so it can be additive with
-   * the STT provider's endpointing delay.
+   * turn complete. In dynamic mode this is the learned floor. In VAD mode this effectively behaves
+   * like `max(VAD silence, minDelay)`; in STT mode it is applied after the STT end-of-speech signal,
+   * so it can be additive with the STT provider's endpointing delay.
    * @defaultValue 500
    */
   minDelay: number;
   /**
-   * Maximum time in milliseconds the agent will wait before terminating the turn.
+   * Maximum time in milliseconds the agent will wait before terminating the turn. In dynamic mode
+   * this is a fixed ceiling.
    * @defaultValue 3000
    */
   maxDelay: number;
+  /**
+   * Exponential moving average coefficient for dynamic endpointing. Higher values give more
+   * weight to history.
+   * @defaultValue 0.9
+   */
+  alpha: number;
 }
 
 export const defaultEndpointingOptions = {
   mode: 'fixed',
   minDelay: 500,
   maxDelay: 3000,
+  alpha: 0.9,
 } as const satisfies EndpointingOptions;
+
+/**
+ * Tighter endpointing defaults used when the turn detector is a streaming
+ * ("audio model") detector. Keys the caller does not provide fall back to
+ * these instead of the legacy {@link defaultEndpointingOptions}.
+ */
+export const streamingEndpointingOptions = {
+  mode: 'fixed',
+  minDelay: 300,
+  maxDelay: 2500,
+  alpha: 0.9,
+} as const satisfies EndpointingOptions;
+
+const AGENT_SPEECH_LEADING_SILENCE_GRACE_PERIOD = 250;
+
+export class BaseEndpointing {
+  protected _minDelay: number;
+  protected _maxDelay: number;
+  protected _overlapping = false;
+
+  constructor({ minDelay, maxDelay }: { minDelay: number; maxDelay: number }) {
+    this._minDelay = minDelay;
+    this._maxDelay = maxDelay;
+  }
+
+  updateOptions({ minDelay, maxDelay }: { minDelay?: number; maxDelay?: number }) {
+    if (minDelay !== undefined) {
+      this._minDelay = minDelay;
+    }
+    if (maxDelay !== undefined) {
+      this._maxDelay = maxDelay;
+    }
+  }
+
+  get minDelay(): number {
+    return this._minDelay;
+  }
+
+  get maxDelay(): number {
+    return this._maxDelay;
+  }
+
+  get overlapping(): boolean {
+    return this._overlapping;
+  }
+
+  onStartOfSpeech(_startedAt: number, overlapping = false): void {
+    this._overlapping = overlapping;
+  }
+
+  onEndOfSpeech(_endedAt: number, _interruption?: boolean): void {
+    this._overlapping = false;
+  }
+
+  onStartOfAgentSpeech(_startedAt: number): void {}
+
+  onEndOfAgentSpeech(_endedAt: number): void {}
+}
+
+export class DynamicEndpointing extends BaseEndpointing {
+  #utterancePause: ExpFilter;
+  #utteranceStartedAt?: number;
+  #utteranceEndedAt?: number;
+  #agentSpeechStartedAt?: number;
+  #agentSpeechEndedAt?: number;
+  #agentSpeaking = false;
+  #speaking = false;
+
+  constructor({
+    minDelay,
+    maxDelay,
+    alpha = 0.9,
+  }: {
+    minDelay: number;
+    maxDelay: number;
+    alpha?: number;
+  }) {
+    super({ minDelay, maxDelay });
+    this.#utterancePause = new ExpFilter({
+      alpha,
+      initial: minDelay,
+      minVal: minDelay,
+      maxVal: maxDelay,
+    });
+  }
+
+  override get minDelay(): number {
+    return Math.min(this.#utterancePause.value ?? this._minDelay, this.maxDelay);
+  }
+
+  get betweenUtteranceDelay(): number {
+    if (this.#utteranceStartedAt === undefined || this.#utteranceEndedAt === undefined) {
+      return 0;
+    }
+    return Math.max(0, this.#utteranceStartedAt - this.#utteranceEndedAt);
+  }
+
+  get betweenTurnDelay(): number {
+    if (this.#agentSpeechStartedAt === undefined || this.#utteranceEndedAt === undefined) {
+      return 0;
+    }
+    return Math.max(0, this.#agentSpeechStartedAt - this.#utteranceEndedAt);
+  }
+
+  get immediateInterruptionDelay(): [number, number] {
+    if (this.#utteranceStartedAt === undefined || this.#agentSpeechStartedAt === undefined) {
+      return [0, 0];
+    }
+    return [this.betweenTurnDelay, Math.abs(this.betweenUtteranceDelay - this.betweenTurnDelay)];
+  }
+
+  override onStartOfAgentSpeech(startedAt: number): void {
+    // Agent speech started before the current user utterance ended, so the stored end still
+    // belongs to the previous utterance. Move it just before agent speech to exclude this overlap.
+    if (
+      !this.#agentSpeaking &&
+      this.#speaking &&
+      this.#utteranceStartedAt !== undefined &&
+      this.#utteranceEndedAt !== undefined &&
+      this.#utteranceEndedAt < this.#utteranceStartedAt
+    ) {
+      this.#utteranceEndedAt = startedAt - 1;
+    }
+
+    this.#agentSpeechStartedAt = startedAt;
+    this.#agentSpeechEndedAt = undefined;
+    this.#agentSpeaking = true;
+    this._overlapping = this.#speaking;
+  }
+
+  override onEndOfAgentSpeech(endedAt: number): void {
+    if (this.#agentSpeaking) {
+      this.#agentSpeechEndedAt = endedAt;
+    }
+    this.#agentSpeaking = false;
+    this._overlapping = false;
+  }
+
+  override onStartOfSpeech(startedAt: number, overlapping = false): void {
+    if (this._overlapping) {
+      return;
+    }
+
+    this.#utteranceStartedAt = startedAt;
+    this._overlapping = overlapping;
+    this.#speaking = true;
+  }
+
+  override onEndOfSpeech(endedAt: number, interruption?: boolean): void {
+    if (interruption === false && this._overlapping) {
+      if (
+        this.#utteranceStartedAt === undefined ||
+        this.#agentSpeechStartedAt === undefined ||
+        Math.abs(this.#utteranceStartedAt - this.#agentSpeechStartedAt) >=
+          AGENT_SPEECH_LEADING_SILENCE_GRACE_PERIOD
+      ) {
+        this._overlapping = false;
+        this.#speaking = false;
+        this.#utteranceStartedAt = undefined;
+        this.#utteranceEndedAt = undefined;
+        return;
+      }
+    }
+
+    const agentStillSpeaking =
+      this.#agentSpeechStartedAt !== undefined && this.#agentSpeechEndedAt === undefined;
+    const betweenUtteranceDelay = this.betweenUtteranceDelay;
+
+    if (this._overlapping || agentStillSpeaking) {
+      const [turnDelay, interruptionDelay] = this.immediateInterruptionDelay;
+      const isImmediateInterruption =
+        interruptionDelay > 0 &&
+        interruptionDelay <= this.minDelay &&
+        turnDelay > 0 &&
+        turnDelay <= this.maxDelay &&
+        betweenUtteranceDelay > 0;
+
+      if (isImmediateInterruption) {
+        // User resumed almost immediately after the agent started, so the prior pause was probably
+        // part of the same user turn. Learn it as minDelay to avoid cutting in next time.
+        this.#utterancePause.apply(1, betweenUtteranceDelay);
+      }
+    } else {
+      const noAgentSpeechAroundPause =
+        this.#agentSpeechEndedAt === undefined && this.#agentSpeechStartedAt === undefined;
+      if (betweenUtteranceDelay > 0 && noAgentSpeechAroundPause) {
+        // User continued before any agent speech happened. Learn the pause as part of the user's
+        // natural speaking rhythm.
+        this.#utterancePause.apply(1, betweenUtteranceDelay);
+      }
+    }
+
+    this.#utteranceEndedAt = endedAt;
+    // Preserve an active agent interval until its end is recorded.
+    if (!this.#agentSpeaking) {
+      this.#agentSpeechStartedAt = undefined;
+      this.#agentSpeechEndedAt = undefined;
+    }
+    this.#speaking = false;
+    this._overlapping = false;
+  }
+
+  override updateOptions({
+    minDelay,
+    maxDelay,
+    alpha,
+  }: {
+    minDelay?: number;
+    maxDelay?: number;
+    alpha?: number;
+  }) {
+    if (minDelay !== undefined) {
+      this._minDelay = minDelay;
+      this.#utterancePause.reset({ initial: minDelay, minVal: minDelay });
+    }
+    if (maxDelay !== undefined) {
+      this._maxDelay = maxDelay;
+      this.#utterancePause.reset({ maxVal: maxDelay });
+    }
+    if (alpha !== undefined) {
+      this.#utterancePause.reset({ alpha });
+    }
+  }
+}
+
+export function createEndpointing(options: EndpointingOptions): BaseEndpointing {
+  if (options.mode === 'dynamic') {
+    return new DynamicEndpointing({
+      minDelay: options.minDelay,
+      maxDelay: options.maxDelay,
+      alpha: options.alpha,
+    });
+  }
+  return new BaseEndpointing({ minDelay: options.minDelay, maxDelay: options.maxDelay });
+}

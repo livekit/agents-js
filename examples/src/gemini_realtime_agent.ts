@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   dedent,
@@ -12,12 +11,31 @@ import {
   voice,
 } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-// Shared data that's used by the storyteller agent.
-// This structure is passed as a parameter to function calls.
+// ---------------------------------------------------------------------------
+// Test scenarios for the new `toolBehavior` / `toolResponseScheduling` feature.
+// Switch `toolBehavior` and `toolResponseScheduling` below before launching, e.g.:
+//   pnpm build && node ./examples/src/gemini_realtime_agent.ts dev --log-level=debug
+//
+// Supported values:
+//   toolBehavior           : undefined | BLOCKING | NON_BLOCKING
+//   toolResponseScheduling : undefined | SILENT | WHEN_IDLE | INTERRUPT
+//   getWeatherDelayMs      : delay before getWeather returns
+// ---------------------------------------------------------------------------
+const getWeatherDelayMs = 4000;
+
+const toolBehavior: google.realtime.Behavior | undefined = google.realtime.Behavior.NON_BLOCKING;
+const toolResponseScheduling: google.realtime.FunctionResponseScheduling | undefined =
+  google.realtime.FunctionResponseScheduling.WHEN_IDLE;
+
+console.log(
+  `[gemini_realtime_agent] toolBehavior=${toolBehavior ?? 'unset'} ` +
+    `toolResponseScheduling=${toolResponseScheduling ?? 'unset'} ` +
+    `getWeatherDelayMs=${getWeatherDelayMs}`,
+);
+
 type StoryData = {
   name?: string;
   location?: string;
@@ -26,16 +44,20 @@ type StoryData = {
 const roomNameSchema = z.enum(['bedroom', 'living room', 'kitchen', 'bathroom', 'office']);
 
 const getWeather = llm.tool({
-  description: ' Called when the user asks about the weather.',
+  name: 'getWeather',
+  description: 'Called when the user asks about the weather.',
   parameters: z.object({
     location: z.string().describe('The location to get the weather for'),
   }),
+  // Deliberately slow so BLOCKING vs NON_BLOCKING is visible.
   execute: async ({ location }) => {
+    await new Promise((resolve) => setTimeout(resolve, getWeatherDelayMs));
     return `The weather in ${location} is sunny today.`;
   },
 });
 
 const toggleLight = llm.tool({
+  name: 'toggleLight',
   description: 'Called when the user asks to turn on or off the light.',
   parameters: z.object({
     room: roomNameSchema.describe('The room to turn the light in'),
@@ -46,7 +68,6 @@ const toggleLight = llm.tool({
   },
 });
 
-// Use inheritance to create agent with custom hooks
 class IntroAgent extends voice.Agent<StoryData> {
   async onEnter() {
     this.session.generateReply({
@@ -54,28 +75,29 @@ class IntroAgent extends voice.Agent<StoryData> {
     });
   }
 
-  static create() {
+  static createIntroAgent() {
     return new IntroAgent({
       instructions: `You are a story teller. Your goal is to gather a few pieces of information from the user to make the story personalized and engaging. Ask the user for their name and where they are from.`,
-      tools: {
-        informationGathered: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'informationGathered',
           description:
             'Called when the user has provided the information needed to make the story personalized and engaging.',
           parameters: z.object({
             name: z.string().describe('The name of the user'),
             location: z.string().describe('The location of the user'),
           }),
-          execute: async ({ name, location }, { ctx }) => {
+          execute: async ({ name, location }, { ctx }: llm.ToolOptions<StoryData>) => {
             ctx.userData.name = name;
             ctx.userData.location = location;
 
-            const storyAgent = StoryAgent.create(name, location);
+            const storyAgent = StoryAgent.createStoryAgent(name, location);
             return llm.handoff({ agent: storyAgent, returns: "Let's start the story!" });
           },
         }),
         getWeather,
         toggleLight,
-      },
+      ],
     });
   }
 }
@@ -85,7 +107,7 @@ class StoryAgent extends voice.Agent<StoryData> {
     this.session.generateReply();
   }
 
-  static create(name: string, location: string) {
+  static createStoryAgent(name: string, location: string) {
     return new StoryAgent({
       instructions: dedent`
         You are a storyteller. Use the user's information in order to make the story personalized.
@@ -96,26 +118,24 @@ class StoryAgent extends voice.Agent<StoryData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const userdata: StoryData = {};
 
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
-      llm: new google.beta.realtime.RealtimeModel({
+      llm: new google.realtime.RealtimeModel({
         thinkingConfig: {
           // Making the thoughts false to speed up the realtime response
           // If you want to keep the thoughts, set includeThoughts to true or leave it undefined
           includeThoughts: false,
         },
+        toolBehavior,
+        toolResponseScheduling,
       }),
       userData: userdata,
     });
 
     await session.start({
-      agent: IntroAgent.create(),
+      agent: IntroAgent.createIntroAgent(),
       room: ctx.room,
     });
 

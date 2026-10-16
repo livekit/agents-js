@@ -14,6 +14,34 @@ describe('sttServerEventSchema', () => {
 
     expect(result.success).toBe(true);
   });
+
+  it('normalizes null transcript words to an empty array', () => {
+    const result = sttServerEventSchema.safeParse({
+      type: 'final_transcript',
+      session_id: 's1',
+      transcript: 'Hello? Can you hear me?',
+      start: 0,
+      duration: 0,
+      confidence: 1,
+      words: null,
+      language: 'en-US',
+      extra: {
+        voice_profile: {
+          gender: [{ confidence: 0.73, label: 'male' }],
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === 'final_transcript') {
+      expect(result.data.words).toEqual([]);
+      expect(result.data.extra).toEqual({
+        voice_profile: {
+          gender: [{ confidence: 0.73, label: 'male' }],
+        },
+      });
+    }
+  });
 });
 
 describe('ttsServerEventSchema', () => {
@@ -28,11 +56,15 @@ describe('ttsServerEventSchema', () => {
     });
 
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.type).toBe('output_alignment');
-      expect(result.data.session_id).toBe('s1');
-      expect(result.data.words?.map((w) => w.word)).toEqual(['hello', 'world']);
-      expect(result.data.chars).toBeUndefined();
+    if (result.success && result.data.type === 'output_alignment') {
+      const data = result.data as {
+        session_id?: string;
+        words?: Array<{ word: string }>;
+        chars?: Array<{ char: string }>;
+      };
+      expect(data.session_id).toBe('s1');
+      expect(data.words?.map((w) => w.word)).toEqual(['hello', 'world']);
+      expect(data.chars).toBeUndefined();
     }
   });
 
@@ -47,11 +79,15 @@ describe('ttsServerEventSchema', () => {
     });
 
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.type).toBe('output_alignment');
-      expect(result.data.session_id).toBe('s2');
-      expect(result.data.chars?.map((c) => c.char)).toEqual(['h', 'i']);
-      expect(result.data.words).toBeUndefined();
+    if (result.success && result.data.type === 'output_alignment') {
+      const data = result.data as {
+        session_id?: string;
+        words?: Array<{ word: string }>;
+        chars?: Array<{ char: string }>;
+      };
+      expect(data.session_id).toBe('s2');
+      expect(data.chars?.map((c) => c.char)).toEqual(['h', 'i']);
+      expect(data.words).toBeUndefined();
     }
   });
 

@@ -43,6 +43,20 @@ export interface InterruptionOptions {
    * @defaultValue true
    */
   resumeFalseInterruption: boolean;
+  /**
+   * Milliseconds near the start/end of each agent turn during which overlapping speech classified
+   * as a backchannel by the adaptive detector is suppressed. Events flagged as interruptions still
+   * pass through.
+   *
+   * Pass a single number to use the same value for both the start and end boundaries, or a
+   * `[start, end]` tuple to configure them separately. The end value preserves transcripts
+   * received near the end of agent speech.
+   *
+   * `null` disables.
+   *
+   * @defaultValue [1000, 1000]
+   */
+  backchannelBoundary: number | [number, number] | null;
 }
 
 export const defaultInterruptionOptions = {
@@ -53,4 +67,5 @@ export const defaultInterruptionOptions = {
   minWords: 0,
   falseInterruptionTimeout: 2000,
   resumeFalseInterruption: true,
+  backchannelBoundary: [1000, 1000],
 } as const satisfies InterruptionOptions;

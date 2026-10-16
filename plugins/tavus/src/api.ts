@@ -1,0 +1,282 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import {
+  type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
+  DEFAULT_API_CONNECT_OPTIONS,
+  intervalForRetry,
+  shortuuid,
+} from '@livekit/agents';
+import { log } from './log.js';
+
+/** @public */
+export const DEFAULT_API_URL = 'https://tavusapi.com/v2';
+
+// Stock Tavus PAL. Use createPal() to create a PAL with the appearance you'd like.
+const DEFAULT_PAL_ID = 'pb87e71797da';
+// Stock Tavus face ("Lucy - Home", phoenix-4.5) used with DEFAULT_PAL_ID when no face is given.
+const DEFAULT_FACE_ID = 'r4067604db72';
+
+/**
+ * Exception thrown when the Tavus plugin or Tavus service errors.
+ *
+ * @public
+ */
+export class TavusException extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TavusException';
+  }
+}
+
+/** @public */
+export interface CreateConversationOptions {
+  /** Tavus face id. Falls back to `TAVUS_FACE_ID`. */
+  faceId?: string;
+  /** Tavus pal id. Falls back to `TAVUS_PAL_ID`; defaults to a stock pal when omitted. */
+  palId?: string;
+  /** @deprecated Use {@link CreateConversationOptions.faceId | faceId} instead. */
+  replicaId?: string;
+  /** @deprecated Use {@link CreateConversationOptions.palId | palId} instead. */
+  personaId?: string;
+  /** Conversation properties passed through to Tavus. */
+  properties?: Record<string, unknown>;
+  /** Additional fields to merge into the Tavus conversation creation payload. */
+  extraPayload?: Record<string, unknown>;
+}
+
+function coalesceWithDeprecated(
+  newValue: string | undefined,
+  deprecatedValue: string | undefined,
+  deprecatedName: string,
+  newName: string,
+): string | undefined {
+  // Prefer the new option; fall back to the deprecated alias and warn only when it's used.
+  if (!newValue && deprecatedValue) {
+    log().warn(`\`${deprecatedName}\` is deprecated, use \`${newName}\` instead`);
+  }
+  return newValue || deprecatedValue;
+}
+
+function deprecatedEnv(deprecatedName: string, newName: string): string | undefined {
+  // Read a deprecated env var, warning if it's set so callers migrate to `newName`.
+  const value = process.env[deprecatedName];
+  if (value) {
+    log().warn(`\`${deprecatedName}\` is deprecated, use \`${newName}\` instead`);
+  }
+  return value;
+}
+
+/** @public */
+export interface CreatePalOptions {
+  /** Tavus pal name. Generated automatically when omitted. */
+  name?: string;
+  /** Default face id for the pal (required by `/v2/pals`). */
+  defaultFaceId: string;
+  /** Additional fields to merge into the Tavus pal creation payload. */
+  extraPayload?: Record<string, unknown>;
+}
+
+/** @public */
+export interface CreatePersonaOptions {
+  /** Tavus persona name. Generated automatically when omitted. */
+  name?: string;
+  /** Additional fields to merge into the Tavus persona creation payload. */
+  extraPayload?: Record<string, unknown>;
+}
+
+/** @public */
+export interface TavusAPIOptions {
+  /** Tavus API key. Falls back to `TAVUS_API_KEY`. */
+  apiKey?: string;
+  /** Override the Tavus API base URL. */
+  apiUrl?: string;
+  /** API retry/timeout options. */
+  connOptions?: APIConnectOptions;
+}
+
+/**
+ * Thin client for the Tavus HTTP API.
+ *
+ * @public
+ */
+export class TavusAPI {
+  private apiKey: string;
+  private apiUrl: string;
+  private connOptions: APIConnectOptions;
+
+  #logger = log();
+
+  constructor(options: TavusAPIOptions = {}) {
+    const apiKey = options.apiKey ?? process.env.TAVUS_API_KEY ?? '';
+    if (!apiKey) {
+      throw new TavusException('TAVUS_API_KEY must be set');
+    }
+
+    this.apiKey = apiKey;
+    this.apiUrl = options.apiUrl || DEFAULT_API_URL;
+    this.connOptions = options.connOptions || DEFAULT_API_CONNECT_OPTIONS;
+  }
+
+  async createConversation(options: CreateConversationOptions = {}): Promise<string> {
+    let faceId =
+      coalesceWithDeprecated(options.faceId, options.replicaId, 'replicaId', 'faceId') ||
+      process.env.TAVUS_FACE_ID ||
+      deprecatedEnv('TAVUS_REPLICA_ID', 'TAVUS_FACE_ID');
+
+    let palId =
+      coalesceWithDeprecated(options.palId, options.personaId, 'personaId', 'palId') ||
+      process.env.TAVUS_PAL_ID ||
+      deprecatedEnv('TAVUS_PERSONA_ID', 'TAVUS_PAL_ID');
+
+    // extraPayload overrides the payload wholesale, so a pal named there counts as user-supplied
+    // when deciding whether to fill in the stock face.
+    const extra = options.extraPayload ?? {};
+    if (!palId && !extra.pal_id) {
+      // no pal supplied — use the default stock pal and, unless overridden, its stock face
+      palId = DEFAULT_PAL_ID;
+      faceId ||= DEFAULT_FACE_ID;
+    }
+
+    const payload: Record<string, unknown> = {
+      pal_id: palId,
+      properties: options.properties ?? {},
+    };
+    // a user-supplied pal carries its own default face, so only send face_id when we have one
+    if (faceId) {
+      payload.face_id = faceId;
+    }
+
+    Object.assign(payload, extra);
+
+    if (!('conversation_name' in payload)) {
+      payload.conversation_name = shortuuid('lk_conversation_');
+    }
+
+    const responseData = (await this.post('conversations', payload)) as { conversation_id: string };
+    return responseData.conversation_id;
+  }
+
+  async createPal(options: CreatePalOptions): Promise<string> {
+    const payload: Record<string, unknown> = {
+      pal_name: options.name || shortuuid('lk_pal_'),
+      default_face_id: options.defaultFaceId,
+      pipeline_mode: 'echo',
+      layers: {
+        transport: { transport_type: 'livekit' },
+      },
+    };
+
+    if (options.extraPayload) {
+      Object.assign(payload, options.extraPayload);
+    }
+
+    const responseData = (await this.post('pals', payload)) as { pal_id: string };
+    return responseData.pal_id;
+  }
+
+  /** @deprecated Use {@link TavusAPI.createPal | createPal} instead. */
+  async createPersona(options: CreatePersonaOptions = {}): Promise<string> {
+    log().warn('`createPersona` is deprecated, use `createPal` instead');
+    const payload: Record<string, unknown> = {
+      persona_name: options.name || shortuuid('lk_persona_'),
+      pipeline_mode: 'echo',
+      layers: {
+        transport: { transport_type: 'livekit' },
+      },
+    };
+
+    if (options.extraPayload) {
+      Object.assign(payload, options.extraPayload);
+    }
+
+    const responseData = (await this.post('personas', payload)) as { persona_id: string };
+    return responseData.persona_id;
+  }
+
+  private async post(endpoint: string, payload: Record<string, unknown>): Promise<unknown> {
+    const url = `${this.apiUrl}/${endpoint}`;
+    const body = JSON.stringify(payload);
+
+    for (let attempt = 0; attempt <= this.connOptions.maxRetry; attempt++) {
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': this.apiKey,
+          },
+          body,
+          signal: AbortSignal.timeout(this.connOptions.timeoutMs),
+        });
+
+        if (!response.ok) {
+          let responseBody: object | null = null;
+          let cause: unknown;
+          try {
+            responseBody = { error: await response.text() };
+          } catch (e) {
+            cause = e;
+          }
+          const error = new APIStatusError({
+            message: 'Server returned an error',
+            options: { statusCode: response.status, body: responseBody },
+          });
+          if (cause !== undefined) {
+            error.cause = cause;
+          }
+          throw error;
+        }
+
+        try {
+          return await response.json();
+        } catch (cause) {
+          // Tavus already accepted the POST; retrying could create a duplicate.
+          const error = new APIConnectionError({
+            message: 'Tavus returned an invalid response',
+            options: { retryable: false },
+          });
+          error.cause = cause;
+          throw error;
+        }
+      } catch (e) {
+        if (e instanceof APIStatusError) {
+          if (!e.retryable) {
+            throw e;
+          }
+          this.#logger.warn(
+            { attempt: attempt + 1, statusCode: e.statusCode },
+            'failed to call tavus api',
+          );
+          if (attempt >= this.connOptions.maxRetry) {
+            throw e;
+          }
+        } else if (
+          e instanceof TypeError ||
+          (e instanceof DOMException && e.name === 'TimeoutError')
+        ) {
+          this.#logger.warn({ attempt: attempt + 1, error: String(e) }, 'failed to call tavus api');
+          if (attempt >= this.connOptions.maxRetry) {
+            const error = new APIConnectionError({
+              message: 'Failed to call Tavus API after all retries',
+            });
+            error.cause = e;
+            throw error;
+          }
+        } else {
+          throw e;
+        }
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, intervalForRetry(this.connOptions, attempt)),
+        );
+      }
+    }
+
+    throw new APIConnectionError({
+      message: 'Failed to call Tavus API after all retries',
+    });
+  }
+}

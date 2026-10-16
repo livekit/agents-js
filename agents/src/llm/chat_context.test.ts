@@ -3,8 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
+import { encodeChatItem } from '../proto.js';
+import { INSTRUCTIONS_MESSAGE_ID, applyInstructionsModality } from '../voice/generation.js';
 import { FakeLLM } from '../voice/testing/fake_llm.js';
 import {
+  AgentConfigUpdate,
+  AgentHandoffItem,
   type AudioContent,
   ChatContext,
   type ChatItem,
@@ -12,8 +16,14 @@ import {
   FunctionCall,
   FunctionCallOutput,
   type ImageContent,
+  Instructions,
   ReadonlyChatContext,
+  chatItemFingerprint,
+  concatInstructions,
+  isInstructions,
+  renderInstructions,
 } from './chat_context.js';
+import { ProviderTool, ToolContext, tool } from './tool_context.js';
 
 initializeLogger({ pretty: false, level: 'error' });
 
@@ -299,6 +309,56 @@ describe('ChatContext.toJSON', () => {
   });
 });
 
+describe('ChatMessage text content', () => {
+  const mixed =
+    '<expr type="expression" label="happy"/> Press [Enter] to see <b>bold</b>, ' +
+    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+    '<expr type="prosody" label="whisper">keep it secret</expr>';
+  const mixedClean =
+    'Press [Enter] to see <b>bold</b>, ' +
+    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+    'keep it secret';
+
+  it('strips only expr markup from assistant textContent', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [mixed] });
+
+    expect(msg.textContent).toBe(mixedClean);
+    expect(msg.rawTextContent).toBe(mixed);
+  });
+
+  it.each(['user', 'system', 'developer'] as const)('keeps %s textContent raw', (role) => {
+    const msg = ChatMessage.create({ role, content: [mixed] });
+
+    expect(msg.textContent).toBe(mixed);
+    expect(msg.rawTextContent).toBe(mixed);
+  });
+
+  it('returns undefined without text content', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [] });
+
+    expect(msg.textContent).toBeUndefined();
+    expect(msg.rawTextContent).toBeUndefined();
+  });
+
+  it('toJSON stripMarkup is expr-only and assistant-only', () => {
+    const chatCtx = new ChatContext();
+    chatCtx.addMessage({ role: 'user', content: [mixed] });
+    chatCtx.addMessage({ role: 'assistant', content: [mixed] });
+
+    const stripped = chatCtx.toJSON({ stripMarkup: true });
+    expect(stripped.items).toEqual([
+      expect.objectContaining({ content: [mixed], role: 'user' }),
+      expect.objectContaining({ content: [mixedClean], role: 'assistant' }),
+    ]);
+
+    const raw = chatCtx.toJSON();
+    expect(raw.items).toEqual([
+      expect.objectContaining({ content: [mixed], role: 'user' }),
+      expect.objectContaining({ content: [mixed], role: 'assistant' }),
+    ]);
+  });
+});
+
 describe('ChatContext._summarize', () => {
   it('includes function calls in the summarization source and keeps chronological order', async () => {
     const ctx = new ChatContext();
@@ -434,7 +494,7 @@ describe('ChatContext._summarize', () => {
         item.extra?.is_summary !== true,
     );
     expect(rawTailMessages).toHaveLength(4);
-    expect(rawTailMessages.map((item) => item.textContent)).toEqual([
+    expect(rawTailMessages.map((item) => (item as ChatMessage).textContent)).toEqual([
       'Order #123',
       'Found your order. Let me check the warranty.',
       'Thanks.',
@@ -460,6 +520,38 @@ describe('ChatContext._summarize', () => {
     expect(result).toBe(ctx);
     expect(llm.chatCalls).toBe(0);
     expect(ctx.items.map((item) => item.id)).toEqual(originalIds);
+  });
+});
+
+describe('ChatContext.remove', () => {
+  it('removes an item by id', () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'system', content: 'system' });
+    const target = ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+
+    ctx.remove(target.id);
+
+    expect(ctx.getById(target.id)).toBeUndefined();
+  });
+
+  it('removes an item by item', () => {
+    const ctx = new ChatContext();
+    const target = ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+    ctx.addMessage({ role: 'user', content: 'user again' });
+
+    ctx.remove(target);
+
+    expect(ctx.items).toHaveLength(2);
+  });
+
+  it('throws when removing a nonexistent item', () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+
+    expect(() => ctx.remove('nonexistent_id')).toThrow('Item not found: nonexistent_id');
   });
 });
 
@@ -1233,5 +1325,472 @@ describe('ChatContext.isEquivalent', () => {
 
       expect(ctx1.isEquivalent(ctx2)).toBe(true);
     });
+  });
+});
+
+describe('Instructions', () => {
+  it('constructs from an object with audio and text variants', () => {
+    const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
+
+    expect(instr.audio).toBe('audio variant');
+    expect(instr.text).toBe('text variant');
+    expect(instr.value).toBe('audio variant');
+  });
+
+  it('identifies Instructions with a type guard', () => {
+    const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
+
+    expect(isInstructions(instr)).toBe(true);
+    expect(isInstructions('audio variant')).toBe(false);
+    expect(isInstructions({ type: 'instructions', audio: 'audio variant' })).toBe(false);
+  });
+
+  it('tpl propagates Instructions interpolations into audio and text variants', () => {
+    const instr = Instructions.tpl`persona
+${new Instructions({ audio: 'audio rules', text: 'text rules' })}
+extra`;
+
+    expect(instr).toBeInstanceOf(Instructions);
+    expect(instr.audio).toBe('persona\naudio rules\nextra');
+    expect(instr.text).toBe('persona\ntext rules\nextra');
+    expect(instr.value).toBe('persona\naudio rules\nextra');
+    expect(instr.asModality('text').value).toBe('persona\ntext rules\nextra');
+  });
+
+  it('tpl preserves audio-only interpolation as audio-only output', () => {
+    const instr = Instructions.tpl`prefix ${new Instructions({ audio: 'same' })} suffix`;
+
+    expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'prefix same suffix' });
+    expect(instr.audio).toBe('prefix same suffix');
+    expect(instr.text).toBe('prefix same suffix');
+  });
+
+  it('tpl interpolates primitive values into both variants', () => {
+    const instr = Instructions.tpl`date=${'2026-05-13'} enabled=${true} count=${3}`;
+
+    expect(instr.toJSON()).toEqual({
+      type: 'instructions',
+      audio: 'date=2026-05-13 enabled=true count=3',
+    });
+    expect(instr.audio).toBe('date=2026-05-13 enabled=true count=3');
+    expect(instr.text).toBe('date=2026-05-13 enabled=true count=3');
+    expect(instr.value).toBe('date=2026-05-13 enabled=true count=3');
+  });
+
+  it('tpl combines multiple modality-aware interpolations', () => {
+    const instr = Instructions.tpl`${new Instructions({ audio: 'audio A', text: 'text A' })} / ${new Instructions({ audio: 'audio B', text: 'text B' })}`;
+
+    expect(instr.audio).toBe('audio A / audio B');
+    expect(instr.text).toBe('text A / text B');
+    expect(instr.value).toBe('audio A / audio B');
+  });
+
+  it('tpl preserves the current rendered value of resolved interpolations', () => {
+    const resolved = new Instructions({ audio: 'audio rules', text: 'text rules' }).asModality(
+      'text',
+    );
+    const instr = Instructions.tpl`prefix ${resolved} suffix`;
+
+    expect(instr.audio).toBe('prefix audio rules suffix');
+    expect(instr.text).toBe('prefix text rules suffix');
+    expect(instr.value).toBe('prefix text rules suffix');
+  });
+
+  it('tpl stringifies null and undefined values like template literals', () => {
+    const instr = Instructions.tpl`null=${null} undefined=${undefined}`;
+
+    expect(instr.toJSON()).toEqual({
+      type: 'instructions',
+      audio: 'null=null undefined=undefined',
+    });
+    expect(instr.audio).toBe('null=null undefined=undefined');
+    expect(instr.text).toBe('null=null undefined=undefined');
+  });
+
+  it('tpl renders each modality variant exactly once', () => {
+    const instr = Instructions.tpl`${'You are a helpful assistant.'}
+
+${new Instructions({ audio: 'Handle noisy voice input.', text: 'Handle typed input.' })}`;
+
+    expect(renderInstructions(instr, 'audio')).toBe(
+      'You are a helpful assistant.\n\nHandle noisy voice input.',
+    );
+    expect(renderInstructions(instr, 'text')).toBe(
+      'You are a helpful assistant.\n\nHandle typed input.',
+    );
+    expect(renderInstructions(instr, 'audio').split('You are a helpful assistant.')).toHaveLength(
+      2,
+    );
+  });
+
+  it('tpl without Instructions interpolations is an audio-only render', () => {
+    const instr = Instructions.tpl`Hello ${'Alex'}`;
+
+    expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'Hello Alex' });
+    expect(instr.audio).toBe('Hello Alex');
+    expect(instr.text).toBe('Hello Alex');
+    expect(renderInstructions(instr)).toBe('Hello Alex');
+    expect(renderInstructions(instr, 'audio')).toBe('Hello Alex');
+  });
+
+  it('tpl collapses identical modality variants', () => {
+    const instr = Instructions.tpl`${'You are a helpful assistant.'}
+
+${new Instructions({ audio: 'shared note', text: 'shared note' })}`;
+
+    expect(instr.toJSON()).toEqual({
+      type: 'instructions',
+      audio: 'You are a helpful assistant.\n\nshared note',
+    });
+    expect(renderInstructions(instr)).toBe('You are a helpful assistant.\n\nshared note');
+    expect(renderInstructions(instr, 'audio')).toBe('You are a helpful assistant.\n\nshared note');
+  });
+
+  it('serializes to a dict with both variants and round-trips through toJSON', () => {
+    const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
+
+    const ctx = new ChatContext([ChatMessage.create({ role: 'system', content: [instr] })]);
+    const data = ctx.toJSON();
+    const items = (data.items as Record<string, unknown>[])!;
+    const content = (items[0]!.content as Record<string, unknown>[])![0]!;
+
+    expect(content).toEqual({
+      type: 'instructions',
+      audio: 'audio variant',
+      text: 'text variant',
+    });
+  });
+
+  it('omits the text key in toJSON when only audio variant is provided', () => {
+    const instr = new Instructions({ audio: 'audio only' });
+    expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'audio only' });
+  });
+
+  it('falls back text -> audio when no text variant is provided', () => {
+    const instr = new Instructions({ audio: 'audio only' });
+    expect(instr.audio).toBe('audio only');
+    expect(instr.text).toBe('audio only');
+    expect(instr.value).toBe('audio only');
+  });
+
+  it('renderInstructions returns strings and resolved Instructions values explicitly', () => {
+    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
+
+    expect(renderInstructions('plain instructions')).toBe('plain instructions');
+    expect(renderInstructions(instr)).toBe('audio instructions');
+    expect(renderInstructions(instr, 'audio')).toBe('audio instructions');
+    expect(renderInstructions(instr, 'text')).toBe('text instructions');
+  });
+
+  it('concatenates two Instructions, propagating both variants', () => {
+    const a = new Instructions({ audio: 'audio A', text: 'text A' });
+    const b = new Instructions({ audio: 'audio B', text: 'text B' });
+    const result = a.concat(b);
+    expect(result).toBeInstanceOf(Instructions);
+    expect(result.audio).toBe('audio Aaudio B');
+    expect(result.text).toBe('text Atext B');
+  });
+
+  it('concatenates Instructions + string, propagating both variants', () => {
+    const instr = new Instructions({ audio: 'audio', text: 'text' });
+    const result = instr.concat(' suffix');
+    expect(result.audio).toBe('audio suffix');
+    expect(result.text).toBe('text suffix');
+  });
+
+  it('concatInstructions handles string + Instructions (radd-style)', () => {
+    const instr = new Instructions({ audio: 'audio', text: 'text' });
+    const result = concatInstructions('prefix ', instr);
+    expect(isInstructions(result)).toBe(true);
+    if (!isInstructions(result)) return;
+    expect(result.audio).toBe('prefix audio');
+    expect(result.text).toBe('prefix text');
+  });
+
+  it('preserves text=undefined when concatenating an audio-only instructions', () => {
+    const audioOnly = new Instructions({ audio: 'audio only' });
+    const result = audioOnly.concat(' more');
+    expect(result.toJSON()).toEqual({ type: 'instructions', audio: 'audio only more' });
+    expect(result.audio).toBe('audio only more');
+    expect(result.text).toBe('audio only more');
+  });
+
+  it('when only one side has a text variant, the other contributes its audio', () => {
+    const a = new Instructions({ audio: 'audio A', text: 'text A' });
+    const b = new Instructions({ audio: 'audio B' });
+    const result = concatInstructions(a, ' ', b);
+    expect(isInstructions(result)).toBe(true);
+    if (!isInstructions(result)) return;
+    expect(result.audio).toBe('audio A audio B');
+    expect(result.text).toBe('text A audio B');
+  });
+
+  it('asModality returns a copy with both variants preserved', () => {
+    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
+
+    let resolved = instr.asModality('audio');
+    expect(resolved.value).toBe('audio instructions');
+    expect(resolved.audio).toBe('audio instructions');
+    expect(resolved.text).toBe('text instructions');
+
+    resolved = instr.asModality('text');
+    expect(resolved.value).toBe('text instructions');
+    expect(resolved.audio).toBe('audio instructions');
+    expect(resolved.text).toBe('text instructions');
+  });
+
+  it('can switch modality after a previous resolution', () => {
+    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
+    const resolvedText = instr.asModality('text');
+    const resolvedAudio = resolvedText.asModality('audio');
+    expect(resolvedAudio.value).toBe('audio instructions');
+  });
+
+  it('asModality on audio-only Instructions returns audio for both modalities', () => {
+    const audioOnly = new Instructions({ audio: 'audio only' });
+    expect(audioOnly.asModality('audio').value).toBe('audio only');
+    expect(audioOnly.asModality('text').value).toBe('audio only');
+  });
+
+  it('applyInstructionsModality rewrites the system message content', () => {
+    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
+    const ctx = new ChatContext([
+      ChatMessage.create({
+        id: INSTRUCTIONS_MESSAGE_ID,
+        role: 'system',
+        content: [instr],
+      }),
+    ]);
+
+    applyInstructionsModality(ctx, { modality: 'audio' });
+    let content = (ctx.items[0]! as ChatMessage).content[0]!;
+    expect(isInstructions(content) ? content.value : '').toBe('audio instructions');
+
+    applyInstructionsModality(ctx, { modality: 'text' });
+    content = (ctx.items[0]! as ChatMessage).content[0]!;
+    expect(isInstructions(content) ? content.value : '').toBe('text instructions');
+  });
+
+  it('applyInstructionsModality is a no-op when content has no Instructions', () => {
+    const ctx = new ChatContext([
+      ChatMessage.create({
+        id: INSTRUCTIONS_MESSAGE_ID,
+        role: 'system',
+        content: ['plain string instructions'],
+      }),
+    ]);
+    const before = (ctx.items[0]! as ChatMessage).content[0];
+    applyInstructionsModality(ctx, { modality: 'text' });
+    expect((ctx.items[0]! as ChatMessage).content[0]).toBe(before);
+  });
+
+  it('survives copy and lets a different modality be applied to the copy', () => {
+    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
+    const baseCtx = new ChatContext([
+      ChatMessage.create({
+        id: INSTRUCTIONS_MESSAGE_ID,
+        role: 'system',
+        content: [instr],
+      }),
+    ]);
+    const turn1 = baseCtx.copy();
+    applyInstructionsModality(turn1, { modality: 'text' });
+    const turn2 = turn1.copy();
+    applyInstructionsModality(turn2, { modality: 'audio' });
+
+    const turn2Content = (turn2.items[0]! as ChatMessage).content[0]!;
+    expect(isInstructions(turn2Content) ? turn2Content.value : '').toBe('audio instructions');
+
+    // base context content is untouched (was the original instr)
+    expect((baseCtx.items[0]! as ChatMessage).content[0]).toBe(instr);
+  });
+});
+
+describe('ChatContext.copy with toolCtx filter', () => {
+  it('drops function calls / outputs whose tool is not in the supplied ToolContext', () => {
+    const known = tool({ name: 'known', description: 'k', execute: async () => 'ok' });
+    const ctx = new ChatContext([
+      ChatMessage.create({ role: 'user', content: ['hello'] }),
+      FunctionCall.create({ callId: 'c1', name: 'known', args: '{}' }),
+      FunctionCallOutput.create({ callId: 'c1', name: 'known', output: 'done', isError: false }),
+      FunctionCall.create({ callId: 'c2', name: 'removed', args: '{}' }),
+      FunctionCallOutput.create({ callId: 'c2', name: 'removed', output: 'x', isError: false }),
+    ]);
+
+    const filtered = ctx.copy({ toolCtx: new ToolContext([known]) });
+    const types = filtered.items.map((i) => `${i.type}:${'name' in i ? i.name : ''}`);
+    expect(types).toEqual(['message:', 'function_call:known', 'function_call_output:known']);
+  });
+
+  it('keeps provider-tool calls when the ToolContext holds a matching provider tool id', () => {
+    class CodeRunner extends ProviderTool {}
+    const provider = new CodeRunner({ id: 'code_runner' });
+    const ctx = new ChatContext([
+      FunctionCall.create({ callId: 'p1', name: 'code_runner', args: '{}' }),
+      FunctionCall.create({ callId: 'p2', name: 'other', args: '{}' }),
+    ]);
+
+    const filtered = ctx.copy({ toolCtx: new ToolContext([provider]) });
+    expect(filtered.items.map((i) => ('name' in i ? i.name : ''))).toEqual(['code_runner']);
+  });
+});
+
+describe('AgentConfigUpdate.toJSON', () => {
+  it('renders Instructions to the same string as the proto encoder', () => {
+    const instructions = new Instructions({ audio: 'keep it short', text: 'use markdown' });
+    const item = new AgentConfigUpdate({ id: 'item_acu', instructions, createdAt: 1 });
+
+    const json = item.toJSON() as { instructions: unknown };
+    expect(json.instructions).toBe('keep it short');
+
+    const encoded = encodeChatItem(item);
+    expect(encoded.item.case).toBe('agentConfigUpdate');
+    if (encoded.item.case === 'agentConfigUpdate') {
+      expect(encoded.item.value.instructions).toBe(json.instructions);
+    }
+  });
+
+  it('passes a plain string through and omits an unset field', () => {
+    const withString = new AgentConfigUpdate({ instructions: 'be nice' }).toJSON() as {
+      instructions?: unknown;
+    };
+    expect(withString.instructions).toBe('be nice');
+
+    const withoutInstructions = new AgentConfigUpdate({ toolsAdded: ['x'] }).toJSON() as {
+      instructions?: unknown;
+    };
+    expect(withoutInstructions).not.toHaveProperty('instructions');
+  });
+});
+
+function equivalenceItems(): ChatItem[] {
+  return [
+    new ChatMessage({ id: 'm', role: 'user', content: ['hi'] }),
+    new FunctionCall({ id: 'c', callId: '1', name: 'f', args: '{}' }),
+    new FunctionCallOutput({ id: 'o', callId: '1', name: 'f', output: 'ok', isError: false }),
+    new AgentHandoffItem({ id: 'h', newAgentId: 'b' }),
+  ];
+}
+
+describe('ChatItem essential fields and fingerprints', () => {
+  it.each([
+    [0, { role: 'assistant' }],
+    [0, { content: ['hello'] }],
+    [0, { interrupted: true }],
+    [1, { args: '{"x": 1}' }],
+    [1, { name: 'g' }],
+    [1, { thoughtSignature: 'signature' }],
+    [1, { groupId: 'g' }],
+    [1, { extra: { k: 1 } }],
+    [2, { output: 'nope' }],
+    [2, { isError: true }],
+  ] as const)(
+    'essential field change at item %i breaks equivalence and fingerprint',
+    (index, update) => {
+      const items = equivalenceItems();
+      const changed = [...items];
+      changed[index] = Object.assign(
+        Object.create(Object.getPrototypeOf(items[index]!)),
+        items[index],
+        update,
+      );
+
+      expect(new ChatContext(items).isEquivalent(new ChatContext(changed))).toBe(false);
+      expect(chatItemFingerprint(items[index]!)).not.toBe(chatItemFingerprint(changed[index]!));
+    },
+  );
+
+  it('metadata does not affect equivalence or fingerprints', () => {
+    const items = equivalenceItems();
+    const changed = items.map((item) =>
+      Object.assign(Object.create(Object.getPrototypeOf(item)), item),
+    );
+    Object.assign(changed[0]!, { createdAt: 0, transcriptConfidence: 0.5, extra: { k: 1 } });
+    Object.assign(changed[1]!, { createdAt: 0 });
+    Object.assign(changed[2]!, { createdAt: 0 });
+    Object.assign(changed[3]!, { newAgentId: 'c' });
+
+    expect(new ChatContext(items).isEquivalent(new ChatContext(changed))).toBe(true);
+    expect(items.map(chatItemFingerprint)).toEqual(changed.map(chatItemFingerprint));
+  });
+
+  it('detects changed inline image data without keeping it', () => {
+    const image = (id: string, data: string): ImageContent => ({
+      id,
+      type: 'image_content',
+      image: data,
+      inferenceDetail: 'auto',
+      _cache: {},
+    });
+    const message = (content: ImageContent) =>
+      new ChatMessage({ role: 'user', content: [content] });
+    const original = image('img', 'data:image/png;base64,AA');
+    const fingerprint = chatItemFingerprint(message(original));
+
+    // the same id and length with different data
+    expect(chatItemFingerprint(message(image('img', 'data:image/png;base64,BB')))).not.toBe(
+      fingerprint,
+    );
+    // the same data in another object
+    expect(chatItemFingerprint(message(image('img', 'data:image/png;base64,AA')))).toBe(
+      fingerprint,
+    );
+    // the data edited in place
+    original.image = 'data:image/png;base64,CC';
+    expect(chatItemFingerprint(message(original))).not.toBe(fingerprint);
+    expect(fingerprint).not.toContain('base64');
+  });
+
+  it('compares audio frames by identity', () => {
+    const audio = (frame: object): AudioContent =>
+      ({ type: 'audio_content', frame: [frame] }) as unknown as AudioContent;
+    const frame = {};
+    const message = (content: AudioContent) =>
+      new ChatMessage({ id: 'm', role: 'user', content: [content] });
+
+    expect(
+      new ChatContext([message(audio(frame))]).isEquivalent(
+        new ChatContext([message(audio(frame))]),
+      ),
+    ).toBe(true);
+    expect(
+      new ChatContext([message(audio(frame))]).isEquivalent(new ChatContext([message(audio({}))])),
+    ).toBe(false);
+  });
+
+  it('fingerprints function-call extra as plain data', () => {
+    // an object that looks like chat content, but is not in a message's content
+    const call = new FunctionCall({
+      callId: '1',
+      name: 'f',
+      args: '{}',
+      extra: { metadata: { type: 'audio_content' } },
+    });
+    expect(() => chatItemFingerprint(call)).not.toThrow();
+  });
+
+  it('tracks image URLs and inference settings', () => {
+    const image = (
+      url: string,
+      inferenceDetail: ImageContent['inferenceDetail'],
+    ): ImageContent => ({
+      id: 'img',
+      type: 'image_content',
+      image: url,
+      inferenceDetail,
+      _cache: {},
+    });
+    const a = new ChatMessage({ role: 'user', content: [image('https://a.example/img', 'auto')] });
+    const changedUrl = new ChatMessage({
+      role: 'user',
+      content: [image('https://b.example/img', 'auto')],
+    });
+    const changedDetail = new ChatMessage({
+      role: 'user',
+      content: [image('https://a.example/img', 'high')],
+    });
+
+    expect(chatItemFingerprint(a)).not.toBe(chatItemFingerprint(changedUrl));
+    expect(chatItemFingerprint(a)).not.toBe(chatItemFingerprint(changedDetail));
   });
 });

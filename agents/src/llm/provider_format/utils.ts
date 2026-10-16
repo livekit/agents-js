@@ -2,13 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { log } from '../../log.js';
-import type {
-  ChatContext,
-  ChatItem,
-  ChatMessage,
-  FunctionCall,
-  FunctionCallOutput,
-} from '../chat_context.js';
+import { ChatContext, ChatMessage } from '../chat_context.js';
+import type { ChatItem, FunctionCall, FunctionCallOutput } from '../chat_context.js';
 
 class ChatItemGroup {
   message?: ChatMessage;
@@ -51,8 +46,8 @@ class ChatItemGroup {
       this.toolCalls.push(item);
     } else if (item.type === 'function_call_output') {
       this.toolOutputs.push(item);
-    } else if (item.type === 'agent_handoff') {
-      // provider formatters don't serialize handoff records into model input.
+    } else if (item.type === 'agent_handoff' || item.type === 'agent_config_update') {
+      // provider formatters don't serialize session metadata records into model input.
     }
     return this;
   }
@@ -107,6 +102,41 @@ class ChatItemGroup {
 
 function intersection<T>(set1: Set<T>, set2: Set<T>): Set<T> {
   return new Set([...set1].filter((item) => set2.has(item)));
+}
+
+export function convertMidConversationInstructions(
+  chatCtx: ChatContext,
+  role: 'user' | 'assistant' = 'user',
+  template: string = 'New instructions received. Apply them carefully: {instructions}',
+): ChatContext {
+  let firstSystemSeen = false;
+  const items: ChatItem[] = [];
+
+  for (const item of chatCtx.items) {
+    if (
+      item.type === 'message' &&
+      (item.role === 'system' || item.role === 'developer') &&
+      firstSystemSeen &&
+      item.rawTextContent
+    ) {
+      items.push(
+        ChatMessage.create({
+          role,
+          content: template.replace('{instructions}', item.rawTextContent),
+          id: item.id,
+          createdAt: item.createdAt,
+        }),
+      );
+      continue;
+    }
+
+    if (item.type === 'message' && (item.role === 'system' || item.role === 'developer')) {
+      firstSystemSeen = true;
+    }
+    items.push(item);
+  }
+
+  return new ChatContext(items);
 }
 
 /**

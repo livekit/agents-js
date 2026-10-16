@@ -14,6 +14,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
+import type { ConversationItemAddedEvent } from '../voice/events.js';
 import type { TimedString } from '../voice/index.js';
 
 /** Indicates start/middle/end of speech */
@@ -75,6 +76,30 @@ export interface SpeechData {
    * May contain multiple entries when a single utterance spans multiple source languages.
    */
   sourceLanguages?: LanguageCode[];
+  /**
+   * The original transcription segments in the source language(s), when translation is active.
+   * Each entry corresponds to the same-indexed entry in `sourceLanguages`.
+   */
+  sourceTexts?: string[];
+  /**
+   * The target language(s) produced by a translation-capable STT service, one entry per
+   * consecutive same-language run, parallel to `targetTexts`.
+   *
+   * `language` holds the dominant or first target language and `targetLanguages` carries the
+   * fine-grained per-run breakdown. Populated when translation is active.
+   */
+  targetLanguages?: LanguageCode[];
+  /**
+   * The translated transcription segments in the target language(s).
+   * Each entry corresponds to the same-indexed entry in `targetLanguages`.
+   */
+  targetTexts?: string[];
+  /**
+   * Optional plugin-specific metadata (e.g. voice profile, provider diagnostics).
+   *
+   * Plugins may populate this with provider-specific data that doesn't map to standard fields.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export interface RecognitionUsage {
@@ -90,8 +115,12 @@ export interface RecognitionUsage {
 export interface SpeechEvent {
   type: SpeechEventType;
   alternatives?: [SpeechData, ...SpeechData[]];
+  /** Wall-clock time when speech ended, in milliseconds since the Unix epoch. */
+  speechEndTime?: number;
   requestId?: string;
   recognitionUsage?: RecognitionUsage;
+  /** Wall-clock time when this event was created, in milliseconds. STT boundaries populate it. */
+  createdAt?: number;
 }
 
 /**
@@ -112,6 +141,10 @@ export interface STTCapabilities {
   alignedTranscript?: 'word' | 'chunk' | false;
   /** Whether this STT supports speaker diarization. */
   diarization?: boolean;
+  /** Whether the STT supports keyterm prompting */
+  keyterms?: boolean;
+  /** Whether the STT can natively consume conversation context (see STT._pushConversationItem) */
+  chatContext?: boolean;
 }
 
 export interface STTError {
@@ -137,6 +170,8 @@ export type STTCallbacks = {
 export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCallbacks>) {
   abstract label: string;
   #capabilities: STTCapabilities;
+  #keytermsUnsupportedWarned = false;
+  #chatContextUnsupportedWarned = false;
 
   constructor(capabilities: STTCapabilities) {
     super();
@@ -180,6 +215,7 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   async recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<SpeechEvent> {
     const startTime = process.hrtime.bigint();
     const event = await this._recognize(frame, abortSignal);
+    event.createdAt ??= Date.now();
     const durationMs = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
     this.emit('metrics_collected', {
       type: 'stt_metrics',
@@ -203,12 +239,62 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   ): Promise<SpeechEvent>;
 
   /**
+   * Set the framework-managed keyterms (session config + auto-detection).
+   *
+   * Internal hook called by the framework, kept separate from the user's own keyterms
+   * (constructor / `updateOptions`). Plugins that support keyterms override this to
+   * store the session set and apply it merged with the user keyterms.
+   *
+   * @internal
+   */
+  _updateSessionKeyterms(_keyterms: string[]): void {
+    if (!this.#capabilities.keyterms) {
+      if (!this.#keytermsUnsupportedWarned) {
+        this.#keytermsUnsupportedWarned = true;
+        log()
+          .child({ stt: this.label })
+          .warn('keyterms are not supported by this STT, ignoring keyterms update');
+      }
+      return;
+    }
+  }
+
+  /**
+   * Feed a new conversation turn to the STT to bias recognition (context carryover).
+   *
+   * Plugins with native context support set `STTCapabilities.chatContext` and override
+   * this to forward the item to their provider's carryover field.
+   *
+   * @internal
+   */
+  _pushConversationItem(_ev: ConversationItemAddedEvent): void {
+    if (!this.#capabilities.chatContext) {
+      if (!this.#chatContextUnsupportedWarned) {
+        this.#chatContextUnsupportedWarned = true;
+        log()
+          .child({ stt: this.label })
+          .warn('chat context is not supported by this STT, ignoring chat context update');
+      }
+      return;
+    }
+  }
+
+  /**
    * Returns a {@link SpeechStream} that can be used to push audio frames and receive
    * transcriptions
    *
    * @param options - Optional configuration including connection options
    */
   abstract stream(options?: { connOptions?: APIConnectOptions }): SpeechStream;
+
+  /**
+   * Open the provider connection ahead of the first recognition. Best effort and non-blocking.
+   * Called by the framework when an agent starts or resumes. Providers without a persistent
+   * connection need not override this.
+   */
+  prewarm(): void {
+    return;
+  }
 
   async close(): Promise<void> {
     return;
@@ -241,10 +327,12 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   abstract label: string;
   protected closed = false;
   #stt: STT;
+  #terminalError?: Error;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   private _connOptions: APIConnectOptions;
   private _startTimeOffset: number = 0;
+  private _numRetries: number = 0;
 
   protected abortController = new AbortController();
 
@@ -264,20 +352,41 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
+    const runMainTask = async () => {
+      try {
+        await this.mainTask();
+      } catch (error) {
+        // already surfaced via emitError; swallow to avoid unhandled rejection.
+        this.#terminalError = toError(error);
+      } finally {
+        this.queue.close();
+      }
+    };
+    startSoon(() => {
+      void runMainTask();
+    });
   }
 
   /**
    * Runs the STT with retry logic. Errors are emitted via {@link STT} error events
-   * and then re-thrown to trigger `.finally()` cleanup.
+   * and then re-thrown to end the attempt loop; the caller swallows them.
    *
    * @throws {APIError} When the STT request fails with a non-retryable error
    * @throws {APIConnectionError} When all retry attempts are exhausted
    * @internal Not annotated with Throws<> because this is fire-and-forget via startSoon()
    */
   private async mainTask(): Promise<void> {
-    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+    let lastStartTime = Date.now();
+    // `_numRetries` counts consecutive failures, not failures over the lifetime of the stream:
+    // it is reset below once an attempt outlived the connect timeout (it had connected), and by
+    // monitorMetrics() on every FINAL_TRANSCRIPT. Providers that recycle their socket on a fixed
+    // interval (Gemini Live's 10-minute cap, Cartesia's 3-minute idle timeout) would otherwise
+    // exhaust it and permanently stop recognizing on long sessions.
+    while (this._numRetries <= this._connOptions.maxRetry) {
       try {
+        // Keep provider-relative transcript timestamps linear across reconnect attempts.
+        this._startTimeOffset += (Date.now() - lastStartTime) / 1000;
+        lastStartTime = Date.now();
         return await this.run();
       } catch (error) {
         // If the stream was intentionally aborted (e.g. session shutdown), exit
@@ -288,13 +397,17 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
           return;
         }
 
+        if (Date.now() - lastStartTime > this._connOptions.timeoutMs) {
+          this._numRetries = 0;
+        }
+
         if (error instanceof APIError) {
-          const retryInterval = intervalForRetry(this._connOptions, i);
+          const retryInterval = intervalForRetry(this._connOptions, this._numRetries);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
             this.emitError({ error, recoverable: false });
             throw error;
-          } else if (i === this._connOptions.maxRetry) {
+          } else if (this._numRetries === this._connOptions.maxRetry) {
             this.emitError({ error, recoverable: false });
             throw new APIConnectionError({
               message: `failed to recognize speech after ${this._connOptions.maxRetry + 1} attempts`,
@@ -304,7 +417,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
             // Don't emit error event for recoverable errors during retry loop
             // to avoid ERR_UNHANDLED_ERROR or premature session termination
             this.logger.warn(
-              { stt: this.#stt.label, attempt: i + 1, error },
+              { stt: this.#stt.label, attempt: this._numRetries + 1, error },
               `failed to recognize speech, retrying in ${retryInterval}ms`,
             );
           }
@@ -312,6 +425,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
           if (retryInterval > 0) {
             await delay(retryInterval);
           }
+
+          this._numRetries += 1;
         } else {
           this.emitError({ error: toError(error), recoverable: false });
           throw error;
@@ -350,6 +465,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected async monitorMetrics() {
     for await (const event of this.queue) {
+      event.createdAt ??= Date.now();
       if (!this.output.closed) {
         try {
           this.output.put(event);
@@ -361,6 +477,10 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
             );
           }
         }
+      }
+      if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+        // reset the retry count after a successful recognition
+        this._numRetries = 0;
       }
       if (event.type !== SpeechEventType.RECOGNITION_USAGE) continue;
       const metrics: STTMetrics = {
@@ -389,6 +509,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected get abortSignal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  /** Whether this stream ended with an unrecoverable error. @internal */
+  get _failed(): boolean {
+    return this.#terminalError !== undefined;
   }
 
   get startTimeOffset(): number {
@@ -464,6 +589,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   next(): Promise<IteratorResult<SpeechEvent>> {
     return this.output.next();
+  }
+
+  /** The error that ended the retry loop; set once the stream has stopped recognizing for good. */
+  get terminalError(): Error | undefined {
+    return this.#terminalError;
   }
 
   /** Close both the input and output of the STT stream */

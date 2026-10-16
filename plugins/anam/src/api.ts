@@ -2,20 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { log } from '@livekit/agents';
-import { type APIConnectOptions, AnamException, type PersonaConfig } from './types.js';
+import {
+  type APIConnectOptions,
+  AnamException,
+  type PersonaConfig,
+  type SessionOptions,
+} from './types.js';
 
 const DEFAULT_API_URL = 'https://api.anam.ai';
 
+/** @public */
 export class AnamAPI {
   constructor(
     private apiKey: string,
     private apiUrl: string = DEFAULT_API_URL,
     private conn: APIConnectOptions = { maxRetry: 3, retryInterval: 2, timeout: 10 },
   ) {}
-
-  private get tokenPath(): string {
-    return '/v1/auth/session-token';
-  }
 
   private get startPath(): string {
     return '/v1/engine/session';
@@ -117,18 +119,29 @@ export class AnamAPI {
     return this.postWithHeaders<T>(path, body, { Authorization: `Bearer ${this.apiKey}` });
   }
 
-  createSessionToken(params: {
+  startSession(params: {
     personaConfig: PersonaConfig;
     livekitUrl?: string;
     livekitToken?: string;
+    sessionOptions?: SessionOptions;
   }) {
     const pc = params.personaConfig;
-    const personaPayload = {
-      type: 'ephemeral',
-      name: pc.name,
-      avatarId: pc.avatarId,
-      llmId: 'CUSTOMER_CLIENT_V1',
-    };
+    // Anam's personaConfig is a `oneOf`: reference a previously created
+    // (stateful) persona by `personaId` — the "dev flow" — or configure an
+    // ephemeral persona inline with name/avatarId/llmId. The two are mutually
+    // exclusive, so when a personaId is given we must not also send the
+    // ephemeral fields.
+    const personaPayload: Record<string, unknown> = pc.personaId
+      ? { personaId: pc.personaId }
+      : {
+          type: 'ephemeral',
+          name: pc.name,
+          avatarId: pc.avatarId,
+          llmId: 'CUSTOMER_CLIENT_V1',
+          // Only forward the avatar model version when set; otherwise let Anam
+          // fall back to the avatar's default model.
+          ...(pc.avatarModel ? { avatarModel: pc.avatarModel } : {}),
+        };
 
     const payload: Record<string, unknown> = {
       personaConfig: personaPayload,
@@ -138,14 +151,25 @@ export class AnamAPI {
       livekitToken: params.livekitToken,
     };
 
-    return this.post<{ sessionToken: string }>(this.tokenPath, payload);
-  }
+    if (
+      params.sessionOptions &&
+      (params.sessionOptions.videoWidth !== undefined ||
+        params.sessionOptions.videoHeight !== undefined)
+    ) {
+      if (
+        params.sessionOptions.videoWidth === undefined ||
+        params.sessionOptions.videoHeight === undefined
+      ) {
+        throw new AnamException(
+          'videoWidth and videoHeight must be set together (both or neither)',
+        );
+      }
+      payload.sessionOptions = {
+        videoWidth: params.sessionOptions.videoWidth,
+        videoHeight: params.sessionOptions.videoHeight,
+      };
+    }
 
-  startEngineSession(params: { sessionToken: string }) {
-    return this.postWithHeaders<{ sessionId: string }>(
-      this.startPath,
-      {},
-      { Authorization: `Bearer ${params.sessionToken}` },
-    );
+    return this.post<{ sessionId: string }>(this.startPath, payload);
   }
 }

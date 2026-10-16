@@ -2,19 +2,26 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type {
+  LocalTrackPublication,
+  Participant,
   ParticipantKind,
-  RemoteParticipant,
   RemoteTrackPublication,
   Room,
   TrackKind,
 } from '@livekit/rtc-node';
-import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler, RemoteParticipant, RoomEvent } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
-import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
-import { v4 as uuidv4 } from 'uuid';
+import type { IncomingMessage } from 'node:http';
+import {
+  ReadableStream,
+  TransformStream,
+  type TransformStreamDefaultController,
+} from 'node:stream/web';
+import type { WebSocket } from 'ws';
+import { APIConnectionError, APIStatusError } from './_exceptions.js';
 import { log } from './log.js';
 
 /**
@@ -38,6 +45,52 @@ export type Expand<T> = T extends Function
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
 export const noop = () => {};
+
+/** @internal */
+export async function waitForWebSocketOpen(ws: WebSocket, provider: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      ws.off('open', onOpen);
+      ws.off('unexpected-response', onUnexpectedResponse);
+      ws.off('error', onError);
+      ws.off('close', onClose);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+      cleanup();
+      response.resume();
+      ws.on('error', noop);
+      ws.close();
+      const statusCode = response.statusCode ?? -1;
+      reject(
+        new APIStatusError({
+          message: `${provider} WebSocket connection rejected with status ${statusCode}`,
+          options: { statusCode },
+        }),
+      );
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(
+        new APIConnectionError({
+          message: `failed to connect to ${provider} (${error.name})`,
+        }),
+      );
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new APIConnectionError({ message: `failed to connect to ${provider} (CloseEvent)` }));
+    };
+
+    ws.once('open', onOpen);
+    ws.once('unexpected-response', onUnexpectedResponse);
+    ws.once('error', onError);
+    ws.once('close', onClose);
+  });
+}
 
 export const isPending = async (promise: Promise<unknown>): Promise<Throws<boolean, Error>> => {
   const sentinel = Symbol('sentinel');
@@ -98,20 +151,21 @@ export class Queue<T> {
     this.#limit = limit;
   }
 
-  async get(): Promise<T> {
-    const _get = async (): Promise<T> => {
-      if (this.items.length === 0) {
-        await once(this.#events, 'put');
-      }
-      let item = this.items.shift();
-      if (typeof item === 'undefined') {
-        item = await _get();
-      }
-      return item;
-    };
+  async get(options: { signal?: AbortSignal } = {}): Promise<T> {
+    // Cancelled readers must leave buffered items for the next reader.
+    options.signal?.throwIfAborted();
+    while (this.items.length === 0) {
+      await once(this.#events, 'put', { signal: options.signal });
+    }
+    options.signal?.throwIfAborted();
 
-    const item = _get();
+    const item = this.items.shift();
     this.#events.emit('get');
+
+    if (typeof item === 'undefined') {
+      return this.get(options);
+    }
+
     return item;
   }
 
@@ -228,91 +282,6 @@ export class Event {
 }
 
 /** @internal */
-export class CancellablePromise<T, E extends Error = Error> {
-  #promise: ThrowsPromise<T, E>;
-  #cancelFn: () => void;
-  #isCancelled: boolean = false;
-  #error: E | null = null;
-
-  constructor(
-    executor: (
-      resolve: (value: T | PromiseLike<T>) => void,
-      reject: (reason: E) => void,
-      onCancel: (cancelFn: () => void) => void,
-    ) => void,
-  ) {
-    let cancel: () => void;
-
-    this.#promise = new ThrowsPromise<T, E>((resolve, reject) => {
-      executor(
-        resolve,
-        (reason) => {
-          this.#error = reason;
-          reject(reason);
-        },
-        (cancelFn) => {
-          cancel = () => {
-            this.#isCancelled = true;
-            cancelFn();
-          };
-        },
-      );
-    });
-
-    this.#cancelFn = cancel!;
-  }
-
-  get isCancelled(): boolean {
-    return this.#isCancelled;
-  }
-
-  get error(): Error | null {
-    return this.#error;
-  }
-
-  then<TResult1 = T, TResult2 = never>(
-    onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null,
-    onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null,
-  ): Promise<TResult1 | TResult2> {
-    return this.#promise.then(onfulfilled, onrejected);
-  }
-
-  catch<TResult = never>(
-    onrejected?: ((reason: E) => TResult | Promise<TResult>) | null,
-  ): Promise<Throws<T | TResult | undefined, E>> {
-    return this.#promise.catch(onrejected);
-  }
-
-  finally(onfinally?: (() => void) | null): Promise<Throws<T, E>> {
-    return this.#promise.finally(onfinally);
-  }
-
-  cancel(): void {
-    this.#cancelFn();
-  }
-
-  static from<T, E extends Error = Error>(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>;
-  static from<T>(promise: Promise<T>): CancellablePromise<T>;
-  static from<T>(promise: Promise<T>): CancellablePromise<T> {
-    return new CancellablePromise<T>((resolve, reject) => {
-      promise.then(resolve).catch(reject);
-    });
-  }
-}
-
-/** @internal */
-export async function gracefullyCancel<T>(promise: CancellablePromise<T>): Promise<void> {
-  if (!promise.isCancelled) {
-    promise.cancel();
-  }
-  try {
-    await promise;
-  } catch (error) {
-    // Ignore the error, as it's expected due to cancellation
-  }
-}
-
-/** @internal */
 export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
   private static readonly CLOSE_SENTINEL = Symbol('CLOSE_SENTINEL');
   #queue = new Queue<T | typeof AsyncIterableQueue.CLOSE_SENTINEL>();
@@ -334,11 +303,11 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
     this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
   }
 
-  async next(): Promise<IteratorResult<T>> {
+  async next(options: { signal?: AbortSignal } = {}): Promise<IteratorResult<T>> {
     if (this.#closed && this.#queue.items.length === 0) {
       return { value: undefined, done: true };
     }
-    const item = await this.#queue.get();
+    const item = await this.#queue.get(options);
     if (item === AsyncIterableQueue.CLOSE_SENTINEL && this.#closed) {
       return { value: undefined, done: true };
     }
@@ -353,31 +322,67 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 /** @internal */
 export class ExpFilter {
   #alpha: number;
+  #min?: number;
   #max?: number;
   #filtered?: number = undefined;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
+  constructor(
+    alphaOrOpts: number | { alpha: number; initial?: number; minVal?: number; maxVal?: number },
+    max?: number,
+  ) {
+    if (typeof alphaOrOpts === 'number') {
+      this.#alpha = alphaOrOpts;
+      this.#max = max;
+      return;
+    }
+
+    this.#validateAlpha(alphaOrOpts.alpha);
+    this.#alpha = alphaOrOpts.alpha;
+    this.#filtered = alphaOrOpts.initial;
+    this.#min = alphaOrOpts.minVal;
+    this.#max = alphaOrOpts.maxVal;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  reset(
+    alphaOrOpts?: number | { alpha?: number; initial?: number; minVal?: number; maxVal?: number },
+  ) {
+    if (typeof alphaOrOpts === 'object') {
+      if (alphaOrOpts.alpha !== undefined) {
+        this.#validateAlpha(alphaOrOpts.alpha);
+        this.#alpha = alphaOrOpts.alpha;
+      }
+      if (alphaOrOpts.initial !== undefined) {
+        this.#filtered = alphaOrOpts.initial;
+      }
+      if (alphaOrOpts.minVal !== undefined) {
+        this.#min = alphaOrOpts.minVal;
+      }
+      if (alphaOrOpts.maxVal !== undefined) {
+        this.#max = alphaOrOpts.maxVal;
+      }
+      return;
     }
+
+    if (alphaOrOpts) {
+      this.#alpha = alphaOrOpts;
+    }
+
     this.#filtered = undefined;
   }
 
   apply(exp: number, sample: number): number {
-    if (this.#filtered) {
+    if (this.#filtered !== undefined) {
       const a = this.#alpha ** exp;
       this.#filtered = a * this.#filtered + (1 - a) * sample;
     } else {
       this.#filtered = sample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
+    if (this.#max !== undefined && this.#filtered > this.#max) {
       this.#filtered = this.#max;
+    }
+    if (this.#min !== undefined && this.#filtered < this.#min) {
+      this.#filtered = this.#min;
     }
 
     return this.#filtered;
@@ -387,8 +392,18 @@ export class ExpFilter {
     return this.#filtered;
   }
 
+  get value(): number | undefined {
+    return this.#filtered;
+  }
+
   set alpha(alpha: number) {
     this.#alpha = alpha;
+  }
+
+  #validateAlpha(alpha: number) {
+    if (alpha <= 0 || alpha > 1) {
+      throw new Error('alpha must be in (0, 1].');
+    }
   }
 }
 
@@ -449,6 +464,8 @@ export class Task<T> {
   private static readonly currentTaskStorage = new AsyncLocalStorage<Task<unknown>>();
   private resultFuture: Future<T>;
   private doneCallbacks: Set<() => void> = new Set();
+  /** Snapshot of the cancellation disposition, taken once at settlement. See {@link cancelled}. */
+  private settledCancelled = false;
 
   #logger = log();
 
@@ -510,10 +527,18 @@ export class Task<T> {
     return Task.currentTaskStorage
       .run(this as Task<unknown>, run)
       .then((value) => {
+        // Snapshot before resolving: `done` flips synchronously inside resolve(), so the
+        // disposition has to be in place before any observer can see the task as settled.
+        this.settledCancelled = this.controller.signal.aborted;
         this.resultFuture.resolve(value);
         return value;
       })
       .catch((error) => {
+        // Failing for a reason unrelated to the abort is an exceptional completion, not a
+        // cancellation — asyncio reports the same when a task swallows CancelledError and
+        // raises something else.
+        this.settledCancelled =
+          this.controller.signal.aborted && (error as Error | undefined)?.name === 'AbortError';
         this.resultFuture.reject(error);
       })
       .finally(() => {
@@ -579,6 +604,34 @@ export class Task<T> {
     return this.resultFuture.done;
   }
 
+  /**
+   * Whether this task settled under a cancellation, the near-equivalent of asyncio's
+   * `Task.cancelled()`. Needed because a cancelled body usually observes the abort signal and
+   * returns normally rather than rejecting, so {@link result} alone cannot distinguish a task
+   * that was torn down from one that ran to a real answer.
+   *
+   * Guarantees exactly: `true` if and only if the task is {@link done}, its controller was
+   * already aborted at the instant it settled, and it did not fail with an error unrelated to
+   * that abort (it either returned a value or rejected with an `AbortError`). The value is
+   * captured once at settlement, so it is immutable afterwards — aborting the controller later
+   * cannot reclassify a task that already finished.
+   *
+   * Does *not* guarantee:
+   * - that the body was actually interrupted. A body that observes the abort and returns
+   *   normally anyway still reports `true`; the abort, not the return, is the disposition.
+   * - that this task specifically was the cancellation target. Controllers are intentionally
+   *   shareable (see the class example), so an abort raised for a sibling before this task
+   *   settles also marks it cancelled. Read this as "a cancellation was in effect for this
+   *   task when it settled", not "someone called cancel() on this task".
+   *
+   * `false` while a cancelled task is still winding down, matching asyncio.
+   *
+   * @internal
+   */
+  get cancelled(): boolean {
+    return this.done && this.settledCancelled;
+  }
+
   addDoneCallback(callback: () => void) {
     if (this.done) {
       queueMicrotask(callback);
@@ -620,7 +673,7 @@ export function withResolvers<T = unknown>() {
  * @returns A short UUID with the prefix.
  */
 export function shortuuid(prefix: string = ''): string {
-  return `${prefix}${uuidv4().slice(0, 12)}`;
+  return `${prefix}${randomUUID().slice(0, 12)}`;
 }
 
 const READONLY_SYMBOL = Symbol('Readonly');
@@ -710,15 +763,37 @@ export function resampleStream({
   outputRate: number;
 }): ReadableStream<AudioFrame> {
   let resampler: AudioResampler | null = null;
+  let currentInputRate = 0;
   const transformStream = new TransformStream<AudioFrame, AudioFrame>({
     transform(chunk: AudioFrame, controller: TransformStreamDefaultController<AudioFrame>) {
       if (chunk.samplesPerChannel === 0) {
         controller.enqueue(chunk);
         return;
       }
-      if (!resampler) {
-        resampler = new AudioResampler(chunk.sampleRate, outputRate);
+
+      if (chunk.sampleRate === outputRate) {
+        if (resampler) {
+          for (const frame of resampler.flush()) {
+            controller.enqueue(frame);
+          }
+          resampler.close();
+          resampler = null;
+        }
+        controller.enqueue(chunk);
+        return;
       }
+
+      if (!resampler || currentInputRate !== chunk.sampleRate) {
+        if (resampler) {
+          for (const frame of resampler.flush()) {
+            controller.enqueue(frame);
+          }
+          resampler.close();
+        }
+        resampler = new AudioResampler(chunk.sampleRate, outputRate);
+        currentInputRate = chunk.sampleRate;
+      }
+
       for (const frame of resampler.push(chunk)) {
         controller.enqueue(frame);
       }
@@ -729,6 +804,7 @@ export function resampleStream({
           controller.enqueue(frame);
         }
         resampler.close();
+        resampler = null;
       }
     },
   });
@@ -871,6 +947,74 @@ export function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(
   ]).finally(() => clearTimeout(timer)) as Promise<Throws<T, E>>;
 }
 
+/** Result of {@link waitUntilAborted}: either the settled value, or an abort marker. */
+export type Aborted<T> =
+  | {
+      result: T;
+      isAborted: false;
+    }
+  | {
+      result: undefined;
+      isAborted: true;
+    };
+
+/**
+ * Race a promise against an `AbortSignal`. Unlike a plain reject-on-abort race,
+ * this resolves with a tagged result so callers can branch on `isAborted`
+ * instead of catching. On abort it resolves `{ result: undefined, isAborted: true }`;
+ * otherwise it resolves `{ result, isAborted: false }`. A rejection of the
+ * underlying promise is propagated. The abort listener is always cleaned up.
+ *
+ * Each call uses a separate listener to avoid retaining prior results on a
+ * shared abort promise.
+ *
+ * An already-aborted signal short-circuits immediately to the abort result.
+ *
+ * Note: the underlying promise is not cancelled — it keeps running; this only
+ * stops waiting for it. Because the promise is passed already-created, the
+ * caller's operation has already started, so a pre-aborted signal won't prevent
+ * that side effect (pass/await a factory yourself if you need to avoid starting it).
+ */
+export async function waitUntilAborted<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<Aborted<T>> {
+  if (signal.aborted) {
+    // We're abandoning the promise, but it's already running: swallow any late
+    // rejection so it doesn't surface as an unhandled rejection (mirrors how the
+    // .catch below consumes a rejection that loses the race to an abort).
+    void promise.catch(() => {});
+    return { result: undefined, isAborted: true };
+  }
+
+  const abortFut = new Future<Aborted<T>>();
+
+  const resolveAbort = () => {
+    if (!abortFut.done) {
+      abortFut.resolve({ result: undefined, isAborted: true });
+    }
+  };
+
+  signal.addEventListener('abort', resolveAbort);
+
+  promise
+    .then((r) => {
+      if (!abortFut.done) {
+        abortFut.resolve({ result: r, isAborted: false });
+      }
+    })
+    .catch((e) => {
+      if (!abortFut.done) {
+        abortFut.reject(e);
+      }
+    })
+    .finally(() => {
+      signal.removeEventListener('abort', resolveAbort);
+    });
+
+  return await abortFut.await;
+}
+
 /**
  * Returns a participant that matches the given identity. If identity is None, the first
  * participant that joins the room will be returned.
@@ -884,18 +1028,51 @@ export async function waitForParticipant({
   room,
   identity,
   kind,
+  includeLocal,
+  signal,
 }: {
   room: Room;
   identity?: string;
   kind?: ParticipantKind | ParticipantKind[];
-}): Promise<RemoteParticipant> {
+  includeLocal: true;
+  signal?: AbortSignal;
+}): Promise<Participant>;
+export async function waitForParticipant({
+  room,
+  identity,
+  kind,
+  includeLocal,
+  signal,
+}: {
+  room: Room;
+  identity?: string;
+  kind?: ParticipantKind | ParticipantKind[];
+  includeLocal?: false;
+  signal?: AbortSignal;
+}): Promise<RemoteParticipant>;
+export async function waitForParticipant({
+  room,
+  identity,
+  kind,
+  includeLocal = false,
+  signal,
+}: {
+  room: Room;
+  identity?: string;
+  kind?: ParticipantKind | ParticipantKind[];
+  includeLocal?: boolean;
+  signal?: AbortSignal;
+}): Promise<Participant> {
   if (!room.isConnected) {
     throw new Error('Room is not connected');
   }
+  if (signal?.aborted) {
+    throw new Error('waitForParticipant aborted');
+  }
 
-  const fut = new Future<RemoteParticipant>();
+  const fut = new Future<Participant>();
 
-  const kindMatch = (participant: RemoteParticipant) => {
+  const kindMatch = (participant: Participant) => {
     if (kind === undefined) return true;
 
     if (Array.isArray(kind)) {
@@ -917,10 +1094,27 @@ export async function waitForParticipant({
     fut.reject(new Error('Got disconnected from room while waiting for participant'));
   };
 
+  const onAbort = () => {
+    if (!fut.done) {
+      fut.reject(new Error('waitForParticipant aborted'));
+    }
+  };
+
   room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
   room.on(RoomEvent.Disconnected, onDisconnected);
+  signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
+    const localParticipant = room.localParticipant;
+    if (
+      includeLocal &&
+      localParticipant &&
+      (identity === undefined || localParticipant.identity === identity) &&
+      kindMatch(localParticipant)
+    ) {
+      return localParticipant;
+    }
+
     for (const p of room.remoteParticipants.values()) {
       onParticipantConnected(p);
       if (fut.done) {
@@ -932,6 +1126,88 @@ export async function waitForParticipant({
   } finally {
     room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
     room.off(RoomEvent.Disconnected, onDisconnected);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+export async function waitForParticipantAttribute({
+  room,
+  identity,
+  attribute,
+  value,
+  signal,
+}: {
+  room: Room;
+  identity: string;
+  attribute: string;
+  value: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  if (!room.isConnected) {
+    throw new Error('Room is not connected');
+  }
+  if (signal?.aborted) {
+    throw new Error('waitForParticipantAttribute aborted');
+  }
+
+  const participant = room.remoteParticipants.get(identity);
+  if (!participant) {
+    throw new Error(`Participant ${identity} is not in the room`);
+  }
+
+  const fut = new Future<void>();
+
+  const isMatch = (p: Participant) =>
+    p instanceof RemoteParticipant && p.identity === identity && p.attributes[attribute] === value;
+
+  const onParticipantAttributesChanged = (
+    _changedAttributes: Record<string, string>,
+    p: Participant,
+  ) => {
+    if (!fut.done && isMatch(p)) {
+      fut.resolve();
+    }
+  };
+
+  const onParticipantDisconnected = (p: RemoteParticipant) => {
+    if (!fut.done && p.identity === identity) {
+      fut.reject(new Error(`Participant ${identity} disconnected while waiting for ${attribute}`));
+    }
+  };
+
+  const onDisconnected = () => {
+    if (!fut.done) {
+      fut.reject(new Error(`Room disconnected while waiting for ${identity} ${attribute}`));
+    }
+  };
+
+  const onAbort = () => {
+    if (!fut.done) {
+      fut.reject(new Error('waitForParticipantAttribute aborted'));
+    }
+  };
+
+  room.on(RoomEvent.ParticipantAttributesChanged, onParticipantAttributesChanged);
+  room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+  room.on(RoomEvent.Disconnected, onDisconnected);
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    // Re-check after registering: if the participant vanished in between, reject
+    // rather than await a future that could only settle on disconnect/abort.
+    const current = room.remoteParticipants.get(identity);
+    if (!current) {
+      throw new Error(`Participant ${identity} is not in the room`);
+    }
+    if (current.attributes[attribute] === value) {
+      return;
+    }
+    await fut.await;
+  } finally {
+    room.off(RoomEvent.ParticipantAttributesChanged, onParticipantAttributesChanged);
+    room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+    room.off(RoomEvent.Disconnected, onDisconnected);
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -939,16 +1215,72 @@ export async function waitForTrackPublication({
   room,
   identity,
   kind,
+  waitForSubscription,
+  signal,
+  includeLocal,
 }: {
   room: Room;
-  identity: string;
+  identity?: string;
   kind: TrackKind;
-}): Promise<RemoteTrackPublication> {
+  waitForSubscription?: boolean;
+  signal?: AbortSignal;
+  includeLocal: true;
+}): Promise<RemoteTrackPublication | LocalTrackPublication>;
+export async function waitForTrackPublication({
+  room,
+  identity,
+  kind,
+  waitForSubscription,
+  signal,
+  includeLocal,
+}: {
+  room: Room;
+  /**
+   * Restrict matching to a specific participant identity. When omitted (or
+   * `undefined`), matches whichever remote participant publishes a matching
+   * track first. Rejects if the requested participant disconnects before a
+   * matching publication is found. Pass `''` to match no one (rare, use
+   * `undefined` instead).
+   */
+  identity?: string;
+  kind: TrackKind;
+  /**
+   * If true, only resolve once the matching track is subscribed (i.e.
+   * `publication.subscribed` is true and `publication.track` is set).
+   * Mirrors python `wait_for_track_publication(wait_for_subscription=True)`.
+   */
+  waitForSubscription?: boolean;
+  /**
+   * Optional AbortSignal that rejects the promise and detaches all room
+   * listeners when fired. Without this, callers that lose interest in the
+   * publication leak listeners until the room disconnects.
+   */
+  signal?: AbortSignal;
+  includeLocal?: false;
+}): Promise<RemoteTrackPublication>;
+export async function waitForTrackPublication({
+  room,
+  identity,
+  kind,
+  waitForSubscription = false,
+  signal,
+  includeLocal = false,
+}: {
+  room: Room;
+  identity?: string;
+  kind: TrackKind;
+  waitForSubscription?: boolean;
+  signal?: AbortSignal;
+  includeLocal?: boolean;
+}): Promise<RemoteTrackPublication | LocalTrackPublication> {
   if (!room.isConnected) {
     throw new Error('Room is not connected');
   }
+  if (signal?.aborted) {
+    throw new Error('waitForTrackPublication aborted');
+  }
 
-  const fut = new Future<RemoteTrackPublication>();
+  const fut = new Future<RemoteTrackPublication | LocalTrackPublication>();
 
   const kindMatch = (k: TrackKind | undefined) => {
     if (kind === undefined || kind === null) {
@@ -957,32 +1289,113 @@ export async function waitForTrackPublication({
     return k === kind;
   };
 
+  const matches = (publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+    if (identity !== undefined && participant.identity !== identity) return false;
+    if (!kindMatch(publication.kind)) return false;
+    if (waitForSubscription && !(publication.subscribed && publication.track !== undefined)) {
+      return false;
+    }
+    return true;
+  };
+
   const onTrackPublished = (
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ) => {
     if (fut.done) return;
-    if (
-      (identity === undefined || participant.identity === identity) &&
-      kindMatch(publication.kind)
-    ) {
+    if (matches(publication, participant)) {
       fut.resolve(publication);
     }
   };
 
-  room.on(RoomEvent.TrackPublished, onTrackPublished);
+  // RoomEvent.TrackSubscribed signature: (track, publication, participant).
+  const onTrackSubscribed = (
+    _track: unknown,
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ) => {
+    if (fut.done) return;
+    if (matches(publication, participant)) {
+      fut.resolve(publication);
+    }
+  };
+
+  const onLocalTrackPublished = (publication: LocalTrackPublication | undefined) => {
+    if (fut.done || !publication) return;
+    const localParticipant = room.localParticipant;
+    if (localParticipant && (identity === undefined || localParticipant.identity === identity)) {
+      if (kindMatch(publication.kind)) {
+        fut.resolve(publication);
+      }
+    }
+  };
+
+  const onParticipantDisconnected = (participant: RemoteParticipant) => {
+    if (participant.identity === identity && !fut.done) {
+      fut.reject(
+        new Error(`Participant ${identity} disconnected while waiting for track publication`),
+      );
+    }
+  };
+
+  if (waitForSubscription) {
+    room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
+  } else {
+    room.on(RoomEvent.TrackPublished, onTrackPublished);
+  }
+  if (includeLocal) {
+    room.on(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
+  }
+  if (identity !== undefined) {
+    room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+  }
+
+  const onAbort = () => {
+    if (!fut.done) {
+      fut.reject(new Error('waitForTrackPublication aborted'));
+    }
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
+    const localParticipant = room.localParticipant;
+    if (
+      includeLocal &&
+      localParticipant &&
+      (identity === undefined || localParticipant.identity === identity)
+    ) {
+      for (const publication of localParticipant.trackPublications.values()) {
+        if (kindMatch(publication.kind)) {
+          fut.resolve(publication);
+          break;
+        }
+      }
+    }
+
     for (const p of room.remoteParticipants.values()) {
       for (const publication of p.trackPublications.values()) {
-        onTrackPublished(publication, p);
-        if (fut.done) break;
+        if (matches(publication, p)) {
+          fut.resolve(publication);
+          break;
+        }
       }
+      if (fut.done) break;
     }
 
     return await fut.await;
   } finally {
-    room.off(RoomEvent.TrackPublished, onTrackPublished);
+    if (waitForSubscription) {
+      room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
+    } else {
+      room.off(RoomEvent.TrackPublished, onTrackPublished);
+    }
+    if (includeLocal) {
+      room.off(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
+    }
+    if (identity !== undefined) {
+      room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+    }
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -1001,15 +1414,21 @@ export async function* readStream<T>(
       const abortPromise = waitForAbort(signal);
       while (true) {
         const result = await ThrowsPromise.race([reader.read(), abortPromise]);
-        if (!result) break;
+        if (!result) {
+          break;
+        }
         const { done, value } = result;
-        if (done) break;
+        if (done) {
+          break;
+        }
         yield value;
       }
     } else {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          break;
+        }
         yield value;
       }
     }
@@ -1020,6 +1439,39 @@ export async function* readStream<T>(
       // stream cleanup errors are expected (releasing reader, controller closed, etc.)
     }
   }
+}
+
+export function toStream<T>(iterable: AsyncIterable<T>): ReadableStream<T> {
+  let iterator: AsyncIterator<T> | undefined;
+  let cancelled = false;
+
+  return new ReadableStream<T>({
+    async start(controller) {
+      iterator = iterable[Symbol.asyncIterator]();
+
+      try {
+        while (true) {
+          const { done, value } = await iterator.next();
+          if (done || cancelled) {
+            break;
+          }
+          controller.enqueue(value);
+        }
+
+        if (!cancelled) {
+          controller.close();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          controller.error(error);
+        }
+      }
+    },
+    cancel(reason) {
+      cancelled = true;
+      void iterator?.return?.(reason).catch(() => {});
+    },
+  });
 }
 
 export async function waitForAbort(signal: AbortSignal) {
@@ -1095,6 +1547,32 @@ export function asError(maybeError: unknown): Error {
     return maybeError;
   }
   return new Error(String(maybeError));
+}
+
+/**
+ * Resolve a value that may come from an explicit argument, one of several
+ * environment variables (checked in order), or a final default.
+ *
+ * Used by inference transports to plumb credentials and URLs (e.g.
+ * `LIVEKIT_REMOTE_EOT_URL`, `LIVEKIT_INFERENCE_API_KEY`).
+ */
+export function resolveEnvVar(
+  value: string | undefined,
+  envVars: readonly string[],
+  defaultValue = '',
+): string {
+  // An explicit empty string is a provided value, returned as-is; only
+  // `undefined` falls through to env resolution.
+  if (value !== undefined) {
+    return value;
+  }
+  for (const name of envVars) {
+    const v = process.env[name];
+    if (v !== undefined && v !== '') {
+      return v;
+    }
+  }
+  return defaultValue;
 }
 
 /**

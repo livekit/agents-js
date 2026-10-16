@@ -14,7 +14,9 @@ import {
 } from '@livekit/agents';
 import type OpenAI from 'openai';
 import { WebSocket } from 'ws';
-import type { ChatModels } from '../models.js';
+import type { ChatModels, Reasoning } from '../models.js';
+import { defaultReasoningEffort } from '../models.js';
+import { toResponsesTools } from '../tool_utils.js';
 import type {
   WsOutputItemDoneEvent,
   WsOutputTextDeltaEvent,
@@ -22,6 +24,7 @@ import type {
   WsResponseCreateEvent,
   WsResponseCreatedEvent,
   WsResponseFailedEvent,
+  WsResponseIncompleteEvent,
   WsServerEvent,
 } from './types.js';
 import { wsServerEventSchema } from './types.js';
@@ -31,6 +34,34 @@ const OPENAI_RESPONSES_WS_URL = 'wss://api.openai.com/v1/responses';
 // OpenAI enforces a 60-minute maximum duration on Responses WebSocket connections.
 const WS_MAX_SESSION_DURATION = 3_600_000;
 
+/**
+ * Build the Responses-API WebSocket URL.
+ *
+ * Includes the model on the upgrade URL for OpenAI-compatible gateways
+ * (which can only see the URL at the WebSocket upgrade, not the subsequent
+ * `response.create` frame) so they can route by model. OpenAI's native
+ * endpoint gets the model in the `response.create` frame, so the query
+ * parameter is intentionally omitted for direct connections.
+ *
+ * The scheme of `baseURL` is respected: `http://` maps to `ws://`
+ * and `https://` maps to `wss://`.
+ *
+ * @internal
+ */
+export function buildResponsesWsUrl(baseURL: string | undefined, model: string): string {
+  const normalizedBaseURL = baseURL?.replace(/^http(s?):/, 'ws$1:').replace(/\/+$/, '');
+  const base = normalizedBaseURL
+    ? normalizedBaseURL.endsWith('/responses')
+      ? normalizedBaseURL
+      : `${normalizedBaseURL}/responses`
+    : OPENAI_RESPONSES_WS_URL;
+  const url = new URL(base);
+  if (url.hostname !== 'api.openai.com') {
+    url.searchParams.set('model', model);
+  }
+  return url.toString();
+}
+
 // ============================================================================
 // Internal: ResponsesWebSocket
 //
@@ -38,7 +69,7 @@ const WS_MAX_SESSION_DURATION = 3_600_000;
 // StreamChannels — one per outstanding response.create request — and
 // dispatches every incoming server-event to the front of the queue.
 // A response is terminated (and its channel closed) when the service sends
-// response.completed, response.failed, or error.
+// response.completed, response.failed, response.incomplete, or error.
 //
 // ============================================================================
 
@@ -73,6 +104,7 @@ export class ResponsesWebSocket {
       if (
         event.type === 'response.completed' ||
         event.type === 'response.failed' ||
+        event.type === 'response.incomplete' ||
         event.type === 'error'
       ) {
         void current.close();
@@ -92,7 +124,7 @@ export class ResponsesWebSocket {
               message: 'OpenAI Responses WebSocket closed unexpectedly',
             },
           };
-          void current.write(closeError).finally(() => current.close());
+          void current.write(closeError).finally(() => void current.close());
         }
       }
       this.#outputQueue = [];
@@ -145,6 +177,8 @@ export interface WSLLMOptions {
   serviceTier?: string;
   /** Upper bound for the number of tokens that can be generated for a response. */
   maxOutputTokens?: number;
+  /** Configuration options for reasoning models. */
+  reasoning?: Reasoning | null;
 }
 
 const defaultLLMOptions: WSLLMOptions = {
@@ -179,6 +213,13 @@ export class WSLLM extends llm.LLM {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
+    if (this.#opts.reasoning === undefined) {
+      const effort = defaultReasoningEffort(this.#opts.model);
+      if (effort !== undefined) {
+        this.#opts.reasoning = { effort };
+      }
+    }
+
     if (!this.#opts.apiKey) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -186,9 +227,7 @@ export class WSLLM extends llm.LLM {
     this.#pool = new ConnectionPool<ResponsesWebSocket>({
       maxSessionDuration: WS_MAX_SESSION_DURATION,
       connectCb: async (timeoutMs: number) => {
-        const wsUrl = this.#opts.baseURL
-          ? `${this.#opts.baseURL.replace(/^https?/, 'wss').replace(/\/+$/, '')}/responses`
-          : OPENAI_RESPONSES_WS_URL;
+        const wsUrl = buildResponsesWsUrl(this.#opts.baseURL, String(this.#opts.model));
         const ws = await connectWs(wsUrl, this.#opts.apiKey!, timeoutMs);
         return new ResponsesWebSocket(ws);
       },
@@ -218,9 +257,9 @@ export class WSLLM extends llm.LLM {
     await this.close();
   }
 
-  /** Called by LLMStream once response.created fires to atomically persist both the
+  /** Called by LLMStream once response.completed fires to atomically persist both the
    *  response ID and its corresponding chat context for the next turn's diff. */
-  _onResponseCreated(responseId: string, chatCtx: llm.ChatContext): void {
+  _onResponseCompleted(responseId: string, chatCtx: llm.ChatContext): void {
     this.#prevResponseId = responseId;
     this.#prevChatCtx = chatCtx;
   }
@@ -231,24 +270,29 @@ export class WSLLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
   }): WSLLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const modelOptions: Record<string, unknown> = { ...(extraKwargs ?? {}) };
 
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -278,6 +322,10 @@ export class WSLLM extends llm.LLM {
       modelOptions.max_output_tokens = this.#opts.maxOutputTokens;
     }
 
+    if (this.#opts.reasoning !== undefined) {
+      modelOptions.reasoning = this.#opts.reasoning;
+    }
+
     let inputChatCtx = chatCtx;
     let prevResponseId: string | undefined;
     const canUseStoredResponse = modelOptions.store !== false;
@@ -288,6 +336,7 @@ export class WSLLM extends llm.LLM {
 
       if (
         diff.toRemove.length === 0 &&
+        diff.toUpdate.length === 0 &&
         diff.toCreate.length > 0 &&
         diff.toCreate[0]![0] === lastPrevItemId
       ) {
@@ -346,6 +395,12 @@ export class WSLLMStream extends llm.LLMStream {
   #fullChatCtx: llm.ChatContext;
   #responseId = '';
   #pendingToolCalls = new Set<string>();
+  /**
+   * Whether this attempt may still be retried. Cleared once generation reaches the
+   * caller, which a retry would duplicate. Held on the instance because the loop
+   * that reads chunks sits in #runWithConn, one call down from run().
+   */
+  #retryable = true;
 
   constructor(
     llm: WSLLM,
@@ -382,19 +437,29 @@ export class WSLLMStream extends llm.LLMStream {
   }
 
   protected async run(): Promise<void> {
-    let retryable = true;
+    this.#retryable = true;
+    let responseError: APIStatusError | undefined;
 
     try {
       await this.#pool.withConnection(async (conn: ResponsesWebSocket) => {
-        const needsRetry = await this.#runWithConn(conn, this.chatCtx, this.#prevResponseId);
+        const result = await this.#runWithConn(conn, this.chatCtx, this.#prevResponseId);
 
-        if (needsRetry) {
+        if (result instanceof APIStatusError) {
+          responseError = result;
+          return;
+        }
+
+        if (result) {
           // previous_response_id was evicted from the server-side cache.
           // Retry once on the same connection with the full context and no ID.
-          retryable = true;
-          await this.#runWithConn(conn, this.#fullChatCtx, undefined);
+          this.#retryable = true;
+          const retryResult = await this.#runWithConn(conn, this.#fullChatCtx, undefined);
+          if (retryResult instanceof APIStatusError) {
+            responseError = retryResult;
+          }
         }
       });
+      if (responseError) throw responseError;
     } catch (error) {
       if (
         error instanceof APIStatusError ||
@@ -405,7 +470,7 @@ export class WSLLMStream extends llm.LLMStream {
       }
       throw new APIConnectionError({
         message: toError(error).message,
-        options: { retryable },
+        options: { retryable: this.#retryable },
       });
     }
   }
@@ -419,31 +484,12 @@ export class WSLLMStream extends llm.LLMStream {
     conn: ResponsesWebSocket,
     chatCtx: llm.ChatContext,
     prevResponseId: string | undefined,
-  ): Promise<boolean> {
+  ): Promise<boolean | APIStatusError> {
     const messages = (await chatCtx.toProviderFormat(
       'openai.responses',
     )) as OpenAI.Responses.ResponseInputItem[];
 
-    const tools = this.toolCtx
-      ? Object.entries(this.toolCtx).map(([name, func]) => {
-          const oaiParams = {
-            type: 'function' as const,
-            name,
-            description: func.description,
-            parameters: llm.toJsonSchema(
-              func.parameters,
-              true,
-              this.#strictToolSchema,
-            ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-          } as OpenAI.Responses.FunctionTool;
-
-          if (this.#strictToolSchema) {
-            oaiParams.strict = true;
-          }
-
-          return oaiParams;
-        })
-      : undefined;
+    const tools = this.toolCtx ? toResponsesTools(this.toolCtx, this.#strictToolSchema) : undefined;
 
     const requestOptions: Record<string, unknown> = { ...this.#modelOptions };
     if (!tools) {
@@ -501,12 +547,17 @@ export class WSLLMStream extends llm.LLMStream {
           case 'response.failed':
             this.#handleResponseFailed(event);
             break;
+          case 'response.incomplete':
+            return this.#handleResponseIncomplete(event);
           default:
             break;
         }
 
         if (chunk) {
           this.queue.put(chunk);
+          if (llm.hasResponse(chunk)) {
+            this.#retryable = false;
+          }
         }
       }
     } finally {
@@ -521,7 +572,7 @@ export class WSLLMStream extends llm.LLMStream {
    * (`previous_response_not_found`), throws for all other errors.
    */
   #handleError(event: WsServerEvent & { type: 'error' }, conn: ResponsesWebSocket): boolean {
-    const code = event.error?.code;
+    const code = event.error?.code ?? event.code;
 
     if (code === 'previous_response_not_found') {
       // The server-side in-memory cache was evicted (e.g. after a failed turn
@@ -536,7 +587,7 @@ export class WSLLMStream extends llm.LLMStream {
       this.#pool.invalidate();
       throw new APIConnectionError({
         message: event.error?.message ?? `WebSocket closed (${code})`,
-        options: { retryable: true },
+        options: { retryable: this.#retryable },
       });
     }
 
@@ -551,7 +602,6 @@ export class WSLLMStream extends llm.LLMStream {
 
   #handleResponseCreated(event: WsResponseCreatedEvent): void {
     this.#responseId = event.response.id;
-    this.#llm._onResponseCreated(event.response.id, this.#fullChatCtx);
   }
 
   #handleOutputItemDone(event: WsOutputItemDoneEvent): llm.ChatChunk | undefined {
@@ -571,6 +621,15 @@ export class WSLLMStream extends llm.LLMStream {
           ],
         },
       };
+    } else if (event.item.type === 'message' && event.item.phase !== undefined) {
+      return {
+        id: this.#responseId,
+        delta: {
+          role: 'assistant',
+          content: undefined,
+          extra: { openai: { phase: event.item.phase } },
+        },
+      };
     }
     return undefined;
   }
@@ -586,6 +645,7 @@ export class WSLLMStream extends llm.LLMStream {
   }
 
   #handleResponseCompleted(event: WsResponseCompletedEvent): llm.ChatChunk | undefined {
+    this.#llm._onResponseCompleted(event.response.id, this.#fullChatCtx);
     this.#llm._setPendingToolCalls(this.#pendingToolCalls);
 
     if (event.response.usage) {
@@ -606,6 +666,13 @@ export class WSLLMStream extends llm.LLMStream {
   #handleResponseFailed(event: WsResponseFailedEvent): void {
     throw new APIStatusError({
       message: event.response?.error?.message ?? 'Response failed',
+      options: { statusCode: -1, retryable: false },
+    });
+  }
+
+  #handleResponseIncomplete(event: WsResponseIncompleteEvent): APIStatusError {
+    return new APIStatusError({
+      message: `response incomplete: ${event.response.incomplete_details?.reason ?? 'reason unavailable'}`,
       options: { statusCode: -1, retryable: false },
     });
   }

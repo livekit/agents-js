@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext, ChatItem, ImageContent } from '../chat_context.js';
+import { isInstructions } from '../chat_context.js';
 import { type SerializedImage, serializeImage } from '../utils.js';
-import { groupToolCalls } from './utils.js';
+import { convertMidConversationInstructions, groupToolCalls } from './utils.js';
 
 export interface GoogleFormatData {
   systemMessages: string[] | null;
@@ -13,6 +14,8 @@ export async function toChatCtx(
   chatCtx: ChatContext,
   injectDummyUserMessage: boolean = true,
 ): Promise<[Record<string, unknown>[], GoogleFormatData]> {
+  chatCtx = convertMidConversationInstructions(chatCtx);
+
   const turns: Record<string, unknown>[] = [];
   const systemMessages: string[] = [];
   let currentRole: string | null = null;
@@ -28,8 +31,8 @@ export async function toChatCtx(
 
   for (const msg of flattenedItems) {
     // Handle system messages separately
-    if (msg.type === 'message' && msg.role === 'system' && msg.textContent) {
-      systemMessages.push(msg.textContent);
+    if (msg.type === 'message' && msg.role === 'system' && msg.rawTextContent) {
+      systemMessages.push(msg.rawTextContent);
       continue;
     }
 
@@ -57,6 +60,8 @@ export async function toChatCtx(
       for (const content of msg.content) {
         if (content && typeof content === 'string') {
           parts.push({ text: content });
+        } else if (isInstructions(content)) {
+          parts.push({ text: content.value });
         } else if (content && typeof content === 'object') {
           if (content.type === 'image_content') {
             parts.push(await toImagePart(content));

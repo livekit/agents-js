@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
 
+export * from './stt.js';
 export * from './tts.js';
 
 class CartesiaPlugin extends Plugin {

@@ -4,6 +4,7 @@
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   AgentHandoffItem,
   ChatContext,
@@ -12,12 +13,42 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
+import { ToolContext, tool } from './tool_context.js';
 import {
+  ThinkingTokenFilter,
+  _computeLCS,
   computeChatCtxDiff,
+  executeToolCall,
   formatChatHistory,
+  parseFunctionArguments,
   serializeImage,
+  stripThinkingTokens,
   validateChatContextStructure,
 } from './utils.js';
+
+const GEMMA_THINK_TAGS: [string, string] = ['<|channel>thought', '<channel|>'];
+
+function collectVisibleText(
+  chunks: Array<string | null | undefined>,
+  thinkTags?: [string, string],
+) {
+  const state = thinkTags ? new ThinkingTokenFilter(...thinkTags) : new ThinkingTokenFilter();
+  const visible: string[] = [];
+
+  for (const chunk of chunks) {
+    const content = stripThinkingTokens(chunk, state);
+    if (content !== undefined) {
+      visible.push(content);
+    }
+  }
+
+  const content = stripThinkingTokens(undefined, state, { final: true });
+  if (content !== undefined) {
+    visible.push(content);
+  }
+
+  return visible.join('');
+}
 
 function createChatMessage(
   id: string,
@@ -37,6 +68,44 @@ function createChatContext(messages: ChatMessage[]): ChatContext {
     ctx.items.push(message);
   }
   return ctx;
+}
+
+function dpLCSLength(oldIds: string[], newIds: string[]): number {
+  const dp = Array.from({ length: oldIds.length + 1 }, () => Array(newIds.length + 1).fill(0));
+  for (let i = 1; i <= oldIds.length; i++) {
+    for (let j = 1; j <= newIds.length; j++) {
+      dp[i]![j] =
+        oldIds[i - 1] === newIds[j - 1]
+          ? dp[i - 1]![j - 1]! + 1
+          : Math.max(dp[i - 1]![j]!, dp[i]![j - 1]!);
+    }
+  }
+  return dp[oldIds.length]![newIds.length]!;
+}
+
+function isSubsequence(subsequence: string[], sequence: string[]): boolean {
+  let at = 0;
+  for (const item of sequence) {
+    if (item === subsequence[at]) at++;
+  }
+  return at === subsequence.length;
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed + 1;
+  return () => {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    return state / 0x1_0000_0000;
+  };
+}
+
+function sample<T>(values: T[], length: number, random: () => number): T[] {
+  const shuffled = [...values];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j]!, shuffled[i]!];
+  }
+  return shuffled.slice(0, length);
 }
 
 function createImageContent(
@@ -138,7 +207,405 @@ function expectPixel(
   expect(data[index + 3]).toBe(expected.a);
 }
 
+describe('parseFunctionArguments', () => {
+  it('should parse strict JSON arguments', () => {
+    expect(parseFunctionArguments('{"a": 1, "b": [2, 3]}')).toEqual({ a: 1, b: [2, 3] });
+    expect(parseFunctionArguments('{}')).toEqual({});
+    expect(parseFunctionArguments('null')).toEqual({});
+  });
+
+  it('should repair malformed JSON arguments', () => {
+    expect(parseFunctionArguments('{"arg1": "hi", "optArg2": "yo"')).toEqual({
+      arg1: 'hi',
+      optArg2: 'yo',
+    });
+    expect(parseFunctionArguments("{arg1: 'hi'}")).toEqual({ arg1: 'hi' });
+  });
+
+  it('should strip leaked chat-template tokens after repair', () => {
+    const leaked = '{"orderId": ["<|\\"|\\"O_WAAB70<|\\"|\\"]}';
+
+    expect(parseFunctionArguments(leaked)).toEqual({ orderId: ['O_WAAB70'] });
+  });
+
+  it('should leave clean chat-template-like strings unchanged', () => {
+    expect(parseFunctionArguments('{"arg1": "<|safe|>"}')).toEqual({ arg1: '<|safe|>' });
+  });
+
+  it('should accept pre-parsed argument objects', () => {
+    const args = { arg1: 'hi', optArg2: 'yo' };
+
+    expect(parseFunctionArguments(args)).toEqual(args);
+  });
+
+  it('should reject non-object argument shapes', () => {
+    expect(() => parseFunctionArguments('[1, 2, 3]')).toThrow(/expected object/);
+    expect(() => parseFunctionArguments('"just a string"')).toThrow(/non-JSON string/);
+  });
+});
+
+describe('stripThinkingTokens', () => {
+  it('preserves content without thinking tokens', () => {
+    expect(collectVisibleText([undefined, '', 'Hello from LiveKit'])).toBe('Hello from LiveKit');
+  });
+
+  it('strips complete Gemma reasoning block', () => {
+    expect(
+      collectVisibleText(
+        ['<|channel>thought\nprivate reasoning\n<channel|>answer'],
+        GEMMA_THINK_TAGS,
+      ),
+    ).toBe('answer');
+  });
+
+  it('strips empty Gemma reasoning block', () => {
+    expect(collectVisibleText(['<|channel>thought\n<channel|>answer'], GEMMA_THINK_TAGS)).toBe(
+      'answer',
+    );
+  });
+
+  it('strips Gemma reasoning across chunks', () => {
+    expect(
+      collectVisibleText(
+        ['<|channel>thought\n', 'private reasoning', '<channel|>', 'answer'],
+        GEMMA_THINK_TAGS,
+      ),
+    ).toBe('answer');
+  });
+
+  it('preserves answer after streamed Gemma closing marker', () => {
+    expect(
+      collectVisibleText(
+        ['<|channel>thought\n', 'private reasoning', '<channel|>answer'],
+        GEMMA_THINK_TAGS,
+      ),
+    ).toBe('answer');
+  });
+
+  it('strips multiple Gemma reasoning blocks', () => {
+    expect(
+      collectVisibleText(
+        [
+          '<|channel>thought\nfirst thought<channel|>first answer; ',
+          '<|channel>thought\nsecond thought<channel|>second answer',
+        ],
+        GEMMA_THINK_TAGS,
+      ),
+    ).toBe('first answer; second answer');
+  });
+
+  it('handles Gemma markers split at arbitrary boundaries', () => {
+    expect(
+      collectVisibleText(
+        Array.from('<|channel>thought\nprivate reasoning<channel|>answer'),
+        GEMMA_THINK_TAGS,
+      ),
+    ).toBe('answer');
+  });
+
+  it('preserves visible text before Gemma reasoning', () => {
+    expect(
+      collectVisibleText(['Let me check that.\n\n<|channel>thought\n<channel|>'], GEMMA_THINK_TAGS),
+    ).toBe('Let me check that.\n\n');
+  });
+
+  it('preserves Gemma markers without model configuration', () => {
+    const content = '<|channel>thought\nprivate reasoning<channel|>answer';
+
+    expect(collectVisibleText([content])).toBe(content);
+  });
+
+  it('preserves existing think token behavior', () => {
+    expect(collectVisibleText(['<think>', 'private reasoning', '</think>answer'])).toBe('answer');
+  });
+
+  it('preserves incomplete marker at end of stream', () => {
+    expect(collectVisibleText(['literal <|chan'], GEMMA_THINK_TAGS)).toBe('literal <|chan');
+  });
+
+  it('drops unclosed reasoning at end of stream', () => {
+    expect(
+      collectVisibleText(['before<|channel>thought\nprivate reasoning'], GEMMA_THINK_TAGS),
+    ).toBe('before');
+  });
+
+  it('flattens list-shaped delta content', () => {
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([{ type: 'text', text: 'Hallo' }], state)).toBe('Hallo');
+  });
+
+  it('flattens multiple and string parts', () => {
+    const state = new ThinkingTokenFilter();
+    expect(
+      stripThinkingTokens(
+        [{ type: 'text', text: 'Hello ' }, 'from ', { type: 'text', text: 'LiveKit' }],
+        state,
+      ),
+    ).toBe('Hello from LiveKit');
+  });
+
+  it('strips thinking tokens inside list parts', () => {
+    const state = new ThinkingTokenFilter();
+    const visible: string[] = [];
+    for (const chunk of [
+      [{ type: 'text', text: '<think>private ' }],
+      [{ type: 'text', text: 'reasoning</think>answer' }],
+    ]) {
+      const content = stripThinkingTokens(chunk, state);
+      if (content !== undefined) {
+        visible.push(content);
+      }
+    }
+
+    const content = stripThinkingTokens(undefined, state, { final: true });
+    if (content !== undefined) {
+      visible.push(content);
+    }
+    expect(visible.join('')).toBe('answer');
+  });
+
+  it('ignores list parts without text', () => {
+    const state = new ThinkingTokenFilter();
+    expect(
+      stripThinkingTokens(
+        [
+          { type: 'image_url', image_url: { url: 'https://x' } },
+          { type: 'text', text: 'hi' },
+        ],
+        state,
+      ),
+    ).toBe('hi');
+  });
+
+  it('treats a list without any text part as no content', () => {
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([], state)).toBeUndefined();
+    expect(
+      stripThinkingTokens([{ type: 'image_url', image_url: { url: 'https://x' } }], state),
+    ).toBeUndefined();
+  });
+
+  it('keeps an empty text part as empty content', () => {
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([{ type: 'text', text: '' }], state)).toBe('');
+  });
+
+  it('flattens object parts with a text property', () => {
+    class Part {
+      text = 'typed part';
+    }
+
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([new Part()], state)).toBe('typed part');
+  });
+});
+
+describe('executeToolCall', () => {
+  it('should canonicalize repaired arguments before returning', async () => {
+    const removeOrderItem = tool({
+      name: 'removeOrderItem',
+      description: 'remove order item',
+      parameters: z.object({ orderId: z.array(z.string()) }),
+      execute: async ({ orderId }) => orderId.join(','),
+    });
+
+    const rawArgs = '{"orderId": ["<|\\"|\\"O_WAAB70<|\\"|\\"]}';
+    const toolCall = FunctionCall.create({
+      callId: 'call-canon-1',
+      name: 'removeOrderItem',
+      args: rawArgs,
+    });
+
+    const result = await executeToolCall(toolCall, new ToolContext([removeOrderItem]));
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toBe('O_WAAB70');
+    expect(toolCall.args).not.toBe(rawArgs);
+    expect(JSON.parse(toolCall.args)).toEqual({ orderId: ['O_WAAB70'] });
+  });
+
+  it('should preserve valid argument structure during execution', async () => {
+    const echo = tool({
+      name: 'echo',
+      description: 'echo',
+      parameters: z.object({ arg1: z.string(), optArg2: z.string().optional() }),
+      execute: async ({ arg1, optArg2 }) => ({ arg1, optArg2 }),
+    });
+
+    const originalArgs = '{"arg1": "hello", "optArg2": "<|safe|>"}';
+    const toolCall = FunctionCall.create({
+      callId: 'call-valid-1',
+      name: 'echo',
+      args: originalArgs,
+    });
+
+    const result = await executeToolCall(toolCall, new ToolContext([echo]));
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });
+    expect(JSON.parse(toolCall.args)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });
+  });
+
+  it('should use defaults for null non-nullable arguments', async () => {
+    const count = tool({
+      name: 'count',
+      description: 'count',
+      parameters: z.object({ arg1: z.string(), count: z.number().default(5) }),
+      execute: async ({ count }) => count,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-default-1',
+        name: 'count',
+        args: '{"arg1":"test","count":null}',
+      }),
+      new ToolContext([count]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toBe(5);
+  });
+
+  it('should use defaults for nested null sentinels across schema shapes', async () => {
+    const setPrefs = tool({
+      name: 'setPrefs',
+      description: 'set preferences',
+      parameters: z.object({
+        prefs: z.object({ color: z.string().default('red'), note: z.string().nullable() }),
+        children: z.record(z.string(), z.object({ x: z.number().default(1) })),
+        pair: z.tuple([z.string(), z.object({ x: z.number().default(1) })]),
+      }),
+      execute: async ({ prefs, children, pair }) => ({ prefs, children, pair }),
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-default-2',
+        name: 'setPrefs',
+        args: JSON.stringify({
+          prefs: { color: null, note: null },
+          children: { k: { x: null } },
+          pair: ['k', { x: null }],
+        }),
+      }),
+      new ToolContext([setPrefs]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({
+      prefs: { color: 'red', note: null },
+      children: { k: { x: 1 } },
+      pair: ['k', { x: 1 }],
+    });
+  });
+
+  it('should reject null for required arguments without defaults', async () => {
+    const required = tool({
+      name: 'required',
+      description: 'required',
+      parameters: z.object({ arg1: z.string() }),
+      execute: async ({ arg1 }) => arg1,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-required-1',
+        name: 'required',
+        args: '{"arg1":null}',
+      }),
+      new ToolContext([required]),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toMatch(/Arguments parsing failed/);
+  });
+
+  it('should preserve a genuine null for a nullable defaulted argument', async () => {
+    const maybe = tool({
+      name: 'maybe',
+      description: 'maybe',
+      parameters: z.object({ n: z.number().nullable().default(3) }),
+      execute: async ({ n }) => n,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-nullable-1',
+        name: 'maybe',
+        args: '{"n":null}',
+      }),
+      new ToolContext([maybe]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toBe(null);
+  });
+
+  it('should accept an argument named "default"', async () => {
+    const configure = tool({
+      name: 'configure',
+      description: 'configure',
+      parameters: z.object({ default: z.string(), retries: z.number().default(2) }),
+      execute: async (args) => args,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-default-name-1',
+        name: 'configure',
+        args: '{"default":"eco","retries":null}',
+      }),
+      new ToolContext([configure]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({ default: 'eco', retries: 2 });
+  });
+});
+
 describe('computeChatCtxDiff', () => {
+  it.each(Array.from({ length: 300 }, (_, seed) => seed))(
+    'returns a longest common subsequence for seed %i',
+    (seed) => {
+      const random = seededRandom(seed);
+      const pool = Array.from({ length: Math.floor(random() * 41) }, (_, i) => `id_${i}`);
+      const oldIds = sample(pool, Math.floor(random() * (pool.length + 1)), random);
+      const newIds = sample(pool, Math.floor(random() * (pool.length + 1)), random);
+      if (seed % 3 === 0 && oldIds.length > 0) {
+        for (let i = 0; i < 3; i++) {
+          newIds.push(oldIds[Math.floor(random() * oldIds.length)]!);
+        }
+      }
+
+      const lcsIds = _computeLCS(oldIds, newIds);
+
+      expect(lcsIds).toHaveLength(dpLCSLength(oldIds, newIds));
+      expect(isSubsequence(lcsIds, oldIds)).toBe(true);
+      expect(isSubsequence(lcsIds, newIds)).toBe(true);
+    },
+  );
+
+  it('diffs a long context without building an n-by-m table', () => {
+    const n = 2_000;
+    const oldCtx = new ChatContext();
+    for (let i = 0; i < n; i++) {
+      oldCtx.addMessage({ role: 'user', content: `message ${i}`, id: `item_${i}` });
+    }
+    const newCtx = oldCtx.copy();
+    newCtx.addMessage({ role: 'system', content: 'appended', id: 'appended' });
+
+    const heapBefore = process.memoryUsage().heapUsed;
+    const diff = computeChatCtxDiff(oldCtx, newCtx);
+    const heapGrowth = process.memoryUsage().heapUsed - heapBefore;
+
+    expect(diff.toCreate).toEqual([[`item_${n - 1}`, 'appended']]);
+    expect(diff.toRemove).toEqual([]);
+    expect(diff.toUpdate).toEqual([]);
+    // A 2000 x 2001 number table requires tens of megabytes in V8.
+    expect(heapGrowth).toBeLessThan(10_000_000);
+  });
+
   it('should return empty operations for identical contexts', () => {
     const msg1 = createChatMessage('1', 'Hello', 'user');
     const msg2 = createChatMessage('2', 'Hi there', 'assistant');
@@ -150,6 +617,43 @@ describe('computeChatCtxDiff', () => {
 
     expect(result.toRemove).toEqual([]);
     expect(result.toCreate).toEqual([]);
+    expect(result.toUpdate).toEqual([]);
+  });
+
+  it('should update same-id messages when raw text content changes', () => {
+    const oldMsg = createChatMessage(
+      '1',
+      '<expr type="expression" label="happy"/>Hello',
+      'assistant',
+    );
+    const newMsg = createChatMessage(
+      '1',
+      '<expr type="expression" label="sad"/>Hello',
+      'assistant',
+    );
+
+    const result = computeChatCtxDiff(createChatContext([oldMsg]), createChatContext([newMsg]));
+
+    expect(oldMsg.textContent).toBe(newMsg.textContent);
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([]);
+    expect(result.toUpdate).toEqual([[null, '1']]);
+  });
+
+  it('should include previous item id for same-id message updates', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const oldMsg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const newMsg2 = createChatMessage('2', 'Hi again', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+
+    const result = computeChatCtxDiff(
+      createChatContext([msg1, oldMsg2, msg3]),
+      createChatContext([msg1, newMsg2, msg3]),
+    );
+
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([]);
+    expect(result.toUpdate).toEqual([['1', '2']]);
   });
 
   it('should handle empty old context', () => {

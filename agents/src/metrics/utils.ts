@@ -16,7 +16,9 @@ export const logMetrics = (metrics: AgentMetrics) => {
         ttftMs: roundTwoDecimals(metrics.ttftMs),
         inputTokens: metrics.promptTokens,
         promptCachedTokens: metrics.promptCachedTokens,
+        cacheCreationTokens: metrics.cacheCreationTokens ?? 0,
         outputTokens: metrics.completionTokens,
+        reasoningTokens: metrics.reasoningTokens ?? 0,
         tokensPerSecond: roundTwoDecimals(metrics.tokensPerSecond),
       })
       .info('LLM metrics');
@@ -27,6 +29,7 @@ export const logMetrics = (metrics: AgentMetrics) => {
         input_tokens: metrics.inputTokens,
         cached_input_tokens: metrics.inputTokenDetails.cachedTokens,
         output_tokens: metrics.outputTokens,
+        reasoning_tokens: metrics.reasoningTokens ?? 0,
         total_tokens: metrics.totalTokens,
         tokens_per_second: roundTwoDecimals(metrics.tokensPerSecond),
       })
@@ -71,5 +74,18 @@ export const logMetrics = (metrics: AgentMetrics) => {
         numRequests: metrics.numRequests,
       })
       .info('Interruption metrics');
+  } else if (metrics.type === 'avatar_metrics') {
+    const extra: Record<string, number | string> = {};
+    if (metrics.metadata?.modelProvider) extra.modelProvider = metrics.metadata.modelProvider;
+    if (metrics.metadata?.modelName) extra.modelName = metrics.metadata.modelName;
+    if (metrics.sessionStartedAt !== undefined && metrics.avatarJoinedAt !== undefined) {
+      extra.avatarJoinLatencyMs = roundTwoDecimals(
+        metrics.avatarJoinedAt - metrics.sessionStartedAt,
+      );
+    }
+    if (metrics.playbackLatencyMs !== undefined) {
+      extra.playbackLatencyMs = roundTwoDecimals(metrics.playbackLatencyMs);
+    }
+    logger.child(extra).info('Avatar metrics');
   }
 };

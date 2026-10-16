@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIError,
+  APIStatusError,
   type AudioBuffer,
   AudioByteStream,
-  AudioEnergyFilter,
   Future,
   Task,
   log,
@@ -13,6 +15,7 @@ import {
   normalizeLanguage,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
@@ -97,6 +100,26 @@ export interface STTV3Options extends STTBaseOptions {
   prompt?: string;
   /** Return chunk-level timestamps in REST response */
   withTimestamps?: boolean;
+  /** Fine-grained VAD positive speech threshold (WS only). */
+  positiveSpeechThreshold?: number;
+  /** Fine-grained VAD negative speech threshold (WS only). */
+  negativeSpeechThreshold?: number;
+  /** Fine-grained VAD minimum speech frames (WS only). */
+  minSpeechFrames?: number;
+  /** Fine-grained VAD first-turn minimum speech frames (WS only). */
+  firstTurnMinSpeechFrames?: number;
+  /** Fine-grained VAD negative frames count (WS only). */
+  negativeFramesCount?: number;
+  /** Fine-grained VAD negative frames window (WS only). */
+  negativeFramesWindow?: number;
+  /** Fine-grained VAD start speech volume threshold (WS only). */
+  startSpeechVolumeThreshold?: number;
+  /** Fine-grained VAD interrupt minimum speech frames (WS only). */
+  interruptMinSpeechFrames?: number;
+  /** Fine-grained VAD pre-speech padding frames (WS only). */
+  preSpeechPadFrames?: number;
+  /** Fine-grained VAD initial ignored frames (WS only). */
+  numInitialIgnoredFrames?: number;
 }
 
 /** Combined options — discriminated by `model` field */
@@ -121,6 +144,17 @@ interface ResolvedSTTOptions {
   // WS-only flags
   highVadSensitivity?: boolean;
   flushSignal?: boolean;
+  // saaras:v3 WS-only fine-grained VAD params
+  positiveSpeechThreshold?: number;
+  negativeSpeechThreshold?: number;
+  minSpeechFrames?: number;
+  firstTurnMinSpeechFrames?: number;
+  negativeFramesCount?: number;
+  negativeFramesWindow?: number;
+  startSpeechVolumeThreshold?: number;
+  interruptMinSpeechFrames?: number;
+  preSpeechPadFrames?: number;
+  numInitialIgnoredFrames?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +220,16 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
     base.mode = v3Opts.mode ?? SAARAS_V3_DEFAULTS.mode;
     base.prompt = v3Opts.prompt;
     base.withTimestamps = v3Opts.withTimestamps;
+    base.positiveSpeechThreshold = v3Opts.positiveSpeechThreshold;
+    base.negativeSpeechThreshold = v3Opts.negativeSpeechThreshold;
+    base.minSpeechFrames = v3Opts.minSpeechFrames;
+    base.firstTurnMinSpeechFrames = v3Opts.firstTurnMinSpeechFrames;
+    base.negativeFramesCount = v3Opts.negativeFramesCount;
+    base.negativeFramesWindow = v3Opts.negativeFramesWindow;
+    base.startSpeechVolumeThreshold = v3Opts.startSpeechVolumeThreshold;
+    base.interruptMinSpeechFrames = v3Opts.interruptMinSpeechFrames;
+    base.preSpeechPadFrames = v3Opts.preSpeechPadFrames;
+    base.numInitialIgnoredFrames = v3Opts.numInitialIgnoredFrames;
   } else {
     // saarika:v2.5
     let languageCode = normalizeLanguage(
@@ -236,6 +280,38 @@ function buildWsUrl(opts: ResolvedSTTOptions): string {
   }
   if (opts.flushSignal != null) {
     params.set('flush_signal', String(opts.flushSignal));
+  }
+  if (opts.model === 'saaras:v3') {
+    if (opts.positiveSpeechThreshold != null) {
+      params.set('positive_speech_threshold', String(opts.positiveSpeechThreshold));
+    }
+    if (opts.negativeSpeechThreshold != null) {
+      params.set('negative_speech_threshold', String(opts.negativeSpeechThreshold));
+    }
+    if (opts.minSpeechFrames != null) {
+      params.set('min_speech_frames', String(opts.minSpeechFrames));
+    }
+    if (opts.firstTurnMinSpeechFrames != null) {
+      params.set('first_turn_min_speech_frames', String(opts.firstTurnMinSpeechFrames));
+    }
+    if (opts.negativeFramesCount != null) {
+      params.set('negative_frames_count', String(opts.negativeFramesCount));
+    }
+    if (opts.negativeFramesWindow != null) {
+      params.set('negative_frames_window', String(opts.negativeFramesWindow));
+    }
+    if (opts.startSpeechVolumeThreshold != null) {
+      params.set('start_speech_volume_threshold', String(opts.startSpeechVolumeThreshold));
+    }
+    if (opts.interruptMinSpeechFrames != null) {
+      params.set('interrupt_min_speech_frames', String(opts.interruptMinSpeechFrames));
+    }
+    if (opts.preSpeechPadFrames != null) {
+      params.set('pre_speech_pad_frames', String(opts.preSpeechPadFrames));
+    }
+    if (opts.numInitialIgnoredFrames != null) {
+      params.set('num_initial_ignored_frames', String(opts.numInitialIgnoredFrames));
+    }
   }
 
   return `${base}?${params.toString()}`;
@@ -292,6 +368,22 @@ function createWav(frame: AudioFrame): Buffer {
 
   const pcm = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
   return Buffer.concat([header, pcm]);
+}
+
+function extractConfidence(
+  payload: { language_probability?: unknown },
+  logger: ReturnType<typeof log>,
+): number {
+  const value = payload.language_probability;
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (value != null) {
+    logger.debug(
+      `Unexpected language_probability type: ${typeof value} (value=${JSON.stringify(value)}); falling back to confidence=1.0`,
+    );
+  }
+  return 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -418,6 +510,7 @@ export class STT extends stt.STT {
     }
 
     const data = (await response.json()) as SarvamSTTResponse;
+    const logger = log();
 
     let startTime = 0;
     let endTime = 0;
@@ -437,7 +530,7 @@ export class STT extends stt.STT {
           language: normalizeLanguage(data.language_code ?? this.opts.languageCode ?? 'unknown'),
           startTime,
           endTime,
-          confidence: data.language_probability ?? 0,
+          confidence: extractConfidence(data, logger),
         },
       ],
     };
@@ -459,7 +552,6 @@ export class STT extends stt.STT {
 
 export class SpeechStream extends stt.SpeechStream {
   #opts: ResolvedSTTOptions;
-  #audioEnergyFilter: AudioEnergyFilter;
   #logger = log();
   #speaking = false;
   #resetWS = new Future();
@@ -470,7 +562,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(sttInstance, SAMPLE_RATE, connOptions);
     this.#opts = opts;
     this.closed = false;
-    this.#audioEnergyFilter = new AudioEnergyFilter();
   }
 
   updateOptions(opts: Partial<STTOptions>) {
@@ -506,22 +597,12 @@ export class SpeechStream extends stt.SpeechStream {
 
       let sessionStart = 0;
       try {
-        await new Promise<void>((resolve, reject) => {
-          ws.once('open', () => resolve());
-          ws.once('error', (err: Error) => reject(err));
-          ws.once('close', (code: number) =>
-            reject(new Error(`WebSocket closed with code ${code}`)),
-          );
-        });
+        await waitForWebSocketOpen(ws, 'Sarvam');
 
         sessionStart = Date.now();
         await this.#runWS(ws);
         retries = 0;
       } catch (e) {
-        // Clean up the WebSocket on failure to prevent listener leaks
-        ws.removeAllListeners();
-        ws.close();
-
         if (!this.closed && !this.input.closed) {
           // If the session ran for a meaningful duration (>5s), this was a working
           // session that ended normally (e.g. server idle timeout ~20s). Reset retries
@@ -529,18 +610,20 @@ export class SpeechStream extends stt.SpeechStream {
           if (sessionStart > 0 && Date.now() - sessionStart > 5000) {
             retries = 0;
           }
-          if (retries >= maxRetry) {
-            throw new Error(`Failed to connect to Sarvam STT after ${retries} attempts: ${e}`);
+          if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
+            throw e;
           }
           const delay = Math.min(retries * 5, 10);
           retries++;
           this.#logger.warn(
-            `Failed to connect to Sarvam STT, retrying in ${delay}s: ${e} (${retries}/${maxRetry})`,
+            { error: e, retryDelayMs: delay * 1000, attempt: retries, maxRetry },
+            'Failed to connect to Sarvam STT, retrying',
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            `Sarvam STT disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            { error: e, inputClosed: this.input.closed, isClosed: this.closed },
+            'Sarvam STT disconnected, connection is closed',
           );
         }
       }
@@ -553,8 +636,8 @@ export class SpeechStream extends stt.SpeechStream {
     this.#resetWS = new Future();
     this.#speaking = false;
     let closing = false;
-    // Session-scoped controller: aborted in finally to cancel sendTask on WS reset
-    const sessionController = new AbortController();
+    const attemptController = new AbortController();
+    const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
 
     // Config message: only supported on translate WS endpoint (saaras:v2.5)
     // @see https://docs.sarvam.ai/api-reference-docs/speech-to-text-translate/translate/ws
@@ -562,18 +645,26 @@ export class SpeechStream extends stt.SpeechStream {
       ws.send(JSON.stringify({ type: 'config', prompt: this.#opts.prompt }));
     }
 
-    // No keepalive — Sarvam rejects messages without 'audio' field, and sending
-    // silent audio could confuse server-side VAD. On idle timeout (~20s), the
-    // server closes the connection and the outer retry loop in run() reconnects.
-    // This matches the Python SDK's approach.
+    // No keepalive messages: if input stops and the server closes the connection,
+    // the retry loop in run() reconnects.
 
     const wsMonitor = Task.from(async (controller) => {
       const closed = new Promise<void>((_, reject) => {
         ws.once('close', (code: number, reason: Buffer) => {
           if (!closing) {
             this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            reject(
+              new APIConnectionError({
+                message: `Sarvam STT WebSocket closed unexpectedly (${code})`,
+              }),
+            );
           }
+        });
+        ws.once('error', (error: Error) => {
+          if (!closing)
+            reject(
+              new APIConnectionError({ message: `Sarvam STT WebSocket failed (${error.name})` }),
+            );
         });
       });
       await Promise.race([closed, waitForAbort(controller.signal)]);
@@ -582,13 +673,10 @@ export class SpeechStream extends stt.SpeechStream {
     const sendTask = async () => {
       const samples50Ms = Math.floor(SAMPLE_RATE / 20); // 50ms chunks
       const stream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, samples50Ms);
-      const abortPromise = waitForAbort(this.abortSignal);
-      const sessionAbort = waitForAbort(sessionController.signal);
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise, sessionAbort]);
-          if (result === undefined) return; // aborted
+          const result = await this.input.next({ signal: attemptSignal });
           if (result.done) break;
 
           const data = result.value;
@@ -610,24 +698,22 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           for (const frame of frames) {
-            if (this.#audioEnergyFilter.pushFrame(frame)) {
-              // Sarvam expects base64-encoded PCM in a JSON message
-              const pcmBuffer = Buffer.from(
-                frame.data.buffer,
-                frame.data.byteOffset,
-                frame.data.byteLength,
-              );
-              const base64Audio = pcmBuffer.toString('base64');
-              ws.send(
-                JSON.stringify({
-                  audio: {
-                    data: base64Audio,
-                    encoding: 'audio/wav',
-                    sample_rate: SAMPLE_RATE,
-                  },
-                }),
-              );
-            }
+            // Sarvam expects base64-encoded PCM in a JSON message
+            const pcmBuffer = Buffer.from(
+              frame.data.buffer,
+              frame.data.byteOffset,
+              frame.data.byteLength,
+            );
+            const base64Audio = pcmBuffer.toString('base64');
+            ws.send(
+              JSON.stringify({
+                audio: {
+                  data: base64Audio,
+                  encoding: 'audio/wav',
+                  sample_rate: SAMPLE_RATE,
+                },
+              }),
+            );
           }
 
           // Send flush message on FLUSH_SENTINEL (VAD end of speech)
@@ -635,6 +721,8 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(JSON.stringify({ type: 'flush' }));
           }
         }
+      } catch (error) {
+        if (!attemptSignal.aborted) throw error;
       } finally {
         closing = true;
         // Match Python: end_of_stream includes an empty audio field to avoid
@@ -653,7 +741,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
     };
 
-    const listenTask = Task.from(async (controller) => {
+    const listenTask = Task.from(async () => {
       const putMessage = (event: stt.SpeechEvent) => {
         if (!this.queue.closed) {
           try {
@@ -669,7 +757,10 @@ export class SpeechStream extends stt.SpeechStream {
         ws.on('message', (msg: RawData) => {
           try {
             const raw = msg.toString();
-            this.#logger.debug(`Sarvam STT raw WS message: ${raw.substring(0, 500)}`);
+            this.#logger.debug(
+              { 'lk.pii.raw_message': raw.substring(0, 500) },
+              'received Sarvam STT WebSocket message',
+            );
             const json = JSON.parse(raw);
             const msgType: string = json['type'] ?? '';
 
@@ -695,7 +786,7 @@ export class SpeechStream extends stt.SpeechStream {
                 td.language_code ?? this.#opts.languageCode ?? 'unknown',
               );
               const requestId = td.request_id ?? '';
-              const confidence = td.language_probability ?? 0;
+              const confidence = extractConfidence(td, this.#logger);
               this.#requestId = requestId;
 
               // Log metrics when available
@@ -736,8 +827,16 @@ export class SpeechStream extends stt.SpeechStream {
                 json['message'] ??
                 'Unknown error';
               const errorCode = nested?.code ?? json['code'] ?? '';
-              this.#logger.error(`Sarvam STT WebSocket error [${errorCode}]: ${errorInfo}`);
-              reject(new Error(`Sarvam STT API error [${errorCode}]: ${errorInfo}`));
+              this.#logger.error({ 'lk.pii.error': json }, 'Sarvam STT WebSocket error');
+              reject(
+                new APIStatusError({
+                  message: `Sarvam STT API error [${errorCode}]: ${errorInfo}`,
+                  options: {
+                    statusCode: /^\d+$/.test(String(errorCode)) ? Number(errorCode) : -1,
+                    body: json,
+                  },
+                }),
+              );
               return;
             }
 
@@ -745,31 +844,34 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`Error processing Sarvam STT message: ${msg}`);
+            this.#logger.error(
+              {
+                error: err,
+                'lk.pii.message': msg.toString(),
+              },
+              'Error processing Sarvam STT message',
+            );
             reject(err);
           }
         });
       });
 
-      await Promise.race([listenMessage, waitForAbort(controller.signal)]);
-    }, this.abortController);
+      await Promise.race([listenMessage, waitForAbort(attemptSignal)]);
+    });
 
+    const sendPromise = sendTask();
     try {
       await Promise.race([
         this.#resetWS.await,
-        Promise.all([sendTask(), listenTask.result, wsMonitor.result]),
+        Promise.all([sendPromise, listenTask.result, wsMonitor.result]),
       ]);
     } finally {
       closing = true;
-      sessionController.abort();
-      // Do NOT call listenTask.cancel() — it would abort this.abortController
-      // (passed to Task.from) and permanently break the stream. Instead, ws.close()
-      // triggers the ws.once('close') handler inside listenMessage, letting listenTask
-      // exit naturally. On close(), the parent abort signal handles it directly.
+      attemptController.abort();
       wsMonitor.cancel();
       ws.close();
-      // Suppress unhandled rejection from orphaned listenTask on reconnect
-      listenTask.result.catch(() => {});
+      await Promise.allSettled([sendPromise, listenTask.result, wsMonitor.result]);
+      ws.removeAllListeners('message');
     }
   }
 }

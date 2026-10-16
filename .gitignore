@@ -193,9 +193,11 @@ examples/src/test_*.ts
 
 # Ignore all markdown files except root README
 *.md
+!**/etc/*.api.md
 !README.md
 !.changeset/*.md
 !**/README.md
+!**/CHANGELOG.md
 !CONTRIBUTING.md
 !CLAUDE.md
 !.CODE_OF_CONDUCT.md

@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConnectionPool } from './connection_pool.js';
+import { log } from './log.js';
 
 describe('ConnectionPool', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   const makeConnectCb = () => {
     let n = 0;
     return vi.fn(async (_timeout: number): Promise<string> => `conn_${++n}`);
@@ -79,6 +85,7 @@ describe('ConnectionPool', () => {
 
   describe('maxSessionDuration', () => {
     it('should expire connections after maxSessionDuration', async () => {
+      vi.useFakeTimers();
       const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (_conn: string) => {
         // Mock close
@@ -94,7 +101,7 @@ describe('ConnectionPool', () => {
       pool.put(conn1);
 
       // Wait for expiration
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await vi.advanceTimersByTimeAsync(150);
 
       const conn2 = await pool.get();
       expect(conn2).not.toBe(conn1); // Should create new connection
@@ -103,6 +110,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should refresh connection timestamp when markRefreshedOnGet is true', async () => {
+      vi.useFakeTimers();
       const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (_conn: string) => {
         // Mock close
@@ -119,7 +127,7 @@ describe('ConnectionPool', () => {
       pool.put(conn1);
 
       // Wait 100ms (less than expiration)
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vi.advanceTimersByTimeAsync(100);
 
       // Get again - should refresh timestamp
       const conn2 = await pool.get();
@@ -127,7 +135,7 @@ describe('ConnectionPool', () => {
       pool.put(conn2);
 
       // Wait another 100ms (total 200ms, but refreshed at 100ms)
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vi.advanceTimersByTimeAsync(100);
 
       // Should still be valid
       const conn3 = await pool.get();
@@ -189,6 +197,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should handle abort signal', async () => {
+      vi.useFakeTimers();
       const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (_conn: string) => {
         // Mock close
@@ -213,8 +222,9 @@ describe('ConnectionPool', () => {
 
       // Abort after a short delay
       setTimeout(() => abortController.abort(), 10);
-
-      await expect(promise).rejects.toThrow();
+      const rejection = expect(promise).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(10);
+      await rejection;
 
       // Connection should be removed from pool
       const conn2 = await pool.get();
@@ -225,6 +235,7 @@ describe('ConnectionPool', () => {
 
   describe('prewarm', () => {
     it('should create connection in background', async () => {
+      vi.useFakeTimers();
       let n = 0;
       const connectCb = vi.fn(async (_timeout: number): Promise<string> => {
         await new Promise((resolve) => setTimeout(resolve, 50));
@@ -242,7 +253,7 @@ describe('ConnectionPool', () => {
       pool.prewarm();
 
       // Wait for prewarm to complete
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vi.advanceTimersByTimeAsync(50);
 
       const conn = await pool.get();
       expect(conn).toBeDefined();
@@ -269,6 +280,225 @@ describe('ConnectionPool', () => {
       const conn2 = await pool.get();
       expect(conn2).toBe(conn1); // Should reuse existing
       expect(connectCb).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not leak API keys from failed prewarm errors', async () => {
+      const secret = 'cartesia-secret-api-key-do-not-log';
+      const warnSpy = vi.spyOn(log(), 'warn');
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        const pool = new ConnectionPool<string>({
+          connectCb: async () => {
+            throw new TypeError(`WebSocket handshake failed with X-API-Key: ${secret}`);
+          },
+          closeCb: async () => {},
+        });
+        pool.prewarm();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(unhandled).toEqual([]);
+        expect(warnSpy).toHaveBeenCalledWith(
+          { exceptionType: 'TypeError' },
+          'failed to prewarm connection pool',
+        );
+        expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(secret);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('does not leak URL credentials from failed prewarm errors', async () => {
+      const secretKey = 'url-secret-api-key-do-not-log';
+      const secretJwt = 'url-secret-jwt-token-do-not-log';
+      const warnSpy = vi.spyOn(log(), 'warn');
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        const pool = new ConnectionPool<string>({
+          connectCb: async () => {
+            throw new Error(`wss://example.com/ws?api_key=${secretKey}&jwt_token=${secretJwt}`);
+          },
+          closeCb: async () => {},
+        });
+        pool.prewarm();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(unhandled).toEqual([]);
+        expect(warnSpy).toHaveBeenCalledWith(
+          { exceptionType: 'Error' },
+          'failed to prewarm connection pool',
+        );
+        expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(secretKey);
+        expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(secretJwt);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('retries after failure', async () => {
+      let attempts = 0;
+      const pool = new ConnectionPool<number>({
+        connectCb: async () => {
+          attempts += 1;
+          if (attempts === 1) {
+            throw new Error('temporary prewarm failure');
+          }
+          return attempts;
+        },
+      });
+
+      pool.prewarm();
+      await vi.waitFor(() => expect(attempts).toBe(1));
+
+      pool.prewarm();
+      await vi.waitFor(() => expect(attempts).toBe(2));
+
+      expect(await pool.get()).toBe(2);
+      expect(attempts).toBe(2);
+    });
+  });
+
+  describe('releaseIdle', () => {
+    it('closes idle connections now and checked-out ones when they return', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      const idle = await pool.get();
+      pool.put(idle);
+
+      await pool.releaseIdle();
+
+      // only the idle connection closed; the in-flight one is untouched
+      expect(closeCb).toHaveBeenCalledTimes(1);
+      expect(closeCb).toHaveBeenCalledWith(idle);
+
+      // once returned it closes instead of rejoining the pool, and the next get connects fresh
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+      expect(await pool.get()).toBe('conn_3');
+    });
+
+    it('keeps a returned connection queued when its close fails, without an unhandled rejection', async () => {
+      let failOnce = true;
+      const closeCb = vi.fn(async (_conn: string) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error('close failed');
+        }
+      });
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      await pool.releaseIdle();
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledTimes(1));
+
+      // the failed close is retried by the next drain
+      await pool.close();
+      expect(closeCb).toHaveBeenCalledTimes(2);
+      expect(closeCb).toHaveBeenLastCalledWith(inUse);
+    });
+
+    it('does not let invalidate close a retired connection that is still in use', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      await pool.releaseIdle();
+      pool.invalidate();
+      await pool.get(); // drains the close queue
+      expect(closeCb).not.toHaveBeenCalledWith(inUse);
+
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+    });
+
+    it('does not close a connection invalidated mid-request, even when released afterwards', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      const idle = await pool.get();
+      pool.put(idle);
+
+      pool.invalidate(); // settings changed while inUse is still serving a request
+      await pool.releaseIdle(); // drains the close queue
+      expect(closeCb).toHaveBeenCalledTimes(1);
+      expect(closeCb).toHaveBeenCalledWith(idle);
+
+      // the request finishes: its connection closes on return and the next get connects fresh
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+      expect(await pool.get()).toBe('conn_3');
+    });
+
+    it('closes a released checked-out connection that is removed instead of returned', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      await pool.releaseIdle();
+      pool.remove(inUse);
+
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+    });
+
+    it('closes every idle connection even when one close fails', async () => {
+      let failOnce = true;
+      const closeCb = vi.fn(async (conn: string) => {
+        if (conn === 'conn_1' && failOnce) {
+          failOnce = false;
+          throw new Error('close failed');
+        }
+      });
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const first = await pool.get();
+      const second = await pool.get();
+      pool.put(first);
+      pool.put(second);
+
+      await expect(pool.releaseIdle()).rejects.toThrow('close failed');
+
+      expect(closeCb).toHaveBeenCalledWith('conn_1');
+      expect(closeCb).toHaveBeenCalledWith('conn_2');
+      // the failed connection stays queued and is retried on the next drain
+      closeCb.mockClear();
+      await pool.close();
+      expect(closeCb).toHaveBeenCalledWith('conn_1');
+    });
+
+    it('aborts a pending prewarm before it connects', async () => {
+      const connectCb = makeConnectCb();
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb, closeCb });
+
+      pool.prewarm();
+      await pool.releaseIdle();
+
+      expect(connectCb).not.toHaveBeenCalled();
+      expect(closeCb).not.toHaveBeenCalled();
+      // the pool is still usable
+      expect(await pool.get()).toBe('conn_1');
+    });
+
+    it('closes a prewarmed idle connection and stays usable', async () => {
+      const connectCb = makeConnectCb();
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb, closeCb });
+
+      pool.prewarm();
+      await vi.waitFor(() => expect(connectCb).toHaveBeenCalledTimes(1));
+      await pool.releaseIdle();
+
+      expect(closeCb).toHaveBeenCalledWith('conn_1');
+      expect(await pool.get()).toBe('conn_2');
     });
   });
 

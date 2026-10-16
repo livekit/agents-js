@@ -6,130 +6,81 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
+import { type AudioBuffer, delay } from '../utils.js';
 import { FallbackAdapter } from './fallback_adapter.js';
-import {
-  STT,
-  type STTCapabilities,
-  type SpeechEvent,
-  SpeechEventType,
-  SpeechStream,
-} from './stt.js';
+import { STT, type SpeechEvent, SpeechEventType, SpeechStream } from './stt.js';
+import { FakeSTT, RecognizeSentinel, emptyAudioFrame } from './testing/fake_stt.js';
 
-type Step =
-  | { kind: 'event'; event: SpeechEvent }
-  | { kind: 'error'; error: Error; recoverable?: boolean }
-  | { kind: 'end' };
+type RetryTimelineMode = 'outer' | 'child';
 
-class MockSpeechStream extends SpeechStream {
-  label: string;
-  private program: Step[];
-  private parent: MockSTT;
-  private drainsInput: boolean;
+class RetryTimelineSTT extends STT {
+  label = 'retry-timeline-stt';
+  mainStreams: RetryTimelineStream[] = [];
+  private mainAttempts = 0;
+
+  constructor(private readonly mode: RetryTimelineMode) {
+    super({ streaming: true, interimResults: false });
+  }
+
+  protected async _recognize(_frame: AudioBuffer): Promise<SpeechEvent> {
+    throw new APIConnectionError({ message: 'not used' });
+  }
+
+  override stream(options?: { connOptions?: APIConnectOptions }): RetryTimelineStream {
+    const isRecoveryProbe = options?.connOptions?.maxRetry === 0;
+    const mainAttempt = isRecoveryProbe ? 0 : ++this.mainAttempts;
+    const stream = new RetryTimelineStream(this, this.mode, mainAttempt, options?.connOptions);
+    if (!isRecoveryProbe) {
+      this.mainStreams.push(stream);
+    }
+    return stream;
+  }
+}
+
+class RetryTimelineStream extends SpeechStream {
+  label = 'retry-timeline-stream';
+  runOffsets: number[] = [];
+  private runCount = 0;
+
   constructor(
-    parent: MockSTT,
-    program: Step[],
+    stt: STT,
+    private readonly mode: RetryTimelineMode,
+    private readonly mainAttempt: number,
     connOptions?: APIConnectOptions,
-    drainsInput = false,
   ) {
-    super(parent, undefined, connOptions);
-    this.label = `${parent.label}.stream`;
-    this.program = program;
-    this.parent = parent;
-    this.drainsInput = drainsInput;
+    super(stt, undefined, connOptions);
   }
+
   protected async run(): Promise<void> {
-    for (const step of this.program) {
-      if (step.kind === 'event') {
-        this.queue.put(step.event);
-      } else if (step.kind === 'error') {
-        this.parent.emit('error', {
-          type: 'stt_error',
-          timestamp: Date.now(),
-          label: this.parent.label,
-          error: step.error,
-          recoverable: step.recoverable ?? false,
-        });
-        throw step.error;
-      } else if (step.kind === 'end') {
-        break;
-      }
-    }
-    // Optionally block on input like a real provider. run() only returns once
-    // endInput() is called on this child, so this is what exposes the
-    // "child elected after forwarder EOF never gets endInput()" hang.
-    if (this.drainsInput) {
-      for await (const _ of this.input) {
-        /* noop */
-      }
-    }
-  }
-}
+    this.runCount += 1;
+    this.runOffsets.push(this.startTimeOffset);
 
-interface MockSTTOptions {
-  label: string;
-  program: Step[];
-  streamProgram?: Step[];
-  streamDrainsInput?: boolean;
-  capabilities?: Partial<STTCapabilities>;
-}
+    if (this.mainAttempt === 0) {
+      return;
+    }
 
-class MockSTT extends STT {
-  label: string;
-  private recognizeProgram: Step[];
-  private streamProgram: Step[];
-  private streamDrainsInput: boolean;
-  constructor(opts: MockSTTOptions) {
-    super({
-      streaming: opts.capabilities?.streaming ?? true,
-      interimResults: opts.capabilities?.interimResults ?? true,
-      diarization: opts.capabilities?.diarization ?? false,
+    if (this.mode === 'outer' && this.mainAttempt === 1) {
+      await delay(25);
+      throw new APIConnectionError({
+        message: 'first main stream failed',
+        options: { retryable: false },
+      });
+    }
+
+    if (this.mode === 'child' && this.runCount === 1) {
+      await delay(25);
+      throw new APIConnectionError({ message: 'first child run failed' });
+    }
+
+    this.queue.put({
+      type: SpeechEventType.FINAL_TRANSCRIPT,
+      alternatives: [{ text: 'recovered', startTime: 0, endTime: 0, confidence: 1 }],
     });
-    this.label = opts.label;
-    this.recognizeProgram = opts.program;
-    this.streamProgram = opts.streamProgram ?? opts.program;
-    this.streamDrainsInput = opts.streamDrainsInput ?? false;
-  }
-  override async recognize(
-    frame: Parameters<STT['recognize']>[0],
-    abortSignal?: AbortSignal,
-  ): Promise<SpeechEvent> {
-    return super.recognize(frame, abortSignal);
-  }
-  protected async _recognize(): Promise<SpeechEvent> {
-    for (const step of this.recognizeProgram) {
-      if (step.kind === 'event') return step.event;
-      if (step.kind === 'error') throw step.error;
+    for await (const _ of this.input) {
+      /* drain */
     }
-    return { type: SpeechEventType.FINAL_TRANSCRIPT };
-  }
-  override stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
-    return new MockSpeechStream(
-      this,
-      this.streamProgram,
-      options?.connOptions,
-      this.streamDrainsInput,
-    );
   }
 }
-
-const finalEvent: SpeechEvent = {
-  type: SpeechEventType.FINAL_TRANSCRIPT,
-  alternatives: [
-    {
-      language: 'en',
-      text: 'hello world',
-      startTime: 0,
-      endTime: 1,
-      confidence: 0.99,
-    },
-  ],
-  requestId: 'req-1',
-};
-
-const emptyFinalEvent: SpeechEvent = {
-  type: SpeechEventType.FINAL_TRANSCRIPT,
-  alternatives: [{ language: 'en', text: '', startTime: 0, endTime: 1, confidence: 0.99 }],
-};
 
 describe('FallbackAdapter', () => {
   beforeAll(() => {
@@ -144,10 +95,9 @@ describe('FallbackAdapter', () => {
   });
 
   it('throws if a non-streaming STT is provided without a VAD', () => {
-    const nonStreaming = new MockSTT({
+    const nonStreaming = new FakeSTT({
       label: 'non-streaming',
-      program: [{ kind: 'end' }],
-      capabilities: { streaming: false },
+      capabilities: { streaming: false, interimResults: false },
     });
     expect(() => new FallbackAdapter({ sttInstances: [nonStreaming] })).toThrow(
       /do not support streaming/,
@@ -155,8 +105,8 @@ describe('FallbackAdapter', () => {
   });
 
   it('exposes provided instances and telephony-tuned defaults', () => {
-    const a = new MockSTT({ label: 'a', program: [{ kind: 'end' }] });
-    const b = new MockSTT({ label: 'b', program: [{ kind: 'end' }] });
+    const a = new FakeSTT({ label: 'a' });
+    const b = new FakeSTT({ label: 'b' });
     const adapter = new FallbackAdapter({ sttInstances: [a, b] });
     expect(adapter.sttInstances).toHaveLength(2);
     expect(adapter.sttInstances[0]).toBe(a);
@@ -168,98 +118,106 @@ describe('FallbackAdapter', () => {
   });
 
   it('reports streaming=true even when capabilities are mixed (via StreamAdapter wrap)', () => {
-    // All-streaming case: we can verify streaming=true without needing a VAD.
-    const a = new MockSTT({ label: 'a', program: [{ kind: 'end' }] });
+    const a = new FakeSTT({ label: 'a' });
     const adapter = new FallbackAdapter({ sttInstances: [a] });
     expect(adapter.capabilities.streaming).toBe(true);
   });
 
   it('_recognize falls through to the next instance on error', async () => {
-    const boom = new APIConnectionError({ message: 'primary down' });
-    const primary = new MockSTT({ label: 'primary', program: [{ kind: 'error', error: boom }] });
-    const fallback = new MockSTT({
-      label: 'fallback',
-      program: [{ kind: 'event', event: finalEvent }],
+    const primary = new FakeSTT({
+      label: 'primary',
+      fakeException: new APIConnectionError({ message: 'primary down' }),
     });
+    const fallback = new FakeSTT({ label: 'fallback', fakeTranscript: 'hello world' });
     const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
 
-    const emptyFrame = {} as Parameters<typeof adapter.recognize>[0];
-    const result = await adapter.recognize(emptyFrame);
-    expect(result).toEqual(finalEvent);
+    const result = await adapter.recognize(emptyAudioFrame());
+    expect(result.alternatives?.[0]?.text).toBe('hello world');
     expect(adapter.status[0]?.available).toBe(false);
     expect(adapter.status[1]?.available).toBe(true);
+
+    // Observability: each STT saw exactly one recognize() attempt.
+    expect((await primary.recognizeCh.next()).value).toBeInstanceOf(RecognizeSentinel);
+    expect((await fallback.recognizeCh.next()).value).toBeInstanceOf(RecognizeSentinel);
   });
 
   it('_recognize throws APIConnectionError when every instance fails', async () => {
     const boom = new APIConnectionError({ message: 'down' });
-    const a = new MockSTT({ label: 'a', program: [{ kind: 'error', error: boom }] });
-    const b = new MockSTT({ label: 'b', program: [{ kind: 'error', error: boom }] });
+    const a = new FakeSTT({ label: 'a', fakeException: boom });
+    const b = new FakeSTT({ label: 'b', fakeException: boom });
     const adapter = new FallbackAdapter({ sttInstances: [a, b] });
 
-    const emptyFrame = {} as Parameters<typeof adapter.recognize>[0];
-    await expect(adapter.recognize(emptyFrame)).rejects.toThrow(/all STTs failed/);
+    await expect(adapter.recognize(emptyAudioFrame())).rejects.toThrow(/all STTs failed/);
     expect(adapter.status[0]?.available).toBe(false);
     expect(adapter.status[1]?.available).toBe(false);
   });
 
   it('_recognize treats non-APIError failures as fallback-worthy too', async () => {
-    const a = new MockSTT({
-      label: 'a',
-      program: [{ kind: 'error', error: new Error('anything') }],
-    });
-    const b = new MockSTT({
-      label: 'b',
-      program: [{ kind: 'event', event: finalEvent }],
-    });
+    const a = new FakeSTT({ label: 'a', fakeException: new Error('anything') });
+    const b = new FakeSTT({ label: 'b', fakeTranscript: 'hello world' });
     const adapter = new FallbackAdapter({ sttInstances: [a, b] });
 
-    const emptyFrame = {} as Parameters<typeof adapter.recognize>[0];
-    const result = await adapter.recognize(emptyFrame);
-    expect(result).toEqual(finalEvent);
+    const result = await adapter.recognize(emptyAudioFrame());
+    expect(result.alternatives?.[0]?.text).toBe('hello world');
     expect(adapter.status[0]?.available).toBe(false);
   });
 
   it("emits 'stt_availability_changed' with { stt, available } when marking unavailable", async () => {
-    const boom = new APIError('primary down');
-    const primary = new MockSTT({ label: 'primary', program: [{ kind: 'error', error: boom }] });
-    const fallback = new MockSTT({
-      label: 'fallback',
-      program: [{ kind: 'event', event: finalEvent }],
+    const primary = new FakeSTT({
+      label: 'primary',
+      fakeException: new APIError('primary down'),
     });
+    const fallback = new FakeSTT({ label: 'fallback', fakeTranscript: 'hello world' });
     const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
 
     const handler = vi.fn();
     (adapter as unknown as EventEmitter).on('stt_availability_changed', handler);
 
-    const emptyFrame = {} as Parameters<typeof adapter.recognize>[0];
-    await adapter.recognize(emptyFrame);
+    await adapter.recognize(emptyAudioFrame());
 
     expect(handler).toHaveBeenCalledWith({ stt: primary, available: false });
   });
 
-  it('recognize recovery probe flips an instance back to available on success', async () => {
-    // Primary fails, fallback succeeds. The background recovery probe for the
-    // primary re-runs recognize() — with our MockSTT program, the second
-    // invocation still errors, so it stays unavailable. Swap program mid-test
-    // to simulate recovery.
-    const primary = new MockSTT({
+  it('recognize recovery probe flips an instance back to available once it succeeds', async () => {
+    // Port of Python's `test_stt_recover`. Primary starts broken, fallback
+    // works. After the first recognize() marks primary unavailable, flipping
+    // primary to success via updateOptions should let the background
+    // recovery task mark it available again on the next recognize() call
+    // (recovery is scheduled inside _recognize for every unavailable STT).
+    const primary = new FakeSTT({
       label: 'primary',
-      program: [{ kind: 'error', error: new APIError('transient') }],
+      fakeException: new APIConnectionError({ message: 'primary down' }),
     });
-    const fallback = new MockSTT({
-      label: 'fallback',
-      program: [{ kind: 'event', event: finalEvent }],
-    });
+    const fallback = new FakeSTT({ label: 'fallback', fakeTranscript: 'hello world' });
     const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
 
-    const emptyFrame = {} as Parameters<typeof adapter.recognize>[0];
-    await adapter.recognize(emptyFrame);
-    expect(adapter.status[0]?.available).toBe(false);
+    const availabilityEvents: Array<{ stt: STT; available: boolean }> = [];
+    (adapter as unknown as EventEmitter).on(
+      'stt_availability_changed',
+      (ev: { stt: STT; available: boolean }) => {
+        availabilityEvents.push(ev);
+      },
+    );
 
-    // Give the background recovery task a chance to run (then confirm it
-    // correctly stays marked unavailable since primary's program still errors).
-    await new Promise((r) => setTimeout(r, 20));
+    await adapter.recognize(emptyAudioFrame());
     expect(adapter.status[0]?.available).toBe(false);
+    expect(adapter.status[1]?.available).toBe(true);
+
+    // Flip primary to success and trigger another recognize — that kicks
+    // off a fresh recovery task for primary.
+    primary.updateOptions({ fakeException: null, fakeTranscript: 'recovered' });
+    await adapter.recognize(emptyAudioFrame());
+
+    // Recovery runs asynchronously; poll briefly for the flip.
+    const deadline = Date.now() + 500;
+    while (Date.now() < deadline && !adapter.status[0]?.available) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(adapter.status[0]?.available).toBe(true);
+    expect(availabilityEvents.map((e) => ({ stt: e.stt.label, available: e.available }))).toEqual([
+      { stt: 'primary', available: false },
+      { stt: 'primary', available: true },
+    ]);
   });
 
   it('recognize emits exactly one metrics_collected event (no double-count)', async () => {
@@ -268,24 +226,20 @@ describe('FallbackAdapter', () => {
     // also emits metrics — and those child metrics are forwarded onto the
     // adapter. Without a recognize() override, consumers see two stt_metrics
     // events per call and RECOGNITION_USAGE is double-counted.
-    const primary = new MockSTT({
-      label: 'primary',
-      program: [{ kind: 'event', event: finalEvent }],
-    });
+    const primary = new FakeSTT({ label: 'primary', fakeTranscript: 'hello' });
     const adapter = new FallbackAdapter({ sttInstances: [primary] });
 
     const received: unknown[] = [];
     adapter.on('metrics_collected', (m) => received.push(m));
 
-    const emptyFrame = {} as Parameters<typeof adapter.recognize>[0];
-    await adapter.recognize(emptyFrame);
+    await adapter.recognize(emptyAudioFrame());
 
     expect(received).toHaveLength(1);
   });
 
   it('forwards metrics_collected events from every child instance', () => {
-    const a = new MockSTT({ label: 'a', program: [{ kind: 'end' }] });
-    const b = new MockSTT({ label: 'b', program: [{ kind: 'end' }] });
+    const a = new FakeSTT({ label: 'a' });
+    const b = new FakeSTT({ label: 'b' });
     const adapter = new FallbackAdapter({ sttInstances: [a, b] });
 
     const received: unknown[] = [];
@@ -307,7 +261,7 @@ describe('FallbackAdapter', () => {
   });
 
   it('close detaches the forwarders so orphan events stop flowing through', async () => {
-    const a = new MockSTT({ label: 'a', program: [{ kind: 'end' }] });
+    const a = new FakeSTT({ label: 'a' });
     const adapter = new FallbackAdapter({ sttInstances: [a] });
 
     const received: unknown[] = [];
@@ -327,13 +281,6 @@ describe('FallbackAdapter', () => {
 
     expect(received).toHaveLength(0);
   });
-
-  it('recovery probe marks an STT available when it yields a non-empty FINAL_TRANSCRIPT', () => {
-    // Direct-unit test of the probe guard: an empty-transcript FINAL event
-    // should not satisfy the recovery condition.
-    expect(emptyFinalEvent.alternatives?.[0]?.text).toBe('');
-    expect(finalEvent.alternatives?.[0]?.text).toBe('hello world');
-  });
 });
 
 describe('FallbackSpeechStream (streaming path)', () => {
@@ -343,16 +290,8 @@ describe('FallbackSpeechStream (streaming path)', () => {
   });
 
   it('forwards events from the primary without triggering fallback when it succeeds', async () => {
-    const primary = new MockSTT({
-      label: 'primary',
-      program: [],
-      streamProgram: [{ kind: 'event', event: finalEvent }, { kind: 'end' }],
-    });
-    const fallback = new MockSTT({
-      label: 'fallback',
-      program: [],
-      streamProgram: [{ kind: 'event', event: finalEvent }, { kind: 'end' }],
-    });
+    const primary = new FakeSTT({ label: 'primary', fakeTranscript: 'hello world' });
+    const fallback = new FakeSTT({ label: 'fallback', fakeTranscript: 'hello world' });
     const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
 
     const availabilityChanges: Array<{ stt: STT; available: boolean }> = [];
@@ -369,23 +308,94 @@ describe('FallbackSpeechStream (streaming path)', () => {
     const events: SpeechEvent[] = [];
     for await (const ev of stream) events.push(ev);
 
-    expect(events).toEqual([finalEvent]);
+    expect(events.map((e) => e.alternatives?.[0]?.text)).toEqual(['hello world']);
     expect(availabilityChanges).toEqual([]);
     expect(adapter.status[0]?.available).toBe(true);
     expect(adapter.status[1]?.available).toBe(true);
   });
 
-  it('stream switches to the secondary provider when the primary errors', async () => {
-    const primary = new MockSTT({
+  it('keeps the provider available when a late transcript arrives after stream close', async () => {
+    const primary = new FakeSTT({
       label: 'primary',
-      program: [],
-      streamProgram: [{ kind: 'error', error: new APIError('primary down') }],
+      fakeTranscript: 'late transcript',
+      fakeTimeoutMs: 50,
     });
-    const fallback = new MockSTT({
+    const adapter = new FallbackAdapter({
+      sttInstances: [primary],
+      maxRetryPerSTT: 0,
+    });
+
+    const availabilityChanges: Array<{ stt: STT; available: boolean }> = [];
+    (adapter as unknown as EventEmitter).on(
+      'stt_availability_changed',
+      (ev: { stt: STT; available: boolean }) => {
+        availabilityChanges.push(ev);
+      },
+    );
+
+    const stream = adapter.stream();
+    await primary.streamCh.next();
+    stream.close();
+    await delay(150);
+
+    expect(availabilityChanges).toEqual([]);
+    expect(adapter.status[0]?.available).toBe(true);
+
+    await adapter.close();
+  });
+
+  it('closes recovery probes when a late transcript arrives after stream close', async () => {
+    const primary = new FakeSTT({
+      label: 'primary',
+      fakeException: new APIError('primary down'),
+    });
+    const fallback = new FakeSTT({
       label: 'fallback',
-      program: [],
-      streamProgram: [{ kind: 'event', event: finalEvent }, { kind: 'end' }],
+      fakeTranscript: 'late transcript',
+      fakeTimeoutMs: 50,
     });
+    const adapter = new FallbackAdapter({
+      sttInstances: [primary, fallback],
+      maxRetryPerSTT: 0,
+    });
+
+    (adapter as unknown as EventEmitter).on(
+      'stt_availability_changed',
+      (ev: { stt: STT; available: boolean }) => {
+        if (ev.stt === primary && !ev.available) {
+          // Keep the recovery probe alive until the parent stream tears it down.
+          primary.updateOptions({ fakeException: null });
+        }
+      },
+    );
+
+    const stream = adapter.stream();
+    stream.endInput();
+
+    await primary.streamCh.next(); // failed main stream
+    const recoveryProbe = (await primary.streamCh.next()).value;
+    await fallback.streamCh.next();
+
+    stream.close();
+    await delay(150);
+
+    let recoveryProbeClosed = false;
+    try {
+      recoveryProbe?.endInput();
+    } catch {
+      recoveryProbeClosed = true;
+    }
+    await adapter.close();
+
+    expect(recoveryProbeClosed).toBe(true);
+  });
+
+  it('stream switches to the secondary provider when the primary errors', async () => {
+    const primary = new FakeSTT({
+      label: 'primary',
+      fakeException: new APIError('primary down'),
+    });
+    const fallback = new FakeSTT({ label: 'fallback', fakeTranscript: 'hello world' });
     const adapter = new FallbackAdapter({
       sttInstances: [primary, fallback],
       maxRetryPerSTT: 0, // no retries — primary fails once, move on
@@ -405,28 +415,87 @@ describe('FallbackSpeechStream (streaming path)', () => {
     const events: SpeechEvent[] = [];
     for await (const ev of stream) events.push(ev);
 
-    expect(events).toEqual([finalEvent]);
+    expect(events.map((e) => e.alternatives?.[0]?.text)).toEqual(['hello world']);
     expect(availabilityChanges).toContainEqual({ stt: primary, available: false });
     expect(adapter.status[0]?.available).toBe(false);
     expect(adapter.status[1]?.available).toBe(true);
+
+    // Both providers saw a stream attempt via the observability channel.
+    expect((await primary.streamCh.next()).done).toBe(false);
+    expect((await fallback.streamCh.next()).done).toBe(false);
+  });
+
+  it('stream fallback propagates startTimeOffset to child streams', async () => {
+    const primary = new FakeSTT({
+      label: 'primary',
+      fakeException: new APIConnectionError({ message: 'primary down' }),
+    });
+    const fallback = new FakeSTT({ label: 'fallback', fakeTranscript: 'hello world' });
+    const adapter = new FallbackAdapter({
+      sttInstances: [primary, fallback],
+      maxRetryPerSTT: 0,
+    });
+
+    const stream = adapter.stream();
+    stream.startTimeOffset = 30;
+    stream.endInput();
+
+    for await (const _ of stream) {
+      /* drain */
+    }
+
+    const primaryStream = (await primary.streamCh.next()).value;
+    const fallbackStream = (await fallback.streamCh.next()).value;
+    expect(primaryStream?.startTimeOffset).toBeGreaterThanOrEqual(30);
+    expect(fallbackStream?.startTimeOffset).toBeGreaterThanOrEqual(30);
+  });
+
+  it('preserves child stream timeline across outer SpeechStream retries', async () => {
+    const stt = new RetryTimelineSTT('outer');
+    const adapter = new FallbackAdapter({ sttInstances: [stt] });
+
+    const stream = adapter.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 10_000 },
+    });
+    stream.startTimeOffset = 30;
+    stream.endInput();
+
+    const events: SpeechEvent[] = [];
+    for await (const ev of stream) events.push(ev);
+
+    expect(events.map((e) => e.alternatives?.[0]?.text)).toEqual(['recovered']);
+    expect(stt.mainStreams).toHaveLength(2);
+    expect(stt.mainStreams[0]?.startTimeOffset).toBeGreaterThanOrEqual(30);
+    expect(stt.mainStreams[1]?.startTimeOffset).toBeGreaterThan(
+      stt.mainStreams[0]!.startTimeOffset,
+    );
+  });
+
+  it('preserves child stream timeline across provider retries', async () => {
+    const stt = new RetryTimelineSTT('child');
+    const adapter = new FallbackAdapter({ sttInstances: [stt] });
+
+    const stream = adapter.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 10_000 },
+    });
+    stream.startTimeOffset = 30;
+    stream.endInput();
+
+    const events: SpeechEvent[] = [];
+    for await (const ev of stream) events.push(ev);
+
+    expect(events.map((e) => e.alternatives?.[0]?.text)).toEqual(['recovered']);
+    expect(stt.mainStreams).toHaveLength(1);
+    expect(stt.mainStreams[0]?.runOffsets).toHaveLength(2);
+    expect(stt.mainStreams[0]?.runOffsets[0]).toBeGreaterThanOrEqual(30);
+    expect(stt.mainStreams[0]!.runOffsets[1]).toBeGreaterThan(stt.mainStreams[0]!.runOffsets[0]!);
   });
 
   it('stream marks every instance unavailable when all children fail', async () => {
     const err = new APIError('down');
-    const a = new MockSTT({
-      label: 'a',
-      program: [],
-      streamProgram: [{ kind: 'error', error: err }],
-    });
-    const b = new MockSTT({
-      label: 'b',
-      program: [],
-      streamProgram: [{ kind: 'error', error: err }],
-    });
-    const adapter = new FallbackAdapter({
-      sttInstances: [a, b],
-      maxRetryPerSTT: 0,
-    });
+    const a = new FakeSTT({ label: 'a', fakeException: err });
+    const b = new FakeSTT({ label: 'b', fakeException: err });
+    const adapter = new FallbackAdapter({ sttInstances: [a, b], maxRetryPerSTT: 0 });
 
     // Adapter's base SpeechStream.mainTask re-throws after emitting 'error';
     // swallow to keep the test harness quiet.
@@ -449,17 +518,12 @@ describe('FallbackSpeechStream (streaming path)', () => {
     // The fallback child elected afterwards never receives endInput(), so
     // a provider whose run() drains input hangs forever. Guard: on election
     // after the forwarder has finished, immediately end the child's input.
-    const primary = new MockSTT({
+    // FakeRecognizeStream drains input by default, matching a real provider.
+    const primary = new FakeSTT({
       label: 'primary',
-      program: [],
-      streamProgram: [{ kind: 'error', error: new APIError('primary down') }],
+      fakeException: new APIError('primary down'),
     });
-    const fallback = new MockSTT({
-      label: 'fallback',
-      program: [],
-      streamProgram: [{ kind: 'event', event: finalEvent }, { kind: 'end' }],
-      streamDrainsInput: true,
-    });
+    const fallback = new FakeSTT({ label: 'fallback', fakeTranscript: 'hello world' });
     const adapter = new FallbackAdapter({
       sttInstances: [primary, fallback],
       maxRetryPerSTT: 0,
@@ -479,8 +543,194 @@ describe('FallbackSpeechStream (streaming path)', () => {
     const outcome = await Promise.race([collect.then(() => 'ok' as const), timeout]);
 
     expect(outcome).toBe('ok');
-    expect(events).toEqual([finalEvent]);
+    expect(events.map((e) => e.alternatives?.[0]?.text)).toEqual(['hello world']);
     expect(adapter.status[0]?.available).toBe(false);
     expect(adapter.status[1]?.available).toBe(true);
+  });
+});
+
+describe('FallbackAdapter dynamic model/provider getters', () => {
+  // The OTel `gen_ai.request.model` / `gen_ai.provider.name` attributes on the `user_turn`
+  // span read these when the turn opens and when it ends. Without dynamic getters that
+  // reflect the child serving, those attributes would name the wrapper (`FallbackAdapter` /
+  // `livekit`) regardless of which provider actually transcribed, so a fallover would be
+  // invisible in traces.
+
+  class IdentifiedFakeSTT extends FakeSTT {
+    private readonly _model: string;
+    private readonly _provider: string;
+    constructor(opts: { label: string; model: string; provider: string; fakeTranscript?: string }) {
+      super({ label: opts.label, fakeTranscript: opts.fakeTranscript });
+      this._model = opts.model;
+      this._provider = opts.provider;
+    }
+    override get model(): string {
+      return this._model;
+    }
+    override get provider(): string {
+      return this._provider;
+    }
+  }
+
+  it('reports the primary before any traffic', () => {
+    // model and provider follow the instance that serves next, so spans and metrics name the
+    // model that will answer rather than the adapter; the label stays the adapter's own
+    const a = new IdentifiedFakeSTT({ label: 'a', model: 'a-model', provider: 'a-provider' });
+    const adapter = new FallbackAdapter({ sttInstances: [a] });
+    expect(adapter.model).toBe('a-model');
+    expect(adapter.provider).toBe('a-provider');
+    expect(adapter.label).toContain('FallbackAdapter');
+  });
+
+  it('follows availability: a recovered primary is reported again before it serves', () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+    });
+    const fallback = new IdentifiedFakeSTT({
+      label: 'fallback',
+      model: 'fallback-model',
+      provider: 'fallback-provider',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+    adapter.status[0]!.available = false;
+    expect(adapter.model).toBe('fallback-model');
+    expect(adapter.provider).toBe('fallback-provider');
+    // once the primary recovers (its recovery task flips it back to available) the next request
+    // goes to it first, so that is what model and provider report
+    adapter.status[0]!.available = true;
+    expect(adapter.model).toBe('primary-model');
+    // all down: they are all retried, primary first
+    adapter.status[0]!.available = false;
+    adapter.status[1]!.available = false;
+    expect(adapter.model).toBe('primary-model');
+  });
+
+  it('reflects the active child after a successful recognize()', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+      fakeTranscript: 'hello',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary] });
+
+    await adapter.recognize(emptyAudioFrame());
+
+    expect(adapter.model).toBe('primary-model');
+    expect(adapter.provider).toBe('primary-provider');
+  });
+
+  it('reflects the fallback child after recognize() falls through', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+    });
+    // Force primary to throw without touching the IdentifiedFakeSTT constructor
+    // surface — updateOptions is the documented runtime knob on FakeSTT.
+    primary.updateOptions({ fakeException: new APIConnectionError({ message: 'down' }) });
+    const fallback = new IdentifiedFakeSTT({
+      label: 'fallback',
+      model: 'fallback-model',
+      provider: 'fallback-provider',
+      fakeTranscript: 'hello',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+
+    await adapter.recognize(emptyAudioFrame());
+
+    expect(adapter.model).toBe('fallback-model');
+    expect(adapter.provider).toBe('fallback-provider');
+  });
+
+  it('keeps naming the child serving the stream after the primary recovers', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+    });
+    const fallback = new IdentifiedFakeSTT({
+      label: 'fallback',
+      model: 'fallback-model',
+      provider: 'fallback-provider',
+      fakeTranscript: 'hello world',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+    adapter.status[0]!.available = false;
+
+    const stream = adapter.stream();
+    expect(adapter.model).toBe('fallback-model');
+    stream.pushFrame(emptyAudioFrame());
+    stream.endInput();
+    let events = 0;
+    for await (const ev of stream) {
+      if (ev.type !== SpeechEventType.FINAL_TRANSCRIPT) continue;
+      events += 1;
+      // a recovery probe finds the primary back while the fallback still serves this stream:
+      // the transcript in flight is the fallback's
+      adapter.status[0]!.available = true;
+      expect(adapter.model).toBe('fallback-model');
+      expect(adapter.provider).toBe('fallback-provider');
+    }
+    expect(events).toBeGreaterThan(0);
+    // the stream over, the next request goes to the recovered primary
+    expect(adapter.model).toBe('primary-model');
+  });
+
+  it('a stream ending does not clear what a newer stream elected', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+      fakeTranscript: 'hello',
+    });
+    const fallback = new IdentifiedFakeSTT({
+      label: 'fallback',
+      model: 'fallback-model',
+      provider: 'fallback-provider',
+      fakeTranscript: 'hello',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+    adapter.status[0]!.available = false;
+    const older = adapter.stream();
+    older.pushFrame(emptyAudioFrame());
+    expect(adapter.model).toBe('fallback-model');
+    // the primary recovers and a second stream elects it while the first still runs
+    adapter.status[0]!.available = true;
+    const newer = adapter.stream();
+    newer.pushFrame(emptyAudioFrame());
+    expect(adapter.model).toBe('primary-model');
+    older.endInput();
+    for await (const _ of older) {
+      /* drain */
+    }
+    expect(adapter.model).toBe('primary-model');
+    newer.endInput();
+    for await (const _ of newer) {
+      /* drain */
+    }
+    expect(adapter.model).toBe('primary-model');
+  });
+
+  it('reflects the active child once streaming events flow', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+      fakeTranscript: 'hello world',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary] });
+
+    const stream = adapter.stream();
+    stream.endInput();
+
+    const events: SpeechEvent[] = [];
+    for await (const ev of stream) events.push(ev);
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(adapter.model).toBe('primary-model');
+    expect(adapter.provider).toBe('primary-provider');
   });
 });

@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
+import { createHash } from 'node:crypto';
+import { stripExprMarkup } from '../tts/provider_format.js';
 import { createImmutableArray, shortuuid } from '../utils.js';
 import type { LLM } from './llm.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
@@ -9,6 +11,9 @@ import type { JSONObject, JSONValue, ToolContext } from './tool_context.js';
 
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 export interface ImageContent {
+  /**
+   * Unique identifier for the image.
+   */
   id: string;
 
   type: 'image_content';
@@ -37,7 +42,196 @@ export interface AudioContent {
   transcript?: string;
 }
 
-export type ChatContent = ImageContent | AudioContent | string;
+type InstructionsOptions = {
+  /** The audio/voice variant of the instructions. */
+  audio: string;
+  /** The text variant of the instructions; falls back to `audio` when omitted. */
+  text?: string;
+  /** The currently rendered string value, used by `value`/`toString()`. */
+  represent?: string;
+};
+
+const INSTRUCTIONS_SYMBOL = Symbol.for('livekit.agents.Instructions');
+
+export function isInstructions(value: unknown): value is Instructions {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    INSTRUCTIONS_SYMBOL in value &&
+    (value as Record<symbol, boolean>)[INSTRUCTIONS_SYMBOL] === true
+  );
+}
+
+/**
+ * Instructions that adapt based on the user's input modality (audio vs. text).
+ *
+ * The `value` property is the rendered string providers see. By default it
+ * equals the `audio` variant; after {@link asModality} it equals the chosen
+ * variant. Both the `audio` variant and the raw `text` variant are preserved
+ * so {@link asModality} can be called again for a different modality (e.g.,
+ * when the same `ChatContext` is reused across tool-call turns).
+ */
+export class Instructions {
+  readonly type = 'instructions' as const;
+
+  private readonly _audioVariant: string;
+
+  /** Raw text variant; falls back to {@link audio} when omitted. */
+  private readonly _textVariant?: string;
+
+  /** The currently rendered string (what providers should treat as content). */
+  readonly value: string;
+
+  /** @internal Symbol marker for type identification */
+  readonly [INSTRUCTIONS_SYMBOL] = true;
+
+  constructor(options: InstructionsOptions) {
+    this._audioVariant = options.audio;
+    this._textVariant = options.text;
+    this.value = options.represent ?? options.audio;
+  }
+
+  static tpl(
+    strings: TemplateStringsArray,
+    ...values: Array<Instructions | string | number | boolean | null | undefined>
+  ): Instructions {
+    const render = (mode: 'audio' | 'text' | 'value') => {
+      let result = strings[0]!;
+      for (let i = 0; i < values.length; i++) {
+        const value = values[i]!;
+        if (isInstructions(value)) {
+          result += mode === 'audio' ? value.audio : mode === 'text' ? value.text : value.value;
+        } else {
+          result += String(value);
+        }
+        result += strings[i + 1]!;
+      }
+      return result;
+    };
+
+    const audio = render('audio');
+    const text = render('text');
+
+    return new Instructions({
+      audio,
+      text: audio === text ? undefined : text,
+      represent: render('value'),
+    });
+  }
+
+  /** The audio (voice) variant of the instructions. */
+  get audio(): string {
+    return this._audioVariant;
+  }
+
+  /** The text variant of the instructions. Falls back to {@link audio}. */
+  get text(): string {
+    return this._textVariant ?? this.audio;
+  }
+
+  /**
+   * Return a copy whose {@link value} is the variant matching `modality`.
+   * Both `audio` and `text` variants are preserved on the result, so this can
+   * be called again for a different modality (e.g. across tool-call turns).
+   */
+  asModality(modality: 'audio' | 'text'): Instructions {
+    return new Instructions({
+      audio: this.audio,
+      text: this._textVariant,
+      represent: modality === 'audio' ? this.audio : this.text,
+    });
+  }
+
+  /** Concatenate, propagating both variants and the current rendered value. */
+  concat(other: string | Instructions): Instructions {
+    if (isInstructions(other)) {
+      const hasText = this._textVariant !== undefined || other._textVariant !== undefined;
+      return new Instructions({
+        audio: this.audio + other.audio,
+        text: hasText ? this.text + other.text : undefined,
+        represent: this.value + other.value,
+      });
+    }
+    return new Instructions({
+      audio: this.audio + other,
+      text: this._textVariant !== undefined ? this._textVariant + other : undefined,
+      represent: this.value + other,
+    });
+  }
+
+  toString(): string {
+    return this.value;
+  }
+
+  toJSON(): { type: 'instructions'; audio: string; text?: string } {
+    const result: { type: 'instructions'; audio: string; text?: string } = {
+      type: 'instructions',
+      audio: this.audio,
+    };
+    if (this._textVariant !== undefined) {
+      result.text = this._textVariant;
+    }
+    return result;
+  }
+}
+
+export function renderInstructions(
+  instructions: string | Instructions,
+  modality?: 'audio' | 'text',
+): string {
+  if (typeof instructions === 'string') return instructions;
+  return modality === undefined ? instructions.value : instructions.asModality(modality).value;
+}
+
+/**
+ * Compare two instruction values by content. Plain strings compare by value;
+ * {@link Instructions} compare by their audio + text variants so that two
+ * distinct instances with the same content are treated as equal.
+ */
+export function instructionsEqual(
+  a: string | Instructions | undefined,
+  b: string | Instructions | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  const aIsInstr = isInstructions(a);
+  const bIsInstr = isInstructions(b);
+  if (aIsInstr && bIsInstr) {
+    return a.audio === b.audio && a.text === b.text;
+  }
+  if (!aIsInstr && !bIsInstr) {
+    return a === b;
+  }
+  return false;
+}
+
+/**
+ * Concatenate any mix of plain strings and {@link Instructions}, propagating
+ * both audio/text variants. If no argument is an {@link Instructions} the
+ * result is a plain string; otherwise the result is an {@link Instructions}
+ * preserving both variants from every contributing operand.
+ */
+export function concatInstructions(...parts: Array<string | Instructions>): string | Instructions {
+  if (parts.length === 0) return '';
+  const hasInstructions = parts.some((p) => isInstructions(p));
+  if (!hasInstructions) return parts.join('');
+
+  let acc = parts[0]!;
+  for (let i = 1; i < parts.length; i++) {
+    const next = parts[i]!;
+    if (isInstructions(acc)) {
+      acc = acc.concat(next);
+    } else if (isInstructions(next)) {
+      // string + Instructions (radd-style): prepend `acc` to both variants.
+      acc = new Instructions({ audio: acc }).concat(next);
+    } else {
+      acc = acc + next;
+    }
+  }
+  return acc;
+}
+
+export type ChatContent = ImageContent | AudioContent | Instructions | string;
 
 export function createImageContent(params: {
   image: string | VideoFrame;
@@ -82,6 +276,13 @@ export function createAudioContent(params: {
 }
 
 export interface MetricsReport {
+  /**
+   * Provider-known request or response IDs associated with this turn.
+   *
+   * Assistant `ChatMessage` only. These IDs can be used to correlate a turn with
+   * provider-side logs.
+   */
+  providerRequestIds?: string[];
   startedSpeakingAt?: number;
   stoppedSpeakingAt?: number;
   transcriptionDelay?: number;
@@ -168,10 +369,24 @@ export class ChatMessage {
 
   /**
    * Returns a single string with all text parts of the message joined by new
-   * lines. If no string content is present, returns `null`.
+   * lines, with LiveKit's expressive `<expr/>` tags removed from assistant
+   * messages. If no string content is present, returns `undefined`.
    */
   get textContent(): string | undefined {
-    const parts = this.content.filter((c): c is string => typeof c === 'string');
+    const raw = this.rawTextContent;
+    if (raw === undefined || this.role !== 'assistant') return raw;
+    return stripExprMarkup(raw);
+  }
+
+  /**
+   * Returns a single string with all text parts of the message joined by new
+   * lines, exactly as generated. Assistant messages may contain expressive
+   * `<expr/>` tags.
+   */
+  get rawTextContent(): string | undefined {
+    const parts = this.content
+      .filter((c): c is string | Instructions => typeof c === 'string' || isInstructions(c))
+      .map((c) => (typeof c === 'string' ? c : c.value));
     return parts.length > 0 ? parts.join('\n') : undefined;
   }
 
@@ -179,6 +394,8 @@ export class ChatMessage {
     return this.content.map((c) => {
       if (typeof c === 'string') {
         return c as JSONValue;
+      } else if (isInstructions(c)) {
+        return c.toJSON() as JSONValue;
       } else if (c.type === 'image_content') {
         return {
           id: c.id,
@@ -451,8 +668,196 @@ export class AgentHandoffItem {
   }
 }
 
-// TODO(parity): Add AgentConfigUpdate type to ChatItem union
-export type ChatItem = ChatMessage | FunctionCall | FunctionCallOutput | AgentHandoffItem;
+export class AgentConfigUpdate {
+  readonly id: string;
+
+  readonly type = 'agent_config_update' as const;
+
+  instructions?: string | Instructions;
+
+  toolsAdded?: string[];
+
+  toolsRemoved?: string[];
+
+  createdAt: number;
+
+  constructor(
+    params: {
+      id?: string;
+      instructions?: string | Instructions;
+      toolsAdded?: string[];
+      toolsRemoved?: string[];
+      createdAt?: number;
+    } = {},
+  ) {
+    const {
+      id = shortuuid('item_'),
+      instructions,
+      toolsAdded,
+      toolsRemoved,
+      createdAt = Date.now(),
+    } = params;
+    this.id = id;
+    this.instructions = instructions;
+    this.toolsAdded = toolsAdded;
+    this.toolsRemoved = toolsRemoved;
+    this.createdAt = createdAt;
+  }
+
+  static create(params: {
+    id?: string;
+    instructions?: string | Instructions;
+    toolsAdded?: string[];
+    toolsRemoved?: string[];
+    createdAt?: number;
+  }) {
+    return new AgentConfigUpdate(params);
+  }
+
+  toJSON(excludeTimestamp: boolean = false): JSONValue {
+    const result: JSONValue = {
+      id: this.id,
+      type: this.type,
+    };
+
+    if (this.instructions !== undefined) {
+      result.instructions = renderInstructions(this.instructions);
+    }
+    if (this.toolsAdded !== undefined) {
+      result.toolsAdded = this.toolsAdded;
+    }
+    if (this.toolsRemoved !== undefined) {
+      result.toolsRemoved = this.toolsRemoved;
+    }
+    if (!excludeTimestamp) {
+      result.createdAt = this.createdAt;
+    }
+
+    return result;
+  }
+}
+
+export type ChatItem =
+  | ChatMessage
+  | FunctionCall
+  | FunctionCallOutput
+  | AgentHandoffItem
+  | AgentConfigUpdate;
+
+/**
+ * What identifies an item's content beyond its id and type: what {@link ChatContext.isEquivalent}
+ * compares and {@link chatItemFingerprint} hashes, so the two cannot drift apart. Timestamps,
+ * metrics and similar metadata are left out. `content` maps a message's content entries: as they
+ * are for equivalence, as media-safe stand-ins for the fingerprint.
+ */
+function essentialFields(
+  item: ChatItem,
+  content: (entry: ChatContent) => unknown = (entry) => entry,
+): unknown[] {
+  switch (item.type) {
+    case 'message':
+      return [item.role, item.interrupted, item.content.map(content)];
+    case 'function_call':
+      return [item.name, item.callId, item.args, item.thoughtSignature, item.groupId, item.extra];
+    case 'function_call_output':
+      return [item.name, item.callId, item.output, item.isError];
+    case 'agent_handoff':
+    case 'agent_config_update':
+      return [];
+  }
+}
+
+function contentEqual(a: ChatContent, b: ChatContent): boolean {
+  if (typeof a === 'string' || typeof b === 'string') return a === b;
+  if (isInstructions(a) || isInstructions(b)) {
+    return (
+      isInstructions(a) &&
+      isInstructions(b) &&
+      a.audio === b.audio &&
+      a.text === b.text &&
+      a.value === b.value
+    );
+  }
+  if (a.type === 'image_content' && b.type === 'image_content') {
+    return (
+      a.id === b.id &&
+      a.image === b.image &&
+      a.inferenceDetail === b.inferenceDetail &&
+      a.inferenceWidth === b.inferenceWidth &&
+      a.inferenceHeight === b.inferenceHeight &&
+      a.mimeType === b.mimeType
+    );
+  }
+  if (a.type === 'audio_content' && b.type === 'audio_content') {
+    return (
+      a.frame.length === b.frame.length &&
+      a.frame.every((frame, index) => frame === b.frame[index]) &&
+      a.transcript === b.transcript
+    );
+  }
+  return false;
+}
+
+function essentialFieldEqual(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return (
+      a.length === b.length &&
+      a.every((value, index) => contentEqual(value as ChatContent, b[index] as ChatContent))
+    );
+  }
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+  return a === b;
+}
+
+function digest(text: string): string {
+  return createHash('blake2b512').update(text).digest('hex').slice(0, 16);
+}
+
+// media payloads are never kept: a URL counts as itself, inline data by a digest computed once per
+// image object (and again when its data changes), and a video frame by its identity
+const imageSources = new WeakMap<ImageContent, { image: unknown; source: string | number }>();
+const frameTokens = new WeakMap<object, number>();
+let nextFrameToken = 0;
+
+function imageSource(content: ImageContent): string | number {
+  const image = content.image;
+  if (typeof image === 'string' && !image.startsWith('data:')) return image;
+  const cached = imageSources.get(content);
+  if (cached?.image === image) return cached.source;
+  let source: string | number;
+  if (typeof image === 'string') {
+    source = digest(image);
+  } else {
+    source = frameTokens.get(image) ?? nextFrameToken++;
+    frameTokens.set(image, source);
+  }
+  imageSources.set(content, { image, source });
+  return source;
+}
+
+function contentStandIn(entry: ChatContent): unknown {
+  if (typeof entry === 'string') return entry;
+  if (isInstructions(entry)) return ['instructions', entry.audio, entry.text, entry.value];
+  if (entry.type === 'image_content') {
+    return [
+      'image',
+      entry.id,
+      imageSource(entry),
+      entry.inferenceWidth,
+      entry.inferenceHeight,
+      entry.inferenceDetail,
+      entry.mimeType,
+    ];
+  }
+  return ['audio', entry.frame.length, entry.transcript];
+}
+
+/** @internal A short digest of an item's essential fields, to tell whether it changed. */
+export function chatItemFingerprint(item: ChatItem): string {
+  return digest(JSON.stringify([item.type, ...essentialFields(item, contentStandIn)]));
+}
 
 export class ChatContext {
   protected _items: ChatItem[];
@@ -508,6 +913,20 @@ export class ChatContext {
     }
   }
 
+  /**
+   * Remove the first item from the chat context by item or item ID.
+   *
+   * Throws if the item or ID is not found.
+   */
+  remove(item: ChatItem | string): void {
+    const itemId = typeof item === 'string' ? item : item.id;
+    const idx = this.indexById(itemId);
+    if (idx === undefined) {
+      throw new Error(`Item not found: ${itemId}`);
+    }
+    this._items.splice(idx, 1);
+  }
+
   getById(itemId: string): ChatItem | undefined {
     return this._items.find((i) => i.id === itemId);
   }
@@ -517,13 +936,13 @@ export class ChatContext {
     return idx !== -1 ? idx : undefined;
   }
 
-  // TODO(parity): Add excludeConfigUpdate option when AgentConfigUpdate is ported
   copy(
     options: {
       excludeFunctionCall?: boolean;
       excludeInstructions?: boolean;
       excludeEmptyMessage?: boolean;
       excludeHandoff?: boolean;
+      excludeConfigUpdate?: boolean;
       toolCtx?: ToolContext<any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     } = {},
   ): ChatContext {
@@ -532,6 +951,7 @@ export class ChatContext {
       excludeInstructions = false,
       excludeEmptyMessage = false,
       excludeHandoff = false,
+      excludeConfigUpdate = false,
       toolCtx,
     } = options;
     const items: ChatItem[] = [];
@@ -561,7 +981,11 @@ export class ChatContext {
         continue;
       }
 
-      if (toolCtx !== undefined && isToolCallOrOutput(item) && toolCtx[item.name] === undefined) {
+      if (excludeConfigUpdate && item.type === 'agent_config_update') {
+        continue;
+      }
+
+      if (toolCtx !== undefined && isToolCallOrOutput(item) && !toolCtx.hasTool(item.name)) {
         continue;
       }
 
@@ -571,15 +995,19 @@ export class ChatContext {
     return new ChatContext(items);
   }
 
-  // TODO(parity): Add excludeConfigUpdate option when AgentConfigUpdate is ported
   merge(
     other: ChatContext,
     options: {
       excludeFunctionCall?: boolean;
       excludeInstructions?: boolean;
+      excludeConfigUpdate?: boolean;
     } = {},
   ): ChatContext {
-    const { excludeFunctionCall = false, excludeInstructions = false } = options;
+    const {
+      excludeFunctionCall = false,
+      excludeInstructions = false,
+      excludeConfigUpdate = false,
+    } = options;
     const existingIds = new Set(this._items.map((item) => item.id));
 
     for (const item of other.items) {
@@ -592,6 +1020,10 @@ export class ChatContext {
         item.type === 'message' &&
         (item.role === 'system' || item.role === 'developer')
       ) {
+        continue;
+      }
+
+      if (excludeConfigUpdate && item.type === 'agent_config_update') {
         continue;
       }
 
@@ -642,6 +1074,8 @@ export class ChatContext {
       excludeAudio?: boolean;
       excludeTimestamp?: boolean;
       excludeFunctionCall?: boolean;
+      excludeConfigUpdate?: boolean;
+      stripMarkup?: boolean;
     } = {},
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): JSONObject {
@@ -650,6 +1084,8 @@ export class ChatContext {
       excludeAudio = true,
       excludeTimestamp = true,
       excludeFunctionCall = false,
+      excludeConfigUpdate = false,
+      stripMarkup = false,
     } = options;
 
     const items: ChatItem[] = [];
@@ -658,6 +1094,10 @@ export class ChatContext {
       let processedItem = item;
 
       if (excludeFunctionCall && ['function_call', 'function_call_output'].includes(item.type)) {
+        continue;
+      }
+
+      if (excludeConfigUpdate && item.type === 'agent_config_update') {
         continue;
       }
 
@@ -684,6 +1124,12 @@ export class ChatContext {
           processedItem.content = processedItem.content.filter((c) => {
             return !(typeof c === 'object' && c.type === 'audio_content');
           });
+        }
+
+        if (stripMarkup && processedItem.role === 'assistant') {
+          processedItem.content = processedItem.content.map((c) =>
+            typeof c === 'string' ? stripExprMarkup(c) : c,
+          );
         }
       }
 
@@ -720,10 +1166,11 @@ export class ChatContext {
    *
    * Comparison rules:
    * - Messages: compares the full `content` list, `role` and `interrupted`.
-   * - Function calls: compares `name`, `callId`, and `args`.
+   * - Function calls: compares `name`, `callId`, `args`, `thoughtSignature`, `groupId` and
+   *   `extra`.
    * - Function call outputs: compares `name`, `callId`, `output`, and `isError`.
    *
-   * Does not consider timestamps or other metadata.
+   * Does not consider timestamps or other metadata. Item fingerprints hash the same fields.
    */
   isEquivalent(other: ChatContext): boolean {
     if (this === other) {
@@ -741,86 +1188,10 @@ export class ChatContext {
       if (a.id !== b.id || a.type !== b.type) {
         return false;
       }
-
-      if (a.type === 'message' && b.type === 'message') {
-        if (
-          a.role !== b.role ||
-          a.interrupted !== b.interrupted ||
-          !this.compareContent(a.content, b.content)
-        ) {
-          return false;
-        }
-      } else if (a.type === 'function_call' && b.type === 'function_call') {
-        if (
-          a.name !== b.name ||
-          a.callId !== b.callId ||
-          a.args !== b.args ||
-          a.thoughtSignature !== b.thoughtSignature ||
-          a.groupId !== b.groupId ||
-          JSON.stringify(a.extra) !== JSON.stringify(b.extra)
-        ) {
-          return false;
-        }
-      } else if (a.type === 'function_call_output' && b.type === 'function_call_output') {
-        if (
-          a.name !== b.name ||
-          a.callId !== b.callId ||
-          a.output !== b.output ||
-          a.isError !== b.isError
-        ) {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Compare two content arrays for equality.
-   */
-  private compareContent(a: ChatContent[], b: ChatContent[]): boolean {
-    if (a.length !== b.length) {
-      return false;
-    }
-
-    for (let i = 0; i < a.length; i++) {
-      const contentA = a[i]!;
-      const contentB = b[i]!;
-
-      if (typeof contentA === 'string' && typeof contentB === 'string') {
-        if (contentA !== contentB) {
-          return false;
-        }
-        continue;
-      }
-
-      if (typeof contentA !== typeof contentB) {
+      const left = essentialFields(a);
+      const right = essentialFields(b);
+      if (!left.every((value, index) => essentialFieldEqual(value, right[index]))) {
         return false;
-      }
-
-      if (typeof contentA === 'object' && typeof contentB === 'object') {
-        if (contentA.type === 'image_content' && contentB.type === 'image_content') {
-          if (
-            contentA.id !== contentB.id ||
-            contentA.image !== contentB.image ||
-            contentA.inferenceDetail !== contentB.inferenceDetail ||
-            contentA.inferenceWidth !== contentB.inferenceWidth ||
-            contentA.inferenceHeight !== contentB.inferenceHeight ||
-            contentA.mimeType !== contentB.mimeType
-          ) {
-            return false;
-          }
-        } else if (contentA.type === 'audio_content' && contentB.type === 'audio_content') {
-          if (contentA.frame.length !== contentB.frame.length) {
-            return false;
-          }
-          if (contentA.transcript !== contentB.transcript) {
-            return false;
-          }
-        } else {
-          return false;
-        }
       }
     }
 
@@ -887,7 +1258,7 @@ export class ChatContext {
           return toXml(item.role, (item.textContent ?? '').trim());
         }
 
-        return functionCallItemToMessage(item).textContent ?? '';
+        return functionCallItemToMessage(item).rawTextContent ?? '';
       })
       .join('\n')
       .trim();

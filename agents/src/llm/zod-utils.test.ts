@@ -9,6 +9,7 @@ import {
   isZod4Schema,
   isZodObjectSchema,
   isZodSchema,
+  jsonSchemaAllowsNull,
   parseZodSchema,
   zodSchemaToJsonSchema,
 } from './zod-utils.js';
@@ -261,6 +262,30 @@ describe('Zod Utils', () => {
       });
     });
 
+    it('should preserve constraints on tool argument schemas', async () => {
+      const schema = z.object({
+        count: z.number().min(1).max(10).describe('how many'),
+      });
+
+      const jsonSchema = zodSchemaToJsonSchema(schema);
+      const properties = jsonSchema.properties as JSONSchemaProperties;
+      const count = properties.count!;
+
+      expect(count.minimum).toBe(1);
+      expect(count.maximum).toBe(10);
+      expect(count.description).toBe('how many');
+
+      await expect(parseZodSchema(schema, { count: 5 })).resolves.toMatchObject({
+        success: true,
+      });
+
+      for (const bad of [0, 11]) {
+        await expect(parseZodSchema(schema, { count: bad })).resolves.toMatchObject({
+          success: false,
+        });
+      }
+    });
+
     describe('strict parameter', () => {
       it('should produce strict JSON schema with strict: true', () => {
         const schema = z4.object({
@@ -291,6 +316,131 @@ describe('Zod Utils', () => {
 
         const strictSchema = zodSchemaToJsonSchema(schema, true, true);
         expect(strictSchema).toMatchSnapshot();
+      });
+
+      it('should advertise null sentinels for all defaulted strict tool shapes', () => {
+        const schema = z4.object({
+          count: z4.number().default(5),
+          label: z4.enum(['a', 'b']).default('a'),
+          value: z4.union([z4.number(), z4.string()]).default(5),
+          child: z4.object({ x: z4.number().default(1) }).default({ x: 1 }),
+        });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true) as Record<string, unknown>;
+        const properties = strictSchema.properties as JSONSchemaProperties;
+
+        for (const field of ['count', 'label', 'value', 'child']) {
+          const prop = properties[field]!;
+          expect(jsonSchemaAllowsNull(prop, strictSchema), field).toBe(true);
+          expect(prop).not.toHaveProperty('default');
+        }
+      });
+
+      it('should not add a null sentinel to a defaulted const field', () => {
+        const schema = z4.object({ tag: z4.literal('only').default('only') });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true) as Record<string, unknown>;
+        const properties = strictSchema.properties as JSONSchemaProperties;
+
+        expect(properties.tag).toEqual({ const: 'only', type: 'string' });
+        expect(jsonSchemaAllowsNull(properties.tag!, strictSchema)).toBe(false);
+      });
+
+      it('should keep defaulted discriminant tags pinned to their variants', async () => {
+        const celsius = z4.object({
+          unit: z4.literal('celsius').default('celsius'),
+          value: z4.number(),
+        });
+        const fahrenheit = z4.object({
+          unit: z4.literal('fahrenheit').default('fahrenheit'),
+          value: z4.number(),
+        });
+        const temperature = z4.discriminatedUnion('unit', [celsius, fahrenheit]);
+        const schema = z4.object({ temp: temperature });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true) as Record<string, unknown>;
+        const properties = strictSchema.properties as JSONSchemaProperties;
+        const variants = (properties.temp!.anyOf ?? properties.temp!.oneOf) as Array<
+          Record<string, unknown>
+        >;
+
+        for (const [variant, tag] of variants.map((variant, index) => [
+          variant,
+          index === 0 ? 'celsius' : 'fahrenheit',
+        ]) as Array<[Record<string, unknown>, string]>) {
+          const variantProperties = variant.properties as JSONSchemaProperties;
+          expect(variantProperties.unit).toEqual({ const: tag, type: 'string' });
+          expect(jsonSchemaAllowsNull(variantProperties.unit!, strictSchema)).toBe(false);
+          expect(variant.required).toContain('unit');
+        }
+
+        await expect(
+          parseZodSchema(schema, { temp: { unit: 'fahrenheit', value: 70 } }),
+        ).resolves.toMatchObject({
+          success: true,
+          data: { temp: { unit: 'fahrenheit', value: 70 } },
+        });
+      });
+
+      it('should keep defaulted fields non-nullable when not generating a strict schema', () => {
+        const schema = z4.object({
+          count: z4.number().default(5),
+          label: z4.enum(['a', 'b']).default('a'),
+          value: z4.union([z4.number(), z4.string()]).default(5),
+          child: z4.object({ x: z4.number().default(1) }).default({ x: 1 }),
+        });
+
+        const jsonSchema = zodSchemaToJsonSchema(schema, true, false) as Record<string, unknown>;
+        const properties = jsonSchema.properties as JSONSchemaProperties;
+
+        for (const field of ['count', 'label', 'value', 'child']) {
+          expect(jsonSchemaAllowsNull(properties[field]!, jsonSchema), field).toBe(false);
+          expect(properties[field], field).toHaveProperty('default');
+        }
+      });
+
+      it('should preserve genuine null declared through enum membership', () => {
+        const schema = z4.object({
+          value: z4.literal(['x', null]).default('x'),
+        });
+
+        for (const strict of [false, true]) {
+          const jsonSchema = zodSchemaToJsonSchema(schema, true, strict) as Record<string, unknown>;
+          const properties = jsonSchema.properties as JSONSchemaProperties;
+
+          expect(jsonSchemaAllowsNull(properties.value!, jsonSchema), `strict=${strict}`).toBe(
+            true,
+          );
+        }
+      });
+
+      it('should not treat a property named "default" as a schema keyword', () => {
+        const schema = z4.object({
+          default: z4.string(),
+          other: z4.number(),
+          cfg: z4.object({ default: z4.boolean() }),
+        });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true) as Record<string, unknown>;
+        const properties = strictSchema.properties as JSONSchemaProperties;
+
+        expect(properties.default).toEqual({ type: 'string' });
+        expect(properties.other).toEqual({ type: 'number' });
+        expect((properties.cfg as Record<string, unknown>).properties).toEqual({
+          default: { type: 'boolean' },
+        });
+        expect(properties).not.toHaveProperty('anyOf');
+      });
+
+      it('should not double up the null branch of an already nullable union', () => {
+        const schema = z3.object({ role: z3.string().default('user') });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true) as Record<string, unknown>;
+        const properties = strictSchema.properties as JSONSchemaProperties;
+
+        expect(properties.role).toEqual({
+          anyOf: [{ type: 'string' }, { type: 'null' }],
+        });
       });
 
       it('should handle nested objects in strict mode', () => {

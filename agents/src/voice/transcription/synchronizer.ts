@@ -7,6 +7,7 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { WordStream, WordTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
+import { TranscriptMarkupStripper } from '../../tts/provider_format.js';
 import { Future, Task, delay } from '../../utils.js';
 import {
   AudioOutput,
@@ -25,6 +26,12 @@ interface TextSyncOptions {
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
   enabled: boolean;
+  /**
+   * Whether expressive markup may be present in the forwarded text, so pacing should
+   * discount it. Evaluated per word, because the session latches expressive on the first
+   * turn that injects the markup guide — after this synchronizer is constructed.
+   */
+  expressiveEnabled: () => boolean;
 }
 
 interface TextData {
@@ -156,6 +163,23 @@ class SegmentSynchronizerImpl {
   private startFuture: Future = new Future();
   private closedFuture: Future = new Future();
   private playbackCompleted: boolean = false;
+  private interrupted: boolean = false;
+  // The audio source failed before covering the segment's text, e.g. a TTS error.
+  audioTruncated: boolean = false;
+
+  /**
+   * Paces against the visible text only; stateful because a markup tag with spaces in its
+   * attributes (e.g. `<expr type="expression" label="warm surprise"/>`) is shredded across
+   * word tokens and a per-token strip can't recognize the fragments — each would otherwise
+   * be paced as if it were spoken.
+   */
+  private pacingStripper = new TranscriptMarkupStripper();
+
+  private pausedWallTime?: number;
+  /** Accumulated paused time in milliseconds; subtracted from wall-clock elapsed. */
+  private pausedDuration: number = 0;
+  /** Gate held closed while paused; the main task awaits it between words. */
+  private outputEnabledFuture: Future<void> = new Future();
 
   private logger = log();
 
@@ -190,6 +214,7 @@ class SegmentSynchronizerImpl {
     };
     this.outputStream = new IdentityTransform();
     this.outputStreamWriter = this.outputStream.writable.getWriter();
+    this.outputEnabledFuture.resolve();
 
     if (this.enabled) {
       this.mainTask()
@@ -291,6 +316,10 @@ class SegmentSynchronizerImpl {
 
     this.textData.wordStream.pushText(textStr);
     this.textData.pushedText += textStr;
+    if (endTime !== undefined) {
+      // A closed span releases its trailing word while the turn is still open.
+      this.textData.wordStream.flush();
+    }
   }
 
   endTextInput() {
@@ -307,12 +336,46 @@ class SegmentSynchronizerImpl {
     }
   }
 
+  pause(): void {
+    if (this.closed) {
+      this.logger.warn('SegmentSynchronizerImpl.pause called after close');
+      return;
+    }
+    if (this.pausedWallTime === undefined) {
+      this.pausedWallTime = Date.now();
+    }
+    if (this.outputEnabledFuture.done) {
+      this.outputEnabledFuture = new Future();
+    }
+  }
+
+  resume(): void {
+    if (this.closed) {
+      this.logger.warn('SegmentSynchronizerImpl.resume called after close');
+      return;
+    }
+    if (this.pausedWallTime !== undefined) {
+      if (this.startWallTime !== undefined) {
+        // max() guards the case where pause() ran before startWallTime was set
+        // (e.g. a new impl is created while the synchronizer is already paused).
+        this.pausedDuration += Date.now() - Math.max(this.startWallTime, this.pausedWallTime);
+      }
+      this.pausedWallTime = undefined;
+    }
+    if (!this.outputEnabledFuture.done) {
+      this.outputEnabledFuture.resolve();
+    }
+  }
+
   markPlaybackFinished(_playbackPosition: number, interrupted: boolean) {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.markPlaybackFinished called after close');
       return;
     }
 
+    // A truncated input keeps the transcript to what played, as an interruption does.
+    interrupted ||= this.audioTruncated;
+    this.interrupted = interrupted;
     if (!this.textData.done || !this.audioData.done) {
       this.logger.warn(
         { textDone: this.textData.done, audioDone: this.audioData.done },
@@ -369,6 +432,13 @@ class SegmentSynchronizerImpl {
     for await (const wordToken of this.textData.wordStream) {
       const word = wordToken.token;
 
+      if (!this.outputEnabledFuture.done) {
+        await this.outputEnabledFuture.await;
+        if (this.interrupted) {
+          return;
+        }
+      }
+
       if (this.closed && !this.playbackCompleted) {
         return;
       }
@@ -392,7 +462,7 @@ class SegmentSynchronizerImpl {
         this.outputStreamWriter.write(
           createTimedString({
             text: forwardedWord,
-            endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+            endTime: this.synchronizedElapsedSeconds(),
           }),
         );
         const cleanWords = this.options.splitWords(word);
@@ -402,10 +472,23 @@ class SegmentSynchronizerImpl {
         continue;
       }
 
-      const cleanWords = this.options.splitWords(word);
-      const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
-      const wordHyphens = this.options.hyphenateWord(cleanWord).length;
-      const elapsedSeconds = (Date.now() - this.startWallTime) / 1000;
+      // forward the raw token (the room output strips markup and surfaces the expression
+      // downstream), but pace against the visible text only so markup adds no delay. The
+      // stripper holds back an unclosed tag across tokens and releases the clean text once
+      // it completes.
+      //
+      // `forwardedWord`, not `word`: the word tokenizer emits whitespace-free runs, so a
+      // tag with spaces in its attributes (`<expr type="expression" label="warm surprise"/>`)
+      // would be reassembled without them and no longer match. The forwarded slices are
+      // contiguous over `pushedText`, so feeding those replays the original text exactly.
+      //
+      // Without expressive there is no markup to discount, and the stripper would hold a
+      // tag-shaped "<" in ordinary prose — so it is bypassed entirely.
+      const cleanWord = this.options.expressiveEnabled()
+        ? this.pacingStripper.push(forwardedWord)
+        : forwardedWord;
+      const wordHyphens = cleanWord.trim() ? this.calcHyphens(cleanWord).length : 0;
+      const elapsedSeconds = this.synchronizedElapsedSeconds()!;
 
       let dHyphens = 0;
       const annotated = this.audioData.annotatedRate;
@@ -438,7 +521,7 @@ class SegmentSynchronizerImpl {
       this.outputStreamWriter.write(
         createTimedString({
           text: forwardedWord,
-          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+          endTime: this.synchronizedElapsedSeconds(),
         }),
       );
       await this.sleepIfNotClosed(delayTime / 2);
@@ -452,11 +535,19 @@ class SegmentSynchronizerImpl {
       this.outputStreamWriter.write(
         createTimedString({
           text: remaining,
-          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+          endTime: this.synchronizedElapsedSeconds(),
         }),
       );
       this.textData.forwardedText += remaining;
     }
+  }
+
+  /** Elapsed audio-playback time in seconds — wall-clock minus paused time. */
+  private synchronizedElapsedSeconds(): number | undefined {
+    if (this.startWallTime === undefined) {
+      return undefined;
+    }
+    return (Date.now() - this.startWallTime - this.pausedDuration) / 1000;
   }
 
   private calcHyphens(text: string): string[] {
@@ -487,6 +578,10 @@ class SegmentSynchronizerImpl {
     }
 
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
+    // Release the pause gate so mainTask can observe `closed` and exit if close() ran while paused.
+    if (!this.outputEnabledFuture.done) {
+      this.outputEnabledFuture.resolve();
+    }
     // Close the writer if endTextInput hasn't already done so (e.g. on interruption)
     if (!this.enabled && !this.textData.done) {
       this.outputStreamWriter.close();
@@ -502,6 +597,8 @@ export interface TranscriptionSynchronizerOptions {
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
   enabled: boolean;
+  /** See {@link TextSyncOptions.expressiveEnabled}. Defaults to "never". */
+  expressiveEnabled?: () => boolean;
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
@@ -528,10 +625,30 @@ export class TranscriptionSynchronizer {
   _audioAttached: boolean = true;
   /** @internal */
   _textAttached: boolean = true;
-  // warn once per enabled cycle when only one of audio/text is detached; reset when
-  // the synchronizer transitions back to enabled
+  // warn once per detach cycle when only one of audio/text is detached; reset when
+  // both outputs are reattached
   /** @internal */
   _warnedAsymmetricDetach: boolean = false;
+
+  /** Pause state tracked at the synchronizer level so it can be reapplied across segment rotations.
+   * @internal */
+  _paused: boolean = false;
+
+  /**
+   * Segments that were rotated out by an incoming `capture_text` *before* their own
+   * `on_playback_finished` arrived (the "should not happen" path in `_SyncedTextOutput`).
+   * Each still owes one `on_playback_finished`; when it arrives it must settle that
+   * already-closed segment instead of the freshly-rotated current `_impl` (which now holds
+   * the *next* reply's text). Without this, the stale interrupted verdict tears down the new
+   * reply's leading segment and drops its transcript.
+   *
+   * `acceptedDownstream` records whether the next-in-chain audio output counted the segment:
+   * accepted segments owe a *real* finish from downstream, dropped segments owe a *synthetic*
+   * drift finish from `waitForPlayout()` — pairing by kind keeps a synthetic finish from
+   * consuming an entry whose real finish is still in flight.
+   * @internal
+   */
+  _pendingRotatedSegments: { impl: SegmentSynchronizerImpl; acceptedDownstream: boolean }[] = [];
 
   private logger = log();
 
@@ -548,6 +665,7 @@ export class TranscriptionSynchronizer {
       splitWords: options.splitWords,
       wordTokenizer: options.wordTokenizer,
       enabled: options.enabled,
+      expressiveEnabled: options.expressiveEnabled ?? (() => false),
     };
 
     // initial segment/first segment, recreated for each new segment
@@ -629,11 +747,20 @@ export class TranscriptionSynchronizer {
 
     await this._impl.close();
     this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
+
+    if (this._paused) {
+      this._impl.pause();
+    }
   }
 }
 
 class SyncedAudioOutput extends AudioOutput {
   private pushedDuration: number = 0.0;
+  /** Whether the downstream output counted the segment currently being captured. */
+  private segmentAccepted = false;
+  private segmentOpen = false;
+  /** Acceptance verdict of the most recently flushed segment. */
+  private lastSegmentAccepted = false;
 
   constructor(
     public synchronizer: TranscriptionSynchronizer,
@@ -642,13 +769,46 @@ class SyncedAudioOutput extends AudioOutput {
     super(nextInChainAudio.sampleRate, nextInChainAudio, { pause: true });
   }
 
+  /**
+   * Whether the segment a rotation is about to queue was accepted downstream — the open
+   * segment's live verdict if frames are still flowing, else the last flushed segment's.
+   * @internal
+   */
+  get _rotationCandidateAccepted(): boolean {
+    return this.segmentOpen ? this.segmentAccepted : this.lastSegmentAccepted;
+  }
+
+  pause(): void {
+    super.pause();
+    this.synchronizer._paused = true;
+    if (!this.synchronizer._impl.closed) {
+      this.synchronizer._impl.pause();
+    }
+  }
+
+  resume(): void {
+    super.resume();
+    this.synchronizer._paused = false;
+    if (!this.synchronizer._impl.closed) {
+      this.synchronizer._impl.resume();
+    }
+  }
+
   async captureFrame(frame: AudioFrame): Promise<void> {
     // using barrier() on capture should be sufficient, flush() must not be called if
     // capture_frame isn't completed
     await this.synchronizer.barrier();
 
+    if (!this.segmentOpen) {
+      this.segmentOpen = true;
+      this.segmentAccepted = false;
+    }
+    const downstreamCapturedBefore = this.nextInChainAudio.capturedPlayoutSegments;
     await super.captureFrame(frame);
     await this.nextInChainAudio.captureFrame(frame); // passthrough audio
+    if (this.nextInChainAudio.capturedPlayoutSegments > downstreamCapturedBefore) {
+      this.segmentAccepted = true;
+    }
 
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
@@ -686,8 +846,20 @@ class SyncedAudioOutput extends AudioOutput {
   flush() {
     super.flush();
     this.nextInChainAudio.flush();
+    if (this.segmentOpen) {
+      this.segmentOpen = false;
+      this.lastSegmentAccepted = this.segmentAccepted;
+    }
 
     if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
+      return;
+    }
+
+    // If a previous (interrupted) speech was rotated out early by an incoming capture_text,
+    // this flush belongs to that already-closed segment. Applying endAudioInput to the current
+    // `_impl` would mark the NEXT reply's audio as ended and trigger a spurious rotation that
+    // drops its transcript. Skip it; the pending stale playback_finished finalizes the old one.
+    if (this.synchronizer._pendingRotatedSegments.length > 0) {
       return;
     }
 
@@ -712,6 +884,54 @@ class SyncedAudioOutput extends AudioOutput {
     this.nextInChainAudio.clearBuffer();
   }
 
+  override _markInputTruncated(): void {
+    this.synchronizer._impl.audioTruncated = true;
+    super._markInputTruncated();
+  }
+
+  async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    const drift = this.pendingPlayoutSegments - this.nextInChainAudio.pendingPlayoutSegments;
+    for (let i = 0; i < drift; i++) {
+      this.settleDriftFinish();
+    }
+    return super.waitForPlayout();
+  }
+
+  /**
+   * Synthetic finish for a segment the downstream output dropped. Routed through the
+   * synchronizer like a real finish (mark finished, attach transcript, rotate), but paired
+   * only with queue entries that were *not* accepted downstream — an accepted entry's real
+   * finish is still in flight and must settle it instead.
+   */
+  private settleDriftFinish(): void {
+    const ev: PlaybackFinishedEvent = { playbackPosition: 0, interrupted: true };
+    if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
+      super.onPlaybackFinished(ev);
+      return;
+    }
+
+    const queue = this.synchronizer._pendingRotatedSegments;
+    const idx = queue.findIndex((entry) => !entry.acceptedDownstream);
+    if (idx >= 0) {
+      const [entry] = queue.splice(idx, 1);
+      super.onPlaybackFinished({
+        ...ev,
+        synchronizedTranscript: entry!.impl.synchronizedTranscript,
+      });
+      this.pushedDuration = 0.0;
+      return;
+    }
+
+    // the dropped segment is the current one
+    this.synchronizer._impl.markPlaybackFinished(ev.playbackPosition, ev.interrupted);
+    super.onPlaybackFinished({
+      ...ev,
+      synchronizedTranscript: this.synchronizer._impl.synchronizedTranscript,
+    });
+    this.synchronizer.rotateSegment();
+    this.pushedDuration = 0.0;
+  }
+
   // this is going to be automatically called by the next_in_chain
   onPlaybackStarted(createdAt: number): void {
     super.onPlaybackStarted(createdAt);
@@ -724,6 +944,25 @@ class SyncedAudioOutput extends AudioOutput {
   onPlaybackFinished(ev: PlaybackFinishedEvent) {
     if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
       super.onPlaybackFinished(ev);
+      return;
+    }
+
+    // If a segment was rotated out by an incoming capture_text before its own
+    // playback_finished arrived, this event belongs to that already-closed segment — not the
+    // freshly-rotated current `_impl` (which holds the next reply). Settle the old one and
+    // leave the current segment untouched, so the new reply's leading text isn't dropped.
+    // Real finishes can only be for segments the downstream accepted; dropped entries are
+    // settled by `settleDriftFinish` instead.
+    const queue = this.synchronizer._pendingRotatedSegments;
+    const idx = queue.findIndex((entry) => entry.acceptedDownstream);
+    if (idx >= 0) {
+      const [entry] = queue.splice(idx, 1);
+      super.onPlaybackFinished({
+        playbackPosition: ev.playbackPosition,
+        interrupted: ev.interrupted,
+        synchronizedTranscript: entry!.impl.synchronizedTranscript,
+      });
+      this.pushedDuration = 0.0;
       return;
     }
 
@@ -793,6 +1032,13 @@ class SyncedTextOutput extends TextOutput {
       this.logger.warn(
         'SegmentSynchronizerImpl text marked as ended in capture text, rotating segment',
       );
+      // This segment's text input already ended but its on_playback_finished hasn't arrived
+      // yet (interrupt + fast next reply). Remember it so the still-pending playback_finished
+      // settles *this* segment, not the new one we're about to rotate in.
+      this.synchronizer._pendingRotatedSegments.push({
+        impl: this.synchronizer._impl,
+        acceptedDownstream: this.synchronizer.audioOutput._rotationCandidateAccepted,
+      });
       this.synchronizer.rotateSegment();
       await this.synchronizer.barrier();
     }

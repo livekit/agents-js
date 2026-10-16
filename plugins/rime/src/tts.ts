@@ -1,185 +1,254 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type APIConnectOptions, AudioByteStream, shortuuid, tts } from '@livekit/agents';
+import {
+  type APIConnectOptions,
+  APIConnectionError,
+  APIError,
+  APIStatusError,
+  AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
+  shortuuid,
+  tts,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import type { DefaultLanguages, TTSModels } from './models.js';
+import { RimePool, bounded, connectionPools } from './connection.js';
+import {
+  type TTSOptions,
+  fetchPayload,
+  getSampleRate,
+  resolveOptions,
+  warnIfArcana,
+  wsUrl,
+} from './options.js';
+import { SynthesizeStream } from './stream.js';
 
-const RIME_BASE_URL = 'https://users.rime.ai/v1/rime-tts';
-const RIME_TTS_SAMPLE_RATE = 24000;
-const RIME_TTS_CHANNELS = 1;
-
-/**
- * Get the appropriate sample rate based on TTS options.
- *
- * @param opts - Optional TTS configuration options
- * @returns The sample rate in Hz. Returns the explicit samplingRate if provided,
- *          otherwise returns model-specific defaults (24000 for arcana, 16000 for mistv2,
- *          or the default RIME_TTS_SAMPLE_RATE for other models)
- */
-function getSampleRate(opts?: Partial<TTSOptions>): number {
-  if (opts?.samplingRate && typeof opts.samplingRate === 'number') {
-    return opts.samplingRate;
-  }
-  switch (opts?.modelId) {
-    case 'arcana':
-      return 24000;
-    case 'mistv2':
-      return 16000;
-    default:
-      return RIME_TTS_SAMPLE_RATE;
-  }
-}
-
-/** Configuration options for Rime AI TTS */
-export interface TTSOptions {
-  speaker: string;
-  modelId: TTSModels | string;
-  baseURL?: string;
-  apiKey?: string;
-  lang?: DefaultLanguages | string;
-  repetition_penalty?: number;
-  temperature?: number;
-  top_p?: number;
-  max_tokens?: number;
-  samplingRate?: number;
-  speedAlpha?: number;
-  pauseBetweenBrackets?: boolean;
-  phonemizeBetweenBrackets?: boolean;
-  inlineSpeedAlpha?: string;
-  noTextNormalization?: boolean;
-  saveOovs?: boolean;
-  /** Additional Rime API parameters */
-  [key: string]: string | number | boolean | undefined;
-}
-
-const defaultTTSOptions: TTSOptions = {
-  modelId: 'arcana',
-  speaker: 'luna',
-  apiKey: process.env.RIME_API_KEY,
-  baseURL: RIME_BASE_URL,
-};
+export type { TTSOptions, RimeAudioFormat, WebSocketProtocol } from './options.js';
+export { SynthesizeStream } from './stream.js';
 
 export class TTS extends tts.TTS {
   private opts: TTSOptions;
+  private pool?: RimePool;
+  private pools = new Set<RimePool>();
+  private streams = new Set<SynthesizeStream>();
+  private isClosed = false;
   label = 'rime.TTS';
 
-  /**
-   * Create a new instance of Rime TTS.
-   *
-   * @remarks
-   * `apiKey` must be set to your Rime AI API key, either using the argument or by setting the
-   * `RIME_API_KEY` environmental variable.
-   *
-   * @param opts - Configuration options for the TTS instance
-   */
-
-  constructor(opts: Partial<TTSOptions> = defaultTTSOptions) {
-    const sampleRate = getSampleRate(opts);
-    super(sampleRate, RIME_TTS_CHANNELS, {
-      streaming: false,
+  constructor(opts: Partial<TTSOptions> = {}) {
+    const resolved = resolveOptions(opts);
+    super(getSampleRate(resolved), 1, {
+      streaming: resolved.useWebsocket ?? false,
+      alignedTranscript: Boolean(resolved.useWebsocket && !resolved.websocketURL),
     });
-
-    this.opts = { ...defaultTTSOptions, ...opts };
-    if (this.opts.apiKey === undefined) {
-      throw new Error('RIME API key is required, whether as an argument or as $RIME_API_KEY');
-    }
+    this.opts = resolved;
+    warnIfArcana(opts.modelId);
+    this.replacePool();
   }
 
-  /**
-   * Update TTS options after initialization
-   *
-   * @param opts - Partial options to update
-   */
+  override get sampleRate() {
+    return getSampleRate(this.opts);
+  }
+  get model() {
+    return this.opts.modelId;
+  }
+  get provider() {
+    return 'Rime';
+  }
+
+  /** Resolves once the previous pool closed, or right away if streams still hold it. */
+  private replacePool(): Promise<void> | undefined {
+    if (!this.opts.useWebsocket) return;
+    const previous = this.pool;
+    const pool = new RimePool(
+      this.opts.websocketURL ?? wsUrl(this.opts),
+      this.opts.apiKey!,
+      this.opts.websocketURL ? this.opts.websocketProtocol : undefined,
+      () => this.pools.delete(pool),
+    );
+    this.pool = pool;
+    this.pools.add(this.pool);
+    connectionPools.set(this, this.pool);
+    return previous?.retire();
+  }
+
   updateOptions(opts: Partial<TTSOptions>) {
-    this.opts = { ...this.opts, ...opts };
+    if (this.isClosed) throw new Error('Rime TTS is closed');
+    const next = resolveOptions(opts, this.opts);
+    const identity = (value: TTSOptions) =>
+      JSON.stringify([value.websocketURL ?? wsUrl(value), value.apiKey, value.websocketProtocol]);
+    const changed = identity(next) !== identity(this.opts);
+    this.opts = next;
+    warnIfArcana(opts.modelId);
+    if (changed) this.replacePool();
+  }
+
+  prewarm() {
+    if (!this.isClosed) this.pool?.pool.prewarm();
   }
 
   /**
-   * Synthesize text to audio using Rime AI TTS.
-   *
-   * @param text - Text to synthesize
-   * @returns A chunked stream of synthesized audio
+   * Retire the current pool so its idle connections close, and start a fresh one for later
+   * synthesis. Active streams keep the retired pool until they finish (see `replacePool`).
    */
+  override async releaseIdleConnections(): Promise<void> {
+    if (!this.isClosed) await this.replacePool();
+  }
+
   synthesize(
     text: string,
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ): ChunkedStream {
-    return new ChunkedStream(this, text, this.opts, connOptions, abortSignal);
+    if (this.isClosed) throw new Error('Rime TTS is closed');
+    if (this.opts.useWebsocket) throw new Error('Rime one-shot synthesis requires HTTP mode');
+    return new ChunkedStream(this, text, { ...this.opts }, connOptions, abortSignal);
   }
 
-  stream(): tts.SynthesizeStream {
-    throw new Error('Streaming is not supported on RimeTTS');
+  stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
+    if (this.isClosed) throw new Error('Rime TTS is closed');
+    if (!this.pool) throw new Error('Rime streaming requires useWebsocket or websocketURL');
+    const result = new SynthesizeStream(this, { ...this.opts }, options?.connOptions);
+    this.streams.add(result);
+    void result.waitClosed().then(() => this.streams.delete(result));
+    return result;
+  }
+
+  override async close() {
+    this.isClosed = true;
+    connectionPools.delete(this);
+    const streams = [...this.streams];
+    streams.forEach((value) => value.close());
+    await Promise.all(streams.map((value) => value.waitClosed()));
+    await Promise.all([...this.pools].map((value) => value.close()));
+    this.pools.clear();
   }
 }
 
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'rime-tts.ChunkedStream';
   private opts: TTSOptions;
-  private text: string;
-
-  /**
-   * Create a new ChunkedStream instance.
-   *
-   * @param tts - The parent TTS instance
-   * @param text - Text to synthesize
-   * @param opts - TTS configuration options
-   * @param connOptions - API connection options
-   * @param abortSignal - Abort signal for cancellation
-   */
+  private requestOptions: APIConnectOptions;
+  private attempts = 0;
   constructor(
-    tts: TTS,
-    text: string,
+    private parent: TTS,
+    private text: string,
     opts: TTSOptions,
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ) {
-    super(text, tts, connOptions, abortSignal);
-    this.text = text;
-    this.opts = opts;
+    super(text, parent, connOptions, abortSignal);
+    this.opts = { ...opts };
+    this.requestOptions = connOptions ?? DEFAULT_API_CONNECT_OPTIONS;
+    if (abortSignal?.aborted) this.close();
   }
 
   protected async run() {
+    this.attempts++;
+    try {
+      await this.runAttempt();
+    } catch (error) {
+      if (this.abortSignal.aborted) return;
+      if (
+        error instanceof APIError &&
+        error.retryable &&
+        this.attempts <= this.requestOptions.maxRetry
+      )
+        throw error;
+
+      // Let the base class retry temporary failures. Report the final failure here
+      // so its background task can finish and close output without rejecting.
+      this.parent.emit('error', {
+        type: 'tts_error',
+        timestamp: Date.now(),
+        label: this.parent.label,
+        error:
+          error instanceof APIError
+            ? error
+            : new APIConnectionError({ message: 'Rime HTTP request failed' }),
+        recoverable: false,
+      });
+    }
+  }
+
+  private async runAttempt() {
+    if (this.abortSignal.aborted) return;
     const requestId = shortuuid();
-    const response = await fetch(`${this.opts.baseURL}`, {
-      method: 'POST',
-      headers: {
-        Accept: 'audio/pcm',
-        Authorization: `Bearer ${this.opts.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        ...Object.fromEntries(
-          Object.entries(this.opts).filter(([k]) => !['apiKey', 'baseURL'].includes(k)),
-        ),
-        text: this.text,
-      }),
-      signal: this.abortSignal,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Rime AI TTS request failed: ${response.status} ${response.statusText}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    const sampleRate = getSampleRate(this.opts);
-    const audioByteStream = new AudioByteStream(sampleRate, RIME_TTS_CHANNELS);
-    const frames = audioByteStream.write(buffer);
-    let lastFrame: AudioFrame | undefined;
-    const sendLastFrame = (segmentId: string, final: boolean) => {
-      if (lastFrame) {
-        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
-        lastFrame = undefined;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, this.abortSignal]);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let emitted = false;
+    try {
+      const response = await bounded(
+        fetch(this.opts.baseURL!, {
+          method: 'POST',
+          redirect: 'error',
+          headers: {
+            Accept: 'audio/pcm',
+            Authorization: `Bearer ${this.opts.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(fetchPayload(this.opts, this.text)),
+          signal,
+        }),
+        signal,
+        this.requestOptions.timeoutMs,
+      );
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => {});
+        throw new APIStatusError({
+          message: 'Rime HTTP request failed',
+          options: { statusCode: response.status },
+        });
       }
-    };
-
-    for (const frame of frames) {
-      sendLastFrame(requestId, false);
-      lastFrame = frame;
+      if (!response.body)
+        throw new APIConnectionError({ message: 'Rime HTTP response has no body' });
+      const bytes = new AudioByteStream(getSampleRate(this.opts), 1);
+      let last: AudioFrame | undefined;
+      let byteCount = 0;
+      const emit = (final: boolean) => {
+        if (last && !this.queue.closed) {
+          emitted = true;
+          this.queue.put({ requestId, segmentId: requestId, frame: last, final });
+        }
+      };
+      reader = response.body.getReader();
+      while (true) {
+        const result = await bounded(reader.read(), signal, this.requestOptions.timeoutMs);
+        if (result.done) break;
+        byteCount += result.value.length;
+        for (const frame of bytes.write(result.value)) {
+          emit(false);
+          last = frame;
+        }
+      }
+      if (byteCount % 2)
+        throw new APIError('Rime returned incomplete PCM audio', { retryable: false });
+      for (const frame of bytes.flush()) {
+        emit(false);
+        last = frame;
+      }
+      emit(true);
+    } catch (error) {
+      if (this.abortSignal.aborted) return;
+      if (error instanceof APIError) {
+        if (emitted && error.retryable) throw new APIError(error.message, { retryable: false });
+        throw error;
+      }
+      throw new APIConnectionError({
+        message: 'Rime HTTP request failed',
+        options: { retryable: !emitted },
+      });
+    } finally {
+      controller.abort();
+      if (reader) {
+        // The request is already aborted. Give cancellation its own bounded cleanup window.
+        await bounded(
+          reader.cancel(),
+          new AbortController().signal,
+          Math.min(1000, this.requestOptions.timeoutMs),
+        ).catch(() => {});
+        reader.releaseLock();
+      }
     }
-    sendLastFrame(requestId, true);
-
-    this.queue.close();
   }
 }
