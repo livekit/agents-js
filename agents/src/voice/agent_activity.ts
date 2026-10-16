@@ -5737,6 +5737,15 @@ export class AgentActivity implements RecognitionHooks {
   private _resolveTurnDetection(
     turnDetection: TurnDetectionMode | undefined,
   ): TurnDetectionMode | undefined {
+    // Text simulations commit user turns as text, there is no audio to detect turns in.
+    if (
+      this.agentSession._textOnly &&
+      turnDetection !== 'manual' &&
+      turnDetection !== 'realtime_llm'
+    ) {
+      return undefined;
+    }
+
     if (turnDetection !== undefined && typeof turnDetection !== 'string') {
       if (turnDetection instanceof BaseStreamingTurnDetector) {
         if (this.vad === undefined) {
@@ -5758,6 +5767,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
+    // Text simulations carry no audio to detect interruptions in.
+    if (this.agentSession._textOnly) {
+      return undefined;
+    }
+
     const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
     const sessionInterruptionDetection = this.agentSession.interruptionDetection;
 
