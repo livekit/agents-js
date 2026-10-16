@@ -522,9 +522,6 @@ export class ToolExecutor {
         ? exception.message
         : 'An internal error occurred while executing the tool.';
     }
-    if (output === undefined || output === null) {
-      return;
-    }
     if (!this.runningTasks.has(runCtx.functionCall.callId)) {
       return;
     }
