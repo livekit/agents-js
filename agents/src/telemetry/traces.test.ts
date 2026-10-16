@@ -619,7 +619,7 @@ function fakeClientRequest(): ClientRequest {
 }
 
 function mockSuccessfulFormSubmit() {
-  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit(_opts, cb) {
+  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit() {
     const request = fakeClientRequest();
     const res = new PassThrough() as PassThrough & {
       statusCode: number;
@@ -632,7 +632,7 @@ function mockSuccessfulFormSubmit() {
       process.nextTick(() => res.emit('end'));
       return res;
     };
-    cb?.(null, res as never);
+    queueMicrotask(() => request.emit('response', res));
     return request;
   });
 }

@@ -11,6 +11,7 @@ import { initializeLogger } from '../log.js';
 import { uploadRecording } from './recording_upload.js';
 import { uploadGate } from './upload_gate.js';
 
+/** Like a real `ClientRequest`, an `'error'` event without a listener throws. */
 function fakeClientRequest(): ClientRequest {
   const request = new EventEmitter() as ClientRequest;
   request.destroy = vi.fn(() => request);
@@ -48,12 +49,13 @@ type FormSubmitOutcome =
       body?: Buffer;
       hangResponse?: boolean;
       responseError?: Error;
+      requestErrorAfterResponse?: Error;
       onResponse?: () => void;
     };
 
 function mockFormSubmitSequence(outcomes: FormSubmitOutcome[]) {
   let attempt = 0;
-  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit(_opts, cb) {
+  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit() {
     const request = fakeClientRequest();
     const outcome = outcomes[Math.min(attempt, outcomes.length - 1)]!;
     attempt += 1;
@@ -62,15 +64,19 @@ function mockFormSubmitSequence(outcomes: FormSubmitOutcome[]) {
 
     queueMicrotask(() => {
       if ('error' in outcome) {
-        cb?.(outcome.error, undefined as never);
+        request.emit('error', outcome.error);
         return;
       }
 
       const response = new PassThrough() as PassThrough & IncomingMessage;
       response.statusCode = outcome.statusCode;
       response.statusMessage = outcome.statusCode < 400 ? 'OK' : 'Service Unavailable';
-      cb?.(null, response);
+      request.emit('response', response);
       outcome.onResponse?.();
+      if (outcome.requestErrorAfterResponse) {
+        request.emit('error', outcome.requestErrorAfterResponse);
+        return;
+      }
 
       if (outcome.hangResponse) return;
       queueMicrotask(() => {
@@ -164,6 +170,15 @@ describe('recording upload transport', () => {
     expect(submitSpy.mock.instances[0]).not.toBe(submitSpy.mock.instances[1]);
   });
 
+  it.each(['EPIPE', 'EAI_FAIL', 'EMFILE'])('retries connection failure %s', async (code) => {
+    const connectionError = Object.assign(new Error('connection failed'), { code });
+    const submitSpy = mockFormSubmitSequence([{ error: connectionError }, { statusCode: 200 }]);
+
+    await upload();
+
+    expect(submitSpy).toHaveBeenCalledTimes(2);
+  });
+
   it('stops after the initial connection attempt and three retries', async () => {
     const connectionError = Object.assign(new Error('secret upstream address'), {
       code: 'ETIMEDOUT',
@@ -181,17 +196,19 @@ describe('recording upload transport', () => {
     expect(submitSpy).toHaveBeenCalledTimes(4);
   });
 
-  it.each(['CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNKNOWN_NETWORK_ERROR'])(
-    'does not retry non-allowlisted failure %s',
-    async (code) => {
-      const connectionError = Object.assign(new Error('connection failed'), { code });
-      const submitSpy = mockFormSubmitSequence([{ error: connectionError }]);
+  it.each([
+    'CERT_HAS_EXPIRED',
+    'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    'EPROTO',
+    'UNKNOWN_NETWORK_ERROR',
+  ])('does not retry non-allowlisted failure %s', async (code) => {
+    const connectionError = Object.assign(new Error('connection failed'), { code });
+    const submitSpy = mockFormSubmitSequence([{ error: connectionError }]);
 
-      await expect(upload()).rejects.toThrow(code);
+    await expect(upload()).rejects.toThrow(code);
 
-      expect(submitSpy).toHaveBeenCalledTimes(1);
-    },
-  );
+    expect(submitSpy).toHaveBeenCalledTimes(1);
+  });
 
   it('retries an error response only when it contains RetryInfo', async () => {
     const submitSpy = mockFormSubmitSequence([
@@ -233,6 +250,17 @@ describe('recording upload transport', () => {
     expect((error as Error).message).toContain('response body error (status 200)');
     expect((error as Error).message).not.toContain('secret response stream detail');
     expect(error).not.toHaveProperty('cause');
+    expect(submitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails without retry when the request errors while reading the response', async () => {
+    const reset = Object.assign(new Error('socket reset'), { code: 'ECONNRESET' });
+    const submitSpy = mockFormSubmitSequence([
+      { statusCode: 503, requestErrorAfterResponse: reset },
+    ]);
+
+    await expect(upload()).rejects.toThrow('ECONNRESET');
+
     expect(submitSpy).toHaveBeenCalledTimes(1);
   });
 
