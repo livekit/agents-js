@@ -21,6 +21,9 @@ import { traceTypes, tracer } from '../../telemetry/index.js';
 import { resampleStream } from '../../utils.js';
 import { AudioInput } from '../io.js';
 
+// livekit.proto.AudioTrackFeature.TF_ENHANCED_NOISE_CANCELLATION, not re-exported by rtc-node
+const TF_ENHANCED_NOISE_CANCELLATION = 5;
+
 export class ParticipantAudioInputStream extends AudioInput {
   private room: Room;
   private sampleRate: number;
@@ -337,6 +340,18 @@ export class ParticipantAudioInputStream extends AudioInput {
   };
 
   private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
+    if (
+      (this.frameProcessor || this.noiseCancellation) &&
+      this.publication?.info?.audioFeatures.includes(TF_ENHANCED_NOISE_CANCELLATION)
+    ) {
+      this.logger.warn(
+        { participant: this.participantIdentity, trackId: track.sid },
+        "the participant's audio track already has enhanced noise cancellation enabled, " +
+          'applying noise cancellation again on the agent side degrades audio quality. ' +
+          'disable it on either the client or the agent',
+      );
+    }
+
     return new AudioStream(track, {
       sampleRate: this.sampleRate,
       numChannels: this.numChannels,
