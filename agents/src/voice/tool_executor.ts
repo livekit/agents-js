@@ -19,7 +19,7 @@ import {
   tool,
 } from '../llm/tool_context.js';
 import { log } from '../log.js';
-import { Future } from '../utils.js';
+import { Future, Task } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import type { PromptTemplate, RunContext, UpdatePromptArgs } from './run_context.js';
 import { isStopResponse } from './stop_response.js';
@@ -431,18 +431,18 @@ export class ToolExecutor {
     this.pendingUpdates.push({ ctx, items, target });
     if (this._replyTask === undefined || this._replyTaskDone) {
       this._replyTaskDone = false;
-      this._replyTask = this.deliverReply(ctx.session).catch((error) => {
-        log().warn(
-          { error },
-          'deliverReply failed; async tool result may not trigger a follow-up reply',
-        );
-      });
-      const runState = (
-        ctx.session as unknown as {
-          _globalRunState?: { _watchHandle?: (p: Promise<void>) => void };
+      const replyTask = Task.from(async () => {
+        try {
+          await this.deliverReply(ctx.session);
+        } catch (error) {
+          log().warn(
+            { error },
+            'deliverReply failed; async tool result may not trigger a follow-up reply',
+          );
         }
-      )._globalRunState;
-      runState?._watchHandle?.(this._replyTask);
+      });
+      this._replyTask = replyTask.result;
+      ctx.session._globalRunState?._watchHandle(replyTask);
     }
   }
 
@@ -523,9 +523,6 @@ export class ToolExecutor {
       output = isToolError(exception)
         ? exception.message
         : 'An internal error occurred while executing the tool.';
-    }
-    if (output === undefined || output === null) {
-      return;
     }
     if (!this.runningTasks.has(runCtx.functionCall.callId)) {
       return;
