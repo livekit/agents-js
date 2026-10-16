@@ -1,0 +1,25 @@
+.changeset/async-tool-empty-completion.md
+  s_de5d34fcc7db11::t_5a673c4e36124e 5
+agents/src/voice/tool_executor.ts
+  s_de5d34fcc7db11::t_5a673c4e36124e 22,434-441,443-445
+agents/src/voice/tool_executor.test.ts
+  s_de5d34fcc7db11::t_5a673c4e36124e 9-10,13,233
+  s_de5d34fcc7db11::t_bfd0dcc000e01f 201-232,234-235
+  s_de5d34fcc7db11::t_1e2d0e9d243be5 236
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "931818138518d1f11c95ddd38eb0cacf18e6f14a",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
