@@ -6248,7 +6248,11 @@ export class AgentActivity implements RecognitionHooks {
   private async onToolsetToolsChanged(): Promise<void> {
     if (!this._toolsetsSetup) return;
     const current = this.agent._toolCtx;
-    if (new ToolContext(current.tools).equals(current)) return;
+    if (new ToolContext(current.tools).equals(current)) {
+      // Session toolsets are outside the agent's context but still change the provider's tools.
+      await this.realtimeSession?.updateTools(this.tools);
+      return;
+    }
     // Same toolset entries, so updateTools' setup/close steps are no-ops (no re-entrancy here).
     await this.updateTools(current.tools);
   }
