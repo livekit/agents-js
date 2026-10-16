@@ -6,8 +6,6 @@ SPDX-License-Identifier: Apache-2.0
 
 # AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
 LiveKit Agents for Node.js — a TypeScript framework for building realtime, multimodal, and voice AI agents that run on servers. This is the Node.js distribution of the [LiveKit Agents framework](https://github.com/livekit/agents) (originally Python).
