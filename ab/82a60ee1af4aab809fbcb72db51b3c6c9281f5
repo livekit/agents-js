@@ -1,0 +1,29 @@
+agents/src/telemetry/recording_upload.test.ts
+  s_3f5bca9945febe::t_002b9d08d606ce 14,52,58,67,74,76-79,173-181,199-206,208,210-211,256-265
+  s_3f5bca9945febe::t_2800ef8f953e6e 266
+.changeset/recording-upload-request-errors.md
+  s_3f5bca9945febe::t_984d2d9dae59b5 1-5
+agents/src/telemetry/recording_disabled.test.ts
+  s_3f5bca9945febe::t_b6efab7c2f02ef 42,59
+agents/src/telemetry/traces.test.ts
+  s_3f5bca9945febe::t_b6efab7c2f02ef 622,635
+agents/src/telemetry/recording_upload.ts
+  s_3f5bca9945febe::t_bef36f7b29e22c 18-22,24-25,27,33,35,37-40,42-52
+  s_3f5bca9945febe::t_2ea7d9c74a4efd 238-245,247-277,279-281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ab82a60ee1af4aab809fbcb72db51b3c6c9281f5",
+  "prompts": {},
+  "sessions": {
+    "s_3f5bca9945febe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a09c960c-621f-42ce-8fed-3454165bc4ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
