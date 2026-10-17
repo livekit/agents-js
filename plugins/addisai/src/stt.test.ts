@@ -99,6 +99,18 @@ describe('AddisAI STT', () => {
     expect(() => new STT({ apiKey: 'test-key', language })).toThrow(/language must be "am".*"om"/);
   });
 
+  it('transcribes a Tigrinya batch request', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const form = init?.body as FormData;
+      expect(form.get('request_data')).toBe('{"language_code":"ti"}');
+      return new Response(JSON.stringify({ data: { transcription: 'ሰላም' } }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const event = await new STT({ apiKey: 'test-key', language: 'ti' }).recognize(audioFrame());
+    expect(event.alternatives[0]?.language).toBe('ti');
+    expect(event.alternatives[0]?.text).toBe('ሰላም');
+  });
+
   it('rejects streaming because the provider endpoint is batch-only', () => {
     const recognizer = new STT({ apiKey: 'test-key' });
     expect(() => recognizer.stream()).toThrow(/batch-only/i);

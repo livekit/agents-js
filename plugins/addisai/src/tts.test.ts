@@ -138,6 +138,28 @@ describe('AddisAI TTS', () => {
     expect(() => new TTS({ apiKey: 'test-key', language })).toThrow(/language must be "am".*"om"/);
   });
 
+  it('generates audio for Tigrinya', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/api/v1/voice/generations')) {
+        const body = JSON.parse(String(init?.body)) as { language: string; voice_id: string };
+        expect(body.language).toBe('ti');
+        expect(body.voice_id).toBe('ti-berhane');
+        return new Response(JSON.stringify({
+          data: { id: 'ti-clip', audio_url: 'https://audio.example.test/ti.wav' },
+        }), { status: 200 });
+      }
+      return new Response(pcmWav(), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const events = [];
+    for await (const event of new TTS({
+      apiKey: 'test-key', language: 'ti', voice: 'ti-berhane',
+    }).synthesize('ሰላም', NO_RETRY)) {
+      events.push(event);
+    }
+    expect(events.length).toBeGreaterThan(0);
+  });
+
   it('rejects native streaming because Addis Voices 2 is non-streaming', () => {
     const synthesizer = new TTS({ apiKey: 'test-key' });
     expect(() => synthesizer.stream()).toThrow(/streaming is not supported/i);
