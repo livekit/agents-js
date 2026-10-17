@@ -309,6 +309,76 @@ describe('OpenAI Responses WS incomplete handling', () => {
   );
 });
 
+async function usageFromCompletedResponse(cacheWriteTokens: number) {
+  const completed = wsServerEventSchema.parse({
+    type: 'response.completed',
+    response: {
+      id: 'resp_1',
+      usage: {
+        input_tokens: 2596,
+        output_tokens: 40,
+        total_tokens: 2636,
+        input_tokens_details: {
+          cached_tokens: 1024,
+          cache_write_tokens: cacheWriteTokens,
+        },
+      },
+    },
+  });
+  const model = new WSLLM({ model: 'gpt-4.1', apiKey: 'test-key' });
+  const conn = new StallingConnection([]);
+  conn.sendRequest = () => {
+    const channel = stream.createStreamChannel<WsServerEvent>();
+    void (async () => {
+      await channel.write(RESPONSE_CREATED);
+      await channel.write(completed);
+      await channel.close();
+    })();
+    return channel;
+  };
+  const pool = new ConnectionPool<ResponsesWebSocket>({
+    connectCb: async () => conn as unknown as ResponsesWebSocket,
+  });
+  const chatCtx = ChatContext.empty();
+  chatCtx.addMessage({ role: 'user', content: 'hi' });
+  const llmStream = new WSLLMStream(model, {
+    pool,
+    model: 'gpt-4.1',
+    chatCtx,
+    fullChatCtx: chatCtx,
+    connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5000 },
+    modelOptions: {},
+    strictToolSchema: true,
+  });
+
+  let usage;
+  for await (const chunk of llmStream) {
+    if (chunk.usage) usage = chunk.usage;
+  }
+  await pool.close();
+  await model.aclose();
+
+  expect(usage).toBeDefined();
+  return usage!;
+}
+
+describe('OpenAI Responses WS cache write usage', () => {
+  it('reports cache write tokens from input token details', async () => {
+    const usage = await usageFromCompletedResponse(1536);
+
+    expect(usage).toMatchObject({
+      cacheCreationTokens: 1536,
+      promptCachedTokens: 1024,
+      promptTokens: 2596,
+      totalTokens: 2636,
+    });
+  });
+
+  it('reports zero when no cache write tokens were used', async () => {
+    expect((await usageFromCompletedResponse(0)).cacheCreationTokens).toBe(0);
+  });
+});
+
 if (hasOpenAIApiKey) {
   describe('OpenAI Responses WS wrapper', async () => {
     await llm(
