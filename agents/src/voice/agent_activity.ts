@@ -150,6 +150,7 @@ import {
   applyInstructionsModality,
   forwardedTextFor,
   hasExpressiveInstructions,
+  ownSynchronizedTranscript,
   performAudioForwarding,
   performLLMInference,
   performTTSInference,
@@ -4135,7 +4136,11 @@ export class AgentActivity implements RecognitionHooks {
             ) {
               output.played = 'partial';
               output.playbackPositionInS = interruptedPlaybackEv.playbackPosition;
-              output.synchronizedTranscript = interruptedPlaybackEv.synchronizedTranscript;
+              output.synchronizedTranscript = ownSynchronizedTranscript(
+                interruptedPlaybackEv,
+                output.audioOut,
+                audioOutput,
+              );
             } else if (
               output.audioOut?.firstFrameFut.done &&
               !output.audioOut.firstFrameFut.rejected
@@ -4747,7 +4752,11 @@ export class AgentActivity implements RecognitionHooks {
             ) {
               output.played = 'partial';
               output.playbackPositionInS = playbackEv.playbackPosition;
-              output.synchronizedTranscript = playbackEv.synchronizedTranscript;
+              output.synchronizedTranscript = ownSynchronizedTranscript(
+                playbackEv,
+                output.audioOut,
+                audioOutput,
+              );
             }
           } else if (output.textOut?.text) {
             output.played = 'partial';
