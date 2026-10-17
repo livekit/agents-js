@@ -9,8 +9,16 @@ import {
   APITimeoutError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
+  log,
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
+
+const NO_FORCED_TOOL_CHOICE_PATTERNS = [
+  'claude-opus-5-5',
+  'claude-sonnet-5-5',
+  'claude-fable-5-1',
+  'claude-mythos-5-1',
+];
 
 /** Configuration options for the Anthropic LLM plugin. */
 export interface LLMOptions {
@@ -52,6 +60,7 @@ const defaultLLMOptions: LLMOptions = {
 export class LLM extends llm.LLM {
   #opts: LLMOptions;
   #client: Anthropic;
+  #forcedToolChoiceWarned = false;
 
   constructor(opts: Partial<LLMOptions> = defaultLLMOptions) {
     super();
@@ -259,6 +268,21 @@ export class LLM extends llm.LLM {
       }
 
       if (anthropicToolChoice) {
+        const forced = anthropicToolChoice.type === 'any' || anthropicToolChoice.type === 'tool';
+        if (
+          forced &&
+          NO_FORCED_TOOL_CHOICE_PATTERNS.some((pattern) => this.#opts.model.startsWith(pattern))
+        ) {
+          if (!this.#forcedToolChoiceWarned) {
+            log().warn(
+              { 'lk.pii.model': this.#opts.model },
+              "anthropic llm: this model does not support a forced tool_choice; sending 'auto' instead",
+            );
+            this.#forcedToolChoiceWarned = true;
+          }
+          anthropicToolChoice = { type: 'auto' };
+        }
+
         // Map parallelToolCalls
         if (resolvedParallel !== undefined) {
           anthropicToolChoice.disable_parallel_tool_use = !resolvedParallel;

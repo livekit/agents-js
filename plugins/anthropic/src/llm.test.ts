@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import Anthropic from '@anthropic-ai/sdk';
-import { llm } from '@livekit/agents';
+import { llm, log } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { LLM } from './llm.js';
@@ -67,6 +67,46 @@ function textDeltaEvent(text: string): Anthropic.MessageStreamEvent {
   } as Anthropic.MessageStreamEvent;
 }
 
+const getWeather = llm.tool({
+  description: 'Look up the weather.',
+  parameters: z.object({ city: z.string() }),
+  execute: async ({ city }) => city,
+});
+
+const namedToolChoice: llm.ToolChoice = {
+  type: 'function',
+  function: { name: 'getWeather' },
+};
+
+async function toolChoice(
+  model: string,
+  choice: llm.ToolChoice,
+  options: { parallelToolCalls?: boolean } = {},
+): Promise<Anthropic.MessageCreateParamsStreaming['tool_choice']> {
+  let capturedParams: Anthropic.MessageCreateParamsStreaming | undefined;
+  const client = {
+    messages: {
+      create: async (params: Anthropic.MessageCreateParamsStreaming) => {
+        capturedParams = params;
+        return (async function* (): AsyncGenerator<Anthropic.MessageStreamEvent> {
+          yield messageStartEvent();
+        })();
+      },
+    },
+  } as unknown as Anthropic;
+  const anthropicLlm = new LLM({ apiKey: 'dummy', client, model, parallelToolCalls: undefined });
+  const stream = anthropicLlm.chat({
+    chatCtx: new llm.ChatContext(),
+    toolCtx: { getWeather },
+    toolChoice: choice,
+    ...options,
+  });
+  for await (const _ of stream) {
+    // drain
+  }
+  return capturedParams!.tool_choice;
+}
+
 async function collectTextFromEvents(
   events: Anthropic.MessageStreamEvent[],
   toolCtx?: llm.ToolContextLike,
@@ -98,6 +138,78 @@ async function collectTextFromEvents(
 }
 
 describe('Anthropic LLM', () => {
+  it('sends forced tool choice as auto only for rejecting models', async () => {
+    for (const model of [
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-fable-5-1',
+      'claude-mythos-5-1',
+    ]) {
+      expect(await toolChoice(model, 'required')).toEqual({ type: 'auto' });
+      expect(await toolChoice(model, namedToolChoice)).toEqual({ type: 'auto' });
+    }
+
+    expect(await toolChoice('claude-sonnet-5-5', 'required', { parallelToolCalls: false })).toEqual(
+      { type: 'auto', disable_parallel_tool_use: true },
+    );
+
+    for (const model of [
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-fable-5',
+      'claude-haiku-5-5',
+    ]) {
+      expect(await toolChoice(model, 'required')).toEqual({ type: 'any' });
+      expect(await toolChoice(model, namedToolChoice)).toEqual({
+        type: 'tool',
+        name: 'getWeather',
+      });
+    }
+  });
+
+  it('logs the forced tool choice warning once', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const requests: Anthropic.MessageCreateParamsStreaming[] = [];
+    const client = {
+      messages: {
+        create: async (params: Anthropic.MessageCreateParamsStreaming) => {
+          requests.push(params);
+          return (async function* (): AsyncGenerator<Anthropic.MessageStreamEvent> {
+            yield messageStartEvent();
+          })();
+        },
+      },
+    } as unknown as Anthropic;
+    const anthropicLlm = new LLM({
+      apiKey: 'dummy',
+      client,
+      model: 'claude-sonnet-5-5',
+      parallelToolCalls: undefined,
+      toolChoice: 'required',
+    });
+
+    for (let i = 0; i < 3; i++) {
+      const stream = anthropicLlm.chat({
+        chatCtx: new llm.ChatContext(),
+        toolCtx: { getWeather },
+      });
+      for await (const _ of stream) {
+        // drain
+      }
+    }
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      { 'lk.pii.model': 'claude-sonnet-5-5' },
+      expect.stringContaining('forced tool_choice'),
+    );
+    expect(requests.map((request) => request.tool_choice)).toEqual([
+      { type: 'auto' },
+      { type: 'auto' },
+      { type: 'auto' },
+    ]);
+  });
+
   it('disables Anthropic SDK retries by default', () => {
     const callCount = anthropicConstructor.mock.calls.length;
 
