@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
+import { performance } from 'node:perf_hooks';
+import { log } from './log.js';
 
 /** @internal */
 export interface CpuMonitor {
@@ -51,6 +53,8 @@ export class DefaultCpuMonitor implements CpuMonitor {
 
 /** @internal */
 export class CGroupV2CpuMonitor implements CpuMonitor {
+  #lastCpuPercent = 0;
+
   cpuCount(): number {
     const envCpus = cpuCountFromEnv();
     if (envCpus !== undefined) return envCpus;
@@ -61,16 +65,28 @@ export class CGroupV2CpuMonitor implements CpuMonitor {
 
   cpuPercent(intervalMs: number): Promise<number> {
     return new Promise((resolve, reject) => {
+      const start = performance.now();
       const usageStart = this.#readCpuUsage();
       const timer = setTimeout(() => {
         try {
           const usageEnd = this.#readCpuUsage();
-          const usageDiffUsec = usageEnd - usageStart;
-          const usageSeconds = usageDiffUsec / 1_000_000;
-          const numCpus = this.cpuCount();
-          const intervalSeconds = intervalMs / 1000;
-          const percent = usageSeconds / (intervalSeconds * numCpus);
-          resolve(Math.max(Math.min(percent, 1), 0));
+          const elapsedSeconds = (performance.now() - start) / 1000;
+          const usageSeconds = (usageEnd - usageStart) / 1_000_000;
+
+          // Some hypervisors serve a torn per-CPU sum, so discard a delta the host cannot produce.
+          const maxUsageSeconds = elapsedSeconds * (os.cpus().length || 1);
+          if (usageSeconds < 0 || usageSeconds > maxUsageSeconds) {
+            log().warn(
+              { cpuUsageSeconds: usageSeconds, maxCpuUsageSeconds: maxUsageSeconds },
+              'discarding impossible cgroup CPU usage delta',
+            );
+            resolve(this.#lastCpuPercent);
+            return;
+          }
+
+          const percent = usageSeconds / (elapsedSeconds * this.cpuCount());
+          this.#lastCpuPercent = Math.min(percent, 1);
+          resolve(this.#lastCpuPercent);
         } catch (e) {
           reject(e);
         }
