@@ -4,9 +4,11 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIError,
   APIStatusError,
   type AudioBuffer,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   Future,
   Task,
   createTimedString,
@@ -21,7 +23,12 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
+import {
+  HEARTBEAT_INTERVAL_MS,
+  PONG_TIMEOUT_MS,
+  PeriodicCollector,
+  startWebSocketHeartbeat,
+} from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
 export interface STTOptions {
@@ -54,6 +61,11 @@ export interface STTOptions {
   numerals: boolean;
   mipOptOut: boolean;
   baseUrl: string;
+  /**
+   * How long an open turn may go without any message from Deepgram before the stream commits it
+   * and reconnects.
+   */
+  turnStallTimeoutMs: number;
 }
 
 const defaultSTTOptions: STTOptions = {
@@ -81,6 +93,7 @@ const defaultSTTOptions: STTOptions = {
   numerals: false,
   mipOptOut: false,
   baseUrl: 'wss://api.deepgram.com',
+  turnStallTimeoutMs: 10_000,
 };
 
 export class STT extends stt.STT {
@@ -266,10 +279,45 @@ export class STT extends stt.STT {
   }
 }
 
+/**
+ * How far a replay reaches past the heartbeat's blind spot. A socket that dies without closing is
+ * noticed only when its pong is overdue, so it can swallow audio for a full heartbeat interval plus
+ * the pong timeout before the reconnect. The margin covers the reconnect itself.
+ */
+const REPLAY_MARGIN_MS = 2000;
+
+/**
+ * Deepgram can still attribute audio just before an empty result to the speech that follows it, so
+ * the last half second of reported silence stays in the replay.
+ */
+const REPLAY_SILENCE_KEPT_S = 0.5;
+
+/** Chunk durations are summed, so comparisons with Deepgram's window ignore the last digits. */
+const REPLAY_EPSILON_S = 1e-6;
+
+interface ReplayChunk {
+  data: Int16Array;
+  seconds: number;
+  /** Where the chunk ends on the current connection's timeline, in seconds. */
+  end: number;
+}
+
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
   #logger = log();
   #speaking = false;
+  #lastAlternatives: stt.SpeechData[] | null = null;
+  /** Where the interim held in #lastAlternatives ends on the current connection's timeline. */
+  #lastInterimEnd: number | undefined = undefined;
+  #consecutiveDrops = 0;
+  #connOptions: APIConnectOptions | undefined;
+  #audioBstream: AudioByteStream;
+  /**
+   * Audio sent since Deepgram last finalized a result: what a connection that died silently may
+   * have swallowed, for the next one.
+   */
+  #replay: ReplayChunk[] = [];
+  #sentSeconds = 0;
   #resetWS = new Future();
   #requestId = '';
   // keyterms set while the user is speaking; applied at END_OF_SPEECH (latest wins)
@@ -281,6 +329,12 @@ export class SpeechStream extends stt.SpeechStream {
   constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#connOptions = connOptions;
+    this.#audioBstream = new AudioByteStream(
+      opts.sampleRate,
+      opts.numChannels,
+      Math.floor(opts.sampleRate / 10),
+    );
     this.closed = false;
     this.#audioDurationCollector = new PeriodicCollector(
       (duration) => this.onAudioDurationReport(duration),
@@ -337,6 +391,7 @@ export class SpeechStream extends stt.SpeechStream {
       try {
         await this.#runWS(ws);
       } catch (e) {
+        if (e instanceof APIError && !e.retryable) throw e;
         if (!this.closed && !this.input.closed) {
           if (retries >= maxRetry) {
             throw e;
@@ -380,14 +435,103 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
+  #commitOpenTurn() {
+    if (!this.#speaking) return;
+    this.#speaking = false;
+    const alternatives = this.#lastAlternatives;
+    this.#lastAlternatives = null;
+    if (!this.queue.closed) {
+      if (alternatives && alternatives.length > 0) {
+        this.queue.put({
+          type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+          alternatives: [alternatives[0]!, ...alternatives.slice(1)],
+        });
+        // The interim's words are committed here, so only the audio past its window is replayed.
+        this.#forgetTranscribed(this.#lastInterimEnd);
+      }
+      this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+    }
+    if (this._pendingKeyterm !== null) {
+      this.#opts = { ...this.#opts, keyterm: this._pendingKeyterm };
+      this._pendingKeyterm = null;
+    }
+  }
+
+  #remember(frame: AudioFrame, seconds: number) {
+    this.#sentSeconds += seconds;
+    this.#replay.push({ data: frame.data, seconds, end: this.#sentSeconds });
+    const reach = (HEARTBEAT_INTERVAL_MS + PONG_TIMEOUT_MS + REPLAY_MARGIN_MS) / 1000;
+    while (this.#replay.length > 0 && this.#replay[0]!.end <= this.#sentSeconds - reach) {
+      this.#replay.shift();
+    }
+  }
+
+  /** Drops the audio Deepgram has transcribed, all of it when the result does not say how far that is. */
+  #forgetTranscribed(windowEnd: number | undefined) {
+    if (typeof windowEnd !== 'number') {
+      this.#replay = [];
+      return;
+    }
+    const owed: ReplayChunk[] = [];
+    for (const entry of this.#replay) {
+      if (entry.end <= windowEnd + REPLAY_EPSILON_S) continue;
+      const heard = entry.seconds - (entry.end - windowEnd);
+      if (heard <= REPLAY_EPSILON_S) {
+        owed.push(entry);
+        continue;
+      }
+      // The window ends inside this chunk: only the samples past it are still owed.
+      const heardValues = Math.round(heard * this.#opts.sampleRate * this.#opts.numChannels);
+      owed.push({
+        data: entry.data.slice(heardValues),
+        seconds: entry.end - windowEnd,
+        end: entry.end,
+      });
+    }
+    this.#replay = owed;
+  }
+
+  #dropError(message: string): APIConnectionError {
+    this.#consecutiveDrops += 1;
+    const maxRetry = this.#connOptions?.maxRetry ?? DEFAULT_API_CONNECT_OPTIONS.maxRetry;
+    const retryable = this.#consecutiveDrops <= maxRetry;
+    if (!retryable) {
+      this.#logger.error(
+        { consecutiveDrops: this.#consecutiveDrops, maxRetry },
+        'Deepgram dropped repeatedly without completing a turn, giving up',
+      );
+    }
+    return new APIConnectionError({ message, options: { retryable } });
+  }
+
   async #runWS(ws: WebSocket) {
     this.#resetWS = new Future();
     let closing = false;
+    let failConnection: (message: string) => void = () => undefined;
     // Scoped to this connection. An abandoned `input.next()` stays parked inside the
     // queue and shifts the next frame off it for a promise nobody awaits, so a sender
     // left over from a previous attempt steals audio from the current one. The read
     // has to be cancelled, not merely raced against.
     const attempt = new AbortController();
+
+    let turnStallTimer: ReturnType<typeof setTimeout> | undefined;
+    const clearTurnStallTimer = () => {
+      clearTimeout(turnStallTimer);
+      turnStallTimer = undefined;
+    };
+    const armTurnStallTimer = () => {
+      clearTurnStallTimer();
+      if (!this.#speaking) return;
+      turnStallTimer = setTimeout(() => {
+        this.#logger.warn(
+          { turnStallTimeoutMs: this.#opts.turnStallTimeoutMs },
+          'Deepgram stopped producing mid-turn, committing the open turn and reconnecting',
+        );
+        failConnection('Deepgram stopped producing mid-turn');
+        ws.close();
+      }, this.#opts.turnStallTimeoutMs);
+    };
+    armTurnStallTimer();
 
     const keepalive = setInterval(() => {
       try {
@@ -408,20 +552,22 @@ export class SpeechStream extends stt.SpeechStream {
     // gets cancelled also when sendTask is complete
     const wsMonitor = Task.from(async (controller) => {
       const closed = new Promise<void>((_, reject) => {
+        let handled = false;
+        failConnection = (message) => {
+          if (handled) return;
+          handled = true;
+          this.#commitOpenTurn();
+          attempt.abort();
+          reject(this.#dropError(message));
+        };
         ws.once('close', (code) => {
           if (!closing) {
             this.#logger.error({ code }, 'Deepgram WebSocket closed unexpectedly');
-            reject(new APIConnectionError({ message: 'Deepgram WebSocket closed unexpectedly' }));
+            failConnection('Deepgram WebSocket closed unexpectedly');
           }
         });
         ws.once('error', (error) => {
-          if (!closing) {
-            reject(
-              new APIConnectionError({
-                message: `Deepgram WebSocket failed (${errorName(error)})`,
-              }),
-            );
-          }
+          if (!closing) failConnection(`Deepgram WebSocket failed (${errorName(error)})`);
         });
       });
 
@@ -429,14 +575,16 @@ export class SpeechStream extends stt.SpeechStream {
     });
 
     const sendTask = async () => {
-      const samples100Ms = Math.floor(this.#opts.sampleRate / 10);
-      const stream = new AudioByteStream(
-        this.#opts.sampleRate,
-        this.#opts.numChannels,
-        samples100Ms,
-      );
+      const stream = this.#audioBstream;
 
       try {
+        this.#sentSeconds = 0;
+        for (const entry of this.#replay) {
+          this.#sentSeconds += entry.seconds;
+          entry.end = this.#sentSeconds;
+          ws.send(entry.data);
+        }
+
         while (!this.closed) {
           const { result, isAborted } = await waitUntilAborted(
             this.input.next({ signal: attempt.signal }),
@@ -466,6 +614,7 @@ export class SpeechStream extends stt.SpeechStream {
           for await (const frame of frames) {
             const frameDuration = frame.samplesPerChannel / frame.sampleRate;
             this.#audioDurationCollector.push(frameDuration);
+            this.#remember(frame, frameDuration);
             ws.send(frame.data.buffer);
           }
 
@@ -499,6 +648,9 @@ export class SpeechStream extends stt.SpeechStream {
 
       const listenMessage = new Promise<void>((resolve, reject) => {
         ws.on('message', (msg) => {
+          // A connection given up on has handed what it had not transcribed to its replacement, so
+          // a late message from it describes audio another connection now owns.
+          if (attempt.signal.aborted) return;
           try {
             const json = JSON.parse(msg.toString());
             switch (json['type']) {
@@ -529,6 +681,16 @@ export class SpeechStream extends stt.SpeechStream {
                   this.#opts.punctuate || this.#opts.smartFormat,
                 );
 
+                const windowEnd =
+                  typeof json['start'] === 'number' && typeof json['duration'] === 'number'
+                    ? json['start'] + json['duration']
+                    : undefined;
+                const heard = Boolean(alternatives[0] && alternatives[0].text);
+                if (isFinal) this.#forgetTranscribed(windowEnd);
+                else if (!heard && !this.#speaking && typeof windowEnd === 'number') {
+                  this.#forgetTranscribed(windowEnd - REPLAY_SILENCE_KEPT_S);
+                }
+
                 // If, for some reason, we didn't get a SpeechStarted event but we got
                 // a transcript with text, we should start speaking. It's rare but has
                 // been observed.
@@ -541,11 +703,14 @@ export class SpeechStream extends stt.SpeechStream {
                   }
 
                   if (isFinal) {
+                    this.#lastAlternatives = null;
                     putMessage({
                       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
                   } else {
+                    this.#lastAlternatives = alternatives;
+                    this.#lastInterimEnd = windowEnd;
                     putMessage({
                       type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
@@ -558,6 +723,8 @@ export class SpeechStream extends stt.SpeechStream {
                 // a non-empty transcript (deepgram doesn't have a SpeechEnded event)
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
+                  this.#lastAlternatives = null;
+                  this.#consecutiveDrops = 0;
                   putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
                   this.#onEndOfSpeech();
                 }
@@ -570,6 +737,8 @@ export class SpeechStream extends stt.SpeechStream {
               case 'UtteranceEnd': {
                 if (this.#speaking) {
                   this.#speaking = false;
+                  this.#lastAlternatives = null;
+                  this.#consecutiveDrops = 0;
                   putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
                   this.#onEndOfSpeech();
                 }
@@ -583,6 +752,7 @@ export class SpeechStream extends stt.SpeechStream {
               }
             }
 
+            armTurnStallTimer();
             if (this.closed || closing) {
               resolve();
             }
@@ -611,6 +781,7 @@ export class SpeechStream extends stt.SpeechStream {
     } finally {
       closing = true;
       ws.close();
+      clearTurnStallTimer();
       clearInterval(keepalive);
       stopHeartbeat();
       // settle this attempt's sender before the caller opens the next socket
@@ -620,6 +791,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   private onAudioDurationReport(duration: number) {
+    if (this.queue.closed) return;
     const usageEvent: stt.SpeechEvent = {
       type: stt.SpeechEventType.RECOGNITION_USAGE,
       requestId: this.#requestId,
