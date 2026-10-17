@@ -46,6 +46,7 @@ import {
 } from '../voice/background_audio.js';
 import { DEFAULT_PARTICIPANT_KINDS } from '../voice/room_io/index.js';
 import type { SpeechHandle } from '../voice/speech_handle.js';
+import type { TurnHandlingOptions } from '../voice/turn_config/turn_handling.js';
 import type { InstructionParts } from './utils.js';
 
 export interface WarmTransferResult {
@@ -177,6 +178,8 @@ export interface WarmTransferTaskOptions {
    */
   instructions?: InstructionParts | string;
   chatCtx?: ChatContext;
+  /** Turn handling options for the conversation with the human agent. */
+  turnHandling?: TurnHandlingOptions;
   turnDetection?: TurnDetectionMode | null;
   tools?: readonly ToolContextEntry[];
   stt?: STT | STTModelString | null;
@@ -223,6 +226,7 @@ export function createWarmTransferTask({
   callerHangupInstruction,
   instructions,
   chatCtx,
+  turnHandling,
   turnDetection,
   tools,
   stt,
@@ -515,6 +519,14 @@ export function createWarmTransferTask({
     const ctx = jobCtx ?? getJobContext();
     const humanAgentRoomName = resolveHumanAgentRoomName(callerRoom.name, rawRoomName);
     const room = new Room();
+    const agentTurnHandling = task.turnHandling ? { ...task.turnHandling } : undefined;
+    const sessionTurnHandling = {
+      ...agentTurnHandling,
+      turnDetection:
+        agentTurnHandling?.turnDetection !== undefined
+          ? agentTurnHandling.turnDetection
+          : task.session.turnDetection,
+    };
     const transferAgent = new Agent({
       instructions: task.instructions,
       stt: task.stt,
@@ -523,8 +535,7 @@ export function createWarmTransferTask({
       tts: task.tts,
       tools: task.toolCtx.tools,
       chatCtx: task.chatCtx.copy(),
-      turnDetection: turnDetection ?? undefined,
-      allowInterruptions,
+      turnHandling: agentTurnHandling as TurnHandlingOptions | undefined,
     });
 
     let session: AgentSession | undefined;
@@ -557,7 +568,7 @@ export function createWarmTransferTask({
         llm: task.session.llm,
         stt: task.session.stt,
         tts: task.session.tts,
-        turnDetection: task.session.turnDetection,
+        turnHandling: sessionTurnHandling,
       });
 
       const started = await waitUntilAborted(
@@ -667,6 +678,7 @@ export function createWarmTransferTask({
 
   const task = AgentTask.create<WarmTransferResult>({
     instructions: resolveInstructions(instructions, chatCtx),
+    turnHandling,
     turnDetection: turnDetection ?? undefined,
     tools: [...(tools ?? []), ...transferTools],
     stt: stt ?? undefined,
