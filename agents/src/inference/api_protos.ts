@@ -209,6 +209,9 @@ export const sttErrorEventSchema = z
     type: z.literal('error'),
     message: z.string().optional(),
     code: z.number().optional(),
+    // false for a refusal the gateway repeats on every attempt; absent leaves
+    // retrying to the client
+    retryable: z.boolean().optional(),
   })
   .passthrough();
 
