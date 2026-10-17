@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-cartesia
 
+## 1.9.4
+
+### Patch Changes
+
+- Add `tokenize.blingfire.SentenceTokenizer` (backed by `@livekit/blingfire`) and make it the default sentence tokenizer, matching the Python agents. The framework TTS adapters now also retain formatting like Python. - [#2709](https://github.com/livekit/agents-js/pull/2709) ([@davidzhao](https://github.com/davidzhao))
+
+- Updated dependencies [[`0b9cab4`](https://github.com/livekit/agents-js/commit/0b9cab4f0eb7c68088d7ff329edcbd94b1b86dd8), [`b146170`](https://github.com/livekit/agents-js/commit/b14617071c691a15cd77421efd1f263c287503a2), [`1098fd8`](https://github.com/livekit/agents-js/commit/1098fd8ee2a8e4b0aec6ed02863ff1c42b94b105), [`767c7cb`](https://github.com/livekit/agents-js/commit/767c7cba771b7adc468bf8b59726c4b46086ff81), [`4b607c8`](https://github.com/livekit/agents-js/commit/4b607c8e2aa9f1f480b8f3a769ef1cafe8af0940), [`df96ee8`](https://github.com/livekit/agents-js/commit/df96ee878e5fdc84071440edbc99aa07de4398ab)]:
+  - @livekit/agents@1.9.4
+
 ## 1.9.3
 
 ### Patch Changes

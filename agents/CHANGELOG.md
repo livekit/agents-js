@@ -1,5 +1,21 @@
 # @livekit/agents
 
+## 1.9.4
+
+### Patch Changes
+
+- Add `tokenize.blingfire.SentenceTokenizer` (backed by `@livekit/blingfire`) and make it the default sentence tokenizer, matching the Python agents. The framework TTS adapters now also retain formatting like Python. - [#2709](https://github.com/livekit/agents-js/pull/2709) ([@davidzhao](https://github.com/davidzhao))
+
+- Send session keyterms to the Speechmatics Linden inference model. - [#2740](https://github.com/livekit/agents-js/pull/2740) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Correct the inference Deepgram `mip_opt_out` docs: it is always true for LiveKit Inference, and the passed value is ignored. - [#2742](https://github.com/livekit/agents-js/pull/2742) ([@shawnfeldman](https://github.com/shawnfeldman))
+
+- Add `inference.TurnDetector({ localFallback: false })` to disable cloud-to-local fallback, matching Python. Prediction timeouts keep cloud detection active. A terminal cloud failure disables detection for the stream and lets endpointing commit turns. Fallback remains enabled by default. - [#2726](https://github.com/livekit/agents-js/pull/2726) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Fix a crash when a session recording upload fails while reading the response, such as on a socket reset. Also retry the same DNS and connection errors as the Python SDK, such as `EPIPE` and `EAI_FAIL`. - [#2350](https://github.com/livekit/agents-js/pull/2350) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Text simulations no longer warn about a missing VAD for the turn detector or adaptive interruption detection; both are disabled directly since there is no audio. - [#2746](https://github.com/livekit/agents-js/pull/2746) ([@u9g](https://github.com/u9g))
+
 ## 1.9.3
 
 ### Patch Changes
