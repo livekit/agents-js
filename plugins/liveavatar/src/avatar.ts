@@ -291,26 +291,34 @@ export class AvatarSession extends voice.AvatarSession {
   /**
    * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 180-196 lines
    *
-   * Gates everything on the `wasCapturing` flag carried by the `clear_buffer`
-   * event (set synchronously inside `QueueAudioOutput.clearBuffer`):
+   * A segment owes exactly one `notifyPlaybackFinished`, and `wasCapturing`
+   * alone does not tell us whether one is outstanding. The two flags each
+   * cover one half of the window:
    *
-   * 1. `notifyPlaybackFinished` only fires when a segment was actually in
-   *    flight, so the base class's segment-count bookkeeping stays balanced
-   *    even when an interrupt lands in the window between `super.captureFrame`
-   *    incrementing `playbackSegmentsCount` and `forwardAudio` consuming the
-   *    frame.
-   * 2. `chunkInterrupted` is only flipped when there's an actual segment to
-   *    interrupt. If `wasCapturing` is false (e.g. `clearBuffer` is called
-   *    after `flush` has already written its `AudioSegmentEnd`), setting
-   *    `chunkInterrupted` would otherwise carry over and discard the first
-   *    frame of the *next* segment.
+   * 1. `wasCapturing` (set synchronously inside `QueueAudioOutput.clearBuffer`)
+   *    covers an interrupt landing between `super.captureFrame` incrementing
+   *    `playbackSegmentsCount` and `forwardAudio` consuming the frame. There
+   *    `audioPlaying` is still false, and skipping the notify would leak the
+   *    count and deadlock `waitForPlayout`.
+   * 2. `audioPlaying` covers the common barge-in: `forwardAudio` ships the
+   *    whole segment to LiveAvatar faster than real time, so `flush` clears
+   *    `wasCapturing` seconds before the avatar stops talking. Gating on
+   *    `wasCapturing` alone would return early here and never send
+   *    `agent.interrupt`, letting the avatar talk over the user.
+   *
+   * `chunkInterrupted` stays gated on `wasCapturing` only: with no segment
+   * in flight it would carry over and discard the first frame of the *next*
+   * segment.
    */
   private onClearBuffer(ev: voice.QueueAudioOutputClearEvent): void {
+    const wasPlaying = this.audioPlaying;
     this.audioPlaying = false;
-    if (!ev.wasCapturing) {
+    if (!ev.wasCapturing && !wasPlaying) {
       return;
     }
-    this.chunkInterrupted = true;
+    if (ev.wasCapturing) {
+      this.chunkInterrupted = true;
+    }
     if (this.audioBuffer) {
       this.audioBuffer.notifyPlaybackFinished(this.playbackPosition, true);
       if (this.avatarSpeaking) {
@@ -522,33 +530,13 @@ export class AvatarSession extends voice.AvatarSession {
               message: 'LiveAvatar connection closed unexpectedly.',
             });
           }
-          let parsed: { type?: string; state?: string };
+          let parsed: Record<string, unknown>;
           try {
-            parsed = JSON.parse(msg.toString()) as { type?: string; state?: string };
+            parsed = JSON.parse(msg.toString()) as Record<string, unknown>;
           } catch {
             continue;
           }
-          switch (parsed.type) {
-            case 'session.state_updated':
-              this.#logger.debug({ state: parsed.state }, 'LiveAvatar session state');
-              if (parsed.state === 'connected') {
-                if (!this.sessionConnectedFuture.done) {
-                  this.sessionConnectedFuture.resolve();
-                }
-              }
-              break;
-            case 'agent.speak_interrupted':
-              this.handleAgentSpeakInterrupted();
-              break;
-            case 'agent.speak_ended':
-              this.handleAgentSpeakEnded();
-              break;
-            case 'agent.speak_started':
-              this.handleAgentSpeakStarted();
-              break;
-            default:
-              this.#logger.debug({ type: parsed.type }, 'Unhandled LiveAvatar event');
-          }
+          this.handleServerEvent(parsed);
         }
       };
 
@@ -611,6 +599,58 @@ export class AvatarSession extends voice.AvatarSession {
     }
   }
 
+  private handleServerEvent(event: Record<string, unknown>): void {
+    const eventType = event.type;
+    switch (eventType) {
+      case 'session.state_updated':
+        this.#logger.debug({ state: event.state }, 'LiveAvatar session state');
+        if (event.state === 'connected' && !this.sessionConnectedFuture.done) {
+          this.sessionConnectedFuture.resolve();
+        }
+        break;
+      case 'agent.speak_interrupted':
+        this.handleAgentSpeakInterrupted();
+        break;
+      case 'agent.speak_ended':
+        this.handleAgentSpeakEnded();
+        break;
+      case 'agent.speak_started':
+        this.handleAgentSpeakStarted();
+        break;
+      case 'agent.state_updated':
+        this.handleAgentStateUpdated(event);
+        break;
+      case 'agent.audio_buffer_cleared':
+        this.handleAgentSpeakInterrupted();
+        break;
+      case 'agent.audio_buffer_appended':
+        // One ack per speak chunk, too frequent to log.
+        break;
+      case 'agent.audio_buffer_committed':
+        // Command acknowledgement; playback follows speak_* / agent.state_updated.
+        this.#logger.debug({ type: eventType }, `LiveAvatar ${eventType}`);
+        break;
+      case 'error':
+        this.#logger.error({ error: event.error ?? event }, 'LiveAvatar error');
+        break;
+      case 'warning':
+        this.#logger.warn({ warning: event.warning ?? event }, 'LiveAvatar warning');
+        break;
+      default:
+        this.#logger.debug({ type: eventType }, 'Unhandled LiveAvatar event');
+    }
+  }
+
+  private handleAgentStateUpdated(event: Record<string, unknown>): void {
+    const newState = event.new_state ?? event.state;
+    this.#logger.debug({ previousState: event.previous_state, newState }, 'LiveAvatar agent state');
+    if (newState === 'talking') {
+      this.handleAgentSpeakStarted();
+    } else if ((newState === 'idle' || newState === 'listening') && this.avatarSpeaking) {
+      this.handleAgentSpeakEnded();
+    }
+  }
+
   /**
    * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 310-311 lines
    */
@@ -622,6 +662,9 @@ export class AvatarSession extends voice.AvatarSession {
    * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 313-322 lines
    */
   private handleAgentSpeakEnded(): void {
+    if (!this.avatarSpeaking && !this.audioPlaying) {
+      return;
+    }
     this.avatarSpeaking = false;
     if (!this.avatarInterrupted && this.audioBuffer) {
       this.audioBuffer.notifyPlaybackFinished(this.playbackPosition, false);
@@ -634,8 +677,13 @@ export class AvatarSession extends voice.AvatarSession {
    * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 324-327 lines
    */
   private handleAgentSpeakStarted(): void {
+    const alreadySpeaking = this.avatarSpeaking;
     this.avatarSpeaking = true;
-    this.avatarInterrupted = false;
-    this.audioBuffer?.notifyPlaybackStarted();
+    if (!alreadySpeaking) {
+      // only a new turn clears the latch; a redundant start would otherwise let
+      // a second notifyPlaybackFinished through
+      this.avatarInterrupted = false;
+      this.audioBuffer?.notifyPlaybackStarted();
+    }
   }
 }
