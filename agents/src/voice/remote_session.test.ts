@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AgentSession as pb } from '@livekit/protocol';
+import type { Room } from '@livekit/rtc-node';
 import * as net from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from '../ipc/inference_executor.js';
@@ -11,20 +12,40 @@ import {
   type RunningJobInfo,
   runWithJobContextAsync,
 } from '../job.js';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import type { AgentSession } from './agent_session.js';
 import { FinalizeSimulationError } from './index.js';
 import {
   RemoteSession,
+  RoomSessionTransport,
   SessionHost,
   SessionTransport,
   TcpSessionTransport,
 } from './remote_session.js';
+import type { RoomIO } from './room_io/room_io.js';
 
 beforeAll(() => {
   initializeLogger({ pretty: true, level: 'info' });
 });
+
+// Every session event the host forwards to a remote consumer. Asserting the set
+// rather than its size says which events are forwarded, and pairs register with
+// close: an `on` added without its `off` leaks a handler across reconnects and
+// only shows up as a mismatch between these two.
+const FORWARDED_EVENTS = new Set([
+  'agent_false_interruption',
+  'agent_state_changed',
+  'conversation_item_added',
+  'debug_message',
+  'eot_prediction',
+  'error',
+  'function_tools_executed',
+  'metrics_collected',
+  'overlapping_speech',
+  'user_input_transcribed',
+  'user_state_changed',
+]);
 
 function frame(msg: pb.AgentSessionMessage): Buffer {
   const data = msg.toBinary();
@@ -242,6 +263,118 @@ function createConnectedTransportPair(): [FakeTransport, FakeTransport] {
   host.connect(client);
   return [client, host];
 }
+
+// A message that cannot be sent is a request somebody waits out in full, so the
+// transport reports the failure and each caller decides what to do with it, as
+// the Python SessionTransport does. Events are the one caller nobody awaits.
+describe('SessionTransport failures surface to the caller', () => {
+  it('room transport rejects when the room is not connected', async () => {
+    const room = { isConnected: false, registerByteStreamHandler: () => {} };
+    const transport = new RoomSessionTransport(
+      room as unknown as Room,
+      { linkedParticipant: undefined } as unknown as RoomIO,
+    );
+    await expect(transport.sendMessage(pingMessage('r1'))).rejects.toThrow(
+      /room session transport is closed/,
+    );
+  });
+
+  it('tcp transport rejects once closed', async () => {
+    const server = net.createServer(() => {});
+    const port = await listen(server);
+    const t = new TcpSessionTransport('127.0.0.1', port);
+    try {
+      await t.start();
+      await t.close();
+      await expect(t.sendMessage(pingMessage('r2'))).rejects.toThrow(
+        /tcp session transport is closed/,
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('session host logs a failed event send instead of leaving it unhandled', async () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => log());
+    const transport = new (class extends SessionTransport {
+      async sendMessage(): Promise<void> {
+        throw new Error('room session transport is closed');
+      }
+      async close(): Promise<void> {}
+      [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage> {
+        return { next: () => new Promise(() => {}) };
+      }
+    })();
+    const host = new SessionHost(transport, fakeSimJobContext());
+    const rejections: unknown[] = [];
+    const onRejection = (e: unknown) => rejections.push(e);
+    process.on('unhandledRejection', onRejection);
+    try {
+      (host as unknown as { emitEvent: (e: pb.AgentSessionEvent['event']) => void }).emitEvent({
+        case: 'debugMessage',
+        value: new pb.DebugMessage(),
+      });
+      await new Promise((r) => setTimeout(r, 20));
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+    expect(rejections).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'failed to send session event');
+    warn.mockRestore();
+  });
+});
+
+describe('RemoteSession request over a dead transport', () => {
+  it('rejects at once and leaves nothing pending', async () => {
+    const transport = new (class extends SessionTransport {
+      async sendMessage(): Promise<void> {
+        throw new Error('tcp session transport is closed');
+      }
+      async close(): Promise<void> {}
+      [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage> {
+        return { next: () => new Promise(() => {}) };
+      }
+    })();
+    const session = new RemoteSession(transport);
+    await session.start();
+    try {
+      await expect(
+        session.finalizeSimulation({ provisionalSuccess: true, timeout: 60_000 }),
+      ).rejects.toThrow(/transport is closed/);
+      const pending = (session as unknown as { pendingRequests: Map<string, unknown> })
+        .pendingRequests;
+      expect(pending.size).toBe(0);
+    } finally {
+      await session.close();
+    }
+  });
+});
+
+describe('SessionHost event forwarding', () => {
+  it('registers every forwarded event', () => {
+    const on = vi.fn();
+    const session = { on, off: vi.fn() } as unknown as AgentSession;
+    const host = new SessionHost(new FakeTransport());
+
+    host.registerSession(session);
+
+    const subscribed = new Set(on.mock.calls.map(([event]) => event));
+    expect(subscribed).toEqual(FORWARDED_EVENTS);
+  });
+
+  it('unregisters every forwarded event on close', async () => {
+    const off = vi.fn();
+    const session = { on: vi.fn(), off } as unknown as AgentSession;
+    const host = new SessionHost(new FakeTransport());
+
+    host.registerSession(session);
+    await host.start();
+    await host.close();
+
+    const unsubscribed = new Set(off.mock.calls.map(([event]) => event));
+    expect(unsubscribed).toEqual(FORWARDED_EVENTS);
+  });
+});
 
 describe('RemoteSession RPCs', () => {
   it('fetches framework info', async () => {

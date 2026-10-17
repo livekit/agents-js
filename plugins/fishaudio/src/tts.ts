@@ -30,6 +30,7 @@ const connectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
 /** @public */
 export interface TTSOptions {
   apiKey?: string;
+  /** TTS model to use: `s1`, `s2-pro`, `s2.1-pro`, or `drama-3`. Defaults to `s2.1-pro`. */
   model?: TTSModels | string;
   voiceId?: string;
   sampleRate?: number;
@@ -182,6 +183,9 @@ const buildTtsRequest = (opts: ResolvedTTSOptions, text: string = ''): Record<st
     prosody,
     top_p: opts.topP,
     temperature: opts.temperature,
+    // Server-side reliability feature, deliberately not exposed as an option:
+    // every synthesis request runs with the quality guard enabled.
+    features: ['quality-guard'],
     ...(opts.maxNewTokens !== undefined ? { max_new_tokens: opts.maxNewTokens } : {}),
     ...(opts.minChunkLength !== undefined ? { min_chunk_length: opts.minChunkLength } : {}),
     ...(opts.conditionOnPreviousChunks !== undefined
@@ -235,7 +239,7 @@ export class TTS extends tts.TTS {
     // rather than batching short sentences together — minimizes TTFB on the
     // first sentence and keeps Fish synthesizing continuously.
     const tokenizer =
-      opts.tokenizer ?? new tokenize.basic.SentenceTokenizer({ minSentenceLength: 1 });
+      opts.tokenizer ?? new tokenize.blingfire.SentenceTokenizer({ minSentenceLength: 1 });
 
     this.#opts = {
       apiKey,
@@ -362,6 +366,11 @@ export class TTS extends tts.TTS {
 
   prewarm(): void {
     this.#pool.prewarm();
+  }
+
+  /** Release pooled connections; an in-flight synthesis keeps its until it finishes. */
+  override async releaseIdleConnections(): Promise<void> {
+    await this.#pool.releaseIdle();
   }
 
   override async close(): Promise<void> {
@@ -643,7 +652,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
           if (!finished.done) finished.resolve();
         } else {
-          this.#logger.debug({ event }, 'unknown Fish Audio event');
+          this.#logger.debug({ 'lk.pii.event': event }, 'unknown Fish Audio event');
         }
       };
 

@@ -101,6 +101,10 @@ export class LLM extends llm.LLM {
     }
   }
 
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    await this.#client.models.list({ signal });
+  }
+
   /**
    * Create a new instance of OpenAI LLM with Azure.
    *
@@ -166,7 +170,7 @@ export class LLM extends llm.LLM {
     }
 
     return new LLM({
-      model: 'llama3.1-8b',
+      model: 'gpt-oss-120b',
       baseURL: 'https://api.cerebras.ai/v1',
       ...opts,
     });

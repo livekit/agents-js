@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { RoomServiceClient } from 'livekit-server-sdk';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { runWithJobContextAsync } from '../job.js';
 import { initializeLogger } from '../log.js';
@@ -46,6 +46,10 @@ beforeAll(() => {
   initializeLogger({ level: 'silent', pretty: false });
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 function makeAvatar(overrides: Partial<ConstructorParameters<typeof AvatarSession>[0]> = {}) {
   return new AvatarSession({
     model: 'lemonslice',
@@ -63,18 +67,11 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   });
 }
 
-function parseJwt(token: string): Record<string, unknown> {
-  const payload = token.split('.')[1];
-  if (!payload) throw new Error('missing jwt payload');
-  return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
-}
-
 async function callCreate(av: AvatarSession) {
   return await av._createSession({
     roomName: 'my-room',
     roomSid: 'RM_123',
     livekitUrl: 'wss://example.livekit.cloud',
-    workerToken: 'worker-token',
     agentIdentity: 'agent-worker-1',
   });
 }
@@ -140,51 +137,23 @@ describe('AvatarSession constructor', () => {
   });
 
   it('uses LIVEKIT_API_KEY fallback credentials', () => {
-    const oldKey = process.env.LIVEKIT_API_KEY;
-    const oldSecret = process.env.LIVEKIT_API_SECRET;
-    const oldInferenceKey = process.env.LIVEKIT_INFERENCE_API_KEY;
-    const oldInferenceSecret = process.env.LIVEKIT_INFERENCE_API_SECRET;
-    try {
-      delete process.env.LIVEKIT_INFERENCE_API_KEY;
-      delete process.env.LIVEKIT_INFERENCE_API_SECRET;
-      process.env.LIVEKIT_API_KEY = 'env-key';
-      process.env.LIVEKIT_API_SECRET = 'env-secret';
-      const av = new AvatarSession({ model: 'lemonslice', baseURL: 'https://x/v1' });
-      expect(av['apiKey']).toBe('env-key');
-      expect(av['apiSecret']).toBe('env-secret');
-    } finally {
-      if (oldKey === undefined) delete process.env.LIVEKIT_API_KEY;
-      else process.env.LIVEKIT_API_KEY = oldKey;
-      if (oldSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
-      else process.env.LIVEKIT_API_SECRET = oldSecret;
-      if (oldInferenceKey === undefined) delete process.env.LIVEKIT_INFERENCE_API_KEY;
-      else process.env.LIVEKIT_INFERENCE_API_KEY = oldInferenceKey;
-      if (oldInferenceSecret === undefined) delete process.env.LIVEKIT_INFERENCE_API_SECRET;
-      else process.env.LIVEKIT_INFERENCE_API_SECRET = oldInferenceSecret;
-    }
+    vi.stubEnv('LIVEKIT_INFERENCE_API_KEY', undefined);
+    vi.stubEnv('LIVEKIT_INFERENCE_API_SECRET', undefined);
+    vi.stubEnv('LIVEKIT_API_KEY', 'env-key');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'env-secret');
+
+    const av = new AvatarSession({ model: 'lemonslice', baseURL: 'https://x/v1' });
+    expect(av['apiKey']).toBe('env-key');
+    expect(av['apiSecret']).toBe('env-secret');
   });
 
   it('rejects missing credentials', () => {
-    const oldKey = process.env.LIVEKIT_API_KEY;
-    const oldSecret = process.env.LIVEKIT_API_SECRET;
-    const oldInferenceKey = process.env.LIVEKIT_INFERENCE_API_KEY;
-    const oldInferenceSecret = process.env.LIVEKIT_INFERENCE_API_SECRET;
-    try {
-      delete process.env.LIVEKIT_API_KEY;
-      delete process.env.LIVEKIT_API_SECRET;
-      delete process.env.LIVEKIT_INFERENCE_API_KEY;
-      delete process.env.LIVEKIT_INFERENCE_API_SECRET;
-      expect(() => new AvatarSession({ model: 'lemonslice', baseURL: 'https://x/v1' })).toThrow();
-    } finally {
-      if (oldKey === undefined) delete process.env.LIVEKIT_API_KEY;
-      else process.env.LIVEKIT_API_KEY = oldKey;
-      if (oldSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
-      else process.env.LIVEKIT_API_SECRET = oldSecret;
-      if (oldInferenceKey === undefined) delete process.env.LIVEKIT_INFERENCE_API_KEY;
-      else process.env.LIVEKIT_INFERENCE_API_KEY = oldInferenceKey;
-      if (oldInferenceSecret === undefined) delete process.env.LIVEKIT_INFERENCE_API_SECRET;
-      else process.env.LIVEKIT_INFERENCE_API_SECRET = oldInferenceSecret;
-    }
+    vi.stubEnv('LIVEKIT_API_KEY', undefined);
+    vi.stubEnv('LIVEKIT_API_SECRET', undefined);
+    vi.stubEnv('LIVEKIT_INFERENCE_API_KEY', undefined);
+    vi.stubEnv('LIVEKIT_INFERENCE_API_SECRET', undefined);
+
+    expect(() => new AvatarSession({ model: 'lemonslice', baseURL: 'https://x/v1' })).toThrow();
   });
 
   it('supports custom identity', () => {
@@ -245,14 +214,16 @@ it('creates a gateway session with payload, headers, and idempotency key', async
   expect(resp.provider_session_id).toBe('ls_abc');
   expect(capturedBody).toMatchObject({
     provider: 'lemonslice',
-    livekit_token: 'worker-token',
     avatar_identity: 'lemonslice-inference-avatar',
+    avatar_name: 'lemonslice-inference-avatar',
     agent_identity: 'agent-worker-1',
+    room_name: 'my-room',
     room_sid: 'RM_123',
     image_url: 'https://example.com/face.png',
     prompt: 'be expressive',
     idle_timeout_s: 300,
   });
+  expect(capturedBody).not.toHaveProperty('livekit_token');
   expect(capturedBody).not.toHaveProperty('extra_kwargs');
   expect(capturedHeaders?.get('Authorization')).toMatch(/^Bearer /);
   expect(capturedHeaders?.get(INFERENCE_PROVIDER_HEADER)).toBe('lemonslice');
@@ -386,8 +357,6 @@ it('start uses response sample rate and captures terminate token', async () => {
   const agentSession = new FakeAgentSession();
   await av.start(agentSession as never, new FakeConnectedRoom() as never, {
     livekitUrl: 'wss://example.livekit.cloud',
-    livekitApiKey: 'devkey',
-    livekitApiSecret: 'devsecret',
   });
 
   expect(av.sessionId).toBe('AVS_1');
@@ -397,30 +366,83 @@ it('start uses response sample rate and captures terminate token', async () => {
   expect(agentSession.output.audio).toBe(fakeSinks[0]);
 });
 
-it('start mints worker token with expected grants and attributes', async () => {
+it('start sends mint inputs and no token', async () => {
   let captured: Record<string, unknown> | undefined;
   const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
     captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
     return jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' });
   });
 
-  const av = makeAvatar({ fetch: fetchMock as typeof fetch });
+  const av = makeAvatar({ fetch: fetchMock as typeof fetch, avatarParticipantName: 'Ada' });
   await av.start(new FakeAgentSession() as never, new FakeConnectedRoom() as never, {
     livekitUrl: 'wss://example.livekit.cloud',
-    livekitApiKey: 'devkey',
-    livekitApiSecret: 'devsecret',
   });
 
-  expect(captured?.room_sid).toBe('RM_789');
+  expect(captured).not.toHaveProperty('livekit_token');
+  expect(captured?.room_name).toBe('my-room');
+  expect(captured?.avatar_identity).toBe('lemonslice-inference-avatar');
+  expect(captured?.avatar_name).toBe('Ada');
   expect(captured?.agent_identity).toBe('standalone-agent');
-  const claims = parseJwt(String(captured?.livekit_token));
-  expect(claims.kind).toBe('agent');
-  expect(claims.sub).toBe('lemonslice-inference-avatar');
-  expect(claims.video).toMatchObject({ roomJoin: true, room: 'my-room' });
-  expect(claims.attributes).toEqual({
-    'lk.publish_on_behalf': 'standalone-agent',
-    'lk.avatar_provider': 'lemonslice',
+  expect(captured?.room_sid).toBe('RM_789');
+});
+
+it('start warns when the gateway minted a different avatar identity', async () => {
+  const fetchMock = vi.fn(async () =>
+    jsonResponse({
+      session_id: 'AVS_1',
+      provider_session_id: 'ls_1',
+      avatar_identity: 'gateway-normalized-avatar',
+    }),
+  );
+
+  const av = makeAvatar({ fetch: fetchMock as typeof fetch });
+  // The logger is the process-wide `log()` singleton, so drop calls made by earlier tests.
+  const warn = vi.spyOn(av['logger'], 'warn').mockClear();
+  await av.start(new FakeAgentSession() as never, new FakeConnectedRoom() as never, {
+    livekitUrl: 'wss://example.livekit.cloud',
   });
+
+  expect(warn).toHaveBeenCalledWith(
+    expect.objectContaining({
+      requestedIdentity: 'lemonslice-inference-avatar',
+      mintedIdentity: 'gateway-normalized-avatar',
+    }),
+    expect.stringContaining('different identity than requested'),
+  );
+});
+
+it.each([
+  ['echoes the requested identity', 'lemonslice-inference-avatar'],
+  ['omits avatar_identity', undefined],
+])('start does not warn when the gateway %s', async (_label, avatarIdentity) => {
+  const fetchMock = vi.fn(async () =>
+    jsonResponse({
+      session_id: 'AVS_1',
+      provider_session_id: 'ls_1',
+      avatar_identity: avatarIdentity,
+    }),
+  );
+
+  const av = makeAvatar({ fetch: fetchMock as typeof fetch });
+  // The logger is the process-wide `log()` singleton, so drop calls made by earlier tests.
+  const warn = vi.spyOn(av['logger'], 'warn').mockClear();
+  await av.start(new FakeAgentSession() as never, new FakeConnectedRoom() as never, {
+    livekitUrl: 'wss://example.livekit.cloud',
+  });
+
+  // Scoped to the mismatch message: the shared logger also carries unrelated warnings.
+  expect(warn).not.toHaveBeenCalledWith(
+    expect.anything(),
+    expect.stringContaining('different identity than requested'),
+  );
+});
+
+it('start without livekitUrl raises', async () => {
+  vi.stubEnv('LIVEKIT_URL', undefined);
+
+  await expect(
+    makeAvatar().start(new FakeAgentSession() as never, new FakeConnectedRoom() as never),
+  ).rejects.toThrow(/livekitUrl/);
 });
 
 it('start uses job room name and sid before the rtc room is connected', async () => {
@@ -440,8 +462,6 @@ it('start uses job room name and sid before the rtc room is connected', async ()
   await runWithJobContextAsync(jobCtx as never, async () => {
     await av.start(new FakeAgentSession() as never, new FakeJobRoom() as never, {
       livekitUrl: 'wss://example.livekit.cloud',
-      livekitApiKey: 'devkey',
-      livekitApiSecret: 'devsecret',
     });
   });
 
@@ -468,8 +488,6 @@ it('start falls back to the connected room sid when the job room sid is absent',
   await runWithJobContextAsync(jobCtx as never, async () => {
     await av.start(new FakeAgentSession() as never, room as never, {
       livekitUrl: 'wss://example.livekit.cloud',
-      livekitApiKey: 'devkey',
-      livekitApiSecret: 'devsecret',
     });
   });
 
@@ -484,15 +502,11 @@ it('start twice raises without creating a second provider session', async () => 
   const agentSession = new FakeAgentSession();
   await av.start(agentSession as never, new FakeConnectedRoom() as never, {
     livekitUrl: 'wss://example.livekit.cloud',
-    livekitApiKey: 'devkey',
-    livekitApiSecret: 'devsecret',
   });
 
   await expect(
     av.start(agentSession as never, new FakeConnectedRoom() as never, {
       livekitUrl: 'wss://example.livekit.cloud',
-      livekitApiKey: 'devkey',
-      livekitApiSecret: 'devsecret',
     }),
   ).rejects.toThrow(/only be called once/);
   expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -507,8 +521,6 @@ it('guards overlapping concurrent start calls (only one provider session)', asyn
   const agentSession = new FakeAgentSession();
   const opts = {
     livekitUrl: 'wss://example.livekit.cloud',
-    livekitApiKey: 'devkey',
-    livekitApiSecret: 'devsecret',
   };
 
   // Both calls start before either awaits its gateway create; the synchronous guard
@@ -541,8 +553,6 @@ it('allows retry after gateway create fails', async () => {
   const room = new FakeConnectedRoom();
   const opts = {
     livekitUrl: 'wss://example.livekit.cloud',
-    livekitApiKey: 'devkey',
-    livekitApiSecret: 'devsecret',
   };
 
   await expect(av.start(agentSession as never, room as never, opts)).rejects.toBeInstanceOf(
@@ -585,8 +595,6 @@ it('retries an ambiguous create failure without removing the avatar participant'
   const agentSession = new FakeAgentSession();
   const opts = {
     livekitUrl: 'wss://example.livekit.cloud',
-    livekitApiKey: 'devkey',
-    livekitApiSecret: 'devsecret',
   };
 
   await runWithJobContextAsync(jobCtx as never, async () => {
@@ -618,8 +626,6 @@ it('sets ids before audio rebind failures', async () => {
   await expect(
     av.start(agentSession as never, new FakeConnectedRoom() as never, {
       livekitUrl: 'wss://example.livekit.cloud',
-      livekitApiKey: 'devkey',
-      livekitApiSecret: 'devsecret',
     }),
   ).rejects.toThrow(/boom/);
   expect(av.providerSessionId).toBe('ls_1');
@@ -631,8 +637,6 @@ it('start rejects disconnected standalone rooms', async () => {
   await expect(
     av.start(new FakeAgentSession() as never, new FakeRoom() as never, {
       livekitUrl: 'wss://example.livekit.cloud',
-      livekitApiKey: 'devkey',
-      livekitApiSecret: 'devsecret',
     }),
   ).rejects.toThrow(/needs a connected room/);
 });

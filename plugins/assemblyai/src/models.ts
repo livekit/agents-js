@@ -8,6 +8,7 @@ export type STTModels =
   | 'u3-rt-pro'
   | 'u3-rt-pro-beta-1'
   | 'universal-3-5-pro'
+  | 'universal-3-6-pro'
   // Deprecated alias — AssemblyAI maps this to `universal-3-5-pro`, but the
   // Python plugin emits a warning and rewrites it. Kept here so TS users don't
   // break if they already pass it.

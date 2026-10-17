@@ -20,6 +20,15 @@ import {
 } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
 import type { TimedString } from '../voice/io.js';
+import {
+  type MarkupInfo,
+  type SpeechSteeringOptions,
+  convertMarkup,
+  hasMarkupDialect,
+  llmInstructions,
+  normalizeMarkup,
+  supportedNonverbals,
+} from './provider_format.js';
 
 /**
  * SynthesizedAudio is a packet of speech synthesis as returned by the TTS.
@@ -52,6 +61,71 @@ export interface TTSCapabilities {
   streaming: boolean;
   // Whether this TTS supports aligned transcripts (word-level timestamps).
   alignedTranscript?: boolean;
+}
+
+/**
+ * Declares TTS markup capabilities for the expressive pipeline.
+ *
+ * Plugins opt in by overriding {@link TTS.markupProviderKey}: it selects which markup
+ * dialect the TTS speaks — what the LLM is taught to write, and how those markers are
+ * normalized and lowered to the provider's native syntax before synthesis. Stripping
+ * markup back out is not here — the transcript sinks do it provider-agnostically (see
+ * `splitAllMarkup`).
+ */
+export class TTSMarkup {
+  #providerKey: () => string;
+
+  /** @internal */
+  constructor(providerKey: () => string) {
+    this.#providerKey = providerKey;
+  }
+
+  /** Key into the shared `provider_format` markup tables, or `''` for none. */
+  get providerKey(): string {
+    return this.#providerKey();
+  }
+
+  /**
+   * Whether this voice speaks a markup dialect at all.
+   *
+   * Allocation-free, unlike testing {@link llmInstructions} for `undefined` — which the
+   * expressive gate does once per speech segment.
+   */
+  get supported(): boolean {
+    return hasMarkupDialect(this.providerKey);
+  }
+
+  /** The queryable markup matrix for this voice. */
+  get info(): MarkupInfo {
+    return { nonverbals: supportedNonverbals(this.providerKey) };
+  }
+
+  /**
+   * Instructions for the LLM describing available markup tags.
+   *
+   * The framework injects this into the LLM system prompt when expressive mode is active.
+   * Returns `undefined` if this TTS has no markup support. When `speechSteering` is given,
+   * sounds it disables are omitted from the advertised vocabulary.
+   */
+  llmInstructions(options: { speechSteering?: SpeechSteeringOptions } = {}): string | undefined {
+    return llmInstructions(this.providerKey, options.speechSteering);
+  }
+
+  /** Fix common LLM markup mistakes (e.g. unclosed self-closing tags). */
+  normalize(text: string): string {
+    return normalizeMarkup(this.providerKey, text);
+  }
+
+  /**
+   * Convert framework-standard markup to the provider's native format.
+   *
+   * Called before text is sent to the TTS; a no-op when the provider declares no markup.
+   * Plugins that use non-XML formats (e.g. square brackets) opt in via
+   * {@link TTS.markupProviderKey} so `<expression value="..."/>` becomes native syntax.
+   */
+  convert(text: string): string {
+    return convertMarkup(this.providerKey, text);
+  }
 }
 
 export interface TTSError {
@@ -90,6 +164,14 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
   #capabilities: TTSCapabilities;
   #sampleRate: number;
   #numChannels: number;
+  #markup: TTSMarkup;
+  /**
+   * Whether expressive is active for the current turn, set by the framework before each
+   * synthesis. TTS implementations that tokenize their own input read this to batch into
+   * larger chunks (continuous prosody); `false` (the default) means per-sentence chunking.
+   * See {@link TTS._setExpressive}.
+   */
+  #expressive = false;
   abstract label: string;
 
   constructor(sampleRate: number, numChannels: number, capabilities: TTSCapabilities) {
@@ -97,6 +179,43 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
     this.#capabilities = capabilities;
     this.#sampleRate = sampleRate;
     this.#numChannels = numChannels;
+    this.#markup = new TTSMarkup(() => this.markupProviderKey());
+  }
+
+  /**
+   * Key into the shared markup tables, or `''` for none.
+   *
+   * Plugins override this to opt into markup support; the default (`''`) means no markup
+   * instructions, normalization, or conversion are applied. Every {@link TTS.markup} method
+   * delegates through this key, so a plugin only needs to override this one method.
+   */
+  protected markupProviderKey(): string {
+    return '';
+  }
+
+  /** Access TTS markup capabilities (instructions for the LLM, text conversion). */
+  get markup(): TTSMarkup {
+    return this.#markup;
+  }
+
+  /**
+   * Whether expressive is active for the current turn.
+   * @internal
+   */
+  get expressive(): boolean {
+    return this.#expressive;
+  }
+
+  /**
+   * Framework-internal: mark whether expressive is active for this turn.
+   *
+   * Called by the voice pipeline before each synthesis. TTS implementations widen their
+   * input chunking when enabled; a no-op for TTS that don't tokenize their own input.
+   *
+   * @internal
+   */
+  _setExpressive(enabled: boolean): void {
+    this.#expressive = enabled;
   }
 
   /** Returns this TTS's capabilities */
@@ -154,7 +273,43 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
    */
   abstract stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream;
 
+  /**
+   * Open the provider connection ahead of the first synthesis, so it does not pay for the
+   * handshake. Best effort and non-blocking. Called by the framework when an agent starts or
+   * resumes. Providers without a persistent connection need not override this.
+   */
+  prewarm(): void {
+    return;
+  }
+
   async close(): Promise<void> {
+    return;
+  }
+
+  /**
+   * The providers this TTS delegates to, for an adapter that wraps others. The framework counts
+   * its users on the wrapped providers as well, so a provider shared between an adapter and a
+   * direct user is released only when both are done.
+   *
+   * @internal
+   */
+  get _wrappedTts(): readonly TTS[] {
+    return [];
+  }
+
+  /**
+   * Release idle pooled provider connections without closing the TTS.
+   *
+   * The framework calls this once nothing uses the TTS any more: every activity and session that
+   * uses an instance counts as a user, and the last one to close, or an `Agent.updateOptions`
+   * that swaps the instance out, triggers the release. Those connections would otherwise sit idle
+   * until the process exits.
+   * Nothing in flight is interrupted: an in-flight synthesis keeps its connection, which then
+   * closes when it finishes instead of rejoining the pool. The TTS stays usable and reconnects
+   * on the next synthesis.
+   * Providers without a connection pool need not override this.
+   */
+  async releaseIdleConnections(): Promise<void> {
     return;
   }
 }
@@ -186,6 +341,8 @@ export abstract class SynthesizeStream
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >();
   protected closed = false;
+  /** Wrappers forward provider metrics instead of emitting their own usage. */
+  protected emitMetrics = true;
   protected connOptions: APIConnectOptions;
   protected abortController = new AbortController();
 
@@ -210,6 +367,7 @@ export abstract class SynthesizeStream
   #currentAttemptSpan?: Span;
   #startedTime?: number;
   #startedHrTime?: bigint;
+  #error?: Error;
 
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
@@ -232,7 +390,7 @@ export abstract class SynthesizeStream
     // Ensure `this.output` is closed once mainTask settles, even when
     // `monitorMetrics` never started (no `pushText` was ever called).
     // Without this, consumers iterating the stream hang forever.
-    startSoon(async () => {
+    const runMainTask = async () => {
       try {
         await this.mainTask();
       } catch {
@@ -251,7 +409,29 @@ export abstract class SynthesizeStream
           this.output.close();
         }
       }
+    };
+    startSoon(() => {
+      void runMainTask();
     });
+  }
+
+  /** The `tts_request` span of this stream, once the main task has opened it. */
+  /**
+   * The model named in the usage metrics: the TTS's own by default; a fallback adapter's stream
+   * reports the instance that actually served, which the adapter's own getters cannot tell once
+   * a failed instance recovered while the request was still running.
+   */
+  protected get responseModel(): string {
+    return this.#tts.model;
+  }
+
+  /** The provider named in the usage metrics; see `responseModel`. */
+  protected get responseProvider(): string {
+    return this.#tts.provider;
+  }
+
+  protected get ttsRequestSpan(): Span | undefined {
+    return this.#ttsRequestSpan;
   }
 
   private _mainTaskImpl = async (span: Span) => {
@@ -319,6 +499,7 @@ export abstract class SynthesizeStream
     });
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    this.#error = error;
     this.#tts.emit('error', {
       type: 'tts_error',
       timestamp: Date.now(),
@@ -381,6 +562,16 @@ export abstract class SynthesizeStream
       return undefined;
     }
     return { time: this.#startedTime, hrTime: this.#startedHrTime };
+  }
+
+  /**
+   * The error this stream failed with, if it failed. Iterating a failed stream
+   * just ends, and the TTS `error` event doesn't say which stream failed —
+   * this does.
+   * @internal
+   */
+  get error(): Error | undefined {
+    return this.#error;
   }
 
   // NOTE(AJS-37): The implementation below uses an AsyncIterableQueue (`this.input`)
@@ -452,14 +643,14 @@ export abstract class SynthesizeStream
           outputTokens: this.#outputTokens,
           streamed: true,
           metadata: {
-            modelProvider: this.#tts.provider,
-            modelName: this.#tts.model,
+            modelProvider: this.responseProvider,
+            modelName: this.responseModel,
           },
         };
-        if (this.#ttsRequestSpan) {
-          this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+        if (this.emitMetrics) {
+          this.#ttsRequestSpan?.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+          this.#tts.emit('metrics_collected', metrics);
         }
-        this.#tts.emit('metrics_collected', metrics);
 
         // Reset token usage after emitting metrics for the next segment
         this.#inputTokens = 0;
@@ -605,6 +796,8 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   protected queue = new AsyncIterableQueue<SynthesizedAudio>();
   protected output = new AsyncIterableQueue<SynthesizedAudio>();
   protected closed = false;
+  /** Wrappers forward provider metrics instead of emitting their own usage. */
+  protected emitMetrics = true;
   abstract label: string;
   #text: string;
   #tts: TTS;
@@ -614,6 +807,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   #inputTokens = 0;
   #outputTokens = 0;
   #startedTime: number;
+  #error?: Error;
   #metricsQueue = new AsyncIterableQueue<SynthesizedAudio>();
 
   protected abortController = new AbortController();
@@ -639,7 +833,12 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    ThrowsPromise.resolve().then(() => this.mainTask().finally(() => this.#metricsQueue.close()));
+    ThrowsPromise.resolve().then(() =>
+      this.mainTask()
+        .finally(() => this.#metricsQueue.close())
+        // already surfaced via emitError; swallow to avoid unhandled rejection.
+        .catch(() => {}),
+    );
   }
 
   private drainAttemptQueue(attemptQueue: AsyncIterableQueue<SynthesizedAudio>): Promise<void> {
@@ -650,6 +849,25 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
         }
       }
     });
+  }
+
+  /** The `tts_request` span of this stream, once the main task has opened it. */
+  /**
+   * The model named in the usage metrics: the TTS's own by default; a fallback adapter's stream
+   * reports the instance that actually served, which the adapter's own getters cannot tell once
+   * a failed instance recovered while the request was still running.
+   */
+  protected get responseModel(): string {
+    return this.#tts.model;
+  }
+
+  /** The provider named in the usage metrics; see `responseModel`. */
+  protected get responseProvider(): string {
+    return this.#tts.provider;
+  }
+
+  protected get ttsRequestSpan(): Span | undefined {
+    return this.#ttsRequestSpan;
   }
 
   private _mainTaskImpl = async (span: Span) => {
@@ -724,6 +942,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    this.#error = error;
     this.#tts.emit('error', {
       type: 'tts_error',
       timestamp: Date.now(),
@@ -741,6 +960,16 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
 
   get abortSignal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  /**
+   * The error this stream failed with, if it failed. Iterating a failed stream
+   * just ends, and the TTS `error` event doesn't say which stream failed —
+   * this does.
+   * @internal
+   */
+  get error(): Error | undefined {
+    return this.#error;
   }
 
   /**
@@ -787,18 +1016,22 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       outputTokens: this.#outputTokens,
       streamed: false,
       metadata: {
-        modelProvider: this.#tts.provider,
-        modelName: this.#tts.model,
+        modelProvider: this.responseProvider,
+        modelName: this.responseModel,
       },
     };
 
     if (this.#ttsRequestSpan) {
-      this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+      if (this.emitMetrics) {
+        this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+      }
       this.#ttsRequestSpan.end();
       this.#ttsRequestSpan = undefined;
     }
 
-    this.#tts.emit('metrics_collected', metrics);
+    if (this.emitMetrics) {
+      this.#tts.emit('metrics_collected', metrics);
+    }
   }
 
   /** Collect every frame into one in a single call */

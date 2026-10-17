@@ -13,7 +13,7 @@ interface InferenceTestHarness {
   stt: (
     model: STT,
     vad: VAD,
-    supports?: Partial<{ streaming: boolean; nonStreaming: boolean }>,
+    supports?: Partial<{ streaming: boolean; nonStreaming: boolean; streamSpeed: number }>,
   ) => Promise<void>;
   tts: (
     model: TTS,

@@ -241,6 +241,11 @@ export class TTS extends tts.TTS {
     this.#pool.prewarm();
   }
 
+  /** Release pooled connections; an in-flight synthesis keeps its until it finishes. */
+  override async releaseIdleConnections(): Promise<void> {
+    await this.#pool.releaseIdle();
+  }
+
   override async close(): Promise<void> {
     this.#closed = true;
     await this.#pool.close();
@@ -384,7 +389,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #pool: ConnectionPool<WebSocket>;
   #logger = log();
-  #tokenizer = new tokenize.basic.SentenceTokenizer({
+  #tokenizer = new tokenize.blingfire.SentenceTokenizer({
     minSentenceLength: BUFFERED_WORDS_COUNT,
   }).stream();
   label = 'cartesia.SynthesizeStream';
@@ -552,6 +557,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
           const segmentId = serverMsg.context_id;
 
+          // A pooled websocket may still hold audio/done from an interrupted
+          // previous context; ignore messages tagged with another context id.
+          if (segmentId !== requestId) continue;
+
           // Handle error frames first. 4xx (e.g. empty-transcript on
           // function-call turns) is non-fatal — log and fall through so an
           // accompanying done:true still triggers the unified close path
@@ -635,7 +644,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           } else if (!isFlushDoneMessage(serverMsg) && !isErrorMessage(serverMsg)) {
             // flush_done is an ack with nothing to do; error frames without
             // done:true were already logged above.
-            this.#logger.warn({ message: serverMsg }, 'Unknown Cartesia message');
+            this.#logger.warn({ 'lk.pii.message': serverMsg }, 'Unknown Cartesia message');
           }
         }
 
@@ -710,6 +719,14 @@ const isRecord = (v: unknown): v is Record<string, unknown> => {
   return v !== null && typeof v === 'object';
 };
 
+const sanitizedErrorName = (error: Error): string => {
+  if (error instanceof SyntaxError) return 'SyntaxError';
+  if (error instanceof TypeError) return 'TypeError';
+  if (error instanceof RangeError) return 'RangeError';
+  if (error instanceof AggregateError) return 'AggregateError';
+  return 'Error';
+};
+
 const isAggregateErrorLike = (e: unknown): e is { errors: unknown[]; name?: string } => {
   if (!isRecord(e)) return false;
   return e.name === 'AggregateError' && Array.isArray(e.errors);
@@ -763,6 +780,7 @@ const waitForWsOpen = async ({
   const cleanup = () => {
     if (timeout) clearTimeout(timeout);
     ws.off('open', onOpen);
+    ws.off('unexpected-response', onUnexpectedResponse);
     ws.off('error', onError);
     ws.off('close', onClose);
     abortSignal?.removeEventListener('abort', onAbort);
@@ -770,6 +788,16 @@ const waitForWsOpen = async ({
 
   const onOpen = () => fut.resolve();
   const onError = (err: Error) => fut.reject(asError(err));
+  const onUnexpectedResponse = (_request: unknown, response: { statusCode?: number }) => {
+    // Authentication headers can appear in WebSocket handshake errors.
+    const statusCode = response.statusCode ?? -1;
+    fut.reject(
+      new APIStatusError({
+        message: `Cartesia WebSocket connection rejected with status ${statusCode}`,
+        options: { statusCode },
+      }),
+    );
+  };
   const onClose = (code: number, reason: Buffer) =>
     fut.reject(
       new Error(`WebSocket closed before open (code=${code}, reason=${reason.toString()})`),
@@ -777,12 +805,16 @@ const waitForWsOpen = async ({
   const onAbort = () => fut.reject(new Error('aborted'));
 
   ws.on('open', onOpen);
+  ws.on('unexpected-response', onUnexpectedResponse);
   ws.on('error', onError);
   ws.on('close', onClose);
   abortSignal?.addEventListener('abort', onAbort, { once: true });
 
   if (timeoutMs > 0) {
-    timeout = setTimeout(() => fut.reject(new Error('connect timeout')), timeoutMs);
+    timeout = setTimeout(
+      () => fut.reject(new APITimeoutError({ message: 'Cartesia WebSocket connection timed out' })),
+      timeoutMs,
+    );
   }
 
   try {
@@ -859,9 +891,11 @@ const connectCartesiaWebSocket = async ({
     }
   };
 
+  let connectError: unknown;
   try {
     return await connectOnce();
   } catch (e) {
+    connectError = e;
     // Mitigation for Node.js dual-stack (IPv6/IPv4) connect flakiness ("happy eyeballs"):
     // some environments surface `AggregateError` with nested `ETIMEDOUT` during the initial
     // WebSocket open. In that case we do a one-off retry forcing IPv4 (`family: 4`) before
@@ -871,11 +905,24 @@ const connectCartesiaWebSocket = async ({
     // - Increase the session TTS connect timeout (`connOptions.ttsConnOptions.timeoutMs`)
     // - Or adjust Node's family autoselection behavior via `NODE_OPTIONS`, e.g.
     //   `--network-family-autoselection-attempt-timeout=5000` (or disable it entirely).
-    if (hasAnyTransientCode(e) || isAggregateErrorLike(e)) {
-      return await connectOnce(4);
+    if (!(e instanceof APIError) && (hasAnyTransientCode(e) || isAggregateErrorLike(e))) {
+      try {
+        return await connectOnce(4);
+      } catch (retryError) {
+        connectError = retryError;
+      }
     }
-    throw e;
   }
+
+  if (connectError instanceof APIError) throw connectError;
+  const error = asError(connectError);
+  const isTimeout =
+    hasErrorCode(connectError, 'ETIMEDOUT') || /timed?\s*out|timeout/i.test(error.message);
+  if (isTimeout) {
+    throw new APITimeoutError({ message: 'Cartesia WebSocket connection timed out' });
+  }
+  // Transport errors can contain credentials in URLs.
+  throw new APIConnectionError({ message: sanitizedErrorName(error) });
 };
 
 const toCartesiaOptions = (

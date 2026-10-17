@@ -34,6 +34,24 @@ export {
 } from './tool_context.js';
 
 export { AsyncToolset, type AsyncToolsetCreateOptions } from './async_toolset.js';
+
+export {
+  DuplexModel,
+  DuplexSession,
+  type DuplexAudioFrame,
+  type DuplexCapabilities,
+  type DuplexOutputTranscriptDelta,
+  type DuplexSessionCallbacks,
+} from './duplex.js';
+export {
+  AdaptiveNoiseGate,
+  DuplexRealtimeAdapter,
+  FixedGate,
+  type AdaptiveNoiseGateOptions,
+  type AudioGate,
+  type AudioGateOptions,
+  type DuplexRealtimeAdapterOptions,
+} from './duplex_adapter.js';
 export type {
   AsyncToolOptions,
   DuplicatePromptArgs,
@@ -65,6 +83,7 @@ export type { ProviderFormat } from './provider_format/index.js';
 export {
   LLM,
   LLMStream,
+  hasResponse,
   type ChatChunk,
   type ChoiceDelta,
   type CollectedResponse,
@@ -93,7 +112,6 @@ export {
   createToolOptions,
   executeToolCall,
   formatChatHistory,
-  oaiBuildFunctionInfo,
   oaiParams,
   serializeImage,
   toJsonSchema,

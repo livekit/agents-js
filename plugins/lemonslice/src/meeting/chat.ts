@@ -100,7 +100,10 @@ export class MeetingChatRelay {
         return;
       }
 
-      this.#logger.info({ userInput: userInput.slice(0, 120) }, 'meeting chat relay: user_input');
+      this.#logger.info(
+        { 'lk.pii.user_input': userInput.slice(0, 120) },
+        'meeting chat relay received user input',
+      );
       try {
         this.session.interrupt();
         this.session.generateReply({ userInput });

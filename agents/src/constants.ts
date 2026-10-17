@@ -5,8 +5,26 @@ export const ATTRIBUTE_TRANSCRIPTION_TRACK_ID = 'lk.transcribed_track_id';
 export const ATTRIBUTE_TRANSCRIPTION_FINAL = 'lk.transcription_final';
 export const TOPIC_TRANSCRIPTION = 'lk.transcription';
 export const ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID = 'lk.segment_id';
+/**
+ * The expression (delivery/emotion) the agent used for a transcription segment, surfaced
+ * so the frontend can react to it, when expressive markup is stripped from the transcript.
+ * The value is a JSON object `{"expression": ..., "mood": ...}` carrying the segment's
+ * leading expression — the `<expression>` tag for Inworld/xAI or the `<emotion>` tag for
+ * Cartesia — plus the mood it normalizes to, e.g.
+ * `{"expression":"speak happy","mood":"happy"}`. A JSON object (rather than a bare string)
+ * so the shape can gain fields later without breaking parsers.
+ */
+export const ATTRIBUTE_TRANSCRIPTION_EXPRESSION = 'lk.expression';
 export const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 export const TOPIC_CHAT = 'lk.chat';
+
+/**
+ * Minimum `ParticipantInfo.clientProtocol` of a client that rebuilds transcription events from
+ * `lk.transcription` text streams and ignores the deprecated `Transcription` data packet. While
+ * any considered participant is below this, the legacy packet is still published. The value is
+ * defined by the client SDKs (`client-sdk-js` `src/version.ts`).
+ */
+export const CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS = 3;
 
 export const ATTRIBUTE_AGENT_STATE = 'lk.agent.state';
 export const ATTRIBUTE_AGENT_NAME = 'lk.agent.name';

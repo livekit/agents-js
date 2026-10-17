@@ -74,6 +74,10 @@ export class AudioByteStream {
   }
 
   flush(): AudioFrame[] {
+    if (this.#buf.length === 0) {
+      return [];
+    }
+
     if (this.#buf.length % (2 * this.#numChannels) !== 0) {
       this.#logger.warn('AudioByteStream: incomplete frame during flush, dropping');
       return [];

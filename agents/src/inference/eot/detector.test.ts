@@ -26,6 +26,7 @@ import { APIConnectionError, APIError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import { log } from '../../log.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
+import type { Task } from '../../utils.js';
 import type { BaseStreamingTurnDetectorStream } from './base.js';
 import {
   type BaseStreamingTurnDetectorOptions,
@@ -35,7 +36,7 @@ import {
 import { TurnDetector, TurnDetectorStreamImpl } from './detector.js';
 import { LOCAL_LANGUAGES, ThresholdOptions } from './languages.js';
 import { EOT_INFERENCE_METHOD } from './runner.js';
-import { LocalTransport } from './transports.js';
+import { CloudTransport, LocalTransport } from './transports.js';
 
 // Stand-in for the per-language defaults a gateway returns in `SessionCreated`.
 const SERVER_THRESHOLDS: Record<string, number> = { en: 0.56, ja: 0.37, fr: 0.575 };
@@ -108,6 +109,7 @@ interface MakeStreamOpts {
   model?: 'turn-detector-v1' | 'turn-detector-v1-mini';
   userThreshold?: number | Record<string, number>;
   detector?: TurnDetector;
+  localFallback?: boolean;
 }
 
 /**
@@ -137,6 +139,7 @@ function makeStreamWithTransport(
         : undefined,
     model,
     transport,
+    localFallback: opts.localFallback,
   });
   return stream;
 }
@@ -203,10 +206,10 @@ afterEach(() => {
   runSpy.mockRestore();
 });
 
-describe('AutoSelect', () => {
+describe.each([undefined, false])('AutoSelect (localFallback=%s)', (localFallback) => {
   it('selects local when no remote EOT url', () => {
     void withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
-      const detector = new TurnDetector();
+      const detector = new TurnDetector({ localFallback });
       expect(detector.model).toBe('turn-detector-v1-mini');
     });
   });
@@ -219,7 +222,7 @@ describe('AutoSelect', () => {
         LIVEKIT_API_SECRET: 's',
       },
       () => {
-        const detector = new TurnDetector();
+        const detector = new TurnDetector({ localFallback });
         expect(detector.model).toBe('turn-detector-v1');
       },
     );
@@ -235,7 +238,7 @@ describe('AutoSelect', () => {
         LIVEKIT_INFERENCE_API_SECRET: undefined,
       },
       () => {
-        const detector = new TurnDetector();
+        const detector = new TurnDetector({ localFallback });
         expect(detector.model).toBe('turn-detector-v1-mini');
       },
     );
@@ -287,33 +290,39 @@ describe('ExplicitModelErrors', () => {
 });
 
 describe('Fallback', () => {
-  it('fallback on transport error swaps to local', async () => {
-    const transport = new ScriptedTransport({
-      runBehavior: 'raise',
-      runExc: new APIConnectionError({ message: 'boom' }),
-    });
-    const stream = makeStreamWithTransport(transport);
-    await waitFor(() => stream.model === 'turn-detector-v1-mini');
-    expect(stream.model).toBe('turn-detector-v1-mini');
-    expect(stream.isFallback).toBe(true);
-    expect(stream.warnedCloudFailure).toBe(true);
-    expect(transport.events).toContainEqual(['detach', null]);
-    await stream.aclose();
-  });
+  it.each([undefined, true])(
+    'fallback on transport error swaps to local (%s)',
+    async (localFallback) => {
+      const transport = new ScriptedTransport({
+        runBehavior: 'raise',
+        runExc: new APIConnectionError({ message: 'boom' }),
+      });
+      const stream = makeStreamWithTransport(transport, { localFallback });
+      await waitFor(() => stream.model === 'turn-detector-v1-mini');
+      expect(stream.model).toBe('turn-detector-v1-mini');
+      expect(stream.isFallback).toBe(true);
+      expect(stream.warnedCloudFailure).toBe(true);
+      expect(transport.events).toContainEqual(['detach', null]);
+      await stream.aclose();
+    },
+  );
 
-  it('fallback on timed-out cancelInference', async () => {
-    const transport = new ScriptedTransport({ runBehavior: 'idle' });
-    const stream = makeStreamWithTransport(transport);
-    const fut = stream.predict();
-    // A timed-out cancel (driven by AudioRecognition's eou bounce) closes the
-    // request and promotes the cloud→local fallback.
-    stream.cancelInference({ timedOut: true });
-    expect((await fut.await).endOfTurnProbability).toBe(0.0);
-    await waitFor(() => stream.model === 'turn-detector-v1-mini');
-    expect(stream.model).toBe('turn-detector-v1-mini');
-    expect(stream.isFallback).toBe(true);
-    await stream.aclose();
-  });
+  it.each([undefined, true])(
+    'fallback on timed-out cancelInference (%s)',
+    async (localFallback) => {
+      const transport = new ScriptedTransport({ runBehavior: 'idle' });
+      const stream = makeStreamWithTransport(transport, { localFallback });
+      const fut = stream.predict();
+      // A timed-out cancel (driven by AudioRecognition's eou bounce) closes the
+      // request and promotes the cloud→local fallback.
+      stream.cancelInference({ timedOut: true });
+      expect((await fut.await).endOfTurnProbability).toBe(0.0);
+      await waitFor(() => stream.model === 'turn-detector-v1-mini');
+      expect(stream.model).toBe('turn-detector-v1-mini');
+      expect(stream.isFallback).toBe(true);
+      await stream.aclose();
+    },
+  );
 
   it('fallback persists across turns', async () => {
     const transport = new ScriptedTransport({
@@ -326,6 +335,91 @@ describe('Fallback', () => {
     stream.predict();
     expect(stream.model).toBe('turn-detector-v1-mini');
     await stream.aclose();
+  });
+});
+
+describe('LocalFallbackDisabled', () => {
+  it('keeps the cloud transport active after prediction timeouts', async () => {
+    const transport = new ScriptedTransport();
+    const stream = makeStreamWithTransport(transport, { localFallback: false });
+    stream.thresholdsOptions._updateDefaults(
+      { ...SERVER_THRESHOLDS },
+      SERVER_DEFAULT_THRESHOLD,
+      { ...SERVER_BACKCHANNEL_THRESHOLDS },
+      SERVER_BACKCHANNEL_DEFAULT,
+    );
+    try {
+      for (let i = 0; i < 2; i++) {
+        const prediction = stream.predict();
+        stream.cancelInference({ timedOut: true });
+        expect((await prediction.await).endOfTurnProbability).toBe(0);
+      }
+
+      const prediction = stream.predict();
+      const requestId = transport.events.at(-1)![1] as string;
+      stream._resolvePrediction(requestId, 0.75);
+      expect((await prediction.await).endOfTurnProbability).toBe(0.75);
+      expect(stream.model).toBe('turn-detector-v1');
+      expect(stream.isFallback).toBe(false);
+      expect(stream.transport).toBe(transport);
+      expect(transport.runCalls).toBe(1);
+      expect(transport.events).not.toContainEqual(['detach', null]);
+      expect(runSpy).not.toHaveBeenCalled();
+      expect(await stream.unlikelyThreshold('en')).toBe(SERVER_THRESHOLDS.en);
+      expect(await stream.backchannelThreshold('en')).toBe(SERVER_BACKCHANNEL_THRESHOLDS.en);
+    } finally {
+      await stream.aclose();
+    }
+  });
+
+  it('defaults pending and future predictions after a terminal cloud failure and discards audio', async () => {
+    const cloudRunSpy = vi
+      .spyOn(CloudTransport.prototype, 'run')
+      .mockRejectedValue(new APIConnectionError({ message: 'cloud unavailable' }));
+    const pushSpy = vi.spyOn(CloudTransport.prototype, 'pushFrame');
+    const flushSpy = vi.spyOn(CloudTransport.prototype, 'flush');
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const detector = new TurnDetector({
+      version: 'v1',
+      localFallback: false,
+      baseUrl: 'ws://test',
+      apiKey: 'k',
+      apiSecret: 's',
+    });
+    const stream = detector.stream() as TurnDetectorStreamImpl;
+    stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    try {
+      const frame = new AudioFrame(new Int16Array(320), 16000, 1, 320);
+      for (let i = 0; i < 20; i++) stream.pushAudio(frame);
+      stream.flush();
+      const prediction = stream.predict();
+      expect((await prediction.await).endOfTurnProbability).toBe(1);
+      await (stream as unknown as { _mainTask: Task<void> })._mainTask.result;
+
+      stream.pushAudio(frame);
+      stream.flush();
+      stream.cancelInference({ timedOut: true });
+      expect((await stream.predict().await).endOfTurnProbability).toBe(1);
+      expect((await stream.predict().await).endOfTurnProbability).toBe(1);
+      await stream._drainAudioChannel();
+      expect(pushSpy).not.toHaveBeenCalled();
+      expect(flushSpy).not.toHaveBeenCalled();
+      expect(runSpy).not.toHaveBeenCalled();
+      expect(cloudRunSpy).toHaveBeenCalledTimes(1);
+      expect(stream.model).toBe('turn-detector-v1');
+      expect(detector.model).toBe('turn-detector-v1');
+      expect(stream.isFallback).toBe(false);
+      expect(await stream.unlikelyThreshold('en')).toBe(SERVER_THRESHOLDS.en);
+      expect(
+        warnSpy.mock.calls.filter((c) => JSON.stringify(c).includes('local fallback is disabled')),
+      ).toHaveLength(1);
+    } finally {
+      await detector.aclose();
+      cloudRunSpy.mockRestore();
+      pushSpy.mockRestore();
+      flushSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 });
 
@@ -761,24 +855,34 @@ describe('LocalModelExecutor', () => {
     return new AudioFrame(new Int16Array(samples), 16000, 1, samples);
   }
 
-  it('routes local predict through the injected executor (base64 PCM)', async () => {
-    const doInference = vi.fn(async (method: string, data: unknown) => {
-      expect(method).toBe(EOT_INFERENCE_METHOD);
-      expect(typeof (data as { pcm: string }).pcm).toBe('string');
-      return { probability: 0.7, inferenceDurationMs: 5 };
-    });
-    const executor: InferenceExecutor = { doInference };
-    const detector = new TurnDetector({ version: 'v1-mini', executor });
-    const stream = detector.stream();
-    try {
-      stream.pushAudio(pcmFrame());
-      const ev = await stream.predict().await;
-      expect(ev.endOfTurnProbability).toBe(0.7);
-      expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, expect.anything());
-    } finally {
-      await stream.aclose();
-    }
-  });
+  it.each([undefined, false])(
+    'routes local predict through the executor (localFallback=%s)',
+    async (localFallback) => {
+      const doInference = vi.fn(async (method: string, data: unknown) => {
+        expect(method).toBe(EOT_INFERENCE_METHOD);
+        expect(typeof (data as { pcm: string }).pcm).toBe('string');
+        return { probability: 0.7, inferenceDurationMs: 5 };
+      });
+      const executor: InferenceExecutor = { doInference };
+      const warnSpy = vi.spyOn(log(), 'warn');
+      const detector = new TurnDetector({ version: 'v1-mini', executor, localFallback });
+      const stream = detector.stream();
+      try {
+        stream.pushAudio(pcmFrame());
+        const ev = await stream.predict().await;
+        expect(ev.endOfTurnProbability).toBe(0.7);
+        expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, expect.anything());
+        if (localFallback === false) {
+          expect(warnSpy).toHaveBeenCalledWith(
+            expect.stringContaining('localFallback=false has no effect'),
+          );
+        }
+      } finally {
+        await stream.aclose();
+        warnSpy.mockRestore();
+      }
+    },
+  );
 
   it('degrades to a positive default when no executor is available', async () => {
     // explicit undefined → constructor falls through to getJobContext()

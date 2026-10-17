@@ -77,6 +77,13 @@ export const langFields = (
   return fields;
 };
 
+/**
+ * Accumulates token metadata (text, language, speaker, timing, confidence).
+ *
+ * Tokens are assumed to arrive in chronological order, but individual tokens may omit timing
+ * keys. `startTime` is the earliest `start_ms` seen and `endTime` the latest `end_ms` seen, so a
+ * token that carries timing late (or regresses) cannot collapse the span onto itself.
+ */
 export class TokenAccumulator {
   text = '';
   language: stt.SpeechData['language'] = '' as stt.SpeechData['language'];
@@ -112,12 +119,14 @@ export class TokenAccumulator {
     if (token.speaker !== undefined && this.speakerId === undefined) {
       this.speakerId = String(token.speaker);
     }
-    if (token.start_ms !== undefined && !this.#hasStartTime) {
-      this.#hasStartTime = true;
-      this.startTime = token.start_ms;
+    if (token.start_ms !== undefined) {
+      if (!this.#hasStartTime || token.start_ms < this.startTime) {
+        this.#hasStartTime = true;
+        this.startTime = token.start_ms;
+      }
     }
     if (token.end_ms !== undefined) {
-      this.endTime = token.end_ms;
+      this.endTime = Math.max(this.endTime, token.end_ms);
     }
     if (token.confidence !== undefined) {
       this.#confidenceSum += token.confidence;
@@ -284,7 +293,6 @@ export function* processMessage(
     if (token.is_final) {
       if (isEndToken(token)) {
         yield* sendEndpointTranscript(state, options);
-        yield* reportProcessedAudioDuration(totalAudioProcMs, state);
       } else {
         state.final.update(token);
       }
@@ -322,6 +330,8 @@ export function* processMessage(
 
   if (content.finished || content.error_code || content.error_message) {
     yield* sendEndpointTranscript(state, options);
-    yield* reportProcessedAudioDuration(totalAudioProcMs, state);
   }
+
+  // Report every frame so processed audio that never reaches an endpoint is not dropped.
+  yield* reportProcessedAudioDuration(totalAudioProcMs, state);
 }

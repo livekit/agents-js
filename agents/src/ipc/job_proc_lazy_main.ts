@@ -3,20 +3,45 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Room, RoomEvent, dispose } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
-import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
+import {
+  JobContext,
+  JobProcess,
+  type RunningJobInfo,
+  runWithJobContext,
+  runWithJobContextAsync,
+} from '../job.js';
+import {
+  finalizeSession,
+  flushJobLogs,
+  flushJobMetrics,
+  flushJobTraces,
+  runShutdownCallbacks,
+  validateSessionEndTimeout,
+  waitForEntrypointShutdown,
+} from '../job_lifecycle.js';
 import { initializeLogger, log } from '../log.js';
+import { loggerOptions, setLoggerState } from '../log_core.js';
 import type { SimulationContext } from '../simulation.js';
-import { Future, IdleTimeoutError, shortuuid, waitUntilTimeout } from '../utils.js';
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
+import { getMonitor, startMonitoring, stopMonitoring } from '../telemetry/loop_monitor.js';
+import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
+import { preload } from './_preload.js';
 import type { InferenceExecutor } from './inference_executor.js';
+import { startJobSpan } from './job_trace.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
-const SESSION_CLOSE_TIMEOUT = 60 * 1000;
+const EXIT_REASON = {
+  roomDisconnected: 'room disconnected',
+  shutdownRequest: 'parent process shutdown',
+  jobCrashed: 'job crashed',
+} as const;
 
 const safeSend = (msg: IPCMessage): boolean => {
   try {
@@ -64,7 +89,9 @@ class InfClient implements InferenceExecutor {
           const fut = this.#requests[msg.value.requestId];
           delete this.#requests[msg.value.requestId];
           if (!fut) {
-            this.#logger.child({ resp: msg.value }).warn('received unexpected inference response');
+            this.#logger
+              .child({ 'lk.pii.response': msg.value })
+              .warn('received unexpected inference response');
             return;
           }
           fut.resolve(msg.value);
@@ -99,15 +126,20 @@ const startJob = (
   closeEvent: EventEmitter,
   logger: Logger,
   joinFuture: Future,
+  sessionEndTimeout: number,
+  onSessionEnd?: (ctx: JobContext) => unknown,
   onSimulationEnd?: (ctx: SimulationContext) => unknown,
 ): JobTask => {
   let connect = false;
   let shutdown = false;
+  // a shutdown the agent asked for (ctx.shutdown()), as opposed to the room dropping or the
+  // worker's request
+  let userInitiated = false;
 
   const room = new Room();
   room.on(RoomEvent.Disconnected, () => {
     if (!shutdown) {
-      closeEvent.emit('close', false);
+      closeEvent.emit('close', EXIT_REASON.roomDisconnected);
     }
   });
 
@@ -116,13 +148,37 @@ const startJob = (
   };
   const onShutdown = (reason: string) => {
     shutdown = true;
-    closeEvent.emit('close', true, reason);
+    userInitiated = true;
+    closeEvent.emit('close', reason || 'user requested');
   };
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
   ctx._simulationEndFnc = onSimulationEnd;
 
   const task = (async () => {
+    let closeReason = '';
+    // listen before the first await: a shutdown request that lands while the trace pipeline
+    // is being prepared would otherwise emit `close` to nobody, and the job would never end
+    const closePromise = once(closeEvent, 'close').then((close) => {
+      logger.debug('shutting down');
+      shutdown = true;
+      closeReason = String(close[0] ?? '');
+      safeSend({
+        case: 'exiting',
+        value: { reason: close[0] },
+      });
+    });
+
+    // before the first span: without a provider the job's root would not record
+    await ctx._prepareTelemetry();
+
+    // the job's root span, from the availability request to the end of shutdown; the
+    // entrypoint returning is an event on it. A close that arrived while the pipeline was
+    // being prepared skips the entrypoint (below), so its start is not a stage of this job
+    const jobSpan = startJobSpan(ctx, shutdown ? null : Date.now());
+    const jobSpanContext = trace.setSpan(otelContext.active(), jobSpan);
+    ctx._jobSpanContext = jobSpanContext;
+
     const unconnectedTimeout = setTimeout(() => {
       if (!(connect || shutdown)) {
         logger.warn(
@@ -133,85 +189,92 @@ const startJob = (
     }, 10000);
 
     try {
-      const closePromise = once(closeEvent, 'close').then((close) => {
-        logger.debug('shutting down');
-        shutdown = true;
-        safeSend({ case: 'exiting', value: { reason: close[1] } });
-      });
-
-      // Run the job function within the AsyncLocalStorage context
-      await runWithJobContextAsync(ctx, async () => {
-        const { tracer, traceTypes } = await import('../telemetry/index.js');
-        return tracer.startActiveSpan(
-          async (span) => {
-            span.setAttribute(traceTypes.ATTR_JOB_ID, info.job.id);
-            span.setAttribute(traceTypes.ATTR_AGENT_NAME, info.job.agentName);
-            span.setAttribute(traceTypes.ATTR_ROOM_NAME, info.job.room?.name ?? '');
-            return func(ctx);
-          },
-          { name: 'job_entrypoint' },
-        );
-      })
-        .then(async () => {
-          if (!shutdown) {
-            await closePromise;
-          }
-        })
-        .finally(async () => {
-          clearTimeout(unconnectedTimeout);
-        });
-    } catch (error) {
-      logger.error({ error }, 'error in entry function');
-      shutdown = true;
-      safeSend({
-        case: 'exiting',
-        value: { reason: error instanceof Error ? error.message : String(error) },
-      });
-    }
-
-    // Close the primary agent session if it exists
-    if (ctx._primaryAgentSession) {
-      const sessionClosePromise = ctx._primaryAgentSession.close();
       try {
-        await waitUntilTimeout(sessionClosePromise, SESSION_CLOSE_TIMEOUT);
-      } catch (error) {
-        if (!(error instanceof IdleTimeoutError)) {
-          throw error;
-        }
+        let entrypointPromise: Promise<void>;
+        if (shutdown) {
+          // the close arrived while the pipeline was being prepared: the job is already
+          // ending, so the entrypoint is not started (python starts it and cancels it at once;
+          // a running async function cannot be cancelled here)
+          logger.debug('shutdown requested before the entrypoint started, skipping it');
+          jobSpan.addEvent('entrypoint_skipped');
+          entrypointPromise = Promise.resolve();
+        } else {
+          // Run the job function within the AsyncLocalStorage context, under the job's span:
+          // agent_session and everything else the entrypoint starts nests below it
+          entrypointPromise = runWithJobContextAsync(ctx, () =>
+            otelContext.with(jobSpanContext, async () => {
+              // the loop monitor's heartbeat predates the job: give its reports this context
+              getMonitor()?.setReportContext(otelContext.active(), (fn) =>
+                runWithJobContext(ctx, fn),
+              );
+              try {
+                await func(ctx);
+              } catch (error) {
+                recordException(jobSpan, error instanceof Error ? error : new Error(String(error)));
+                throw error;
+              }
+              jobSpan.addEvent('entrypoint_returned');
+            }),
+          );
 
-        void sessionClosePromise.catch((sessionCloseError) =>
-          logger.debug(
-            { error: sessionCloseError },
-            'AgentSession.close() rejected after shutdown timeout',
-          ),
-        );
-        logger.error(
-          { timeout: SESSION_CLOSE_TIMEOUT },
-          'AgentSession.close() timed out; proceeding with shutdown so registered callbacks still run.',
-        );
+          void entrypointPromise.catch(() => {
+            closeEvent.emit('close', EXIT_REASON.jobCrashed);
+          });
+        }
+        await closePromise;
+        await waitForEntrypointShutdown(entrypointPromise, logger);
+      } finally {
+        clearTimeout(unconnectedTimeout);
+      }
+
+      // the shutdown sequence as one bar under the job: session close, the user's
+      // onSessionEnd, the report upload, the room disconnect, and the shutdown callbacks
+      await runWithJobContextAsync(ctx, () =>
+        tracer.startActiveSpan(
+          async () => {
+            try {
+              await finalizeSession(ctx, onSessionEnd, sessionEndTimeout, logger);
+            } finally {
+              safeSend({ case: 'shuttingDown', value: undefined });
+            }
+
+            await tracer.startActiveSpan(
+              async (span) => {
+                try {
+                  await room.disconnect();
+                  logger.debug('disconnected from room');
+                } catch (error) {
+                  recordException(span, error instanceof Error ? error : new Error(String(error)));
+                  logger.error({ error }, 'error while disconnecting room');
+                }
+              },
+              { name: 'room_disconnect' },
+            );
+
+            await runShutdownCallbacks(ctx.shutdownCallbacks, logger);
+          },
+          {
+            name: 'job_shutdown',
+            context: jobSpanContext,
+            attributes: {
+              [traceTypes.ATTR_SHUTDOWN_REASON]: closeReason,
+              [traceTypes.ATTR_SHUTDOWN_USER_INITIATED]: userInitiated,
+            },
+          },
+        ),
+      );
+    } finally {
+      // whatever happened above, the job ends: root span, per-job telemetry state, flushes
+      jobSpan.end();
+      ctx._onCleanup();
+      try {
+        await flushJobTraces(logger);
+        await flushJobLogs(logger);
+      } finally {
+        safeSend({ case: 'done', value: undefined });
+        joinFuture.resolve();
       }
     }
-
-    // Generate and save/upload session report
-    try {
-      await ctx._onSessionEnd();
-    } catch (error) {
-      logger.error({ error }, 'error in ctx._onSessionEnd');
-    }
-
-    await room.disconnect();
-    logger.debug('disconnected from room');
-
-    const shutdownTasks = [];
-    for (const callback of ctx.shutdownCallbacks) {
-      shutdownTasks.push(callback());
-    }
-    await ThrowsPromise.all(shutdownTasks).catch((error) =>
-      logger.error({ error }, 'error while shutting down the job'),
-    );
-
-    safeSend({ case: 'done', value: undefined });
-    joinFuture.resolve();
   })();
 
   return { ctx, task };
@@ -221,10 +284,6 @@ const startJob = (
   if (process.send) {
     const join = new Future();
 
-    // process.argv:
-    //   [0] `node'
-    //   [1] import.meta.filename
-    //   [2] import.meta.filename of function containing entry file
     const moduleFile = process.argv[2];
     const agent: Agent = await import(pathToFileURL(moduleFile!).pathname).then((module) => {
       // Handle both ESM (module.default is the agent) and CJS (module.default.default is the agent)
@@ -253,23 +312,28 @@ const startJob = (
       logger.debug('SIGTERM received in job proc');
     });
 
-    await once(process, 'message').then(([msg]: IPCMessage[]) => {
+    const sessionEndTimeout = await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;
       if (msg.case !== 'initializeRequest') {
         throw new Error('first message must be InitializeRequest');
       }
       initializeLogger(msg.value.loggerOptions);
+      return validateSessionEndTimeout(msg.value.sessionEndTimeout ?? Number.NaN);
     });
     const proc = new JobProcess();
     let logger = log().child({ pid: proc.pid });
 
     process.on('unhandledRejection', (reason) => {
-      logger.debug({ error: reason }, 'Unhandled promise rejection');
+      logger.debug({ error: reason }, 'Unhandled promise rejection in job process');
     });
 
     logger.debug('initializing job runner');
+    // the framework's warm-up, ahead of the user's: one-time work that would otherwise stall
+    // the loop at session start
+    preload();
     await agent.prewarm(proc);
     logger.debug('job runner initialized');
+    const loopMonitor = startMonitoring({ name: 'job' });
     safeSend({ case: 'initializeResponse', value: undefined });
 
     let job: JobTask | undefined = undefined;
@@ -295,7 +359,11 @@ const startJob = (
             throw new Error('job task already running');
           }
 
-          logger = logger.child({ jobID: msg.value.runningJob.job.id });
+          logger = logger.child({
+            jobID: msg.value.runningJob.job.id,
+            room_id: msg.value.runningJob.job.room?.sid,
+          });
+          setLoggerState(logger, loggerOptions()!);
 
           job = startJob(
             proc,
@@ -304,18 +372,20 @@ const startJob = (
             closeEvent,
             logger,
             join,
+            sessionEndTimeout,
+            agent.onSessionEnd,
             agent.onSimulationEnd,
           );
           logger.debug('job started');
           break;
         }
         case 'shutdownRequest': {
+          safeSend({ case: 'shutdownRequestAck', value: undefined });
           if (!job) {
+            safeSend({ case: 'shuttingDown', value: undefined });
             join.resolve();
           }
-          closeEvent.emit('close', 'shutdownRequest');
-          clearTimeout(orphanedTimeout);
-          process.off('message', messageHandler);
+          closeEvent.emit('close', msg.value?.reason || EXIT_REASON.shutdownRequest);
         }
       }
     };
@@ -323,6 +393,12 @@ const startJob = (
     process.on('message', messageHandler);
 
     await join.await;
+    // stop the monitor first so a stall from the shutdown callbacks is recorded, then export:
+    // the periodic reader gets no further turn before process.exit() below
+    if (loopMonitor) stopMonitoring(loopMonitor);
+    await flushJobMetrics(logger);
+    clearTimeout(orphanedTimeout);
+    process.off('message', messageHandler);
 
     // Dispose native FFI resources (Rust FfiServer, tokio runtimes, libwebrtc)
     // before process.exit() to prevent libc++abi mutex crash during teardown.

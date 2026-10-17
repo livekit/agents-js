@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, tts } from '@livekit/agents';
+import {
+  type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
+  DEFAULT_API_CONNECT_OPTIONS,
+  tts,
+} from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts as testTts } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
@@ -25,6 +31,7 @@ if (hasCartesiaConfig) {
 // A single 24 kHz mono s16le frame's worth of silence, base64-encoded the way
 // Cartesia sends audio chunks.
 const CHUNK_BASE64 = Buffer.alloc(4800).toString('base64');
+const CURRENT_CHUNK = Buffer.alloc(4800, 1);
 
 async function startWebSocketServer() {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -110,6 +117,61 @@ async function synthesizeTurn(
 }
 
 describe('Cartesia streaming pool', () => {
+  it('redacts API keys from WebSocket handshake errors', async () => {
+    const secret = 'cartesia-secret-api-key-do-not-log';
+    const wss = new WebSocketServer({
+      host: '127.0.0.1',
+      port: 0,
+      verifyClient: (_info, done) => done(false, 401, 'Unauthorized'),
+    });
+    await once(wss, 'listening');
+    const address = wss.address() as AddressInfo;
+    const cartesia = new TTS({ apiKey: secret, baseUrl: `http://127.0.0.1:${address.port}` });
+    const errorEvent = once(cartesia, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+
+    try {
+      const stream = cartesia.stream({
+        connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 },
+      });
+      stream.pushText('test');
+      stream.endInput();
+
+      const [{ error }] = await errorEvent;
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect((error as APIStatusError).statusCode).toBe(401);
+      expect(error.message).not.toContain(secret);
+      expect(error.toString()).not.toContain(secret);
+      stream.close();
+    } finally {
+      await cartesia.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('does not retain generic WebSocket connection errors', async () => {
+    const secret = 'cartesia-secret-api-key-do-not-log';
+    const cartesia = new TTS({ apiKey: secret, baseUrl: `http://[${secret}` });
+    const errorEvent = once(cartesia, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+
+    try {
+      const stream = cartesia.stream({
+        connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 },
+      });
+      stream.pushText('test');
+      stream.endInput();
+
+      const [{ error }] = await errorEvent;
+      expect(error).toBeInstanceOf(APIConnectionError);
+      expect(error.message).toBe('SyntaxError');
+      expect(error.message).not.toContain(secret);
+      expect(error.toString()).not.toContain(secret);
+      expect((error as Error & { cause?: unknown }).cause).toBeUndefined();
+      stream.close();
+    } finally {
+      await cartesia.close();
+    }
+  });
+
   it('reuses one websocket across sequential turns', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     const server = serveCartesia(wss);
@@ -119,6 +181,62 @@ describe('Cartesia streaming pool', () => {
       expect(await synthesizeTurn(cartesia, 'first turn.')).not.toHaveLength(0);
       expect(await synthesizeTurn(cartesia, 'second turn.')).not.toHaveLength(0);
       expect(server.connectionCount()).toBe(1);
+    } finally {
+      await cartesia.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('ignores stale frames from a previous context on a pooled websocket', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    serveCartesia(wss, (ws, contextId) => {
+      ws.send(
+        JSON.stringify({
+          type: 'chunk',
+          data: CHUNK_BASE64,
+          done: false,
+          status_code: 200,
+          step_time: 0,
+          context_id: 'stale-context-id',
+        }),
+      );
+      ws.send(
+        JSON.stringify({
+          type: 'done',
+          done: true,
+          status_code: 200,
+          context_id: 'stale-context-id',
+        }),
+      );
+      ws.send(
+        JSON.stringify({
+          type: 'chunk',
+          data: CURRENT_CHUNK.toString('base64'),
+          done: false,
+          status_code: 200,
+          step_time: 0,
+          context_id: contextId,
+        }),
+      );
+      ws.send(
+        JSON.stringify({ type: 'done', done: true, status_code: 200, context_id: contextId }),
+      );
+      return false;
+    });
+
+    const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const events = await synthesizeTurn(cartesia, 'current turn.');
+      expect(events).not.toHaveLength(0);
+      expect(
+        events.every((event) =>
+          Buffer.from(
+            event.frame.data.buffer,
+            event.frame.data.byteOffset,
+            event.frame.data.byteLength,
+          ).equals(CURRENT_CHUNK),
+        ),
+      ).toBe(true);
     } finally {
       await cartesia.close();
       await closeWebSocketServer(wss);

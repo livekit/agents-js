@@ -3,11 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Room } from '@livekit/rtc-node';
 import { TrackKind } from '@livekit/rtc-node';
-import type { VideoGrant } from 'livekit-server-sdk';
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { randomUUID } from 'node:crypto';
 import { APIConnectionError, APIError, APIStatusError, APITimeoutError } from '../_exceptions.js';
-import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../constants.js';
 import { getJobContext } from '../job.js';
 import { log } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
@@ -24,7 +22,6 @@ import {
 } from './utils.js';
 
 const DEFAULT_SAMPLE_RATE = 16000;
-const ATTRIBUTE_AVATAR_PROVIDER = 'lk.avatar_provider';
 
 export interface LemonSliceOptions {
   /** Appearance source; mutually exclusive with a model-string agent id. */
@@ -71,9 +68,9 @@ export interface AvatarSessionOptions {
 export interface AvatarSessionStartOptions {
   /** LiveKit server URL. Falls back to LIVEKIT_URL. */
   livekitUrl?: string;
-  /** LiveKit API key for minting the avatar worker room token. Falls back to LIVEKIT_API_KEY. */
+  /** LiveKit API key for resolving room SID when needed. Falls back to LIVEKIT_API_KEY. */
   livekitApiKey?: string;
-  /** LiveKit API secret for minting the avatar worker room token. Falls back to LIVEKIT_API_SECRET. */
+  /** LiveKit API secret for resolving room SID when needed. Falls back to LIVEKIT_API_SECRET. */
   livekitApiSecret?: string;
 }
 
@@ -81,6 +78,8 @@ type CreateSessionResponse = {
   session_id?: string;
   provider_session_id?: string;
   terminate_token?: string;
+  /** The identity the gateway minted the worker token for; authoritative over the local value. */
+  avatar_identity?: string;
   sample_rate?: number;
 };
 
@@ -99,9 +98,9 @@ export function parseAvatarModel(model: string): [provider: string, avatarId: st
 /**
  * An avatar session provisioned through LiveKit Inference.
  *
- * Unlike BYOK avatar plugins, this calls the LiveKit Inference gateway with LiveKit
- * credentials; the gateway creates the provider session with LiveKit's wholesale key.
- * Media and RPC still flow in-room over DataStream, exactly as the BYOK plugins do.
+ * Unlike BYOK avatar plugins, this calls the LiveKit Inference gateway with gateway
+ * credentials and lets the gateway mint the avatar worker's room token. Media and RPC
+ * still flow in-room over DataStream, exactly as the BYOK plugins do.
  */
 export class AvatarSession extends BaseAvatarSession {
   private readonly logger = log();
@@ -199,11 +198,9 @@ export class AvatarSession extends BaseAvatarSession {
       await super.start(agentSession, room);
 
       const livekitUrl = options.livekitUrl ?? process.env.LIVEKIT_URL;
-      const livekitApiKey = options.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
-      const livekitApiSecret = options.livekitApiSecret ?? process.env.LIVEKIT_API_SECRET;
-      if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
+      if (!livekitUrl) {
         throw new Error(
-          'livekitUrl, livekitApiKey, and livekitApiSecret must be set by arguments or the LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET environment variables',
+          'livekitUrl must be set by argument or the LIVEKIT_URL environment variable',
         );
       }
       const jobCtx = getJobContext(false);
@@ -222,11 +219,10 @@ export class AvatarSession extends BaseAvatarSession {
           room.localParticipant?.identity ??
           jobCtx.info.acceptArguments.identity;
         roomSid =
-          jobCtx.job.room?.sid ||
-          (await resolveRoomSid(room, roomName, livekitUrl, livekitApiKey, livekitApiSecret));
+          jobCtx.job.room?.sid || (await resolveRoomSid(room, roomName, livekitUrl, options));
       } else if (room.isConnected) {
         localParticipantIdentity = room.localParticipant?.identity;
-        roomSid = await resolveRoomSid(room, roomName, livekitUrl, livekitApiKey, livekitApiSecret);
+        roomSid = await resolveRoomSid(room, roomName, livekitUrl, options);
       } else {
         throw new Error(
           'AvatarSession.start() needs a connected room or an agent job context; connect the room before calling start()',
@@ -239,18 +235,10 @@ export class AvatarSession extends BaseAvatarSession {
         throw new Error('failed to get room sid');
       }
 
-      const workerToken = await this.createWorkerToken({
-        livekitApiKey,
-        livekitApiSecret,
-        roomName,
-        localParticipantIdentity,
-      });
-
       const createResp = await this._createSession({
         roomName,
         roomSid,
         livekitUrl,
-        workerToken,
         agentIdentity: localParticipantIdentity,
       });
       sessionCreated = true;
@@ -273,6 +261,24 @@ export class AvatarSession extends BaseAvatarSession {
             providerSessionId: this._providerSessionId,
           },
           'avatar gateway create response had no terminate_token; this session cannot be explicitly terminated and will bill until its provider idle timeout',
+        );
+      }
+
+      // The worker joins under the identity in the minted token, so a mismatch means every
+      // identity-keyed operation here (RPC destination, join wait, removeParticipant cleanup)
+      // is addressing a participant that will never exist. Older gateways omit the field.
+      if (
+        createResp.avatar_identity &&
+        createResp.avatar_identity !== this.avatarParticipantIdentity
+      ) {
+        this.logger.warn(
+          {
+            provider: this.providerName,
+            sessionId: this._sessionId,
+            requestedIdentity: this.avatarParticipantIdentity,
+            mintedIdentity: createResp.avatar_identity,
+          },
+          'avatar gateway minted the worker token for a different identity than requested; the avatar participant will join as the minted identity and this session will not reach it',
         );
       }
 
@@ -346,22 +352,23 @@ export class AvatarSession extends BaseAvatarSession {
     roomName,
     roomSid,
     livekitUrl,
-    workerToken,
     agentIdentity,
   }: {
     roomName: string;
     roomSid: string;
     livekitUrl: string;
-    workerToken: string;
     agentIdentity: string;
   }): Promise<CreateSessionResponse> {
+    // roomName / avatar identity / agent identity are the inputs the gateway mints the
+    // worker room token from: roomJoin is scoped to roomName, the worker joins as the
+    // avatar identity/name, and lk.publish_on_behalf is set to agentIdentity.
     const payload: Record<string, unknown> = {
       provider: this.providerName,
       livekit_url: livekitUrl,
-      livekit_token: workerToken,
       room_name: roomName,
       room_sid: roomSid,
       avatar_identity: this.avatarParticipantIdentity,
+      avatar_name: this.avatarParticipantName,
       agent_identity: agentIdentity,
     };
     if (this.avatarId) {
@@ -490,30 +497,6 @@ export class AvatarSession extends BaseAvatarSession {
     }
     return response;
   }
-
-  private async createWorkerToken({
-    livekitApiKey,
-    livekitApiSecret,
-    roomName,
-    localParticipantIdentity,
-  }: {
-    livekitApiKey: string;
-    livekitApiSecret: string;
-    roomName: string;
-    localParticipantIdentity: string;
-  }): Promise<string> {
-    const token = new AccessToken(livekitApiKey, livekitApiSecret, {
-      identity: this.avatarParticipantIdentity,
-      name: this.avatarParticipantName,
-    });
-    token.kind = 'agent';
-    token.addGrant({ roomJoin: true, room: roomName } as VideoGrant);
-    token.attributes = {
-      [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity,
-      [ATTRIBUTE_AVATAR_PROVIDER]: this.providerName,
-    };
-    return await token.toJwt();
-  }
 }
 
 function toAPIError(error: unknown, timeoutMessage: string): APIError {
@@ -553,14 +536,21 @@ async function resolveRoomSid(
   room: Room,
   roomName: string,
   livekitUrl: string,
-  livekitApiKey: string,
-  livekitApiSecret: string,
+  options: AvatarSessionStartOptions,
 ): Promise<string | undefined> {
   // `@livekit/rtc-node` `Room` exposes `getSid()` (not a `sid` property); for a connected
   // room it resolves to the server-assigned sid without any extra RPC. Fall back to a
   // RoomService lookup only if it comes back empty (e.g. sid not yet assigned).
   const sid = await room.getSid();
   if (sid) return sid;
+
+  const livekitApiKey = options.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
+  const livekitApiSecret = options.livekitApiSecret ?? process.env.LIVEKIT_API_SECRET;
+  if (!livekitApiKey || !livekitApiSecret) {
+    throw new Error(
+      'livekitApiKey and livekitApiSecret must be set by arguments or the LIVEKIT_API_KEY / LIVEKIT_API_SECRET environment variables to resolve room sid',
+    );
+  }
 
   const client = new RoomServiceClient(livekitUrl, livekitApiKey, livekitApiSecret);
   const rooms = await client.listRooms([roomName]);

@@ -22,7 +22,7 @@ export interface LLMOptions {
 }
 
 const defaultLLMOptions: LLMOptions = {
-  model: 'llama-4-scout-17b-16e-instruct',
+  model: 'gpt-oss-120b',
   baseURL: 'https://api.cerebras.ai/v1',
   gzipCompression: true,
   msgpackEncoding: true,
