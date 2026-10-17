@@ -33,11 +33,13 @@ import {
 import { type LanguageCode, asLanguageCode } from '../language.js';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import {
   AudioRecognition,
   type AudioRecognitionOptions,
+  type EndOfTurnInfo,
   type RecognitionHooks,
   type _TurnDetector,
 } from './audio_recognition.js';
@@ -815,5 +817,78 @@ describe('TestVadMinSilenceRequirement', () => {
     // Aborted before adopting the detector or opening a stream.
     expect(internals.turnDetectorStream).toBeUndefined();
     expect((detector.stream as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+  });
+});
+
+describe('AudioRecognition — STT final after a committed turn', () => {
+  function sttEvent(type: SpeechEventType, text = ''): SpeechEvent {
+    return {
+      type,
+      alternatives: text
+        ? [{ language: asLanguageCode('en'), text, startTime: 0, endTime: 0, confidence: 1 }]
+        : [],
+    };
+  }
+
+  it('commits a final that arrives after END_OF_SPEECH committed the previous utterance', async () => {
+    // https://github.com/livekit/agents/issues/7699
+    const { recognition, hooks } = makeRecognition({
+      turnDetectionMode: 'stt',
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
+    });
+    const internals = recognition as unknown as {
+      stt: unknown;
+      onSTTEvent: (ev: SpeechEvent) => Promise<void>;
+    };
+    // STT turn detection always has an STT attached; it gates EOU on an empty transcript
+    internals.stt = vi.fn();
+    const turns: string[] = [];
+    hooks.onEndOfTurn = vi.fn(async (info: EndOfTurnInfo) => {
+      turns.push(info.newTranscript);
+      return true;
+    });
+
+    await internals.onSTTEvent(sttEvent(SpeechEventType.START_OF_SPEECH));
+    await internals.onSTTEvent(sttEvent(SpeechEventType.END_OF_SPEECH));
+    await internals.onSTTEvent(sttEvent(SpeechEventType.START_OF_SPEECH));
+    await internals.onSTTEvent(sttEvent(SpeechEventType.FINAL_TRANSCRIPT, 'I need the OTP.'));
+    await internals.onSTTEvent(sttEvent(SpeechEventType.END_OF_SPEECH));
+    await recognition.waitForEndOfTurnTask();
+    expect(turns).toEqual(['I need the OTP.']);
+
+    await internals.onSTTEvent(sttEvent(SpeechEventType.FINAL_TRANSCRIPT, 'For the guard.'));
+    await recognition.waitForEndOfTurnTask();
+    expect(turns).toEqual(['I need the OTP.', 'For the guard.']);
+  });
+
+  it('does not split a turn when a local VAD goes quiet before the STT END_OF_SPEECH', async () => {
+    const { recognition, hooks } = makeRecognition({
+      turnDetectionMode: 'stt',
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
+    });
+    const internals = recognition as unknown as {
+      stt: unknown;
+      speaking: boolean;
+      onSTTEvent: (ev: SpeechEvent) => Promise<void>;
+    };
+    internals.stt = vi.fn();
+    const turns: string[] = [];
+    hooks.onEndOfTurn = vi.fn(async (info: EndOfTurnInfo) => {
+      turns.push(info.newTranscript);
+      return true;
+    });
+
+    await internals.onSTTEvent(sttEvent(SpeechEventType.START_OF_SPEECH));
+    internals.speaking = false; // VAD end of speech while the STT still hears the utterance
+    await internals.onSTTEvent(sttEvent(SpeechEventType.FINAL_TRANSCRIPT, 'first half'));
+    await internals.onSTTEvent(sttEvent(SpeechEventType.FINAL_TRANSCRIPT, 'second half'));
+    await recognition.waitForEndOfTurnTask();
+    expect(turns).toEqual([]);
+
+    await internals.onSTTEvent(sttEvent(SpeechEventType.END_OF_SPEECH));
+    await recognition.waitForEndOfTurnTask();
+    expect(turns).toEqual(['first half second half']);
   });
 });
