@@ -712,6 +712,10 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
   /** @internal */
   _oldAgent?: Agent;
 
+  // set while awaited: complete() watches it on the active run, run() resolves it once the
+  // parent's task is watched again
+  private resumeGuard?: { future: Future<void>; task: Task<void>; session: AgentSession };
+
   #logger = log();
 
   static create<ResultT = unknown, UserData = unknown>(
@@ -745,6 +749,15 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       this.future.reject(result);
     } else {
       this.future.resolve(result);
+    }
+
+    // the run checks its handles as soon as the completing task returns; the awaiter that
+    // re-watches the parent only resumes a tick later
+    if (this.resumeGuard) {
+      const runState = this.resumeGuard.session._globalRunState;
+      if (runState && !runState.done()) {
+        runState._watchHandle(this.resumeGuard.task);
+      }
     }
 
     const speechHandle = speechHandleStorage.getStore();
@@ -796,6 +809,21 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     if (onEnterTask && !onEnterTask.done && onEnterTask !== currentTask) {
       blockedTasks.push(onEnterTask);
     }
+
+    // armed before onEnter can run: a task completing from its own onEnter does so while
+    // this awaiter is still parked on it
+    const resumeGuard = new Future<void>();
+    this.resumeGuard = {
+      future: resumeGuard,
+      task: Task.from(
+        async () => {
+          await resumeGuard.await;
+        },
+        undefined,
+        'AgentTask_resumeGuard',
+      ),
+      session,
+    };
 
     this.inactive.clear();
     try {
@@ -877,10 +905,11 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
             // The active RunResult may have changed while the task waited for user input.
             runState = session._globalRunState;
             if (runState && !runState.done()) {
-              for (const handle of suspendedHandles) {
+              for (const handle of [...suspendedHandles, currentTask as Task<void>]) {
                 runState._watchHandle(handle);
               }
             }
+            if (!resumeGuard.done) resumeGuard.resolve();
 
             if (pendingOnEnterTask) {
               try {
@@ -920,6 +949,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
         },
       });
     } finally {
+      if (!resumeGuard.done) resumeGuard.resolve();
       this.inactive.set();
     }
   }
