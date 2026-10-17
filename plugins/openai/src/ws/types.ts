@@ -42,13 +42,14 @@ export const wsFunctionCallItemSchema = z.object({
   arguments: z.string(),
 });
 
-export const wsOutputItemSchema = z.discriminatedUnion('type', [
+export const wsOutputItemSchema = z.union([
   wsFunctionCallItemSchema,
   z.object({ type: z.literal('message'), phase: z.string().optional() }).passthrough(),
   z.object({ type: z.literal('reasoning') }).passthrough(),
   z.object({ type: z.literal('file') }).passthrough(),
   z.object({ type: z.literal('computer_call') }).passthrough(),
   z.object({ type: z.literal('web_search_call') }).passthrough(),
+  z.object({ type: z.string() }).passthrough(),
 ]);
 
 export const wsOutputItemDoneEventSchema = z.object({
@@ -67,6 +68,7 @@ export const wsResponseCompletedEventSchema = z.object({
     .object({
       id: z.string(),
       service_tier: z.string().nullable().optional(),
+      output: z.array(z.object({ type: z.string() }).passthrough()).optional(),
       usage: z
         .object({
           output_tokens: z.number(),
