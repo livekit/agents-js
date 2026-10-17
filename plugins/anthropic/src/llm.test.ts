@@ -349,6 +349,82 @@ describe('Anthropic LLM', () => {
     expect(messages[2].content[0].type).toBe('tool_result');
   });
 
+  it('drops a function_call whose output has not arrived yet', () => {
+    const anthropicLlm = new LLM({ apiKey: 'dummy', model: 'claude-3-5-sonnet-20241022' });
+
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'user', content: 'Book me tomorrow at 10' });
+    chatCtx.items.push(
+      new llm.FunctionCall({
+        callId: 'call_in_flight',
+        name: 'check_availability',
+        args: '{"day":"tomorrow"}',
+      }),
+    );
+    chatCtx.addMessage({ role: 'user', content: 'Actually, make it 11' });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { messages } = (anthropicLlm as any)._buildAnthropicContext(chatCtx);
+
+    expect(JSON.stringify(messages)).not.toContain('tool_use');
+    expect(messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Book me tomorrow at 10' },
+          { type: 'text', text: 'Actually, make it 11' },
+        ],
+      },
+    ]);
+  });
+
+  it('drops a function_call_output whose call is not in the context', () => {
+    const anthropicLlm = new LLM({ apiKey: 'dummy', model: 'claude-3-5-sonnet-20241022' });
+
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'user', content: 'Hi' });
+    chatCtx.items.push(
+      new llm.FunctionCallOutput({
+        callId: 'call_truncated',
+        name: 'get_weather',
+        output: '{"temp": 20}',
+        isError: false,
+      }),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { messages } = (anthropicLlm as any)._buildAnthropicContext(chatCtx);
+
+    expect(JSON.stringify(messages)).not.toContain('tool_result');
+  });
+
+  it('puts tool_result blocks first when a user message lands before the output', () => {
+    const anthropicLlm = new LLM({ apiKey: 'dummy', model: 'claude-3-5-sonnet-20241022' });
+
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'user', content: 'What is the weather?' });
+    chatCtx.items.push(new llm.FunctionCall({ callId: 'call_1', name: 'get_weather', args: '{}' }));
+    chatCtx.addMessage({ role: 'user', content: 'In London' });
+    chatCtx.items.push(
+      new llm.FunctionCallOutput({
+        callId: 'call_1',
+        name: 'get_weather',
+        output: '{"temp": 20}',
+        isError: false,
+      }),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { messages } = (anthropicLlm as any)._buildAnthropicContext(chatCtx);
+
+    expect(messages[1].content[0]).toMatchObject({ type: 'tool_use', id: 'call_1' });
+    expect(messages[2].role).toBe('user');
+    expect(messages[2].content.map((block: { type: string }) => block.type)).toEqual([
+      'tool_result',
+      'text',
+    ]);
+  });
+
   it('creates a fresh stream on retry', async () => {
     let calls = 0;
     const client = {
