@@ -23,7 +23,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 }
 
 // @public
-export type Language = 'am' | 'om';
+export type Language = 'am' | 'om' | 'ti';
 
 // @public
 export class STT extends stt.STT {
