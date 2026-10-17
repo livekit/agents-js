@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { LiveServerContent, UsageMetadata } from '@google/genai';
 import { Behavior, FunctionResponseScheduling, ThinkingLevel } from '@google/genai';
-import { llm, log } from '@livekit/agents';
+import { AudioByteStream, llm, log } from '@livekit/agents';
+import { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
 import {
   RealtimeModel,
@@ -177,6 +178,146 @@ describe('Google Realtime thinking configuration', () => {
 
     expect(model.provider).toBe('Vertex AI');
     vi.unstubAllEnvs();
+  });
+});
+
+type AudioInputSessionInternals = {
+  options: { realtimeInputConfig: { automaticActivityDetection: { disabled: boolean } } };
+  bstream: AudioByteStream;
+  inUserActivity: boolean;
+  preActivityAudio: string[];
+  pendingToolCallIds: Set<string>;
+  pendingInterruptText: boolean;
+  currentGeneration?: { _done: boolean; outputText: string };
+  sendClientEvent: ReturnType<typeof vi.fn>;
+  pushAudio(frame: AudioFrame): void;
+  startUserActivity(): void;
+  commitAudio(): Promise<void>;
+  clearAudio(): Promise<void>;
+  interrupt(): Promise<void>;
+};
+
+// 50 ms at 16 kHz, the chunk size the session sends
+const CHUNK_SAMPLES = 800;
+
+function createAudioInputSession({
+  manualActivity,
+}: {
+  manualActivity: boolean;
+}): AudioInputSessionInternals {
+  const session = Object.create(RealtimeSession.prototype) as AudioInputSessionInternals;
+  session.options = {
+    realtimeInputConfig: { automaticActivityDetection: { disabled: manualActivity } },
+  };
+  session.bstream = new AudioByteStream(16000, 1, CHUNK_SAMPLES);
+  session.inUserActivity = false;
+  session.preActivityAudio = [];
+  session.pendingToolCallIds = new Set();
+  session.pendingInterruptText = false;
+  session.sendClientEvent = vi.fn();
+  return session;
+}
+
+function pushChunks(session: AudioInputSessionInternals, count: number): string[] {
+  const chunks: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const samples = new Int16Array(CHUNK_SAMPLES).fill(i + 1);
+    session.pushAudio(new AudioFrame(samples, 16000, 1, CHUNK_SAMPLES));
+    chunks.push(Buffer.from(samples.buffer).toString('base64'));
+  }
+  return chunks;
+}
+
+const activityStart = [{ type: 'realtime_input', value: { activityStart: {} } }];
+
+function audioEvent(data: string): [Record<string, unknown>] {
+  return [{ type: 'realtime_input', value: { audio: { mimeType: 'audio/pcm', data } } }];
+}
+
+describe('Google Realtime audio input', () => {
+  it('holds the last 3 s of audio outside a user activity', () => {
+    const session = createAudioInputSession({ manualActivity: true });
+
+    const chunks = pushChunks(session, 70);
+
+    expect(session.sendClientEvent).not.toHaveBeenCalled();
+    expect(session.preActivityAudio).toEqual(chunks.slice(-60));
+  });
+
+  it('opens a user activity with the last 1.5 s of held audio', () => {
+    const session = createAudioInputSession({ manualActivity: true });
+    const chunks = pushChunks(session, 40);
+
+    session.startUserActivity();
+
+    expect(session.sendClientEvent.mock.calls).toEqual([
+      activityStart,
+      ...chunks.slice(-30).map(audioEvent),
+    ]);
+    expect(session.preActivityAudio).toEqual([]);
+
+    session.sendClientEvent.mockClear();
+    const [next] = pushChunks(session, 1);
+    expect(session.sendClientEvent.mock.calls).toEqual([audioEvent(next!)]);
+  });
+
+  it('sends a turn too short to open an activity whole on commit', async () => {
+    const session = createAudioInputSession({ manualActivity: true });
+    const chunks = pushChunks(session, 5);
+
+    await session.commitAudio();
+
+    expect(session.sendClientEvent.mock.calls).toEqual([activityStart, ...chunks.map(audioEvent)]);
+    expect(session.inUserActivity).toBe(true);
+  });
+
+  it('sends nothing on commit when no audio is held', async () => {
+    const session = createAudioInputSession({ manualActivity: true });
+
+    await session.commitAudio();
+
+    expect(session.sendClientEvent).not.toHaveBeenCalled();
+    expect(session.inUserActivity).toBe(false);
+  });
+
+  it('drops held audio on clearAudio', async () => {
+    const session = createAudioInputSession({ manualActivity: true });
+    pushChunks(session, 5);
+
+    await session.clearAudio();
+    await session.commitAudio();
+
+    expect(session.sendClientEvent).not.toHaveBeenCalled();
+  });
+
+  it('opens no user activity on interrupt when no reply is running', async () => {
+    const session = createAudioInputSession({ manualActivity: true });
+    pushChunks(session, 5);
+
+    await session.interrupt();
+
+    expect(session.sendClientEvent).not.toHaveBeenCalled();
+    expect(session.inUserActivity).toBe(false);
+  });
+
+  it('opens a user activity without held audio on interrupt during a reply', async () => {
+    const session = createAudioInputSession({ manualActivity: true });
+    session.currentGeneration = { _done: false, outputText: '' };
+    pushChunks(session, 5);
+
+    await session.interrupt();
+
+    expect(session.sendClientEvent.mock.calls).toEqual([activityStart]);
+    expect(session.preActivityAudio).toEqual([]);
+  });
+
+  it('sends audio right away with automatic activity detection', () => {
+    const session = createAudioInputSession({ manualActivity: false });
+
+    const chunks = pushChunks(session, 3);
+
+    expect(session.sendClientEvent.mock.calls).toEqual(chunks.map(audioEvent));
+    expect(session.preActivityAudio).toEqual([]);
   });
 });
 
