@@ -275,7 +275,7 @@ export class LLM extends llm.LLM {
         ) {
           if (!this.#forcedToolChoiceWarned) {
             log().warn(
-              { 'lk.pii.model': this.#opts.model },
+              { model: this.#opts.model },
               "anthropic llm: this model does not support a forced tool_choice; sending 'auto' instead",
             );
             this.#forcedToolChoiceWarned = true;

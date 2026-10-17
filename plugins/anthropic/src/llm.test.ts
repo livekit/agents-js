@@ -200,7 +200,7 @@ describe('Anthropic LLM', () => {
 
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
-      { 'lk.pii.model': 'claude-sonnet-5-5' },
+      { model: 'claude-sonnet-5-5' },
       expect.stringContaining('forced tool_choice'),
     );
     expect(requests.map((request) => request.tool_choice)).toEqual([
