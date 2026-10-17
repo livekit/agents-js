@@ -4,21 +4,42 @@
 
 ```ts
 
+import { AgentInference } from '@livekit/protocol';
+import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
+import type { Context } from '@opentelemetry/api';
+import { EventEmitter } from 'events';
+import { EventEmitter as EventEmitter_2 } from 'node:events';
+import { FrameProcessor } from '@livekit/rtc-node';
+import { JsonObject } from '@bufbuild/protobuf';
+import type { JSONSchema7 } from 'json-schema';
 import { Logger } from 'pino';
-import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import { NoiseCancellationOptions } from '@livekit/rtc-node';
+import OpenAI from 'openai';
+import { Participant } from '@livekit/rtc-node';
+import { ParticipantKind } from '@livekit/rtc-node';
+import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { ReasoningEffort } from 'openai/resources/shared';
+import { RemoteParticipant } from '@livekit/rtc-node';
+import { Room } from '@livekit/rtc-node';
+import type { Span } from '@opentelemetry/api';
+import type { TextStreamInfo } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { TrackPublishOptions } from '@livekit/rtc-node';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import { WebSocket as WebSocket_2 } from 'ws';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
+import { z } from 'zod';
 
-// Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "tts_2" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "ChunkedStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export class ChunkedStream extends tts.ChunkedStream {
+export class ChunkedStream extends tts_2.ChunkedStream {
     // Warning: (ae-forgotten-export) The symbol "ResolvedTTSOptions" needs to be exported by the entry point index.d.ts
     // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
     //
@@ -30,11 +51,87 @@ export class ChunkedStream extends tts.ChunkedStream {
     protected run(): Promise<void>;
 }
 
-// Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
+//
+// @public
+export class LLM extends llm.LLM {
+    constructor(opts?: Partial<LLMOptions>);
+    // Warning: (ae-forgotten-export) The symbol "inference" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    chat(input: {
+        chatCtx: llm.ChatContext;
+        toolCtx?: llm.ToolContextLike;
+        connOptions?: APIConnectOptions;
+        parallelToolCalls?: boolean;
+        toolChoice?: llm.ToolChoice;
+        responseFormat?: unknown;
+        extraKwargs?: Record<string, unknown>;
+    }): inference.LLMStream;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    updateOptions(opts: {
+        model?: LLMModels | string;
+    }): void;
+}
+
+// Warning: (ae-missing-release-tag) "LLMModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type LLMModels = 'gemma4' | 'sarvam-105b' | 'glm5.2' | 'sarvam-105b-conversations';
+
+// @public (undocumented)
+export interface LLMOptions {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    client?: OpenAI;
+    // (undocumented)
+    extraBody?: Record<string, unknown>;
+    // (undocumented)
+    extraHeaders?: Record<string, string>;
+    // (undocumented)
+    frequencyPenalty?: number;
+    // (undocumented)
+    maxTokens?: number;
+    // (undocumented)
+    model: LLMModels | string;
+    // (undocumented)
+    n?: number;
+    // (undocumented)
+    presencePenalty?: number;
+    // (undocumented)
+    reasoningEffort?: ReasoningEffort;
+    // (undocumented)
+    seed?: number;
+    // (undocumented)
+    stop?: string | string[];
+    // (undocumented)
+    temperature?: number;
+    // (undocumented)
+    timeoutMs?: number;
+    // (undocumented)
+    toolChoice?: llm.ToolChoice;
+    // (undocumented)
+    topP?: number;
+    // (undocumented)
+    user?: string;
+    // (undocumented)
+    wikiGrounding?: boolean;
+}
+
+// Warning: (ae-forgotten-export) The symbol "stt_2" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export class SpeechStream extends stt.SpeechStream {
+export class SpeechStream extends stt_2.SpeechStream {
     // Warning: (ae-forgotten-export) The symbol "ResolvedSTTOptions" needs to be exported by the entry point index.d.ts
     constructor(sttInstance: STT, opts: ResolvedSTTOptions, connOptions?: APIConnectOptions);
     // (undocumented)
@@ -48,14 +145,14 @@ export class SpeechStream extends stt.SpeechStream {
 // Warning: (ae-missing-release-tag) "STT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export class STT extends stt.STT {
+export class STT extends stt_2.STT {
     constructor(opts?: Partial<STTOptions>);
     // (undocumented)
     label: string;
     // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    _recognize(buffer: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>;
+    _recognize(buffer: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt_2.SpeechEvent>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
@@ -140,7 +237,7 @@ export interface STTV3Options extends STTBaseOptions {
 // Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export class SynthesizeStream extends tts.SynthesizeStream {
+export class SynthesizeStream extends tts_2.SynthesizeStream {
     constructor(tts: TTS, opts: ResolvedTTSOptions);
     // (undocumented)
     label: string;
@@ -151,12 +248,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 // Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export class TTS extends tts.TTS {
+export class TTS extends tts_2.TTS {
     constructor(opts?: Partial<TTSOptions>);
     // (undocumented)
     label: string;
     // (undocumented)
-    stream(): tts.SynthesizeStream;
+    stream(): tts_2.SynthesizeStream;
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
     updateOptions(opts: Partial<TTSOptions>): void;
 }
