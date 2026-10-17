@@ -22,6 +22,8 @@ import { traceTypes, tracer } from '../../telemetry/index.js';
 import { resampleStream } from '../../utils.js';
 import { AudioInput } from '../io.js';
 
+const PLAIN_INPUT_FRAME_SIZE_MS = 20;
+
 export class ParticipantAudioInputStream extends AudioInput {
   private room: Room;
   private sampleRate: number;
@@ -338,8 +340,9 @@ export class ParticipantAudioInputStream extends AudioInput {
   };
 
   private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
+    const processor = this.frameProcessor || this.noiseCancellation;
     if (
-      (this.frameProcessor || this.noiseCancellation) &&
+      processor &&
       this.publication?.info?.audioFeatures.includes(
         AudioTrackFeature.TF_ENHANCED_NOISE_CANCELLATION,
       )
@@ -355,7 +358,10 @@ export class ParticipantAudioInputStream extends AudioInput {
     return new AudioStream(track, {
       sampleRate: this.sampleRate,
       numChannels: this.numChannels,
-      noiseCancellation: this.frameProcessor || this.noiseCancellation,
+      // A processor may depend on the native 10 ms frame size, so only a plain
+      // input asks for larger frames, which halves the native events and copies.
+      ...(processor ? {} : { frameSizeMs: PLAIN_INPUT_FRAME_SIZE_MS }),
+      noiseCancellation: processor,
       // Don't let the AudioStream close the processor when the track switches —
       // this input stream owns the processor across track changes and closes it
       // itself in close().

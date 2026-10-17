@@ -4,6 +4,7 @@
 import { AudioTrackFeature } from '@livekit/protocol';
 import {
   AudioFrame,
+  AudioStream,
   type FrameProcessor,
   type RemoteTrack,
   type RemoteTrackPublication,
@@ -34,6 +35,12 @@ vi.mock('@livekit/rtc-node', async (importOriginal) => {
     }),
   };
 });
+
+const audioStreamOptions = () => {
+  const call = vi.mocked(AudioStream).mock.calls.at(-1);
+  if (!call) throw new Error('AudioStream was not created');
+  return call[1] as Record<string, unknown>;
+};
 
 const nextTick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -272,6 +279,27 @@ describe('ParticipantAudioInputStream', () => {
       await input.close();
     },
   );
+
+  it('reads the track in 20 ms frames when no frame processor is attached', async () => {
+    const { input, participant } = createParticipantInput();
+    input.setParticipant(participant.identity);
+
+    expect(audioStreamOptions()).toMatchObject({ frameSizeMs: 20 });
+    await input.close();
+  });
+
+  it('keeps the native frame size when a frame processor is attached', async () => {
+    const frameProcessor = {
+      symbol: Symbol.for('lk.frame-processor'),
+      close: vi.fn(),
+    } as unknown as FrameProcessor<AudioFrame>;
+    const { input, participant } = createParticipantInput(frameProcessor);
+    input.setParticipant(participant.identity);
+
+    expect(audioStreamOptions()).not.toHaveProperty('frameSizeMs');
+    expect(audioStreamOptions()).toMatchObject({ noiseCancellation: frameProcessor });
+    await input.close();
+  });
 
   it('drops frames while detached and resumes forwarding when attached', async () => {
     const { input, participant, source } = createParticipantInput();
