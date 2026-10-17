@@ -43,6 +43,7 @@ export interface BasetenLLMOptions {
     // (undocumented)
     apiKey?: string;
     frequencyPenalty?: number;
+    inlineMidConversationInstructions?: boolean;
     // (undocumented)
     maxTokens?: number;
     // (undocumented)
