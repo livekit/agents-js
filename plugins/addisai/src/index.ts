@@ -9,7 +9,10 @@ import { Plugin } from '@livekit/agents';
  * @packageDocumentation
  */
 export * from './models.js';
+export * from './realtime.js';
+export * from './scribe.js';
 export * from './stt.js';
+export * from './streaming_tts.js';
 export * from './tts.js';
 
 class AddisAIPlugin extends Plugin {

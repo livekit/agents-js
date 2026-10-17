@@ -144,16 +144,21 @@ describe('AddisAI TTS', () => {
         const body = JSON.parse(String(init?.body)) as { language: string; voice_id: string };
         expect(body.language).toBe('ti');
         expect(body.voice_id).toBe('ti-berhane');
-        return new Response(JSON.stringify({
-          data: { id: 'ti-clip', audio_url: 'https://audio.example.test/ti.wav' },
-        }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            data: { id: 'ti-clip', audio_url: 'https://audio.example.test/ti.wav' },
+          }),
+          { status: 200 },
+        );
       }
       return new Response(pcmWav(), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
     const events = [];
     for await (const event of new TTS({
-      apiKey: 'test-key', language: 'ti', voice: 'ti-berhane',
+      apiKey: 'test-key',
+      language: 'ti',
+      voice: 'ti-berhane',
     }).synthesize('ሰላም', NO_RETRY)) {
       events.push(event);
     }
