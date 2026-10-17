@@ -143,6 +143,8 @@ import {
 } from './events.js';
 import type { ToolExecutionOutput, ToolOutput, _TTSGenerationData } from './generation.js';
 import {
+  RELEASED_TOOL_TEMPLATE,
+  RUNNING_TOOL_PLACEHOLDER,
   type _AudioOut,
   type _TextOut,
   _injectRunningToolCalls,
@@ -173,6 +175,7 @@ import {
 } from './speech_handle.js';
 import {
   ToolExecutor,
+  _releaseRunningTools,
   cancelTaskTool,
   getRunningTasks,
   getRunningTasksTool,
@@ -556,6 +559,7 @@ export class AgentActivity implements RecognitionHooks {
   private autoToolReplyTurn = new AutoToolReplyTurnHold();
   private lock = new Mutex();
   private inlineTaskLock = new Mutex();
+  private chatCtxLock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
   private readonly inputDeltaTracker = new inputDelta.InputDeltaTracker();
@@ -636,6 +640,7 @@ export class AgentActivity implements RecognitionHooks {
   _onExitTask?: Task<void>;
   _userTurnCompletedTask?: Task<void>;
   _toolExecutor: ToolExecutor;
+  private committedInterruptedToolOutputs = new WeakSet<ToolOutput>();
 
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
@@ -1316,8 +1321,27 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async updateChatCtx(chatCtx: ChatContext): Promise<void> {
-    chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
+    const unlock = await this.chatCtxLock.lock();
+    try {
+      await this.updateChatCtxUnlocked(chatCtx);
+    } finally {
+      unlock();
+    }
+  }
 
+  async enqueueToolUpdate(items: [FunctionCall, FunctionCallOutput]): Promise<void> {
+    const unlock = await this.chatCtxLock.lock();
+    try {
+      const chatCtx = this.agent.chatCtx.copy();
+      chatCtx.insert(items);
+      await this.updateChatCtxUnlocked(chatCtx);
+    } finally {
+      unlock();
+    }
+  }
+
+  private async updateChatCtxUnlocked(chatCtx: ChatContext): Promise<void> {
+    chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
     this.agent._chatCtx = chatCtx;
 
     if (this.realtimeSession) {
@@ -4179,11 +4203,14 @@ export class AgentActivity implements RecognitionHooks {
     //TODO(AJS-272): before executing tools, make sure we generated all the text
     // (this ensure everything is kept ordered)
 
+    const startedCalls: FunctionCall[] = [];
+
     // items are ordered by `createdAt`
     const onToolExecutionStarted = (f: FunctionCall) => {
       // function call is created during LLM generation, might be before the speech is authorized
       // reset the `createdAt` to the start time of the tool execution
       f.createdAt = Date.now();
+      startedCalls.push(f);
       speechHandle._itemAdded([f]);
       this.agent._chatCtx.items.push(f);
       this.agentSession._toolItemsAdded([f]);
@@ -4195,6 +4222,7 @@ export class AgentActivity implements RecognitionHooks {
       }
     };
 
+    const toolExecution = this.createToolExecutionController(speechHandle);
     const [executeToolsTask, toolOutput] = performToolExecutions({
       agentName: this.agent.id,
       session: this.agentSession,
@@ -4202,10 +4230,19 @@ export class AgentActivity implements RecognitionHooks {
       toolCtx,
       toolChoice: modelSettings.toolChoice,
       toolCallStream: llmGenData.toolCallStream,
-      controller: replyAbortController,
+      controller: toolExecution.controller,
       onToolExecutionStarted,
       onToolExecutionCompleted,
     });
+    executeToolsTask.addDoneCallback(toolExecution.detach);
+    const removeInterruptionTimeoutCallback = speechHandle._addInterruptionTimeoutCallback(() => {
+      void (async () => {
+        await this.releaseRunningTools(startedCalls, speechHandle);
+        await executeToolsTask.result;
+        await this.commitInterruptedToolOutputs(toolOutput, speechHandle);
+      })();
+    });
+    executeToolsTask.addDoneCallback(removeInterruptionTimeoutCallback);
 
     const segmentOutputs: SegmentOutput[] = [];
 
@@ -4307,8 +4344,8 @@ export class AgentActivity implements RecognitionHooks {
       if (speechHandle._hasGenerations) {
         speechHandle._markGenerationDone();
       }
-      await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
-      this._commitInterruptedToolOutputs(toolOutput, speechHandle);
+      await this.waitForInterruptedToolExecutions(executeToolsTask, startedCalls, speechHandle);
+      await this.commitInterruptedToolOutputs(toolOutput, speechHandle);
       return;
     }
 
@@ -4364,6 +4401,7 @@ export class AgentActivity implements RecognitionHooks {
       executeToolsTask,
       toolOutput,
       speechHandle,
+      startedCalls,
     });
     if (!toolExecutionCompleted) return;
 
@@ -4887,11 +4925,14 @@ export class AgentActivity implements RecognitionHooks {
       ),
     );
 
+    const startedCalls: FunctionCall[] = [];
+
     // items are ordered by `createdAt`
     const onToolExecutionStarted = (f: FunctionCall) => {
       // function call is created during the model generation, might be before the speech is
       // authorized; reset the `createdAt` to the start time of the tool execution
       f.createdAt = Date.now();
+      startedCalls.push(f);
       speechHandle._itemAdded([f]);
       this.agent._chatCtx.items.push(f);
       this.agentSession._toolItemsAdded([f]);
@@ -4903,6 +4944,7 @@ export class AgentActivity implements RecognitionHooks {
       }
     };
 
+    const toolExecution = this.createToolExecutionController(speechHandle);
     const [executeToolsTask, toolOutput] = performToolExecutions({
       agentName: this.agent.id,
       session: this.agentSession,
@@ -4910,10 +4952,19 @@ export class AgentActivity implements RecognitionHooks {
       toolCtx,
       toolCallStream,
       toolChoice: modelSettings.toolChoice,
-      controller: replyAbortController,
+      controller: toolExecution.controller,
       onToolExecutionStarted,
       onToolExecutionCompleted,
     });
+    executeToolsTask.addDoneCallback(toolExecution.detach);
+    const removeInterruptionTimeoutCallback = speechHandle._addInterruptionTimeoutCallback(() => {
+      void (async () => {
+        await this.releaseRunningTools(startedCalls, speechHandle);
+        await executeToolsTask.result;
+        await this.commitInterruptedRealtimeToolOutputs(toolOutput, speechHandle, realtimeSession);
+      })();
+    });
+    executeToolsTask.addDoneCallback(removeInterruptionTimeoutCallback);
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
@@ -4943,7 +4994,8 @@ export class AgentActivity implements RecognitionHooks {
         this.onEndOfAgentSpeech(Date.now());
       }
       speechHandle._markGenerationDone();
-      await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
+      await this.waitForInterruptedToolExecutions(executeToolsTask, startedCalls, speechHandle);
+      await this.commitInterruptedRealtimeToolOutputs(toolOutput, speechHandle, realtimeSession);
 
       // TODO(brian): close tees
       return;
@@ -4974,12 +5026,17 @@ export class AgentActivity implements RecognitionHooks {
 
     this._backgroundSpeeches.add(speechHandle);
     try {
-      await executeToolsTask.result;
+      await Promise.race([executeToolsTask.result, speechHandle._interruptionTimedOut]);
     } finally {
       this._backgroundSpeeches.delete(speechHandle);
     }
     // the tools may have run past a barge-in: the turn names what cut it short
     recordInterruption(speechHandle);
+    if (speechHandle.interrupted) {
+      await this.waitForInterruptedToolExecutions(executeToolsTask, startedCalls, speechHandle);
+      await this.commitInterruptedRealtimeToolOutputs(toolOutput, speechHandle, realtimeSession);
+      return;
+    }
 
     if (toolOutput.output.length > 0) {
       if (this.updateAgentState(stateLease, 'thinking') && !endedAgentSpeechBeforeTool) {
@@ -5135,33 +5192,83 @@ export class AgentActivity implements RecognitionHooks {
     this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
   }
 
-  /**
-   * Cancel the tool-execution task, tolerating a cancellation that overruns its budget.
-   *
-   * `Task.cancelAndWait` throws once the budget expires, and every caller still has work to do
-   * afterwards — committing the interrupted tool outputs above all. A tool that ignores its abort
-   * signal must degrade to a warning, not propagate and drop outputs the LLM has already seen.
-   */
-  private async cancelToolExecutions(
-    executeToolsTask: Pick<Task<void>, 'cancelAndWait'>,
+  private async waitForInterruptedToolExecutions(
+    executeToolsTask: Pick<Task<void>, 'result'>,
+    startedCalls: FunctionCall[],
     speechHandle: SpeechHandle,
-    toolOutput: ToolOutput,
   ): Promise<void> {
-    try {
-      await executeToolsTask.cancelAndWait(REPLY_TASK_CANCEL_TIMEOUT);
-    } catch (error) {
+    const timedOut = await Promise.race([
+      executeToolsTask.result.then(() => false),
+      speechHandle._interruptionTimedOut.then(() => true),
+    ]);
+    if (timedOut) {
+      await this.releaseRunningTools(startedCalls, speechHandle);
+      await executeToolsTask.result;
+    }
+  }
+
+  private createToolExecutionController(speechHandle: SpeechHandle): {
+    controller: AbortController;
+    detach: () => void;
+  } {
+    const controller = new AbortController();
+    const detach = speechHandle._addInterruptionTimeoutCallback(() => {
+      setImmediate(() => controller.abort());
+    });
+    return { controller, detach };
+  }
+
+  private async releaseRunningTools(
+    startedCalls: FunctionCall[],
+    speechHandle: SpeechHandle,
+  ): Promise<void> {
+    const released = await _releaseRunningTools(
+      this.agentSession,
+      startedCalls,
+      RUNNING_TOOL_PLACEHOLDER,
+      RELEASED_TOOL_TEMPLATE,
+    );
+    if (released.length > 0) {
       this.logger.warn(
         {
-          error,
+          functions: released,
           speech_id: speechHandle.id,
-          timeout: REPLY_TASK_CANCEL_TIMEOUT,
-          tool_calls: toolOutput.output.map((output) => ({
-            function: output.toolCall.name,
-            call_id: output.toolCall.callId,
-          })),
         },
-        'tool execution task did not settle within the cancellation budget, continuing teardown',
+        'tools still running when the interrupted speech timed out, their results will arrive as a deferred reply; a long-running tool should call `ctx.update()`',
       );
+    }
+  }
+
+  private async commitInterruptedRealtimeToolOutputs(
+    toolOutput: ToolOutput,
+    speechHandle: SpeechHandle,
+    realtimeSession: RealtimeSession,
+  ): Promise<void> {
+    const unlock = await this.chatCtxLock.lock();
+    try {
+      const interruptedOutputs = this._commitInterruptedToolOutputs(toolOutput, speechHandle);
+      if (interruptedOutputs.length === 0) return;
+      const chatCtx = realtimeSession.chatCtx.copy();
+      chatCtx.insert(interruptedOutputs);
+      try {
+        await realtimeSession.updateChatCtx(chatCtx);
+      } catch (error) {
+        this.logger.warn({ error }, 'failed to sync the tool results of an interrupted generation');
+      }
+    } finally {
+      unlock();
+    }
+  }
+
+  private async commitInterruptedToolOutputs(
+    toolOutput: ToolOutput,
+    speechHandle: SpeechHandle,
+  ): Promise<void> {
+    const unlock = await this.chatCtxLock.lock();
+    try {
+      this._commitInterruptedToolOutputs(toolOutput, speechHandle);
+    } finally {
+      unlock();
     }
   }
 
@@ -5170,33 +5277,42 @@ export class AgentActivity implements RecognitionHooks {
     executeToolsTask,
     toolOutput,
     speechHandle,
+    startedCalls,
   }: {
-    executeToolsTask: Pick<Task<void>, 'result' | 'cancelAndWait'>;
+    executeToolsTask: Pick<Task<void>, 'result'>;
     toolOutput: ToolOutput;
     speechHandle: SpeechHandle;
+    startedCalls: FunctionCall[];
   }): Promise<boolean> {
     if (speechHandle.interrupted) {
-      await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
-      this._commitInterruptedToolOutputs(toolOutput, speechHandle);
+      await this.waitForInterruptedToolExecutions(executeToolsTask, startedCalls, speechHandle);
+      await this.commitInterruptedToolOutputs(toolOutput, speechHandle);
       return false;
     }
 
     this._backgroundSpeeches.add(speechHandle);
     try {
-      await executeToolsTask.result;
+      await Promise.race([executeToolsTask.result, speechHandle._interruptionTimedOut]);
     } finally {
       this._backgroundSpeeches.delete(speechHandle);
     }
 
     if (speechHandle.interrupted) {
-      this._commitInterruptedToolOutputs(toolOutput, speechHandle);
+      await this.waitForInterruptedToolExecutions(executeToolsTask, startedCalls, speechHandle);
+      await this.commitInterruptedToolOutputs(toolOutput, speechHandle);
       return false;
     }
     return true;
   }
 
   /** @internal */
-  _commitInterruptedToolOutputs(toolOutput: ToolOutput, speechHandle: SpeechHandle): void {
+  _commitInterruptedToolOutputs(
+    toolOutput: ToolOutput,
+    speechHandle: SpeechHandle,
+  ): FunctionCallOutput[] {
+    this.committedInterruptedToolOutputs ??= new WeakSet<ToolOutput>();
+    if (this.committedInterruptedToolOutputs.has(toolOutput)) return [];
+    this.committedInterruptedToolOutputs.add(toolOutput);
     const interruptedHandoffCallIds = toolOutput.output
       .filter((output) => output.agentTask !== undefined)
       .map((output) => output.toolCall.callId);
@@ -5209,7 +5325,7 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
     const completedOutputs = toolOutput.output.filter((output) => output.agentTask === undefined);
-    if (completedOutputs.length === 0) return;
+    if (completedOutputs.length === 0) return [];
     const { functionToolsExecutedEvent } = this.summarizeToolExecutionOutput(
       { ...toolOutput, output: completedOutputs },
       speechHandle,
@@ -5223,6 +5339,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agent._chatCtx.insert(outputs);
       this.agentSession._toolItemsAdded(outputs);
     }
+    return outputs as FunctionCallOutput[];
   }
 
   private summarizeToolExecutionOutput(toolOutput: ToolOutput, speechHandle: SpeechHandle) {

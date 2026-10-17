@@ -221,7 +221,9 @@ export class SpeechHandle {
 
   private itemAddedCallbacks: Set<(item: ChatItem) => void> = new Set();
   private doneCallbacks: Set<(sh: SpeechHandle) => void> = new Set();
+  private interruptionTimeoutCallbacks = new Set<() => void>();
   private interruptTimeout?: ReturnType<typeof setTimeout>;
+  private interruptionTimeoutFut = new Future<void>();
   private logger = log();
 
   /** @internal Symbol marker for type identification */
@@ -478,6 +480,17 @@ export class SpeechHandle {
     await ThrowsPromise.race(fs);
   }
 
+  /** @internal Resolves when the interruption watchdog fires. */
+  get _interruptionTimedOut(): Promise<void> {
+    return this.interruptionTimeoutFut.await;
+  }
+
+  /** @internal */
+  _addInterruptionTimeoutCallback(callback: () => void): () => void {
+    this.interruptionTimeoutCallbacks.add(callback);
+    return () => this.interruptionTimeoutCallbacks.delete(callback);
+  }
+
   addDoneCallback(callback: (sh: SpeechHandle) => void) {
     if (this.done()) {
       queueMicrotask(() => callback(this));
@@ -527,6 +540,8 @@ export class SpeechHandle {
   private startInterruptTimeout(): void {
     this.interruptTimeout = setTimeout(() => {
       this.interruptTimeout = undefined;
+      for (const callback of this.interruptionTimeoutCallbacks) callback();
+      this.interruptionTimeoutFut.resolve();
       this.logger.error(
         { speech_id: this._id, timeout: INTERRUPTION_TIMEOUT },
         'speech not done in time after interruption, cancelling the speech arbitrarily.',

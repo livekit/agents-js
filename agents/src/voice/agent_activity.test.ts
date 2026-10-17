@@ -14,6 +14,7 @@
  *
  * Related: #1124, #1089, #836
  */
+import { Mutex } from '@livekit/mutex';
 import { Heap } from 'heap-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -1676,10 +1677,10 @@ describe('AgentActivity - interruption while waiting for tools', () => {
   type WaitForToolExecution = (options: {
     executeToolsTask: {
       result: Promise<void>;
-      cancelAndWait: (timeout: number) => Promise<void>;
     };
     toolOutput: ReturnType<typeof buildToolOutput>;
     speechHandle: SpeechHandle;
+    startedCalls: FunctionCall[];
   }) => Promise<boolean>;
 
   function buildActivity() {
@@ -1687,6 +1688,8 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     const activity = Object.create(AgentActivity.prototype) as AgentActivity;
     Object.assign(activity, {
       _backgroundSpeeches: new Set<SpeechHandle>(),
+      chatCtxLock: new Mutex(),
+      committedInterruptedToolOutputs: new WeakSet(),
       _commitInterruptedToolOutputs: commitInterruptedToolOutputs,
       logger: log(),
     });
@@ -1700,17 +1703,16 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     const { activity, commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
     const speechHandle = SpeechHandle.create();
     speechHandle.interrupt();
-    const cancelAndWait = vi.fn(async () => {});
     const toolOutput = buildToolOutput();
 
     const shouldContinue = await waitForToolExecution({
-      executeToolsTask: { result: Promise.resolve(), cancelAndWait },
+      executeToolsTask: { result: Promise.resolve() },
       toolOutput,
       speechHandle,
+      startedCalls: [],
     });
 
     expect(shouldContinue).toBe(false);
-    expect(cancelAndWait).toHaveBeenCalledOnce();
     expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle);
     expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
   });
@@ -1724,10 +1726,10 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     const waiting = waitForToolExecution({
       executeToolsTask: {
         result: executionFinished.await,
-        cancelAndWait: vi.fn(async () => {}),
       },
       toolOutput,
       speechHandle,
+      startedCalls: [],
     });
     expect(activity['_backgroundSpeeches']).toContain(speechHandle);
 
@@ -1737,30 +1739,6 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     await expect(waiting).resolves.toBe(false);
     expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle);
     expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
-  });
-
-  it('still commits outputs when cancelling the tool task overruns its budget', async () => {
-    // `Task.cancelAndWait` throws once the cooperative-cancel budget expires. A tool that
-    // ignores its abort signal must not take the commit down with it — the LLM has already
-    // seen these outputs, so dropping them leaves the function calls dangling.
-    const { commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
-    const speechHandle = SpeechHandle.create();
-    speechHandle.interrupt();
-    const toolOutput = buildToolOutput();
-
-    const shouldContinue = await waitForToolExecution({
-      executeToolsTask: {
-        result: new Promise<void>(() => {}),
-        cancelAndWait: vi.fn(async () => {
-          throw new Error('Task cancellation timed out');
-        }),
-      },
-      toolOutput,
-      speechHandle,
-    });
-
-    expect(shouldContinue).toBe(false);
-    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle);
   });
 });
 
