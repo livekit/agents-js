@@ -3576,20 +3576,9 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const [textSource, audioSource] = baseStream.tee();
+    let transcriptionInput: ReadableStream<string | TimedString> = textSource;
 
     const tasks: Array<Task<void>> = [];
-
-    const trNode = await this.agent.transcriptionNode(textSource, {});
-    let textOut: _TextOut | null = null;
-    if (trNode) {
-      const [textForwardTask, _textOut] = performTextForwarding(
-        trNode,
-        replyAbortController,
-        transcriptionOutput,
-      );
-      textOut = _textOut;
-      tasks.push(textForwardTask);
-    }
 
     let replyStartedSpeakingAt: number | undefined;
     let replyStartedForwardingAt: number | undefined;
@@ -3608,13 +3597,7 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     let audioOut: _AudioOut | null = null;
-    if (!audioOutput) {
-      if (textOut) {
-        textOut.firstTextFut.await
-          .then(() => onFirstFrame(null))
-          .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
-      }
-    } else {
+    if (audioOutput) {
       if (!audio) {
         // generate audio using TTS
         const [ttsTask, ttsGenData] = performTTSInference(
@@ -3629,6 +3612,19 @@ export class AgentActivity implements RecognitionHooks {
         );
         tasks.push(ttsTask);
         replyTtsGenData = ttsGenData;
+
+        if (this.useTtsAlignedTranscript && this.tts?.capabilities.alignedTranscript) {
+          const timedTextsStream = await ThrowsPromise.race([
+            ttsGenData.timedTextsFut.await,
+            ttsTask.result.catch(() =>
+              this.logger.warn('TTS task failed before resolving timedTextsFut'),
+            ),
+          ]);
+          if (timedTextsStream) {
+            this.logger.debug('Using TTS aligned transcripts for transcription node input');
+            transcriptionInput = timedTextsStream;
+          }
+        }
 
         const [forwardTask, _audioOut] = performAudioForwarding(
           ttsGenData.audioStream,
@@ -3659,6 +3655,24 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     try {
+      const trNode = await this.agent.transcriptionNode(transcriptionInput, {});
+      let textOut: _TextOut | null = null;
+      if (trNode) {
+        const [textForwardTask, _textOut] = performTextForwarding(
+          trNode,
+          replyAbortController,
+          transcriptionOutput,
+        );
+        textOut = _textOut;
+        tasks.push(textForwardTask);
+      }
+
+      if (!audioOutput && textOut) {
+        textOut.firstTextFut.await
+          .then(() => onFirstFrame(null))
+          .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
+      }
+
       await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
       let playbackEv: PlaybackFinishedEvent | undefined;
@@ -3721,6 +3735,13 @@ export class AgentActivity implements RecognitionHooks {
         this.onEndOfAgentSpeech(Date.now());
         this.restoreInterruptionByAudioActivity();
       }
+    } catch (error) {
+      replyAbortController.abort();
+      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
+      if (audioOutput && audioOutput.pendingPlayoutSegments > 0) {
+        audioOutput.clearBuffer();
+      }
+      throw error;
     } finally {
       // In a finally so the listener is dropped even if an await above throws —
       // otherwise it would leak on the shared audioOutput.
