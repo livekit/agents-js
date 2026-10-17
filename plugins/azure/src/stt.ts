@@ -415,8 +415,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   #speechData(evt: speechsdk.SpeechRecognitionEventArgs, confidence: number): stt.SpeechData {
-    const result = speechsdk.AutoDetectSourceLanguageResult.fromResult(evt.result);
-    const language = result.language || this._opts.language[0] || '';
+    const language = evt.result.language || this._opts.language[0] || '';
     return {
       language: asLanguageCode(language),
       confidence,

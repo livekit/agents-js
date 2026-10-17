@@ -15,6 +15,8 @@ const azureHarness = vi.hoisted(() => ({
   closedRecognizers: 0,
   recognizers: [] as Array<{
     canceled?: (_sender: unknown, event: unknown) => void;
+    recognized?: (_sender: unknown, event: unknown) => void;
+    recognizing?: (_sender: unknown, event: unknown) => void;
     sessionStarted?: (_sender: unknown, event: unknown) => void;
     sessionStopped?: (_sender: unknown, event: unknown) => void;
     speechStartDetected?: (_sender: unknown, event: unknown) => void;
@@ -267,6 +269,47 @@ describe('Azure STT cancellation handling', () => {
         expect(startEvents).toEqual([
           stt.SpeechEventType.START_OF_SPEECH,
           stt.SpeechEventType.START_OF_SPEECH,
+        ]),
+      );
+    } finally {
+      stream.close();
+      await collectEvents;
+    }
+  });
+});
+
+describe('Azure STT transcripts', () => {
+  beforeEach(() => {
+    azureHarness.startupFailure = undefined;
+    azureHarness.recognizers.length = 0;
+    azureHarness.streams.length = 0;
+  });
+
+  it('emits transcripts when a single language is configured', async () => {
+    const provider = new STT({ speechKey: 'test', speechRegion: 'test', language: 'da-DK' });
+    const stream = provider.stream();
+    const transcripts: Array<[stt.SpeechEventType, string, string]> = [];
+    const collectEvents = (async () => {
+      for await (const event of stream) {
+        const data = event.alternatives?.[0];
+        if (data) transcripts.push([event.type, data.language, data.text]);
+      }
+    })();
+    // without language identification the service sends no detection confidence
+    const result = (reason: speechsdk.ResultReason, text: string) => ({
+      result: new speechsdk.SpeechRecognitionResult('id', reason, text, 0, 0, 'da-DK'),
+    });
+
+    try {
+      await vi.waitFor(() => expect(azureHarness.recognizers).toHaveLength(1));
+      const recognizer = azureHarness.recognizers[0]!;
+      recognizer.recognizing?.(undefined, result(speechsdk.ResultReason.RecognizingSpeech, 'hej'));
+      recognizer.recognized?.(undefined, result(speechsdk.ResultReason.RecognizedSpeech, 'Hej.'));
+
+      await vi.waitFor(() =>
+        expect(transcripts).toEqual([
+          [stt.SpeechEventType.INTERIM_TRANSCRIPT, 'da-DK', 'hej'],
+          [stt.SpeechEventType.FINAL_TRANSCRIPT, 'da-DK', 'Hej.'],
         ]),
       );
     } finally {
