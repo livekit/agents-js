@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { SentenceTokenizer, WordTokenizer, hyphenateWord } from './basic/index.js';
 import { splitParagraphs } from './basic/paragraph.js';
+import { splitSentences } from './basic/sentence.js';
 
 const TEXT =
   'Hi! ' +
@@ -131,6 +132,31 @@ describe('tokenizer', () => {
 
     it('should tokenize sentences correctly', () => {
       expect(tokenizer.tokenize(TEXT).every((x, i) => EXPECTED_MIN_20[i] === x)).toBeTruthy();
+    });
+
+    it('keeps dotted numbers in one sentence', () => {
+      // Only the first dot used to be protected because replaceAll does not return to
+      // overlapping positions, splitting version numbers and IP addresses across tokens.
+      for (const text of [
+        'Version 1.2.3 is out today.',
+        'The server is at 192.168.1.1 right now.',
+      ]) {
+        expect(splitSentences(text, 20)).toStrictEqual([[text, 0, text.length]]);
+      }
+    });
+
+    it('still splits after a number', () => {
+      const text = 'One 1. Two 2. Three 3.';
+      const sentences = splitSentences(text, 0);
+
+      expect(sentences.map(([sentence]) => sentence)).toStrictEqual([
+        'One 1.',
+        'Two 2.',
+        'Three 3.',
+      ]);
+      for (const [sentence, start, end] of sentences) {
+        expect(text.slice(start, end).trim()).toBe(sentence);
+      }
     });
 
     it('should stream tokenize sentences correctly', async () => {
