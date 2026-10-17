@@ -7,4 +7,4 @@
  *
  * @public
  */
-export type Language = 'am' | 'om';
+export type Language = 'am' | 'om' | 'ti';

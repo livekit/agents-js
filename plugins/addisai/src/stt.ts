@@ -28,7 +28,7 @@ import {
  * @public
  */
 export interface STTOptions {
-  /** Transcription language: `am` for Amharic or `om` for Afaan Oromo. */
+  /** Transcription language: `am` (Amharic), `om` (Afaan Oromo), or `ti` (Tigrinya). */
   language: Language | string;
   /** AddisAI API key. Defaults to `ADDIS_API_KEY`. */
   apiKey?: string;
@@ -41,7 +41,7 @@ export interface STTOptions {
 const DEFAULT_OPTIONS: Pick<STTOptions, 'language' | 'baseURL' | 'requestTimeoutMs'> = {
   language: 'am',
   baseURL: API_BASE_URL,
-  requestTimeoutMs: 30_000,
+  requestTimeoutMs: 120_000,
 };
 
 interface ResolvedSTTOptions {

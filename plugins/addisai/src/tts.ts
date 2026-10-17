@@ -34,7 +34,7 @@ const DEFAULT_VOICE = 'am-hamen';
  * @public
  */
 export interface TTSOptions {
-  /** Synthesis language: `am` for Amharic or `om` for Afaan Oromo. */
+  /** Synthesis language: `am` (Amharic), `om` (Afaan Oromo), or `ti` (Tigrinya). */
   language: Language | string;
   /** Available voice ID from the dynamic AddisAI voice catalog. */
   voice: string;

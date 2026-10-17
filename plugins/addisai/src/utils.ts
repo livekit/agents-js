@@ -8,8 +8,8 @@ import type { Language } from './models.js';
 export const API_BASE_URL = 'https://api.addisassistant.com';
 
 export function validateLanguage(language: Language | string): Language {
-  if (language !== 'am' && language !== 'om') {
-    throw new Error('language must be "am" for Amharic or "om" for Afaan Oromo');
+  if (language !== 'am' && language !== 'om' && language !== 'ti') {
+    throw new Error('language must be "am" for Amharic, "om" for Afaan Oromo, or "ti" for Tigrinya');
   }
   return language;
 }
