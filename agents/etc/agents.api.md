@@ -6078,7 +6078,9 @@ function recordException(span: Span, error: Error, options?: RecordExceptionOpti
 
 // @public (undocumented)
 interface RecordExceptionOptions {
+    recordEvent?: boolean;
     redacted?: boolean;
+    setStatus?: boolean;
 }
 
 // Warning: (ae-internal-missing-underscore) The name "recordingEnabled" should be prefixed with an underscore because the declaration is marked as @internal
@@ -7268,6 +7270,8 @@ interface StartSpanOptions {
     endOnExit?: boolean;
     kind?: SpanKind;
     name: string;
+    recordException?: boolean;
+    setStatusOnException?: boolean;
     startTime?: number;
 }
 

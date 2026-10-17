@@ -9,11 +9,12 @@ import {
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ReadableStream } from 'node:stream/web';
 import { afterEach, describe, expect, it } from 'vitest';
+import { type JobContext, runWithJobContext } from '../job.js';
 import { ChatContext, FunctionCall } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { ToolContext } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
-import { setTracerProvider, traceTypes } from '../telemetry/index.js';
+import { REDACTED_EXCEPTION_MESSAGE, setTracerProvider, traceTypes } from '../telemetry/index.js';
 import { isFlushSentinel } from '../types.js';
 import type { ModelSettings } from './agent.js';
 import { type _LLMGenerationData, performLLMInference } from './generation.js';
@@ -201,5 +202,95 @@ describe('performLLMInference response telemetry', () => {
     }
 
     expectFunctionCallTelemetry(span);
+    expect(span.status.code).toBe(0);
+    expect(span.events.filter((event) => event.name === 'exception')).toHaveLength(0);
+  });
+
+  it.each([
+    ['sync invocation', false],
+    ['sync invocation', true],
+    ['async invocation', false],
+    ['async invocation', true],
+    ['stream start', false],
+    ['stream start', true],
+    ['stream read', false],
+    ['stream read', true],
+    ['stream cleanup', false],
+    ['stream cleanup', true],
+  ] as const)('records %s failures once when redacted=%s', async (phase, redacted) => {
+    const { exporter, provider: testProvider } = setupInMemoryTracing();
+    provider = testProvider;
+    const failure = new Error('private failure details');
+    let cleaned = false;
+    let llmNode: LLMNode;
+    const abortController = new AbortController();
+
+    if (phase === 'sync invocation') {
+      llmNode = (() => {
+        throw failure;
+      }) as LLMNode;
+    } else if (phase === 'async invocation') {
+      llmNode = async () => Promise.reject(failure);
+    } else if (phase === 'stream start') {
+      llmNode = async () =>
+        new ReadableStream({
+          start() {
+            throw failure;
+          },
+        });
+    } else if (phase === 'stream read') {
+      llmNode = async () =>
+        new ReadableStream({
+          pull(controller) {
+            controller.error(failure);
+          },
+          cancel() {
+            cleaned = true;
+          },
+        });
+    } else {
+      llmNode = async () =>
+        new ReadableStream({
+          pull() {
+            abortController.abort();
+          },
+          cancel() {
+            cleaned = true;
+            throw failure;
+          },
+        });
+    }
+
+    const context = { _redactionEnabled: redacted } as unknown as JobContext;
+    const raised = await runWithJobContext(context, async () => {
+      const [task] = performLLMInference(
+        llmNode,
+        ChatContext.empty(),
+        ToolContext.empty(),
+        modelSettings,
+        abortController,
+      );
+      return task.result.catch((error: unknown) => error);
+    });
+    expect(raised).toBe(failure);
+    if (phase === 'stream cleanup') expect(cleaned).toBe(true);
+
+    const span = spanByName(exporter.getFinishedSpans(), 'llm_node');
+    expect(span).toBeDefined();
+    const events = span!.events.filter((event) => event.name === 'exception');
+    expect(events).toHaveLength(1);
+    const expected = redacted ? REDACTED_EXCEPTION_MESSAGE : failure.message;
+    expect(events[0]!.attributes?.[traceTypes.ATTR_EXCEPTION_MESSAGE]).toBe(expected);
+    expect(span!.status).toMatchObject({ code: 2, message: expected });
+    expect(span!.attributes[traceTypes.ATTR_ERROR_TYPE]).toBe('Error');
+    if (redacted) {
+      expect(
+        JSON.stringify({
+          attributes: span!.attributes,
+          events: span!.events,
+          status: span!.status,
+        }),
+      ).not.toContain(failure.message);
+    }
   });
 });

@@ -34,7 +34,6 @@ import { type JobContext, getJobContext, runWithJobContext } from '../job.js';
 import { jobRootContext, sessionRootContext } from './session_context.js';
 import * as traceTypes from './trace_types.js';
 import { tracer } from './traces.js';
-import { recordException } from './utils.js';
 
 /** Request and response payloads longer than this many characters are truncated in span attributes. */
 export const MAX_PAYLOAD_ATTR_LEN = 1024;
@@ -58,10 +57,6 @@ function responseAttributes(response: string | undefined | null): Attributes {
   };
   if (text) attrs[traceTypes.ATTR_RPC_RESPONSE] = truncate(text);
   return attrs;
-}
-
-function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
 }
 
 /**
@@ -90,7 +85,6 @@ export class TracingRpcInterceptor implements RpcInterceptor {
           if (error instanceof RpcError) {
             span.setAttribute(traceTypes.ATTR_RPC_ERROR_CODE, Number(error.code));
           }
-          recordException(span, toError(error));
           throw error;
         }
         span.setAttributes(responseAttributes(response));
@@ -132,7 +126,6 @@ export class TracingRpcInterceptor implements RpcInterceptor {
           if (error instanceof RpcError) {
             span.setAttribute(traceTypes.ATTR_RPC_ERROR_CODE, Number(error.code));
           }
-          recordException(span, toError(error));
           throw error;
         }
         span.setAttributes(responseAttributes(response));
