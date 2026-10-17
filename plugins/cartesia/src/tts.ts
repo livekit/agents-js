@@ -48,6 +48,9 @@ const API_VERSION = '2025-04-16';
 const API_VERSION_WITH_EXPERIMENTAL_CONTROLS = '2024-11-13';
 const MODEL_WITH_EXPERIMENTAL_CONTROLS = 'sonic-2-2025-03-07';
 const NUM_CHANNELS = 1;
+// Frames are 20 ms. The last frame is held back until the next one arrives so it can be
+// marked final, and with 100 ms frames that delayed the first audio until the second chunk.
+const FRAMES_PER_SECOND = 50;
 const BUFFERED_WORDS_COUNT = 8;
 // Cartesia refreshes a pooled socket after this long so a very long call cannot
 // keep one connection open indefinitely. Matches the Python plugin's 300s.
@@ -314,7 +317,11 @@ export class ChunkedStream extends tts.ChunkedStream {
 
   protected async run() {
     const requestId = shortuuid();
-    const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
+    const bstream = new AudioByteStream(
+      this.#opts.sampleRate,
+      NUM_CHANNELS,
+      Math.floor(this.#opts.sampleRate / FRAMES_PER_SECOND),
+    );
     const json = toCartesiaOptions(this.#opts);
     json.transcript = this.#text;
 
@@ -458,7 +465,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     // Use event channel and set up listeners ONCE to avoid missing messages during listener re-registration
     const recvTask = async (ws: WebSocket) => {
-      const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
+      const bstream = new AudioByteStream(
+        this.#opts.sampleRate,
+        NUM_CHANNELS,
+        Math.floor(this.#opts.sampleRate / FRAMES_PER_SECOND),
+      );
 
       // Create event channel to buffer incoming messages
       // This prevents message loss between listener re-registrations
