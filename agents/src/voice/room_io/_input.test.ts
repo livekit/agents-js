@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AudioTrackFeature } from '@livekit/protocol';
 import {
   AudioFrame,
   type FrameProcessor,
@@ -242,6 +243,35 @@ describe('ParticipantAudioInputStream', () => {
     await input.close();
     expect(frameProcessor.close).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    { clientNc: true, agentNc: true, warns: true },
+    { clientNc: true, agentNc: false, warns: false },
+    { clientNc: false, agentNc: true, warns: false },
+  ])(
+    'warns on double noise cancellation (client $clientNc, agent $agentNc)',
+    async ({ clientNc, agentNc, warns }) => {
+      const frameProcessor = agentNc
+        ? ({
+            symbol: Symbol.for('lk.frame-processor'),
+            close: vi.fn(),
+          } as unknown as FrameProcessor<AudioFrame>)
+        : undefined;
+      const { input, participant, publication } = createParticipantInput(frameProcessor);
+      publication.info = {
+        audioFeatures: clientNc ? [AudioTrackFeature.TF_ENHANCED_NOISE_CANCELLATION] : [],
+      } as unknown as RemoteTrackPublication['info'];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const warn = vi.spyOn((input as any).logger, 'warn');
+
+      input.setParticipant(participant.identity);
+
+      expect(
+        warn.mock.calls.some((args) => String(args[1]).includes('enhanced noise cancellation')),
+      ).toBe(warns);
+      await input.close();
+    },
+  );
 
   it('drops frames while detached and resumes forwarding when attached', async () => {
     const { input, participant, source } = createParticipantInput();
