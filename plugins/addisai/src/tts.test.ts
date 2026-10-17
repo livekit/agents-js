@@ -162,6 +162,6 @@ describe('AddisAI TTS', () => {
 
   it('rejects native streaming because Addis Voices 2 is non-streaming', () => {
     const synthesizer = new TTS({ apiKey: 'test-key' });
-    expect(() => synthesizer.stream()).toThrow(/streaming is not supported/i);
+    expect(() => synthesizer.stream()).toThrow(/streaming is not implemented/i);
   });
 });

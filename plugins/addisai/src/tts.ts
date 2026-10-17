@@ -148,7 +148,7 @@ export class TTS extends tts.TTS {
 
   stream(): tts.SynthesizeStream {
     throw new APIConnectionError({
-      message: 'Streaming is not supported by Addis Voices 2',
+      message: 'Native streaming is not implemented by this AddisAI LiveKit adapter',
       options: { retryable: false },
     });
   }

@@ -113,6 +113,6 @@ describe('AddisAI STT', () => {
 
   it('rejects streaming because the provider endpoint is batch-only', () => {
     const recognizer = new STT({ apiKey: 'test-key' });
-    expect(() => recognizer.stream()).toThrow(/batch-only/i);
+    expect(() => recognizer.stream()).toThrow(/batch recognition/i);
   });
 });

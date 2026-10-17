@@ -163,7 +163,7 @@ export class STT extends stt.STT {
   stream(_options?: { connOptions?: APIConnectOptions }): stt.SpeechStream {
     throw new APIConnectionError({
       message:
-        'AddisAI STT is batch-only. Use LiveKit with a VAD so it can adapt recognition to turns.',
+        'This AddisAI adapter uses batch recognition. Use LiveKit with a VAD to adapt recognition to turns; live Scribe streaming is a separate API.',
       options: { retryable: false },
     });
   }
