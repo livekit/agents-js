@@ -1742,7 +1742,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       // the server can anchor to an item it is no longer tracking; append at the tail instead
       this.#logger.warn(
         { itemId: event.item.id, previousItemId },
-        'Realtime API anchored an item to one it is no longer tracking, appending it instead',
+        'Realtime API placed a chat history item after an unknown item; appended it instead',
       );
       previousItemId = this.remoteChatCtx.toChatCtx().items.at(-1)?.id;
     }
