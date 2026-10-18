@@ -302,7 +302,7 @@ export class RealtimeSession extends OpenAIRealtimeSession {
     if (previousItemId && !this.remoteChatCtx.get(previousItemId)) {
       log().warn(
         { itemId: event.item.id, previousItemId },
-        'xAI anchored an item to one it never announced, appending it instead',
+        'xAI placed a chat history item after an unknown item; appended it instead',
       );
       previousItemId = '';
     }
