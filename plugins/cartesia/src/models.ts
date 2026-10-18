@@ -14,13 +14,7 @@ export const AUDIO_ENCODING = 'pcm_s16le';
 /**
  * See [the docs](https://docs.cartesia.ai/build-with-cartesia/tts-models/latest) for all options.
  */
-export type TTSModels =
-  | 'sonic'
-  | 'sonic-2'
-  | 'sonic-3'
-  | 'sonic-lite'
-  | 'sonic-preview'
-  | 'sonic-turbo';
+export type TTSModels = 'sonic-3' | 'sonic-3.5' | 'sonic-3.6' | 'sonic-lite' | 'sonic-preview';
 
 /**
  * See [the docs](https://docs.cartesia.ai/build-with-cartesia/tts-models/latest) for all options.
