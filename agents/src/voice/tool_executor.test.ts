@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ChatContext, FunctionCall } from '../llm/chat_context.js';
 import { ToolError, ToolFlag, tool } from '../llm/tool_context.js';
 import { Future } from '../utils.js';
-import { StopResponse } from './agent.js';
-import type { AgentSession } from './agent_session.js';
+import { Agent, StopResponse } from './agent.js';
+import { AgentSession } from './agent_session.js';
 import { RunContext } from './run_context.js';
 import { SpeechHandle } from './speech_handle.js';
+import { FakeLLM } from './testing/fake_llm.js';
 import { ToolExecutor, _getCancellableRunningTasks, getRunningTasks } from './tool_executor.js';
 
 describe('ToolExecutor', () => {
@@ -196,6 +197,80 @@ describe('ToolExecutor', () => {
     expect(history.items).toHaveLength(0);
     expect(executor.hasRunningTasks).toBe(false);
   });
+
+  it.each([null, undefined, 'finished'])(
+    'settles a real session run after progress (%s)',
+    async (output) => {
+      const lookup = tool({
+        name: 'lookup',
+        description: '',
+        execute: async (_, { ctx }) => {
+          await ctx.update('working');
+          return output;
+        },
+      });
+      const session = new AgentSession({
+        llm: new FakeLLM([{ input: 'lookup', toolCalls: [{ name: 'lookup', args: {} }] }]),
+        vad: null,
+      });
+      try {
+        await session.start({ agent: new Agent({ instructions: 'test', tools: [lookup] }) });
+        await session.run({ userInput: 'lookup' }).wait();
+        for (const items of [session.history.items, session.currentAgent.chatCtx.items]) {
+          expect(items).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: 'function_call_output',
+                callId: 'fake_call_0_final',
+                output: output ?? '',
+                isError: false,
+              }),
+            ]),
+          );
+        }
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it.each([null, undefined, 'finished'])(
+    'settles a run on close while its completion reply waits for foreground work (%s)',
+    async (output) => {
+      const holdStarted = new Future<void>();
+      const releaseHold = new Future<void>();
+      const lookup = tool({
+        name: 'lookup',
+        description: '',
+        execute: async (_, { ctx }) => {
+          await ctx.update('working');
+          return output;
+        },
+      });
+      const session = new AgentSession({
+        llm: new FakeLLM([{ input: 'lookup', toolCalls: [{ name: 'lookup', args: {} }] }]),
+        vad: null,
+      });
+      await session.start({ agent: new Agent({ instructions: 'test', tools: [lookup] }) });
+      const executor = session._activity!._toolExecutor;
+      const hold = session.waitForIdleAndHold(async () => {
+        holdStarted.resolve();
+        await releaseHold.await;
+      });
+      try {
+        await holdStarted.await;
+        const run = session.run({ userInput: 'lookup' });
+        await vi.waitFor(() => expect(executor.replyTask).toBeDefined());
+        await session.close();
+        await vi.waitFor(() => expect(run.done()).toBe(true));
+        await run.wait();
+      } finally {
+        releaseHold.resolve();
+        await hold;
+        await session.close();
+      }
+    },
+  );
 
   it('rejects duplicate calls when onDuplicate is reject', async () => {
     const executor = new ToolExecutor();

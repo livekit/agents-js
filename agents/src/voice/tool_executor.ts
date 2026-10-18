@@ -19,7 +19,7 @@ import {
   tool,
 } from '../llm/tool_context.js';
 import { log } from '../log.js';
-import { Future, Task } from '../utils.js';
+import { Future, Task, waitUntilAborted } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import type { PromptTemplate, RunContext, UpdatePromptArgs } from './run_context.js';
 import { isStopResponse } from './stop_response.js';
@@ -406,6 +406,8 @@ export class ToolExecutor {
 
   async aclose(): Promise<void> {
     this.pendingUpdates = [];
+    const replyTask = this._replyTask;
+    replyTask?.cancel();
     const tasks = [...this.runningTasks.values()];
     for (const task of tasks) {
       task.controller.abort();
@@ -416,6 +418,7 @@ export class ToolExecutor {
       void task.promise.catch(() => undefined);
     }
     this.runningTasks.clear();
+    await replyTask?.result;
   }
 
   async enqueueReply(
@@ -432,8 +435,8 @@ export class ToolExecutor {
     if (this._replyTask === undefined || this._replyTaskDone) {
       this._replyTaskDone = false;
       // a Task, not a bare promise: an active RunResult watches it like a speech handle
-      this._replyTask = Task.from(() =>
-        this.deliverReply(ctx.session).catch((error) => {
+      this._replyTask = Task.from(({ signal }) =>
+        this.deliverReply(ctx.session, signal).catch((error) => {
           log().warn(
             { error },
             'deliverReply failed; async tool result may not trigger a follow-up reply',
@@ -581,13 +584,14 @@ export class ToolExecutor {
     return undefined;
   }
 
-  private async deliverReply(session: AgentSession): Promise<void> {
+  private async deliverReply(session: AgentSession, signal: AbortSignal): Promise<void> {
     try {
       if (this.owningActivity) {
-        await this.owningActivity.waitForIdle();
+        await waitUntilAborted(this.owningActivity.waitForIdle(), signal);
       } else if ('waitForIdle' in session && typeof session.waitForIdle === 'function') {
-        await session.waitForIdle();
+        await waitUntilAborted(session.waitForIdle(), signal);
       }
+      if (signal.aborted) return;
 
       const updates = [...this.pendingUpdates];
       this.pendingUpdates = [];
