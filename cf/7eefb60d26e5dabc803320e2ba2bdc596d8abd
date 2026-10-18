@@ -1,0 +1,41 @@
+plugins/google/src/utils.test.ts
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 41-54
+agents/src/llm/mcp_http.test.ts
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 107,113,171,248-250,435-462
+  s_de5d34fcc7db11::t_f08560a64fc4ef 463-464
+plugins/openai/src/tool_utils.test.ts
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 41,46,50
+.changeset/mcp-tool-metadata.md
+  s_de5d34fcc7db11::t_2190d717965e25 1-5
+plugins/anthropic/src/llm.test.ts
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 281,305,322-326
+agents/src/llm/mcp.test.ts
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 88-100
+plugins/openai/src/realtime/realtime_model.test.ts
+  s_de5d34fcc7db11::t_57c8dab6bcd552 79-109
+agents/src/llm/mcp.ts
+  s_de5d34fcc7db11::t_2190d717965e25 352
+  s_de5d34fcc7db11::t_b709521684e27d 353
+agents/src/llm/tool_context.ts
+  s_de5d34fcc7db11::t_2190d717965e25 206-208,680,690-691,727,737-738,795
+agents/src/llm/tool_context.test.ts
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 25-36
+agents/etc/agents.api.md
+  s_de5d34fcc7db11::t_63eca52e0c82d6 3837,7980,7992,9403-9404
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cf7eefb60d26e5dabc803320e2ba2bdc596d8abd",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
