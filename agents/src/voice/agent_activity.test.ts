@@ -767,6 +767,7 @@ describe('AgentActivity - false interruption resume', () => {
 
   it('keeps the resume armed when the realtime server owns turn detection', async () => {
     const activity = endOfTurnActivity(new ServerTurnRealtimeModel());
+    Object.assign(activity, { rtTurnDetectionEnabled: true });
     activity.startFalseInterruptionTimer(300);
 
     expect(await activity.onEndOfTurn(endOfTurnInfo())).toBe(true);
@@ -1888,6 +1889,48 @@ describe('AgentActivity - transcriptsEquivalent', () => {
       first: 'BOOK   A ROOM',
       second: 'book a room.',
       expected: true,
+    },
+    {
+      name: 'ASCII casing and punctuation',
+      first: 'hello how are you',
+      second: 'Hello, how are you?',
+      expected: true,
+    },
+    {
+      name: 'Arabic comma and question mark',
+      first: 'مرحبا كيف حالك',
+      second: 'مرحبا، كيف حالك؟',
+      expected: true,
+    },
+    {
+      name: 'Arabic comma and semicolon',
+      first: 'نعم أريد الحجز',
+      second: 'نعم، أريد الحجز؛',
+      expected: true,
+    },
+    {
+      name: 'Urdu full stop',
+      first: 'آپ کیسے ہیں',
+      second: 'آپ کیسے ہیں۔',
+      expected: true,
+    },
+    {
+      name: 'Devanagari danda',
+      first: 'आप कैसे हैं',
+      second: 'आप कैसे हैं।',
+      expected: true,
+    },
+    {
+      name: 'CJK punctuation',
+      first: '你好 我很好',
+      second: '你好，我很好。',
+      expected: true,
+    },
+    {
+      name: 'different Arabic words',
+      first: 'مرحبا كيف حالك',
+      second: 'مرحبا كيف حالكم؟',
+      expected: false,
     },
     // A changed word must invalidate it (Python: test_changed_words_invalidate_preemptive_generation).
     { name: 'a changed word', first: 'book a', second: 'book a room', expected: false },

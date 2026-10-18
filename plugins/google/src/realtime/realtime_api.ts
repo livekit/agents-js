@@ -50,7 +50,7 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
 
-const KNOWN_VERTEXAI_MODELS = new Set(['gemini-live-2.5-flash-native-audio']);
+const KNOWN_VERTEXAI_MODELS = new Set(['gemini-3.8-live', 'gemini-live-2.5-flash-native-audio']);
 
 const KNOWN_GEMINI_API_MODELS = new Set([
   'gemini-3.8-live',
@@ -60,11 +60,34 @@ const KNOWN_GEMINI_API_MODELS = new Set([
 ]);
 
 // generateReply() appends a "." user turn so Gemini sees a completed turn. These models
-// answer that placeholder with an empty turn instead, so they must not get it.
+// answer that placeholder with an empty turn instead, so they must not get it, and take
+// reply instructions as a user turn instead.
 const MODELS_WITHOUT_REPLY_PLACEHOLDER = ['3.1', '3.8'];
 
 function needsReplyPlaceholder(model: string): boolean {
   return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
+}
+
+/** The turns generateReply() sends to request a reply, with optional instructions. */
+export function replyTurns(model: string, instructions?: string): types.Content[] {
+  const placeholder = needsReplyPlaceholder(model);
+  const turns: types.Content[] = [];
+  if (instructions !== undefined) {
+    if (placeholder) {
+      turns.push({ parts: [{ text: instructions }], role: 'model' });
+    } else {
+      // A trailing model turn is continued: these models speak their reasoning or
+      // stay silent. Unwrapped, they later quote it back as the user's words.
+      turns.push({
+        parts: [{ text: `<instructions>\n${instructions}\n</instructions>` }],
+        role: 'user',
+      });
+    }
+  }
+  if (placeholder) {
+    turns.push({ parts: [{ text: '.' }], role: 'user' });
+  }
+  return turns;
 }
 
 /**
@@ -82,17 +105,27 @@ export function toClientContentParams({
   };
 }
 
-function validateModelAPIMatch(model: string, vertexai: boolean): void {
-  if (vertexai && KNOWN_GEMINI_API_MODELS.has(model)) {
-    throw new Error(
-      `Model '${model}' is a Gemini API model, but vertexai=true. Use a VertexAI model ` +
+function warnModelAPIMismatch(model: string, vertexai: boolean): void {
+  const modelName = model.replace(
+    /^(?:google\/|(?:(?:projects\/[^/]+\/locations\/[^/]+\/)?publishers\/google\/)?models\/)/,
+    '',
+  );
+  if (vertexai && KNOWN_GEMINI_API_MODELS.has(modelName) && !KNOWN_VERTEXAI_MODELS.has(modelName)) {
+    log().warn(
+      `Model '${model}' may not be available on VertexAI (vertexai=true). ` +
+        `If the connection fails, use a VertexAI model ` +
         `(e.g., 'gemini-live-2.5-flash-native-audio') or set vertexai=false.`,
     );
   }
 
-  if (!vertexai && KNOWN_VERTEXAI_MODELS.has(model)) {
-    throw new Error(
-      `Model '${model}' is a VertexAI model, but vertexai=false. Use a Gemini API model ` +
+  if (
+    !vertexai &&
+    KNOWN_VERTEXAI_MODELS.has(modelName) &&
+    !KNOWN_GEMINI_API_MODELS.has(modelName)
+  ) {
+    log().warn(
+      `Model '${model}' may not be available on the Gemini API (vertexai=false). ` +
+        `If the connection fails, use a Gemini API model ` +
         `(e.g., 'gemini-2.5-flash-native-audio-preview-12-2025') or set vertexai=true.`,
     );
   }
@@ -198,6 +231,10 @@ export class RealtimeModel extends llm.RealtimeModel {
 
   get model(): string {
     return this._options.model;
+  }
+
+  override get provider(): string {
+    return this._options.vertexai ? 'Vertex AI' : 'Gemini';
   }
 
   label(): string {
@@ -351,6 +388,7 @@ export class RealtimeModel extends llm.RealtimeModel {
        * Thinking configuration for native audio models.
        * If not set, the model's default thinking behavior is used.
        * Gemini 3.1 live models use `thinkingLevel`.
+       * `thinkingLevel` is not supported by gemini-3.8-live on the Gemini API.
        * Gemini 2.5 live models use `thinkingBudget`.
        */
       thinkingConfig?: types.ThinkingConfig;
@@ -382,7 +420,10 @@ export class RealtimeModel extends llm.RealtimeModel {
     const apiKey = options.apiKey || process.env.GOOGLE_API_KEY;
     const project = options.project || process.env.GOOGLE_CLOUD_PROJECT;
     const location = options.location || process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
-    const vertexai = options.vertexai ?? false;
+    const vertexai =
+      options.vertexai ??
+      (process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' ||
+        process.env.GOOGLE_GENAI_USE_VERTEXAI === '1');
 
     // Model selection based on API type
     const defaultModel = vertexai
@@ -390,7 +431,18 @@ export class RealtimeModel extends llm.RealtimeModel {
       : 'gemini-2.5-flash-native-audio-preview-12-2025';
 
     const model = options.model || defaultModel;
-    validateModelAPIMatch(model, vertexai);
+    warnModelAPIMismatch(model, vertexai);
+
+    if (
+      !vertexai &&
+      model.replace(/^models\//, '') === 'gemini-3.8-live' &&
+      options.thinkingConfig?.thinkingLevel !== undefined
+    ) {
+      throw new Error(
+        `Model '${model}' does not support thinkingLevel on the Gemini API. ` +
+          `Omit thinkingLevel or use 'gemini-3.8-live-extended-thinking'.`,
+      );
+    }
 
     super({
       messageTruncation: false,
@@ -512,6 +564,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
   private pendingToolCallIds = new Set<string>();
+  private syntheticCallIds = new Set<string>();
   private toolCallStatuses = new Map<string, ToolCallStatus>();
   private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
   private generationPendingTurnComplete?: ResponseGeneration;
@@ -578,6 +631,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pendingInterruptText = false;
 
     this.pendingToolCallIds.clear();
+    this.syntheticCallIds.clear();
     this.toolCallStatuses.clear();
     if (this.generationPendingTurnComplete) {
       this.markCurrentGenerationDone(false, this.generationPendingTurnComplete);
@@ -610,19 +664,15 @@ export class RealtimeSession extends llm.RealtimeSession {
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
         const response: types.FunctionResponse = {
+          // gemini-3.8-live on Vertex AI drops BLOCKING responses without an id
+          id: this.syntheticCallIds.has(item.callId) ? undefined : item.callId,
           name: item.name,
           response: { output: item.output },
         };
 
-        if (this.options.toolResponseScheduling !== undefined) {
-          // vertexai currently doesn't support the scheduling parameter, gemini api defaults to idle
-          // it's the user's responsibility to avoid this parameter when using vertexai
+        // Vertex AI does not support scheduling; the Gemini API defaults it to WHEN_IDLE.
+        if (!vertexai && this.options.toolResponseScheduling !== undefined) {
           response.scheduling = this.options.toolResponseScheduling;
-        }
-
-        if (!vertexai) {
-          // vertexai does not support id in FunctionResponse
-          response.id = item.callId;
         }
         this.toolResponseCallIds.set(response, item.callId);
 
@@ -856,11 +906,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     instructions?: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<llm.GenerationCreatedEvent> {
-    if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate) {
-      this.#logger.warn(
-        `generateReply is not compatible with '${this.options.model}' and will be ignored.`,
+    if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate && instructions !== undefined) {
+      throw new Error(
+        `generateReply with 'instructions' is not compatible with '${this.options.model}'`,
       );
-      throw new Error(`generateReply is not compatible with '${this.options.model}'`);
     }
 
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
@@ -903,19 +952,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.inUserActivity = false;
     }
 
-    const turns: types.Content[] = [];
-    if (instructions !== undefined) {
-      turns.push({
-        parts: [{ text: instructions }],
-        role: 'model',
-      });
-    }
-    if (needsReplyPlaceholder(this.options.model)) {
-      turns.push({
-        parts: [{ text: '.' }],
-        role: 'user',
-      });
-    }
+    const turns = replyTurns(this.options.model, instructions);
 
     this.sendClientEvent({
       type: 'content',
@@ -1023,9 +1060,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       await this.closeActiveSession();
 
       this.sessionShouldClose.clear();
-      const config = this.buildConnectConfig();
 
       try {
+        const config = this.buildConnectConfig();
         this.#logger.debug('Connecting to Gemini Realtime API...');
 
         const sessionOpened = new Event();
@@ -1777,6 +1814,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       const callId = fc.id || shortuuid('fnc-call-');
       this.pendingToolCallIds.add(callId);
+      if (!fc.id) {
+        this.syntheticCallIds.add(callId);
+      }
       this.toolCallStatuses.set(callId, {
         name: fc.name,
         status: 'pending',
@@ -1785,12 +1825,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       });
       if (this.isNonBlockingToolBehavior()) {
         const continuingResponse: types.FunctionResponse = {
-          id: this.options.vertexai ? undefined : callId,
+          id: fc.id || undefined,
           name: fc.name,
           response: {},
           willContinue: true,
         };
-        if (this.options.toolResponseScheduling !== undefined) {
+        if (!this.options.vertexai && this.options.toolResponseScheduling !== undefined) {
           continuingResponse.scheduling = this.options.toolResponseScheduling;
         }
         this.sendClientEvent({
@@ -1827,6 +1867,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
     for (const id of cancellation.ids || []) {
       this.pendingToolCallIds.delete(id);
+      this.syntheticCallIds.delete(id);
       const status = this.toolCallStatuses.get(id);
       if (status) {
         status.status = 'cancelled';
@@ -1843,6 +1884,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const callId = fr.id ?? this.toolResponseCallIds.get(fr);
       if (callId) {
         this.pendingToolCallIds.delete(callId);
+        this.syntheticCallIds.delete(callId);
       }
     }
   }

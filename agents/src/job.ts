@@ -259,7 +259,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     });
     this.#logger = log().child({
       jobId: this.#info.job.id,
-      'lk.pii.room_name': this.#info.job.room?.name,
+      roomName: this.#info.job.room?.name,
     });
     this.#inferenceExecutor = inferenceExecutor;
     this._redactionEnabled = Boolean(info.job.enableRedaction);
@@ -565,9 +565,9 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     try {
       const client = new RoomServiceClient(this.#info.url, this.#info.apiKey, this.#info.apiSecret);
       await client.deleteRoom(targetRoomName);
-      this.#logger.info({ 'lk.pii.room_name': targetRoomName }, 'room deleted');
+      this.#logger.info({ roomName: targetRoomName }, 'room deleted');
     } catch (error) {
-      this.#logger.warn({ error, 'lk.pii.room_name': targetRoomName }, 'error while deleting room');
+      this.#logger.warn({ error, roomName: targetRoomName }, 'error while deleting room');
     }
   }
 

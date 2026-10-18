@@ -196,7 +196,7 @@ export abstract class SupervisedProc {
 
   async join() {
     if (!this.#started) {
-      throw new Error('runner not started');
+      return;
     }
 
     await this.#join.await;
@@ -341,17 +341,6 @@ export abstract class SupervisedProc {
     } finally {
       this.clearTimers();
     }
-  }
-
-  async launchJob(info: RunningJobInfo) {
-    if (this.#runningJob) {
-      throw new Error('executor already has a running job');
-    }
-    if (!this.proc?.connected) {
-      throw new Error('process not connected');
-    }
-    this.#runningJob = info;
-    this.proc.send({ case: 'startJobRequest', value: { runningJob: info } });
   }
 
   private async getChildMemoryUsageMB(): Promise<number> {

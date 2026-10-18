@@ -70,7 +70,7 @@ function stylesPerPart(model: string): boolean {
 // Headerless PCM, asked for explicitly: the byte stream is decoded as raw PCM, and the docs
 // only guarantee a headerless stream when response_format names it. The docs spell it
 // "audio/l16"; on the wire it is an enum (AUDIO_MULAW and AUDIO_ALAW are the other two)
-// nested under a ResponseFormatConfig that the typed SDK has no field for.
+// nested under a ResponseFormatConfig that the SDK does not send from its typed field.
 const RESPONSE_FORMAT = { audio: { mime_type: 'AUDIO_L16' } };
 
 // where one part ends and the next begins: Gemini takes a style per part, and an
@@ -293,27 +293,22 @@ export class ChunkedStream extends tts.ChunkedStream {
       .filter((instruction): instruction is string => !!instruction)
       .join('\n');
 
-    // neither speech_metadata nor response_format has a field on the typed config, so both
-    // ride extraBody: it merges into the request body, replacing `contents` wholesale since
-    // arrays overwrite, and merging into `generationConfig` since objects recurse.
-    const extraBody: Record<string, unknown> = {};
+    // googleapis/js-genai#2004: the SDK drops the typed responseFormat from the request; move RESPONSE_FORMAT there once it's sent
+    // Until then it rides extraBody, which merges into `generationConfig` since objects recurse.
     if (stylesPerPart(opts.model)) {
-      extraBody.generationConfig = { response_format: RESPONSE_FORMAT };
+      config.httpOptions = {
+        extraBody: { generationConfig: { response_format: RESPONSE_FORMAT } },
+      };
     }
     const styledParts = this.#styledParts(instructions);
-    if (styledParts) {
-      extraBody.contents = [{ role: 'user', parts: styledParts }];
-    } else if (instructions) {
+    if (!styledParts && instructions) {
       inputText = `${instructions}:\n"${inputText}"`;
-    }
-    if (Object.keys(extraBody).length) {
-      config.httpOptions = { extraBody };
     }
 
     const contents: types.Content[] = [
       {
         role: 'user',
-        parts: [{ text: inputText }],
+        parts: styledParts ?? [{ text: inputText }],
       },
     ];
 
@@ -411,9 +406,9 @@ export class ChunkedStream extends tts.ChunkedStream {
    *
    * ```
    * {"parts": [{"text": "\"<chuckle> Sienna?\"",
-   *             "speech_metadata": {"style": "Thoughtful, Quiet"}},
+   *             "speechMetadata": {"style": "Thoughtful, Quiet"}},
    *            {"text": "\"What's on your mind?\"",
-   *             "speech_metadata": {"style": "Wistful"}}]}
+   *             "speechMetadata": {"style": "Wistful"}}]}
    * ```
    *
    * The agent's stream adapter hands over one sentence at a time, so a turn usually makes
@@ -422,7 +417,7 @@ export class ChunkedStream extends tts.ChunkedStream {
    * as a plain part. Hence `splitExprMarkup`, not `splitAllMarkup` — the latter would take
    * the inline tags out too.
    */
-  #styledParts(instructions: string): Record<string, unknown>[] | undefined {
+  #styledParts(instructions: string): types.Part[] | undefined {
     const opts = this.#opts;
     if (!stylesPerPart(opts.model)) {
       return undefined;
@@ -442,7 +437,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       text.length,
     ];
 
-    const parts: Record<string, unknown>[] = [];
+    const parts: types.Part[] = [];
     let strippedAMarker = false;
     for (let i = 0; i + 1 < bounds.length; i++) {
       const [clean, markers] = tts.splitExprMarkup(text.slice(bounds[i], bounds[i + 1]));
@@ -451,8 +446,8 @@ export class ChunkedStream extends tts.ChunkedStream {
       const words = clean.trim();
       if (!words) continue;
 
-      const part: Record<string, unknown> = { text: `"${words}"` };
-      const metadata: Record<string, string> = {};
+      const part: types.Part = { text: `"${words}"` };
+      const metadata: types.SpeechMetadata = {};
       const style = [instructions, expressions[0]?.value].filter((p) => !!p).join(', ');
       if (style) {
         metadata.style = style;
@@ -463,7 +458,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         metadata.speaker = opts.speaker;
       }
       if (Object.keys(metadata).length) {
-        part.speech_metadata = metadata;
+        part.speechMetadata = metadata;
       }
       parts.push(part);
     }
@@ -472,7 +467,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     // send the raw text for Gemini to read out. Only hand back undefined when the input
     // carried no markup at all, where the plain prompt says the same thing.
     const carriesMarkup = lowered || strippedAMarker;
-    if (!parts.length || !(carriesMarkup || parts.some((p) => 'speech_metadata' in p))) {
+    if (!parts.length || !(carriesMarkup || parts.some((p) => p.speechMetadata))) {
       return undefined;
     }
     return parts;

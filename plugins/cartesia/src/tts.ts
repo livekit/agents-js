@@ -389,7 +389,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #pool: ConnectionPool<WebSocket>;
   #logger = log();
-  #tokenizer = new tokenize.basic.SentenceTokenizer({
+  #tokenizer = new tokenize.blingfire.SentenceTokenizer({
     minSentenceLength: BUFFERED_WORDS_COUNT,
   }).stream();
   label = 'cartesia.SynthesizeStream';

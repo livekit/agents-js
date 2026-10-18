@@ -10,6 +10,7 @@ import { Attributes } from '@opentelemetry/api';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
+import { default as default_2 } from 'ws';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
@@ -32,6 +33,7 @@ import type * as proto from '@livekit/protocol';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Reasoning as Reasoning_2 } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { RemoteTrackPublication } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
@@ -50,6 +52,7 @@ import { SimulationRun_Job } from '@livekit/protocol';
 import type { SIPOutboundConfig } from '@livekit/protocol';
 import { Span } from '@opentelemetry/api';
 import type { Span as Span_2 } from '@opentelemetry/sdk-trace-base';
+import type { SpanContext } from '@opentelemetry/api';
 import type { SpanExporter } from '@opentelemetry/sdk-trace-base';
 import { SpanKind } from '@opentelemetry/api';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base';
@@ -77,6 +80,9 @@ export type Aborted<T> = {
     result: undefined;
     isAborted: true;
 };
+
+// @public (undocumented)
+function active(): boolean;
 
 // @public
 export class AdaptiveNoiseGate implements AudioGate {
@@ -373,7 +379,7 @@ export interface AgentOptions<UserData> {
     // (undocumented)
     instructions: string | Instructions;
     // (undocumented)
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
     // (undocumented)
     minConsecutiveSpeechDelay?: number;
     // (undocumented)
@@ -613,6 +619,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     tts?: TTS;
     // (undocumented)
     turnDetection?: TurnDetectionMode;
+    // @internal
+    _turnDetectionExplicit: boolean;
     // Warning: (ae-forgotten-export) The symbol "ActivityTransitionOptions" needs to be exported by the entry point index.d.ts
     //
     // @internal (undocumented)
@@ -695,7 +703,7 @@ export enum AgentSessionEventTypes {
 export type AgentSessionOptions<UserData = UnknownUserData> = {
     stt?: STT | ModelWithLanguage;
     vad?: VAD | null;
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels;
     tts?: TTS | ModelWithVoice;
     userData?: UserData;
     connOptions?: SessionConnectOptions;
@@ -775,7 +783,7 @@ export interface AgentTaskCreateOptions<ResultT = unknown, UserData = any> exten
 // @public
 export interface AgentUpdateOptions {
     expressive?: boolean | ExpressiveOptions;
-    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
     stt?: STT | ModelWithLanguage | null;
     tts?: TTS | ModelWithVoice | null;
     vad?: VAD | null;
@@ -887,7 +895,7 @@ export interface APIConnectOptions {
 export class APIError extends Error {
     constructor(message: string, input?: APIErrorOptions);
     // (undocumented)
-    readonly body: object | null;
+    readonly body: object | string | number | boolean | null;
     // (undocumented)
     readonly retryable: boolean;
     // (undocumented)
@@ -1109,6 +1117,9 @@ const ATTR_CONNECTION_STATE = "lk.connection_state";
 
 // @public (undocumented)
 const ATTR_DEPLOYMENT_ID = "lk.deployment_id";
+
+// @public (undocumented)
+const ATTR_DESTINATION_IDENTITY = "lk.pii.destination_identity";
 
 // @public (undocumented)
 const ATTR_DISCONNECT_REASON = "lk.disconnect_reason";
@@ -1333,6 +1344,15 @@ const ATTR_GEN_AI_WORKFLOW_NAME = "gen_ai.workflow.name";
 const ATTR_GENERATION_COUNT = "lk.generation_count";
 
 // @public (undocumented)
+const ATTR_INPUT_BASE_SPAN_ID = "lk.input.base_span_id";
+
+// @public
+const ATTR_INPUT_DELTA = "lk.input.delta";
+
+// @public
+const ATTR_INPUT_DROPPED_FROM_BASE = "lk.input.dropped_from_base";
+
+// @public (undocumented)
 const ATTR_INSTRUCTIONS = "lk.pii.instructions";
 
 // @public (undocumented)
@@ -1515,6 +1535,9 @@ const ATTR_SPEECH_QUEUE_WAIT = "lk.speech.queue_wait";
 // @public (undocumented)
 const ATTR_START_TIME = "lk.start_time";
 
+// @public
+const ATTR_STT_EVENTS = "lk.stt.events";
+
 // @public (undocumented)
 const ATTR_TOOL_SETS = "lk.tool_sets";
 
@@ -1685,6 +1708,8 @@ export abstract class AudioOutput extends EventEmitter_2 {
     flush(): void;
     // (undocumented)
     protected logger: Logger;
+    // @internal (undocumented)
+    _markInputTruncated(): void;
     // (undocumented)
     protected readonly nextInChain?: AudioOutput | undefined;
     // (undocumented)
@@ -1932,6 +1957,12 @@ declare namespace beta {
     }
 }
 
+declare namespace blingfire {
+    export {
+        SentenceTokenizer_3 as SentenceTokenizer
+    }
+}
+
 // @public (undocumented)
 interface BlockedReport {
     cause: LoopStallCause;
@@ -2024,28 +2055,8 @@ export function calculateAudioDurationSeconds(frame: AudioBuffer_2): number;
 // @public (undocumented)
 export function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void>;
 
-// Warning: (ae-internal-missing-underscore) The name "CancellablePromise" should be prefixed with an underscore because the declaration is marked as @internal
-//
-// @internal (undocumented)
-export class CancellablePromise<T, E extends Error = Error> {
-    constructor(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason: E) => void, onCancel: (cancelFn: () => void) => void) => void);
-    // (undocumented)
-    cancel(): void;
-    // (undocumented)
-    catch<TResult = never>(onrejected?: ((reason: E) => TResult | Promise<TResult>) | null): Promise<Throws<T | TResult | undefined, E>>;
-    // (undocumented)
-    get error(): Error | null;
-    // (undocumented)
-    finally(onfinally?: (() => void) | null): Promise<Throws<T, E>>;
-    // (undocumented)
-    static from<T, E extends Error = Error>(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>;
-    // (undocumented)
-    static from<T>(promise: Promise<T>): CancellablePromise<T>;
-    // (undocumented)
-    get isCancelled(): boolean;
-    // (undocumented)
-    then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null, onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null): Promise<TResult1 | TResult2>;
-}
+// @public (undocumented)
+function captureContentEnabled(): boolean;
 
 // @public (undocumented)
 type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
@@ -2359,6 +2370,7 @@ abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> 
     // (undocumented)
     protected closed: boolean;
     collect(): Promise<AudioFrame>;
+    protected emitMetrics: boolean;
     // @internal
     get error(): Error | undefined;
     // (undocumented)
@@ -2533,6 +2545,9 @@ export interface CompletionUsage {
     totalTokens: number;
 }
 
+// @public
+function compute(site: InputDeltaSite, chatCtx: ChatContext, span: Span): InputDelta;
+
 // Warning: (ae-forgotten-export) The symbol "DiffOps" needs to be exported by the entry point index.d.ts
 //
 // @public
@@ -2578,6 +2593,9 @@ export type ConversationItemAddedEvent = {
     item: ChatMessage | AgentHandoffItem;
     createdAt: number;
 };
+
+// @internal (undocumented)
+function conversationMessages(items: readonly ChatItem[]): ChatMessagePayload[];
 
 // @public
 function convertMarkup(provider: string, text: string): string;
@@ -2913,6 +2931,20 @@ function dropBracketCues(tokens: TimedString[], held: TimedString[], options?: {
 // @public (undocumented)
 type DtmfEvent = (typeof DTMF_EVENTS)[number];
 
+declare namespace duplex {
+    export {
+        isDuplexModel,
+        OpenAIDuplexModels,
+        DuplexModels,
+        OpenAIResponsesOptions,
+        OpenAIDuplexOptions,
+        DuplexOptions,
+        DuplexModelOptions,
+        DuplexModel_2 as DuplexModel,
+        DuplexSession_2 as DuplexSession
+    }
+}
+
 // @public
 export interface DuplexAudioFrame {
     frame: AudioFrame;
@@ -2940,6 +2972,50 @@ export abstract class DuplexModel {
     get provider(): string;
     abstract session(): DuplexSession;
 }
+
+// Warning: (ae-forgotten-export) The symbol "GPTLiveModel" needs to be exported by the entry point index.d.ts
+//
+// @public
+class DuplexModel_2<TModel extends DuplexModels | AnyString = DuplexModels | AnyString> extends GPTLiveModel {
+    constructor(options: DuplexModelOptions<TModel>);
+    // (undocumented)
+    static fromModelString(model: string): DuplexModel_2;
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions_2" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    readonly _inferenceOptions: InferenceOptions_2;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(): DuplexSession_2;
+}
+
+// @public (undocumented)
+interface DuplexModelOptions<TModel extends DuplexModels | AnyString> {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    maxSessionDuration?: number | null;
+    model: TModel;
+    modelOptions?: DuplexOptions<TModel>;
+    provider?: string;
+    voice?: string;
+}
+
+// @public
+type DuplexModels = OpenAIDuplexModels;
+
+// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+type DuplexOptions<TModel extends DuplexModels | AnyString> = TModel extends OpenAIDuplexModels ? OpenAIDuplexOptions : Record<string, unknown>;
 
 // @public
 export interface DuplexOutputTranscriptDelta {
@@ -2997,6 +3073,24 @@ export abstract class DuplexSession<Events extends EventMap = Record<never, neve
     }): void;
     _updateSession(instructions?: string, chatCtx?: ChatContext, tools?: ToolContext): Promise<void>;
     abstract _updateTools(tools: ToolContext): Promise<void>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "GPTLiveSession" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+class DuplexSession_2 extends GPTLiveSession {
+    constructor(model: DuplexModel_2);
+    // (undocumented)
+    protected createWsUrlAndHeaders(): Promise<{
+        url: URL;
+        headers: Record<string, string>;
+    }>;
+    // Warning: (ae-forgotten-export) The symbol "ErrorBody" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected isFatalError(error: ErrorBody): boolean;
+    // (undocumented)
+    _updateTools(tools: ToolContext): Promise<void>;
 }
 
 // @public
@@ -3876,10 +3970,15 @@ const GEN_AI_PROVIDER_NAMES: ReadonlySet<string>;
 declare namespace genAI {
     export {
         setCaptureContent,
+        captureContentEnabled,
         withInferenceTracking,
         markInferenceSpanRecorded,
+        splitInstructions,
         toSystemInstructions,
         toInputMessages,
+        instructionParts,
+        conversationMessages,
+        messageLayout,
         toOutputMessages,
         toToolDefinitions,
         finishReasonFor,
@@ -3977,7 +4076,10 @@ export function getLanguageRegion(language: string): string | undefined;
 function getMonitor(): EventLoopMonitor | undefined;
 
 // @public (undocumented)
-type GoogleModels = 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
+type GoogleModels = 'google/gemini-4-argon' | 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
+
+// @public (undocumented)
+type GoogleRealtimeModels = 'google/gemini-3.8-live' | 'google/gemini-3.8-live-extended-thinking' | 'google/gemini-live';
 
 // @public (undocumented)
 type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
@@ -3987,11 +4089,6 @@ interface GoogleSTTOptions {
     custom_vocabulary?: string[];
     language_codes?: string[];
 }
-
-// Warning: (ae-internal-missing-underscore) The name "gracefullyCancel" should be prefixed with an underscore because the declaration is marked as @internal
-//
-// @internal (undocumented)
-export function gracefullyCancel<T>(promise: CancellablePromise<T>): Promise<void>;
 
 // @public (undocumented)
 export function handoff(options: {
@@ -4022,7 +4119,6 @@ export class IdleTimeoutError extends Error {
 export interface ImageContent {
     // (undocumented)
     _cache: Record<any, any>;
-    // (undocumented)
     id: string;
     image: string | VideoFrame_2;
     // (undocumented)
@@ -4064,11 +4160,27 @@ declare namespace inference {
         LLMStream_2 as LLMStream,
         ChatCompletionOptions,
         GatewayOptions,
-        InferenceClass,
         InferenceLLMOptions,
         LLMModels,
         XAIModels,
         ZAIModels,
+        llmFromModelString,
+        InferenceClass,
+        RealtimeModel_2 as RealtimeModel,
+        RealtimeSession_3 as RealtimeSession,
+        isRealtimeModel,
+        OpenAIRealtimeModels,
+        RealtimeModelOptions,
+        RealtimeModels,
+        XAIRealtimeModels,
+        DuplexModel_2 as DuplexModel,
+        DuplexSession_2 as DuplexSession,
+        isDuplexModel,
+        DuplexModelOptions,
+        DuplexModels,
+        DuplexOptions,
+        OpenAIDuplexOptions,
+        OpenAIResponsesOptions,
         normalizeSTTFallback,
         parseSTTModelString,
         STT_2 as STT,
@@ -4094,7 +4206,9 @@ declare namespace inference {
         TTSOptions,
         XaiTTSModels,
         XaiTTSOptions,
+        duplex,
         llm_3 as llm,
+        realtime,
         stt_2 as stt,
         tts_2 as tts
     }
@@ -4109,7 +4223,7 @@ interface InferenceExecutor {
     doInference(method: string, data: unknown): Promise<unknown>;
 }
 
-// @public (undocumented)
+// @public
 interface InferenceLLMOptions {
     // (undocumented)
     apiKey: string;
@@ -4211,6 +4325,77 @@ export const initializeLogger: (input: LoggerOptions) => void;
 // @public (undocumented)
 function initPinoCloudExporter(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig): void;
 
+// @internal (undocumented)
+interface InputBaseline {
+    // (undocumented)
+    instructions: string;
+    keys: Array<[string, string]>;
+    layout: Array<'new' | 'merged' | 'skipped'>;
+    // (undocumented)
+    spanContext: SpanContext;
+}
+
+// @public
+class InputDelta {
+    constructor(chatCtx: ChatContext, instructions: ChatItem[], conversation: ChatItem[], base?: SpanContext | undefined, droppedFromBase?: number | undefined);
+    // (undocumented)
+    readonly base?: SpanContext | undefined;
+    // (undocumented)
+    readonly chatCtx: ChatContext;
+    // (undocumented)
+    readonly conversation: ChatItem[];
+    // (undocumented)
+    readonly droppedFromBase?: number | undefined;
+    // (undocumented)
+    static full(chatCtx: ChatContext): InputDelta;
+    // (undocumented)
+    inputMessages(): ChatMessagePayload[];
+    // (undocumented)
+    readonly instructions: ChatItem[];
+    // (undocumented)
+    systemInstructions(): MessagePart[];
+}
+
+declare namespace inputDelta {
+    export {
+        runWithScope,
+        active,
+        compute,
+        setAttributes,
+        InputDeltaSite,
+        LLM_NODE,
+        LLM_REQUEST,
+        InputBaseline,
+        InputDelta,
+        InputDeltaTracker,
+        InputDeltaScope
+    }
+}
+
+// @public
+class InputDeltaScope {
+    constructor(tracker: InputDeltaTracker);
+    // (undocumented)
+    commit(): void;
+    // (undocumented)
+    delta(site: InputDeltaSite, chatCtx: ChatContext, span: Span): InputDelta;
+}
+
+// @public
+interface InputDeltaSite {
+    chatCtx: boolean;
+    // (undocumented)
+    name: 'llm_node' | 'llm_request';
+}
+
+// @public
+class InputDeltaTracker {
+    // @internal (undocumented)
+    readonly _baselines: Map<InputDeltaSite, InputBaseline>;
+    // (undocumented)
+    begin(): InputDeltaScope;
+}
+
 // @public
 export interface InputDetails {
     // (undocumented)
@@ -4246,6 +4431,9 @@ interface InstructionParts {
     extra?: Instructions | string;
     persona?: Instructions | string;
 }
+
+// @internal (undocumented)
+function instructionParts(items: readonly ChatItem[]): MessagePart[];
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "asModality"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "asModality"
@@ -4375,6 +4563,9 @@ export const isCloud: (url: URL) => boolean;
 export const isDevMode: () => boolean;
 
 // @public
+function isDuplexModel(model: string): model is DuplexModels;
+
+// @public
 export function isFfmpegTeardownError(error: unknown): boolean;
 
 // Warning: (ae-internal-missing-underscore) The name "isFlushSentinel" should be prefixed with an underscore because the declaration is marked as @internal
@@ -4402,6 +4593,9 @@ export const isPending: (promise: Promise<unknown>) => Promise<Throws<boolean, E
 
 // @public (undocumented)
 export function isProviderTool(tool: any): tool is ProviderTool;
+
+// @public
+function isRealtimeModel(model: string): boolean;
 
 // @public
 export function isStreamClosedError(error: unknown): boolean;
@@ -4703,7 +4897,6 @@ declare namespace llm {
         createToolOptions,
         executeToolCall,
         formatChatHistory,
-        oaiBuildFunctionInfo,
         oaiParams,
         serializeImage,
         toJsonSchema,
@@ -4762,6 +4955,7 @@ class LLM_2 extends llm_2.LLM {
 
 declare namespace llm_3 {
     export {
+        llmFromModelString,
         OpenAIModels,
         GoogleModels,
         MoonshotModels,
@@ -4770,7 +4964,6 @@ declare namespace llm_3 {
         XAIModels,
         ChatCompletionOptions,
         LLMModels,
-        InferenceClass,
         InferenceLLMOptions,
         GatewayOptions,
         LLM_2 as LLM,
@@ -4779,10 +4972,19 @@ declare namespace llm_3 {
 }
 
 // @public (undocumented)
+const LLM_NODE: InputDeltaSite;
+
+// @public (undocumented)
+const LLM_REQUEST: InputDeltaSite;
+
+// @public (undocumented)
 export type LLMCallbacks = {
     ['metrics_collected']: (metrics: LLMMetrics) => void;
     ['error']: (error: LLMError) => void;
 };
+
+// @public
+function llmFromModelString(model: string): LLM_2 | RealtimeModel_2 | DuplexModel_2;
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "convertMarkup"
 //
@@ -4809,8 +5011,6 @@ export type LLMMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
-//
 // @public (undocumented)
 type LLMModels = OpenAIModels | GoogleModels | MoonshotModels | DeepSeekModels | ZAIModels | XAIModels | AnyString;
 
@@ -5076,6 +5276,9 @@ export interface MessageGeneration {
     textStream: ReadableStream_2<string | TimedString>;
 }
 
+// @internal (undocumented)
+function messageLayout(items: readonly ChatItem[]): Array<'new' | 'merged' | 'skipped'>;
+
 // @public (undocumented)
 interface MessagePart {
     // (undocumented)
@@ -5250,11 +5453,6 @@ function normalizeSTTFallback(fallback: STTFallbackModelType | STTFallbackModelT
 // @public
 function normalizeTTSFallback(fallback: TTSFallbackModelType | TTSFallbackModelType[]): TTSFallbackModel[];
 
-// Warning: (ae-internal-missing-underscore) The name "oaiBuildFunctionInfo" should be prefixed with an underscore because the declaration is marked as @internal
-//
-// @internal (undocumented)
-export const oaiBuildFunctionInfo: (toolCtx: ToolContext, toolCallId: string, toolName: string, rawArgs: string) => FunctionCall;
-
 // Warning: (ae-internal-missing-underscore) The name "oaiParams" should be prefixed with an underscore because the declaration is marked as @internal
 //
 // @internal (undocumented)
@@ -5269,6 +5467,15 @@ type ObservabilityEndpoint = {
     cloudHostname: string;
 };
 
+// @public (undocumented)
+type OpenAIDuplexModels = 'openai/gpt-live-1';
+
+// @public (undocumented)
+interface OpenAIDuplexOptions {
+    delegation?: 'responses' | 'client';
+    responsesOptions?: OpenAIResponsesOptions;
+}
+
 // @public
 export type OpenAIFunctionParameters = {
     type: 'object';
@@ -5280,7 +5487,15 @@ export type OpenAIFunctionParameters = {
 };
 
 // @public (undocumented)
-type OpenAIModels = 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
+type OpenAIModels = 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
+
+// @public (undocumented)
+type OpenAIRealtimeModels = 'openai/gpt-realtime' | 'openai/gpt-realtime-mini' | 'openai/gpt-realtime-2.1' | 'openai/gpt-realtime-2.1-mini';
+
+// Warning: (ae-forgotten-export) The symbol "ResponsesDelegationOptions" needs to be exported by the entry point index.d.ts
+//
+// @public
+type OpenAIResponsesOptions = Omit<ResponsesDelegationOptions, 'serviceTier'>;
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTaskOptions"
 //
@@ -5603,10 +5818,24 @@ export type QueueAudioOutputItem = AudioFrame | AudioSegmentEnd;
 // @public
 export function readStream<T>(stream: ReadableStream_2<T>, signal?: AbortSignal): AsyncGenerator<T>;
 
+declare namespace realtime {
+    export {
+        isRealtimeModel,
+        OpenAIRealtimeModels,
+        GoogleRealtimeModels,
+        XAIRealtimeModels,
+        RealtimeModels,
+        RealtimeModelOptions,
+        RealtimeModel_2 as RealtimeModel,
+        RealtimeSession_3 as RealtimeSession
+    }
+}
+
 // @public (undocumented)
 export interface RealtimeCapabilities {
     audioOutput: boolean;
     autoToolReplyGeneration: boolean;
+    canDisableTurnDetection?: boolean;
     manualFunctionCalls: boolean;
     messageTruncation: boolean;
     midSessionChatCtxUpdate?: boolean;
@@ -5638,7 +5867,30 @@ export abstract class RealtimeModel {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    abstract session(): RealtimeSession;
+    abstract session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession;
+}
+
+// Warning: (ae-forgotten-export) The symbol "RealtimeModel_3" needs to be exported by the entry point index.d.ts
+//
+// @public
+class RealtimeModel_2 extends RealtimeModel_3 {
+    constructor(options: RealtimeModelOptions);
+    // (undocumented)
+    static fromModelString(model: string): RealtimeModel_2;
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    readonly _inferenceOptions: InferenceOptions;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession_3;
 }
 
 // @public (undocumented)
@@ -5676,6 +5928,44 @@ export type RealtimeModelMetrics = {
     outputTokenDetails: RealtimeModelMetricsOutputTokenDetails;
     metadata?: MetricsMetadata;
 };
+
+// @public (undocumented)
+interface RealtimeModelOptions {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    // (undocumented)
+    inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
+    // (undocumented)
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+    // (undocumented)
+    maxSessionDuration?: number | null;
+    // (undocumented)
+    modalities?: api_proto.Modality[];
+    // (undocumented)
+    model: RealtimeModels | AnyString;
+    provider?: string;
+    // (undocumented)
+    reasoning?: api_proto.Reasoning;
+    // (undocumented)
+    speed?: number;
+    // (undocumented)
+    toolChoice?: ToolChoice;
+    // (undocumented)
+    tracing?: api_proto.TracingConfig | null;
+    // (undocumented)
+    turnDetection?: api_proto.TurnDetectionType | null;
+    // (undocumented)
+    voice?: string;
+}
+
+// @public (undocumented)
+type RealtimeModels = OpenAIRealtimeModels | GoogleRealtimeModels | XAIRealtimeModels;
 
 // @public (undocumented)
 export abstract class RealtimeSession extends EventEmitter {
@@ -5722,6 +6012,45 @@ export abstract class RealtimeSession extends EventEmitter {
     _updateSession(instructions?: string, chatCtx?: ChatContext, tools?: ToolContext): Promise<void>;
     // (undocumented)
     abstract updateTools(tools: ToolContext): Promise<void>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+class RealtimeSession_3 extends RealtimeSession_2 {
+    constructor(realtimeModel: RealtimeModel_2, options?: {
+        turnDetectionDisabled?: boolean;
+    });
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    protected createChatCtxUpdateEvents(chatCtx: llm_2.ChatContext, addMockAudio?: boolean): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]>;
+    // Warning: (ae-forgotten-export) The symbol "api_proto" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected createSessionUpdateEvent(): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createToolsUpdateEvent(tools: ToolContext): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createWsConn(): Promise<default_2>;
+    // (undocumented)
+    protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void;
+    // (undocumented)
+    protected handleConversationItemInputAudioTranscriptionCompleted(event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent): void;
+    // (undocumented)
+    protected handleInputAudioBufferSpeechStarted(event: api_proto.InputAudioBufferSpeechStartedEvent): void;
+    // (undocumented)
+    protected handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void;
+    // (undocumented)
+    protected handleResponseCreated(event: api_proto.ResponseCreatedEvent): void;
+    // (undocumented)
+    protected handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void;
+    // (undocumented)
+    interrupt(): Promise<void>;
+    // (undocumented)
+    protected isFatalError(error: unknown): boolean;
+    // (undocumented)
+    protected resetInputTurnState(): void;
 }
 
 // @public (undocumented)
@@ -6125,6 +6454,9 @@ export function runWithJobContext<T>(context: JobContext, fn: () => T): T;
 // @internal
 export function runWithJobContextAsync<T>(context: JobContext, fn: () => Promise<T>): Promise<T>;
 
+// @public
+function runWithScope<T>(scope: InputDeltaScope, fn: () => T): T;
+
 export { Scenario }
 
 export { ScenarioGroup }
@@ -6186,6 +6518,16 @@ function sentenceTokenizer(provider: string, options: {
 class SentenceTokenizer_2 extends tokenizer.SentenceTokenizer {
     // Warning: (ae-forgotten-export) The symbol "TokenizerOptions" needs to be exported by the entry point index.d.ts
     constructor(options?: Partial<TokenizerOptions>);
+    // (undocumented)
+    stream(language?: string): tokenizer.SentenceStream;
+    // (undocumented)
+    tokenize(text: string, language?: string): string[];
+}
+
+// @public (undocumented)
+class SentenceTokenizer_3 extends tokenizer.SentenceTokenizer {
+    // Warning: (ae-forgotten-export) The symbol "TokenizerOptions_2" needs to be exported by the entry point index.d.ts
+    constructor(options?: Partial<TokenizerOptions_2>);
     // (undocumented)
     stream(language?: string): tokenizer.SentenceStream;
     // (undocumented)
@@ -6390,6 +6732,9 @@ function setAgentAttributes(span: Span, params: {
     model?: string;
     provider?: string;
 }): void;
+
+// @public
+function setAttributes(span: Span, delta: InputDelta): void;
 
 // @public
 function setCaptureContent(enabled: boolean): void;
@@ -6887,6 +7232,9 @@ function splitAllMarkup(text: string, options?: {
 // @public
 function splitExprMarkup(text: string): [string, ExpressiveTag[]];
 
+// @internal (undocumented)
+function splitInstructions(items: readonly ChatItem[]): [ChatItem[], ChatItem[]];
+
 // @public
 const splitWords: (text: string, ignorePunctuation?: boolean) => [string, number, number][];
 
@@ -7007,6 +7355,8 @@ class StreamAdapterWrapper extends SpeechStream {
 // @public (undocumented)
 class StreamAdapterWrapper_2 extends SynthesizeStream {
     constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions);
+    // (undocumented)
+    protected emitMetrics: boolean;
     // @internal
     get error(): Error | undefined;
     // @internal
@@ -7267,6 +7617,7 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     protected closed: boolean;
     // (undocumented)
     protected connOptions: APIConnectOptions;
+    protected emitMetrics: boolean;
     // (undocumented)
     static readonly END_OF_STREAM: unique symbol;
     endInput(): void;
@@ -7462,6 +7813,7 @@ declare namespace telemetry {
         PinoCloudExporterUrlConfig,
         PinoLogObject,
         genAI,
+        inputDelta,
         REDACTED_EXCEPTION_MESSAGE,
         loopMonitor,
         rpc,
@@ -7673,7 +8025,8 @@ declare namespace tokenize {
         BufferedSentenceStream,
         BufferedTokenStream,
         BufferedWordStream,
-        basic
+        basic,
+        blingfire
     }
 }
 
@@ -7898,6 +8251,7 @@ declare namespace traceTypes {
         ATTR_PROVIDER_REQUEST_IDS,
         ATTR_PARTICIPANT_ID,
         ATTR_PARTICIPANT_IDENTITY,
+        ATTR_DESTINATION_IDENTITY,
         ATTR_PARTICIPANT_KIND,
         ATTR_JOB_ID,
         ATTR_AGENT_NAME,
@@ -7959,6 +8313,9 @@ declare namespace traceTypes {
         ATTR_RESPONSE_TEXT,
         ATTR_RESPONSE_FUNCTION_CALLS,
         ATTR_RESPONSE_TTFT,
+        ATTR_INPUT_DELTA,
+        ATTR_INPUT_BASE_SPAN_ID,
+        ATTR_INPUT_DROPPED_FROM_BASE,
         ATTR_FUNCTION_TOOL_ID,
         ATTR_FUNCTION_TOOL_NAME,
         ATTR_FUNCTION_TOOL_ARGS,
@@ -7983,6 +8340,7 @@ declare namespace traceTypes {
         ATTR_ON_USER_TURN_COMPLETED_DELAY,
         ATTR_SPEECH_QUEUE_WAIT,
         ATTR_USER_TRANSCRIPT,
+        ATTR_STT_EVENTS,
         ATTR_TRANSCRIPT_CONFIDENCE,
         ATTR_TRANSCRIPTION_DELAY,
         ATTR_END_OF_TURN_DELAY,
@@ -8346,6 +8704,8 @@ class TurnDetector extends BaseStreamingTurnDetector {
     describeOptions(): Readonly<Record<string, unknown>>;
     // (undocumented)
     protected _executor: InferenceExecutor | undefined;
+    // (undocumented)
+    protected _localFallback: boolean;
     get model(): TurnDetectorModel;
     // (undocumented)
     protected _model: TurnDetectorModel;
@@ -8379,6 +8739,7 @@ interface TurnDetectorOptions {
     // (undocumented)
     connOptions?: APIConnectOptions;
     executor?: InferenceExecutor;
+    localFallback?: boolean;
     sampleRate?: number;
     // (undocumented)
     unlikelyThreshold?: number | Record<string, number>;
@@ -8398,11 +8759,13 @@ class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
     // (undocumented)
     protected _executor: InferenceExecutor | undefined;
     // @internal
-    _fallBackToLocal(reason: Error): void;
+    _fallBackToLocal(reason: Error): boolean;
     // (undocumented)
     get isFallback(): boolean;
     // (undocumented)
     protected _isFallback: boolean;
+    // (undocumented)
+    protected _localFallback: boolean;
     get model(): TurnDetectorModel;
     // (undocumented)
     protected _model: TurnDetectorModel;
@@ -9092,6 +9455,9 @@ interface XaiOptions {
 }
 
 // @public (undocumented)
+type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0';
+
+// @public (undocumented)
 type XaiSTTModels = 'xai/stt-1';
 
 // @public (undocumented)
@@ -9114,24 +9480,24 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
 // src/inference/tts.ts:282:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
-// src/llm/chat_context.ts:76:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
+// src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:702:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
-// src/utils.ts:553:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:394:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1060:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1776:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1776:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1776:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
+// src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
 // src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/events.ts:424:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
-// src/voice/room_io/_output.ts:180:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
+// src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 
 ```

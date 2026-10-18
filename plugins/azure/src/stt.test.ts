@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { stt } from '@livekit/agents';
+import { APIConnectionError, APIError, stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { STT, SpeechStream, speechsdk } from './stt.js';
@@ -11,6 +11,8 @@ const azureHarness = vi.hoisted(() => ({
   cancellationErrors: 0,
   deadStreamWrites: 0,
   maxActiveReaders: 0,
+  startupFailure: undefined as 'callback' | 'throw' | undefined,
+  closedRecognizers: 0,
   recognizers: [] as Array<{
     canceled?: (_sender: unknown, event: unknown) => void;
     sessionStarted?: (_sender: unknown, event: unknown) => void;
@@ -70,7 +72,12 @@ vi.mock('microsoft-cognitiveservices-speech-sdk', async (importOriginal) => {
       azureHarness.recognizers.push(this);
     }
 
-    startContinuousRecognitionAsync(resolve: () => void): void {
+    startContinuousRecognitionAsync(resolve: () => void, reject: (error: string) => void): void {
+      if (azureHarness.startupFailure === 'callback') {
+        reject('connection failed');
+        return;
+      }
+      if (azureHarness.startupFailure === 'throw') throw new TypeError('invalid SDK configuration');
       resolve();
       queueMicrotask(() => {
         this.sessionStarted?.(undefined, {});
@@ -82,7 +89,9 @@ vi.mock('microsoft-cognitiveservices-speech-sdk', async (importOriginal) => {
       resolve();
     }
 
-    close(): void {}
+    close(): void {
+      azureHarness.closedRecognizers++;
+    }
   }
 
   return {
@@ -117,8 +126,35 @@ describe('Azure STT cancellation handling', () => {
     azureHarness.cancellationErrors = 0;
     azureHarness.deadStreamWrites = 0;
     azureHarness.maxActiveReaders = 0;
+    azureHarness.startupFailure = undefined;
+    azureHarness.closedRecognizers = 0;
     azureHarness.recognizers.length = 0;
     azureHarness.streams.length = 0;
+  });
+
+  it.each(['callback', 'throw'] as const)('cleans up a startup %s failure', async (failure) => {
+    azureHarness.startupFailure = failure;
+    const provider = new STT({ speechKey: 'test', speechRegion: 'test' });
+    const onError = vi.fn();
+    provider.on('error', onError);
+    const stream = provider.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    try {
+      for await (const _ of stream) {
+        /* drain */
+      }
+      expect(onError).toHaveBeenCalledOnce();
+      if (failure === 'callback') expect(stream.terminalError).toBeInstanceOf(APIConnectionError);
+      else {
+        expect(stream.terminalError).toBeInstanceOf(TypeError);
+        expect(stream.terminalError).not.toBeInstanceOf(APIError);
+      }
+      expect(azureHarness.closedRecognizers).toBe(1);
+      expect(azureHarness.streams[0]?.closed).toBe(true);
+    } finally {
+      stream.close();
+    }
   });
 
   it('unblocks run on canceled error', () => {

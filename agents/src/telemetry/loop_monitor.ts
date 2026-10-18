@@ -69,9 +69,9 @@ export type LoopStallCause = 'code' | 'host';
 export type LoopCpuScope = 'thread' | 'process';
 
 /**
- * When the loop thread's stack is sampled (see loop_stack_sampler): `adaptive` from the
- * process's first code-caused stall on (a healthy process never enables the debugger domain),
- * `always` from the start, `never` not at all.
+ * When the loop thread's stack is sampled (see loop_stack_sampler): `never` (default) not at
+ * all, `adaptive` from the process's first code-caused stall on (a healthy process never enables
+ * the debugger domain), `always` from the start.
  */
 export type StackSamplingMode = 'adaptive' | 'always' | 'never';
 
@@ -168,9 +168,10 @@ export interface EventLoopMonitorOptions {
   watchdog?: boolean;
   /**
    * When to sample the loop thread's stack through the inspector (see `loop_stack_sampler`):
-   * `adaptive` (default) after the process's first code-caused stall, `always` from the start,
-   * `never` not at all. The sampler runs on the watchdog thread, so `watchdog: false` means
-   * `never`. Sampling is not started, and is stopped, while an inspector is attached to the
+   * `never` (default, or from `LIVEKIT_AGENTS_LOOP_BLOCK_STACKS`) not at all, `adaptive` after
+   * the process's first code-caused stall, `always` from the start. Sampling crashes V8 before
+   * Node 26.10 (see `loop_stack_sampler`). The sampler runs on the watchdog thread, so
+   * `watchdog: false` means `never`. Sampling is not started, and is stopped, while an inspector is attached to the
    * process: its pauses would land in the debugger's session.
    */
   stacks?: StackSamplingMode;
@@ -440,7 +441,7 @@ export class EventLoopMonitor {
     this.#lastCpuUsage = cpu;
     const state = this.#watchdogState;
     if (state) Atomics.store(state, WD_MAIN_LAST_TICK, BigInt(nowWall));
-    const watchdogGap = this.#consumeWatchdogGap(windowStart);
+    const watchdogGap = this.consumeWatchdogGap(windowStart);
     this.#scheduleTick();
     if (this.#stackMode !== 'never') this.#stopSamplingForInspector();
     // GC entries for the previous stall reach the observer through two immediates, which the
@@ -473,10 +474,15 @@ export class EventLoopMonitor {
    *
    * Two sources, since the two threads race when a descheduled process resumes: the watchdog's
    * recorded late wake-up if it fell inside the window (an older one belongs to a stall already
-   * reported), and the time since its last run if it has not run since before the window opened.
+   * reported), and the time since its last run. The watchdog wakes every tick, so any wait past
+   * one tick since its last wake is starvation, wherever in the window that wake fell: a watchdog
+   * that ran early in the window and then waited has not yet recorded a late wake-up.
    */
-  #consumeWatchdogGap(windowStart: number): number {
-    const state = this.#watchdogState;
+  private consumeWatchdogGap(
+    windowStart: number,
+    state = this.#watchdogState,
+    now = Date.now(),
+  ): number {
     if (!state) return 0;
     const lastWake = Number(Atomics.load(state, WD_LAST_WAKE));
     const lateAt = Number(Atomics.exchange(state, WD_LATE_AT, 0n));
@@ -484,8 +490,7 @@ export class EventLoopMonitor {
     if (lastWake === 0) return 0; // the watchdog has not woken yet (it was just started)
     let gap = 0;
     if (lateAt >= windowStart) gap = lateGap;
-    if (lastWake < windowStart) gap = Math.max(gap, Date.now() - lastWake - this.tickInterval);
-    return Math.max(gap, 0);
+    return Math.max(gap, now - lastWake - this.tickInterval, 0);
   }
 
   private buildReport(

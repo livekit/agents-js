@@ -339,7 +339,7 @@ export class SpeechStream extends stt.SpeechStream {
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           if (retries >= maxRetry) {
-            throw new Error(`failed to connect to Deepgram after ${retries} attempts: ${e}`);
+            throw e;
           }
 
           const delay = Math.min(retries * 5, 10);
