@@ -532,6 +532,7 @@ export class AgentActivity implements RecognitionHooks {
   private closed = false;
   private audioRecognition?: AudioRecognition;
   private realtimeSession?: RealtimeSession;
+  private realtimeOnEnterScopes = new Set<{ toolsUpdated: boolean }>();
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
   private turnDetectionMode?: TurnDetectionMode;
   private rtTurnDetectionEnabled = false;
@@ -1474,9 +1475,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.history.insert(configUpdate);
     }
 
-    if (this.realtimeSession) {
-      await this.realtimeSession.updateTools(this.tools);
-    }
+    await this.updateRealtimeTools();
 
     if (this.llm instanceof LLM) {
       // for realtime LLM, we assume the server will remove unvalid tool messages
@@ -5349,15 +5348,15 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const originalToolChoice = this.toolChoice;
-    let originalTools: ToolContext | undefined;
+    const onEnterData = onEnterStorage.getStore();
+    const onEnterScope =
+      onEnterData?.agent === this.agent && onEnterData?.session === this.agentSession
+        ? { toolsUpdated: false }
+        : undefined;
+    if (onEnterScope) this.realtimeOnEnterScopes.add(onEnterScope);
     try {
-      const sessionTools = this.realtimeSession.tools;
-      const onEnterIgnoredTools = this._onEnterIgnoredTools(sessionTools);
-      if (onEnterIgnoredTools.length > 0) {
-        originalTools = sessionTools;
-        const turnTools = sessionTools._flattenedCopy();
-        turnTools._exclude(onEnterIgnoredTools);
-        await this.realtimeSession.updateTools(turnTools);
+      if (this._onEnterIgnoredTools(this.realtimeSession.tools).length > 0) {
+        await this.updateRealtimeTools();
       }
 
       if (toolChoice !== undefined) {
@@ -5387,6 +5386,7 @@ export class AgentActivity implements RecognitionHooks {
         abortController,
       );
     } finally {
+      if (onEnterScope) this.realtimeOnEnterScopes.delete(onEnterScope);
       // reset toolChoice value
       if (toolChoice !== undefined && toolChoice !== originalToolChoice) {
         try {
@@ -5395,9 +5395,9 @@ export class AgentActivity implements RecognitionHooks {
           this.logger.error({ error }, 'failed to reset tool_choice');
         }
       }
-      if (originalTools !== undefined) {
+      if (onEnterScope?.toolsUpdated) {
         try {
-          await this.realtimeSession.updateTools(originalTools);
+          await this.updateRealtimeTools();
         } catch (error) {
           this.logger.error({ error }, 'failed to reset tools');
         }
@@ -6250,11 +6250,27 @@ export class AgentActivity implements RecognitionHooks {
     const current = this.agent._toolCtx;
     if (new ToolContext(current.tools).equals(current)) {
       // Session toolsets are outside the agent's context but still change the provider's tools.
-      await this.realtimeSession?.updateTools(this.tools);
+      await this.updateRealtimeTools();
       return;
     }
     // Same toolset entries, so updateTools' setup/close steps are no-ops (no re-entrancy here).
     await this.updateTools(current.tools);
+  }
+
+  /** Publish current tools while preserving any active onEnter exclusions. */
+  private async updateRealtimeTools(): Promise<void> {
+    if (!this.realtimeSession) return;
+    let tools = this.tools;
+    if (this.realtimeOnEnterScopes.size > 0) {
+      for (const scope of this.realtimeOnEnterScopes) scope.toolsUpdated = true;
+      tools = tools._flattenedCopy();
+      tools._exclude(
+        tools
+          .flatten()
+          .filter((tool) => isFunctionTool(tool) && !!(tool.flags & ToolFlag.IGNORE_ON_ENTER)),
+      );
+    }
+    await this.realtimeSession.updateTools(tools);
   }
 
   private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {

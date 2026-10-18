@@ -7,14 +7,16 @@ import {
   type ServerResponse,
   createServer,
 } from 'node:http';
+import { ReadableStream } from 'node:stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Future } from '../utils.js';
 import { Agent } from '../voice/agent.js';
 import { AgentSession } from '../voice/agent_session.js';
 import { FakeLLM } from '../voice/testing/fake_llm.js';
 import { ChatContext } from './chat_context.js';
 import { MCPServerHTTP, MCPServerStdio, type MCPToolResultResolver, MCPToolset } from './mcp.js';
 import { type GenerationCreatedEvent, RealtimeModel, RealtimeSession } from './realtime.js';
-import { ToolContext, type ToolOptions } from './tool_context.js';
+import { ToolContext, ToolFlag, type ToolOptions, tool } from './tool_context.js';
 
 class RecordingRealtimeModel extends RealtimeModel {
   readonly client: RecordingRealtimeSession;
@@ -46,12 +48,14 @@ class RecordingRealtimeModel extends RealtimeModel {
 class RecordingRealtimeSession extends RealtimeSession {
   chatCtx = ChatContext.empty();
   tools = new ToolContext();
+  readonly advertisedTools: string[][] = [];
   async updateInstructions() {}
   async updateChatCtx(chatCtx: ChatContext) {
     this.chatCtx = chatCtx;
   }
   async updateTools(tools: ToolContext) {
-    this.tools = tools;
+    this.advertisedTools.push(tools.flatten().map((tool) => tool.id));
+    this.tools = tools.copy();
   }
   updateOptions() {}
   pushAudio() {}
@@ -276,6 +280,76 @@ describe('MCP HTTP protocol integration', () => {
       }
       expect(server.initialized).toBe(false);
       await expect(toolset.refresh()).rejects.toThrow('MCPToolset is not active');
+    },
+  );
+
+  it.each([
+    { change: 'filter', ignoredInitially: true },
+    { change: 'refresh', ignoredInitially: true },
+    { change: 'refresh', ignoredInitially: false },
+  ])(
+    'preserves an MCP $change during a realtime greeting (ignored initially: $ignoredInitially)',
+    async ({ change, ignoredInitially }) => {
+      const { server, renameTool } = await fixture('2026-07-28');
+      const toolset = new MCPToolset({
+        id: 'mcp',
+        mcpServer: server,
+        toolOptions: { new_lookup: { flags: ToolFlag.IGNORE_ON_ENTER } },
+      });
+      const model = new RecordingRealtimeModel();
+      const greetingStarted = new Future<void>();
+      const finishGreeting = new Future<void>();
+      vi.spyOn(model.client, 'generateReply').mockImplementation(async () => {
+        greetingStarted.resolve();
+        await finishGreeting.await;
+        return {
+          messageStream: new ReadableStream({ start: (controller) => controller.close() }),
+          functionStream: new ReadableStream({ start: (controller) => controller.close() }),
+          userInitiated: true,
+        };
+      });
+      class GreetingAgent extends Agent {
+        override async onEnter() {
+          this.session.generateReply({ userInput: 'greeting' });
+        }
+      }
+      const session = new AgentSession({ llm: model, vad: null, tools: [toolset] });
+      try {
+        await session.start({ agent: new Agent({ instructions: 'first agent' }) });
+        session.updateAgent(
+          new GreetingAgent({
+            instructions: 'second agent',
+            tools: ignoredInitially
+              ? [
+                  tool({
+                    name: 'end_call',
+                    description: '',
+                    flags: ToolFlag.IGNORE_ON_ENTER,
+                    execute: async () => undefined,
+                  }),
+                ]
+              : [],
+          }),
+        );
+        await greetingStarted.await;
+        expect(model.client.advertisedTools.at(-1)).toEqual(['lookup']);
+        if (change === 'filter') {
+          toolset.filterTools(() => false);
+        } else {
+          renameTool('new_lookup');
+          await toolset.refresh();
+        }
+        const mcpTools = change === 'filter' ? [] : ['new_lookup'];
+        await vi.waitFor(() => expect(model.client.advertisedTools.at(-1)).toEqual([]));
+        finishGreeting.resolve();
+        await session.waitForIdle();
+        const expected = [...mcpTools, ...(ignoredInitially ? ['end_call'] : [])];
+        expect(model.client.advertisedTools.at(-1)).toEqual(expected);
+        expect(Object.keys(session._activity!.tools.functionTools)).toEqual(expected);
+      } finally {
+        finishGreeting.resolve();
+        await session.close();
+      }
     },
   );
 
