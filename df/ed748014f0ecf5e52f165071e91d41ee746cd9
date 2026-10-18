@@ -1,0 +1,41 @@
+agents/src/voice/agent_activity.ts
+  s_de5d34fcc7db11::t_ea7dd8a785f758 6181-6185
+agents/src/llm/mcp.ts
+  s_de5d34fcc7db11::t_7ae8d3693b1289 12,22,56-57,160,166-170,174,431-432,440-441,478-479,501-510,512,586-587,615-629,639,644-645,690,694-695,708
+  s_de5d34fcc7db11::t_f2125240352f46 171-173,691-693
+agents/src/llm/mcp.test.ts
+  s_de5d34fcc7db11::t_f2125240352f46 491-494,505-527,700-710,712-714,716-718,721-723,730-731,752-753,769,895-903,905-911,913,915-923,925-927
+  s_de5d34fcc7db11::t_c524b3be965e0a 690-699,711,715,719-720,724-729,732-751,754-768
+  s_de5d34fcc7db11::t_d31dc5ed1c413c 1186-1187
+  s_de5d34fcc7db11::t_20aa08486eef47 6,13,475-490,495-504,528-529,894,904,962,977,986,1165,1169,1176
+  s_de5d34fcc7db11::t_33cf282fb7747a 530,770
+.changeset/mcp-parity-controls.md
+  s_de5d34fcc7db11::t_7ae8d3693b1289 1-5
+agents/src/llm/mcp_http.test.ts
+  s_de5d34fcc7db11::t_eac0e5992bf164 35-43,50-55,58-60,247-280
+  s_de5d34fcc7db11::t_d6989f0059fa1b 15,282-317
+  s_de5d34fcc7db11::t_d31dc5ed1c413c 200,205-210
+  s_de5d34fcc7db11::t_25760554fc6ddf 201-204
+  s_de5d34fcc7db11::t_0890f4a38785a5 11-13,102,231,281,318
+  s_de5d34fcc7db11::t_033353977e7deb 14,16-34,44-49,56-57,61-65
+  s_de5d34fcc7db11::t_f2125240352f46 141-144,323-347,349-354,357-358,374-376
+  s_de5d34fcc7db11::t_c524b3be965e0a 100-101,109,117-122,140,145-150,228,319-322,348,355-356,359-373,377-379,525,528
+agents/etc/agents.api.md
+  s_de5d34fcc7db11::t_0ad3ac94842ced 5176-5177,5199,5289-5290
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dfed748014f0ecf5e52f165071e91d41ee746cd9",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
