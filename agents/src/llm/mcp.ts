@@ -349,6 +349,8 @@ export abstract class MCPServer {
       name,
       description: descriptor.description ?? '',
       parameters: descriptor.inputSchema,
+      meta:
+        descriptor._meta && Object.keys(descriptor._meta).length > 0 ? descriptor._meta : undefined,
       flags: options.flags,
       onDuplicate: options.onDuplicate,
       execute: (args, { ctx, abortSignal }) =>
