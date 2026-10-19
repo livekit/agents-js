@@ -162,6 +162,40 @@ describe('tokenizer', () => {
         });
       }
     });
+
+    const ABBREVIATION_CASES: [string, string[]][] = [
+      [
+        'Martin Luther King Jr. was a leader. He spoke well.',
+        ['Martin Luther King Jr. was a leader.', 'He spoke well.'],
+      ],
+      [
+        'I work at Acme Inc. with my friend. He is nice.',
+        ['I work at Acme Inc. with my friend.', 'He is nice.'],
+      ],
+      [
+        'She holds a B.Sc in physics now. She teaches it.',
+        ['She holds a B.Sc in physics now.', 'She teaches it.'],
+      ],
+    ];
+
+    it.each(ABBREVIATION_CASES)(
+      'keeps the space before an abbreviation in %s',
+      (text, expected) => {
+        expect(tokenizer.tokenize(text)).toStrictEqual(expected);
+      },
+    );
+
+    it.each(ABBREVIATION_CASES)('streams %s without shifting offsets', async (text, expected) => {
+      const stream = tokenizer.stream();
+      stream.pushText(text);
+      stream.endInput();
+
+      const tokens: string[] = [];
+      for await (const ev of stream) {
+        tokens.push(ev.token);
+      }
+      expect(tokens).toStrictEqual(expected);
+    });
   });
   describe('WordTokenizer', () => {
     const tokenizer = new WordTokenizer();

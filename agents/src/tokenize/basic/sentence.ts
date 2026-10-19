@@ -43,10 +43,10 @@ export const splitSentences = (
   );
   text = text.replaceAll(
     new RegExp(` ${suffixes.source}[.] ${starters.source}`, 'g'),
-    '$1<stop> $2',
+    ' $1<stop> $2',
   );
-  text = text.replaceAll(new RegExp(` ${suffixes.source}[.]`, 'g'), '$1<prd>');
-  text = text.replaceAll(new RegExp(` ${alphabets.source}[.]`, 'g'), '$1<prd>');
+  text = text.replaceAll(new RegExp(` ${suffixes.source}[.]`, 'g'), ' $1<prd>');
+  text = text.replaceAll(new RegExp(` ${alphabets.source}[.]`, 'g'), ' $1<prd>');
   text = text.replaceAll('.”', '”.');
   text = text.replaceAll('."', '".');
   text = text.replaceAll('!"', '"!');
