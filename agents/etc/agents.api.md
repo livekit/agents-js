@@ -2062,7 +2062,7 @@ function captureContentEnabled(): boolean;
 type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 
 // @public (undocumented)
-type CartesiaModels_2 = 'cartesia/sonic-3.5' | 'cartesia/sonic-3' | 'cartesia/sonic-2' | 'cartesia/sonic-turbo' | 'cartesia/sonic' | 'cartesia/sonic-3-latest' | 'cartesia/sonic-latest';
+type CartesiaModels_2 = 'cartesia/sonic-3.6' | 'cartesia/sonic-3.5' | 'cartesia/sonic-3' | 'cartesia/sonic-3-latest' | 'cartesia/sonic-latest';
 
 // @public (undocumented)
 interface CartesiaOptions {
@@ -9479,7 +9479,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:282:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:280:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:702:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
