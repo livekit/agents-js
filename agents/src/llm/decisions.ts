@@ -234,18 +234,24 @@ function sameKeys(left: Record<string, unknown>, right: Record<string, unknown>)
   return leftKeys.length === rightKeys.length && leftKeys.every((key, i) => key === rightKeys[i]);
 }
 
+function validateResultProbability(value: number): void {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new APIError('invalid probability', { retryable: false });
+  }
+}
+
 function validateResult(result: DecisionResult, decision: Decision): void {
   if (result.kind !== decision.kind) {
     throw new APIError('wrong result kind', { retryable: false });
   }
   if (result.kind === 'probability') {
-    validateProbability(result.value);
+    validateResultProbability(result.value);
   } else if (result.kind === 'choice' && decision.kind === 'choice') {
     if (!Object.hasOwn(decision.options, result.value)) {
       throw new APIError('unknown choice', { retryable: false });
     }
     if (result.probabilities !== undefined) {
-      Object.values(result.probabilities).forEach(validateProbability);
+      Object.values(result.probabilities).forEach(validateResultProbability);
       if (!sameKeys(result.probabilities, decision.options)) {
         throw new APIError('choice distribution does not match options', { retryable: false });
       }
@@ -257,7 +263,7 @@ function validateResult(result: DecisionResult, decision: Decision): void {
     if (!Number.isFinite(result.value) || result.value < 0) {
       throw new APIError('invalid score', { retryable: false });
     }
-    Object.values(result.probabilities).forEach(validateProbability);
+    Object.values(result.probabilities).forEach(validateResultProbability);
     const expectedKeys = Object.fromEntries(decision.levels.map((_, index) => [index, true]));
     if (
       result.levels.length !== decision.levels.length ||

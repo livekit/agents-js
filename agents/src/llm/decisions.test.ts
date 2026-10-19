@@ -307,6 +307,15 @@ describe('DecisionModel', () => {
     },
   );
 
+  it('reports invalid result probabilities per decision', async () => {
+    const results = validResults();
+    (results.human as ProbabilityResult).value = 1.2;
+    const model = new StaticModel(new DecisionResponse({ results }));
+    const response = await evaluate(model);
+    expect(response.errors).toEqual({ human: 'invalid probability' });
+    expect(Object.keys(response.results).sort()).toEqual(['frustration', 'intent']);
+  });
+
   it('times out when the provider ignores the abort signal', async () => {
     class IgnoringAbortModel extends StaticModel {
       protected async _evaluateImpl({
