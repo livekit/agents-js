@@ -143,7 +143,7 @@ export interface AssemblyAIOptions {
   language_detection?: boolean;
   /** Seconds of inactivity before AssemblyAI closes the session. Default: not specified. */
   inactivity_timeout?: number;
-  /** Prompt to guide recognition. Only supported with U3 Pro models; mutually exclusive with keyterms_prompt. */
+  /** Context describing the audio. Only supported with U3 Pro models; works alongside keyterms_prompt. */
   prompt?: string;
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
