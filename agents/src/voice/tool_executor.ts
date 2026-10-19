@@ -15,6 +15,7 @@ import {
   ToolFlag,
   Toolset,
   isFunctionTool,
+  isToolError,
   tool,
 } from '../llm/tool_context.js';
 import { log } from '../log.js';
@@ -509,14 +510,26 @@ export class ToolExecutor {
     }
 
     if (exception !== undefined) {
-      log().error(
-        {
-          function: runCtx.functionCall.name,
-          callId: runCtx.functionCall.callId,
-          error: exception,
-        },
-        'exception occurred while executing tool after a progress update',
-      );
+      if (isToolError(exception)) {
+        // Keep detail out of the message body so redaction can drop it.
+        log().warn(
+          {
+            function: runCtx.functionCall.name,
+            callId: runCtx.functionCall.callId,
+            'lk.pii.error': exception.message,
+          },
+          'ToolError while executing tool',
+        );
+      } else {
+        log().error(
+          {
+            function: runCtx.functionCall.name,
+            callId: runCtx.functionCall.callId,
+            error: exception,
+          },
+          'exception occurred while executing tool after a progress update',
+        );
+      }
       return;
     }
     if (output === undefined || output === null) {
