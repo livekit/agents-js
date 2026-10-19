@@ -176,6 +176,14 @@ describe('tokenizer', () => {
         'She holds a B.Sc in physics now. She teaches it.',
         ['She holds a B.Sc in physics now.', 'She teaches it.'],
       ],
+      [
+        'I have worked for years at Acme Inc. They make good tools for us.',
+        ['I have worked for years at Acme Inc.', 'They make good tools for us.'],
+      ],
+      [
+        'The speech was given by Martin Luther King Jr. He spoke about freedom.',
+        ['The speech was given by Martin Luther King Jr.', 'He spoke about freedom.'],
+      ],
     ];
 
     it.each(ABBREVIATION_CASES)(
