@@ -31,6 +31,19 @@ import type { STTRealtimeSampleRates } from './models.js';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
 const AUTHORIZATION_HEADER = 'xi-api-key';
 
+/**
+ * How often the realtime socket must answer a ping. Nothing else notices a socket that dies without
+ * closing, and the stream would stay deaf for the rest of the call.
+ */
+const LIVENESS_PING_INTERVAL_MS = 2000;
+
+/**
+ * How far a replay reaches past the watchdog's blind spot. A dead socket is noticed only when a
+ * ping is still unanswered at the next one, so it can swallow up to two ping intervals of audio;
+ * the margin covers the redial.
+ */
+const REPLAY_MARGIN_MS = 2000;
+
 export interface VADOptions {
   vadSilenceThresholdSecs?: number | null;
   vadThreshold?: number | null;
@@ -87,6 +100,8 @@ export interface STTOptions {
   includeLanguageDetection?: boolean;
   noVerbatim?: boolean;
   enableLogging?: boolean;
+  /** How often the realtime socket must answer a ping before it is terminated and redialed, in ms. */
+  livenessPingIntervalMs?: number;
 }
 
 interface ResolvedSTTOptions {
@@ -104,6 +119,7 @@ interface ResolvedSTTOptions {
   includeLanguageDetection?: boolean;
   noVerbatim: boolean;
   enableLogging: boolean;
+  livenessPingIntervalMs: number;
 }
 
 export interface STTRecognizeOptions {
@@ -321,6 +337,7 @@ export class STT extends stt.STT {
       includeLanguageDetection,
       noVerbatim: opts.noVerbatim ?? false,
       enableLogging: opts.enableLogging ?? true,
+      livenessPingIntervalMs: opts.livenessPingIntervalMs ?? LIVENESS_PING_INTERVAL_MS,
     };
     this.#session = opts.httpSession ?? {};
   }
@@ -602,6 +619,12 @@ export class SpeechStream extends stt.SpeechStream {
   #speaking = false;
   #lastPartialText = '';
   #audioDurationCollector: PeriodicCollector<number>;
+  /**
+   * Audio sent since the last committed transcript, base64 as it was sent, with its duration: what a
+   * socket that died silently swallowed, for the next one.
+   */
+  #replay: { audioBase64: string; seconds: number }[] = [];
+  #replaySeconds = 0;
   #logger = log();
 
   label = 'elevenlabs.SpeechStream';
@@ -655,6 +678,20 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
+  #remember(audioBase64: string, seconds: number): void {
+    this.#replay.push({ audioBase64, seconds });
+    this.#replaySeconds += seconds;
+    const reach = (2 * this.#opts.livenessPingIntervalMs + REPLAY_MARGIN_MS) / 1000;
+    while (this.#replay.length > 1 && this.#replaySeconds - this.#replay[0]!.seconds >= reach) {
+      this.#replaySeconds -= this.#replay.shift()!.seconds;
+    }
+  }
+
+  #forgetReplay(): void {
+    this.#replay = [];
+    this.#replaySeconds = 0;
+  }
+
   #onAudioDurationReport(duration: number): void {
     this.queue.put({
       type: stt.SpeechEventType.RECOGNITION_USAGE,
@@ -676,11 +713,30 @@ export class SpeechStream extends stt.SpeechStream {
     while (!this.closed && !this.input.closed) {
       let ws: WebSocket | null = null;
       let closingWs = false;
+      let liveness: ReturnType<typeof setInterval> | undefined;
       const sessionController = new AbortController();
 
       try {
         ws = await this.#connectWs();
         this.#lastPartialText = '';
+
+        const socket = ws;
+        let awaitingPong = false;
+        socket.on('pong', () => {
+          awaitingPong = false;
+        });
+        liveness = setInterval(() => {
+          if (socket.readyState !== WebSocket.OPEN) return;
+          if (awaitingPong) {
+            this.#logger.warn(
+              'ElevenLabs STT WebSocket stopped answering pings; terminating and redialing',
+            );
+            socket.terminate();
+            return;
+          }
+          awaitingPong = true;
+          socket.ping();
+        }, this.#opts.livenessPingIntervalMs);
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
@@ -702,18 +758,34 @@ export class SpeechStream extends stt.SpeechStream {
             (this.#opts.sampleRate * this.#opts.audioChunkDuration) / 1000,
           );
           const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
-          const abortPromise = waitForAbort(controller.signal);
-          const streamAbortPromise = waitForAbort(this.abortSignal);
           let hasEnded = false;
+
+          for (const entry of this.#replay) {
+            if (ws?.readyState !== WebSocket.OPEN) break;
+            ws.send(
+              JSON.stringify({
+                message_type: 'input_audio_chunk',
+                audio_base_64: entry.audioBase64,
+                commit: false,
+                sample_rate: this.#opts.sampleRate,
+              }),
+            );
+          }
 
           try {
             while (!this.closed) {
-              const result = await Promise.race([
-                this.input.next(),
-                abortPromise,
-                streamAbortPromise,
-              ]);
-              if (result === undefined) return;
+              // Scoped to this connection: a read left pending by a race would outlive a drop and take
+              // the next frame, which then reaches neither the dead socket nor its replacement.
+              let result: IteratorResult<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
+              try {
+                result = await this.input.next({ signal: controller.signal });
+              } catch (error) {
+                if (controller.signal.aborted || this.abortSignal.aborted) return;
+                if (error instanceof APIError) throw error;
+                throw new APIConnectionError({
+                  message: `ElevenLabs STT input failed: ${error instanceof Error ? error.message : String(error)}`,
+                });
+              }
               if (result.done) break;
 
               const data = result.value;
@@ -732,6 +804,7 @@ export class SpeechStream extends stt.SpeechStream {
                   frame.data.byteOffset,
                   frame.data.byteLength,
                 ).toString('base64');
+                this.#remember(audioBase64, frame.samplesPerChannel / frame.sampleRate);
                 ws?.send(
                   JSON.stringify({
                     message_type: 'input_audio_chunk',
@@ -763,6 +836,9 @@ export class SpeechStream extends stt.SpeechStream {
         const recvTask = Task.from(async (controller) => {
           const receiveMessages = new Promise<void>((resolve, reject) => {
             const onMessage = (msg: RawData, isBinary: boolean) => {
+              // An abandoned connection has handed what it had not committed to the replacement, so a
+              // late message from it is about audio another socket now owns.
+              if (sessionController.signal.aborted) return;
               if (isBinary) {
                 this.#logger.warn('unexpected ElevenLabs STT binary message');
                 return;
@@ -817,6 +893,7 @@ export class SpeechStream extends stt.SpeechStream {
       } finally {
         closingWs = true;
         sessionController.abort();
+        clearInterval(liveness);
         ws?.close();
       }
     }
@@ -979,6 +1056,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
     } else if (messageType === this.#finalMessageType) {
       this.#lastPartialText = '';
+      this.#forgetReplay();
 
       if (text) {
         if (!this.#speaking) {
