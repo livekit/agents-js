@@ -465,3 +465,130 @@ describe('errors', () => {
     expect(error.toString()).not.toContain(API_KEY);
   });
 });
+
+describe('review fixes', () => {
+  const RETRY_ONCE: APIConnectOptions = {
+    ...DEFAULT_API_CONNECT_OPTIONS,
+    maxRetry: 1,
+    retryIntervalMs: 0,
+  };
+
+  it('replays all of the text on a retry', async () => {
+    const t = await makeTTS();
+    server.onTask = (ws, ctx) => {
+      // The first connection fails after receiving the text; the retry gets a working one.
+      if (server.connections === 1) ws.close(1011);
+      else answer(ws, ctx);
+    };
+    const stream = t.stream({ connOptions: RETRY_ONCE });
+    stream.pushText('Hello there.');
+    stream.endInput();
+
+    const audio = await collect(stream);
+
+    expect(audio.equals(Buffer.concat([CHUNK, CHUNK]))).toBe(true);
+    expect(server.connections).toBe(2);
+    const starts = server.received.filter((m) => m.type === 'task_start');
+    expect(starts.map((m) => m.text)).toEqual(['Hello there.', 'Hello there.']);
+  });
+
+  it('does not retry once audio has played, so nothing is spoken twice', async () => {
+    const t = await makeTTS();
+    server.answerFinalize = false; // the connection drops before the turn finishes
+    server.onTask = (ws, ctx) => {
+      ws.send(JSON.stringify({ type: 'audio_chunk', context_id: ctx }));
+      ws.send(CHUNK);
+      ws.send(CHUNK); // a second frame pushes the first one out to the listener
+      ws.send(JSON.stringify({ type: 'audio_chunk', context_id: ctx }));
+      ws.send(CHUNK);
+      setTimeout(() => ws.close(1011), 50);
+    };
+    const error = await errorOf(t, () => {
+      const stream = t.stream({ connOptions: RETRY_ONCE });
+      stream.pushText('Hello there.');
+      stream.endInput();
+      void collect(stream);
+    });
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect(error.retryable).toBe(false);
+    expect(server.connections).toBe(1);
+  });
+
+  it('survives an idle pooled socket closing, and reconnects for the next reply', async () => {
+    const t = await makeTTS();
+    const first = t.stream({ connOptions: NO_RETRY });
+    first.pushText('One.');
+    first.endInput();
+    await collect(first);
+
+    // Break the idle pooled socket between replies.
+    for (const client of server.wss.clients) client.terminate();
+    await new Promise((r) => setTimeout(r, 50));
+
+    const second = t.stream({ connOptions: NO_RETRY });
+    second.pushText('Two.');
+    second.endInput();
+    expect((await collect(second)).length).toBe(2 * CHUNK.length);
+    expect(server.connections).toBe(2);
+  });
+
+  it('forgets a stream once it is done', async () => {
+    const t = await makeTTS();
+    const forgotten: unknown[] = [];
+    const original = t._forgetStream.bind(t);
+    t._forgetStream = (s) => {
+      forgotten.push(s);
+      original(s);
+    };
+    const stream = t.stream({ connOptions: NO_RETRY });
+    stream.pushText('Hi.');
+    stream.endInput();
+    await collect(stream);
+    await until(() => forgotten.length === 1);
+    expect(forgotten[0]).toBe(stream);
+  });
+
+  it('stops sending once the turn has failed', async () => {
+    const t = await makeTTS();
+    server.onTask = (ws, ctx) =>
+      ws.send(JSON.stringify({ type: 'task_failed', context_id: ctx, code: 'voice_not_found' }));
+    const stream = t.stream({ connOptions: NO_RETRY });
+    const error = await errorOf(t, () => {
+      stream.pushText('Hello.');
+      void collect(stream);
+    });
+    expect(error.body).toEqual({ code: 'voice_not_found' });
+    stream.pushText(' More text after the failure.');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(server.types()).toEqual(['task_start']);
+  });
+
+  it('never splits an emoji between two frames', async () => {
+    const t = await makeTTS();
+    const text = 'a'.repeat(99_999) + '😀' + 'b'.repeat(10);
+    await collect(t.synthesize(text, NO_RETRY));
+    const texts = server.received.map((m) => String(m.text));
+    expect(texts.join('')).toBe(text);
+    for (const chunk of texts.filter((c) => c.length > 0)) {
+      const first = chunk.charCodeAt(0);
+      const last = chunk.charCodeAt(chunk.length - 1);
+      expect(first >= 0xdc00 && first <= 0xdfff).toBe(false);
+      expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+    }
+  });
+
+  it.each([
+    ['idle', 'idle'],
+    ['Hello, this is speech', undefined],
+  ])('keeps a session_ended reason %j only if it is an identifier', async (reason, kept) => {
+    const t = await makeTTS();
+    server.onTask = (ws) => ws.send(JSON.stringify({ type: 'session_ended', reason }));
+    const error = await errorOf(t, () => {
+      const stream = t.stream({ connOptions: NO_RETRY });
+      stream.pushText('Hello.');
+      stream.endInput();
+      void collect(stream);
+    });
+    expect(error.body).toEqual({ reason: kept });
+  });
+});

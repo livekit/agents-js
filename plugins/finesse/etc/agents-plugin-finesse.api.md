@@ -33,6 +33,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     // (undocumented)
     label: string;
     // (undocumented)
+    protected onStreamDone(): void;
+    // (undocumented)
     protected run(): Promise<void>;
 }
 
@@ -52,6 +54,8 @@ export class TTS extends tts.TTS {
     closeWs(ws: WebSocket_2): Promise<void>;
     // @internal (undocumented)
     connectWs(timeout: number): Promise<WebSocket_2>;
+    // @internal
+    _forgetStream(stream: SynthesizeStream): void;
     // (undocumented)
     label: string;
     // (undocumented)

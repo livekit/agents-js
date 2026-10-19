@@ -251,6 +251,11 @@ export class TTS extends tts.TTS {
     await this.pool.releaseIdle();
   }
 
+  /** @internal Called by a stream once it is done, so finished streams aren't kept. */
+  _forgetStream(stream: SynthesizeStream): void {
+    this.#streams.delete(stream);
+  }
+
   async close(): Promise<void> {
     for (const stream of this.#streams) {
       stream.close();
@@ -271,6 +276,11 @@ export class TTS extends tts.TTS {
     try {
       // A refused handshake reports only its status code, never the request headers.
       await waitForWebSocketOpen(ws, 'Finesse');
+      // Between syntheses a pooled socket has no other listeners: the no-op error listener stops
+      // an idle error from crashing the process, and a socket that closes while idle leaves the
+      // pool so the next synthesis doesn't pick it up.
+      ws.on('error', () => {});
+      ws.on('close', () => this.pool.remove(ws));
       return ws;
     } catch (e) {
       try {
@@ -336,6 +346,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #logger = log();
   #tts: TTS;
   #opts: ResolvedTTSOptions;
+  // The base class retries run() on the same stream, and its input queue can't be read twice,
+  // so the input is read once into this buffer, which every attempt replays.
+  #pieces: string[] = [];
+  #inputEnded = false;
+  #inputTask?: Promise<void>;
+  #inputWaiters = new Set<() => void>();
+  // Set once audio reached the listener: retrying after that would speak it twice.
+  #emittedAudio = false;
 
   constructor(tts: TTS, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
@@ -343,7 +361,64 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     this.#opts = opts;
   }
 
+  protected override onStreamDone(): void {
+    this.#tts._forgetStream(this);
+  }
+
   protected async run(): Promise<void> {
+    this.#inputTask ??= this.#readInput();
+    try {
+      await this.#attempt();
+    } catch (e) {
+      if (this.abortSignal.aborted) return;
+      const error =
+        e instanceof APIStatusError || e instanceof APIConnectionError
+          ? e
+          : new APIConnectionError({
+              message: `Finesse TTS failed (${e instanceof Error ? e.name : typeof e})`,
+            });
+      throw this.#emittedAudio && error.retryable ? notRetryable(error) : error;
+    }
+
+    if (!this.queue.closed) {
+      this.queue.put(SynthesizeStream.END_OF_STREAM);
+    }
+  }
+
+  async #readInput(): Promise<void> {
+    try {
+      for await (const data of this.input) {
+        // The server speaks a pending partial sentence on its own after idleFlushMs, so a
+        // flush needs no message.
+        if (data === SynthesizeStream.FLUSH_SENTINEL) continue;
+        this.#pieces.push(data);
+        this.#wakeInputWaiters();
+      }
+    } finally {
+      this.#inputEnded = true;
+      this.#wakeInputWaiters();
+    }
+  }
+
+  #wakeInputWaiters(): void {
+    for (const wake of this.#inputWaiters) wake();
+    this.#inputWaiters.clear();
+  }
+
+  /** Wait until more input arrives, the input ends, or `signal` aborts. */
+  #waitForInput(signal: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const wake = () => {
+        signal.removeEventListener('abort', wake);
+        this.#inputWaiters.delete(wake);
+        resolve();
+      };
+      this.#inputWaiters.add(wake);
+      signal.addEventListener('abort', wake, { once: true });
+    });
+  }
+
+  async #attempt(): Promise<void> {
     const contextId = shortuuid();
     const opts = this.#opts;
     const bstream = new AudioByteStream(opts.sampleRate, NUM_CHANNELS);
@@ -352,58 +427,65 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const sendLastFrame = (final: boolean) => {
       if (lastFrame) {
         this.queue.put({ requestId: contextId, segmentId: contextId, frame: lastFrame, final });
+        this.#emittedAudio = true;
         lastFrame = undefined;
       }
     };
 
-    try {
-      await this.#tts.pool.withConnection(
-        async (ws) => {
-          const events = new AsyncIterableQueue<WebSocketEvent>();
-          // Resolves true once the context is open, or false if the input ended without text.
-          const opened = new Future<boolean>();
-          let finished = false;
-          let inputDone = false;
-          let timer: ReturnType<typeof setTimeout> | undefined;
+    await this.#tts.pool.withConnection(
+      async (ws) => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          throw new APIConnectionError({ message: 'Finesse connection closed while idle' });
+        }
 
-          // The timeout only runs once the input is finalized: while the LLM is still writing
-          // (or calling a tool), the server can rightly have nothing to send.
-          const armTimer = () => {
-            if (timer) clearTimeout(timer);
-            if (inputDone) {
-              timer = setTimeout(() => events.put({ type: 'timeout' }), this.connOptions.timeoutMs);
+        const events = new AsyncIterableQueue<WebSocketEvent>();
+        // Stops this attempt's sender when the receiver fails or the stream is aborted.
+        const attempt = new AbortController();
+        // Resolves true once the context is open, or false if the input ended without text.
+        const opened = new Future<boolean>();
+        let finished = false;
+        let inputDone = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+
+        // The timeout only runs once the input is finalized: while the LLM is still writing
+        // (or calling a tool), the server can rightly have nothing to send.
+        const armTimer = () => {
+          if (timer) clearTimeout(timer);
+          if (inputDone) {
+            timer = setTimeout(() => events.put({ type: 'timeout' }), this.connOptions.timeoutMs);
+          }
+        };
+
+        const onMessage = (data: RawData, isBinary: boolean) =>
+          events.put({ type: 'message', data, isBinary });
+        const onClose = (code: number) => events.put({ type: 'close', code });
+        const onError = (error: Error) => events.put({ type: 'error', error });
+        // The user interrupted the agent: stop the server synthesizing the turn right away.
+        const onAbort = () => {
+          attempt.abort();
+          if (opened.done && !finished) {
+            try {
+              ws.send(JSON.stringify({ type: 'task_cancel', context_id: contextId }));
+            } catch {
+              // the connection may already be gone, which stops the context too
             }
-          };
+          }
+        };
 
-          const onMessage = (data: RawData, isBinary: boolean) =>
-            events.put({ type: 'message', data, isBinary });
-          const onClose = (code: number) => events.put({ type: 'close', code });
-          const onError = (error: Error) => events.put({ type: 'error', error });
-          // The user interrupted the agent: stop the server synthesizing the turn right away.
-          const onAbort = () => {
-            if (opened.done && !finished) {
-              try {
-                ws.send(JSON.stringify({ type: 'task_cancel', context_id: contextId }));
-              } catch {
-                // the connection may already be gone, which stops the context too
-              }
-            }
-          };
+        ws.on('message', onMessage);
+        ws.on('close', onClose);
+        ws.on('error', onError);
+        this.abortSignal.addEventListener('abort', onAbort, { once: true });
 
-          ws.on('message', onMessage);
-          ws.on('close', onClose);
-          ws.on('error', onError);
-          this.abortSignal.addEventListener('abort', onAbort, { once: true });
-
-          const sendTask = async () => {
-            let isOpen = false;
-            // Leading whitespace waits for real text: the server rejects a context with none.
-            let pending = '';
-            for await (const data of this.input) {
-              if (this.abortSignal.aborted) return;
-              // The server speaks a pending partial sentence on its own after idleFlushMs, so a
-              // flush needs no message.
-              if (data === SynthesizeStream.FLUSH_SENTINEL) continue;
+        const sendTask = async () => {
+          let isOpen = false;
+          // Leading whitespace waits for real text: the server rejects a context with none.
+          let pending = '';
+          let next = 0;
+          for (;;) {
+            while (next < this.#pieces.length) {
+              if (attempt.signal.aborted) return;
+              const data = this.#pieces[next++]!;
               if (!isOpen) {
                 pending += data;
                 if (!pending.trim()) continue;
@@ -415,126 +497,132 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 sendText(ws, opts, contextId, data, { opened: true });
               }
             }
-            if (isOpen) {
-              sendText(ws, opts, contextId, '', { opened: true, finalize: true });
-            }
-            inputDone = true;
+            if (this.#inputEnded) break;
+            await this.#waitForInput(attempt.signal);
+            if (attempt.signal.aborted) return;
+          }
+          if (isOpen) {
+            sendText(ws, opts, contextId, '', { opened: true, finalize: true });
+          }
+          inputDone = true;
+          armTimer();
+          if (!opened.done) opened.resolve(false);
+        };
+
+        const recvTask = async () => {
+          if (!(await opened.await)) return;
+          // Each binary frame belongs to the context named by the audio_chunk just before it.
+          let audioContext: string | undefined;
+          for await (const event of events) {
             armTimer();
-            if (!opened.done) opened.resolve(false);
-          };
+            if (event.type === 'timeout') {
+              throw new APITimeoutError({ message: 'Finesse did not finish the turn in time' });
+            }
+            if (event.type === 'error') {
+              throw new APIConnectionError({
+                message: `Finesse WebSocket error (${event.error.name})`,
+              });
+            }
+            if (event.type === 'close') {
+              throw new APIStatusError({
+                message: 'Finesse connection closed unexpectedly',
+                options: {
+                  statusCode: event.code || -1,
+                  requestId: contextId,
+                  retryable: !NON_RETRYABLE_CLOSE_CODES.has(event.code),
+                },
+              });
+            }
 
-          const recvTask = async () => {
-            if (!(await opened.await)) return;
-            // Each binary frame belongs to the context named by the audio_chunk just before it.
-            let audioContext: string | undefined;
-            for await (const event of events) {
-              armTimer();
-              if (event.type === 'timeout') {
-                throw new APITimeoutError({ message: 'Finesse did not finish the turn in time' });
-              }
-              if (event.type === 'error') {
-                throw new APIConnectionError({
-                  message: `Finesse WebSocket error (${event.error.name})`,
-                });
-              }
-              if (event.type === 'close') {
-                throw new APIStatusError({
-                  message: 'Finesse connection closed unexpectedly',
-                  options: {
-                    statusCode: event.code || -1,
-                    requestId: contextId,
-                    retryable: !NON_RETRYABLE_CLOSE_CODES.has(event.code),
-                  },
-                });
-              }
-
-              if (event.isBinary) {
-                if (audioContext === contextId) {
-                  for (const frame of bstream.write(toBuffer(event.data))) {
-                    sendLastFrame(false);
-                    lastFrame = frame;
-                  }
-                }
-                audioContext = undefined;
-                continue;
-              }
-
-              let data: Record<string, unknown>;
-              try {
-                data = JSON.parse(toBuffer(event.data).toString()) as Record<string, unknown>;
-              } catch {
-                this.#logger.warn('Unexpected non-JSON Finesse message');
-                continue;
-              }
-              const kind = data.type;
-              const eventContext = data.context_id;
-
-              if (kind === 'audio_chunk') {
-                audioContext = typeof eventContext === 'string' ? eventContext : undefined;
-              } else if (kind === 'error') {
-                // A fatal error ends the session; a non-fatal one only rejected one message.
-                if (data.fatal || eventContext === undefined || eventContext === contextId) {
-                  throw eventError(data, contextId);
-                }
-              } else if (kind === 'session_ended') {
-                throw new APIStatusError({
-                  message: 'Finesse session ended',
-                  options: { requestId: contextId, body: { reason: data.reason } },
-                });
-              } else if (eventContext !== contextId) {
-                continue;
-              } else if (kind === 'task_done') {
-                for (const frame of bstream.flush()) {
+            if (event.isBinary) {
+              if (audioContext === contextId) {
+                for (const frame of bstream.write(toBuffer(event.data))) {
                   sendLastFrame(false);
                   lastFrame = frame;
                 }
-                sendLastFrame(true);
-                finished = true;
-                return;
-              } else if (kind === 'task_cancelled') {
-                // The plugin only cancels a context it has stopped reading, so this came from the
-                // server: the speech is incomplete.
-                throw new APIStatusError({
-                  message: 'Finesse cancelled the context',
-                  options: { requestId: contextId },
-                });
-              } else if (kind === 'task_failed') {
+              }
+              audioContext = undefined;
+              continue;
+            }
+
+            let data: Record<string, unknown>;
+            try {
+              data = JSON.parse(toBuffer(event.data).toString()) as Record<string, unknown>;
+            } catch {
+              this.#logger.warn('Unexpected non-JSON Finesse message');
+              continue;
+            }
+            const kind = data.type;
+            const eventContext = data.context_id;
+
+            if (kind === 'audio_chunk') {
+              audioContext = typeof eventContext === 'string' ? eventContext : undefined;
+            } else if (kind === 'error') {
+              // A fatal error ends the session; a non-fatal one only rejected one message.
+              if (data.fatal || eventContext === undefined || eventContext === contextId) {
                 throw eventError(data, contextId);
-              } else if (kind === 'task_started') {
-                if (data.sample_rate !== undefined && data.sample_rate !== opts.sampleRate) {
-                  this.#logger.warn(
-                    { requested: opts.sampleRate, returned: data.sample_rate },
-                    'Finesse returned a different sample rate',
-                  );
-                }
+              }
+            } else if (kind === 'session_ended') {
+              throw new APIStatusError({
+                message: 'Finesse session ended',
+                options: { requestId: contextId, body: { reason: identifier(data.reason) } },
+              });
+            } else if (eventContext !== contextId) {
+              continue;
+            } else if (kind === 'task_done') {
+              for (const frame of bstream.flush()) {
+                sendLastFrame(false);
+                lastFrame = frame;
+              }
+              sendLastFrame(true);
+              finished = true;
+              return;
+            } else if (kind === 'task_cancelled') {
+              // The plugin only cancels a context it has stopped reading, so this came from the
+              // server: the speech is incomplete.
+              throw new APIStatusError({
+                message: 'Finesse cancelled the context',
+                options: { requestId: contextId },
+              });
+            } else if (kind === 'task_failed') {
+              throw eventError(data, contextId);
+            } else if (kind === 'task_started') {
+              if (data.sample_rate !== undefined && data.sample_rate !== opts.sampleRate) {
+                this.#logger.warn(
+                  { requested: opts.sampleRate, returned: data.sample_rate },
+                  'Finesse returned a different sample rate',
+                );
               }
             }
-          };
-
-          try {
-            await Promise.all([sendTask(), recvTask()]);
-          } finally {
-            if (timer) clearTimeout(timer);
-            ws.off('message', onMessage);
-            ws.off('close', onClose);
-            ws.off('error', onError);
-            this.abortSignal.removeEventListener('abort', onAbort);
-            events.close();
           }
-        },
-        { timeout: this.connOptions.timeoutMs, signal: this.abortSignal },
-      );
-    } catch (e) {
-      if (this.abortSignal.aborted) return;
-      if (e instanceof APIStatusError || e instanceof APIConnectionError) throw e;
-      throw new APIConnectionError({
-        message: `Finesse TTS failed (${e instanceof Error ? e.name : typeof e})`,
-      });
-    }
+        };
 
-    if (!this.queue.closed) {
-      this.queue.put(SynthesizeStream.END_OF_STREAM);
-    }
+        // If either side fails, stop the other and wait for it, so a failed attempt's sender
+        // can't keep running against a discarded socket.
+        const stopOnFailure = (task: Promise<void>) =>
+          task.catch((e: unknown) => {
+            attempt.abort();
+            throw e;
+          });
+        try {
+          const results = await Promise.allSettled([
+            stopOnFailure(recvTask()),
+            stopOnFailure(sendTask()),
+          ]);
+          const failed = results.find((r) => r.status === 'rejected');
+          if (failed) throw (failed as PromiseRejectedResult).reason;
+        } finally {
+          attempt.abort();
+          if (timer) clearTimeout(timer);
+          ws.off('message', onMessage);
+          ws.off('close', onClose);
+          ws.off('error', onError);
+          this.abortSignal.removeEventListener('abort', onAbort);
+          events.close();
+        }
+      },
+      { timeout: this.connOptions.timeoutMs, signal: this.abortSignal },
+    );
   }
 }
 
@@ -571,8 +659,13 @@ const sendText = (
   { opened, finalize = false }: { opened: boolean; finalize?: boolean },
 ): void => {
   const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += MAX_TEXT_CHARS) {
-    chunks.push(text.slice(i, i + MAX_TEXT_CHARS));
+  for (let i = 0; i < text.length; ) {
+    let end = Math.min(i + MAX_TEXT_CHARS, text.length);
+    // Keep a surrogate pair (an emoji, say) in one frame.
+    const last = text.charCodeAt(end - 1);
+    if (end < text.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+    chunks.push(text.slice(i, end));
+    i = end;
   }
   if (chunks.length === 0) chunks.push('');
   chunks.forEach((chunk, i) => {
@@ -586,12 +679,36 @@ const sendText = (
 };
 
 const eventError = (data: Record<string, unknown>, requestId: string): APIStatusError => {
-  const code =
-    typeof data.code === 'string' && ERROR_CODE_RE.test(data.code) ? data.code : 'unknown_error';
+  const code = identifier(data.code) ?? 'unknown_error';
   return new APIStatusError({
     message: `Finesse ${String(data.type)}: ${code}`,
     options: { requestId, body: { code }, retryable: !NON_RETRYABLE_CODES.has(code) },
   });
+};
+
+/** A server-sent value, kept only if it is an identifier (so it can't carry speech). */
+const identifier = (value: unknown): string | undefined =>
+  typeof value === 'string' && ERROR_CODE_RE.test(value) ? value : undefined;
+
+/** The same error, marked not retryable. */
+const notRetryable = (
+  error: APIStatusError | APIConnectionError,
+): APIStatusError | APIConnectionError => {
+  if (error instanceof APIStatusError) {
+    return new APIStatusError({
+      message: error.message,
+      options: {
+        statusCode: error.statusCode,
+        requestId: error.requestId ?? undefined,
+        body: error.body,
+        retryable: false,
+      },
+    });
+  }
+  if (error instanceof APITimeoutError) {
+    return new APITimeoutError({ message: error.message, options: { retryable: false } });
+  }
+  return new APIConnectionError({ message: error.message, options: { retryable: false } });
 };
 
 const toBuffer = (data: RawData): Buffer =>
