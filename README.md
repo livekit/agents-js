@@ -84,6 +84,7 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-fishaudio](https://www.npmjs.com/package/@livekit/agents-plugin-fishaudio)   | TTS           |
 | [@livekit/agents-plugin-hume](https://www.npmjs.com/package/@livekit/agents-plugin-hume)             | TTS           |
 | [@livekit/agents-plugin-speechify](https://www.npmjs.com/package/@livekit/agents-plugin-speechify)   | TTS           |
+| [@livekit/agents-plugin-finesse](https://www.npmjs.com/package/@livekit/agents-plugin-finesse)       | TTS           |
 
 ## Docs and guides
 
