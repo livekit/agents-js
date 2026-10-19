@@ -384,13 +384,14 @@ export abstract class DecisionModel extends (EventEmitter as new () => TypedEmit
           let response: DecisionResponse | undefined;
           for (let attempt = 0; attempt <= connOptions.maxRetry; attempt++) {
             const abortController = new AbortController();
-            const request = this._evaluateImpl({
-              input: text,
-              decisions: definitions,
-              connOptions,
-              abortSignal: abortController.signal,
-            });
+            let request: Promise<DecisionResponse> | undefined;
             try {
+              request = this._evaluateImpl({
+                input: text,
+                decisions: definitions,
+                connOptions,
+                abortSignal: abortController.signal,
+              });
               response = await waitUntilTimeout(
                 request,
                 connOptions.timeoutMs,
@@ -401,7 +402,7 @@ export abstract class DecisionModel extends (EventEmitter as new () => TypedEmit
               if (error instanceof DecisionRequestTimeoutError) {
                 abortController.abort(error);
                 // don't wait for providers that ignore the abort signal
-                request.catch(() => undefined);
+                request?.catch(() => undefined);
               }
               const retryable =
                 error instanceof DecisionRequestTimeoutError ||

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { APIStatusError, APITimeoutError } from '../_exceptions.js';
+import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import type { DecisionMetrics } from '../metrics/base.js';
 import type { APIConnectOptions } from '../types.js';
 import {
@@ -268,6 +268,29 @@ describe('DecisionModel', () => {
       new APIStatusError({ message: 'unavailable', options: { statusCode: 503 } }),
       new DecisionResponse({ results: validResults() }),
     );
+    const response = await evaluate(model, {
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    expect(model.requests).toHaveLength(2);
+    expect(response.errors).toEqual({});
+  });
+
+  it('retries retryable errors thrown synchronously by the provider', async () => {
+    class SyncThrowModel extends StaticModel {
+      protected _evaluateImpl(options: {
+        input: string;
+        decisions: Readonly<Record<string, Decision>>;
+        connOptions: APIConnectOptions;
+        abortSignal: AbortSignal;
+      }): Promise<DecisionResponse> {
+        if (this.requests.length === 0) {
+          this.requests.push([options.input, options.decisions]);
+          throw new APIConnectionError({ message: 'connect failed' });
+        }
+        return super._evaluateImpl(options);
+      }
+    }
+    const model = new SyncThrowModel(new DecisionResponse({ results: validResults() }));
     const response = await evaluate(model, {
       connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
     });
