@@ -394,7 +394,8 @@ export abstract class DecisionModel extends (EventEmitter as new () => TypedEmit
             } catch (error) {
               if (error instanceof DecisionRequestTimeoutError) {
                 abortController.abort(error);
-                await request.catch(() => undefined);
+                // don't wait for providers that ignore the abort signal
+                request.catch(() => undefined);
               }
               const retryable =
                 error instanceof DecisionRequestTimeoutError ||

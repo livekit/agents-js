@@ -307,6 +307,31 @@ describe('DecisionModel', () => {
     },
   );
 
+  it('times out when the provider ignores the abort signal', async () => {
+    class IgnoringAbortModel extends StaticModel {
+      protected async _evaluateImpl({
+        input,
+        decisions,
+      }: {
+        input: string;
+        decisions: Readonly<Record<string, Decision>>;
+        connOptions: APIConnectOptions;
+        abortSignal: AbortSignal;
+      }): Promise<DecisionResponse> {
+        this.requests.push([input, decisions]);
+        return new Promise(() => {});
+      }
+    }
+    const model = new IgnoringAbortModel();
+    await expect(
+      evaluate(model, {
+        decisions: { check: new Probability('True?') },
+        connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 10 },
+      }),
+    ).rejects.toBeInstanceOf(APITimeoutError);
+    expect(model.requests).toHaveLength(2);
+  });
+
   it('skips the provider for an empty batch', async () => {
     const model = new StaticModel();
     const response = await evaluate(model, { decisions: {} });
