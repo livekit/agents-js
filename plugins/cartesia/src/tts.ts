@@ -40,6 +40,7 @@ import {
   isDoneMessage,
   isErrorMessage,
   isFlushDoneMessage,
+  isPhonemeTimestampsMessage,
 } from './types.js';
 
 const AUTHORIZATION_HEADER = 'X-API-Key';
@@ -86,6 +87,18 @@ export interface TTSOptions {
    */
   wordTimestamps?: boolean;
 
+  /**
+   * Whether to request phoneme-level timestamps from streaming responses.
+   * @defaultValue false
+   */
+  addPhonemeTimestamps: boolean;
+
+  /**
+   * Whether streaming responses should timestamp the normalized transcript.
+   * @defaultValue false
+   */
+  useNormalizedTimestamps: boolean;
+
   pronunciationDictId?: string;
 }
 
@@ -100,6 +113,8 @@ const defaultTTSOptions: TTSOptions = {
   apiVersion: API_VERSION,
   chunkTimeout: 5000,
   wordTimestamps: true,
+  addPhonemeTimestamps: false,
+  useNormalizedTimestamps: false,
 };
 
 const checkGenerationConfig = (opts: TTSOptions) => {
@@ -315,7 +330,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   protected async run() {
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
-    const json = toCartesiaOptions(this.#opts);
+    const json = _toCartesiaOptions(this.#opts);
     json.transcript = this.#text;
 
     const baseUrl = new URL(this.#opts.baseUrl);
@@ -421,7 +436,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     let sentenceStreamClosed = false;
 
     const sentenceStreamTask = async (ws: WebSocket) => {
-      const packet = toCartesiaOptions(this.#opts, true);
+      const packet = _toCartesiaOptions(this.#opts, true);
       for await (const event of this.#tokenizer) {
         const msg = {
           ...packet,
@@ -621,6 +636,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 );
               }
             }
+          } else if (isPhonemeTimestampsMessage(serverMsg)) {
+            // Phoneme timestamps are accepted but not surfaced by the TTS output API.
           } else if (isDoneMessage(serverMsg) || (isErrorMessage(serverMsg) && serverMsg.done)) {
             // This ensures all sentences have been sent before closing
             if (sentenceStreamClosed) {
@@ -925,7 +942,8 @@ const connectCartesiaWebSocket = async ({
   throw new APIConnectionError({ message: sanitizedErrorName(error) });
 };
 
-const toCartesiaOptions = (
+/** @internal */
+export const _toCartesiaOptions = (
   opts: TTSOptions,
   streaming: boolean = false,
 ): { [id: string]: unknown } => {
@@ -985,6 +1003,12 @@ const toCartesiaOptions = (
 
   if (streaming && opts.wordTimestamps !== false) {
     result.add_timestamps = true;
+  }
+  if (streaming && opts.addPhonemeTimestamps) {
+    result.add_phoneme_timestamps = true;
+  }
+  if (streaming && opts.useNormalizedTimestamps) {
+    result.use_normalized_timestamps = true;
   }
 
   return result;

@@ -25,7 +25,51 @@ export type TTSModels =
 /**
  * See [the docs](https://docs.cartesia.ai/build-with-cartesia/tts-models/latest) for all options.
  */
-export type TTSLanguages = 'en' | 'es' | 'fr' | 'de' | 'pt' | 'zh' | 'ja';
+export type TTSLanguages =
+  | 'en'
+  | 'es'
+  | 'fr'
+  | 'de'
+  | 'pt'
+  | 'zh'
+  | 'ja'
+  | 'hi'
+  | 'ko'
+  | 'it'
+  | 'nl'
+  | 'pl'
+  | 'ru'
+  | 'sv'
+  | 'tr'
+  | 'tl'
+  | 'bg'
+  | 'ro'
+  | 'ar'
+  | 'cs'
+  | 'el'
+  | 'fi'
+  | 'hr'
+  | 'ms'
+  | 'sk'
+  | 'da'
+  | 'ta'
+  | 'uk'
+  | 'hu'
+  | 'no'
+  | 'vi'
+  | 'bn'
+  | 'th'
+  | 'he'
+  | 'ka'
+  | 'id'
+  | 'te'
+  | 'gu'
+  | 'kn'
+  | 'ml'
+  | 'mr'
+  | 'or'
+  | 'pa'
+  | 'ur';
 
 export const TTSDefaultVoiceId = 'f786b574-daa5-4673-aa0c-cbe3e8534c02';
 

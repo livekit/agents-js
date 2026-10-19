@@ -6,15 +6,16 @@ import {
   APIConnectionError,
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
+  log,
   tts,
 } from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts as testTts } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
-import { TTS } from './tts.js';
+import { TTS, type TTSOptions, _toCartesiaOptions } from './tts.js';
 
 const hasCartesiaConfig = Boolean(process.env.CARTESIA_API_KEY && process.env.OPENAI_API_KEY);
 
@@ -32,6 +33,21 @@ if (hasCartesiaConfig) {
 // Cartesia sends audio chunks.
 const CHUNK_BASE64 = Buffer.alloc(4800).toString('base64');
 const CURRENT_CHUNK = Buffer.alloc(4800, 1);
+
+const TEST_TTS_OPTIONS: TTSOptions = {
+  model: 'sonic-3',
+  encoding: 'pcm_s16le',
+  sampleRate: 24000,
+  voice: 'test-voice',
+  apiKey: 'test-key',
+  language: 'en',
+  baseUrl: 'https://api.cartesia.ai',
+  apiVersion: '2025-04-16',
+  chunkTimeout: 5000,
+  wordTimestamps: true,
+  addPhonemeTimestamps: false,
+  useNormalizedTimestamps: false,
+};
 
 async function startWebSocketServer() {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -67,17 +83,25 @@ async function waitFor<T>(promise: Promise<T>, timeoutMs = 1000): Promise<T> {
 // false to suppress the normal chunk/done reply.
 function serveCartesia(
   wss: WebSocketServer,
-  onStop?: (ws: WebSocket, contextId: string, connectionNumber: number) => boolean,
+  onStop?: (
+    ws: WebSocket,
+    contextId: string,
+    connectionNumber: number,
+    message: Record<string, unknown>,
+  ) => boolean,
 ): { connectionCount: () => number } {
   let connectionCount = 0;
   wss.on('connection', (ws) => {
     connectionCount++;
     const connectionNumber = connectionCount;
     ws.on('message', (raw) => {
-      const message = JSON.parse(raw.toString()) as { context_id: string; continue?: boolean };
+      const message = JSON.parse(raw.toString()) as Record<string, unknown> & {
+        context_id: string;
+        continue?: boolean;
+      };
       if (message.continue !== false) return; // only reply once the turn is closed
       const contextId = message.context_id;
-      if (onStop && !onStop(ws, contextId, connectionNumber)) return;
+      if (onStop && !onStop(ws, contextId, connectionNumber, message)) return;
       ws.send(
         JSON.stringify({
           type: 'chunk',
@@ -117,6 +141,95 @@ async function synthesizeTurn(
 }
 
 describe('Cartesia streaming pool', () => {
+  it('sends timestamp options only on the websocket when enabled', () => {
+    const streaming = _toCartesiaOptions(TEST_TTS_OPTIONS, true);
+    expect(streaming).not.toHaveProperty('add_phoneme_timestamps');
+    expect(streaming).not.toHaveProperty('use_normalized_timestamps');
+
+    const enabled = {
+      ...TEST_TTS_OPTIONS,
+      addPhonemeTimestamps: true,
+      useNormalizedTimestamps: true,
+    };
+    expect(_toCartesiaOptions(enabled, true)).toMatchObject({
+      add_phoneme_timestamps: true,
+      use_normalized_timestamps: true,
+    });
+
+    const rest = _toCartesiaOptions(enabled);
+    expect(rest).not.toHaveProperty('add_phoneme_timestamps');
+    expect(rest).not.toHaveProperty('use_normalized_timestamps');
+  });
+
+  it('updates timestamp options independently', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const requests: Record<string, unknown>[] = [];
+    serveCartesia(wss, (_ws, _contextId, _connectionNumber, message) => {
+      requests.push(message);
+      return true;
+    });
+
+    const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      cartesia.updateOptions({ addPhonemeTimestamps: true, useNormalizedTimestamps: true });
+      await synthesizeTurn(cartesia, 'enabled.');
+      expect(requests[0]).toMatchObject({
+        add_phoneme_timestamps: true,
+        use_normalized_timestamps: true,
+      });
+
+      cartesia.updateOptions({ addPhonemeTimestamps: false });
+      await synthesizeTurn(cartesia, 'partially disabled.');
+      expect(requests[1]).not.toHaveProperty('add_phoneme_timestamps');
+      expect(requests[1]).toMatchObject({ use_normalized_timestamps: true });
+    } finally {
+      await cartesia.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('accepts phoneme timestamps and continues synthesizing audio', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const warn = vi.spyOn(log(), 'warn');
+    serveCartesia(wss, (ws, contextId) => {
+      ws.send(
+        JSON.stringify({
+          type: 'phoneme_timestamps',
+          context_id: contextId,
+          phoneme_timestamps: {
+            phonemes: ['h', 'ə'],
+            start: [0, 0.05],
+            end: [0.05, 0.1],
+          },
+        }),
+      );
+      return true;
+    });
+
+    const cartesia = new TTS({
+      apiKey: 'test-key',
+      baseUrl: baseURL,
+      addPhonemeTimestamps: true,
+    });
+    try {
+      expect(await synthesizeTurn(cartesia, 'hello.')).not.toHaveLength(0);
+      expect(
+        warn.mock.calls.filter((call) =>
+          call.some(
+            (arg) =>
+              typeof arg === 'string' &&
+              (arg.includes('Unknown Cartesia message') ||
+                arg.includes('Failed to parse Cartesia message')),
+          ),
+        ),
+      ).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+      await cartesia.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('redacts API keys from WebSocket handshake errors', async () => {
     const secret = 'cartesia-secret-api-key-do-not-log';
     const wss = new WebSocketServer({
