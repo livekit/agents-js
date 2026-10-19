@@ -947,11 +947,14 @@ interface AssemblyAIOptions {
     agent_context?: string;
     end_of_turn_confidence_threshold?: number;
     format_turns?: boolean;
+    inactivity_timeout?: number;
     keyterms_prompt?: string[];
+    language_detection?: boolean;
     max_turn_silence?: number;
     min_end_of_turn_silence_when_confident?: number;
     mode?: 'min_latency' | 'balanced' | 'max_accuracy';
     previous_context_n_turns?: number;
+    prompt?: string;
     speaker_labels?: boolean;
     voice_focus?: 'near-field' | 'far-field';
     voice_focus_threshold?: number;

@@ -136,6 +136,15 @@ export interface AssemblyAIOptions {
   max_turn_silence?: number;
   /** Key terms prompt for recognition. Default: not specified. */
   keyterms_prompt?: string[];
+  /**
+   * Include `language_code` and `language_confidence` on final transcripts.
+   * Default: true for multilingual and U3 Pro models, false for Universal-Streaming English.
+   */
+  language_detection?: boolean;
+  /** Seconds of inactivity before AssemblyAI closes the session. Default: not specified. */
+  inactivity_timeout?: number;
+  /** Prompt to guide recognition. Only supported with U3 Pro models; mutually exclusive with keyterms_prompt. */
+  prompt?: string;
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
   /** Context to bias recognition. Only supported with U3 Pro models. Max 1750 chars. */
