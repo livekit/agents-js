@@ -1,0 +1,39 @@
+agents/src/voice/report.test.ts
+  s_12d0cca5111d2b::t_3822f35a82478e 21,289-323
+  s_12d0cca5111d2b::t_d18fa7b347cbfc 324-327
+agents/src/voice/generation_telemetry.test.ts
+  s_12d0cca5111d2b::t_953a197c8920c5 14,18-24,26,212-222,226-254
+  s_12d0cca5111d2b::t_5dc5f3ccf01b40 223-225
+  s_12d0cca5111d2b::t_d3e9841af60dfd 255
+agents/src/voice/generation.ts
+  s_12d0cca5111d2b::t_8c63b778af85c1 1514-1521
+plugins/google/src/realtime/realtime_tool_reply.test.ts
+  s_12d0cca5111d2b::t_9672617e08888f 77-79,93
+  s_12d0cca5111d2b::t_6350b7e0d11746 1-76,80-92,94-103
+agents/src/voice/agent_activity.ts
+  s_12d0cca5111d2b::t_80e0e08c82a668 4194,4900
+agents/src/voice/realtime_tool_output_commit.test.ts
+  s_12d0cca5111d2b::t_47aac915b9c640 14,102,145,471-522
+  s_12d0cca5111d2b::t_936b0bad120128 523
+agents/src/voice/report.ts
+  s_12d0cca5111d2b::t_70fd6d93b8b4aa 172-176
+agents/src/voice/tool_output_per_call.test.ts
+  s_12d0cca5111d2b::t_3238c666d792b5 1-22,26-92,94,96-99
+  s_12d0cca5111d2b::t_5a5f6a2dc4d540 23-25,93,95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f9ab52a6f5b21e5b12266262141cb841af22b875",
+  "prompts": {},
+  "sessions": {
+    "s_12d0cca5111d2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ec4947c-c653-4071-b14b-220d8481f3c1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
