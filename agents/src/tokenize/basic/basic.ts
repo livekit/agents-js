@@ -6,7 +6,7 @@ import * as tokenizer from '../tokenizer.js';
 import { hyphenator } from './hyphenator.js';
 import { splitParagraphs } from './paragraph.js';
 import { splitSentences } from './sentence.js';
-import { splitWords } from './word.js';
+import { splitCjkWords, splitWords } from './word.js';
 
 interface TokenizerOptions {
   language: string;
@@ -98,13 +98,15 @@ export class WordTokenizer extends tokenizer.WordTokenizer {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   tokenize(text: string, language?: string): string[] {
-    return splitWords(text, this.#ignorePunctuation).map((tok) => tok[0]);
+    return splitCjkWords(text, this.#ignorePunctuation).map((tok) => tok[0]);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   stream(language?: string): tokenizer.WordStream {
     return new BufferedWordStream(
-      (text: string) => splitWords(text, this.#ignorePunctuation),
+      // A CJK reply has no spaces, so a word stream would otherwise hold all of it
+      // until the end.
+      (text: string) => splitCjkWords(text, this.#ignorePunctuation),
       1,
       1,
     );
