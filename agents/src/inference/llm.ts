@@ -187,15 +187,6 @@ const MODEL_THINK_TAGS = new Map<string, [string, string]>([
   ['google/gemma-4-31b-it', ['<|channel>thought', '<channel|>']],
 ]);
 
-function reasoningEffortIsNone(params: Record<string, unknown>): boolean {
-  // chat completions carries the effort as reasoning_effort. modelOptions is a
-  // free-form record, so a caller can also pass the responses shape, where the
-  // effort rides on a `reasoning` object.
-  if (params.reasoning_effort === 'none') return true;
-  const reasoning = params.reasoning as { effort?: unknown } | undefined;
-  return reasoning?.effort === 'none';
-}
-
 function dropUnsupportedParams(
   model: string,
   params: Record<string, unknown>,
@@ -208,11 +199,13 @@ function dropUnsupportedParams(
     if (!modelName.startsWith(prefix)) continue;
     // At effort "none" these models take every param back, so nothing is
     // dropped. KEPT_AT_EFFORT_NONE and MIN_REASONING_EFFORT both have to name
-    // the model: the first by prefix, the second by bare model name.
+    // the model: the first by prefix, the second by bare model name. The effort
+    // is read straight off `reasoning_effort`: this builder only makes
+    // chat-completions requests, so a `reasoning` object never reaches it.
     const keepsEveryParam =
       KEPT_AT_EFFORT_NONE[prefix] !== undefined &&
       MIN_REASONING_EFFORT[modelName] === 'none' &&
-      reasoningEffortIsNone(result);
+      result.reasoning_effort === 'none';
     if (!keepsEveryParam) {
       result = Object.fromEntries(Object.entries(result).filter(([k]) => !unsupported.has(k)));
     }

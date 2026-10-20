@@ -683,13 +683,4 @@ describe('inference.LLM unsupported-param stripping', () => {
     expect(body.presence_penalty).toBeUndefined();
     expect(body.stop).toBeUndefined();
   });
-
-  it('keeps them on gpt-6-sol at a responses-shaped effort none', async () => {
-    const body = await captureRequestBody({
-      model: 'openai/gpt-6-sol',
-      modelOptions: { temperature: 0.2, reasoning: { effort: 'none' } },
-    });
-
-    expect(body.temperature).toBe(0.2);
-  });
 });
