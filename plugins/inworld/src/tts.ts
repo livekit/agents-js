@@ -733,8 +733,16 @@ class SynthesizeStream extends tts.SynthesizeStream {
 
     pool.registerListener(this.#contextId, handleMessage);
 
+    // Closing the stream also closes its input, so the input loop below ends and
+    // the reply is abandoned: the context is cancelled instead of closed.
+    const aborted = new Promise<void>((resolve) => {
+      if (this.abortSignal.aborted) resolve();
+      else this.abortSignal.addEventListener('abort', () => resolve(), { once: true });
+    });
+
     const sendLoop = async () => {
       for await (const ev of tokenizerStream) {
+        if (this.abortSignal.aborted) break;
         await this.#sendText(ws, ev.token);
       }
     };
@@ -750,8 +758,17 @@ class SynthesizeStream extends tts.SynthesizeStream {
           tokenizerStream.pushText(text);
         }
       }
+      if (this.abortSignal.aborted) {
+        tokenizerStream.close();
+        await this.#cancelContext(ws);
+        return;
+      }
       tokenizerStream.endInput();
       await sendPromise;
+      if (this.abortSignal.aborted) {
+        await this.#cancelContext(ws);
+        return;
+      }
 
       await this.#flushContext(ws);
       await this.#closeContext(ws);
@@ -772,9 +789,16 @@ class SynthesizeStream extends tts.SynthesizeStream {
         timer.unref?.();
       });
       try {
-        await Promise.race([processing, timeout]);
+        await Promise.race([processing, timeout, aborted]);
+      } catch (e) {
+        if (e instanceof APITimeoutError) await this.#cancelContext(ws);
+        throw e;
       } finally {
         if (timer) clearTimeout(timer);
+      }
+      if (this.abortSignal.aborted) {
+        await this.#cancelContext(ws);
+        return;
       }
 
       // Flush remaining frames
@@ -858,5 +882,14 @@ class SynthesizeStream extends tts.SynthesizeStream {
       close_context: {},
       contextId: this.#contextId,
     });
+  }
+
+  // Stops the context and discards text the server has not synthesized yet.
+  async #cancelContext(ws: WebSocket): Promise<void> {
+    try {
+      await this.#send(ws, { cancel_context: {}, contextId: this.#contextId });
+    } catch (e) {
+      log().debug({ error: e }, 'Failed to cancel Inworld context');
+    }
   }
 }
