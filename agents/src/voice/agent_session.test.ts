@@ -21,7 +21,7 @@ type AgentSessionInternals = AgentSession & {
 type AgentSessionCloseInternals = {
   started: boolean;
   closingTask: Promise<void> | null;
-  sessionHost?: { close: () => Promise<void> };
+  sessionHost?: { close: () => Promise<void>; _holdForSimulationFinalize?: () => Promise<void> };
 };
 
 describe('AgentSession close', () => {
@@ -65,7 +65,7 @@ describe('AgentSession close', () => {
     const closeSessionHost = vi.fn(async () => {});
     const closeRoomIO = vi.fn(async () => {});
     internals.started = true;
-    internals.sessionHost = { close: closeSessionHost };
+    internals.sessionHost = { close: closeSessionHost, _holdForSimulationFinalize: async () => {} };
     internals._roomIO = { close: closeRoomIO };
     session.on(AgentSessionEventTypes.Close, () => {
       throw new Error('listener exploded');
@@ -89,7 +89,7 @@ describe('AgentSession close', () => {
     const closeSessionHost = vi.fn(async () => {});
     const closeRoomIO = vi.fn(async () => {});
     const closeActivity = vi.fn(async () => {});
-    internals.sessionHost = { close: closeSessionHost };
+    internals.sessionHost = { close: closeSessionHost, _holdForSimulationFinalize: async () => {} };
     internals._roomIO = { close: closeRoomIO };
     // an activity that was never started (no drain to run), still to be closed
     internals.started = false;

@@ -798,3 +798,100 @@ describe('SessionHost finalizeSimulation', () => {
     await host.close();
   });
 });
+
+function runInputMessage(requestId: string, text: string) {
+  return new pb.AgentSessionMessage({
+    message: {
+      case: 'request',
+      value: new pb.SessionRequest({
+        requestId,
+        request: { case: 'runInput', value: new pb.SessionRequest_RunInput({ text }) },
+      }),
+    },
+  });
+}
+
+// A simulated session's channel outlives the session until the simulator finalizes.
+describe('SessionHost simulation hold', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('ends the hold once finalize is answered', async () => {
+    const ctx = fakeSimJobContext(() => {});
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession(fakeAgentSession());
+    await runWithJobContextAsync(ctx, async () => host.start());
+
+    let held = true;
+    const hold = runWithJobContextAsync(ctx, () => host._holdForSimulationFinalize()).then(() => {
+      held = false;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(held).toBe(true);
+
+    transport.push(finalizeMessage('f-hold', true, 'fine'));
+    await hold;
+
+    const resp = transport.sent.at(-1)!.message.value as pb.SessionResponse;
+    expect(resp.requestId).toBe('f-hold');
+    expect(resp.response.case).toBe('finalizeSimulation');
+
+    await host.close();
+  });
+
+  it('releases the hold on a run_input after the end, leaving it unanswered', async () => {
+    const ctx = fakeSimJobContext(() => {});
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession(fakeAgentSession());
+    await runWithJobContextAsync(ctx, async () => host.start());
+
+    const hold = runWithJobContextAsync(ctx, () => host._holdForSimulationFinalize());
+    transport.push(runInputMessage('r-hold', 'hello?'));
+    await hold;
+
+    expect(transport.sent).toHaveLength(0);
+
+    await host.close();
+  });
+
+  it('gives up the hold after 10s', async () => {
+    vi.useFakeTimers();
+    const ctx = fakeSimJobContext(() => {});
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession(fakeAgentSession());
+    await runWithJobContextAsync(ctx, async () => host.start());
+
+    let held = true;
+    const hold = runWithJobContextAsync(ctx, () => host._holdForSimulationFinalize()).then(() => {
+      held = false;
+    });
+    await vi.advanceTimersByTimeAsync(9_900);
+    expect(held).toBe(true);
+    await vi.advanceTimersByTimeAsync(100);
+    await hold;
+    expect(held).toBe(false);
+
+    await host.close();
+  });
+
+  it('does not hold outside a simulation', async () => {
+    vi.useFakeTimers();
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession(fakeAgentSession());
+    await host.start();
+
+    let held = true;
+    void host._holdForSimulationFinalize().then(() => {
+      held = false;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(held).toBe(false);
+
+    await host.close();
+  });
+});

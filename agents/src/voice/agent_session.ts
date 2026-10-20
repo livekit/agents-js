@@ -2306,6 +2306,11 @@ export class AgentSession<
           }
         }
         try {
+          if (reason === CloseReason.USER_INITIATED) {
+            // only an agent ending its own session leaves the simulator yet to finalize; a
+            // job shutdown has to stay within the supervisor's shutdownProcessTimeout
+            await this.sessionHost?._holdForSimulationFinalize();
+          }
           await this.sessionHost?.close();
         } catch (e) {
           failures.push(e);
