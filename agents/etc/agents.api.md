@@ -481,8 +481,11 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     get _closing(): boolean;
     // @internal
     get _closingSignal(): AbortSignal;
-    // (undocumented)
-    commitUserTurn(): void;
+    commitUserTurn(options?: {
+        transcriptTimeout?: number;
+        sttFlushDuration?: number;
+        skipReply?: boolean;
+    }): Promise<string>;
     // Warning: (ae-incompatible-release-tags) The symbol "connOptions" is marked as @public, but its signature references "ResolvedSessionConnectOptions" which is marked as @internal
     // Warning: (ae-incompatible-release-tags) The symbol "connOptions" is marked as @public, but its signature references "ResolvedSessionConnectOptions" which is marked as @internal
     get connOptions(): ResolvedSessionConnectOptions;
@@ -3594,6 +3597,8 @@ class FallbackAdapter_2 extends STT {
     constructor(opts: FallbackAdapterOptions_2);
     // (undocumented)
     readonly attemptTimeoutMs: number;
+    // (undocumented)
+    get capabilities(): STTCapabilities;
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
@@ -7542,6 +7547,7 @@ interface STTCapabilities {
     // (undocumented)
     interimResults: boolean;
     keyterms?: boolean;
+    manualFlush?: boolean;
     // (undocumented)
     streaming: boolean;
 }
@@ -9488,13 +9494,13 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/stt/stt.ts:383:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1818:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1818:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1818:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"

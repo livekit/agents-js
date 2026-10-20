@@ -134,6 +134,7 @@ export class FallbackAdapter extends STT {
     super({
       streaming: true,
       interimResults: wrapped.every((s) => s.capabilities.interimResults),
+      manualFlush: wrapped.every((s) => s.capabilities.manualFlush === true),
       diarization: wrapped.every((s) => !!s.capabilities.diarization),
       alignedTranscript,
       keyterms: wrapped.some((s) => !!s.capabilities.keyterms),
@@ -154,6 +155,13 @@ export class FallbackAdapter extends STT {
     }));
 
     this.setupEventForwarding();
+  }
+
+  override get capabilities() {
+    this.updateCapabilities({
+      manualFlush: this.sttInstances.every((s) => s.capabilities.manualFlush === true),
+    });
+    return super.capabilities;
   }
 
   /**

@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIStatusError, log, mergeFrames, stt as sttLib } from '@livekit/agents';
+import {
+  APIConnectionError,
+  APIStatusError,
+  log,
+  mergeFrames,
+  stt as sttLib,
+} from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
@@ -233,6 +239,50 @@ describe('ElevenLabs STT integration', () => {
       );
     },
     60_000,
+  );
+
+  it.skipIf(!hasElevenLabsApiKey)(
+    'preserves each turn across manual flushes',
+    async () => {
+      const audio = makeIntegrationSpeech();
+      const eleven = new STT({
+        model: 'scribe_v2_realtime',
+        languageCode: 'en',
+        sampleRate: 24000,
+      });
+      const stream = eleven.stream({
+        connOptions: { maxRetry: 2, retryIntervalMs: 2000, timeoutMs: 10000 },
+      });
+      const finals: string[] = [];
+      const consume = (async () => {
+        for await (const event of stream) {
+          if (event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT) {
+            finals.push(event.alternatives?.[0]?.text ?? '');
+          }
+        }
+      })();
+
+      try {
+        const samplesPerChunk = Math.floor(audio.sampleRate * 0.02);
+        for (let turn = 0; turn < 2; turn++) {
+          for (let offset = 0; offset < audio.samplesPerChannel; offset += samplesPerChunk) {
+            const length = Math.min(samplesPerChunk, audio.samplesPerChannel - offset);
+            const data = audio.data.subarray(offset, offset + length * audio.channels);
+            stream.pushFrame(new AudioFrame(data, audio.sampleRate, audio.channels, length));
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          stream.flush();
+          await waitUntil(() => finals.length === turn + 1, 10_000);
+        }
+
+        expect(finals).toHaveLength(2);
+        expect(finals.every((text) => wordErrorRate(text, TRANSCRIPT) <= 0.25)).toBe(true);
+      } finally {
+        stream.close();
+        await consume;
+      }
+    },
+    90_000,
   );
 });
 
@@ -530,6 +580,31 @@ describe('ElevenLabs STT', () => {
     expect(stt.capabilities.streaming).toBe(false);
     expect(stt.capabilities.interimResults).toBe(true);
     expect(stt.capabilities.alignedTranscript).toBe(false);
+    expect(stt.capabilities.manualFlush).toBe(false);
+  });
+
+  it.each([
+    ['scribe_v2_realtime', undefined, true],
+    ['scribe_v2_realtime', null, true],
+    ['scribe_v2_realtime', {}, false],
+    ['scribe_v2', undefined, false],
+  ] as const)(
+    'reports manual flush capability for model %s and server VAD %j',
+    (model, serverVad, expected) => {
+      const eleven = new STT({ apiKey: 'test-key', model, serverVad });
+
+      expect(eleven.capabilities.manualFlush).toBe(expected);
+    },
+  );
+
+  it('tracks manual flush capability across server VAD updates', () => {
+    const eleven = new STT({ apiKey: 'test-key', model: 'scribe_v2_realtime' });
+
+    eleven.updateOptions({ serverVad: {} });
+    expect(eleven.capabilities.manualFlush).toBe(false);
+
+    eleven.updateOptions({ serverVad: null });
+    expect(eleven.capabilities.manualFlush).toBe(true);
   });
 
   it('maps deprecated useRealtime to realtime model capabilities', () => {
@@ -645,6 +720,94 @@ describe('ElevenLabs STT', () => {
       expect(requests).toBe(1);
     } finally {
       await closeHttpServer(server);
+    }
+  });
+
+  it('keeps provider error content in PII log attributes', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const errorLog = vi.spyOn(log(), 'error').mockImplementation(() => undefined);
+    const providerError = {
+      message_type: 'input_error',
+      message: 'customer secret transcript',
+      details: 'sensitive request details',
+    };
+    wss.on('connection', (ws) => {
+      ws.once('message', () => ws.send(JSON.stringify(providerError)));
+    });
+
+    const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+    eleven.on('error', () => {});
+    const stream = eleven.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+
+    try {
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => stream.terminalError !== undefined);
+      expect(stream.terminalError).toBeInstanceOf(APIConnectionError);
+      expect(stream.terminalError?.message).toBe('ElevenLabs STT error [input_error]');
+      expect(stream.terminalError?.message).not.toContain(providerError.message);
+      expect(stream.terminalError?.message).not.toContain(providerError.details);
+      expect(errorLog).toHaveBeenCalledWith(
+        { 'lk.pii.data': expect.objectContaining(providerError) },
+        'ElevenLabs STT error [input_error]',
+      );
+      expect(
+        errorLog.mock.calls.some((call) =>
+          call.some(
+            (value) =>
+              typeof value === 'string' &&
+              (value.includes(providerError.message) || value.includes(providerError.details)),
+          ),
+        ),
+      ).toBe(false);
+    } finally {
+      stream.close();
+      errorLog.mockRestore();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it.each([
+    ['auth_error', false],
+    ['quota_exceeded', false],
+    ['input_error', false],
+    ['transcriber_error', true],
+    ['error', true],
+  ] as const)('surfaces %s provider errors with retryable=%s', async (messageType, retryable) => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let socketClosed = false;
+    wss.on('connection', (ws) => {
+      ws.on('close', () => {
+        socketClosed = true;
+      });
+      ws.once('message', () => {
+        ws.send(
+          JSON.stringify({
+            message_type: messageType,
+            message: 'provider detail',
+            details: 'sensitive detail',
+          }),
+        );
+      });
+    });
+
+    const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+    eleven.on('error', () => {});
+    const stream = eleven.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+
+    try {
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => stream.terminalError !== undefined);
+      expect(stream.terminalError).toBeInstanceOf(APIConnectionError);
+      expect(stream.terminalError).toMatchObject({ retryable });
+      expect(stream.terminalError?.message).toBe(`ElevenLabs STT error [${messageType}]`);
+      await waitUntil(() => socketClosed);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
     }
   });
 

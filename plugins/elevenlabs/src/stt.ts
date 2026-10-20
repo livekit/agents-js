@@ -296,6 +296,7 @@ export class STT extends stt.STT {
     super({
       streaming: useRealtime,
       interimResults: true,
+      manualFlush: useRealtime && (opts.serverVad === undefined || opts.serverVad === null),
       alignedTranscript: includeTimestamps && useRealtime ? 'word' : false,
     });
 
@@ -542,6 +543,9 @@ export class STT extends stt.STT {
 
     if (opts.serverVad !== undefined) {
       this.#opts.serverVad = opts.serverVad;
+      this.updateCapabilities({
+        manualFlush: this.capabilities.streaming && opts.serverVad === null,
+      });
     }
 
     if (opts.keyterms !== undefined) {
@@ -770,6 +774,10 @@ export class SpeechStream extends stt.SpeechStream {
               try {
                 this.#processStreamEvent(parseStreamEvent(JSON.parse(msg.toString())));
               } catch (error) {
+                if (error instanceof APIError) {
+                  reject(error);
+                  return;
+                }
                 this.#logger.error({ error }, 'failed to process ElevenLabs STT message');
               }
             };
@@ -1011,10 +1019,13 @@ export class SpeechStream extends stt.SpeechStream {
       messageType === 'input_error' ||
       messageType === 'error'
     ) {
-      const errorMsg = data.message ?? 'Unknown error';
-      const detailsSuffix = data.details ? ` - ${data.details}` : '';
-      this.#logger.error(`ElevenLabs STT error [${messageType}]: ${errorMsg}${detailsSuffix}`);
-      throw new APIConnectionError({ message: `${messageType}: ${errorMsg}${detailsSuffix}` });
+      this.#logger.error({ 'lk.pii.data': data }, `ElevenLabs STT error [${messageType}]`);
+      throw new APIConnectionError({
+        message: `ElevenLabs STT error [${messageType}]`,
+        options: {
+          retryable: !['auth_error', 'quota_exceeded', 'input_error'].includes(messageType),
+        },
+      });
     } else {
       this.#logger.warn(
         {
