@@ -77,6 +77,10 @@ export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
 export const DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
 export const RUNNING_TOOL_PLACEHOLDER = 'The tool call is still in progress.';
 export const RUNNING_TOOL_PLACEHOLDER_KEY = '__lk_running_placeholder__';
+export const RELEASED_TOOL_TEMPLATE =
+  '{message} It keeps running in the background, and its result will be delivered to you ' +
+  'automatically when it finishes. Do not call `{functionName}` again, and do not guess its ' +
+  'result.';
 const RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX = 'lk_running_placeholder/';
 
 export function _injectRunningToolCalls(
@@ -1299,6 +1303,13 @@ export function performToolExecutions({
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
+    const cancelReader = () => {
+      void reader.cancel().catch((error) => {
+        logger.debug({ error, speech_id: speechHandle.id }, 'failed to cancel tool call stream');
+      });
+    };
+    signal.addEventListener('abort', cancelReader, { once: true });
+    if (signal.aborted) cancelReader();
 
     // Production always has an activity (and thus a shared executor). Fall back to a standalone
     // executor when it's absent (edge cases / unit tests) instead of dropping every tool call,
@@ -1561,6 +1572,8 @@ export function performToolExecutions({
       // wait, not cancelling all tool calling tasks
       tasks.push(toolTask);
     }
+    signal.removeEventListener('abort', cancelReader);
+    reader.releaseLock();
 
     await ThrowsPromise.allSettled(tasks.map((task) => task.result));
     if (toolOutput.output.length > 0) {

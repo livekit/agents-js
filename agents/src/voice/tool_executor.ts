@@ -103,6 +103,7 @@ type ToolExecutorAgent = {
 
 type ToolExecutorActivity = {
   agent: ToolExecutorAgent;
+  enqueueToolUpdate(items: [FunctionCall, FunctionCallOutput]): Promise<void>;
   waitForIdle(): Promise<void>;
 };
 
@@ -230,6 +231,7 @@ export class ToolExecutor {
       const controller = new AbortController();
       const abort = () => {
         queueMicrotask(() => {
+          if (runCtx.functionCall.extra.__livekit_agents_tool_non_blocking === true) return;
           controller.abort();
           if (!firstUpdateFuture.done) {
             firstUpdateFuture.reject(new Error('tool call was aborted'));
@@ -420,10 +422,15 @@ export class ToolExecutor {
     ctx: RunContext<any>,
     items: [FunctionCall, FunctionCallOutput],
   ): Promise<void> {
-    const target = this.owningActivity?.agent ?? getCurrentAgent(ctx.session);
-    const chatCtx = target.chatCtx.copy();
-    chatCtx.insert(items);
-    await target.updateChatCtx(chatCtx);
+    const activity = this.owningActivity ?? getCurrentActivity(ctx.session);
+    const target = activity?.agent ?? getCurrentAgent(ctx.session);
+    if (activity) {
+      await activity.enqueueToolUpdate(items);
+    } else {
+      const chatCtx = target.chatCtx.copy();
+      chatCtx.insert(items);
+      await target.updateChatCtx(chatCtx);
+    }
     ctx.session.history.insert(items);
 
     this.pendingUpdates.push({ ctx, items, target });
@@ -672,6 +679,24 @@ export function getRunningTasks(session: AgentSession): FunctionCall[] {
 }
 
 /** @internal */
+export async function _releaseRunningTools(
+  session: AgentSession,
+  startedCalls: FunctionCall[],
+  message: string,
+  template: PromptTemplate<UpdatePromptArgs>,
+): Promise<string[]> {
+  const sessionTasks = runningTasks.get(session);
+  const released: string[] = [];
+  for (const call of startedCalls) {
+    const task = sessionTasks?.get(call.callId);
+    if (!task || task.firstUpdateFuture.done) continue;
+    await task.ctx.update(message, { template });
+    released.push(call.name);
+  }
+  return released;
+}
+
+/** @internal */
 export function _getCancellableRunningTasks(session: AgentSession): FunctionCall[] {
   return [...(runningTasks.get(session)?.values() ?? [])]
     .filter((task) => task.allowCancellation && !task.controller.signal.aborted)
@@ -680,4 +705,8 @@ export function _getCancellableRunningTasks(session: AgentSession): FunctionCall
 
 function getCurrentAgent(session: AgentSession): ToolExecutorAgent {
   return (session as unknown as { currentAgent: ToolExecutorAgent }).currentAgent;
+}
+
+function getCurrentActivity(session: AgentSession): ToolExecutorActivity | null {
+  return (session as unknown as { _activity?: ToolExecutorActivity })._activity ?? null;
 }
