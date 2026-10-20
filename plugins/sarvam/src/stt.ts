@@ -596,7 +596,7 @@ export class SpeechStream extends stt.SpeechStream {
     const maxRetry = 32;
     let retries = 0;
 
-    while (!this.input.closed && !this.closed) {
+    while (!this.closed && !this.abortSignal.aborted) {
       const wsUrl = buildWsUrl(this.#opts);
       this.#logger.info(`Sarvam STT connecting to: ${wsUrl}`);
       const ws = new WebSocket(wsUrl, {
@@ -610,6 +610,7 @@ export class SpeechStream extends stt.SpeechStream {
         sessionStart = Date.now();
         await this.#runWS(ws);
         retries = 0;
+        if (this.input.closed) break;
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           // If the session ran for a meaningful duration (>5s), this was a working
@@ -682,10 +683,46 @@ export class SpeechStream extends stt.SpeechStream {
       const samples50Ms = Math.floor(SAMPLE_RATE / 20); // 50ms chunks
       const stream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, samples50Ms);
 
+      const sendFrames = (frames: AudioFrame[]) => {
+        for (const frame of frames) {
+          const pcmBuffer = Buffer.from(
+            frame.data.buffer,
+            frame.data.byteOffset,
+            frame.data.byteLength,
+          );
+          ws.send(
+            JSON.stringify({
+              audio: {
+                data: pcmBuffer.toString('base64'),
+                encoding: 'pcm_s16le',
+                sample_rate: SAMPLE_RATE,
+              },
+            }),
+          );
+        }
+      };
+
       try {
         while (!this.closed) {
           const result = await this.input.next({ signal: attemptSignal });
-          if (result.done) break;
+          if (result.done) {
+            if (attemptSignal.aborted) break;
+
+            sendFrames(stream.flush());
+            if (this.#opts.flushSignal) {
+              ws.send(JSON.stringify({ type: 'flush' }));
+            }
+
+            closing = true;
+            ws.send(
+              JSON.stringify({
+                type: 'end_of_stream',
+                audio: { data: '', encoding: 'pcm_s16le', sample_rate: SAMPLE_RATE },
+              }),
+            );
+            wsMonitor.cancel();
+            break;
+          }
 
           const data = result.value;
 
@@ -705,46 +742,15 @@ export class SpeechStream extends stt.SpeechStream {
             );
           }
 
-          for (const frame of frames) {
-            // Sarvam expects base64-encoded PCM in a JSON message
-            const pcmBuffer = Buffer.from(
-              frame.data.buffer,
-              frame.data.byteOffset,
-              frame.data.byteLength,
-            );
-            const base64Audio = pcmBuffer.toString('base64');
-            ws.send(
-              JSON.stringify({
-                audio: {
-                  data: base64Audio,
-                  encoding: 'audio/wav',
-                  sample_rate: SAMPLE_RATE,
-                },
-              }),
-            );
-          }
+          sendFrames(frames);
 
-          // Send flush message on FLUSH_SENTINEL (VAD end of speech)
-          if (data === SpeechStream.FLUSH_SENTINEL) {
+          if (data === SpeechStream.FLUSH_SENTINEL && this.#opts.flushSignal) {
             ws.send(JSON.stringify({ type: 'flush' }));
           }
         }
       } catch (error) {
         if (!attemptSignal.aborted) throw error;
       } finally {
-        closing = true;
-        // Match Python: end_of_stream includes an empty audio field to avoid
-        // "audio must not be None" rejection from the server
-        try {
-          ws.send(
-            JSON.stringify({
-              type: 'end_of_stream',
-              audio: { data: '', encoding: 'audio/wav', sample_rate: SAMPLE_RATE },
-            }),
-          );
-        } catch {
-          // ws may already be closed
-        }
         wsMonitor.cancel();
       }
     };
@@ -877,7 +883,8 @@ export class SpeechStream extends stt.SpeechStream {
       closing = true;
       attemptController.abort();
       wsMonitor.cancel();
-      ws.close();
+      if (this.abortSignal.aborted) ws.terminate();
+      else ws.close();
       await Promise.allSettled([sendPromise, listenTask.result, wsMonitor.result]);
       ws.removeAllListeners('message');
     }
