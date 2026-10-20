@@ -1,0 +1,35 @@
+agents/src/voice/generation_tools.test.ts
+  s_12d0cca5111d2b::t_6744144024bf8e 113-117
+  s_12d0cca5111d2b::t_970379e4868abc 112,118-137
+agents/src/voice/agent_activity.ts
+  s_12d0cca5111d2b::t_8ba324dc6fd566 5250-5253
+agents/src/voice/events.ts
+  s_12d0cca5111d2b::t_13f5dea28dae24 217,219-222
+agents/src/voice/generation.ts
+  s_12d0cca5111d2b::t_dcd5062960eff0 503-506
+  s_12d0cca5111d2b::t_f246a53da69aa7 435
+  s_12d0cca5111d2b::t_8c12015747d7b4 450-453
+agents/etc/agents.api.md
+  s_12d0cca5111d2b::t_63ad2d4a294677 9507
+agents/src/voice/parallel_tool_handoff.test.ts
+  s_12d0cca5111d2b::t_6744144024bf8e 28-31,43-49
+  s_12d0cca5111d2b::t_c9a9d669a7887c 1-27,32-42,50-62
+.changeset/quiet-tools-always-answer.md
+  s_12d0cca5111d2b::t_5bbffd4a4982c4 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45c08aaf8a3d545524169ab3729450fcef5a79e5",
+  "prompts": {},
+  "sessions": {
+    "s_12d0cca5111d2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ec4947c-c653-4071-b14b-220d8481f3c1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
