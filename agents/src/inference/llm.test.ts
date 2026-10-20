@@ -663,14 +663,33 @@ describe('inference.LLM unsupported-param stripping', () => {
     expect(body.temperature).toBeUndefined();
   });
 
-  it('leaves xAI reasoning models alone', async () => {
+  it('keeps temperature and top_p on xAI reasoning models but drops the penalties', async () => {
     const body = await captureRequestBody({
       model: 'xai/grok-4.20-multi-agent',
-      modelOptions: { temperature: 0.2, top_p: 0.9, frequency_penalty: 0.5 },
+      modelOptions: {
+        temperature: 0.2,
+        top_p: 0.9,
+        frequency_penalty: 0.5,
+        presence_penalty: 0.5,
+        stop: ['x'],
+        n: 2,
+      },
     });
 
     expect(body.temperature).toBe(0.2);
     expect(body.top_p).toBe(0.9);
+    expect(body.n).toBe(2);
     expect(body.frequency_penalty).toBeUndefined();
+    expect(body.presence_penalty).toBeUndefined();
+    expect(body.stop).toBeUndefined();
+  });
+
+  it('keeps them on gpt-6-sol at a responses-shaped effort none', async () => {
+    const body = await captureRequestBody({
+      model: 'openai/gpt-6-sol',
+      modelOptions: { temperature: 0.2, reasoning: { effort: 'none' } },
+    });
+
+    expect(body.temperature).toBe(0.2);
   });
 });
