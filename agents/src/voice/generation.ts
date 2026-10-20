@@ -1471,17 +1471,30 @@ export function performToolExecutions({
             });
           }
         } catch (rawError) {
-          logger.error(
-            {
-              function: toolCall.name,
-              speech_id: speechHandle.id,
-              error: toError(rawError).message,
-            },
-            'exception occurred while executing tool',
-          );
+          const error = toError(rawError);
+          if (isToolError(rawError)) {
+            // Keep detail out of the message body so redaction can drop it.
+            logger.warn(
+              {
+                function: toolCall.name,
+                speech_id: speechHandle.id,
+                'lk.pii.error': rawError.message,
+              },
+              'ToolError while executing tool',
+            );
+          } else {
+            logger.error(
+              {
+                function: toolCall.name,
+                speech_id: speechHandle.id,
+                error: error.message,
+              },
+              'exception occurred while executing tool',
+            );
+          }
           toolOutput = createToolOutput({
             toolCall,
-            exception: toError(rawError),
+            exception: error,
           });
 
           if (toolOutput.toolCallOutput) {

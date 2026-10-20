@@ -5,7 +5,7 @@ import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { FunctionCall, ToolContext, ToolError, tool } from '../llm/index.js';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
 import { AgentTask } from './agent.js';
@@ -572,6 +572,45 @@ describe('Generation + Tool Execution', () => {
       'qty must be positive — try again with a value greater than 0',
     );
   });
+
+  it.each(['jane.doe@example.com', '{"email":"jane.doe@example.com"'])(
+    'keeps ToolError detail out of log message bodies',
+    async (detail) => {
+      const warning = vi.spyOn(log(), 'warn');
+      const checked = tool({
+        name: 'checked',
+        description: 'checked',
+        parameters: z.object({}),
+        execute: async () => {
+          throw new ToolError(detail);
+        },
+      });
+      const toolCallStream = createFunctionCallStream(
+        FunctionCall.create({
+          callId: 'call_tool_error_log',
+          name: 'checked',
+          args: '{}',
+        }),
+      );
+
+      const [execTask] = performToolExecutions({
+        session: {} as any,
+        speechHandle: { id: 'speech_tool_error_log', _itemAdded: () => {} } as any,
+        toolCtx: new ToolContext([checked]) as any,
+        toolCallStream,
+        controller: new AbortController(),
+      });
+      await execTask.result;
+
+      const toolWarning = warning.mock.calls.find(
+        ([attributes, message]) =>
+          message === 'ToolError while executing tool' && attributes['lk.pii.error'] === detail,
+      );
+      expect(toolWarning).toBeDefined();
+      expect(toolWarning?.[1]).not.toContain(detail);
+      expect(toolWarning?.[0]).toMatchObject({ 'lk.pii.error': detail });
+    },
+  );
 
   it('should handle multiple tool calls within a single stream', async () => {
     const replyAbortController = new AbortController();
