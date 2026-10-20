@@ -7,17 +7,19 @@ import { APIError, APITimeoutError, isAPIError } from '../_exceptions.js';
 import type { DecisionMetrics } from '../metrics/base.js';
 import { genAI, recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
-import { delay, waitUntilTimeout } from '../utils.js';
+import { delay, waitUntilAborted, waitUntilTimeout } from '../utils.js';
 import type { ChatContext } from './chat_context.js';
 
 export type DecisionKind = 'probability' | 'choice' | 'score';
 
+/** Estimate the probability that `prompt` is true. No boolean threshold is applied. */
 export class Probability {
   readonly kind = 'probability' as const;
 
   constructor(readonly prompt: string) {}
 }
 
+/** Select one named option. Descriptions explain when each option applies. */
 export class Choice {
   readonly kind = 'choice' as const;
 
@@ -27,6 +29,11 @@ export class Choice {
   ) {}
 }
 
+/**
+ * Estimate a position on ordered descriptive levels, numbered from zero.
+ *
+ * The result is the expected level index, including fractional positions.
+ */
 export class Score {
   readonly kind = 'score' as const;
 
@@ -39,12 +46,13 @@ export class Score {
 export type Decision = Probability | Choice | Score;
 
 export interface DecisionCapabilities {
+  /** Decision kinds the model can evaluate */
   decisionKinds: DecisionKind[];
 }
 
 function validateProbability(value: number): void {
   if (!Number.isFinite(value) || value < 0 || value > 1) {
-    throw new TypeError('probability must be finite and between 0 and 1');
+    throw new Error('probability must be finite and between 0 and 1');
   }
 }
 
@@ -69,6 +77,7 @@ export class ProbabilityResult {
 export class ChoiceResult {
   readonly kind = 'choice' as const;
   value: string;
+  /** Provider distribution over option names, or undefined if unavailable. */
   probabilities?: Record<string, number>;
   providerData: Record<string, unknown>;
 
@@ -78,12 +87,12 @@ export class ChoiceResult {
     providerData = {},
   }: {
     value: string;
-    probabilities?: Record<string, number>;
+    probabilities?: Record<string, number> | null;
     providerData?: Record<string, unknown>;
   }) {
     Object.values(probabilities ?? {}).forEach(validateProbability);
     this.value = value;
-    this.probabilities = probabilities;
+    this.probabilities = probabilities ?? undefined;
     this.providerData = providerData;
   }
 }
@@ -91,6 +100,7 @@ export class ChoiceResult {
 export class ScoreResult {
   readonly kind = 'score' as const;
   value: number;
+  /** Provider distribution over zero-based level indices. */
   probabilities: Record<number, number>;
   levels: string[];
   providerData: Record<string, unknown>;
@@ -107,7 +117,7 @@ export class ScoreResult {
     providerData?: Record<string, unknown>;
   }) {
     if (!Number.isFinite(value) || value < 0) {
-      throw new TypeError('score must be finite and non-negative');
+      throw new Error('score must be finite and non-negative');
     }
     Object.values(probabilities).forEach(validateProbability);
     this.value = value;
@@ -121,6 +131,7 @@ export type DecisionResult = ProbabilityResult | ChoiceResult | ScoreResult;
 
 export class DecisionResponse {
   results: Record<string, DecisionResult>;
+  /** Errors keyed by decision name. Failed decisions are absent from results. */
   errors: Record<string, string>;
   model: string;
   provider: string;
@@ -146,10 +157,10 @@ export class DecisionResponse {
     outputTokens?: number;
   }) {
     if (inputTokens !== undefined && (!Number.isInteger(inputTokens) || inputTokens < 0)) {
-      throw new TypeError('inputTokens must be a non-negative integer');
+      throw new Error('inputTokens must be a non-negative integer');
     }
     if (outputTokens !== undefined && (!Number.isInteger(outputTokens) || outputTokens < 0)) {
-      throw new TypeError('outputTokens must be a non-negative integer');
+      throw new Error('outputTokens must be a non-negative integer');
     }
     this.results = Object.fromEntries(Object.entries(results));
     this.errors = Object.fromEntries(Object.entries(errors));
@@ -188,13 +199,18 @@ export function formatTranscript(
 function copyDecisions(decisions: Readonly<Record<string, Decision>>): Record<string, Decision> {
   return Object.fromEntries(
     Object.entries(decisions).map(([name, decision]) => {
+      // keep the decision's class, like Python's deepcopy
+      const copy = Object.assign(Object.create(Object.getPrototypeOf(decision)), decision);
       if (decision.kind === 'choice') {
-        return [name, new Choice(decision.prompt, { ...decision.options })];
+        copy.options = { ...decision.options };
+      } else if (decision.kind === 'score') {
+        copy.levels = [...decision.levels];
+      } else if (decision.kind !== 'probability') {
+        throw new Error(
+          `decision ${JSON.stringify(name)} has unknown kind ${JSON.stringify((decision as { kind?: unknown }).kind)}`,
+        );
       }
-      if (decision.kind === 'score') {
-        return [name, new Score(decision.prompt, [...decision.levels])];
-      }
-      return [name, new Probability(decision.prompt)];
+      return [name, copy as Decision];
     }),
   );
 }
@@ -205,23 +221,21 @@ function validateDecisions(
 ): void {
   for (const [name, decision] of Object.entries(decisions)) {
     if (!name || !decision.prompt.trim()) {
-      throw new TypeError('decisions require a name and non-empty prompt');
+      throw new Error('decisions require a name and non-empty prompt');
     }
     if (decision.kind === 'choice') {
       const names = Object.keys(decision.options);
       if (names.length < 2 || names.some((key) => !key)) {
-        throw new TypeError(`decision ${JSON.stringify(name)} requires at least two named options`);
+        throw new Error(`decision ${JSON.stringify(name)} requires at least two named options`);
       }
     } else if (
       decision.kind === 'score' &&
       (decision.levels.length < 2 || decision.levels.some((level) => !level.trim()))
     ) {
-      throw new TypeError(
-        `decision ${JSON.stringify(name)} requires at least two described levels`,
-      );
+      throw new Error(`decision ${JSON.stringify(name)} requires at least two described levels`);
     }
     if (capabilities && !capabilities.decisionKinds.includes(decision.kind)) {
-      throw new TypeError(
+      throw new Error(
         `decision model does not support ${JSON.stringify(decision.kind)} required by decision ${JSON.stringify(name)}`,
       );
     }
@@ -250,7 +264,7 @@ function validateResult(result: DecisionResult, decision: Decision): void {
     if (!Object.hasOwn(decision.options, result.value)) {
       throw new APIError('unknown choice', { retryable: false });
     }
-    if (result.probabilities !== undefined) {
+    if (result.probabilities != null) {
       Object.values(result.probabilities).forEach(validateResultProbability);
       if (!sameKeys(result.probabilities, decision.options)) {
         throw new APIError('choice distribution does not match options', { retryable: false });
@@ -329,6 +343,12 @@ export type DecisionModelCallbacks = {
   ['metrics_collected']: (metrics: DecisionMetrics) => void;
 };
 
+/**
+ * Provider-neutral batched decisions over a text input or conversation.
+ *
+ * A ChatContext is converted to a `role: text` transcript, so every provider receives
+ * the same text. In `onUserTurnCompleted`, add the new message to the context first.
+ */
 export abstract class DecisionModel extends (EventEmitter as new () => TypedEmitter<DecisionModelCallbacks>) {
   readonly capabilities: DecisionCapabilities;
   readonly #label: string;
@@ -351,14 +371,28 @@ export abstract class DecisionModel extends (EventEmitter as new () => TypedEmit
     return 'unknown';
   }
 
+  /**
+   * Evaluate a batch of decisions.
+   *
+   * Each requested name appears in either `results` or `errors`. Request failures
+   * and malformed responses throw.
+   *
+   * @param input - Text to evaluate, sent as-is, or a conversation converted to a
+   *   transcript of user and assistant text.
+   * @param decisions - Decisions keyed by name.
+   * @param connOptions - Retry and per-attempt timeout settings.
+   * @param abortSignal - Cancels the in-flight request and any pending retry.
+   */
   async evaluate({
     input,
     decisions,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    abortSignal,
   }: {
     input: string | ChatContext;
     decisions: Readonly<Record<string, Decision>>;
     connOptions?: APIConnectOptions;
+    abortSignal?: AbortSignal;
   }): Promise<DecisionResponse> {
     return tracer.startActiveSpan(
       async (span) => {
@@ -383,22 +417,29 @@ export abstract class DecisionModel extends (EventEmitter as new () => TypedEmit
           const started = performance.now();
           let response: DecisionResponse | undefined;
           for (let attempt = 0; attempt <= connOptions.maxRetry; attempt++) {
+            abortSignal?.throwIfAborted();
             const abortController = new AbortController();
+            const signal = abortSignal
+              ? AbortSignal.any([abortSignal, abortController.signal])
+              : abortController.signal;
             let request: Promise<DecisionResponse> | undefined;
             try {
               request = this._evaluateImpl({
                 input: text,
                 decisions: definitions,
                 connOptions,
-                abortSignal: abortController.signal,
+                abortSignal: signal,
               });
-              response = await waitUntilTimeout(
-                request,
+              const outcome = await waitUntilTimeout(
+                waitUntilAborted(request, signal),
                 connOptions.timeoutMs,
                 () => new DecisionRequestTimeoutError('decision request timed out'),
               );
+              if (outcome.isAborted) throw abortSignal?.reason;
+              response = outcome.result;
               break;
             } catch (error) {
+              if (abortSignal?.aborted) throw abortSignal.reason;
               if (error instanceof DecisionRequestTimeoutError) {
                 abortController.abort(error);
                 // don't wait for providers that ignore the abort signal
@@ -415,7 +456,7 @@ export abstract class DecisionModel extends (EventEmitter as new () => TypedEmit
                 }
                 throw error;
               }
-              await delay(intervalForRetry(connOptions, attempt));
+              await delay(intervalForRetry(connOptions, attempt), { signal: abortSignal });
             }
           }
           if (!response) throw new Error('unreachable');
@@ -437,7 +478,7 @@ export abstract class DecisionModel extends (EventEmitter as new () => TypedEmit
             label: this.label(),
             requestId: response.requestId,
             timestamp: Date.now(),
-            durationMs: performance.now() - started,
+            durationMs: Math.trunc(performance.now() - started),
             inputTokens: response.inputTokens,
             outputTokens: response.outputTokens,
             metadata: { modelName: response.model, modelProvider: response.provider },
@@ -466,5 +507,6 @@ export abstract class DecisionModel extends (EventEmitter as new () => TypedEmit
     abortSignal: AbortSignal;
   }): Promise<DecisionResponse>;
 
+  /** Release resources owned by this model, if any. */
   async aclose(): Promise<void> {}
 }

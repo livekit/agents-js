@@ -2335,7 +2335,7 @@ interface ChatMessagePayload {
 // @public (undocumented)
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 
-// @public (undocumented)
+// @public
 export class Choice {
     constructor(prompt: string, options: Record<string, string>);
     // (undocumented)
@@ -2362,12 +2362,11 @@ export interface ChoiceDelta {
 export class ChoiceResult {
     constructor(input: {
         value: string;
-        probabilities?: Record<string, number>;
+        probabilities?: Record<string, number> | null;
         providerData?: Record<string, unknown>;
     });
     // (undocumented)
     readonly kind: "choice";
-    // (undocumented)
     probabilities?: Record<string, number>;
     // (undocumented)
     providerData: Record<string, unknown>;
@@ -2814,7 +2813,6 @@ export type Decision = Probability | Choice | Score;
 
 // @public (undocumented)
 export interface DecisionCapabilities {
-    // (undocumented)
     decisionKinds: DecisionKind[];
 }
 
@@ -2835,20 +2833,19 @@ export type DecisionMetrics = {
 
 // Warning: (ae-forgotten-export) The symbol "DecisionModel_base" needs to be exported by the entry point index.d.ts
 //
-// @public (undocumented)
+// @public
 export abstract class DecisionModel extends DecisionModel_base {
     constructor(input: {
         capabilities: DecisionCapabilities;
     });
-    // (undocumented)
     aclose(): Promise<void>;
     // (undocumented)
     readonly capabilities: DecisionCapabilities;
-    // (undocumented)
     evaluate(input: {
         input: string | ChatContext;
         decisions: Readonly<Record<string, Decision>>;
         connOptions?: APIConnectOptions;
+        abortSignal?: AbortSignal;
     }): Promise<DecisionResponse>;
     // (undocumented)
     protected abstract _evaluateImpl(input: {
@@ -2881,7 +2878,6 @@ export class DecisionResponse {
         inputTokens?: number;
         outputTokens?: number;
     });
-    // (undocumented)
     errors: Record<string, string>;
     // (undocumented)
     inputTokens?: number;
@@ -5745,7 +5741,7 @@ function prepareCloudTracer(options: ObservabilityEndpoint & {
     agentName?: string;
 }): Promise<void>;
 
-// @public (undocumented)
+// @public
 export class Probability {
     constructor(prompt: string);
     // (undocumented)
@@ -6377,7 +6373,7 @@ export type ScenarioUserdata = {
     [key: string]: unknown;
 };
 
-// @public (undocumented)
+// @public
 export class Score {
     constructor(prompt: string, levels: string[]);
     // (undocumented)
@@ -6400,7 +6396,6 @@ export class ScoreResult {
     readonly kind: "score";
     // (undocumented)
     levels: string[];
-    // (undocumented)
     probabilities: Record<number, number>;
     // (undocumented)
     providerData: Record<string, unknown>;

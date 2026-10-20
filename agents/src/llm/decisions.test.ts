@@ -117,12 +117,14 @@ async function evaluate(
     input?: string | ChatContext;
     decisions?: Readonly<Record<string, Decision>>;
     connOptions?: APIConnectOptions;
+    abortSignal?: AbortSignal;
   } = {},
 ): Promise<DecisionResponse> {
   return model.evaluate({
     input: options.input ?? 'The caller asked for a table.',
     decisions: options.decisions ?? QUESTIONS,
     connOptions: options.connOptions,
+    abortSignal: options.abortSignal,
   });
 }
 
@@ -325,6 +327,7 @@ describe('DecisionModel', () => {
       }
       expect(error).toBeInstanceOf(APITimeoutError);
       expect((error as Error).cause).toBeInstanceOf(Error);
+      expect(((error as Error).cause as Error).message).toBe('decision request timed out');
       expect(model.requests).toHaveLength(maxRetry + 1);
       expect(collected).toEqual([]);
     },
@@ -362,6 +365,76 @@ describe('DecisionModel', () => {
       }),
     ).rejects.toBeInstanceOf(APITimeoutError);
     expect(model.requests).toHaveLength(2);
+  });
+
+  it('cancels the in-flight request when the caller aborts', async () => {
+    const model = new HangingModel();
+    const controller = new AbortController();
+    const reason = new Error('turn changed');
+    const pending = evaluate(model, {
+      decisions: { check: new Probability('True?') },
+      connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 1000 },
+      abortSignal: controller.signal,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+    expect(model.requests).toHaveLength(1);
+  });
+
+  it('cancels a pending retry when the caller aborts', async () => {
+    const controller = new AbortController();
+    const reason = new Error('turn changed');
+    const model = new StaticModel(
+      new APIStatusError({ message: 'unavailable', options: { statusCode: 503 } }),
+      new DecisionResponse({ results: validResults() }),
+    );
+    const pending = evaluate(model, {
+      connOptions: { maxRetry: 1, retryIntervalMs: 10_000, timeoutMs: 1000 },
+      abortSignal: controller.signal,
+    });
+    while (model.requests.length === 0) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+    expect(model.requests).toHaveLength(1);
+  });
+
+  it('treats null choice probabilities as unavailable', async () => {
+    const results = validResults();
+    results.intent = new ChoiceResult({ value: 'booking', probabilities: null });
+    const response = await evaluate(new StaticModel(new DecisionResponse({ results })));
+    expect(response.errors).toEqual({});
+
+    const raw = validResults();
+    (raw.intent as { probabilities: unknown }).probabilities = null;
+    const rawResponse = await evaluate(new StaticModel(new DecisionResponse({ results: raw })));
+    expect(rawResponse.errors).toEqual({});
+  });
+
+  it('rejects decisions of an unknown kind before the provider request', async () => {
+    const model = new StaticModel();
+    await expect(
+      evaluate(model, { decisions: { check: { prompt: 'True?' } as unknown as Decision } }),
+    ).rejects.toThrow('unknown kind');
+    expect(model.requests).toEqual([]);
+  });
+
+  it('keeps the class of copied definitions', async () => {
+    class TaggedChoice extends Choice {
+      readonly tag = 'custom';
+    }
+    const model = new StaticModel(new DecisionResponse({ results: validResults() }));
+    await evaluate(model, {
+      decisions: {
+        ...QUESTIONS,
+        intent: new TaggedChoice('Intent?', { booking: 'R', other: 'O' }),
+      },
+    });
+    const copied = model.requests[0]?.[1].intent;
+    expect(copied).toBeInstanceOf(TaggedChoice);
+    expect((copied as TaggedChoice).tag).toBe('custom');
   });
 
   it('skips the provider for an empty batch', async () => {
