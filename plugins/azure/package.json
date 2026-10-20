@@ -1,7 +1,7 @@
 {
   "name": "@livekit/agents-plugin-azure",
   "version": "1.9.3",
-  "description": "Azure plugin for LiveKit Agents for Node.js",
+  "description": "Azure speech recognition and Microsoft Foundry decision plugin for LiveKit Agents for Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",

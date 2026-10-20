@@ -4,16 +4,35 @@
 
 ```ts
 
+import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
+import { Context } from '@opentelemetry/api';
+import { EventEmitter } from 'events';
+import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
+import { FrameProcessor } from '@livekit/rtc-node';
+import { JsonObject } from '@bufbuild/protobuf';
+import type { JSONSchema7 } from 'json-schema';
 import { Logger } from 'pino';
-import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import { NoiseCancellationOptions } from '@livekit/rtc-node';
+import { Participant } from '@livekit/rtc-node';
+import { ParticipantKind } from '@livekit/rtc-node';
+import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import { RemoteParticipant } from '@livekit/rtc-node';
+import { Room } from '@livekit/rtc-node';
+import { Span } from '@opentelemetry/api';
 import * as speechsdk from 'microsoft-cognitiveservices-speech-sdk';
+import type { TextStreamInfo } from '@livekit/rtc-node';
+import { Throws } from '@livekit/throws-transformer/throws';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { TrackPublishOptions } from '@livekit/rtc-node';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
+import { z } from 'zod';
 
 // @internal (undocumented)
 export interface _CanceledEvent {
@@ -25,13 +44,47 @@ export interface _CanceledEvent {
     reason: speechsdk.CancellationReason;
 }
 
+// Warning: (ae-forgotten-export) The symbol "DecisionModel_2" needs to be exported by the entry point index.d.ts
+//
+// @public
+export class DecisionModel extends DecisionModel_2 {
+    constructor(options?: DecisionModelOptions);
+    // (undocumented)
+    aclose(): Promise<void>;
+    // Warning: (ae-forgotten-export) The symbol "DecisionResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected _evaluateImpl(input: {
+        input: string;
+        decisions: Readonly<Record<string, Decision>>;
+        connOptions: APIConnectOptions;
+        abortSignal: AbortSignal;
+    }): Promise<DecisionResponse>;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+}
+
+// @public (undocumented)
+export interface DecisionModelOptions {
+    apiKey?: string;
+    authHeader?: 'Authorization' | 'api-key';
+    fetch?: typeof globalThis.fetch;
+    headers?: Record<string, string>;
+    model?: DecisionModels | string;
+    url?: string;
+}
+
+// @public (undocumented)
+export type DecisionModels = 'Microsoft-Decision-1';
+
 export { speechsdk }
 
 // Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
 export class SpeechStream extends stt.SpeechStream {
-    // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
     constructor(stt: STT, opts: STTOptions, connOptions: APIConnectOptions);
     // @internal (undocumented)
     _cancellationError: _CanceledEvent | null;
@@ -160,6 +213,11 @@ export interface _WaitableEvent {
     // (undocumented)
     wait(): Promise<void>;
 }
+
+// Warnings were encountered during analysis:
+//
+// src/decision_model.ts:66:5 - (ae-forgotten-export) The symbol "Decision" needs to be exported by the entry point index.d.ts
+// src/decision_model.ts:67:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
