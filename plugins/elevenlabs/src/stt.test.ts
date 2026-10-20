@@ -4,15 +4,20 @@
 import {
   APIConnectionError,
   APIStatusError,
+  VAD,
+  VADEventType,
+  VADStream,
   log,
   mergeFrames,
   stt as sttLib,
+  voice,
 } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { type RequestListener, type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { ReadableStream, type ReadableStreamDefaultController } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT, type STTOptions } from './stt.js';
@@ -222,6 +227,75 @@ function makeIntegrationSpeech(): AudioFrame {
   return mergeFrames(frames);
 }
 
+class IntegrationAudioInput extends voice.AudioInput {
+  #controller!: ReadableStreamDefaultController<AudioFrame>;
+
+  constructor() {
+    super();
+    this.multiStream.addInputStream(
+      new ReadableStream<AudioFrame>({
+        start: (controller) => {
+          this.#controller = controller;
+        },
+      }),
+    );
+  }
+
+  push(frame: AudioFrame): void {
+    this.#controller.enqueue(frame);
+  }
+}
+
+class IntegrationVADStream extends VADStream {
+  emit(type: VADEventType): void {
+    this.sendVADEvent({
+      type,
+      samplesIndex: 0,
+      timestamp: Date.now(),
+      speechDuration: type === VADEventType.END_OF_SPEECH ? 1000 : 0,
+      silenceDuration: type === VADEventType.END_OF_SPEECH ? 300 : 0,
+      frames: [],
+      probability: type === VADEventType.START_OF_SPEECH ? 1 : 0,
+      inferenceDuration: 0,
+      speaking: type === VADEventType.START_OF_SPEECH,
+      rawAccumulatedSilence: type === VADEventType.END_OF_SPEECH ? 300 : 0,
+      rawAccumulatedSpeech: type === VADEventType.START_OF_SPEECH ? 1000 : 0,
+    });
+  }
+}
+
+class IntegrationVAD extends VAD {
+  label = 'test.IntegrationVAD';
+  #stream?: IntegrationVADStream;
+
+  constructor() {
+    super({ updateInterval: 32 });
+  }
+
+  stream(): VADStream {
+    this.#stream = new IntegrationVADStream(this);
+    return this.#stream;
+  }
+
+  startOfSpeech(): void {
+    this.#stream?.emit(VADEventType.START_OF_SPEECH);
+  }
+
+  endOfSpeech(): void {
+    this.#stream?.emit(VADEventType.END_OF_SPEECH);
+  }
+}
+
+function fixedTurnDetector(probability: number) {
+  return {
+    model: 'fixed-test-prediction',
+    provider: 'test',
+    supportsLanguage: async () => true,
+    unlikelyThreshold: async () => 0.5,
+    predictEndOfTurn: async () => probability,
+  };
+}
+
 const hasElevenLabsApiKey = Boolean(process.env.ELEVEN_API_KEY);
 
 describe('ElevenLabs STT integration', () => {
@@ -241,48 +315,70 @@ describe('ElevenLabs STT integration', () => {
     60_000,
   );
 
-  it.skipIf(!hasElevenLabsApiKey)(
-    'preserves each turn across manual flushes',
-    async () => {
+  it.skipIf(!hasElevenLabsApiKey).each(['vad', 'manual', 0.1, 0.9] as const)(
+    'preserves each turn with turn detection %s',
+    async (turnDetection) => {
       const audio = makeIntegrationSpeech();
       const eleven = new STT({
         model: 'scribe_v2_realtime',
         languageCode: 'en',
         sampleRate: 24000,
       });
-      const stream = eleven.stream({
-        connOptions: { maxRetry: 2, retryIntervalMs: 2000, timeoutMs: 10000 },
+      const vad = new IntegrationVAD();
+      const session = new voice.AgentSession({
+        stt: eleven,
+        vad,
+        turnHandling: {
+          turnDetection:
+            typeof turnDetection === 'number' ? fixedTurnDetector(turnDetection) : turnDetection,
+        },
       });
+      const audioInput = new IntegrationAudioInput();
+      session.input.audio = audioInput;
       const finals: string[] = [];
-      const consume = (async () => {
-        for await (const event of stream) {
-          if (event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT) {
-            finals.push(event.alternatives?.[0]?.text ?? '');
-          }
+      session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (event) => {
+        if (event.isFinal) finals.push(event.transcript);
+      });
+
+      const feed = async (frame: AudioFrame) => {
+        const samplesPerChunk = Math.floor(frame.sampleRate * 0.02);
+        for (let offset = 0; offset < frame.samplesPerChannel; offset += samplesPerChunk) {
+          const length = Math.min(samplesPerChunk, frame.samplesPerChannel - offset);
+          const data = frame.data.subarray(offset, offset + length * frame.channels);
+          audioInput.push(new AudioFrame(data, frame.sampleRate, frame.channels, length));
+          await new Promise((resolve) => setTimeout(resolve, 20));
         }
-      })();
+      };
 
       try {
-        const samplesPerChunk = Math.floor(audio.sampleRate * 0.02);
-        for (let turn = 0; turn < 2; turn++) {
-          for (let offset = 0; offset < audio.samplesPerChannel; offset += samplesPerChunk) {
-            const length = Math.min(samplesPerChunk, audio.samplesPerChannel - offset);
-            const data = audio.data.subarray(offset, offset + length * audio.channels);
-            stream.pushFrame(new AudioFrame(data, audio.sampleRate, audio.channels, length));
-            await new Promise((resolve) => setTimeout(resolve, 20));
-          }
-          stream.flush();
-          await waitUntil(() => finals.length === turn + 1, 10_000);
-        }
+        await session.start({ agent: new voice.Agent({ instructions: 'Transcription test.' }) });
+        await feed(new AudioFrame(new Int16Array(24000 * 2), 24000, 1, 24000 * 2));
+        expect(finals).toHaveLength(0);
 
-        expect(finals).toHaveLength(2);
-        expect(finals.every((text) => wordErrorRate(text, TRANSCRIPT) <= 0.25)).toBe(true);
+        for (let turn = 0; turn < 2; turn++) {
+          if (turnDetection !== 'manual') vad.startOfSpeech();
+          await feed(audio);
+
+          if (turnDetection === 'manual') {
+            const committed = await session.commitUserTurn({
+              transcriptTimeout: 10_000,
+              skipReply: true,
+            });
+            expect(wordErrorRate(committed, TRANSCRIPT)).toBeLessThanOrEqual(0.25);
+          } else {
+            vad.endOfSpeech();
+          }
+
+          await waitUntil(() => finals.length > 0, 20_000);
+          expect(wordErrorRate(finals.shift() ?? '', TRANSCRIPT)).toBeLessThanOrEqual(0.25);
+          expect(finals).toHaveLength(0);
+        }
       } finally {
-        stream.close();
-        await consume;
+        await session.close();
+        await eleven.close();
       }
     },
-    90_000,
+    120_000,
   );
 });
 
