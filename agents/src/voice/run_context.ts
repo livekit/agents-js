@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import type { ToolChoice } from '../llm/tool_context.js';
 import type { Future } from '../utils.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession } from './agent_session.js';
@@ -24,6 +25,18 @@ export interface UpdatePromptArgs {
 
 export interface RunContextUpdateOptions {
   template?: PromptTemplate<UpdatePromptArgs>;
+  /**
+   * Whether the user hears anything about this update. The message is recorded for the model
+   * either way; `true` keeps it to the model alone, and on the first update releases control
+   * without speaking. A realtime model that cannot keep a tool result silent may still answer it.
+   */
+  silent?: boolean;
+  /**
+   * What the reply to this update may call. `'none'` by default: a report is not a result, so
+   * the model speaks to it rather than acting on it, and without that it can answer a report by
+   * calling the same tool again. Set it where the report is genuinely something to act on.
+   */
+  toolChoice?: ToolChoice;
 }
 
 export type FillerSource = string | ((step: number) => SpeechHandle | string | null | undefined);
@@ -49,7 +62,11 @@ export interface AttachedToolExecutor<UserData = UnknownUserData> {
   toolOptions: {
     updateTemplate: PromptTemplate<UpdatePromptArgs>;
   };
-  enqueueReply(ctx: RunContext<UserData>, items: [FunctionCall, FunctionCallOutput]): Promise<void>;
+  enqueueReply(
+    ctx: RunContext<UserData>,
+    items: [FunctionCall, FunctionCallOutput],
+    options?: { silent?: boolean; toolChoice?: ToolChoice },
+  ): Promise<void>;
   replyTask?: Promise<void>;
 }
 
@@ -58,6 +75,12 @@ export class RunContext<UserData = UnknownUserData> {
   private _executor?: AttachedToolExecutor<UserData>;
   private _executorAttachment?: object;
   private _firstUpdateFuture?: Future<unknown>;
+  // set by the first update(): whether anything voices its output, and what the step that
+  // answers it may call
+  /** @internal */
+  _suppressReply = false;
+  /** @internal */
+  _replyToolChoice?: ToolChoice;
   private _updates: Array<[FunctionCall, FunctionCallOutput]> = [];
   private _fillerSchedulers: FillerScheduler<UserData>[] = [];
   /**
@@ -156,13 +179,17 @@ export class RunContext<UserData = UnknownUserData> {
       return;
     }
 
+    const silent = options.silent ?? false;
+    const toolChoice = options.toolChoice ?? 'none';
     if (this._firstUpdateFuture && !this._firstUpdateFuture.done) {
+      this._suppressReply = silent;
+      this._replyToolChoice = toolChoice;
       this._firstUpdateFuture.resolve(renderedMessage);
       this.functionCall.extra.__livekit_agents_tool_non_blocking = true;
       return;
     }
 
-    await this._executor.enqueueReply(this, pair);
+    await this._executor.enqueueReply(this, pair, { silent, toolChoice });
   }
 
   async foreground<T>(fn: (activity: AgentActivity) => Promise<T> | T): Promise<T> {

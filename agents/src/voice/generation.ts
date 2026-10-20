@@ -255,8 +255,11 @@ export class ToolExecutionOutput {
     public readonly agentTask: Agent | undefined,
     public readonly rawOutput: unknown,
     public readonly rawException: Error | undefined,
-    public readonly replyRequired: boolean,
+    public replyRequired: boolean,
   ) {}
+
+  /** What the reply to this output may call, when the tool released through `update()`. */
+  replyToolChoice?: ToolChoice;
 
   static create(params: {
     toolCall: FunctionCall;
@@ -1433,7 +1436,11 @@ export function performToolExecutions({
         'Executing LLM tool call',
       );
 
-      const _tracableToolExecutionImpl = async (toolExecTask: Promise<unknown>, span: Span) => {
+      const _tracableToolExecutionImpl = async (
+        toolExecTask: Promise<unknown>,
+        runCtx: RunContext,
+        span: Span,
+      ) => {
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
         genAI.setToolAttributes(span, {
@@ -1455,6 +1462,13 @@ export function performToolExecutions({
             toolCall,
             output: result,
           });
+          if (runCtx._suppressReply) {
+            // a silent update() keeps the output item but asks for no speech
+            toolOutput.replyRequired = false;
+          }
+          // set only when the tool released through update(): the step that answers a report
+          // is bound by what the report asked for
+          toolOutput.replyToolChoice = runCtx._replyToolChoice;
 
           if (toolOutput.toolCallOutput) {
             span.setAttribute(
@@ -1497,10 +1511,13 @@ export function performToolExecutions({
         }
       };
 
-      const tracableToolExecution = (toolExecTask: Promise<unknown>) =>
-        tracer.startActiveSpan(async (span) => _tracableToolExecutionImpl(toolExecTask, span), {
-          name: 'function_tool',
-        });
+      const tracableToolExecution = (toolExecTask: Promise<unknown>, runCtx: RunContext) =>
+        tracer.startActiveSpan(
+          async (span) => _tracableToolExecutionImpl(toolExecTask, runCtx, span),
+          {
+            name: 'function_tool',
+          },
+        );
 
       const toolTask = Task.from(
         async () => {
@@ -1514,10 +1531,10 @@ export function performToolExecutions({
             });
           }
 
+          const runCtx = new RunContext(session, speechHandle, toolCall, activity);
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              const runCtx = new RunContext(session, speechHandle, toolCall, activity);
               const mock = getMockTool(session.currentAgent, toolCall.name);
               const toolToExecute = mock
                 ? {
@@ -1547,7 +1564,7 @@ export function performToolExecutions({
             },
           );
 
-          await tracableToolExecution(toolExecution);
+          await tracableToolExecution(toolExecution, runCtx);
         },
         controller,
         `performToolExecution:${toolCall.name}`,
