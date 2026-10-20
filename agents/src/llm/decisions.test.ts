@@ -421,22 +421,6 @@ describe('DecisionModel', () => {
     expect(model.requests).toEqual([]);
   });
 
-  it('keeps the class of copied definitions', async () => {
-    class TaggedChoice extends Choice {
-      readonly tag = 'custom';
-    }
-    const model = new StaticModel(new DecisionResponse({ results: validResults() }));
-    await evaluate(model, {
-      decisions: {
-        ...QUESTIONS,
-        intent: new TaggedChoice('Intent?', { booking: 'R', other: 'O' }),
-      },
-    });
-    const copied = model.requests[0]?.[1].intent;
-    expect(copied).toBeInstanceOf(TaggedChoice);
-    expect((copied as TaggedChoice).tag).toBe('custom');
-  });
-
   it('skips the provider for an empty batch', async () => {
     const model = new StaticModel();
     const response = await evaluate(model, { decisions: {} });

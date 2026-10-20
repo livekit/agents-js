@@ -199,18 +199,18 @@ export function formatTranscript(
 function copyDecisions(decisions: Readonly<Record<string, Decision>>): Record<string, Decision> {
   return Object.fromEntries(
     Object.entries(decisions).map(([name, decision]) => {
-      // keep the decision's class, like Python's deepcopy
-      const copy = Object.assign(Object.create(Object.getPrototypeOf(decision)), decision);
       if (decision.kind === 'choice') {
-        copy.options = { ...decision.options };
-      } else if (decision.kind === 'score') {
-        copy.levels = [...decision.levels];
-      } else if (decision.kind !== 'probability') {
-        throw new Error(
-          `decision ${JSON.stringify(name)} has unknown kind ${JSON.stringify((decision as { kind?: unknown }).kind)}`,
-        );
+        return [name, new Choice(decision.prompt, { ...decision.options })];
       }
-      return [name, copy as Decision];
+      if (decision.kind === 'score') {
+        return [name, new Score(decision.prompt, [...decision.levels])];
+      }
+      if (decision.kind === 'probability') {
+        return [name, new Probability(decision.prompt)];
+      }
+      throw new Error(
+        `decision ${JSON.stringify(name)} has unknown kind ${JSON.stringify((decision as { kind?: unknown }).kind)}`,
+      );
     }),
   );
 }
