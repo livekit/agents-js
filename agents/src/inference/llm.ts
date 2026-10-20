@@ -588,6 +588,10 @@ export class LLMStream extends llm.LLMStream {
       final: choice.finish_reason !== null && choice.finish_reason !== undefined,
     });
 
+    // Calls completed by this delta. A provider can send several parallel calls
+    // in one chunk (e.g. Ollama), so they are collected and emitted together.
+    const completed: llm.FunctionCall[] = [];
+
     if (delta.tool_calls) {
       // check if we have functions to calls
       for (const tool of delta.tool_calls) {
@@ -612,10 +616,9 @@ export class LLMStream extends llm.LLMStream {
          * [ChoiceDeltaToolCall(index=1, id=None, function=ChoiceDeltaToolCallFunction(arguments='okyo', name=None), type=None)]
          * Choice(delta=ChoiceDelta(content=None, function_call=None, refusal=None, role=None, tool_calls=None), finish_reason='tool_calls', index=0, logprobs=None)
          */
-        let callChunk: llm.ChatChunk | undefined;
         // If we have a previous tool call and this is a new one, emit the previous
         if (this.toolCallId && tool.id && tool.index !== this.toolIndex) {
-          callChunk = this.createRunningToolCallChunk(id, delta);
+          completed.push(this.createRunningToolCall());
           this.toolCallId = this.fncName = this.fncRawArguments = undefined;
           // Note: We intentionally do NOT reset toolExtra here.
           // For Gemini 3+, the thought_signature is only provided on the first tool call
@@ -641,10 +644,6 @@ export class LLMStream extends llm.LLMStream {
         } else if (tool.function.arguments) {
           this.fncRawArguments = (this.fncRawArguments || '') + tool.function.arguments;
         }
-
-        if (callChunk) {
-          return callChunk;
-        }
       }
     }
 
@@ -654,11 +653,24 @@ export class LLMStream extends llm.LLMStream {
       ['tool_calls', 'stop'].includes(choice.finish_reason) &&
       this.toolCallId !== undefined
     ) {
-      const callChunk = this.createRunningToolCallChunk(id, delta);
+      completed.push(this.createRunningToolCall());
       this.toolCallId = this.fncName = this.fncRawArguments = undefined;
       // Reset toolExtra at the end of the response (not between parallel tool calls)
       this.toolExtra = undefined;
-      return callChunk;
+    }
+
+    if (completed.length > 0) {
+      const deltaExtra =
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ((delta as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
+      return {
+        id,
+        delta: {
+          role: 'assistant',
+          extra: deltaExtra,
+          toolCalls: completed,
+        },
+      };
     }
 
     // Extract extra from delta (e.g., Google thought signatures on text parts)
@@ -681,32 +693,16 @@ export class LLMStream extends llm.LLMStream {
     };
   }
 
-  private createRunningToolCallChunk(
-    id: string,
-    delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta,
-  ): llm.ChatChunk {
+  private createRunningToolCall(): llm.FunctionCall {
     const toolExtra = this.toolExtra ? { ...this.toolExtra } : {};
     const thoughtSignature = this.extractThoughtSignature(toolExtra);
-    const deltaExtra =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ((delta as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
-
-    return {
-      id,
-      delta: {
-        role: 'assistant',
-        extra: deltaExtra,
-        toolCalls: [
-          llm.FunctionCall.create({
-            callId: this.toolCallId || '',
-            name: this.fncName || '',
-            args: this.fncRawArguments || '',
-            extra: toolExtra,
-            thoughtSignature,
-          }),
-        ],
-      },
-    };
+    return llm.FunctionCall.create({
+      callId: this.toolCallId || '',
+      name: this.fncName || '',
+      args: this.fncRawArguments || '',
+      extra: toolExtra,
+      thoughtSignature,
+    });
   }
 
   private extractThoughtSignature(extra?: Record<string, unknown>): string | undefined {
