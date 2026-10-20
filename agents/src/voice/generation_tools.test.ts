@@ -109,6 +109,32 @@ describe('Generation + Tool Execution', () => {
     });
   });
 
+  it.each([
+    {
+      label: 'alone',
+      output: (agent: Agent) => [handoff({ agent, returns: 'ok' })],
+      expected: 'ok',
+    },
+    {
+      label: 'with other values',
+      output: (agent: Agent) => ['first', handoff({ agent, returns: 'second' })],
+      expected: ['first', 'second'],
+    },
+  ])('keeps the returns of a handoff in a list $label', ({ output, expected }) => {
+    const nextAgent = new Agent({ instructions: 'next' });
+    const result = createToolOutput({
+      toolCall: FunctionCall.create({ callId: 'call_handoff', name: 'transfer', args: '{}' }),
+      output: output(nextAgent),
+    });
+
+    expect(result.agentTask).toBe(nextAgent);
+    expect(result.toolCallOutput).toMatchObject({
+      output: JSON.stringify(expected),
+      isError: false,
+      replyRequired: true,
+    });
+  });
+
   it('should not abort tool when preamble forwarders are cleaned up', async () => {
     vi.useFakeTimers();
     const replyAbortController = new AbortController();

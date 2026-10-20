@@ -214,7 +214,12 @@ export type FunctionToolsExecutedEvent = {
   functionCalls: FunctionCall[];
   functionCallOutputs: FunctionCallOutput[];
   createdAt: number;
+  /** Whether any output in this batch asks the model to reply. */
   readonly hasToolReply: boolean;
+  /**
+   * Ask the model not to reply to this batch. Each output is still delivered, since a realtime
+   * model holds the call open until it is answered.
+   */
   cancelToolReply(): void;
 };
 

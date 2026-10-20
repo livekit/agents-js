@@ -432,7 +432,7 @@ export function createToolOutput(params: {
     const handoffs = finalOutput.filter(isAgentHandoff);
     if (handoffs.length > 1) {
       logger.error(
-        { callId: toolCall.callId, output: finalOutput },
+        { callId: toolCall.callId, 'lk.pii.output': finalOutput },
         `AI function ${toolCall.name} returned more than one agent`,
       );
       return ToolExecutionOutput.create({
@@ -447,7 +447,10 @@ export function createToolOutput(params: {
         rawException: finalException,
       });
     }
-    const otherOutputs = finalOutput.filter((item) => !isAgentHandoff(item));
+    // a handoff's `returns` stays part of the output, as it does outside a list
+    const otherOutputs = finalOutput.flatMap((item) =>
+      !isAgentHandoff(item) ? [item] : item.returns === undefined ? [] : [item.returns],
+    );
     agentTask = handoffs[0]?.agent;
     toolOutput = agentTask
       ? otherOutputs.length === 0
@@ -497,6 +500,10 @@ export function createToolOutput(params: {
   });
 }
 
+/**
+ * Record the output of a tool that finished on an interrupted turn. A handoff answers as an
+ * error, since the interruption left it unapplied. Either way, the output asks for no reply.
+ */
 export function interruptedToolOutput(output: ToolExecutionOutput): FunctionCallOutput {
   if (output.agentTask !== undefined) {
     output.toolCallOutput.output = 'the agent handoff was interrupted and did not happen';
