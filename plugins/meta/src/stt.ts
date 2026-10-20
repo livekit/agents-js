@@ -13,6 +13,7 @@ import {
   stt,
   waitUntilAborted,
 } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
 import { performance } from 'node:perf_hooks';
 import type { ClientOptions, RawData } from 'ws';
 import { WebSocket } from 'ws';
@@ -137,6 +138,7 @@ interface TurnState {
 
 interface SpeechStreamTestState {
   audioConsumed: boolean;
+  firstFrameAt?: number;
   turns: Map<string, TurnState>;
   completedTurnIds: Set<string>;
   completedTurnOrder: string[];
@@ -494,6 +496,7 @@ export class SpeechStream extends stt.SpeechStream {
   #endStreamSent = false;
   #lastAudioProcessedMs = 0;
   #pendingUsageSeconds = 0;
+  #firstFrameAt?: number;
   #ws?: WebSocket;
   #attemptDone = Promise.resolve();
   #resolveAttemptDone?: () => void;
@@ -505,11 +508,19 @@ export class SpeechStream extends stt.SpeechStream {
     this.#timeoutMs = connOptions?.timeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.timeoutMs;
     SPEECH_STREAM_TEST_STATES.set(this, () => ({
       audioConsumed: this.#audioConsumed,
+      firstFrameAt: this.#firstFrameAt,
       turns: this.#turns,
       completedTurnIds: this.#completedTurnIds,
       completedTurnOrder: this.#completedTurnOrder,
     }));
     SPEECH_STREAM_CLOSE_PROMISES.set(this, () => this.#attemptDone);
+  }
+
+  override pushFrame(frame: AudioFrame) {
+    // Audio keeps queueing while the WebSocket connects. Pace from the first frame so the
+    // backlog catches up without allowing idle time before that frame to create a burst.
+    this.#firstFrameAt ??= performance.now();
+    super.pushFrame(frame);
   }
 
   protected override async run(): Promise<void> {
@@ -741,7 +752,8 @@ export class SpeechStream extends stt.SpeechStream {
 
     const sendPacket = async (packet: Buffer) => {
       if (!packet.length) return;
-      pacingOrigin ??= performance.now();
+      // The first frame may be pushed after the sender starts waiting for input.
+      pacingOrigin ??= this.#firstFrameAt ?? performance.now();
       const delayMs = pacingOrigin + sentDurationMs - performance.now();
       if (delayMs > 0) {
         const { isAborted } = await waitUntilAborted(
