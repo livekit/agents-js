@@ -956,6 +956,7 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
 
   const onPreemptiveGeneration = (AgentActivity.prototype as Record<string, unknown>)
     .onPreemptiveGeneration as (this: unknown, info: PreemptiveGenerationInfo) => void;
+  let calls = 0;
 
   return {
     fakeActivity,
@@ -964,7 +965,7 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
     cancelPreemptiveGeneration,
     call: (info: Partial<PreemptiveGenerationInfo> = {}) =>
       onPreemptiveGeneration.call(fakeActivity, {
-        newTranscript: 'hello world',
+        newTranscript: `hello world ${++calls}`,
         transcriptConfidence: 0.95,
         startedSpeakingAt: undefined,
         ...info,
@@ -1020,6 +1021,23 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     call({ startedSpeakingAt: Date.now() - 5000 });
     expect(fakeActivity._preemptiveGenerationCount).toBe(1);
     expect(generateReply).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['Could you tell me the opening hours?', false],
+    ['could you tell me the opening hours.', false],
+    ['Could you tell me the opening hours today?', true],
+  ] as const)('restarts for the revised transcript %j: %s', (revision, restarted) => {
+    const { fakeActivity, generateReply, cancelPreemptiveGeneration, call } =
+      buildPreemptiveRunner();
+
+    call({ newTranscript: 'Could you tell me the opening hours' });
+    call({ newTranscript: revision });
+
+    const attempts = restarted ? 2 : 1;
+    expect(cancelPreemptiveGeneration).toHaveBeenCalledTimes(attempts);
+    expect(generateReply).toHaveBeenCalledTimes(attempts);
+    expect(fakeActivity._preemptiveGenerationCount).toBe(attempts);
   });
 
   it('skips preemption entirely when enabled is false', () => {
