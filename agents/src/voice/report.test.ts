@@ -18,6 +18,7 @@ import type {
 import {
   AgentSessionEventTypes,
   createConversationItemAddedEvent,
+  createFunctionToolsExecutedEvent,
   createSessionUsageUpdatedEvent,
   createUserInputTranscribedEvent,
   createUserStateChangedEvent,
@@ -281,6 +282,45 @@ describe('sessionReportToJSON', () => {
           created_at: 5,
         },
         created_at: 11,
+      },
+    ]);
+  });
+
+  it('serializes function_tools_executed with only the Python event fields', () => {
+    const call = FunctionCall.create({ callId: 'call_1', name: 'lookup', args: '{}' });
+    const output = FunctionCallOutput.create({
+      callId: 'call_1',
+      name: 'lookup',
+      output: 'ok',
+      isError: false,
+    });
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [
+        createFunctionToolsExecutedEvent({
+          functionCalls: [call],
+          functionCallOutputs: [output],
+          createdAt: 5,
+        }),
+      ],
+      chatHistory: ChatContext.empty(),
+      enableRecording: false,
+      timestamp: 0,
+      startedAt: 0,
+    });
+
+    // hasToolReply and cancelToolReply() are derived, so Python's model_dump() omits them
+    expect(sessionReportToJSON(report).events).toEqual([
+      {
+        type: 'function_tools_executed',
+        function_calls: [expect.objectContaining({ call_id: 'call_1' })],
+        function_call_outputs: [
+          expect.objectContaining({ call_id: 'call_1', reply_required: true }),
+        ],
+        created_at: 5,
       },
     ]);
   });

@@ -150,6 +150,7 @@ import {
   applyInstructionsModality,
   forwardedTextFor,
   hasExpressiveInstructions,
+  interruptedToolOutput,
   performAudioForwarding,
   performLLMInference,
   performTTSInference,
@@ -4190,9 +4191,7 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     const onToolExecutionCompleted = (out: ToolExecutionOutput) => {
-      if (out.toolCallOutput) {
-        speechHandle._itemAdded([out.toolCallOutput]);
-      }
+      speechHandle._itemAdded([out.toolCallOutput]);
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
@@ -4379,7 +4378,7 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
-    const { functionToolsExecutedEvent, shouldGenerateToolReply, newAgentTask, ignoreTaskSwitch } =
+    const { functionToolsExecutedEvent, newAgentTask, ignoreTaskSwitch } =
       this.summarizeToolExecutionOutput(toolOutput, speechHandle);
 
     this.agentSession.emit(
@@ -4406,7 +4405,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._toolItemsAdded(toolCallOutputs);
     }
 
-    if (shouldGenerateToolReply && !this.agentSession._closing) {
+    if (functionToolsExecutedEvent.hasToolReply && !this.agentSession._closing) {
       _stripRunningToolCalls(chatCtx);
       chatCtx.insert(toolMessages);
 
@@ -4898,9 +4897,7 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     const onToolExecutionCompleted = (out: ToolExecutionOutput) => {
-      if (out.toolCallOutput) {
-        speechHandle._itemAdded([out.toolCallOutput]);
-      }
+      speechHandle._itemAdded([out.toolCallOutput]);
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
@@ -4944,6 +4941,20 @@ export class AgentActivity implements RecognitionHooks {
       }
       speechHandle._markGenerationDone();
       await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
+
+      const interruptedOutputs = this._commitInterruptedToolOutputs(toolOutput, speechHandle);
+      if (interruptedOutputs.length > 0) {
+        const chatCtx = realtimeSession.chatCtx.copy();
+        chatCtx.items.push(...interruptedOutputs);
+        try {
+          await realtimeSession.updateChatCtx(chatCtx);
+        } catch (error) {
+          this.logger.warn(
+            { error },
+            'failed to sync the tool results of an interrupted generation',
+          );
+        }
+      }
 
       // TODO(brian): close tees
       return;
@@ -5004,7 +5015,7 @@ export class AgentActivity implements RecognitionHooks {
     const maxStepsReached = speechHandle.numSteps >= maxToolSteps + 1;
     speechHandle._numSteps += 1;
 
-    const { functionToolsExecutedEvent, shouldGenerateToolReply, newAgentTask, ignoreTaskSwitch } =
+    const { functionToolsExecutedEvent, newAgentTask, ignoreTaskSwitch } =
       this.summarizeToolExecutionOutput(toolOutput, speechHandle);
 
     this.agentSession.emit(
@@ -5050,7 +5061,7 @@ export class AgentActivity implements RecognitionHooks {
       let fut: Future<void, never> | undefined;
       if (
         realtimeModel.capabilities.autoToolReplyGeneration &&
-        shouldGenerateToolReply &&
+        functionToolsExecutedEvent.hasToolReply &&
         this.pendingAutoToolReplyFut === undefined
       ) {
         const runState = this.agentSession._globalRunState;
@@ -5100,7 +5111,7 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    if (!shouldGenerateToolReply) return;
+    if (!functionToolsExecutedEvent.hasToolReply) return;
 
     // the model generates the reply itself: its next generation continues this turn
     if (realtimeModel.capabilities.autoToolReplyGeneration) {
@@ -5196,22 +5207,14 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   /** @internal */
-  _commitInterruptedToolOutputs(toolOutput: ToolOutput, speechHandle: SpeechHandle): void {
-    const interruptedHandoffCallIds = toolOutput.output
-      .filter((output) => output.agentTask !== undefined)
-      .map((output) => output.toolCall.callId);
-    if (interruptedHandoffCallIds.length > 0) {
-      const interruptedHandoffCallIdSet = new Set(interruptedHandoffCallIds);
-      for (const chatCtx of [this.agent._chatCtx, this.agentSession.history]) {
-        chatCtx.items = chatCtx.items.filter(
-          (item) => item.type !== 'function_call' || !interruptedHandoffCallIdSet.has(item.callId),
-        );
-      }
-    }
-    const completedOutputs = toolOutput.output.filter((output) => output.agentTask === undefined);
-    if (completedOutputs.length === 0) return;
+  _commitInterruptedToolOutputs(
+    toolOutput: ToolOutput,
+    speechHandle: SpeechHandle,
+  ): FunctionCallOutput[] {
+    if (toolOutput.output.length === 0) return [];
+    for (const output of toolOutput.output) interruptedToolOutput(output);
     const { functionToolsExecutedEvent } = this.summarizeToolExecutionOutput(
-      { ...toolOutput, output: completedOutputs },
+      toolOutput,
       speechHandle,
     );
     this.agentSession.emit(
@@ -5223,6 +5226,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agent._chatCtx.insert(outputs);
       this.agentSession._toolItemsAdded(outputs);
     }
+    return outputs;
   }
 
   private summarizeToolExecutionOutput(toolOutput: ToolOutput, speechHandle: SpeechHandle) {
@@ -5231,34 +5235,30 @@ export class AgentActivity implements RecognitionHooks {
       functionCallOutputs: [],
     });
 
-    let shouldGenerateToolReply = false;
     let newAgentTask: Agent | null = null;
     let ignoreTaskSwitch = false;
 
     for (const sanitizedOut of toolOutput.output) {
-      if (sanitizedOut.toolCallOutput !== undefined) {
-        // Keep event payload symmetric for pipeline + realtime paths.
-        functionToolsExecutedEvent.functionCalls.push(sanitizedOut.toolCall);
-        functionToolsExecutedEvent.functionCallOutputs.push(sanitizedOut.toolCallOutput);
-        if (sanitizedOut.replyRequired) {
-          shouldGenerateToolReply = true;
-        }
-      }
+      functionToolsExecutedEvent.functionCalls.push(sanitizedOut.toolCall);
+      functionToolsExecutedEvent.functionCallOutputs.push(sanitizedOut.toolCallOutput);
 
       if (newAgentTask !== null && sanitizedOut.agentTask !== undefined) {
         this.logger.error('expected to receive only one agent task from the tool executions');
         ignoreTaskSwitch = true;
       }
 
-      newAgentTask = sanitizedOut.agentTask ?? null;
+      // outputs arrive in completion order, so an ordinary tool must not clear a handoff
+      if (sanitizedOut.agentTask !== undefined) {
+        newAgentTask = sanitizedOut.agentTask;
+      }
 
       this.logger.debug(
         {
           speechId: speechHandle.id,
           name: sanitizedOut.toolCall?.name,
           'lk.pii.arguments': sanitizedOut.toolCall.args,
-          'lk.pii.output': sanitizedOut.toolCallOutput?.output,
-          isError: sanitizedOut.toolCallOutput?.isError,
+          'lk.pii.output': sanitizedOut.toolCallOutput.output,
+          isError: sanitizedOut.toolCallOutput.isError,
         },
         'Tool call execution finished',
       );
@@ -5266,7 +5266,6 @@ export class AgentActivity implements RecognitionHooks {
 
     return {
       functionToolsExecutedEvent,
-      shouldGenerateToolReply,
       newAgentTask,
       ignoreTaskSwitch,
     };

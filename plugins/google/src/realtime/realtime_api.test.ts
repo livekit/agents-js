@@ -298,6 +298,27 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     },
   );
 
+  it.each([
+    { replyRequired: false, expected: FunctionResponseScheduling.SILENT },
+    { replyRequired: true, expected: FunctionResponseScheduling.WHEN_IDLE },
+  ])('schedules a final response from replyRequired', ({ replyRequired, expected }) => {
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(
+      llm.FunctionCallOutput.create({
+        callId: 'call_123',
+        name: 'getWeather',
+        output: 'sunny',
+        isError: false,
+        replyRequired,
+      }),
+    );
+
+    expect(session.getToolResultsForRealtime(ctx, false)?.functionResponses[0]?.scheduling).toBe(
+      expected,
+    );
+  });
+
   it.each(schedulingModes)(
     'sends %s on the final non-blocking tool response',
     (toolResponseScheduling) => {
@@ -438,6 +459,31 @@ describe('Google Realtime non-blocking tool scheduling', () => {
         willContinue: false,
       },
     ]);
+  });
+});
+
+describe('Google Realtime Vertex scheduling', () => {
+  it('warns when tool response scheduling is configured for Vertex AI', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new RealtimeModel({
+      vertexai: true,
+      project: 'p',
+      location: 'us-central1',
+      toolResponseScheduling: FunctionResponseScheduling.SILENT,
+    });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not supported by Vertex AI'));
+    warn.mockRestore();
+  });
+
+  it('does not warn for Gemini API scheduling', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new RealtimeModel({ toolResponseScheduling: FunctionResponseScheduling.SILENT });
+
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('not supported by Vertex AI'));
+    warn.mockRestore();
   });
 });
 

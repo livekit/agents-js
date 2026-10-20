@@ -3857,6 +3857,7 @@ export class FunctionCallOutput {
         id?: string;
         createdAt?: number;
         name?: string;
+        replyRequired?: boolean;
     });
     // (undocumented)
     callId: string;
@@ -3868,6 +3869,7 @@ export class FunctionCallOutput {
         id?: string;
         createdAt?: number;
         name?: string;
+        replyRequired?: boolean;
     }): FunctionCallOutput;
     // (undocumented)
     createdAt: number;
@@ -3879,6 +3881,7 @@ export class FunctionCallOutput {
     name: string;
     // (undocumented)
     output: string;
+    replyRequired: boolean;
     // (undocumented)
     toJSON(excludeTimestamp?: boolean): JSONValue;
     // (undocumented)
@@ -3939,6 +3942,8 @@ export type FunctionToolsExecutedEvent = {
     functionCalls: FunctionCall[];
     functionCallOutputs: FunctionCallOutput[];
     createdAt: number;
+    readonly hasToolReply: boolean;
+    cancelToolReply(): void;
 };
 
 // Warning: (ae-internal-missing-underscore) The name "Future" should be prefixed with an underscore because the declaration is marked as @internal
@@ -9499,7 +9504,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
 // src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/events.ts:424:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
+// src/voice/events.ts:437:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 
