@@ -1497,21 +1497,6 @@ export function performToolExecutions({
             toolCall,
             output: result,
           });
-
-          if (toolOutput.toolCallOutput) {
-            span.setAttribute(
-              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
-              toolOutput.toolCallOutput.output,
-            );
-            span.setAttribute(
-              traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR,
-              toolOutput.toolCallOutput.isError,
-            );
-            genAI.setToolResult(span, {
-              result: toolOutput.toolCallOutput.output,
-              isError: toolOutput.toolCallOutput.isError,
-            });
-          }
         } catch (rawError) {
           logger.error(
             {
@@ -1525,17 +1510,15 @@ export function performToolExecutions({
             toolCall,
             exception: toError(rawError),
           });
-
-          if (toolOutput.toolCallOutput) {
-            span.setAttribute(
-              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
-              toolOutput.toolCallOutput.output,
-            );
-            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
-            genAI.setToolResult(span, { isError: true });
-          }
         } finally {
-          if (toolOutput) toolCompleted(toolOutput);
+          if (toolOutput) {
+            // read the output, not the branch: a StopResponse throws but is not an error
+            const { output, isError } = toolOutput.toolCallOutput;
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_OUTPUT, output);
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, isError);
+            genAI.setToolResult(span, { result: output, isError });
+            toolCompleted(toolOutput);
+          }
         }
       };
 
