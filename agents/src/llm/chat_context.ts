@@ -283,7 +283,15 @@ export interface MetricsReport {
    * provider-side logs.
    */
   providerRequestIds?: string[];
+  /**
+   * When the speech in this message started.
+   *
+   * For a user `ChatMessage`, this is the start of the whole user turn, which can span
+   * several VAD segments and so can predate agent speech that played before the turn
+   * committed. Sort by `stoppedSpeakingAt` for the order in which turns completed.
+   */
   startedSpeakingAt?: number;
+  /** When the speech in this message ended. */
   stoppedSpeakingAt?: number;
   transcriptionDelay?: number;
   endOfTurnDelay?: number;
