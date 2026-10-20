@@ -13,11 +13,15 @@ import {
 } from '../llm/realtime.js';
 import { type ToolChoice, ToolContext, tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
+import { Future } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
-import type { FunctionToolsExecutedEvent } from './events.js';
-import { AgentSessionEventTypes } from './events.js';
-import { AudioOutput } from './io.js';
+import {
+  AgentSessionEventTypes,
+  type FunctionToolsExecutedEvent,
+  type SpeechCreatedEvent,
+} from './events.js';
+import { AudioOutput, type PlaybackFinishedEvent } from './io.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
 
@@ -32,11 +36,71 @@ function stream<T>(...items: T[]): ReadableStream<T> {
   });
 }
 
-/** Emits one text message plus one tool call per generation. */
+const PLAYBACK_FINISHED: PlaybackFinishedEvent = {
+  playbackPosition: 0.02,
+  interrupted: false,
+};
+
+function frame(): AudioFrame {
+  const samples = 480;
+  return new AudioFrame(new Int16Array(samples), 24000, 1, samples);
+}
+
+class DelayedCleanupAudioOutput extends AudioOutput {
+  readonly initialWaitEntered = new Future<void>();
+  readonly cleanupWaitEntered = new Future<void>();
+
+  private waitCount = 0;
+  private initialPlayout = new Future<PlaybackFinishedEvent>();
+  private cleanupPlayout = new Future<PlaybackFinishedEvent>();
+
+  constructor() {
+    super(24000);
+  }
+
+  override async captureFrame(audioFrame: AudioFrame): Promise<void> {
+    await super.captureFrame(audioFrame);
+    this.onPlaybackStarted(Date.now());
+  }
+
+  override async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    this.waitCount += 1;
+    if (this.waitCount === 1) {
+      this.initialWaitEntered.resolve();
+      return this.initialPlayout.await;
+    }
+    if (this.waitCount === 2) {
+      this.cleanupWaitEntered.resolve();
+      return this.cleanupPlayout.await;
+    }
+    return PLAYBACK_FINISHED;
+  }
+
+  override clearBuffer(): void {}
+
+  releaseCleanup(): void {
+    if (!this.cleanupPlayout.done) {
+      this.cleanupPlayout.resolve({ ...PLAYBACK_FINISHED, interrupted: true });
+    }
+  }
+
+  releaseAll(): void {
+    if (!this.initialPlayout.done) {
+      this.initialPlayout.resolve({ ...PLAYBACK_FINISHED, interrupted: true });
+    }
+    this.releaseCleanup();
+  }
+}
+
+/** Emits one text message and optionally one tool call per generation. */
 class FakeRealtimeSession extends RealtimeSession {
   private _chatCtx = ChatContext.empty();
   private _tools = ToolContext.empty();
+  private toolChoice: ToolChoice | null = null;
+  private generationCount = 0;
+  includeTool = true;
   emitAudio = false;
+  readonly generatedToolChoices: (ToolChoice | null)[] = [];
 
   get chatCtx(): ChatContext {
     return this._chatCtx;
@@ -51,7 +115,9 @@ class FakeRealtimeSession extends RealtimeSession {
   async updateTools(tools: ToolContext): Promise<void> {
     this._tools = tools.copy();
   }
-  updateOptions(_options: { toolChoice?: ToolChoice | null }): void {}
+  updateOptions(options: { toolChoice?: ToolChoice | null }): void {
+    if (options.toolChoice !== undefined) this.toolChoice = options.toolChoice;
+  }
   pushAudio(_frame: AudioFrame): void {}
   async commitAudio(): Promise<void> {}
   async clearAudio(): Promise<void> {}
@@ -59,20 +125,29 @@ class FakeRealtimeSession extends RealtimeSession {
   async truncate(): Promise<void> {}
 
   async generateReply(): Promise<GenerationCreatedEvent> {
+    const generation = this.generationCount++;
+    this.generatedToolChoices.push(this.toolChoice);
     return {
       messageStream: stream({
-        messageId: 'message-1',
+        messageId: `message-${generation}`,
         textStream: stream('Let me check that.'),
         audioStream: this.emitAudio
           ? stream(new AudioFrame(new Int16Array(24_000), 24_000, 1, 24_000))
           : stream<AudioFrame>(),
         modalities: Promise.resolve(this.emitAudio ? ['audio', 'text'] : ['text']),
       }),
-      functionStream: stream(
-        FunctionCall.create({ callId: TOOL_CALL_ID, name: 'lookup_order', args: '{}' }),
-      ),
-      userInitiated: true,
-      responseId: 'response-1',
+      functionStream:
+        this.includeTool && this.toolChoice !== 'none'
+          ? stream(
+              FunctionCall.create({
+                callId: generation === 0 ? TOOL_CALL_ID : `${TOOL_CALL_ID}-${generation}`,
+                name: 'lookup_order',
+                args: '{}',
+              }),
+            )
+          : stream<FunctionCall>(),
+      userInitiated: generation === 0,
+      responseId: `response-${generation}`,
     };
   }
 }
@@ -92,13 +167,13 @@ class InterruptibleAudioOutput extends AudioOutput {
 class FakeRealtimeModel extends RealtimeModel {
   readonly activeSession = new FakeRealtimeSession(this);
 
-  constructor() {
+  constructor(autoToolReplyGeneration = true) {
     // autoToolReplyGeneration keeps the run to a single generation.
     super({
       messageTruncation: false,
       turnDetection: false,
       userTranscription: false,
-      autoToolReplyGeneration: true,
+      autoToolReplyGeneration,
       audioOutput: false,
       manualFunctionCalls: false,
       midSessionChatCtxUpdate: true,
@@ -115,6 +190,168 @@ class FakeRealtimeModel extends RealtimeModel {
 }
 
 describe('Realtime tool output commit', () => {
+  it('runs realtime tool replies on one handle until maxToolSteps disables tools', async () => {
+    const model = new FakeRealtimeModel(false);
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      maxToolSteps: 3,
+      turnHandling: { turnDetection: null },
+    });
+    const agent = new Agent({
+      instructions: 'test',
+      tools: { lookup_order: tool({ description: 'x', execute: async () => 'ships tomorrow' }) },
+    });
+
+    await session.start({ agent });
+    const created: SpeechCreatedEvent[] = [];
+    session.on(AgentSessionEventTypes.SpeechCreated, (ev) => created.push(ev));
+    try {
+      const handle = session.generateReply();
+      await handle.waitForPlayout();
+      expect(model.activeSession.generatedToolChoices.slice(1)).toEqual([
+        'auto',
+        'auto',
+        'auto',
+        'none',
+      ]);
+      // the first reply and four tool replies are steps of the one handle
+      expect(created.map((ev) => ev.speechHandle)).toEqual([handle]);
+      expect(handle.numSteps).toBe(5);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('restores audio interruption after a reply without tools', async () => {
+    const model = new FakeRealtimeModel();
+    model.activeSession.includeTool = false;
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    const agent = new Agent({ instructions: 'test' });
+
+    await session.start({ agent });
+    const activity = session._activity as unknown as {
+      isInterruptionDetectionEnabled: boolean;
+      isInterruptionByAudioActivityEnabled: boolean;
+    };
+    activity.isInterruptionDetectionEnabled = true;
+    activity.isInterruptionByAudioActivityEnabled = false;
+
+    try {
+      await session.generateReply().waitForPlayout();
+      await vi.waitFor(() => expect(activity.isInterruptionByAudioActivityEnabled).toBe(true));
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('ends active speech before waiting for a tool', async () => {
+    const toolStarted = new Future<void>();
+    const releaseTool = new Future<void>();
+    const toolFinished = new Future<void>();
+
+    const session = new AgentSession({
+      llm: new FakeRealtimeModel(),
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    const agent = new Agent({
+      instructions: 'test',
+      tools: {
+        lookup_order: tool({
+          description: 'x',
+          execute: async () => {
+            toolStarted.resolve();
+            await releaseTool.await;
+            toolFinished.resolve();
+            return 'ships tomorrow';
+          },
+        }),
+      },
+    });
+
+    await session.start({ agent });
+    const speech = session.generateReply();
+    await toolStarted.await;
+    try {
+      await vi.waitFor(() => expect(session.agentState).toBe('thinking'));
+    } finally {
+      releaseTool.resolve();
+      await toolFinished.await;
+      await speech.waitForPlayout();
+      await session.close();
+    }
+  });
+
+  it('ignores delayed cleanup while a newer reply waits for a tool', async () => {
+    vi.useFakeTimers();
+    const output = new DelayedCleanupAudioOutput();
+    const toolStarted = new Future<void>();
+    const releaseTool = new Future<void>();
+    const session = new AgentSession({
+      llm: new FakeRealtimeModel(),
+      vad: null,
+      userAwayTimeout: 15,
+      turnHandling: { turnDetection: null },
+    });
+    session.output.audio = output;
+    const agent = new Agent({
+      instructions: 'test',
+      tools: {
+        lookup_order: tool({
+          description: 'x',
+          execute: async () => {
+            toolStarted.resolve();
+            await releaseTool.await;
+            return 'ships tomorrow';
+          },
+        }),
+      },
+    });
+
+    let currentSpeech: ReturnType<AgentSession['generateReply']> | undefined;
+    await session.start({ agent });
+    try {
+      const staleSpeech = session.say('stale speech', {
+        audio: stream(frame()),
+        addToChatCtx: false,
+      });
+      const staleTask = staleSpeech._tasks[0]!;
+      await output.initialWaitEntered.await;
+      expect(session.agentState).toBe('speaking');
+
+      session.interrupt();
+      await output.cleanupWaitEntered.await;
+      currentSpeech = session.generateReply();
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await toolStarted.await;
+      await vi.waitFor(() => {
+        expect(session.agentState).toBe('thinking');
+        expect(session._activity?.currentSpeech).toBeUndefined();
+      });
+
+      output.releaseCleanup();
+      await staleTask.result.catch(() => undefined);
+
+      expect(session.agentState).toBe('thinking');
+      await vi.advanceTimersByTimeAsync(15_001);
+      expect(session.userState).toBe('listening');
+    } finally {
+      releaseTool.resolve();
+      output.releaseAll();
+      await currentSpeech?.waitForPlayout();
+      const closeTask = session.close();
+      await vi.runAllTimersAsync();
+      await closeTask;
+      vi.useRealTimers();
+    }
+  });
+
   // Regression: the realtime path pushed tool outputs only into the copy sent to
   // the provider and into `session.history`, never into `agent._chatCtx`. That left
   // the agent context with a `function_call` and no matching output, so history

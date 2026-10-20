@@ -31,7 +31,7 @@ import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-import { traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, inputDelta, traceTypes, tracer } from '../telemetry/index.js';
 import { stripAllMarkup } from '../tts/provider_format.js';
 import {
   type FlushSentinel,
@@ -101,6 +101,9 @@ export function _injectRunningToolCalls(
       chatCtx.insert(
         FunctionCall.create({
           ...runningCall,
+          // an id of its own, stable across turns: input-delta telemetry tells items apart by
+          // id, so the copy matches itself while the tool runs and never the real call
+          id: `${runningCall.id}_running`,
           extra: { ...runningCall.extra, [RUNNING_TOOL_PLACEHOLDER_KEY]: true },
         }),
       );
@@ -168,6 +171,8 @@ export interface _TTSGenerationData {
   timedTextsFut: Future<ReadableStream<TimedString> | null, never>;
   /** Time to first byte (set when first audio frame is received) */
   ttfb?: number;
+  /** The error that ended TTS inference, if any. */
+  error: unknown | null;
 }
 
 // TODO(brian): remove this class in favor of ToolOutput
@@ -460,7 +465,7 @@ export function createToolOutput(params: {
     logger.error(
       {
         callId: toolCall.callId,
-        output: finalOutput,
+        'lk.pii.output': finalOutput,
       },
       `AI function ${toolCall.name} returned an invalid output`,
     );
@@ -673,21 +678,39 @@ export function performLLMInference(
   const toolCallWriter = toolCallStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
-  const _performLLMInferenceImpl = async (signal: AbortSignal, span: Span) => {
+  // the configured model and provider describe the inference only once it is known that this
+  // LLM served it: they go on the node span the moment the nested `llm_request` span is created
+  // (see withInferenceTracking), so a fallback that failed over can then name the serving
+  // provider on top of them rather than be overwritten by them when the node completes
+  const recordConfiguredModel = (span: Span) => {
+    if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+    const normalizedProvider = traceTypes.genAIProviderName(provider);
+    if (normalizedProvider) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, normalizedProvider);
+    }
+  };
+
+  const _performLLMInferenceImpl = async (
+    signal: AbortSignal,
+    span: Span,
+    inference: genAI.InferenceMarker,
+  ) => {
+    const delta = inputDelta.compute(inputDelta.LLM_NODE, chatCtx, span);
     span.setAttribute(
       traceTypes.ATTR_CHAT_CTX,
       // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
       // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
-      JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
+      JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
     );
+    inputDelta.setAttributes(span, delta);
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
-    if (model) {
-      span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
-    }
-    if (provider) {
-      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
-    }
+    let nodeError: Error | string | undefined;
+
+    // the GenAI inference attributes belong to the nested `llm_request` span, which is the
+    // provider call the convention describes. Setting them here as well made a backend
+    // summing gen_ai.usage.* over inference spans report twice the calls and tokens, and
+    // serialised the whole chat context onto both spans.
 
     let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk | FlushSentinel> | null =
       null;
@@ -774,6 +797,9 @@ export function performLLMInference(
         // Python since chunk is defined in the type ChatChunk | string in TypeScript
       }
     } catch (error) {
+      // an Error is classified by setErrorType; anything else is never used verbatim,
+      // since error.type is low-cardinality and a thrown value can carry content
+      nodeError = error instanceof Error ? error : 'UnknownError';
       if (error instanceof DOMException && error.name === 'AbortError') {
         // Abort signal was triggered, handle gracefully
         return;
@@ -797,6 +823,36 @@ export function performLLMInference(
       if (data.ttft !== undefined) {
         span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
       }
+      // a custom node may have generated this itself, with no nested `llm_request` span to
+      // carry the convention's attributes; when there was one, they are already recorded
+      if (!inference.recorded) {
+        // a third-party engine served this, so the configured model and provider are left
+        // off rather than crediting it with a call it never made
+        genAI.setRequestAttributes(span, {
+          operation: traceTypes.GenAIOperationName.CHAT,
+          stream: true,
+          outputType: traceTypes.GenAIOutputType.TEXT,
+        });
+        if (nodeError !== undefined) genAI.setErrorType(span, nodeError);
+        const finishReason = genAI.finishReasonFor({
+          functionCalls: data.generatedToolCalls,
+          interrupted: nodeError !== undefined,
+        });
+        genAI.setResponseAttributes(span, {
+          finishReasons: [finishReason],
+          timeToFirstChunk: data.ttft,
+        });
+        genAI.setContentAttributes(span, {
+          systemInstructions: delta.systemInstructions(),
+          inputMessages: delta.inputMessages(),
+          toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
+          outputMessages: genAI.toOutputMessages({
+            text: data.generatedText,
+            functionCalls: data.generatedToolCalls,
+            finishReason,
+          }),
+        });
+      }
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();
       await textWriter.close();
@@ -808,10 +864,13 @@ export function performLLMInference(
   const currentContext = otelContext.active();
 
   const inferenceTask = async (signal: AbortSignal) =>
-    tracer.startActiveSpan(async (span) => _performLLMInferenceImpl(signal, span), {
-      name: 'llm_node',
-      context: currentContext,
-    });
+    tracer.startActiveSpan(
+      async (span) =>
+        genAI.withInferenceTracking((marker) => _performLLMInferenceImpl(signal, span, marker), {
+          onRecorded: () => recordConfiguredModel(span),
+        }),
+      { name: 'llm_node', context: currentContext },
+    );
 
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performLLMInference'),
@@ -868,6 +927,7 @@ export function performTTSInference(
     audioStream: audioOutputStream,
     timedTextsFut,
     ttfb: undefined,
+    error: null,
   };
 
   const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
@@ -944,6 +1004,8 @@ export function performTTSInference(
       } else if (error instanceof DOMException && error.name === 'AbortError') {
         return;
       } else {
+        // Set this before closing the audio stream so forwarding knows it was truncated.
+        genData.error = error;
         throw error;
       }
     } finally {
@@ -1032,12 +1094,11 @@ export function performTextForwarding(
 }
 
 export interface _AudioOut {
-  audio: Array<AudioFrame>;
   firstFrameFut: Future<number>;
   /**
    * Timestamp (ms, `Date.now()`) when the first audio frame was forwarded to the
    * `AudioOutput`. Set by `forwardAudio` as soon as the first TTS frame is
-   * appended; remains `undefined` until then. Used together with the playback-started
+   * received; remains `undefined` until then. Used together with the playback-started
    * timestamp from `firstFrameFut` to derive the assistant's `playbackLatency`
    * metric.
    */
@@ -1073,7 +1134,7 @@ export interface _AudioOut {
  */
 export function forwardedTextFor(output: ForwardOutput): string {
   if (output.played === 'skipped') return '';
-  if (output.played === 'partial' && output.synchronizedTranscript) {
+  if (output.played === 'partial' && output.synchronizedTranscript !== undefined) {
     return output.synchronizedTranscript;
   }
   return output.textOut?.text ?? '';
@@ -1085,6 +1146,7 @@ async function forwardAudio(
   out: _AudioOut,
   reconcilePlayoutPause: () => void,
   idleTimeout: number,
+  ttsData: _TTSGenerationData | null,
   signal?: AbortSignal,
 ): Promise<void> {
   const logger = log();
@@ -1117,7 +1179,6 @@ async function forwardAudio(
         break;
       }
 
-      out.audio.push(frame);
       if (out.startedForwardingAt === undefined) {
         out.startedForwardingAt = Date.now();
       }
@@ -1172,6 +1233,9 @@ async function forwardAudio(
     // listener's lifetime.
     signal?.removeEventListener('abort', cancelReader);
     reader?.releaseLock();
+    if (!signal?.aborted && ttsData?.error != null) {
+      audioOutput._markInputTruncated();
+    }
     audioOutput.flush();
     if (signal?.aborted) {
       audioOutput.clearBuffer();
@@ -1186,9 +1250,9 @@ export function performAudioForwarding(
   controller: AbortController,
   reconcilePlayoutPause: () => void,
   idleTimeout: number = DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS,
+  ttsData: _TTSGenerationData | null = null,
 ): [Task<void>, _AudioOut] {
   const out: _AudioOut = {
-    audio: [],
     firstFrameFut: new Future<number>(),
     _hasCapturedOwnFrame: false,
     capturedSegmentsBefore: audioOutput.capturedPlayoutSegments,
@@ -1226,6 +1290,7 @@ export function performAudioForwarding(
           out,
           reconcilePlayoutPause,
           idleTimeout,
+          ttsData,
           controller.signal,
         ),
       controller,
@@ -1241,6 +1306,7 @@ export function performToolExecutions({
   toolCtx,
   toolChoice,
   toolCallStream,
+  agentName,
   onToolExecutionStarted = () => {},
   onToolExecutionCompleted = () => {},
   controller,
@@ -1250,6 +1316,8 @@ export function performToolExecutions({
   toolCtx: ToolContext;
   toolChoice?: ToolChoice;
   toolCallStream: ReadableStream<FunctionCall>;
+  /** The agent that invoked these tools — a handoff may already have swapped the session's. */
+  agentName?: string;
   onToolExecutionStarted?: (toolCall: FunctionCall) => void;
   onToolExecutionCompleted?: (toolExecutionOutput: ToolExecutionOutput) => void;
   controller: AbortController;
@@ -1371,9 +1439,9 @@ export function performToolExecutions({
         logger.error(
           {
             function: toolCall.name,
-            arguments: toolCall.args,
+            'lk.pii.arguments': toolCall.args,
             speech_id: speechHandle.id,
-            error: error.message,
+            'lk.pii.error': error.message,
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
@@ -1401,7 +1469,7 @@ export function performToolExecutions({
       logger.info(
         {
           function: toolCall.name,
-          arguments: parsedArgs,
+          'lk.pii.arguments': parsedArgs,
           speech_id: speechHandle.id,
         },
         'Executing LLM tool call',
@@ -1410,6 +1478,13 @@ export function performToolExecutions({
       const _tracableToolExecutionImpl = async (toolExecTask: Promise<unknown>, span: Span) => {
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
+        genAI.setToolAttributes(span, {
+          name: toolCall.name,
+          callId: toolCall.callId,
+          description: isFunctionTool(tool) ? tool.description : undefined,
+          args: toolCall.args,
+          agentName,
+        });
 
         // Only completed executions produce tool output. An interrupted execution may still
         // finish in the background and must remain retryable rather than becoming a synthetic
@@ -1432,6 +1507,10 @@ export function performToolExecutions({
               traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR,
               toolOutput.toolCallOutput.isError,
             );
+            genAI.setToolResult(span, {
+              result: toolOutput.toolCallOutput.output,
+              isError: toolOutput.toolCallOutput.isError,
+            });
           }
         } catch (rawError) {
           logger.error(
@@ -1453,6 +1532,7 @@ export function performToolExecutions({
               toolOutput.toolCallOutput.output,
             );
             span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
+            genAI.setToolResult(span, { isError: true });
           }
         } finally {
           if (toolOutput) toolCompleted(toolOutput);
@@ -1479,7 +1559,7 @@ export function performToolExecutions({
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              const runCtx = new RunContext(session, speechHandle, toolCall);
+              const runCtx = new RunContext(session, speechHandle, toolCall, activity);
               const mock = getMockTool(session.currentAgent, toolCall.name);
               const toolToExecute = mock
                 ? {
@@ -1492,7 +1572,7 @@ export function performToolExecutions({
                 logger.debug(
                   {
                     function: toolCall.name,
-                    arguments: parsedArgs,
+                    'lk.pii.arguments': parsedArgs,
                     speech_id: speechHandle.id,
                   },
                   'executing mock tool',

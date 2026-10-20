@@ -16,7 +16,7 @@ import type {
   FunctionCall as FCItem,
   FunctionCallOutput as FCOItem,
 } from '../llm/chat_context.js';
-import { isInstructions, renderInstructions } from '../llm/chat_context.js';
+import { renderInstructions } from '../llm/chat_context.js';
 import { type ToolContext, sortedToolNames } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
@@ -26,6 +26,7 @@ import type {
   STTModelUsage,
   TTSModelUsage,
 } from '../metrics/model_usage.js';
+import { encodeChatItem, msToTimestamp } from '../proto.js';
 import type { SimulationContext } from '../simulation.js';
 import { Future, Task, asError, shortuuid } from '../utils.js';
 import { version } from '../version.js';
@@ -158,7 +159,12 @@ export class RoomSessionTransport extends SessionTransport {
   }
 
   override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
-    if (this.closed || !this.room.isConnected) return;
+    // a dropped message is a request the caller waits out in full, so failures
+    // are thrown rather than logged: only the caller knows whether anyone is
+    // waiting on this one
+    if (this.closed || !this.room.isConnected) {
+      throw new Error('room session transport is closed');
+    }
 
     try {
       const data = msg.toBinary();
@@ -174,7 +180,7 @@ export class RoomSessionTransport extends SessionTransport {
       await writer.write(new Uint8Array(data));
       await writer.close();
     } catch (e) {
-      log().warn({ error: e }, 'failed to send binary stream message');
+      throw new Error(`failed to send binary stream message: ${e}`, { cause: e });
     }
   }
 
@@ -300,7 +306,9 @@ export class TcpSessionTransport extends SessionTransport {
 
   override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
     const socket = this.socket;
-    if (this.closed || socket === null) return;
+    if (this.closed || socket === null) {
+      throw new Error('tcp session transport is closed');
+    }
 
     const data = msg.toBinary();
     const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
@@ -387,10 +395,6 @@ const AMD_CATEGORY_MAP: Record<AMDCategory, pb.AmdCategory> = {
 // ===========================================================================
 // Chat item / timestamp conversion helpers
 // ===========================================================================
-function msToTimestamp(ms: number): Timestamp {
-  return Timestamp.fromDate(new Date(ms));
-}
-
 function nowTimestamp(): Timestamp {
   return Timestamp.fromDate(new Date());
 }
@@ -409,102 +413,7 @@ type RemoteChatItem = Exclude<ChatItem, { type: 'agent_config_update' }>;
 function chatItemsToProto(items: ChatItem[]): pb.ChatContext_ChatItem[] {
   return items
     .filter((item): item is RemoteChatItem => item.type !== 'agent_config_update')
-    .map(chatItemToProto);
-}
-
-function chatItemToProto(item: RemoteChatItem): pb.ChatContext_ChatItem {
-  switch (item.type) {
-    case 'message': {
-      const msg = item;
-      const roleMap: Record<string, pb.ChatRole> = {
-        developer: pb.ChatRole.DEVELOPER,
-        system: pb.ChatRole.SYSTEM,
-        user: pb.ChatRole.USER,
-        assistant: pb.ChatRole.ASSISTANT,
-      };
-      const content: pb.ChatMessage_ChatContent[] = [];
-      for (const c of msg.content) {
-        if (typeof c === 'string') {
-          content.push(new pb.ChatMessage_ChatContent({ payload: { case: 'text', value: c } }));
-        } else if (isInstructions(c)) {
-          content.push(
-            new pb.ChatMessage_ChatContent({ payload: { case: 'text', value: c.value } }),
-          );
-        }
-      }
-
-      const metricsReport = new pb.MetricsReport();
-      if (msg.metrics.transcriptionDelay !== undefined)
-        metricsReport.transcriptionDelay = msg.metrics.transcriptionDelay;
-      if (msg.metrics.endOfTurnDelay !== undefined)
-        metricsReport.endOfTurnDelay = msg.metrics.endOfTurnDelay;
-      if (msg.metrics.onUserTurnCompletedDelay !== undefined)
-        metricsReport.onUserTurnCompletedDelay = msg.metrics.onUserTurnCompletedDelay;
-      if (msg.metrics.llmNodeTtft !== undefined)
-        metricsReport.llmNodeTtft = msg.metrics.llmNodeTtft;
-      if (msg.metrics.ttsNodeTtfb !== undefined)
-        metricsReport.ttsNodeTtfb = msg.metrics.ttsNodeTtfb;
-      if (msg.metrics.e2eLatency !== undefined) metricsReport.e2eLatency = msg.metrics.e2eLatency;
-
-      const pbMsg = new pb.ChatMessage({
-        id: msg.id,
-        role: roleMap[msg.role] ?? pb.ChatRole.ASSISTANT,
-        content,
-        interrupted: msg.interrupted,
-        metrics: metricsReport,
-        createdAt: msToTimestamp(msg.createdAt),
-      });
-      if (msg.transcriptConfidence !== undefined) {
-        pbMsg.transcriptConfidence = msg.transcriptConfidence;
-      }
-      return new pb.ChatContext_ChatItem({ item: { case: 'message', value: pbMsg } });
-    }
-    case 'function_call': {
-      const fc = item;
-      return new pb.ChatContext_ChatItem({
-        item: {
-          case: 'functionCall',
-          value: new pb.FunctionCall({
-            id: fc.id,
-            callId: fc.callId,
-            name: fc.name,
-            arguments: fc.args,
-            createdAt: msToTimestamp(fc.createdAt),
-          }),
-        },
-      });
-    }
-    case 'function_call_output': {
-      const fco = item;
-      return new pb.ChatContext_ChatItem({
-        item: {
-          case: 'functionCallOutput',
-          value: new pb.FunctionCallOutput({
-            id: fco.id,
-            callId: fco.callId,
-            name: fco.name,
-            output: fco.output,
-            isError: fco.isError,
-            createdAt: msToTimestamp(fco.createdAt),
-          }),
-        },
-      });
-    }
-    case 'agent_handoff': {
-      const ah = item;
-      return new pb.ChatContext_ChatItem({
-        item: {
-          case: 'agentHandoff',
-          value: new pb.AgentHandoff({
-            id: ah.id,
-            oldAgentId: ah.oldAgentId,
-            newAgentId: ah.newAgentId,
-            createdAt: msToTimestamp(ah.createdAt),
-          }),
-        },
-      });
-    }
-  }
+    .map(encodeChatItem);
 }
 
 // ===========================================================================
@@ -627,6 +536,7 @@ function protoSerializeOptions(opts: {
   };
   maxToolSteps?: number;
   userAwayTimeout?: number | null;
+  transcriptionTimeout?: number | null;
   useTtsAlignedTranscript?: boolean;
 }): Record<string, string> {
   return {
@@ -634,6 +544,7 @@ function protoSerializeOptions(opts: {
     interruption: JSON.stringify(opts.turnHandling?.interruption ?? {}),
     max_tool_steps: String(opts.maxToolSteps ?? 0),
     user_away_timeout: String(opts.userAwayTimeout ?? ''),
+    transcription_timeout: String(opts.transcriptionTimeout ?? ''),
     preemptive_generation: JSON.stringify(opts.turnHandling?.preemptiveGeneration ?? {}),
     use_tts_aligned_transcript: String(opts.useTtsAlignedTranscript ?? false),
   };
@@ -751,7 +662,16 @@ export class SessionHost {
     const msg = new pb.AgentSessionMessage({
       message: { case: 'event', value: event },
     });
-    this.trackTask(Task.from(async () => this.transport.sendMessage(msg)));
+    // nobody awaits an event, so a failed one is logged rather than thrown
+    this.trackTask(
+      Task.from(async () => {
+        try {
+          await this.transport.sendMessage(msg);
+        } catch (e) {
+          log().warn({ error: e }, 'failed to send session event');
+        }
+      }),
+    );
   }
 
   private emitEvent<Event extends pb.AgentSessionEvent['event']>(
@@ -810,7 +730,7 @@ export class SessionHost {
       {
         case: 'conversationItemAdded',
         value: new pb.AgentSessionEvent_ConversationItemAdded({
-          item: chatItemToProto(event.item),
+          item: encodeChatItem(event.item),
         }),
       },
       event.createdAt,
@@ -847,6 +767,7 @@ export class SessionHost {
   };
 
   private onOverlappingSpeech = (event: OverlappingSpeechEvent): void => {
+    // TODO(AGT-3180): Forward agentEnded when the remote-session protocol supports it.
     const value = new pb.AgentSessionEvent_OverlappingSpeech({
       isInterruption: event.isInterruption,
       detectionDelay: event.detectionDelayInS,
@@ -1145,6 +1066,7 @@ export class SessionHost {
           turnHandling: this.session!.sessionOptions.turnHandling,
           maxToolSteps: this.session!.sessionOptions.maxToolSteps,
           userAwayTimeout: this.session!.sessionOptions.userAwayTimeout,
+          transcriptionTimeout: this.session!.sessionOptions.transcriptionTimeout,
           useTtsAlignedTranscript: this.session!.sessionOptions.useTtsAlignedTranscript,
         }),
         createdAt: msToTimestamp(startedAt),
@@ -1341,19 +1263,18 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     const msg = new pb.AgentSessionMessage({
       message: { case: 'request', value: req },
     });
-    await this.transport.sendMessage(msg);
-
-    const timer = setTimeout(() => {
-      if (!future.done) {
-        this.pendingRequests.delete(requestId);
-        future.reject(new Error('RemoteSession request timed out'));
-      }
-    }, timeout);
-
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      await this.transport.sendMessage(msg);
+      timer = setTimeout(() => {
+        if (!future.done) {
+          future.reject(new Error('RemoteSession request timed out'));
+        }
+      }, timeout);
       return await future.await;
     } finally {
       clearTimeout(timer);
+      this.pendingRequests.delete(requestId);
     }
   }
 

@@ -9,6 +9,7 @@ import {
   LocalAudioTrack,
   type LocalTrackPublication,
   type Participant,
+  ParticipantKind,
   type RemoteTrackPublication,
   type Room,
   RoomEvent,
@@ -16,13 +17,17 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import type { Context } from '@opentelemetry/api';
 import {
+  ATTRIBUTE_PUBLISH_ON_BEHALF,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
+  CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS,
   TOPIC_TRANSCRIPTION,
 } from '../../constants.js';
 import { log } from '../../log.js';
+import { traceTypes, tracer } from '../../telemetry/index.js';
 import {
   type ExpressiveTag,
   TranscriptMarkupStripper,
@@ -397,9 +402,46 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   }
 }
 
+/**
+ * True while some remote participant may still rely on the deprecated `Transcription` data
+ * packet.
+ *
+ * `publishTranscription` has no destination parameter, so this is all-or-nothing for the room:
+ * the packet is dropped only once every considered participant advertises a client protocol at
+ * or above {@link CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS}, meaning it rebuilds transcription
+ * events from the `lk.transcription` stream channel instead.
+ *
+ * An absent `clientProtocol` counts as 0, i.e. a legacy client. The coalesce is load bearing:
+ * protobuf-es types the field as optional, and in JavaScript every comparison against
+ * `undefined` is false, so omitting it would read a missing field as modern and silently drop
+ * the transcripts of a client that still needs them.
+ *
+ * Only STANDARD participants -- user-created client SDK instances -- are considered. SIP,
+ * INGRESS, AGENT (including avatar workers), CONNECTOR and BRIDGE participants never render
+ * legacy transcripts, so their client protocol tells us nothing about whether the legacy packet
+ * is still necessary. Counting them would also keep legacy publishing alive in every telephony
+ * room for good: the Go SDK does not send a client protocol at all, so SIP and INGRESS
+ * participants report 0 permanently. EGRESS participants join hidden and never reach
+ * `remoteParticipants`.
+ */
+function legacyTranscriptionNeeded(room: Room): boolean {
+  const localIdentity = room.localParticipant?.identity ?? null;
+
+  return [...room.remoteParticipants.values()].some(
+    (p) =>
+      p.kind === ParticipantKind.STANDARD &&
+      (p.info.clientProtocol ?? 0) < CLIENT_PROTOCOL_TRANSCRIPTION_STREAMS &&
+      // not our own avatar worker that joined as STANDARD rather than AGENT
+      p.attributes[ATTRIBUTE_PUBLISH_ON_BEHALF] !== localIdentity,
+  );
+}
+
 export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscriptionOutput {
   private pushedText: string = '';
   private flushTask: Promise<void> | null = null;
+  /** the last status written to the log, so only transitions are logged. This never takes part
+   * in the decision itself. */
+  private legacyStatusLogged: boolean | null = null;
 
   protected async handleCaptureText(text: string): Promise<void> {
     if (!this.trackId) {
@@ -444,8 +486,29 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
     this.resetState();
   }
 
+  private shouldPublish(): boolean {
+    const needed = legacyTranscriptionNeeded(this.room);
+    if (needed !== this.legacyStatusLogged) {
+      this.legacyStatusLogged = needed;
+      this.logger.debug(
+        { 'lk.pii.participant': this.participantIdentity },
+        `legacy transcription publishing ${needed ? 'enabled' : 'disabled'}`,
+      );
+    }
+
+    return needed;
+  }
+
   async publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal) {
     if (!this.participantIdentity || !this.trackId) {
+      return;
+    }
+
+    // Gate here, not in handleCaptureText: every legacy publish carries the whole accumulated
+    // segment under a stable id, so pushedText/currentId must stay warm. A legacy client that
+    // joins mid-segment then gets the complete segment on the very next publish, and a client
+    // that only ever sees the final=true packet still gets a complete, correctly-closed segment.
+    if (!this.shouldPublish()) {
       return;
     }
 
@@ -504,16 +567,27 @@ export class ParticipantAudioOutput extends AudioOutput {
   private audioSource: AudioSource;
   private publication?: LocalTrackPublication;
   private flushTask?: Task<void>;
-  private flushPushedDuration?: number;
 
   /** Duration of audio pushed to the source, in seconds */
   private pushedDuration: number = 0;
+  private sourcePushedDuration: number = 0;
+  private sourceDiscardedDuration: number = 0;
+  private interruptionGeneration: number = 0;
+  private forwardingCount: number = 0;
+  /** Resolved only while no capture is held or being submitted to AudioSource. */
+  private forwardingIdleFuture: Future<void> = new Future();
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
   // playbackStarted fires once per segment; a mid-segment pause/resume does not re-arm this.
   private firstFrameEmitted: boolean = false;
   /** Gate held closed while the output is paused; frame forwarding awaits it. */
   private playbackEnabledFuture: Future<void> = new Future();
+  /**
+   * The playhead sits at `sourcePushedDuration` minus what the source still holds; `dryAt` is
+   * when the source runs out if nothing more is pushed, which dates a run that has ended.
+   */
+  private runOffset: number = 0;
+  private dryAt?: number;
 
   constructor(room: Room, options: AudioOutputOptions) {
     super(options.sampleRate, undefined, { pause: true });
@@ -525,14 +599,13 @@ export class ParticipantAudioOutput extends AudioOutput {
       options.queueSizeMs,
     );
     this.playbackEnabledFuture.resolve();
+    this.forwardingIdleFuture.resolve();
   }
 
   pause(): void {
     if (this.playbackEnabledFuture.done) {
       this.playbackEnabledFuture = new Future();
     }
-    // Drop already-buffered audio so playback stops promptly instead of draining the prebuffer.
-    this.audioSource.clearQueue();
     super.pause();
   }
 
@@ -547,76 +620,141 @@ export class ParticipantAudioOutput extends AudioOutput {
     return this.startedFuture.done;
   }
 
-  async start(signal: AbortSignal): Promise<void> {
-    await this.publishTrack(signal);
+  /** Report the open run, and begin the next past any audio that never played. */
+  private reportRun(opts: { offset: number; endedAt: number; resumesAt?: number }): void {
+    const { offset, resumesAt } = opts;
+    // a run cannot outlast the audio the source held, however late the caller noticed
+    const endedAt = this.dryAt !== undefined ? Math.min(opts.endedAt, this.dryAt) : opts.endedAt;
+
+    const duration = offset - this.runOffset;
+    if (duration > 0) {
+      this.onPlaybackProgressed({
+        startedAt: endedAt - duration,
+        offset: this.runOffset,
+        duration,
+      });
+    }
+    this.runOffset = resumesAt ?? offset;
+    this.dryAt = undefined;
+  }
+
+  async start(signal: AbortSignal, traceContext?: Context): Promise<void> {
+    // detached: publishing spawns the track's tasks, which must not inherit this span
+    await tracer.detachedSpan(
+      async (span) => {
+        await this.publishTrack(signal);
+        if (this.publication?.sid) {
+          span.setAttribute(traceTypes.ATTR_TRACK_SID, this.publication.sid);
+        }
+      },
+      { name: 'publish_audio_output', context: traceContext },
+    );
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
-    await this.startedFuture.await;
-
-    if (!this.playbackEnabledFuture.done) {
-      this.audioSource.clearQueue();
-      // Race against interruption so a cancel-while-paused can't deadlock an in-flight frame.
-      await Promise.race([this.playbackEnabledFuture.await, this.interruptedFuture.await]);
-      if (this.interruptedFuture.done) {
+    const interruptionGeneration = this.interruptionGeneration;
+    if (!this.startedFuture.done) {
+      await this.startedFuture.await;
+      if (interruptionGeneration !== this.interruptionGeneration) {
         return;
       }
     }
 
-    // Count the playback segment only after the pause/interrupt gate above. super.captureFrame
-    // bumps playbackSegmentsCount; if a frame interrupted-while-paused bailed at the gate after
-    // that bump, the count would strand ahead of playbackFinishedCount and the next
-    // waitForPlayout() would hang forever. See #1662.
-    super.captureFrame(frame);
-
-    if (!this.firstFrameEmitted) {
-      this.firstFrameEmitted = true;
-      this.onPlaybackStarted(Date.now());
+    if (this.flushTask && !this.flushTask.done) {
+      this.logger.error('captureFrame called while flush is in progress');
+      await this.flushTask.result;
+    }
+    if (interruptionGeneration !== this.interruptionGeneration) {
+      return;
     }
 
-    // TODO(AJS-102): use frame.durationMs once available in rtc-node
-    this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
-    await this.audioSource.captureFrame(frame);
+    const segmentCapture = super.captureFrame(frame);
+    const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+    this.pushedDuration += frameDuration;
+    const interruptionFuture = this.interruptedFuture;
+    this.forwardingCount++;
+    if (this.forwardingCount === 1 && this.forwardingIdleFuture.done) {
+      this.forwardingIdleFuture = new Future();
+    }
+
+    try {
+      await segmentCapture;
+      if (interruptionGeneration !== this.interruptionGeneration || interruptionFuture.done) {
+        return;
+      }
+      while (!this.playbackEnabledFuture.done) {
+        const queuedDuration = this.audioSource.queuedDuration;
+        this.sourceDiscardedDuration += queuedDuration / 1000;
+        // the dropped queue never plays, so the next run resumes past it
+        this.reportRun({
+          offset: this.sourcePushedDuration * 1000 - queuedDuration,
+          endedAt: Date.now(),
+          resumesAt: this.sourcePushedDuration * 1000,
+        });
+        this.audioSource.clearQueue();
+        await Promise.race([this.playbackEnabledFuture.await, interruptionFuture.await]);
+        if (interruptionGeneration !== this.interruptionGeneration || interruptionFuture.done) {
+          return;
+        }
+      }
+
+      if (!this.firstFrameEmitted) {
+        this.firstFrameEmitted = true;
+        this.onPlaybackStarted(Date.now());
+      }
+
+      if (this.dryAt !== undefined && Date.now() >= this.dryAt) {
+        // the source ran out before this frame arrived
+        this.reportRun({ offset: this.sourcePushedDuration * 1000, endedAt: this.dryAt });
+      }
+
+      this.sourcePushedDuration += frameDuration;
+      await this.audioSource.captureFrame(frame);
+      this.dryAt = Date.now() + this.audioSource.queuedDuration;
+    } finally {
+      this.forwardingCount--;
+      if (this.forwardingCount === 0) {
+        this.forwardingIdleFuture.resolve();
+      }
+    }
   }
 
-  private async waitForPlayoutTask(abortController: AbortController): Promise<void> {
-    // Snapshot duration for this flush so overlapping next-segment frames are not erased on completion.
-    const accountedDuration = this.pushedDuration;
-    const abortFuture = new Future<boolean>();
-    // Reset before the race so a stale clearBuffer() from before this segment doesn't fire it.
-    this.interruptedFuture = new Future();
+  private async waitForPlayoutTask(): Promise<void> {
+    const interruptionFuture = this.interruptedFuture;
 
-    const resolveAbort = () => {
-      if (!abortFuture.done) abortFuture.resolve(true);
+    const waitForForwardingAndPlayout = async () => {
+      await this.forwardingIdleFuture.await;
+      await this.audioSource.waitForPlayout();
     };
 
-    abortController.signal.addEventListener('abort', resolveAbort);
-
-    this.audioSource.waitForPlayout().finally(() => {
-      abortController.signal.removeEventListener('abort', resolveAbort);
-      if (!abortFuture.done) abortFuture.resolve(false);
-    });
-
-    const aborted = await Promise.race([
-      abortFuture.await,
-      this.interruptedFuture.await.then(() => true),
-    ]);
-    const interrupted = this.interruptedFuture.done || aborted;
-
-    let pushedDuration = accountedDuration;
+    await Promise.race([waitForForwardingAndPlayout(), interruptionFuture.await]);
+    const interrupted = interruptionFuture.done;
+    let pushedDuration = Math.max(this.sourcePushedDuration - this.sourceDiscardedDuration, 0);
 
     if (interrupted) {
-      pushedDuration = Math.max(accountedDuration - this.audioSource.queuedDuration / 1000, 0);
+      const queuedDuration = this.audioSource.queuedDuration;
+      pushedDuration = Math.max(pushedDuration - queuedDuration / 1000, 0);
+      // the playhead stops where the cleared queue begins
+      this.reportRun({
+        offset: this.sourcePushedDuration * 1000 - queuedDuration,
+        endedAt: Date.now(),
+      });
       this.audioSource.clearQueue();
+    } else {
+      // the source drained, so everything pushed has played
+      this.reportRun({ offset: this.sourcePushedDuration * 1000, endedAt: Date.now() });
     }
 
+    this.runOffset = 0;
     this.pushedDuration = 0;
+    this.sourcePushedDuration = 0;
+    this.sourceDiscardedDuration = 0;
     this.firstFrameEmitted = false;
+    if (this.interruptedFuture === interruptionFuture) {
+      this.interruptedFuture = new Future();
+    }
 
-    this.onPlaybackFinished({
-      playbackPosition: pushedDuration,
-      interrupted,
-    });
+    this.onPlaybackFinished({ playbackPosition: pushedDuration, interrupted });
   }
 
   /**
@@ -630,28 +768,28 @@ export class ParticipantAudioOutput extends AudioOutput {
     }
 
     if (this.flushTask && !this.flushTask.done) {
-      if (this.flushPushedDuration === this.pushedDuration) {
-        return;
-      }
-
-      this.logger.error('flush called while playback is in progress');
-      this.flushTask.cancel();
+      return;
     }
 
-    this.flushPushedDuration = this.pushedDuration;
-    const flushTask = Task.from((controller) => this.waitForPlayoutTask(controller));
+    const flushTask = Task.from(() => this.waitForPlayoutTask());
     this.flushTask = flushTask;
-    void flushTask.result
-      .finally(() => {
-        if (this.flushTask === flushTask) {
-          this.flushPushedDuration = undefined;
-        }
-      })
-      .catch(() => {});
+    void flushTask.result.catch(() => {});
   }
 
   clearBuffer(): void {
-    // Signal interruption even if no frame has been pushed yet, so a gated captureFrame can bail.
+    this.interruptionGeneration++;
+    if (
+      this.interruptedFuture.done ||
+      (this.pushedDuration === 0 && this.pendingPlayoutSegments === 0)
+    ) {
+      return;
+    }
+    if (
+      (this.pushedDuration > 0 || this.pendingPlayoutSegments > 0) &&
+      (!this.flushTask || this.flushTask.done)
+    ) {
+      this.flush();
+    }
     if (!this.interruptedFuture.done) {
       this.interruptedFuture.resolve();
     }

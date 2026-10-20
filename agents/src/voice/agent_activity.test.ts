@@ -101,7 +101,7 @@ function buildMainTaskRunner() {
     _currentSpeech: SpeechHandle | undefined;
     _schedulingPaused: boolean;
     _authorizationPaused: boolean;
-    _drainBlockedTasks: Task<void>[];
+    _drainBlockedTasks: Set<Task<void>>;
     _mainTask: { result: Promise<void> } | undefined;
     logger: {
       info: () => void;
@@ -111,6 +111,7 @@ function buildMainTaskRunner() {
     };
     getDrainPendingSpeechTasks?: () => Task<void>[];
     wakeupMainTask?: () => void;
+    cancelPreemptiveGeneration: ReturnType<typeof vi.fn>;
   } = {
     q_updated,
     speechQueue,
@@ -118,8 +119,9 @@ function buildMainTaskRunner() {
     _currentSpeech: undefined as SpeechHandle | undefined,
     _schedulingPaused: false,
     _authorizationPaused: false,
-    _drainBlockedTasks: [] as Task<void>[],
+    _drainBlockedTasks: new Set<Task<void>>(),
     _mainTask: undefined as { result: Promise<void> } | undefined,
+    cancelPreemptiveGeneration: vi.fn(),
     logger: {
       info: () => {},
       debug: () => {},
@@ -452,9 +454,14 @@ describe('AgentActivity - mainTask', () => {
     }
   });
 
-  it('does not deadlock cancelling a paused speech whose generation never finishes', async () => {
+  it('does not end paused agent speech twice when cancelling it', async () => {
     const handle = SpeechHandle.create({ allowInterruptions: true });
     handle._authorizeGeneration();
+    const onEndOfAgentSpeech = (
+      AgentActivity.prototype as unknown as {
+        onEndOfAgentSpeech: (endedAt: number) => Promise<void>;
+      }
+    ).onEndOfAgentSpeech;
 
     const fakeActivity = {
       cancelSpeechPauseTask: undefined,
@@ -471,6 +478,7 @@ describe('AgentActivity - mainTask', () => {
       audioRecognition: {
         onEndOfAgentSpeech: vi.fn(async () => {}),
       },
+      onEndOfAgentSpeech,
       agentSession: {
         sessionOptions: {
           turnHandling: {
@@ -501,12 +509,17 @@ describe('AgentActivity - mainTask', () => {
     expect(result).toBe('resolved');
     expect(handle.interrupted).toBe(true);
     expect(fakeActivity.pausedSpeech).toBeUndefined();
-    expect(fakeActivity.audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledOnce();
+    expect(fakeActivity.audioRecognition.onEndOfAgentSpeech).not.toHaveBeenCalled();
   });
 });
 
 type FalseInterruptionActivity = {
-  pausedSpeech?: { handle: SpeechHandle; agentState: 'speaking'; timeout: number };
+  pausedSpeech?: {
+    handle: SpeechHandle;
+    agentState: 'listening' | 'speaking';
+    timeout: number;
+  };
+  activeAgentStateLease?: { activity: unknown; speechHandle: SpeechHandle };
   _currentSpeech?: SpeechHandle;
   falseInterruptionTimer?: NodeJS.Timeout;
   falseInterruptionPending: boolean;
@@ -518,7 +531,8 @@ type FalseInterruptionActivity = {
     onEndOfAgentSpeech: ReturnType<typeof vi.fn>;
   };
   agentSession: {
-    agentState: 'speaking';
+    _activity?: FalseInterruptionActivity;
+    agentState: 'listening' | 'speaking';
     sessionOptions: {
       turnHandling: {
         interruption: { resumeFalseInterruption: boolean; falseInterruptionTimeout: number };
@@ -566,6 +580,8 @@ function falseInterruptionActivity(endOfTurnTask?: Task<void>): FalseInterruptio
     disableVadInterruptionSoon: vi.fn(),
     logger: { debug: vi.fn() },
   });
+  activity.agentSession._activity = activity;
+  activity.activeAgentStateLease = { activity, speechHandle: handle };
   return activity;
 }
 
@@ -751,6 +767,7 @@ describe('AgentActivity - false interruption resume', () => {
 
   it('keeps the resume armed when the realtime server owns turn detection', async () => {
     const activity = endOfTurnActivity(new ServerTurnRealtimeModel());
+    Object.assign(activity, { rtTurnDetectionEnabled: true });
     activity.startFalseInterruptionTimer(300);
 
     expect(await activity.onEndOfTurn(endOfTurnInfo())).toBe(true);
@@ -793,6 +810,33 @@ describe('AgentActivity - false interruption resume', () => {
     expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
     expect(activity.pausedSpeech).toBeUndefined();
   });
+
+  it('resumes current playout before it has claimed agent state', async () => {
+    const activity = falseInterruptionActivity();
+    activity.pausedSpeech!.agentState = 'listening';
+    activity.agentSession.agentState = 'listening';
+    activity.activeAgentStateLease = undefined;
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.agentSession._updateAgentState).not.toHaveBeenCalled();
+    expect(activity.audioRecognition!.onStartOfAgentSpeech).not.toHaveBeenCalled();
+    expect(activity.pausedSpeech).toBeUndefined();
+  });
+
+  it('does not resume playout after the activity loses ownership', async () => {
+    const activity = falseInterruptionActivity();
+    activity.agentSession._activity = undefined;
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
+    expect(activity.agentSession._updateAgentState).not.toHaveBeenCalled();
+    expect(activity.pausedSpeech).toBeUndefined();
+  });
 });
 
 describe('AgentActivity - speech completion', () => {
@@ -800,26 +844,39 @@ describe('AgentActivity - speech completion', () => {
     const audioRecognition = {
       onEndOfAgentSpeech: vi.fn(async () => {}),
     };
+    const speechHandle = {
+      done: () => true,
+    } as SpeechHandle;
     const fakeActivity = {
       speechQueue: {
         peek: () => undefined,
       },
-      _currentSpeech: {
-        done: () => true,
-      },
+      _currentSpeech: speechHandle,
+      activeAgentStateLease: undefined as unknown,
       audioRecognition,
+      onEndOfAgentSpeech: (
+        AgentActivity.prototype as unknown as {
+          onEndOfAgentSpeech: (endedAt: number) => Promise<void>;
+        }
+      ).onEndOfAgentSpeech,
       agentSession: {
+        get _activity() {
+          return fakeActivity;
+        },
         agentState: 'speaking',
         _updateAgentState: vi.fn((state: string) => {
           fakeActivity.agentSession.agentState = state;
         }),
       },
     };
+    const stateLease = { activity: fakeActivity, speechHandle };
+    fakeActivity.activeAgentStateLease = stateLease;
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
 
     const onPipelineReplyDone = (AgentActivity.prototype as Record<string, unknown>)
-      .onPipelineReplyDone as (this: typeof fakeActivity) => void;
+      .onPipelineReplyDone as (this: typeof fakeActivity, stateLease: typeof stateLease) => void;
 
-    onPipelineReplyDone.call(fakeActivity);
+    onPipelineReplyDone.call(fakeActivity, stateLease);
 
     expect(fakeActivity.agentSession._updateAgentState).toHaveBeenCalledWith('listening');
     expect(audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledTimes(1);
@@ -860,7 +917,12 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
   };
 
   const generateReply = vi.fn(
-    () => ({ id: 'speech_fake', _cancel: () => {} }) as unknown as SpeechHandle,
+    () =>
+      ({
+        id: 'speech_fake',
+        _cancel: () => {},
+        _takeAgentTurn: () => undefined,
+      }) as unknown as SpeechHandle,
   );
   const cancelPreemptiveGeneration = vi.fn();
 
@@ -1523,12 +1585,13 @@ describe('AgentActivity - realtime reply chat context push', () => {
   }
 
   async function runRealtimeReplyTask(activity: unknown, speechHandle: SpeechHandle) {
+    const stateLease = { activity, speechHandle };
     const realtimeReplyTask = (
       AgentActivity.prototype as unknown as {
         realtimeReplyTask(
           this: unknown,
           args: {
-            speechHandle: SpeechHandle;
+            stateLease: typeof stateLease;
             modelSettings: { toolChoice?: never };
             abortController: AbortController;
             userInput: string;
@@ -1538,7 +1601,7 @@ describe('AgentActivity - realtime reply chat context push', () => {
     ).realtimeReplyTask;
 
     await realtimeReplyTask.call(activity, {
-      speechHandle,
+      stateLease,
       modelSettings: {},
       abortController: new AbortController(),
       userInput: 'hello',
@@ -1829,6 +1892,48 @@ describe('AgentActivity - transcriptsEquivalent', () => {
       second: 'book a room.',
       expected: true,
     },
+    {
+      name: 'ASCII casing and punctuation',
+      first: 'hello how are you',
+      second: 'Hello, how are you?',
+      expected: true,
+    },
+    {
+      name: 'Arabic comma and question mark',
+      first: 'مرحبا كيف حالك',
+      second: 'مرحبا، كيف حالك؟',
+      expected: true,
+    },
+    {
+      name: 'Arabic comma and semicolon',
+      first: 'نعم أريد الحجز',
+      second: 'نعم، أريد الحجز؛',
+      expected: true,
+    },
+    {
+      name: 'Urdu full stop',
+      first: 'آپ کیسے ہیں',
+      second: 'آپ کیسے ہیں۔',
+      expected: true,
+    },
+    {
+      name: 'Devanagari danda',
+      first: 'आप कैसे हैं',
+      second: 'आप कैसे हैं।',
+      expected: true,
+    },
+    {
+      name: 'CJK punctuation',
+      first: '你好 我很好',
+      second: '你好，我很好。',
+      expected: true,
+    },
+    {
+      name: 'different Arabic words',
+      first: 'مرحبا كيف حالك',
+      second: 'مرحبا كيف حالكم؟',
+      expected: false,
+    },
     // A changed word must invalidate it (Python: test_changed_words_invalidate_preemptive_generation).
     { name: 'a changed word', first: 'book a', second: 'book a room', expected: false },
     // Guard clause: there is no finalized transcript to compare against.
@@ -1887,6 +1992,9 @@ describe('AgentActivity - preemptive generation reconciliation', () => {
     const speechHandle = SpeechHandle.create();
     const scheduleSpeech = vi.fn();
     const generateReply = vi.fn();
+    const speechQueue = new Heap<[number, number, SpeechHandle]>(
+      (a, b) => b[0] - a[0] || a[1] - b[1],
+    );
 
     const fakeActivity = {
       _preemptiveGenerationCount: 1,
@@ -1915,6 +2023,7 @@ describe('AgentActivity - preemptive generation reconciliation', () => {
       },
       scheduleSpeech,
       generateReply,
+      speechQueue,
     };
     Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
 

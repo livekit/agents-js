@@ -1,13 +1,18 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AudioFrame } from '@livekit/rtc-node';
+import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatContext } from '../llm/chat_context.js';
 import { tool } from '../llm/tool_context.js';
+import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { Future } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
+import { AudioRecognition } from './audio_recognition.js';
 import { RUNNING_TOOL_PLACEHOLDER } from './generation.js';
+import { AudioOutput } from './io.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
 type PostToolContextObservation = {
@@ -49,7 +54,90 @@ class ContextInspectingLLM extends FakeLLM {
   }
 }
 
+class ImmediateOutput extends AudioOutput {
+  constructor() {
+    super(24_000);
+  }
+
+  override async captureFrame(frame: AudioFrame): Promise<void> {
+    const segmentCount = this.capturedPlayoutSegments;
+    await super.captureFrame(frame);
+    if (this.capturedPlayoutSegments > segmentCount) {
+      this.onPlaybackStarted(Date.now());
+    }
+  }
+
+  override flush(): void {
+    super.flush();
+    if (this.pendingPlayoutSegments > 0) {
+      this.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
+    }
+  }
+
+  override clearBuffer(): void {
+    if (this.pendingPlayoutSegments > 0) {
+      this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    }
+  }
+}
+
+class FrameAgent extends Agent {
+  constructor() {
+    super({
+      instructions: 'test',
+      tools: {
+        lookup: tool({
+          description: 'Look up a value',
+          execute: async () => 'forecast',
+        }),
+      },
+    });
+  }
+
+  override async ttsNode(): Promise<ReadableStream<AudioFrame>> {
+    return new ReadableStream<AudioFrame>({
+      start(controller) {
+        controller.enqueue(new AudioFrame(new Int16Array(480), 24_000, 1, 480));
+        controller.close();
+      },
+    });
+  }
+}
+
 describe('AgentActivity tool output commit ordering', () => {
+  it('ends active speech after entering the tool-call thinking state', async () => {
+    const llm = new FakeLLM([
+      {
+        input: 'look it up',
+        content: 'Let me check.',
+        toolCalls: [{ name: 'lookup', args: {} }],
+      },
+      { input: '"forecast"', content: 'The forecast is clear.' },
+    ]);
+    const session = new AgentSession({ llm, stt: new FakeSTT() });
+    session.output.audio = new ImmediateOutput();
+    const speechEndStates: string[] = [];
+    const onEndOfAgentSpeech = AudioRecognition.prototype.onEndOfAgentSpeech;
+    const speechEndSpy = vi
+      .spyOn(AudioRecognition.prototype, 'onEndOfAgentSpeech')
+      .mockImplementation(async function (this: AudioRecognition, ignoreUntil: number) {
+        speechEndStates.push(session.agentState);
+        await onEndOfAgentSpeech.call(this, ignoreUntil);
+      });
+
+    await session.start({ agent: new FrameAgent() });
+    try {
+      const speech = session.generateReply({ userInput: 'look it up' });
+      await speech.waitForPlayout();
+
+      expect(speechEndStates[0]).toBe('thinking');
+      expect(speechEndStates.slice(1).every((state) => state === 'listening')).toBe(true);
+    } finally {
+      speechEndSpy.mockRestore();
+      await session.close();
+    }
+  });
+
   it('invalidates a stale preemptive generation when late EOU interrupts the post-tool reply', async () => {
     const llm = new ContextInspectingLLM([
       {

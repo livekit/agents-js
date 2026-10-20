@@ -117,6 +117,7 @@ export abstract class AudioInput {
 export abstract class AudioOutput extends EventEmitter {
   static readonly EVENT_PLAYBACK_STARTED = 'playbackStarted';
   static readonly EVENT_PLAYBACK_FINISHED = 'playbackFinished';
+  static readonly EVENT_PLAYBACK_PROGRESSED = 'playbackProgressed';
 
   private playbackFinishedFuture: Future<void> = new Future();
   private _capturing: boolean = false;
@@ -143,6 +144,9 @@ export abstract class AudioOutput extends EventEmitter {
       );
       this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (ev: PlaybackFinishedEvent) =>
         this.onPlaybackFinished(ev),
+      );
+      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_PROGRESSED, (ev: PlaybackProgressedEvent) =>
+        this.onPlaybackProgressed(ev),
       );
     }
   }
@@ -207,6 +211,16 @@ export abstract class AudioOutput extends EventEmitter {
   }
 
   /**
+   * Report a stretch of the current segment that has played.
+   *
+   * Sinks that own their playback device report one run at a time; one that reports nothing is
+   * described by its segment endpoints instead.
+   */
+  onPlaybackProgressed(ev: PlaybackProgressedEvent): void {
+    this.emit(AudioOutput.EVENT_PLAYBACK_PROGRESSED, ev);
+  }
+
+  /**
    * Developers building audio sinks must call this method when a playback/segment is finished.
    * Segments are segmented by calls to flush() or clearBuffer()
    */
@@ -224,6 +238,11 @@ export abstract class AudioOutput extends EventEmitter {
 
   flush(): void {
     this._capturing = false;
+  }
+
+  /** @internal */
+  _markInputTruncated(): void {
+    this.nextInChain?._markInputTruncated();
   }
 
   /**
@@ -290,6 +309,20 @@ export interface PlaybackFinishedEvent {
 export interface PlaybackStartedEvent {
   /** The timestamp (Date.now()) when the playback started */
   createdAt: number;
+}
+
+/**
+ * A stretch of the current segment that has played.
+ *
+ * Reported once the audio can no longer be discarded, so it is never revised.
+ */
+export interface PlaybackProgressedEvent {
+  /** The timestamp (Date.now()) at which this stretch began to play */
+  startedAt: number;
+  /** Where it starts in the audio captured for the current segment, in milliseconds */
+  offset: number;
+  /** How much of it played, in milliseconds */
+  duration: number;
 }
 
 export abstract class TextOutput {
