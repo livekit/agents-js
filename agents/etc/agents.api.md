@@ -5495,7 +5495,7 @@ export type OpenAIFunctionParameters = {
 };
 
 // @public (undocumented)
-type OpenAIModels = 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
+type OpenAIModels = 'openai/gpt-6.1-sol' | 'openai/gpt-6-sol' | 'openai/gpt-6-luna' | 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
 
 // @public (undocumented)
 type OpenAIRealtimeModels = 'openai/gpt-realtime' | 'openai/gpt-realtime-mini' | 'openai/gpt-realtime-2.1' | 'openai/gpt-realtime-2.1-mini';

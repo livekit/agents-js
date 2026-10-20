@@ -584,6 +584,7 @@ describe('inference.LLM unsupported-param stripping', () => {
       modelOptions: { ...samplingParams, reasoning_effort: 'low' },
     });
 
+    expect(body.model).toBe('openai/gpt-6.1-sol');
     for (const key of Object.keys(samplingParams)) {
       if (key === 'n' || key === 'seed') continue;
       expect(body[key], `${key} must not reach the request`).toBeUndefined();
@@ -621,5 +622,55 @@ describe('inference.LLM unsupported-param stripping', () => {
 
     expect(body.temperature).toBe(0.2);
     expect(body.top_p).toBe(0.9);
+  });
+
+  it('strips them on gpt-6-luna while reasoning', async () => {
+    const body = await captureRequestBody({
+      model: 'openai/gpt-6-luna',
+      modelOptions: { temperature: 0.2, stop: ['x'], reasoning_effort: 'low' },
+    });
+
+    expect(body.temperature).toBeUndefined();
+    expect(body.stop).toBeUndefined();
+  });
+
+  it('strips them on gpt-6.1-sol even at a caller-supplied effort none', async () => {
+    const body = await captureRequestBody({
+      model: 'openai/gpt-6.1-sol',
+      modelOptions: { temperature: 0.2, reasoning_effort: 'none' },
+    });
+
+    expect(body.temperature).toBeUndefined();
+    expect(body.reasoning_effort).toBe('none');
+  });
+
+  it('still strips them on gpt-5, which has no carve-out here', async () => {
+    const body = await captureRequestBody({
+      model: 'openai/gpt-5',
+      modelOptions: { temperature: 0.2, top_p: 0.9 },
+    });
+
+    expect(body.temperature).toBeUndefined();
+    expect(body.top_p).toBeUndefined();
+  });
+
+  it('still strips them on the o-series', async () => {
+    const body = await captureRequestBody({
+      model: 'openai/o3',
+      modelOptions: { temperature: 0.2 },
+    });
+
+    expect(body.temperature).toBeUndefined();
+  });
+
+  it('leaves xAI reasoning models alone', async () => {
+    const body = await captureRequestBody({
+      model: 'xai/grok-4.20-multi-agent',
+      modelOptions: { temperature: 0.2, top_p: 0.9, frequency_penalty: 0.5 },
+    });
+
+    expect(body.temperature).toBe(0.2);
+    expect(body.top_p).toBe(0.9);
+    expect(body.frequency_penalty).toBeUndefined();
   });
 });

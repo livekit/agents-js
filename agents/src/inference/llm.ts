@@ -139,9 +139,9 @@ const REASONING_UNSUPPORTED_PARAMS = new Set([
 
 // gpt-6 rejects these while it reasons and accepts every one of them again at
 // reasoning_effort "none" (probed against the API 2026-10-20 on gpt-6.1-sol over
-// both the chat and responses transports, gpt-6-sol and gpt-6-luna). n and seed
-// are accepted at any effort, so unlike the o-series/gpt-5 set this one leaves
-// them out.
+// both the chat and responses transports, gpt-6-sol and gpt-6-luna). It differs
+// from the o-series/gpt-5 set in two ways: n is accepted while reasoning so it is
+// absent here, and stop is rejected so it is added. seed is in neither set.
 const GPT6_REASONING_UNSUPPORTED_PARAMS = new Set([
   'temperature',
   'top_p',
@@ -166,8 +166,8 @@ const UNSUPPORTED_PARAMS: Record<string, Set<string>> = {
   'grok-4.20-multi-agent': XAI_REASONING_UNSUPPORTED_PARAMS,
 };
 
-// Params OpenAI accepts again at reasoning_effort "none", by model prefix.
-// Anything outside a prefix's entry stays stripped at every effort.
+// Params OpenAI accepts again at reasoning_effort "none", by model prefix. The
+// keys mirror the prefixes in UNSUPPORTED_PARAMS.
 const KEPT_AT_EFFORT_NONE: Record<string, Set<string>> = {
   'gpt-6': GPT6_REASONING_UNSUPPORTED_PARAMS,
 };
@@ -175,7 +175,7 @@ const KEPT_AT_EFFORT_NONE: Record<string, Set<string>> = {
 // Lowest reasoning effort each model supports. Only models whose floor is
 // "none" take the carve-out above; gpt-6.1-sol's floor is "low", so its params
 // stay stripped however the caller spells the effort.
-const MIN_REASONING_EFFORT: Record<string, string> = {
+const MIN_REASONING_EFFORT: Record<string, 'none' | 'minimal' | 'low' | 'medium' | 'high'> = {
   'gpt-6-luna': 'none',
   'gpt-6-sol': 'none',
   'gpt-6.1-sol': 'low',
@@ -188,8 +188,9 @@ const MODEL_THINK_TAGS = new Map<string, [string, string]>([
 ]);
 
 function reasoningEffortIsNone(params: Record<string, unknown>): boolean {
-  // chat completions carries the effort as reasoning_effort; a caller using the
-  // responses shape passes a `reasoning` object with an effort field.
+  // chat completions carries the effort as reasoning_effort. modelOptions is a
+  // free-form record, so a caller can also pass the responses shape, where the
+  // effort rides on a `reasoning` object.
   if (params.reasoning_effort === 'none') return true;
   const reasoning = params.reasoning as { effort?: unknown } | undefined;
   return reasoning?.effort === 'none';
@@ -204,16 +205,18 @@ function dropUnsupportedParams(
   let result = { ...params };
 
   for (const [prefix, unsupported] of Object.entries(UNSUPPORTED_PARAMS)) {
-    if (modelName.startsWith(prefix)) {
-      const keptAtNone = KEPT_AT_EFFORT_NONE[prefix];
-      const keepsEveryParam =
-        keptAtNone !== undefined &&
-        MIN_REASONING_EFFORT[modelName] === 'none' &&
-        reasoningEffortIsNone(result);
-      const strip = keepsEveryParam ? new Set<string>() : unsupported;
-      result = Object.fromEntries(Object.entries(result).filter(([k]) => !strip.has(k)));
-      break;
+    if (!modelName.startsWith(prefix)) continue;
+    // At effort "none" these models take every param back, so nothing is
+    // dropped. KEPT_AT_EFFORT_NONE and MIN_REASONING_EFFORT both have to name
+    // the model: the first by prefix, the second by bare model name.
+    const keepsEveryParam =
+      KEPT_AT_EFFORT_NONE[prefix] !== undefined &&
+      MIN_REASONING_EFFORT[modelName] === 'none' &&
+      reasoningEffortIsNone(result);
+    if (!keepsEveryParam) {
+      result = Object.fromEntries(Object.entries(result).filter(([k]) => !unsupported.has(k)));
     }
+    break;
   }
 
   if (
