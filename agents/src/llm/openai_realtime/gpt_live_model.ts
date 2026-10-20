@@ -40,6 +40,7 @@ const ASK_BARE = `Reply to the caller now. ${SPEAK_NOW}`;
 const SESSION_CLOSE_TIMEOUT = 5000;
 const FATAL_ERROR_CODES = new Set([
   'insufficient_quota',
+  'credit_balance_exhausted',
   'invalid_api_key',
   'account_deactivated',
   'billing_hard_limit_reached',
@@ -464,7 +465,10 @@ export class GPTLiveSession extends llm.DuplexSession<{
 
   /** Whether an error event ends the session instead of being reported and survived. */
   protected isFatalError(error: ErrorBody): boolean {
-    return FATAL_ERROR_CODES.has(error.code || error.type || '');
+    return (
+      (typeof error.code === 'string' && FATAL_ERROR_CODES.has(error.code)) ||
+      (typeof error.type === 'string' && FATAL_ERROR_CODES.has(error.type))
+    );
   }
 
   private async runConnection(onOpen: () => void, onStarted: () => void): Promise<void> {

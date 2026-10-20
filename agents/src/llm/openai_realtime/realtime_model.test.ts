@@ -260,11 +260,23 @@ describe('RealtimeSession fatal error handling', () => {
 
   it('matches known fatal error codes', () => {
     expect(isFatalError({ code: 'insufficient_quota' })).toBe(true);
+    expect(isFatalError({ code: 'credit_balance_exhausted', type: 'insufficient_quota' })).toBe(
+      true,
+    );
     expect(isFatalError({ code: undefined, type: 'invalid_api_key' })).toBe(true);
     expect(isFatalError({ code: '', type: 'invalid_api_key' })).toBe(true);
     expect(isFatalError({ code: 'server_error' })).toBe(false);
     expect(isFatalError({})).toBe(false);
     expect(isFatalError(null)).toBe(false);
+  });
+
+  it('matches a fatal error in either code or type', () => {
+    expect(isFatalError({ code: 'some_new_code', type: 'insufficient_quota' })).toBe(true);
+    expect(isFatalError({ code: 'insufficient_quota', type: 'some_new_type' })).toBe(true);
+    expect(isFatalError({ code: '', type: 'insufficient_quota' })).toBe(true);
+    expect(isFatalError({ code: 'server_error', type: 'server_error' })).toBe(false);
+    expect(isFatalError({ code: '', type: '' })).toBe(false);
+    expect(isFatalError({ code: null, type: null })).toBe(false);
   });
 
   it('stops the websocket session after a fatal server error', async () => {

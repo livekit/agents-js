@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger, llm, log, type metrics, voice } from '@livekit/agents';
+import { APIError, initializeLogger, llm, log, type metrics, voice } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
@@ -1440,6 +1440,43 @@ describe('GPTLiveModel', () => {
     expect(errors[0]?.recoverable).toBe(false);
     await session.close();
     expect(server.sockets).toHaveLength(1);
+  });
+
+  it('treats an exhausted credit balance as non-recoverable', async () => {
+    const session = create();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+    await ready(session);
+    await server.send(session, {
+      type: 'error',
+      error: {
+        type: 'insufficient_quota',
+        code: 'credit_balance_exhausted',
+        message: 'You have no credits remaining.',
+      },
+    });
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(errors[0]!.recoverable).toBe(false);
+    expect(errors[0]!.error).toBeInstanceOf(APIError);
+    expect((errors[0]!.error as APIError).retryable).toBe(false);
+  });
+
+  it.each([
+    ['some_new_code', 'insufficient_quota', true],
+    ['insufficient_quota', 'some_new_type', true],
+    [null, 'insufficient_quota', true],
+    ['', 'insufficient_quota', true],
+    ['server_error', 'server_error', false],
+    ['', '', false],
+    [null, null, false],
+  ])('matches fatal errors in either code or type', async (code, type, fatal) => {
+    const session = create();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+    await ready(session);
+    await server.send(session, { type: 'error', error: { code, type, message: 'Rejected' } });
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(errors[0]!.recoverable).toBe(!fatal);
   });
 
   it('reports recoverable protocol errors without disconnecting', async () => {
