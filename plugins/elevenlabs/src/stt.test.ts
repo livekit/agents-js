@@ -6,7 +6,7 @@ import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { type RequestListener, type Server, createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { type AddressInfo, type Socket, createServer as createTcpServer } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT, type STTOptions } from './stt.js';
@@ -645,6 +645,37 @@ describe('ElevenLabs STT', () => {
       expect(requests).toBe(1);
     } finally {
       await closeHttpServer(server);
+    }
+  });
+
+  it('closes quietly while the realtime WebSocket is still connecting', async () => {
+    // Accepts the TCP connection but never answers the WebSocket handshake
+    const sockets = new Set<Socket>();
+    const server = createTcpServer((socket) => sockets.add(socket));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    let connected = false;
+    server.once('connection', () => (connected = true));
+
+    const errors: unknown[] = [];
+    const onUncaught = (error: unknown) => errors.push(error);
+    process.on('uncaughtException', onUncaught);
+    try {
+      const stream = new STT({
+        apiKey: 'test-key',
+        baseURL: `http://127.0.0.1:${port}/v1`,
+        model: 'scribe_v2_realtime',
+      }).stream();
+      await waitUntil(() => connected);
+
+      stream.close();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(errors).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 

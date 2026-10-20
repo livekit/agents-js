@@ -920,6 +920,9 @@ export class SpeechStream extends stt.SpeechStream {
         };
         const onAbort = () => {
           cleanup();
+          // `ws` emits 'error' when a socket is closed while still connecting; keep a listener
+          // attached so it doesn't surface as an unhandled 'error' event and crash the process
+          ws.on('error', () => {});
           ws.close();
           reject(new Error('aborted'));
         };
