@@ -520,3 +520,106 @@ describeLiveKitInference('LiveKit Inference LLM integration', agents, async (har
     );
   });
 });
+
+/**
+ * Build an LLM with the given model options, stub its OpenAI client's
+ * chat.completions.create, drain one chat stream, and return the request body
+ * that reached the client.
+ */
+async function captureRequestBody(opts: {
+  model: string;
+  modelOptions?: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  const llm = new LLM({
+    model: opts.model,
+    apiKey: 'test-key',
+    apiSecret: 'test-secret',
+    baseURL: 'https://example.livekit.cloud',
+    modelOptions: opts.modelOptions,
+  });
+
+  let capturedBody: Record<string, unknown> = {};
+
+  const stub = async (body: unknown) => {
+    capturedBody = body as Record<string, unknown>;
+    return {
+      [Symbol.asyncIterator]() {
+        return {
+          next: async () => ({ done: true as const, value: undefined }),
+        };
+      },
+    };
+  };
+
+  const internal = llm as unknown as {
+    client: { chat: { completions: { create: typeof stub } } };
+  };
+  internal.client.chat.completions.create = stub;
+
+  const stream = llm.chat({ chatCtx: new ChatContext() });
+  for await (const _chunk of stream) {
+    void _chunk;
+  }
+
+  return capturedBody;
+}
+
+describe('inference.LLM unsupported-param stripping', () => {
+  const samplingParams = {
+    temperature: 0.2,
+    top_p: 0.9,
+    presence_penalty: 0.5,
+    frequency_penalty: 0.5,
+    logit_bias: { '123': 1 },
+    logprobs: true,
+    top_logprobs: 3,
+    stop: ['x'],
+    n: 2,
+    seed: 1,
+  };
+
+  it('strips every sampling param gpt-6 rejects while reasoning', async () => {
+    const body = await captureRequestBody({
+      model: 'openai/gpt-6.1-sol',
+      modelOptions: { ...samplingParams, reasoning_effort: 'low' },
+    });
+
+    for (const key of Object.keys(samplingParams)) {
+      if (key === 'n' || key === 'seed') continue;
+      expect(body[key], `${key} must not reach the request`).toBeUndefined();
+    }
+    expect(body.n).toBe(2);
+    expect(body.seed).toBe(1);
+    expect(body.reasoning_effort).toBe('low');
+  });
+
+  it('strips them when the caller omits reasoning_effort', async () => {
+    const body = await captureRequestBody({
+      model: 'openai/gpt-6.1-sol',
+      modelOptions: { temperature: 0.2, top_p: 0.9 },
+    });
+
+    expect(body.temperature).toBeUndefined();
+    expect(body.top_p).toBeUndefined();
+  });
+
+  it('keeps them on gpt-6-sol at reasoning_effort none', async () => {
+    const body = await captureRequestBody({
+      model: 'openai/gpt-6-sol',
+      modelOptions: { temperature: 0.2, stop: ['x'], reasoning_effort: 'none' },
+    });
+
+    expect(body.temperature).toBe(0.2);
+    expect(body.stop).toEqual(['x']);
+  });
+
+  it('keeps them on a model gpt-6 stripping does not cover', async () => {
+    const body = await captureRequestBody({
+      model: 'openai/gpt-4o-mini',
+      modelOptions: { temperature: 0.2, top_p: 0.9 },
+    });
+
+    expect(body.temperature).toBe(0.2);
+    expect(body.top_p).toBe(0.9);
+  });
+});
