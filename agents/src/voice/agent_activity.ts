@@ -3690,6 +3690,7 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
+      let spokenMessage: ChatMessage | undefined;
       if (addToChatCtx) {
         const replyStoppedSpeakingAt = Date.now();
         const replyAssistantMetrics: MetricsReport = {};
@@ -3706,20 +3707,44 @@ export class AgentActivity implements RecognitionHooks {
           }
         }
 
-        const message = ChatMessage.create({
+        spokenMessage = ChatMessage.create({
           role: 'assistant',
           content: textOut?.text || '',
           interrupted: speechHandle.interrupted,
           createdAt: replyStartedSpeakingAt ?? Date.now(),
           metrics: replyAssistantMetrics,
         });
-        this.agent._chatCtx.insert(message);
-        this.agentSession._conversationItemAdded(message);
+        this.agent._chatCtx.insert(spokenMessage);
+        speechHandle._itemAdded([spokenMessage]);
+        this.agentSession._conversationItemAdded(spokenMessage);
       }
 
       if (this.releaseAgentStateLease(stateLease, 'speaking')) {
         this.onEndOfAgentSpeech(Date.now());
         this.restoreInterruptionByAudioActivity();
+      }
+
+      this.settleFirstFrameFut(audioOut);
+
+      if (
+        spokenMessage &&
+        this.realtimeSession &&
+        this.llm instanceof RealtimeModel &&
+        this.llm.capabilities.midSessionChatCtxUpdate
+      ) {
+        // Playout is over, so the next speech can start while the update is acknowledged.
+        speechHandle._markGenerationDone();
+        const realtimeChatCtx = this.realtimeSession.chatCtx.copy();
+        realtimeChatCtx.insert(spokenMessage);
+        try {
+          await this.realtimeSession.updateChatCtx(realtimeChatCtx);
+        } catch (error) {
+          if (!(error instanceof RealtimeError)) throw error;
+          this.logger.warn(
+            { error },
+            'failed to add the spoken message to the realtime chat context',
+          );
+        }
       }
     } finally {
       // In a finally so the listener is dropped even if an await above throws —
