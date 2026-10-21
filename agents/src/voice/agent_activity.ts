@@ -3270,6 +3270,53 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession._conversationItemAdded(userMessage);
   }
 
+  /**
+   * Run `onUserTurnCompleted` for a completed user turn.
+   *
+   * Resolves to the chat context the hook may have edited and the hook's duration in ms, or
+   * `undefined` when the turn is dropped (the hook threw StopResponse).
+   *
+   * @internal
+   */
+  async runUserTurnHook(
+    userMessage: ChatMessage,
+    context: Context | undefined,
+  ): Promise<{ chatCtx: ChatContext; callbackDuration: number } | undefined> {
+    // create a temporary mutable chat context to pass to onUserTurnCompleted
+    // the user can edit it for the current generation, but changes will not be kept inside the
+    // Agent.chatCtx
+    const chatCtx = this.agent.chatCtx.copy();
+    const startTime = Date.now();
+
+    // user code that gates the reply; without a span a slow hook is an unexplained gap
+    const stopped = await tracer.startActiveSpan(
+      async (hookSpan) => {
+        try {
+          await this.agent.onUserTurnCompleted(chatCtx, userMessage);
+        } catch (e) {
+          if (e instanceof StopResponse) {
+            hookSpan.addEvent('stop_response');
+            return true;
+          }
+          // the message may quote the transcript: honour the session's redaction too
+          recordException(hookSpan, e instanceof Error ? e : new Error(String(e)), {
+            redacted: this.agentSession._redactionEnabled || redactionEnabled(),
+          });
+          this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
+        }
+        return false;
+      },
+      {
+        name: 'on_user_turn_completed',
+        context,
+        attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
+      },
+    );
+    if (stopped) return undefined;
+
+    return { chatCtx, callbackDuration: Date.now() - startTime };
+  }
+
   private async userTurnCompleted(info: EndOfTurnInfo, oldTask?: Task<void>): Promise<void> {
     try {
       await this.userTurnCompletedImpl(info, oldTask);
@@ -3366,44 +3413,15 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    // create a temporary mutable chat context to pass to onUserTurnCompleted
-    // the user can edit it for the current generation, but changes will not be kept inside the
-    // Agent.chatCtx
-    const chatCtx = this.agent.chatCtx.copy();
-    const startTime = Date.now();
-
-    // user code that gates the reply; without a span a slow hook is an unexplained gap
-    const hookMessage: ChatMessage = userMessage;
-    const hookContext =
+    const hookResult = await this.runUserTurnHook(
+      userMessage,
       info.userTurnSpanAdopted && info.userTurnSpan
         ? trace.setSpan(this.agentSession.rootSpanContext ?? ROOT_CONTEXT, info.userTurnSpan)
-        : this.agentSession.rootSpanContext;
-    const stopped = await tracer.startActiveSpan(
-      async (hookSpan) => {
-        try {
-          await this.agent.onUserTurnCompleted(chatCtx, hookMessage);
-        } catch (e) {
-          if (e instanceof StopResponse) {
-            hookSpan.addEvent('stop_response');
-            return true; // ignore this turn
-          }
-          // the message may quote the transcript: honour the session's redaction too
-          recordException(hookSpan, e instanceof Error ? e : new Error(String(e)), {
-            redacted: this.agentSession._redactionEnabled || redactionEnabled(),
-          });
-          this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
-        }
-        return false;
-      },
-      {
-        name: 'on_user_turn_completed',
-        context: hookContext,
-        attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
-      },
+        : this.agentSession.rootSpanContext,
     );
-    if (stopped) return;
+    if (!hookResult) return; // ignore this turn
 
-    const callbackDuration = Date.now() - startTime;
+    const { chatCtx, callbackDuration } = hookResult;
 
     if (this.llm instanceof RealtimeModel) {
       // ignore stt transcription for realtime model
