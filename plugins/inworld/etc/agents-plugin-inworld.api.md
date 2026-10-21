@@ -142,7 +142,7 @@ export class TTS extends tts.TTS {
 // Warning: (ae-missing-release-tag) "TTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type TTSModels = 'inworld-tts-2' | 'inworld-tts-1.5-max';
+export type TTSModels = 'inworld-tts-2' | 'inworld-tts-2-flash' | 'inworld-tts-1.5-max';
 
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //

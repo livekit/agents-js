@@ -44,6 +44,7 @@ export type DeepgramTTSModels = 'deepgram/aura' | 'deepgram/aura-2';
 
 export type InworldModels =
   | 'inworld/inworld-tts-2'
+  | 'inworld/inworld-tts-2-flash'
   | 'inworld/inworld-tts-1.5-max'
   | 'inworld/inworld-tts-1.5-mini'
   | 'inworld/inworld-tts-1.5'

@@ -35,7 +35,7 @@ const DEFAULT_BUFFER_CHAR_THRESHOLD = 100;
 const DEFAULT_MAX_BUFFER_DELAY_MS = 3000;
 const NUM_CHANNELS = 1;
 
-export type TTSModels = 'inworld-tts-2' | 'inworld-tts-1.5-max';
+export type TTSModels = 'inworld-tts-2' | 'inworld-tts-2-flash' | 'inworld-tts-1.5-max';
 export type Encoding = 'PCM' | 'LINEAR16';
 export type TimestampType = 'TIMESTAMP_TYPE_UNSPECIFIED' | 'WORD' | 'CHARACTER';
 export type TextNormalization = 'APPLY_TEXT_NORMALIZATION_UNSPECIFIED' | 'ON' | 'OFF';
