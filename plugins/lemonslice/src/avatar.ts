@@ -27,6 +27,7 @@ import type { JoinMeetingResult } from './meeting/room.js';
 const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 const DEFAULT_API_URL = 'https://lemonslice.com/api/liveai/sessions';
 const DEFAULT_AUDIO_SAMPLE_RATE = 24000;
+const SUPPORTED_AUDIO_SAMPLE_RATES = [16000, 22050, 24000, 44100, 48000];
 const AVATAR_AGENT_IDENTITY = 'lemonslice-avatar-agent';
 const AVATAR_AGENT_NAME = 'lemonslice-avatar-agent';
 const MEETING_BROADCAST_IDENTITY = 'lemonslice-meeting-broadcast';
@@ -231,6 +232,12 @@ export class AvatarSession extends voice.AvatarSession {
     this.agentIdlePrompt = options.agentIdlePrompt ?? null;
     this.idleTimeout = options.idleTimeout ?? null;
     this.audioSampleRate = options.audioSampleRate ?? DEFAULT_AUDIO_SAMPLE_RATE;
+    if (!SUPPORTED_AUDIO_SAMPLE_RATES.includes(this.audioSampleRate)) {
+      throw new LemonSliceException(
+        `Unsupported audioSampleRate ${this.audioSampleRate}. ` +
+          `Supported rates: ${SUPPORTED_AUDIO_SAMPLE_RATES.join(', ')}`,
+      );
+    }
     this.model = options.model ?? null;
     this.extraPayload = options.extraPayload ?? null;
 
@@ -528,7 +535,14 @@ export class AvatarSession extends voice.AvatarSession {
         }
 
         if (this.extraPayload) {
-          Object.assign(payload, toSnakeCaseDeep(this.extraPayload) as Record<string, unknown>);
+          const extra = toSnakeCaseDeep(this.extraPayload) as Record<string, unknown>;
+          if ('audio_sample_rate' in extra) {
+            this.#logger.warn(
+              'extraPayload.audioSampleRate is ignored. Use the audioSampleRate option instead',
+            );
+            delete extra.audio_sample_rate;
+          }
+          Object.assign(payload, extra);
         }
 
         const headers: Record<string, string> = {
