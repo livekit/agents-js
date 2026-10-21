@@ -229,6 +229,16 @@ describe('configuration', () => {
 });
 
 describe('streaming', () => {
+  it('requests 8 kHz telephony audio as is', async () => {
+    const t = await makeTTS({ sampleRate: 8000 });
+    expect(t.sampleRate).toBe(8000);
+    const stream = t.stream({ connOptions: NO_RETRY });
+    stream.pushText('Hello.');
+    stream.endInput();
+    await collect(stream);
+    expect(server.received[0]).toMatchObject({ type: 'task_start', sample_rate: 8000 });
+  });
+
   it('sends text as it arrives and finalizes the context', async () => {
     const t = await makeTTS({ language: 'hi', numStep: 16 });
     const stream = t.stream({ connOptions: NO_RETRY });

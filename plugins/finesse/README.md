@@ -52,7 +52,7 @@ first reply. Each open connection holds one of your plan's concurrent streams.
 | --------------- | -------------------- | ------------------------------------------------------------------------------ |
 | `voice`         | required             | id of a ready Finesse voice, including cloned voices                           |
 | `language`      | `en`                 | Finesse language code; region subtags such as `hi-IN` work                     |
-| `sampleRate`    | `24000`              | 24000 (native) to 48000 Hz                                                     |
+| `sampleRate`    | `24000`              | 8000 (telephony), or 24000 (native) to 48000 Hz                                |
 | `numStep`       | server default (32)  | 1-32, quality vs latency                                                       |
 | `guidanceScale` | server default (2.0) | 0-10                                                                           |
 | `lengthScale`   | server default (1.0) | speaking rate, greater than 0 up to 5; higher is slower                        |

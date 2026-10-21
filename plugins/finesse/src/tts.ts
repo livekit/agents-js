@@ -25,8 +25,12 @@ const FINESSE_WS_URL = 'wss://fi.production.flamapis.com/flam-voice-svc/api/v1/p
 const SUBPROTOCOL = 'finesse.v1';
 const NUM_CHANNELS = 1;
 
-/** Finesse synthesizes at 24 kHz and only upsamples, so this is the lowest rate it returns. */
+/**
+ * Finesse synthesizes at 24 kHz and upsamples above it. Below it, it produces only 8 kHz
+ * telephony audio, so the rates it returns are 8000 and 24000 to 48000.
+ */
 const NATIVE_SAMPLE_RATE = 24000;
+const TELEPHONY_SAMPLE_RATE = 8000;
 const MAX_SAMPLE_RATE = 48000;
 
 // Text frames over 1 MiB close the socket. JSON.stringify keeps non-ASCII text as UTF-8, so a
@@ -78,7 +82,7 @@ export interface TTSOptions {
   apiKey?: string;
   /** The language to speak, as a Finesse language code (for example `hi`, `ta` or `arz`). Defaults to `en`. */
   language?: string;
-  /** Output sample rate in Hz, from 24000 (native) up to 48000. Defaults to 24000. */
+  /** Output sample rate in Hz: 8000 for telephony, or 24000 (native) up to 48000. Defaults to 24000. */
   sampleRate?: number;
   /** Quality vs latency, 1-32. Defaults to the server's 32. */
   numStep?: number;
@@ -129,9 +133,12 @@ const validate = (opts: Partial<TTSOptions>): void => {
   }
   if (
     opts.sampleRate !== undefined &&
+    opts.sampleRate !== TELEPHONY_SAMPLE_RATE &&
     !(opts.sampleRate >= NATIVE_SAMPLE_RATE && opts.sampleRate <= MAX_SAMPLE_RATE)
   ) {
-    throw new Error(`sampleRate must be between ${NATIVE_SAMPLE_RATE} and ${MAX_SAMPLE_RATE} Hz`);
+    throw new Error(
+      `sampleRate must be ${TELEPHONY_SAMPLE_RATE}, or between ${NATIVE_SAMPLE_RATE} and ${MAX_SAMPLE_RATE} Hz`,
+    );
   }
   if (opts.numStep !== undefined && !(opts.numStep >= 1 && opts.numStep <= 32)) {
     throw new Error('numStep must be between 1 and 32');
