@@ -26,7 +26,7 @@ import type { JoinMeetingResult } from './meeting/room.js';
 
 const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 const DEFAULT_API_URL = 'https://lemonslice.com/api/liveai/sessions';
-const SAMPLE_RATE = 16000;
+const DEFAULT_AUDIO_SAMPLE_RATE = 24000;
 const AVATAR_AGENT_IDENTITY = 'lemonslice-avatar-agent';
 const AVATAR_AGENT_NAME = 'lemonslice-avatar-agent';
 const MEETING_BROADCAST_IDENTITY = 'lemonslice-meeting-broadcast';
@@ -77,6 +77,15 @@ export interface AvatarSessionOptions {
    * The idle timeout, in seconds. Defaults to 60 seconds.
    */
   idleTimeout?: number | null;
+  /**
+   * Sample rate of the audio sent to the avatar.
+   * One of 16000, 22050, 24000, 44100 or 48000. Defaults to 24000.
+   */
+  audioSampleRate?: number;
+  /**
+   * The LemonSlice model to run the avatar on. Uses the default model when not set.
+   */
+  model?: string | null;
   /**
    * Additional payload fields to merge into the LemonSlice session creation request.
    */
@@ -158,6 +167,8 @@ export class AvatarSession extends voice.AvatarSession {
   private agentPrompt: string | null;
   private agentIdlePrompt: string | null;
   private idleTimeout: number | null;
+  private audioSampleRate: number;
+  private model: string | null;
   private extraPayload: Record<string, unknown> | null;
   private apiUrl: string;
   private apiKey: string;
@@ -219,6 +230,8 @@ export class AvatarSession extends voice.AvatarSession {
     this.agentPrompt = options.agentPrompt ?? null;
     this.agentIdlePrompt = options.agentIdlePrompt ?? null;
     this.idleTimeout = options.idleTimeout ?? null;
+    this.audioSampleRate = options.audioSampleRate ?? DEFAULT_AUDIO_SAMPLE_RATE;
+    this.model = options.model ?? null;
     this.extraPayload = options.extraPayload ?? null;
 
     this.apiUrl = options.apiUrl || process.env.LEMONSLICE_API_URL || DEFAULT_API_URL;
@@ -332,7 +345,7 @@ export class AvatarSession extends voice.AvatarSession {
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
       destinationIdentity: this.avatarIdentity,
-      sampleRate: SAMPLE_RATE,
+      sampleRate: this.audioSampleRate,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
       waitPlaybackStart: true,
     });
@@ -506,6 +519,12 @@ export class AvatarSession extends voice.AvatarSession {
 
         if (this.idleTimeout !== null) {
           payload.idle_timeout = this.idleTimeout;
+        }
+
+        payload.audio_sample_rate = this.audioSampleRate;
+
+        if (this.model) {
+          payload.model = this.model;
         }
 
         if (this.extraPayload) {
