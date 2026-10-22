@@ -1,0 +1,576 @@
+agents/src/inference/utils.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 8,101-111
+  s_de5d34fcc7db11::t_91cfe31c6fceb5 112
+.changeset/cartesia-sunset-models.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-6
+agents/src/inference/eot/detector.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 29,39,112,142,209,212,225,241,293-327,334-335,339,341-372,375-387,389-422,858-885
+plugins/deepgram/src/tts_v2.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 12,14,16-54,67-68,84,91,93,148-158,167-171,177,241-298,339-349
+  s_de5d34fcc7db11::t_e7c05084b05352 350-351
+plugins/minimax/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/cartesia/etc/agents-plugin-cartesia.api.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 12,91-95,125,155
+plugins/openai/src/realtime/realtime_model.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1,5
+plugins/rime/src/options.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 76,103,185-188
+agents/src/constants.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 21-28
+plugins/google/src/utils.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 125-162
+agents/src/voice/transcription/text_transforms.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 119-126,161-194,206
+agents/src/inference/eot/detector.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 32-34,49-57,73,133-136,171,194,250,265,282,302,332-336,362,416-423,432
+plugins/mistralai/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/llm/utils.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 949-950,957-962,999-1049
+  s_de5d34fcc7db11::t_64bf7f1ba3e695 1050
+plugins/sarvam/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+agents/src/inference/_warmup.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 17-18,25-33
+  s_de5d34fcc7db11::t_ab160049993bed 34
+plugins/silero/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-11
+agents/src/inference/utils.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 14-16,49-67,85,89-91,125,128-130
+agents/src/inference/vad.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 4,7,18,21-25,30-54,95-152
+  s_de5d34fcc7db11::t_4086a160482165 153-156
+agents/src/voice/tool_output_per_call.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-99
+plugins/xai/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-12
+agents/src/ipc/job_trace.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 15,179,193,205-215
+  s_de5d34fcc7db11::t_73ced05a191b4b 216
+.changeset/inference-assemblyai-language-detection.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+plugins/deepgram/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/anthropic/src/llm.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 6,70-109,141-212
+plugins/hume/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/synthesia/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/elevenlabs/src/stt.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 26,452-464,466-467,470,493,707-710,727-730,733,764
+agents/src/voice/room_io/_output.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 12,22,26,405-438,442-444,489-501,507-511,513
+  s_de5d34fcc7db11::t_ead7ab7fcb3985 512,514
+agents/src/llm/realtime.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 51-52,130
+.changeset/text-sim-skip-audio-warnings.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+agents/etc/agents.api.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 13,36,382,622-623,706,786,898,950,952,957,1715-1716,1964-1969,2069,2938-2951,2980-3023,3082-3099,3861,3873,3885,3946-3947,4088-4091,4176-4192,4218,4220,4235,4574-4576,4606-4608,4982,5010-5012,5659-5667,5681-5688,6010-6022,6027,6059-6082,6121-6158,6206-6244,6716-6725,8217-8218,8896-8897,8931,8951,8956-8957,9646-9648,9671,9679-9683,9688-9689
+.changeset/recording-upload-request-errors.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+plugins/bey/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/minimax/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/rime/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/soniox/etc/agents-plugin-soniox.api.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 12,157,171
+plugins/soniox/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+.changeset/elevenlabs-commit-throttled.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+plugins/minimax/src/tts.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 165
+plugins/anthropic/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/deepgram/src/tts_v2.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 29-46,110-115,177-180,201-210,213,217-223,260,266-268,335-337
+plugins/google/src/models.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 102
+plugins/meta/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+.changeset/wait-for-idle-no-spin.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+agents/src/llm/openai_realtime/api_proto.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-725
+agents/src/ipc/_preload.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 15,21,29-35,40
+agents/src/voice/agent_session_text_only.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 6,113-134
+  s_de5d34fcc7db11::t_c153228abe5f27 135-137
+agents/src/voice/events.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 217-223,240-245
+plugins/fishaudio/src/models.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 6
+plugins/resemble/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/baseten/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+CLAUDE.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 9
+plugins/openai/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-13
+agents/src/llm/utils.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 19,73-110,568-608
+plugins/test/src/tts.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 152
+plugins/soniox/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-11
+plugins/xai/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/inference/vad.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 121,167-169,190,195-196,199,206,241,244,316,319-323
+plugins/meta/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/trugen/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/inference/realtime.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-403
+agents/src/inference/realtime.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-542
+plugins/livekit/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+agents/src/inference/tts.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 37,77,214
+plugins/google/src/utils.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 142-175,185-206
+agents/src/tokenize/blingfire.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-143
+plugins/cartesia/src/types.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 37-47,79,97-99,117-120
+  s_de5d34fcc7db11::t_f25f1f608f8c5b 121-122
+plugins/silero/src/vad.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 16,23-50,199-289
+  s_de5d34fcc7db11::t_7e781be3d6972d 290
+.changeset/soniox-output-token-usage.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+plugins/phonic/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/hume/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+.changeset/deepgram-mip-opt-out-forced.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+agents/src/inference/stt.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 731-781
+agents/src/voice/report.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 21,289-323
+  s_de5d34fcc7db11::t_75d2d554ee8084 324-327
+plugins/mistral/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-10
+plugins/perplexity/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/livekit/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+README.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 164-167
+plugins/silero/src/vad.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 126,140,167,271,274-278,330,335-336,339,346,349,419,423,464-465
+  s_de5d34fcc7db11::t_2f215720b050b3 466
+agents/src/tts/provider_format.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 22,1075
+agents/src/worker.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 4-5,7-10,40-103
+  s_de5d34fcc7db11::t_36294d82cea807 104-105
+plugins/cerebras/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-10
+plugins/trugen/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/soniox/src/stt.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 473-539
+agents/src/tokenize/index.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 5,17
+plugins/google/src/realtime/realtime_api.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 63-64,71-92,134-139,410,432-434,530,672-673,681,685-690,737,778-780,814-828,940-942,986,1096
+plugins/anam/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/tavus/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/perplexity/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-10
+examples/src/gpt_live/README.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 32-33
+agents/src/ipc/job_trace.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 28
+plugins/runway/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+agents/src/telemetry/loop_monitor.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 444,477-479,481-485,493
+.github/workflows/test.yml
+  s_de5d34fcc7db11::t_3f7144f7a2958d 18,41,52-53,63
+agents/src/tts/provider_format.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 656-658,668-669,690
+plugins/google/etc/agents-plugin-google.api.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 138
+agents/src/inference/eot/runner.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 17,37-43,48-52,56,63
+.changeset/quiet-abort-listeners.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+pnpm-workspace.yaml
+  s_de5d34fcc7db11::t_3f7144f7a2958d 10-11,29-30,65
+plugins/google/src/llm_long_decode.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-630
+agents/src/voice/io.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 243-247
+agents/src/inference/eot/runner.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 11,14-24
+  s_de5d34fcc7db11::t_27436b25244190 25
+plugins/openai/src/realtime/index.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 4-5,10-14
+plugins/phonic/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+agents/src/ipc/supervised_proc.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 262-279
+plugins/google/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3,47
+plugins/google/src/realtime/realtime_api.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 8-13,262-308,348-368,512-536,684-712
+examples/src/hotel-receptionist/suggested_replies.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-158
+.changeset/anthropic-auto-tool-choice.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+plugins/soniox/src/_internal.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 200-201,208-209,217-218,257,262-263,267-268,271-272,291-294,347
+plugins/xai/etc/agents-plugin-xai.api.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 7,11-12,21,29,44,71-72,80,85,105,108,112,131,135,146-147,152,183,187,208,213,215,249
+agents/src/inference/index.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 4,7,46,49-71,103
+agents/src/inference/llm.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 16-17,22,26,54,233,721-729
+  s_de5d34fcc7db11::t_4702742eebbfc5 730
+agents/src/ipc/supervised_proc.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 199
+agents/src/voice/tool_executor.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 22,162,180,303,434-443
+plugins/elevenlabs/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/neuphonic/src/tts.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 197
+agents/src/telemetry/recording_upload.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 18-22,24-25,27,33,35,37-40,42-52,238-245,247-277,279-281
+plugins/speechify/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/krisp/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/inference/llm.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 510-513
+plugins/mistralai/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-10
+plugins/speechify/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/synthesia/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+examples/src/hotel-receptionist/hotel_receptionist.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 36,750-754
+  s_de5d34fcc7db11::t_06ee9308265af9 755
+agents/src/tts/stream_adapter.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 6,33-34,74-77
+plugins/lemonslice/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+.gitignore
+  s_de5d34fcc7db11::t_3f7144f7a2958d 203
+plugins/runway/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/liveavatar/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/openai/src/realtime/gpt_live_model.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 4-15,20,22-25
+.changeset/vertex-instructions-system-role.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+agents/src/voice/agent_activity.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 153,313-314,491-492,537,549-550,683,687,707,714,731,743,884-886,1010,1140-1142,1734-1747,2251,2757,2769,2841-2849,2864-2873,2885-2895,2897,2902-2905,2961-2962,3113,3336,3676,3805,3887-3894,3896,3901,3906-3907,3959-3962,4121,4191-4200,4230,4351,4357-4358,4417,4444,4571,4936,4981-4994,5051-5052,5054,5100,5150,5160-5165,5167-5170,5178,5182,5246-5251,5253,5265,5278-5279,5286-5289,5296-5297,5745-5771,5775-5783,5792,5805-5809,5816
+agents/src/ipc/_preload.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-37
+.github/workflows/build.yml
+  s_de5d34fcc7db11::t_3f7144f7a2958d 54
+.changeset/clear-realtime-item-warning.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-6
+agents/src/voice/generation_tools.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 7,11,16,64-136
+  s_de5d34fcc7db11::t_a6f27be16d54a6 137
+agents/src/voice/playout_launch_pause.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 408-409
+plugins/fishaudio/src/tts.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 33,242
+agents/src/inference/eot/base.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 181,252,292,319,508-516
+  s_de5d34fcc7db11::t_2bb3481bc3a1fc 517
+plugins/openai/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/xai/src/realtime/realtime_model.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 32-33,35,146
+agents/src/voice/room_io/_output.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 4-10,13,20-24,1011-1294
+plugins/phonic/src/realtime/realtime_model.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 561-564
+agents/src/telemetry/recording_upload.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 14,52,58,67,74,76-79,173-181,199-206,208,210-211,256-265
+  s_de5d34fcc7db11::t_82308934fb3f3b 266
+agents/src/llm/openai_realtime/realtime_model.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-1585
+agents/src/inference/duplex.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-221
+agents/src/inference/interruption/interruption_stream.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 4-5,16-148,179-202
+agents/src/telemetry/loop_monitor.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 26,346-357
+agents/src/telemetry/utils.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 156-158
+plugins/fishaudio/src/tts.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 175-182
+agents/src/telemetry/gen_ai.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 168-169
+agents/src/inference/duplex.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-197
+.changeset/bright-lindens-listen.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+agents/src/llm/chat_context.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 564-566,576,585,593,603,616
+plugins/assemblyai/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/cartesia/src/tts.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 43,90-101,116-117,333,407,439,639-640,945-946,1007-1012
+agents/src/llm/openai_realtime/realtime_model.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-2491
+plugins/fishaudio/etc/agents-plugin-fishaudio.api.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 10,87
+agents/src/llm/openai_realtime/gpt_live_types.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-140
+plugins/neuphonic/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+agents/src/inference/interruption/interruption_stream.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 378-382,390-392
+plugins/anthropic/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/tokenize/xml_markup.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 8-9,14-15,17-22,46,139-203,206-280,283-346,367-390
+plugins/did/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/rime/src/stream.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 92
+plugins/google/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-17
+plugins/sarvam/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/_exceptions.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 36,47
+plugins/openai/src/realtime/gpt_live_model.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 189,443-482
+  s_de5d34fcc7db11::t_7e387dd196b305 483
+agents/src/voice/generation.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 174-175,192,197,207,210-211,250,258,263-264,308-314,347-352,363,403-409,429,431-462,477-482,495,503-515,937,1014-1015,1156,1243-1245,1260,1300,1521-1528
+agents/src/telemetry/traces.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 94-107,636,649
+plugins/google/src/realtime/realtime_tool_reply.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-103
+plugins/test/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/voice/report.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 172-176
+plugins/cartesia/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/telemetry/traces.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 55,64-69,106-111,164,186,235
+.github/workflows/release.yml
+  s_de5d34fcc7db11::t_3f7144f7a2958d 35,70
+agents/src/voice/realtime_tool_output_commit.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 14,19-23,99-100,102-104,119-121,129-130,133,135-138,140-151,156-167,171,177,194-226,393-523
+plugins/openai/src/models.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 5-6
+plugins/cartesia/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/rime/src/websocket.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 107,109,160,164,176,197-207,683-684,717
+plugins/mistral/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/voice/agent_session_handoff.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 5
+agents/src/voice/speech_handle.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 187-188,296,656-659
+.changeset/fuzzy-cats-listen.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+.cursor/rules/agent-core.mdc
+  s_de5d34fcc7db11::t_3f7144f7a2958d 377
+plugins/cartesia/src/models.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 18-20,23,28-72
+plugins/protoface/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+agents/src/inference/stt.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 105,120,139-147,202,208
+agents/src/voice/transcription/synchronizer.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 167-168,376-377,887-889
+  s_de5d34fcc7db11::t_549a239cda34ea 890-891
+plugins/anthropic/src/llm.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 12,16-22,63,271-285
+plugins/deepgram/etc/agents-plugin-deepgram.api.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 12,323,336
+agents/src/voice/generation_telemetry.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 14,18-24,26,212-254
+  s_de5d34fcc7db11::t_62aefbb124ba3b 255
+plugins/rime/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/tokenize/blingfire.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-113
+plugins/fishaudio/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/voice/agent_activity.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 123,771,1410,1416,1465-1474,1538-1542,1546-1547
+agents/src/llm/openai_realtime/gpt_live_model.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-1092
+.changeset/calm-dolphins-speak.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+agents/src/voice/realtime_turn_detection.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-133
+agents/src/voice/parallel_tool_handoff.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-62
+agents/src/voice/agent_activity_wait_for_or_abort.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-72
+plugins/did/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/resemble/src/tts.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 197
+plugins/elevenlabs/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-11
+plugins/rime/README.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 21-23,29-30,35-44
+agents/src/voice/remote_session.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 744-752
+plugins/silero/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/test/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+.changeset/quiet-tools-always-answer.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-7
+plugins/inworld/src/tts.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 328
+agents/src/tokenize/token_stream.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 38-40
+.changeset/async-reply-run-result.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+agents/src/voice/tool_executor_run_result.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-71
+plugins/soniox/src/tts.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 29,44-45,57,68-77,119,134-140,656-657
+  s_de5d34fcc7db11::t_27a35dd8c33320 658
+plugins/deepgram/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/krisp/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/baseten/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/src/inference/eot/transports.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 22,69,105,196-218
+  s_de5d34fcc7db11::t_04fc4a08055f86 219-224
+plugins/bey/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/openai/src/realtime/api_proto.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1,5
+.changeset/blingfire-tokenizer.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-13
+plugins/tavus/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/assemblyai/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/rime/src/options.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 10-15,29-30,36-37,43-71,82,145-149
+AGENTS.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-232
+agents/src/voice/agent.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 11,14,34,139,153,259-261,263,439-441,611-615
+plugins/resemble/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+agents/src/telemetry/gen_ai.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 74-79
+agents/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3,9-17,19-27,69,102
+plugins/azure/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+agents/src/telemetry/recording_disabled.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 42,59
+agents/src/voice/agent_turn_span.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 37,329-331
+plugins/inworld/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/google/src/llm.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 33-40,46,49-54,307,309,345-364,374-405,495,520,570-573,576,578-586,588-617,619-687,690-703,706-717,719,722-725,727-728,730-731,733-735,737-751,754-764,766-781
+plugins/rime/etc/agents-plugin-rime.api.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 10
+plugins/soniox/src/tts.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 51,273-317
+  s_de5d34fcc7db11::t_55cdfa57dd5156 318-319
+plugins/liveavatar/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+plugins/neuphonic/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+agents/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-38
+.changeset/rime-v1-explicit-model.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-9
+.changeset/quiet-cloud-turns.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+.changeset/silero-remainder-samples.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-5
+plugins/cartesia/src/tts.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 9,16,18,37-51,86-91,98-101,104,144-232
+agents/src/voice/agent_activity_wait_for_idle.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-53
+agents/src/tts/fallback_adapter.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 11,190
+plugins/cerebras/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/openai/src/realtime/gpt_live_types.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 5
+plugins/fishaudio/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-11
+agents/src/voice/transcription/text_transforms.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 49-55,78-82,90,97
+agents/src/voice/agent_session.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 29,32,313,325-329,635-641,774-776,778,802,1406
+plugins/azure/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/inworld/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/lemonslice/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/elevenlabs/src/stt.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 4,14-16,623-653,750-752,755,757-758,778,780,782-783,803,806-808,811-864,904
+plugins/openai/etc/agents-plugin-openai.api.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 11-12,26,29,139-143,145,509,513,523,526-528,530,545-546,548-550,560,564,566-569,571,574,576,580,582,586,603-613,760,1010,1117-1118,1124,1127,1184,1215,1222,1226-1229,1272,1278,1280,1290,1314-1316,1331,1334-1338,1342-1345,1347,1357-1363,1374,1390-1391,1394,1400,1405,1409,1414,1417,1431,1637,1639,1710,1733,1787-1788,1856-1860,1862,2007,2054-2055,2057,2103
+plugins/protoface/package.json
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3
+plugins/anam/CHANGELOG.md
+  s_de5d34fcc7db11::t_3f7144f7a2958d 3-9
+agents/src/telemetry/conversation_id.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1-142
+plugins/openai/src/realtime/realtime_model.test.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 1,4-7,9-10,13,15-18,21-22,24-26
+plugins/elevenlabs/src/tts.ts
+  s_de5d34fcc7db11::t_3f7144f7a2958d 873
+REVIEW.md
+  s_de5d34fcc7db11::t_fb7a631065aeed 18-20,22-29
+agents/src/llm/__snapshots__/chat_context.test.ts.snap
+  s_de5d34fcc7db11::t_e462d8dca3dc80 44,113,163,207
+agents/src/voice/__snapshots__/report.test.ts.snap
+  s_de5d34fcc7db11::t_2b64ceb475eea6 33
+pnpm-lock.yaml
+  s_de5d34fcc7db11::t_a8b30df31c96cb 133-135,233-234,805-806,2116-2117,2160-2161,2166-2167,2172-2173,2177-2178,2182-2183,2187-2188,2193-2194,2199-2200,2205-2206,2211-2212,2217-2218,2223-2224,2229-2230,2235-2236,2242-2243,2249-2250,2256-2257,2263-2264,2270-2271,2277-2278,2284-2285,2291-2292,2295-2296,2300-2301,2306-2307,2312-2313,2392-2434,5142-5143,6114,6141,6159,6161,6164,6166,6169,6171,6174,6177,6180,6183,6186,6189,6192,6195,6198,6201,6204,6206,6209,6211,6214,6216,6219,6221,6224,6226,6229,6231,6234,6236,6239,6241,6244,6249,6251,6254,6257,6260,6327-6359,9390,9396-9420,9423,9429-9453
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f81043721208117aeaa5910bdb7d2611a544253",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
