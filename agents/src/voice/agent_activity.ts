@@ -6285,11 +6285,11 @@ export class AgentActivity implements RecognitionHooks {
             ts._setTools(tools);
             if (this._suppressToolsetConfigUpdate) return;
             const activity = this.agentSession._activity ?? this;
-            void activity
-              .onToolsetToolsChanged()
-              .catch((error) =>
-                activity.logger.error({ error }, 'error re-advertising toolset tools'),
-              );
+            const update = activity.onToolsetToolsChanged();
+            void update.catch((error) =>
+              activity.logger.error({ error }, 'error re-advertising toolset tools'),
+            );
+            return update;
           },
         }),
       ),

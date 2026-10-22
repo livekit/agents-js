@@ -9,6 +9,7 @@ import type {
 import type { AjvJsonSchemaValidator } from '@modelcontextprotocol/client/validators/ajv';
 import type { JSONSchema7 } from 'json-schema';
 import { log } from '../log.js';
+import { waitUntilAborted } from '../utils.js';
 import { isStopResponse } from '../voice/stop_response.js';
 import { AsyncToolset, type AsyncToolsetCreateOptions } from './async_toolset.js';
 import {
@@ -582,6 +583,7 @@ export class MCPToolset extends AsyncToolset {
   private refreshPromise?: Promise<void>;
   private refreshRequested = false;
   private refreshGeneration = 0;
+  private publicationAbortController = new AbortController();
   private context?: ToolsetContext;
   private availableTools: FunctionTool[] = [];
   private toolFilter?: (tool: FunctionTool) => boolean;
@@ -598,6 +600,8 @@ export class MCPToolset extends AsyncToolset {
     if (this.closePromise) await this.closePromise;
     this.closePromise = undefined;
     this.closed = false;
+    this.publicationAbortController.abort();
+    this.publicationAbortController = new AbortController();
     this.context = ctx;
     this.refreshGeneration += 1;
     this.unsubscribe ??= this.server.onToolsChanged(() => this.requestRefresh());
@@ -615,6 +619,7 @@ export class MCPToolset extends AsyncToolset {
   /**
    * Reload tools from the server. The toolset must be active in an agent session.
    * Concurrent calls wait for all pending reloads and share the final result.
+   * Resolves after the active session applies the updated tools.
    */
   async refresh(): Promise<void> {
     if (!this.context || this.closed) throw new Error('MCPToolset is not active');
@@ -622,7 +627,10 @@ export class MCPToolset extends AsyncToolset {
     await this.requestRefresh();
   }
 
-  /** Replace the tool filter. It applies immediately and persists across refreshes and reconnects. */
+  /**
+   * Replace the tool filter. It applies locally and persists across refreshes and reconnects.
+   * Call {@link MCPToolset.refresh} to wait for the active session to apply the filtered tools.
+   */
   filterTools(predicate: (tool: FunctionTool) => boolean): this {
     const tools = this.availableTools.filter(predicate);
     this.toolFilter = predicate;
@@ -634,6 +642,7 @@ export class MCPToolset extends AsyncToolset {
     this.closed = true;
     this.context = undefined;
     this.refreshGeneration += 1;
+    this.publicationAbortController.abort();
     this.refreshRequested = false;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
@@ -684,6 +693,7 @@ export class MCPToolset extends AsyncToolset {
       this.refreshRequested = false;
       const context = this.context;
       const generation = this.refreshGeneration;
+      const publicationSignal = this.publicationAbortController.signal;
       if (!context) continue;
 
       try {
@@ -695,7 +705,7 @@ export class MCPToolset extends AsyncToolset {
             ? availableTools.filter(this.toolFilter)
             : availableTools;
           this.availableTools = availableTools;
-          context.updateTools(filtered);
+          await waitUntilAborted(Promise.resolve(context.updateTools(filtered)), publicationSignal);
         }
       } catch (error) {
         if (

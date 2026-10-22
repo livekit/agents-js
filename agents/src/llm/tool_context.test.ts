@@ -885,7 +885,7 @@ describe('Toolset', () => {
   it('lets setup push tools after activation via ctx.updateTools', async () => {
     const a = makeFn('a');
     const b = makeFn('b');
-    let push!: (tools: readonly Tool[]) => void;
+    let push!: ToolsetContext['updateTools'];
     const ts = Toolset.create({
       id: 'mcp',
       setup: async ({ updateTools }) => {
