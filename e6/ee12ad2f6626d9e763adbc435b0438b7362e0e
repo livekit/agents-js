@@ -1,0 +1,32 @@
+agents/src/voice/agent_activity_wait_for_idle.test.ts
+  s_d40fba722f3b4d::t_f6dc5beb5ecd44 5,137-166
+  s_de5d34fcc7db11::t_722ed8c0587c31 167-171
+.changeset/great-ties-kiss.md
+  s_d40fba722f3b4d::t_1e23f4f12ead67 5
+agents/src/voice/agent_activity.ts
+  s_d40fba722f3b4d::t_79b5cc18e2e591 2793-2799,2801-2805
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6ee12ad2f6626d9e763adbc435b0438b7362e0e",
+  "prompts": {},
+  "sessions": {
+    "s_d40fba722f3b4d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a155af-3962-7d90-aa05-b905479f1ae2",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    },
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
