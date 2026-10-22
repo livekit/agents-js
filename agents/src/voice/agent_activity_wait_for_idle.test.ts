@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
-import { delay } from '../utils.js';
+import { Future, delay } from '../utils.js';
 import { Agent } from './agent.js';
 import type { AgentActivity } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
@@ -72,6 +72,44 @@ describe('AgentActivity.waitForIdle', () => {
         expect(session.listenerCount(event)).toBe(listeners);
       } finally {
         await session.close();
+      }
+    },
+  );
+
+  it.each(['close', 'shutdown'] as const)(
+    'rejects pending foreground work while onExit drains during %s',
+    async (method) => {
+      const enteredExit = new Future<void>();
+      const releaseExit = new Future<void>();
+      class BlockingExitAgent extends Agent {
+        async onExit() {
+          enteredExit.resolve();
+          await releaseExit.await;
+        }
+      }
+      const session = new AgentSession({ vad: null, turnHandling: { turnDetection: null } });
+      await session.start({ agent: new BlockingExitAgent({ instructions: 'test' }) });
+      const callback = vi.fn();
+      const event = AgentSessionEventTypes.UserStateChanged;
+      const listeners = session.listenerCount(event);
+      session._updateUserState('speaking');
+      const pending = session.waitForIdleAndHold(callback).catch((error: unknown) => error);
+      let closing: Promise<void> | undefined;
+
+      try {
+        await vi.waitFor(() => expect(session.listenerCount(event)).toBe(listeners + 1));
+        if (method === 'shutdown') session.shutdown({ drain: true });
+        closing = session.close();
+        await enteredExit.await;
+        session._updateUserState('listening');
+
+        const result = await pending;
+        expect(callback).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ name: 'AbortError' });
+        expect(session.listenerCount(event)).toBe(listeners);
+      } finally {
+        releaseExit.resolve();
+        await (closing ?? session.close());
       }
     },
   );

@@ -2789,7 +2789,7 @@ export class AgentActivity implements RecognitionHooks {
   async waitForIdle(
     options: { waitForAgent?: boolean; waitForUser?: boolean } = {},
   ): Promise<void> {
-    const signal = this.closeAbort.signal;
+    const signal = AbortSignal.any([this.closeAbort.signal, this.agentSession._closingSignal]);
     while (!signal.aborted) {
       await this.waitForInactive(options, signal);
       if (signal.aborted) break;
