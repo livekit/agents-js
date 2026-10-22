@@ -1,0 +1,40 @@
+agents/src/voice/generation.ts
+  s_7b536f18239596::t_40a8f4fd5fc622 1056-1063,1070,1085-1091
+.changeset/bright-sessions-wait.md
+  s_7b536f18239596::t_c249d109d304c6 6-7
+agents/src/voice/remote_session_lifecycle.test.ts
+  s_7b536f18239596::t_c01b7b225e4fb5 343-365,367-390,393-398,404-405,407-411,414-421,423-465,467-481,484-491,494-499,501-557,562-566,568-569,571,573-588
+  s_7b536f18239596::t_29ad924e5b1896 710-728,730-739
+  s_7b536f18239596::t_ce9b1cec0c6668 6,11,15,340,681
+  s_7b536f18239596::t_9f68e267c59c6f 399-400,402-403,866
+  s_7b536f18239596::t_c060710c03336e 847-865,867-871
+  s_7b536f18239596::t_8587ec9f86c660 366,391-392,401,406,412-413,422,466,482-483,492-493,500,558-561,567,570,572,729
+agents/src/voice/testing/run_result.ts
+  s_7b536f18239596::t_b0c97d0c330a78 271-273,275
+  s_7b536f18239596::t_66788091df8d80 274
+agents/src/voice/agent_activity.ts
+  s_7b536f18239596::t_f19e46dcdf38da 4088,4090,4107-4121,4129
+  s_7b536f18239596::t_d32c0cea0639b1 4123,4128,4229-4230
+agents/src/voice/generation_text_forwarding.test.ts
+  s_7b536f18239596::t_55195a15b6be87 1-8,10-48,50-68,70-81,83-134,136-145
+  s_7b536f18239596::t_80e0d06b87f8e9 9,82
+  s_7b536f18239596::t_f894d760cda12f 49,69,135
+agents/src/voice/remote_session.ts
+  s_7b536f18239596::t_5b1d1d65b353e6 279-290,507
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1c44a641faf459352b5ef07454e3fd6606108116",
+  "prompts": {},
+  "sessions": {
+    "s_7b536f18239596": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16454-34dd-7782-8ca2-5ac476814edb",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
