@@ -1,0 +1,82 @@
+agents/src/voice/tool_executor.test.ts
+  s_de5d34fcc7db11::t_fbf8e8e8528687 104-107,109-118,120-124,126-132,134-136,138-140
+  s_de5d34fcc7db11::t_526e2880d4c73c 119,125,141
+  s_de5d34fcc7db11::t_5a673c4e36124e 9-10,13,237
+  s_de5d34fcc7db11::t_bfd0dcc000e01f 206-229,231-236,238-239
+  s_de5d34fcc7db11::t_1e2d0e9d243be5 240
+  s_de5d34fcc7db11::t_f6a2175c3c3f10 241-250,252-279
+  s_de5d34fcc7db11::t_2df5c02144b3f1 4
+  s_de5d34fcc7db11::t_67e1a22a59c6a0 251
+  s_de5d34fcc7db11::t_4f98622c2da918 103,108,137
+.changeset/async-tool-empty-completion.md
+  s_de5d34fcc7db11::t_b82902e649b369 1-4
+agents/src/voice/tool_executor.ts
+  s_de5d34fcc7db11::t_5a673c4e36124e 448-451
+  s_de5d34fcc7db11::t_af4b6c3a034479 22,162,180,303,409-410,421,600,603,605,607
+  s_de5d34fcc7db11::t_8d854cc74c52c2 424-425,428,434-435,437-441,544-547
+agents/src/voice/agent_activity.ts
+  s_de5d34fcc7db11::t_ea7dd8a785f758 6251-6252,6254-6255
+  s_de5d34fcc7db11::t_b016ba3136fb31 535,1478,5351-5356,5358-5359,5389,5398,5400,6253,6260-6273
+  s_de5d34fcc7db11::t_d4d6654090dd54 6274-6275
+agents/src/llm/mcp.ts
+  s_de5d34fcc7db11::t_7ae8d3693b1289 12,22,56-57,160,166-170,174,433-434,442-443,480-481,503-512,514,588-589,617-631,641,646-647,692,696-697,710
+  s_de5d34fcc7db11::t_f2125240352f46 171-173,693-695
+  s_de5d34fcc7db11::t_2190d717965e25 352
+  s_de5d34fcc7db11::t_b709521684e27d 353
+agents/src/llm/mcp.test.ts
+  s_de5d34fcc7db11::t_f2125240352f46 504-507,518-540,713-723,725-727,729-731,734-736,743-744,765-766,782,908-916,918-924,926,928-936,938-940
+  s_de5d34fcc7db11::t_c524b3be965e0a 703-712,724,728,732-733,737-742,745-764,767-781
+  s_de5d34fcc7db11::t_d31dc5ed1c413c 1199-1200
+  s_de5d34fcc7db11::t_20aa08486eef47 6,13,488-503,508-517,541-542,907,917,975,990,999,1178,1182,1189
+  s_de5d34fcc7db11::t_33cf282fb7747a 543,783
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 88-100
+.changeset/mcp-parity-controls.md
+  s_de5d34fcc7db11::t_7ae8d3693b1289 1-4
+  s_de5d34fcc7db11::t_1cb30d6f852b03 5
+agents/src/llm/mcp_http.test.ts
+  s_de5d34fcc7db11::t_eac0e5992bf164 37-45,53-56,59,62-64,256-289
+  s_de5d34fcc7db11::t_d6989f0059fa1b 17,361-396
+  s_de5d34fcc7db11::t_d31dc5ed1c413c 206,211-216
+  s_de5d34fcc7db11::t_25760554fc6ddf 207-210
+  s_de5d34fcc7db11::t_0890f4a38785a5 13-15,106,237,290,397
+  s_de5d34fcc7db11::t_033353977e7deb 16,18,20-36,46-50,52,60-61,65-69
+  s_de5d34fcc7db11::t_f2125240352f46 147-150,402-426,428-433,466-467,483-485
+  s_de5d34fcc7db11::t_c524b3be965e0a 104-105,115,123-128,146,151-156,234,398-401,427,434,465,468-482,486-488,634,637
+  s_de5d34fcc7db11::t_a6840b7bc903f7 327-336
+  s_de5d34fcc7db11::t_43d2e6d6cfb98b 291-297,299-303,348,351-353
+  s_de5d34fcc7db11::t_e6f5553f30b39a 10,12,19,51,57-58,298,304-326,337-347,349-350,354-357
+  s_de5d34fcc7db11::t_d9a4b9ae1a2009 358-360
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 107,113,171,248-250,435-462
+  s_de5d34fcc7db11::t_f08560a64fc4ef 463-464
+agents/etc/agents.api.md
+  s_de5d34fcc7db11::t_0ad3ac94842ced 5301-5302,5324,5414-5415
+  s_de5d34fcc7db11::t_63eca52e0c82d6 3931,8246,8258,9677-9678
+plugins/google/src/utils.test.ts
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 41-54
+plugins/openai/src/tool_utils.test.ts
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 41,46,50
+.changeset/mcp-tool-metadata.md
+  s_de5d34fcc7db11::t_2190d717965e25 1-5
+plugins/anthropic/src/llm.test.ts
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 393,417,434-438
+agents/src/llm/tool_context.ts
+  s_de5d34fcc7db11::t_2190d717965e25 206-208,680,690-691,727,737-738,795
+agents/src/llm/tool_context.test.ts
+  s_de5d34fcc7db11::t_24e0646f6a3b6c 25-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3b027ba5e4f57915111f4d22d2478fbc592d79d",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
