@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import type { Future } from '../utils.js';
+import type { Agent } from './agent.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession } from './agent_session.js';
 import {
@@ -10,6 +11,7 @@ import {
   type AgentStateChangedEvent,
   type UserStateChangedEvent,
 } from './events.js';
+import type { ToolExecutionOutput } from './generation.js';
 import { type SpeechHandle, isSpeechHandle } from './speech_handle.js';
 
 export type UnknownUserData = unknown;
@@ -49,7 +51,11 @@ export interface AttachedToolExecutor<UserData = UnknownUserData> {
   toolOptions: {
     updateTemplate: PromptTemplate<UpdatePromptArgs>;
   };
-  enqueueReply(ctx: RunContext<UserData>, items: [FunctionCall, FunctionCallOutput]): Promise<void>;
+  enqueueReply(
+    ctx: RunContext<UserData>,
+    items: [FunctionCall, FunctionCallOutput],
+    replyRequired?: boolean,
+  ): Promise<void>;
   replyTask?: Promise<void>;
 }
 
@@ -146,10 +152,11 @@ export class RunContext<UserData = UnknownUserData> {
             message,
           })
         : message;
-    const pair = this._makeUpdatePair(
+    const out = this._makeUpdateOutput(
       renderedMessage,
       updateStep > 0 ? `_update_${updateStep}` : '',
     );
+    const pair: [FunctionCall, FunctionCallOutput] = [out.toolCall, out.toolCallOutput!];
     this._updates.push(pair);
 
     if (!this._executor) {
@@ -244,22 +251,53 @@ export class RunContext<UserData = UnknownUserData> {
     }
   }
 
-  _makeUpdatePair(message: unknown, callIdSuffix: string = ''): [FunctionCall, FunctionCallOutput] {
+  _makeUpdateOutput(
+    message: unknown,
+    callIdSuffix: string = '',
+    options: { agentTask?: Agent; toolError?: boolean } = {},
+  ): ToolExecutionOutput {
     const fncCall = FunctionCall.create({
       callId: `${this.functionCall.callId}${callIdSuffix}`,
       name: this.functionCall.name,
       args: this.functionCall.args,
       extra: { ...this.functionCall.extra },
     });
-    return [
-      fncCall,
-      FunctionCallOutput.create({
+
+    const rawException = message instanceof Error ? message : undefined;
+    if (rawException) {
+      const isStopResponse = rawException.name === 'StopResponse';
+      return {
+        toolCall: fncCall,
+        toolCallOutput: FunctionCallOutput.create({
+          name: fncCall.name,
+          callId: fncCall.callId,
+          output: options.toolError
+            ? rawException.message
+            : isStopResponse
+              ? ''
+              : 'An internal error occurred',
+          isError: !isStopResponse,
+        }),
+        agentTask: undefined,
+        rawOutput: undefined,
+        rawException,
+        replyRequired: !isStopResponse,
+      };
+    }
+
+    return {
+      toolCall: fncCall,
+      toolCallOutput: FunctionCallOutput.create({
         name: fncCall.name,
         callId: fncCall.callId,
         output: stringifyToolOutput(message),
         isError: false,
       }),
-    ];
+      agentTask: options.agentTask,
+      rawOutput: message,
+      rawException: undefined,
+      replyRequired: message !== undefined && message !== null,
+    };
   }
 
   _recordUpdatePair(pair: [FunctionCall, FunctionCallOutput]): void {
