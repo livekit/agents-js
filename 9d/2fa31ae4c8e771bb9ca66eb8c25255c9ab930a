@@ -1,8 +1,13 @@
 agents/src/voice/tool_executor.test.ts
   s_de5d34fcc7db11::t_f6a2175c3c3f10 237-274
   s_de5d34fcc7db11::t_2df5c02144b3f1 4
+  s_de5d34fcc7db11::t_26ae1d19958f26 201-236
+  s_de5d34fcc7db11::t_8ec82b65ddca85 9-10,13
 agents/src/voice/tool_executor.ts
   s_de5d34fcc7db11::t_af4b6c3a034479 22,162,180,303,409-410,421,587,590,592,594
+  s_de5d34fcc7db11::t_8ec82b65ddca85 438-439
+.changeset/async-tool-empty-completion.md
+  s_de5d34fcc7db11::t_8ec82b65ddca85 5
 ---
 {
   "schema_version": "authorship/3.0.0",
