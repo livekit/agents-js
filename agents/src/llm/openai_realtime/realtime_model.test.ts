@@ -78,6 +78,37 @@ function stubTaskRuntime(): void {
   } as unknown as Task<void>);
 }
 
+describe('RealtimeSession.updateTools', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('keeps application metadata locally and omits it from session updates', async () => {
+    stubTaskRuntime();
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session();
+    const sendEvent = vi.fn();
+    Object.assign(session, { sendEvent });
+    const fn = llm.tool({
+      name: 'lookup',
+      description: 'Look up an order',
+      parameters: { type: 'object', properties: {} },
+      meta: { guardrails: ['check_order_access'] },
+      execute: async () => 'found',
+    });
+
+    await session.updateTools(new llm.ToolContext([fn]));
+
+    expect(session.tools.getFunctionTool('lookup')?.meta).toEqual(fn.meta);
+    expect(sendEvent.mock.lastCall?.[0].session.tools).toEqual([
+      {
+        type: 'function',
+        name: 'lookup',
+        description: 'Look up an order',
+        parameters: { type: 'object', properties: {} },
+      },
+    ]);
+    await session.close();
+  });
+});
+
 describe('RealtimeSession.generateReply', () => {
   it('preserves session instructions when generating with per-response instructions', async () => {
     const session = createSessionForTest();
