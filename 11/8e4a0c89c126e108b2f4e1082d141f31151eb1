@@ -1,0 +1,26 @@
+agents/src/voice/tool_executor.ts
+  s_de5d34fcc7db11::t_8d854cc74c52c2 424-425,428,434-435,437-441,544-547
+  s_de5d34fcc7db11::t_82dbf17a01a683 541,543
+agents/src/voice/tool_executor.test.ts
+  s_de5d34fcc7db11::t_4f98622c2da918 103,108,137
+  s_de5d34fcc7db11::t_67e1a22a59c6a0 251
+  s_de5d34fcc7db11::t_c619ce837869e3 133,204-205,230
+.changeset/async-tool-empty-completion.md
+  s_de5d34fcc7db11::t_7801fd4291b981 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "118e4a0c89c126e108b2f4e1082d141f31151eb1",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": null
+    }
+  }
+}
