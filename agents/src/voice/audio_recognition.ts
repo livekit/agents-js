@@ -153,6 +153,7 @@ export interface PreemptiveGenerationInfo {
   startedSpeakingAt: number | undefined;
 }
 
+/** The accumulated user transcript to compare with a pending preflight reply. */
 export interface PreflightStaleInfo {
   newTranscript: string;
 }
