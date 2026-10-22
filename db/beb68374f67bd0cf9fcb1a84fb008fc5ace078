@@ -1,0 +1,22 @@
+plugins/google/src/realtime/realtime_api.ts
+  s_6975e39c9c92e0::t_8bc768b442fdb4 1248,1251
+plugins/google/src/realtime/realtime_goaway.test.ts
+  s_6975e39c9c92e0::t_404b53ed7c9366 5,137-138
+  s_6975e39c9c92e0::t_b7a3d2042ae4a9 6,19,34,45-49,62,128-132,134-136,139-141,143-156,158-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbbeb68374f67bd0cf9fcb1a84fb008fc5ace078",
+  "prompts": {},
+  "sessions": {
+    "s_6975e39c9c92e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a134e0-d333-7f02-9db0-d7cf887f6bca",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
