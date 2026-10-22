@@ -810,8 +810,10 @@ export class SpeechStream extends stt.SpeechStream {
         this.#lastPreflightStartTime = startTime;
       }
 
+      // A redacted final preflight carries the cumulative transcript, so it spans the whole turn.
+      const preflightStartTime = redactFinal ? startTime : this.#lastPreflightStartTime;
       const utteranceWords = timedWords.filter(
-        (w) => w.startTime !== undefined && w.startTime >= this.#lastPreflightStartTime,
+        (w) => w.startTime !== undefined && w.startTime >= preflightStartTime,
       );
       const utteranceConfidence = this.#averageConfidence(utteranceWords);
 
@@ -821,7 +823,7 @@ export class SpeechStream extends stt.SpeechStream {
           {
             language,
             text: redactFinal ? transcript : utterance,
-            startTime: this.#lastPreflightStartTime,
+            startTime: preflightStartTime,
             endTime,
             confidence: utteranceConfidence,
             words: redactFinal ? [] : utteranceWords,

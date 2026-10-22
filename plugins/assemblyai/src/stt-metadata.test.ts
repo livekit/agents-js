@@ -233,6 +233,18 @@ describe('AssemblyAI STT PII redaction', () => {
         ws.send(
           JSON.stringify({
             type: 'Turn',
+            transcript: 'My name',
+            utterance: 'My name',
+            end_of_turn: false,
+            words: [
+              { text: 'My', start: 0, end: 200, confidence: 0.9 },
+              { text: 'name', start: 200, end: 400, confidence: 0.9 },
+            ],
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: 'Turn',
             transcript: 'My name is [PERSON_NAME].',
             utterance: 'My name is Sonny.',
             end_of_turn: true,
@@ -259,10 +271,16 @@ describe('AssemblyAI STT PII redaction', () => {
       stream.close();
 
       const alternatives = events.flatMap((event) => event.alternatives ?? []);
-      expect(alternatives).toHaveLength(3);
-      for (const alternative of alternatives) {
-        expect(alternative.text).toBe('My name is [PERSON_NAME].');
+      expect(alternatives.map((alternative) => alternative.text)).toEqual([
+        'My name',
+        'My name',
+        'My name is [PERSON_NAME].',
+        'My name is [PERSON_NAME].',
+        'My name is [PERSON_NAME].',
+      ]);
+      for (const alternative of alternatives.slice(2)) {
         expect(alternative.words).toEqual([]);
+        expect(alternative.startTime).toBe(alternatives[0]!.startTime);
         expect(alternative.endTime).toBeGreaterThan(alternative.startTime);
       }
     } finally {
