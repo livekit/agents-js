@@ -299,8 +299,11 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     const remaining = expressive && this.isDeltaStream ? this.stripper.flush() : '';
     const tags = !expressive ? [] : this.isDeltaStream ? this.stripper.tags : this.segmentTags;
     const pendingText = remaining ? this.encode(remaining) : '';
+    // Snapshot the segment text now: the task runs asynchronously, and a later
+    // captureText or resetState call can overwrite or clear latestText before it runs.
+    const finalText = this.latestText;
     this.flushTask = Task.from((controller) =>
-      this.flushTaskImpl(currWriter, controller.signal, expressionAttribute(tags), pendingText),
+      this.flushTaskImpl(currWriter, controller.signal, expressionAttribute(tags), pendingText, finalText),
     );
   }
 
@@ -349,6 +352,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     signal: AbortSignal,
     extraAttributes?: Record<string, string>,
     pendingText = '',
+    finalText = '',
   ): Promise<void> {
     const attributes: Record<string, string> = {
       [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'true',
@@ -389,7 +393,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
           if (signal.aborted || !tmpWriter) {
             return;
           }
-          await Promise.race([tmpWriter.write(this.latestText), abortPromise]);
+          await Promise.race([tmpWriter.write(finalText), abortPromise]);
           if (signal.aborted) {
             return;
           }
