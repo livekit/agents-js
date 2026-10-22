@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
 import { createEndCallTool } from '../beta/tools/end_call.js';
 import { voice } from '../index.js';
+import { AgentSessionEventTypes } from '../voice/events.js';
+import { RealtimeModel } from './realtime.js';
 import {
   CONFIRM_DUPLICATE_PARAM,
   ProviderTool,
@@ -810,6 +813,80 @@ describe('createEndCallTool', () => {
       isFunctionTool(ignoredTool) && ignoredTool.flags & ToolFlag.IGNORE_ON_ENTER,
     ).toBeTruthy();
   });
+
+  it.each([
+    { endInstructions: null, output: undefined },
+    { endInstructions: 'say goodbye to the user', output: 'say goodbye to the user' },
+    { endInstructions: 'say goodbye to the user', output: undefined },
+  ])(
+    'waits for a reply only when the completed output asks for one: $endInstructions -> $output',
+    async ({ endInstructions, output }) => {
+      class AutoToolReplyRealtimeModel extends RealtimeModel {
+        constructor() {
+          super({
+            messageTruncation: false,
+            turnDetection: false,
+            userTranscription: false,
+            autoToolReplyGeneration: true,
+            audioOutput: false,
+            manualFunctionCalls: false,
+          });
+        }
+
+        get model(): string {
+          return 'fake-realtime';
+        }
+
+        session(): never {
+          throw new Error('not implemented');
+        }
+
+        async close(): Promise<void> {}
+      }
+
+      const events: string[] = [];
+      const session = new EventEmitter() as EventEmitter & {
+        currentAgent: { getActivityOrThrow: () => { llm: RealtimeModel } };
+        shutdown: () => void;
+      };
+      session.currentAgent = {
+        getActivityOrThrow: () => ({ llm: new AutoToolReplyRealtimeModel() }),
+      };
+      session.shutdown = () => {
+        events.push('shutdown');
+        session.emit(AgentSessionEventTypes.Close, { reason: 'user_initiated' });
+      };
+      session.on(AgentSessionEventTypes.Close, () => events.push('close'));
+
+      let onSpeechDone: (() => void) | undefined;
+      const ctx = {
+        session,
+        speechHandle: {
+          addDoneCallback: (callback: () => void) => {
+            onSpeechDone = callback;
+          },
+        },
+      };
+      const [endCall] = createEndCallTool({
+        endInstructions,
+        onToolCompleted: (event) => {
+          if (output === undefined) event.output = undefined;
+        },
+      }).tools;
+      expect(endCall && isFunctionTool(endCall)).toBe(true);
+      if (!endCall || !isFunctionTool(endCall)) throw new Error('end_call tool not found');
+
+      await endCall.execute({}, { ...createToolOptions('call-1'), ctx } as never);
+      expect(onSpeechDone).toBeDefined();
+      onSpeechDone?.();
+      if (output !== undefined) {
+        session.emit(AgentSessionEventTypes.Close, { reason: 'user_initiated' });
+      }
+      await Promise.resolve();
+
+      expect(events[0]).toBe(output === undefined ? 'shutdown' : 'close');
+    },
+  );
 });
 
 describe('Toolset', () => {
