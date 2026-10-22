@@ -470,6 +470,73 @@ describe('processMessage', () => {
     ]);
     expect(events.at(-1)?.recognitionUsage?.audioDuration).toBeCloseTo(1.5);
   });
+
+  it('reports final transcription tokens as output tokens and excludes control tokens', () => {
+    const events = runProcess([
+      {
+        tokens: [finalToken('Hello', 'en'), finalToken(' world.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 500,
+      },
+    ]);
+    const usage = events.find((event) => event.type === stt.SpeechEventType.RECOGNITION_USAGE)!;
+
+    expect(usage.recognitionUsage?.audioDuration).toBeCloseTo(0.5);
+    expect(usage.recognitionUsage?.outputTokens).toBe(2);
+  });
+
+  it('excludes non-final tokens from output token usage', () => {
+    const events = runProcess([
+      {
+        tokens: [nonfinalToken('Hel', 'en'), nonfinalToken('lo', 'en')],
+        total_audio_proc_ms: 300,
+      },
+      {
+        tokens: [finalToken('Hello', 'en'), finalToken(' world.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 800,
+      },
+    ]);
+    const usages = events.filter((event) => event.type === stt.SpeechEventType.RECOGNITION_USAGE);
+
+    expect(usages[0]?.recognitionUsage?.outputTokens).toBe(0);
+    expect(usages[1]?.recognitionUsage?.outputTokens).toBe(2);
+  });
+
+  it('reports output token usage incrementally across endpoints', () => {
+    const events = runProcess([
+      {
+        tokens: [finalToken('First.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 1000,
+      },
+      {
+        tokens: [finalToken('Second', 'en'), finalToken(' utterance.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 2500,
+      },
+    ]);
+    const usages = events.filter((event) => event.type === stt.SpeechEventType.RECOGNITION_USAGE);
+
+    expect(usages).toHaveLength(2);
+    expect(usages[0]?.recognitionUsage).toMatchObject({ audioDuration: 1, outputTokens: 1 });
+    expect(usages[1]?.recognitionUsage).toMatchObject({ audioDuration: 1.5, outputTokens: 2 });
+  });
+
+  it('counts original and translated final tokens as output token usage', () => {
+    const events = runProcess(
+      [
+        {
+          tokens: [
+            finalToken('Hello world.', 'en', 'original'),
+            finalToken('Hola mundo.', 'es', 'translation'),
+            END_TOKEN_FINAL,
+          ],
+          total_audio_proc_ms: 500,
+        },
+      ],
+      { isTranslationMode: true },
+    );
+    const usage = events.find((event) => event.type === stt.SpeechEventType.RECOGNITION_USAGE)!;
+
+    expect(usage.recognitionUsage?.outputTokens).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

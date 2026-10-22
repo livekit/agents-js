@@ -15,18 +15,41 @@ export const RECORDING_UPLOAD_CONNECT_TIMEOUT_MS = 30_000;
 export const RECORDING_UPLOAD_TOTAL_TIMEOUT_MS = 900_000;
 
 const RECORDING_UPLOAD_MAX_RETRIES = 3;
+/**
+ * DNS and connection errors that Python retries as `aiohttp.ClientConnectorError`. Before the
+ * connection completes, the server has not received the upload. TLS errors such as `EPROTO` and
+ * certificate failures are excluded, as in Python.
+ */
 const RETRYABLE_CONNECTION_ERROR_CODES = new Set([
+  // Connection
+  'EACCES',
   'EADDRNOTAVAIL',
-  'EAI_AGAIN',
+  'EAFNOSUPPORT',
   'ECONNABORTED',
   'ECONNREFUSED',
   'ECONNRESET',
   'EHOSTDOWN',
   'EHOSTUNREACH',
+  'EMFILE',
   'ENETDOWN',
+  'ENETRESET',
   'ENETUNREACH',
-  'ENOTFOUND',
+  'ENFILE',
+  'ENOBUFS',
+  'EPERM',
+  'EPIPE',
   'ETIMEDOUT',
+  // DNS
+  'EAI_ADDRFAMILY',
+  'EAI_AGAIN',
+  'EAI_BADFLAGS',
+  'EAI_FAIL',
+  'EAI_FAMILY',
+  'EAI_MEMORY',
+  'EAI_NODATA',
+  'EAI_SERVICE',
+  'EAI_SYSTEM',
+  'ENOTFOUND',
 ]);
 
 interface RetryInfo extends Message<RetryInfo> {
@@ -212,51 +235,50 @@ function submitRecordingUpload(options: {
         return;
       }
 
-      request = options.formData.submit(
-        {
-          protocol: endpoint.protocol,
-          host: endpoint.hostname,
-          ...(endpoint.port ? { port: Number(endpoint.port) } : {}),
-          path: `${endpoint.pathname}${endpoint.search}`,
-          method: 'POST',
-          headers: { Authorization: `Bearer ${options.jwt}` },
-        },
-        (error, incomingResponse) => {
-          if (error) {
-            const failure = requestFailureName(error);
-            fail(
-              new RecordingUploadAttemptError(
-                failure,
-                !connected && isRetryableConnectionError(error),
-              ),
-            );
-            return;
-          }
+      request = options.formData.submit({
+        protocol: endpoint.protocol,
+        host: endpoint.hostname,
+        ...(endpoint.port ? { port: Number(endpoint.port) } : {}),
+        path: `${endpoint.pathname}${endpoint.search}`,
+        method: 'POST',
+        headers: { Authorization: `Bearer ${options.jwt}` },
+      });
 
-          response = incomingResponse;
-          markConnected();
-          const chunks: Buffer[] = [];
-          const collectBody = (incomingResponse.statusCode ?? 0) >= 400;
-          incomingResponse.on('data', (chunk) => {
-            if (collectBody) chunks.push(Buffer.from(chunk));
+      // Listen on the request instead of passing a submit callback. form-data removes its error
+      // listener when the response arrives, so a later timeout or reset would be uncaught and
+      // crash the process. Keep this listener after the attempt settles for the same reason.
+      request.on('error', (error) => {
+        fail(
+          new RecordingUploadAttemptError(
+            requestFailureName(error),
+            !connected && isRetryableConnectionError(error),
+          ),
+        );
+      });
+      request.once('response', (incomingResponse) => {
+        response = incomingResponse;
+        markConnected();
+        const chunks: Buffer[] = [];
+        const collectBody = (incomingResponse.statusCode ?? 0) >= 400;
+        incomingResponse.on('data', (chunk) => {
+          if (collectBody) chunks.push(Buffer.from(chunk));
+        });
+        incomingResponse.once('error', () => {
+          fail(
+            new RecordingUploadAttemptError(
+              `response body error (status ${incomingResponse.statusCode ?? 0})`,
+              false,
+            ),
+          );
+        });
+        incomingResponse.once('end', () => {
+          succeed({
+            statusCode: incomingResponse.statusCode ?? 0,
+            body: Buffer.concat(chunks),
           });
-          incomingResponse.once('error', () => {
-            fail(
-              new RecordingUploadAttemptError(
-                `response body error (status ${incomingResponse.statusCode ?? 0})`,
-                false,
-              ),
-            );
-          });
-          incomingResponse.once('end', () => {
-            succeed({
-              statusCode: incomingResponse.statusCode ?? 0,
-              body: Buffer.concat(chunks),
-            });
-          });
-          incomingResponse.resume();
-        },
-      );
+        });
+        incomingResponse.resume();
+      });
     } catch {
       fail(new RecordingUploadAttemptError('request setup error', false));
       return;

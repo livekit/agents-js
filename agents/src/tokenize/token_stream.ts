@@ -35,7 +35,9 @@ export function hasUnclosedXmlTags(text: string): boolean {
     const isClosing = match[1] === '/';
     const isSelfClosing = match[3] === '/';
     if (isSelfClosing) continue;
-    else if (isClosing) depth -= 1;
+    // a closing tag whose opener is not in this text (already emitted, or
+    // never sent) must not cancel out a later opening tag
+    else if (isClosing) depth = Math.max(depth - 1, 0);
     else depth += 1;
   }
 

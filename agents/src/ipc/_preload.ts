@@ -12,13 +12,13 @@
  *
  * Failures are logged at debug level only: the first real use reports a proper error.
  */
-import { _getLocalInferenceModule } from '../inference/_warmup.js';
+import { _getLocalInferenceModule, _shouldPreloadLocalInference } from '../inference/_warmup.js';
 import { log } from '../log.js';
 
 function step(name: string, fn: () => unknown): void {
   const started = performance.now();
   try {
-    fn();
+    if (fn() === false) return;
   } catch (error) {
     log().debug({ error }, `could not preload ${name}`);
     return;
@@ -26,11 +26,18 @@ function step(name: string, fn: () => unknown): void {
   log().debug({ elapsed: Math.round(performance.now() - started) }, `preloaded ${name}`);
 }
 
+/** @internal Preload the local inference binding unless explicitly disabled. */
+export function _preloadLocalInference(): boolean {
+  if (!_shouldPreloadLocalInference()) return false;
+  _getLocalInferenceModule();
+  return true;
+}
+
 /** Run every warm-up step. Idempotent: the loaders it calls cache their result. */
 export function preload(): void {
   // the local inference native binding (the VAD runs in-process; the EOT model lives in the
   // shared inference process, see inference/_warmup.ts)
-  step('the local inference binding', () => _getLocalInferenceModule());
+  step('the local inference binding', _preloadLocalInference);
   // the livekit-rtc native binding is loaded when @livekit/rtc-node is imported, which the
   // job process does at startup; its runtime (FfiClient) starts with the first Room and the
   // SDK exposes no way to start it earlier

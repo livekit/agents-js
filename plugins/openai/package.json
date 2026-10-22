@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-openai",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "description": "OpenAI plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -44,7 +44,6 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@livekit/mutex": "^1.1.1",
     "openai": "^6.8.1",
     "ws": "catalog:"
   },

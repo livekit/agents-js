@@ -169,6 +169,11 @@ function eventToJSON(event: AgentEvent): Record<string, unknown> {
       // Raw PCM is not part of the wire format.
       delete e.speechInput;
       break;
+    case 'function_tools_executed':
+      // Derived from the outputs' replyRequired, so Python's model_dump() omits them.
+      delete e.hasToolReply;
+      delete e.cancelToolReply;
+      break;
     case 'error':
       e.source = serializeEventSource(e.source);
       e.error = serializeEventError(e.error);
