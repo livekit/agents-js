@@ -4,6 +4,7 @@
 import { Plugin } from '@livekit/agents';
 
 export * from './stt.js';
+export * from './decision_model.js';
 
 class AzurePlugin extends Plugin {
   constructor() {

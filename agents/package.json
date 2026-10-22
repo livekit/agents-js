@@ -25,6 +25,16 @@
         "types": "./dist/llm/openai_realtime/*.d.cts",
         "default": "./dist/llm/openai_realtime/*.cjs"
       }
+    },
+    "./llm/systemone": {
+      "import": {
+        "types": "./dist/llm/systemone.d.ts",
+        "default": "./dist/llm/systemone.js"
+      },
+      "require": {
+        "types": "./dist/llm/systemone.d.cts",
+        "default": "./dist/llm/systemone.cjs"
+      }
     }
   },
   "bin": {
