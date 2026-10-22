@@ -738,12 +738,43 @@ describe('MCPServer', () => {
     await toolset.aclose();
   });
 
-  it('reloads again when a manual refresh arrives during discovery', async () => {
-    const stalePage = deferred<{ tools: (typeof descriptor)[] }>();
+  it.each(['success', 'failure'])(
+    'reloads again when a manual refresh arrives during discovery (%s)',
+    async (outcome) => {
+      const stalePage = deferred<{ tools: (typeof descriptor)[] }>();
+      const listTools = vi
+        .fn()
+        .mockResolvedValueOnce({ tools: [descriptor] })
+        .mockReturnValueOnce(stalePage.promise)
+        .mockResolvedValueOnce({ tools: [{ ...descriptor, name: 'latest_lookup' }] });
+      const server = new TestServer();
+      await attachClient(server, { listTools });
+      const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+      const context = { updateTools: vi.fn() };
+      await toolset.setup(context);
+      const firstRefresh = toolset.refresh();
+      await vi.waitFor(() => expect(listTools).toHaveBeenCalledTimes(2));
+      const secondRefresh = toolset.refresh();
+      if (outcome === 'success') {
+        stalePage.resolve({ tools: [{ ...descriptor, name: 'stale_lookup' }] });
+      } else {
+        stalePage.reject(new Error('discovery failed'));
+      }
+      await Promise.all([firstRefresh, secondRefresh]);
+      expect(context.updateTools.mock.lastCall?.[0][0]?.name).toBe('latest_lookup');
+      expect(listTools).toHaveBeenCalledTimes(3);
+      await toolset.aclose();
+    },
+  );
+
+  it('rejects concurrent refreshes when the final discovery fails', async () => {
+    const pendingPage = deferred<{ tools: (typeof descriptor)[] }>();
+    const lastError = new Error('latest discovery failed');
     const listTools = vi
       .fn()
       .mockResolvedValueOnce({ tools: [descriptor] })
-      .mockReturnValueOnce(stalePage.promise)
+      .mockReturnValueOnce(pendingPage.promise)
+      .mockRejectedValueOnce(lastError)
       .mockResolvedValueOnce({ tools: [{ ...descriptor, name: 'latest_lookup' }] });
     const server = new TestServer();
     await attachClient(server, { listTools });
@@ -753,10 +784,18 @@ describe('MCPServer', () => {
     const firstRefresh = toolset.refresh();
     await vi.waitFor(() => expect(listTools).toHaveBeenCalledTimes(2));
     const secondRefresh = toolset.refresh();
-    stalePage.resolve({ tools: [{ ...descriptor, name: 'stale_lookup' }] });
-    await Promise.all([firstRefresh, secondRefresh]);
-    expect(context.updateTools.mock.lastCall?.[0][0]?.name).toBe('latest_lookup');
+    const results = Promise.allSettled([firstRefresh, secondRefresh]);
+    pendingPage.reject(new Error('first discovery failed'));
+    expect(await results).toEqual([
+      { status: 'rejected', reason: lastError },
+      { status: 'rejected', reason: lastError },
+    ]);
     expect(listTools).toHaveBeenCalledTimes(3);
+    expect(context.updateTools).toHaveBeenCalledOnce();
+
+    await toolset.refresh();
+    expect(context.updateTools.mock.lastCall?.[0][0]?.name).toBe('latest_lookup');
+    expect(listTools).toHaveBeenCalledTimes(4);
     await toolset.aclose();
   });
 
