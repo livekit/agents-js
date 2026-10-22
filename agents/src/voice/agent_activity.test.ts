@@ -120,6 +120,7 @@ function buildMainTaskRunner() {
     _schedulingPaused: false,
     _authorizationPaused: false,
     _drainBlockedTasks: new Set<Task<void>>(),
+    currentSpeechCleared: new Future<void, never>(),
     _mainTask: undefined as { result: Promise<void> } | undefined,
     cancelPreemptiveGeneration: vi.fn(),
     logger: {

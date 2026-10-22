@@ -546,6 +546,8 @@ export class AgentActivity implements RecognitionHooks {
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private userSilenceEvent = new Event();
   private q_updated: Future<void, never>;
+  // resolved each time mainTask clears _currentSpeech, so idle waiters can sleep until then
+  private currentSpeechCleared = new Future<void, never>();
   private speechTasks: Set<Task<void>> = new Set();
   // Handles whose TTS playout has finished but whose tool execution is still running.
   // Tracking them lets interrupt() reach handles that are no longer _currentSpeech but
@@ -2836,7 +2838,15 @@ export class AgentActivity implements RecognitionHooks {
         } else {
           agentActive = true;
           const currentUpdate = this.q_updated;
-          if (currentUpdate.done) {
+          if (this._currentSpeech) {
+            // q_updated stays resolved while mainTask drains the queue, so it cannot tell
+            // when the current speech ends
+            await this.waitForOrAbort(
+              this.currentSpeechCleared.await,
+              signal,
+              'error waiting for the current speech',
+            );
+          } else if (currentUpdate.done) {
             await delay(0, { signal });
           } else {
             await this.waitForOrAbort(
@@ -2851,7 +2861,16 @@ export class AgentActivity implements RecognitionHooks {
       if (waitForUser) {
         userActive = this.agentSession.userState !== 'listening';
         if (userActive) {
-          await delay(0, { signal });
+          let onChange!: () => void;
+          const changed = new Promise<void>((resolve) => {
+            onChange = () => resolve();
+            this.agentSession.on(AgentSessionEventTypes.UserStateChanged, onChange);
+          });
+          try {
+            await this.waitForOrAbort(changed, signal, 'error waiting for a user state change');
+          } finally {
+            this.agentSession.off(AgentSessionEventTypes.UserStateChanged, onChange);
+          }
         }
         await this.waitForEndOfTurn(signal);
       }
@@ -2924,6 +2943,8 @@ export class AgentActivity implements RecognitionHooks {
           }
         }
         this._currentSpeech = undefined;
+        this.currentSpeechCleared.resolve();
+        this.currentSpeechCleared = new Future();
       }
 
       // if we're draining/pausing and there are no more speech tasks, we can exit.
