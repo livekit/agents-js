@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Attributes, SpanStatus } from '@opentelemetry/api';
+import { type Attributes, type SpanStatus, SpanStatusCode } from '@opentelemetry/api';
 import type { ReadableSpan, Span as SdkSpan, TimedEvent } from '@opentelemetry/sdk-trace-node';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
 import * as traceTypes from './trace_types.js';
@@ -121,6 +121,51 @@ export function stashPii(span: SdkSpan): void {
     attributes: { ...event.attributes },
   }));
   stash[RAW_STATUS] = { ...span.status };
+}
+
+/**
+ * A view of `span` with PII stripped, whatever `onEnding` stashed for {@link restorePii}.
+ *
+ * For a span that ended before its job decided on redaction (the trace gate held it): the
+ * processor saw redaction off at the time, so the attributes may be intact or stashed. The view
+ * carries no stash, so LiveKit Cloud's exporter cannot put the payload back.
+ */
+export function redactReadableSpan(span: ReadableSpan): ReadableSpan {
+  const attributes: Attributes = {};
+  for (const [key, value] of Object.entries(span.attributes)) {
+    if (key === traceTypes.ATTR_EXCEPTION_MESSAGE) {
+      attributes[key] = REDACTED_EXCEPTION_MESSAGE;
+    } else if (!isPIIAttribute(key) && !REDACTED_EXCEPTION_ATTRIBUTES.has(key)) {
+      attributes[key] = value;
+    }
+  }
+  const events: TimedEvent[] = span.events
+    .filter((event) => !PII_EVENT_NAMES.has(event.name))
+    .map((event) => {
+      const attrs: Attributes = {};
+      for (const [key, value] of Object.entries(event.attributes ?? {})) {
+        if (key === traceTypes.ATTR_EXCEPTION_MESSAGE) {
+          attrs[key] = REDACTED_EXCEPTION_MESSAGE;
+        } else if (!isPIIAttribute(key) && !REDACTED_EXCEPTION_ATTRIBUTES.has(key)) {
+          attrs[key] = value;
+        }
+      }
+      return { ...event, attributes: attrs };
+    });
+  const status: SpanStatus =
+    span.status.code === SpanStatusCode.ERROR && span.status.message
+      ? { code: SpanStatusCode.ERROR, message: REDACTED_EXCEPTION_MESSAGE }
+      : span.status;
+
+  const view = Object.create(span) as ReadableSpan & PiiStash;
+  Object.defineProperty(view, 'attributes', { value: attributes, enumerable: true });
+  Object.defineProperty(view, 'events', { value: events, enumerable: true });
+  Object.defineProperty(view, 'status', { value: status, enumerable: true });
+  // shadow the stash the processor may have left on the span: nothing to restore from
+  view[RAW_ATTRIBUTES] = undefined;
+  view[RAW_EVENTS] = undefined;
+  view[RAW_STATUS] = undefined;
+  return view;
 }
 
 /**

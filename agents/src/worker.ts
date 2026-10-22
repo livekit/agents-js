@@ -30,6 +30,11 @@ import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { DEFAULT_SESSION_END_TIMEOUT, validateSessionEndTimeout } from './job_lifecycle.js';
 import { log } from './log.js';
+import {
+  type EventLoopMonitor,
+  startMonitoring,
+  stopMonitoring,
+} from './telemetry/loop_monitor.js';
 import { Future, rejectOnAbort } from './utils.js';
 import { version } from './version.js';
 
@@ -347,6 +352,7 @@ export class AgentServer {
   #httpServer?: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
+  #loopMonitor?: EventLoopMonitor;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: ServerOptions) {
@@ -461,6 +467,7 @@ export class AgentServer {
 
     this.#logger.info('starting worker');
     this.#closed = false;
+    this.#loopMonitor = startMonitoring({ name: 'worker', emitSpans: false });
     this.#procPool.start();
 
     const workerWS = async () => {
@@ -708,7 +715,8 @@ export class AgentServer {
         }
         case 'availability': {
           if (!msg.message.value.job) return;
-          const task = this.#availability(msg.message.value);
+          // receipt is now, not when the handler gets to run: that delay is dispatch latency
+          const task = this.#availability(msg.message.value, Date.now());
           this.#tasks.push(task);
           task.finally(() => {
             const taskIndex = this.#tasks.indexOf(task);
@@ -836,7 +844,7 @@ export class AgentServer {
     }
   }
 
-  async #availability(msg: AvailabilityRequest) {
+  async #availability(msg: AvailabilityRequest, receivedAt: number = Date.now()) {
     let answered = false;
 
     const onReject = async () => {
@@ -857,6 +865,7 @@ export class AgentServer {
 
     const onAccept = async (args: JobAcceptArguments) => {
       answered = true;
+      const acceptedAt = Date.now();
 
       this.event.emit(
         'worker_msg',
@@ -902,6 +911,9 @@ export class AgentServer {
             workerId: this.id,
             apiKey: this.#opts.apiKey,
             apiSecret: this.#opts.apiSecret,
+            receivedAt,
+            acceptedAt,
+            assignedAt: Date.now(),
           });
         } catch (e) {
           this.#logger.child({ requestId: req.id }).error(e, 'error launching job');
@@ -913,12 +925,22 @@ export class AgentServer {
 
     const req = new JobRequest(msg.job!, onReject, onAccept);
     this.#logger
-      .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+      .child({
+        jobId: msg.job?.id,
+        room_id: msg.job?.room?.sid,
+        resuming: msg.resuming,
+        agentName: this.#opts.agentName,
+      })
       .info('received job request');
 
     if (this.#draining) {
       this.#logger
-        .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+        .child({
+          jobId: msg.job?.id,
+          room_id: msg.job?.room?.sid,
+          resuming: msg.resuming,
+          agentName: this.#opts.agentName,
+        })
         .info('Worker is draining and no longer available, rejecting job');
       await req.reject();
       return;
@@ -971,6 +993,8 @@ export class AgentServer {
     this.#logger.debug('shutting down worker');
 
     this.#closed = true;
+    if (this.#loopMonitor) stopMonitoring(this.#loopMonitor);
+    this.#loopMonitor = undefined;
 
     await this.#inferenceExecutor?.close();
     await this.#procPool.close();

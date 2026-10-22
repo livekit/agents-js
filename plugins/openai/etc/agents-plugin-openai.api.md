@@ -8,9 +8,11 @@ import { AgentInference } from '@livekit/protocol';
 import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
-import type { Context } from '@opentelemetry/api';
+import { Context } from '@opentelemetry/api';
+import { default as default_2 } from 'ws';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
@@ -21,10 +23,12 @@ import { Participant } from '@livekit/rtc-node';
 import { ParticipantKind } from '@livekit/rtc-node';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Reasoning as Reasoning_3 } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
+import { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
+import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { TrackPublishOptions } from '@livekit/rtc-node';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
@@ -112,12 +116,12 @@ interface BaseItem {
 // Warning: (ae-missing-release-tag) "CerebrasChatModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type CerebrasChatModels = 'gpt-oss-120b' | 'zai-glm-4.7' | 'gemma-4-31b';
+export type CerebrasChatModels = 'gpt-oss-120b' | 'qwen-3.8-27b' | 'zai-glm-4.7' | 'gemma-4-31b';
 
 // Warning: (ae-missing-release-tag) "ChatModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type ChatModels = 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-chat-latest' | 'gpt-5.2' | 'gpt-5.2-chat-latest' | 'gpt-5.1' | 'gpt-5.1-chat-latest' | 'gpt-5' | 'gpt-5-mini' | 'gpt-5-nano' | 'gpt-4.1' | 'gpt-4.1-mini' | 'gpt-4.1-nano' | 'gpt-4o' | 'gpt-4o-2024-05-13' | 'gpt-4o-mini' | 'gpt-4o-mini-2024-07-18' | 'gpt-4-turbo' | 'gpt-4-turbo-2024-04-09' | 'gpt-4-turbo-preview' | 'gpt-4-0125-preview' | 'gpt-4-1106-preview' | 'gpt-4-vision-preview' | 'gpt-4-1106-vision-preview' | 'gpt-4' | 'gpt-4-0314' | 'gpt-4-0613' | 'gpt-4-32k' | 'gpt-4-32k-0314' | 'gpt-4-32k-0613' | 'gpt-3.5-turbo' | 'gpt-3.5-turbo-16k' | 'gpt-3.5-turbo-0301' | 'gpt-3.5-turbo-0613' | 'gpt-3.5-turbo-1106' | 'gpt-3.5-turbo-16k-0613';
+export type ChatModels = 'gpt-5.6-luna' | 'gpt-5.6-sol' | 'gpt-5.6-terra' | 'gpt-5.5' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-chat-latest' | 'gpt-5.2' | 'gpt-5.2-chat-latest' | 'gpt-5.1' | 'gpt-5.1-chat-latest' | 'gpt-5' | 'gpt-5-mini' | 'gpt-5-nano' | 'gpt-4.1' | 'gpt-4.1-mini' | 'gpt-4.1-nano' | 'gpt-4o' | 'gpt-4o-2024-05-13' | 'gpt-4o-mini' | 'gpt-4o-mini-2024-07-18' | 'gpt-4-turbo' | 'gpt-4-turbo-2024-04-09' | 'gpt-4-turbo-preview' | 'gpt-4-0125-preview' | 'gpt-4-1106-preview' | 'gpt-4-vision-preview' | 'gpt-4-1106-vision-preview' | 'gpt-4' | 'gpt-4-0314' | 'gpt-4-0613' | 'gpt-4-32k' | 'gpt-4-32k-0314' | 'gpt-4-32k-0613' | 'gpt-3.5-turbo' | 'gpt-3.5-turbo-16k' | 'gpt-3.5-turbo-0301' | 'gpt-3.5-turbo-0613' | 'gpt-3.5-turbo-1106' | 'gpt-3.5-turbo-16k-0613';
 
 // Warning: (ae-forgotten-export) The symbol "tts_2" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "ChunkedStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -136,6 +140,31 @@ export class ChunkedStream extends tts_2.ChunkedStream {
 //
 // @public (undocumented)
 type ClientEvent = SessionUpdateEvent | InputAudioBufferAppendEvent | InputAudioBufferCommitEvent | InputAudioBufferClearEvent | ConversationItemCreateEvent | ConversationItemTruncateEvent | ConversationItemDeleteEvent | ResponseCreateEvent | ResponseCancelEvent;
+
+// @public
+type ClientEvent_2 = {
+    event_id?: string;
+} & ({
+    type: 'session.start';
+    session: SessionConfig;
+} | {
+    type: 'session.update';
+    session: {
+        delegation: Delegation;
+    };
+} | {
+    type: 'session.input_audio.append';
+    audio: string;
+} | {
+    type: 'session.input_audio.mute' | 'session.input_audio.unmute' | 'session.close' | 'response.create';
+} | {
+    type: 'session.instructions.append' | 'session.thinking.append' | 'session.commentary.append';
+    delegation_id: string | null;
+    content: string;
+} | {
+    type: 'response.item.create';
+    item: OpenAI.Responses.ResponseInputItem;
+});
 
 // Warning: (ae-missing-release-tag) "ClientEventType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -349,6 +378,17 @@ export type DeepSeekChatModels = 'deepseek-coder' | 'deepseek-chat';
 // @public (undocumented)
 export function defaultReasoningEffort(model: ChatModels | string): ReasoningEffort | undefined;
 
+// @public
+type Delegation = {
+    type: 'client';
+} | {
+    type: 'responses';
+    responses: ResponsesConfig;
+};
+
+// @public
+type DelegationTarget = 'responses' | 'client';
+
 // @internal (undocumented)
 class DiscardedGeneration {
     // (undocumented)
@@ -359,6 +399,20 @@ class DiscardedGeneration {
 //
 // @public (undocumented)
 export type EmbeddingModels = 'text-embedding-ada-002' | 'text-embedding-3-small' | 'text-embedding-3-large';
+
+// @public
+interface ErrorBody {
+    // (undocumented)
+    client_event_id?: string | null;
+    // (undocumented)
+    code?: string | null;
+    // (undocumented)
+    message?: string;
+    // (undocumented)
+    param?: string | null;
+    // (undocumented)
+    type?: string | null;
+}
 
 // Warning: (ae-missing-release-tag) "ErrorEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -444,6 +498,93 @@ interface FunctionCallOutputItemCreate {
 // @public (undocumented)
 type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
 
+declare namespace GPTLive {
+    export {
+        DelegationTarget,
+        InputRole,
+        InputItem,
+        ResponsesConfig,
+        Delegation,
+        SessionConfig,
+        ClientEvent_2 as ClientEvent,
+        ResponseUsage,
+        ResponsesEvent,
+        ErrorBody,
+        ServerEvent_2 as ServerEvent
+    }
+}
+
+// @public
+interface GPTLiveDelegation {
+    id: string;
+    pendingTranscript: string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "GPTLiveModel" needs to be exported by the entry point index.d.ts
+//
+// @public
+class GPTLiveModel_2 extends GPTLiveModel {
+    // Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    _providerToolConfig(tool: llm.ProviderTool): OpenAI.Responses.Tool | undefined;
+}
+
+// @public
+interface GPTLiveModelOptions {
+    apiKey?: string;
+    baseURL?: string;
+    connOptions?: APIConnectOptions;
+    delegation?: DelegationTarget;
+    maxSessionDuration?: number | null;
+    model?: string;
+    responsesOptions?: ResponsesDelegationOptions;
+    voice?: GPTLiveVoices | (string & NonNullable<unknown>) | Record<string, unknown>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "llm_2" needs to be exported by the entry point index.d.ts
+//
+// @public
+class GPTLiveSession extends llm_2.DuplexSession<{
+    openai_server_event_received: (event: ServerEvent_2) => void;
+    openai_client_event_queued: (event: ClientEvent_2 | Record<string, unknown>) => void;
+    delegation_created: (event: GPTLiveDelegation) => void;
+}> {
+    constructor(model: GPTLiveModel);
+    appendCommentary(text: string, options?: {
+        delegationId?: string | null;
+    }): void;
+    appendInstructions(text: string, options?: {
+        delegationId?: string | null;
+    }): void;
+    _appendItems(items: llm_2.ChatItem[]): Promise<void>;
+    appendThinking(text: string, options?: {
+        delegationId?: string | null;
+    }): void;
+    get audioStream(): ReadableStream_2<llm_2.DuplexAudioFrame>;
+    protected closeConnection(): Promise<void>;
+    protected createWsUrlAndHeaders(): Promise<{
+        url: URL;
+        headers: Record<string, string>;
+    }>;
+    _generateReply(instructions?: string): void;
+    protected isFatalError(error: ErrorBody): boolean;
+    muteInput(): void;
+    pushAudio(frame: AudioFrame): void;
+    sendEvent(event: ClientEvent_2 | Record<string, unknown>): void;
+    get sessionId(): string | undefined;
+    get tools(): llm_2.ToolContext;
+    unmuteInput(): void;
+    _updateInstructions(instructions: string): Promise<void>;
+    _updateOptions(options: {
+        toolChoice?: llm_2.ToolChoice | null;
+    }): void;
+    _updateTools(tools: llm_2.ToolContext): Promise<void>;
+}
+
+// @public
+type GPTLiveVoices = 'beacon' | 'cedar' | 'cinder' | 'marin' | 'stone' | 'vesper';
+
 // Warning: (ae-missing-release-tag) "GroqAudioModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -458,6 +599,17 @@ export type GroqChatModels = 'llama-3.1-8b-instant' | 'llama-3.3-70b-versatile' 
 //
 // @public (undocumented)
 const IN_FRAME_SIZE = 2400;
+
+// Warning: (ae-forgotten-export) The symbol "inference" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "InferenceRealtimeModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public @deprecated (undocumented)
+const InferenceRealtimeModel: typeof inference.RealtimeModel;
+
+// Warning: (ae-missing-release-tag) "InferenceRealtimeSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public @deprecated (undocumented)
+const InferenceRealtimeSession: typeof inference.RealtimeSession;
 
 // Warning: (ae-missing-release-tag) "InputAudioBufferAppendEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -558,6 +710,22 @@ interface InputImageContent {
     type: 'input_image';
 }
 
+// @public
+interface InputItem {
+    // (undocumented)
+    content: {
+        type: 'input_text' | 'output_text';
+        text: string;
+    }[];
+    // (undocumented)
+    role: InputRole;
+    // (undocumented)
+    type: 'message';
+}
+
+// @public
+type InputRole = 'developer' | 'user' | 'assistant';
+
 // Warning: (ae-missing-release-tag) "InputTextContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -586,11 +754,10 @@ type ItemResource = SystemItem | UserItem | AssistantItem | FunctionCallItem | F
 // @public @deprecated (undocumented)
 type LegacyAudioFormat = 'pcm16';
 
-// Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
 // Warning: (ae-forgotten-export) The symbol "api_proto" needs to be exported by the entry point index.d.ts
 //
 // @internal
-function livekitItemToOpenAIItem(item: llm.ChatItem): Promise<api_proto.ItemResource>;
+function livekitItemToOpenAIItem(item: llm_2.ChatItem): Promise<api_proto.ItemResource>;
 
 // Warning: (ae-missing-release-tag) "LLM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -802,7 +969,6 @@ interface LLMOptions_2 {
     useWebSocket?: boolean;
 }
 
-// Warning: (ae-forgotten-export) The symbol "inference" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "LLMStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -841,7 +1007,7 @@ type Modality = 'text' | 'audio';
 // Warning: (ae-missing-release-tag) "Model" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type Model = 'gpt-4o-realtime-preview-2024-10-01' | string;
+type Model = RealtimeModels | (string & NonNullable<unknown>);
 
 // Warning: (ae-missing-release-tag) "ModelUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -947,11 +1113,15 @@ interface RateLimitsUpdatedEvent extends BaseServerEvent {
 
 declare namespace realtime {
     export {
+        GPTLive,
+        InferenceRealtimeModel,
+        InferenceRealtimeSession,
         SAMPLE_RATE,
         NUM_CHANNELS,
         IN_FRAME_SIZE,
         OUT_FRAME_SIZE,
         BASE_URL,
+        RealtimeModels,
         Model,
         ReasoningEffort_2 as ReasoningEffort,
         Reasoning_2 as Reasoning,
@@ -1049,8 +1219,14 @@ declare namespace realtime {
         MessageGeneration_2 as MessageGeneration,
         ResponseGeneration,
         DiscardedGeneration,
-        RealtimeModel_2 as RealtimeModel,
-        RealtimeSession_2 as RealtimeSession
+        RealtimeModel_3 as RealtimeModel,
+        RealtimeSession_2 as RealtimeSession,
+        GPTLiveDelegation,
+        GPTLiveModelOptions,
+        GPTLiveSession,
+        GPTLiveVoices,
+        ResponsesDelegationOptions,
+        GPTLiveModel_2 as GPTLiveModel
     }
 }
 
@@ -1093,15 +1269,15 @@ interface RealtimeAudioConfigOutput {
 // Warning: (ae-missing-release-tag) "RealtimeModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-class RealtimeModel_2 extends llm.RealtimeModel {
+class RealtimeModel_3 extends llm_2.RealtimeModel {
     constructor(options?: {
         model?: string;
         reasoning?: api_proto.Reasoning;
         voice?: string;
         temperature?: number;
-        toolChoice?: llm.ToolChoice;
+        toolChoice?: llm_2.ToolChoice;
         baseURL?: string;
-        modalities?: Modality_2[];
+        modalities?: api_proto.Modality[];
         inputAudioTranscription?: api_proto.InputAudioTranscription | null;
         inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
         turnDetection?: api_proto.TurnDetectionType | null;
@@ -1111,7 +1287,7 @@ class RealtimeModel_2 extends llm.RealtimeModel {
         apiKey?: string;
         entraToken?: string;
         apiVersion?: string;
-        maxSessionDuration?: number;
+        maxSessionDuration?: number | null;
         connOptions?: APIConnectOptions;
     });
     // (undocumented)
@@ -1135,7 +1311,9 @@ class RealtimeModel_2 extends llm.RealtimeModel {
     // (undocumented)
     sampleRate: number;
     // (undocumented)
-    session(): RealtimeSession_2;
+    session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession_2;
     static withAzure(input: {
         azureDeployment: string;
         azureEndpoint?: string;
@@ -1150,16 +1328,23 @@ class RealtimeModel_2 extends llm.RealtimeModel {
         turnDetection?: api_proto.TurnDetectionType;
         speed?: number;
         tracing?: api_proto.TracingConfig;
-    }): RealtimeModel_2;
+    }): RealtimeModel_3;
 }
+
+// Warning: (ae-missing-release-tag) "RealtimeModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type RealtimeModels = 'gpt-realtime' | 'gpt-realtime-1.5' | 'gpt-realtime-2' | 'gpt-realtime-2025-08-28' | 'gpt-4o-realtime-preview';
 
 // Warning: (ae-missing-release-tag) "RealtimeSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-class RealtimeSession_2 extends llm.RealtimeSession {
-    constructor(realtimeModel: RealtimeModel_2);
+class RealtimeSession_2 extends llm_2.RealtimeSession {
+    constructor(realtimeModel: RealtimeModel_3, options?: {
+        turnDetectionDisabled?: boolean;
+    });
     // (undocumented)
-    get chatCtx(): llm.ChatContext;
+    get chatCtx(): llm_2.ChatContext;
     // (undocumented)
     clearAudio(): Promise<void>;
     // (undocumented)
@@ -1169,7 +1354,13 @@ class RealtimeSession_2 extends llm.RealtimeSession {
     // (undocumented)
     commitAudio(): Promise<void>;
     // (undocumented)
-    protected createChatCtxUpdateEvents(chatCtx: llm.ChatContext, addMockAudio?: boolean): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]>;
+    protected createChatCtxUpdateEvents(chatCtx: llm_2.ChatContext, addMockAudio?: boolean): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]>;
+    // (undocumented)
+    protected createSessionUpdateEvent(): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createToolsUpdateEvent(_tools: llm_2.ToolContext): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createWsConn(): Promise<WebSocket_2>;
     // Warning: (ae-incompatible-release-tags) The symbol "currentGeneration" is marked as @public, but its signature references "ResponseGeneration" which is marked as @internal
     // Warning: (ae-incompatible-release-tags) The symbol "currentGeneration" is marked as @public, but its signature references "DiscardedGeneration" which is marked as @internal
     // Warning: (ae-incompatible-release-tags) The symbol "currentGeneration" is marked as @public, but its signature references "ResponseGeneration" which is marked as @internal
@@ -1180,7 +1371,7 @@ class RealtimeSession_2 extends llm.RealtimeSession {
     // (undocumented)
     generateReply(instructions?: string, options?: {
         signal?: AbortSignal;
-    }): Promise<llm.GenerationCreatedEvent>;
+    }): Promise<llm_2.GenerationCreatedEvent>;
     // (undocumented)
     protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void;
     // (undocumented)
@@ -1196,32 +1387,34 @@ class RealtimeSession_2 extends llm.RealtimeSession {
     // (undocumented)
     interrupt(): Promise<void>;
     // (undocumented)
+    protected isFatalError(error: unknown): boolean;
+    // (undocumented)
     pushAudio(frame: AudioFrame): void;
     // (undocumented)
-    protected remoteChatCtx: llm.RemoteChatContext;
+    protected remoteChatCtx: llm_2.RemoteChatContext;
     // (undocumented)
     protected resetInputTurnState(): void;
     // (undocumented)
     sendEvent(command: api_proto.ClientEvent): void;
     // (undocumented)
-    get tools(): llm.ToolContext<unknown>;
+    get tools(): llm_2.ToolContext<unknown>;
     // (undocumented)
     truncate(_options: {
         messageId: string;
         audioEndMs: number;
-        modalities?: Modality_2[];
+        modalities?: api_proto.Modality[];
         audioTranscript?: string;
     }): Promise<void>;
     // (undocumented)
-    updateChatCtx(_chatCtx: llm.ChatContext): Promise<void>;
+    updateChatCtx(_chatCtx: llm_2.ChatContext): Promise<void>;
     // (undocumented)
     updateInstructions(_instructions: string): Promise<void>;
     // (undocumented)
     updateOptions(input: {
-        toolChoice?: llm.ToolChoice;
+        toolChoice?: llm_2.ToolChoice;
     }): void;
     // (undocumented)
-    updateTools(_tools: llm.ToolContext): Promise<void>;
+    updateTools(_tools: llm_2.ToolContext): Promise<void>;
 }
 
 // Warning: (ae-missing-release-tag) "Reasoning" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1441,9 +1634,9 @@ interface ResponseGeneration {
     // (undocumented)
     _firstTokenTimestamp?: number;
     // (undocumented)
-    functionChannel: stream.StreamChannel<llm.FunctionCall>;
+    functionChannel: stream.StreamChannel<llm_2.FunctionCall>;
     // (undocumented)
-    messageChannel: stream.StreamChannel<llm.MessageGeneration>;
+    messageChannel: stream.StreamChannel<llm_2.MessageGeneration>;
     // (undocumented)
     messages: Map<string, MessageGeneration_2>;
 }
@@ -1503,6 +1696,65 @@ declare namespace responses {
     }
 }
 
+// @public
+interface ResponsesConfig {
+    // (undocumented)
+    instructions?: string;
+    // (undocumented)
+    max_output_tokens?: number;
+    // (undocumented)
+    model?: string;
+    // (undocumented)
+    parallel_tool_calls?: boolean;
+    // (undocumented)
+    reasoning?: Reasoning_3;
+    // (undocumented)
+    service_tier?: 'auto' | 'default' | 'flex' | 'priority';
+    // (undocumented)
+    text?: OpenAI.Responses.ResponseTextConfig;
+    // (undocumented)
+    tool_choice?: string | {
+        type: 'function';
+        name: string;
+    };
+    // (undocumented)
+    tools?: OpenAI.Responses.Tool[];
+}
+
+// @public
+interface ResponsesDelegationOptions {
+    instructions?: string;
+    maxOutputTokens?: number;
+    model?: string;
+    parallelToolCalls?: boolean;
+    reasoning?: ResponsesConfig['reasoning'];
+    serviceTier?: ResponsesConfig['service_tier'];
+    text?: ResponsesConfig['text'];
+    toolChoice?: llm_2.ToolChoice | null;
+}
+
+// @public
+interface ResponsesEvent {
+    // (undocumented)
+    item?: {
+        id?: string | null;
+        type?: string | null;
+        call_id?: string | null;
+        name?: string | null;
+        arguments?: string | null;
+    } | null;
+    // (undocumented)
+    response?: {
+        id?: string | null;
+        model?: string | null;
+        usage?: ResponseUsage | null;
+        error?: Record<string, unknown> | null;
+        incomplete_details?: Record<string, unknown> | null;
+    } | null;
+    // (undocumented)
+    type: string;
+}
+
 // Warning: (ae-missing-release-tag) "ResponseStatus" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1532,7 +1784,8 @@ class ResponsesWebSocket {
     constructor(ws: WebSocket_2);
     // (undocumented)
     close(): void;
-    sendRequest(payload: WsResponseCreateEvent): stream.StreamChannel<WsServerEvent>;
+    // Warning: (ae-forgotten-export) The symbol "stream_2" needs to be exported by the entry point index.d.ts
+    sendRequest(payload: WsResponseCreateEvent): stream_2.StreamChannel<WsServerEvent>;
 }
 
 // Warning: (ae-missing-release-tag) "ResponseTextDeltaEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -1571,6 +1824,25 @@ interface ResponseTextDoneEvent extends BaseServerEvent {
     type: 'response.text.done';
 }
 
+// @public
+interface ResponseUsage {
+    // (undocumented)
+    input_tokens?: number;
+    // (undocumented)
+    input_tokens_details?: {
+        cached_tokens?: number;
+        cache_write_tokens?: number;
+    };
+    // (undocumented)
+    output_tokens?: number;
+    // (undocumented)
+    output_tokens_details?: {
+        reasoning_tokens?: number;
+    };
+    // (undocumented)
+    total_tokens?: number;
+}
+
 // Warning: (ae-missing-release-tag) "Role" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1586,10 +1858,84 @@ const SAMPLE_RATE = 24000;
 // @public (undocumented)
 type ServerEvent = ErrorEvent_3 | SessionCreatedEvent | SessionUpdatedEvent | ConversationCreatedEvent | InputAudioBufferCommittedEvent | InputAudioBufferClearedEvent | InputAudioBufferSpeechStartedEvent | InputAudioBufferSpeechStoppedEvent | ConversationItemCreatedEvent | ConversationItemAddedEvent_2 | ConversationItemInputAudioTranscriptionDeltaEvent | ConversationItemInputAudioTranscriptionCompletedEvent | ConversationItemInputAudioTranscriptionFailedEvent | ConversationItemTruncatedEvent | ConversationItemDeletedEvent | ResponseCreatedEvent | ResponseDoneEvent | ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent | ResponseContentPartAddedEvent | ResponseContentPartDoneEvent | ResponseTextDeltaEvent | ResponseTextDoneEvent | ResponseAudioTranscriptDeltaEvent | ResponseAudioTranscriptDoneEvent | ResponseAudioDeltaEvent | ResponseAudioDoneEvent | ResponseFunctionCallArgumentsDeltaEvent | ResponseFunctionCallArgumentsDoneEvent | RateLimitsUpdatedEvent;
 
+// @public
+type ServerEvent_2 = {
+    type: 'session.started';
+    session?: {
+        id?: string | null;
+    };
+} | {
+    type: 'session.output_audio.delta';
+    delta?: string;
+} | {
+    type: 'session.output_transcript.delta' | 'session.input_transcript.delta';
+    delta?: string;
+    start_ms?: number | null;
+    end_ms?: number | null;
+} | {
+    type: 'session.delegation.created';
+    delegation?: {
+        id?: string | null;
+        target?: DelegationTarget | null;
+    };
+} | {
+    type: 'response.event';
+    delegation_id?: string | null;
+    event?: ResponsesEvent;
+} | {
+    type: 'session.usage.updated';
+    usage?: {
+        seconds?: number;
+    };
+    context_window?: {
+        usage_ratio?: number | null;
+    } | null;
+} | {
+    type: 'session.closed';
+    reason?: 'close_requested' | 'expired' | 'content' | 'remote_hangup' | 'connection_lost' | null;
+    usage?: {
+        seconds?: number;
+    };
+    context_window?: {
+        usage_ratio?: number | null;
+    } | null;
+} | {
+    type: 'error';
+    error?: ErrorBody;
+} | {
+    type: 'session.updated' | 'session.input_audio.muted' | 'session.input_audio.unmuted';
+    client_event_id?: string;
+} | {
+    type: 'session.instructions.appended' | 'session.thinking.appended' | 'session.commentary.appended';
+    client_event_id?: string;
+};
+
 // Warning: (ae-missing-release-tag) "ServerEventType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 type ServerEventType = 'error' | 'session.created' | 'session.updated' | 'conversation.created' | 'input_audio_buffer.committed' | 'input_audio_buffer.cleared' | 'input_audio_buffer.speech_started' | 'input_audio_buffer.speech_stopped' | 'conversation.item.added' | 'conversation.item.created' | 'conversation.item.input_audio_transcription.delta' | 'conversation.item.input_audio_transcription.completed' | 'conversation.item.input_audio_transcription.failed' | 'conversation.item.truncated' | 'conversation.item.deleted' | 'response.created' | 'response.done' | 'response.output_item.added' | 'response.output_item.done' | 'response.content_part.added' | 'response.content_part.done' | 'response.output_text.delta' | 'response.output_text.done' | 'response.text.delta' | 'response.text.done' | 'response.output_audio_transcript.delta' | 'response.output_audio_transcript.done' | 'response.audio_transcript.delta' | 'response.audio_transcript.done' | 'response.output_audio.delta' | 'response.output_audio.done' | 'response.audio.delta' | 'response.audio.done' | 'response.function_call_arguments.delta' | 'response.function_call_arguments.done' | 'rate_limits.updated';
+
+// @public
+interface SessionConfig {
+    // (undocumented)
+    audio?: {
+        format?: {
+            type: 'audio/pcm' | 'audio/pcmu' | 'audio/pcma';
+            rate: number;
+        };
+        output?: {
+            voice?: string | Record<string, unknown>;
+        };
+    };
+    // (undocumented)
+    delegation?: Delegation;
+    // (undocumented)
+    input?: InputItem[];
+    // (undocumented)
+    instructions?: string;
+    // (undocumented)
+    model: string;
+}
 
 // Warning: (ae-missing-release-tag) "SessionCreatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -1705,8 +2051,10 @@ export class STT extends stt_2.STT {
         connOptions?: APIConnectOptions;
         language?: string | string[];
     }): stt_2.SpeechStream;
+    // Warning: (ae-forgotten-export) The symbol "api_proto_2" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
-    get turnDetection(): api_proto.TurnDetectionType | null | undefined;
+    get turnDetection(): api_proto_2.TurnDetectionType | null | undefined;
     // (undocumented)
     updateOptions(opts: Partial<STTOptions>): void;
     // (undocumented)
@@ -1752,7 +2100,7 @@ export interface STTOptions {
     // (undocumented)
     model: STTModels | string;
     // (undocumented)
-    noiseReductionType?: api_proto.NoiseReductionType;
+    noiseReductionType?: api_proto_2.NoiseReductionType;
     // (undocumented)
     prompt?: string;
     // (undocumented)
@@ -2072,10 +2420,6 @@ type WsServerEvent = z.infer<typeof wsServerEventSchema>;
 //
 // @public (undocumented)
 export type XAIChatModels = 'grok-3' | 'grok-3-fast' | 'grok-3-mini' | 'grok-3-mini-fast' | 'grok-2-vision-1212' | 'grok-2-image-1212' | 'grok-2-1212';
-
-// Warnings were encountered during analysis:
-//
-// src/realtime/realtime_model.ts:193:7 - (ae-forgotten-export) The symbol "Modality_2" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

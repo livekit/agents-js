@@ -7,8 +7,8 @@ settings:
 catalogs:
   default:
     '@livekit/rtc-node':
-      specifier: ^0.13.34
-      version: 0.13.34
+      specifier: ^1.1.0
+      version: 1.1.0
     '@types/ws':
       specifier: ^8.5.10
       version: 8.18.1
@@ -17,23 +17,24 @@ catalogs:
       version: 8.21.3
 
 overrides:
-  adm-zip@<0.6.0: ^0.6.0
+  adm-zip@<0.6.1: ^0.6.1
   uuid@<11.1.1: ^11.1.1
   lodash@<4.18.0: ^4.18.0
   protobufjs@<7.6.5: ^7.6.5
   ws@>=8.0.0 <8.21.0: ^8.21.0
   read-yaml-file@<2.0.0: ^2.1.0
-  js-yaml@<3.15.1: ^4.3.1
-  js-yaml@>=4.0.0 <4.3.1: ^4.3.1
+  js-yaml@<3.15.1: ^4.3.2
+  js-yaml@>=4.0.0 <4.3.2: ^4.3.2
   minimatch@<3.1.3: ^3.1.3
   minimatch@>=9.0.0 <9.0.7: ^9.0.7
-  brace-expansion@<1.1.16: ^1.1.16
-  brace-expansion@>=2.0.0 <5.0.8: ^5.0.8
+  brace-expansion@<1.1.21: ^1.1.21
+  brace-expansion@>=2.0.0 <5.0.12: ^5.0.12
   flatted@<3.4.2: ^3.4.2
   validator@<13.15.22: ^13.15.22
   glob@>=10.2.0 <10.5.0: ^10.5.0
   postcss@<8.5.18: ^8.5.18
   sharp@<0.35.0: ^0.35.0
+  fast-uri@>=3.0.0 <3.1.7: ^3.1.7
 
 patchedDependencies:
   '@changesets/assemble-release-plan': 8a9e658a97bfb49c46e53b21576f6431d1b6aef77190eec5e4dbcd5c73d38ce2
@@ -64,8 +65,8 @@ importers:
         specifier: ^6.21.0
         version: 6.21.0(eslint@8.57.0)(typescript@5.9.3)
       '@vitest/coverage-v8':
-        specifier: 4.1.0
-        version: 4.1.0(vitest@4.1.0(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1)))
+        specifier: 4.1.11
+        version: 4.1.11(vitest@4.1.11)
       eslint:
         specifier: ^8.56.0
         version: 8.57.0
@@ -118,8 +119,8 @@ importers:
         specifier: ^7.3.6
         version: 7.3.6(@types/node@22.19.1)(tsx@4.23.1)
       vitest:
-        specifier: ^4.0.17
-        version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
 
   agents:
     dependencies:
@@ -129,6 +130,9 @@ importers:
       '@livekit/av':
         specifier: ^10.0.0
         version: 10.0.0
+      '@livekit/blingfire':
+        specifier: ^1.2.0
+        version: 1.2.0
       '@livekit/local-inference':
         specifier: ^0.2.7
         version: 0.2.7
@@ -156,6 +160,9 @@ importers:
       '@opentelemetry/exporter-logs-otlp-proto':
         specifier: ^0.220.0
         version: 0.220.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/exporter-metrics-otlp-proto':
+        specifier: ^0.220.0
+        version: 0.220.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/exporter-trace-otlp-proto':
         specifier: ^0.220.0
         version: 0.220.0(@opentelemetry/api@1.9.0)
@@ -171,6 +178,9 @@ importers:
       '@opentelemetry/sdk-logs':
         specifier: ^0.220.0
         version: 0.220.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-metrics':
+        specifier: ^2.8.0
+        version: 2.9.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/sdk-trace-base':
         specifier: ^2.8.0
         version: 2.9.0(@opentelemetry/api@1.9.0)
@@ -202,8 +212,8 @@ importers:
         specifier: ^3.14.0
         version: 3.14.1
       livekit-server-sdk:
-        specifier: ^2.14.1
-        version: 2.14.1
+        specifier: ^2.15.0
+        version: 2.18.0
       ofetch:
         specifier: ^1.5.1
         version: 1.5.1
@@ -220,8 +230,8 @@ importers:
         specifier: ^11.0.0
         version: 11.0.0
       sharp:
-        specifier: 0.35.3
-        version: 0.35.3(@types/node@22.19.1)
+        specifier: 0.35.5
+        version: 0.35.5(@types/node@22.19.1)
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -231,7 +241,7 @@ importers:
     devDependencies:
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@22.19.1)
@@ -354,7 +364,7 @@ importers:
         version: 0.1.9
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.0
@@ -386,8 +396,8 @@ importers:
         specifier: ^1.28.0
         version: 1.43.0
       livekit-server-sdk:
-        specifier: ^2.14.1
-        version: 2.14.1
+        specifier: ^2.15.0
+        version: 2.18.0
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -402,8 +412,8 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
       vitest:
-        specifier: ^4.0.17
-        version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
       zod:
         specifier: ^4.1.12
         version: 4.3.6
@@ -428,7 +438,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -456,7 +466,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -487,7 +497,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -512,7 +522,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -546,7 +556,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@22.19.1)
@@ -574,7 +584,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -611,7 +621,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -645,7 +655,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -679,7 +689,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -704,7 +714,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -738,7 +748,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -772,7 +782,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -789,8 +799,8 @@ importers:
   plugins/google:
     dependencies:
       '@google/genai':
-        specifier: ^2.13.0
-        version: 2.13.0
+        specifier: ^2.29.1
+        version: 2.29.1
       '@livekit/mutex':
         specifier: ^1.1.1
         version: 1.1.1
@@ -818,7 +828,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -828,6 +838,9 @@ importers:
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
+      zod:
+        specifier: ^3.25.76 || ^4.1.8
+        version: 4.3.6
 
   plugins/hume:
     devDependencies:
@@ -842,7 +855,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -870,7 +883,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -888,7 +901,7 @@ importers:
     dependencies:
       '@livekit/plugins-krisp-viva-internal':
         specifier: 0.2.0
-        version: 0.2.0(@livekit/agents@agents)(@livekit/rtc-node@0.13.34)
+        version: 0.2.0(@livekit/agents@agents)(@livekit/rtc-node@1.1.0)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -901,7 +914,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -932,7 +945,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -963,7 +976,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1008,6 +1021,31 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  plugins/meta:
+    dependencies:
+      ws:
+        specifier: 'catalog:'
+        version: 8.21.3
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 1.1.0
+      '@microsoft/api-extractor':
+        specifier: ^7.58.12
+        version: 7.58.12(@types/node@25.6.0)
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.1
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.58.12(@types/node@25.6.0))(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   plugins/minimax:
     dependencies:
       ws:
@@ -1022,7 +1060,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1047,7 +1085,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1075,7 +1113,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1086,8 +1124,8 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
       vitest:
-        specifier: ^4.0.17
-        version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@25.6.0)(vite@7.3.6(@types/node@25.6.0)(tsx@4.23.1))
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@25.6.0)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@25.6.0)(tsx@4.23.1))
 
   plugins/neuphonic:
     dependencies:
@@ -1106,7 +1144,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1122,9 +1160,6 @@ importers:
 
   plugins/openai:
     dependencies:
-      '@livekit/mutex':
-        specifier: ^1.1.1
-        version: 1.1.1
       openai:
         specifier: ^6.8.1
         version: 6.8.1(ws@8.21.3)(zod@4.3.6)
@@ -1146,7 +1181,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1177,7 +1212,7 @@ importers:
         version: link:../openai
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1191,15 +1226,15 @@ importers:
   plugins/phonic:
     dependencies:
       phonic:
-        specifier: ^0.32.22
-        version: 0.32.22
+        specifier: ^0.32.28
+        version: 0.32.28
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1221,7 +1256,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1252,7 +1287,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1268,6 +1303,15 @@ importers:
 
   plugins/rime:
     dependencies:
+      '@bufbuild/protobuf':
+        specifier: ^2.14.1
+        version: 2.14.1
+      '@livekit/av':
+        specifier: ^10.0.0
+        version: 10.0.0
+      '@rimelabs/api':
+        specifier: 0.0.1
+        version: 0.0.1
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -1286,7 +1330,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1311,7 +1355,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1345,7 +1389,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1376,7 +1420,7 @@ importers:
         version: 0.2.7
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1404,13 +1448,62 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
       '@types/ws':
         specifier: 'catalog:'
         version: 8.18.1
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.58.12(@types/node@25.6.0))(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
+  plugins/speechify:
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 1.1.0
+      '@microsoft/api-extractor':
+        specifier: ^7.58.12
+        version: 7.58.12(@types/node@25.6.0)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.58.12(@types/node@25.6.0))(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
+  plugins/synthesia:
+    dependencies:
+      livekit-server-sdk:
+        specifier: ^2.13.3
+        version: 2.18.0
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 1.1.0
+      '@microsoft/api-extractor':
+        specifier: ^7.58.12
+        version: 7.58.12(@types/node@25.6.0)
+      pino:
+        specifier: ^8.19.0
+        version: 8.21.0
       tsup:
         specifier: ^8.3.5
         version: 8.4.0(@microsoft/api-extractor@7.58.12(@types/node@25.6.0))(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)
@@ -1429,7 +1522,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1452,15 +1545,15 @@ importers:
         specifier: ^1.0.16
         version: 1.0.16
       vitest:
-        specifier: ^4.0.17
-        version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@types/node':
         specifier: ^22.5.5
         version: 22.19.1
@@ -1485,7 +1578,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1522,7 +1615,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.34
+        version: 1.1.0
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -1624,6 +1717,9 @@ packages:
 
   '@bufbuild/protobuf@1.10.1':
     resolution: {integrity: sha512-wJ8ReQbHxsAfXhrf9ixl0aYbZorRuOWpBNzm8pL8ftmSxQx/wnJD5Eg861NwJU/czy2VXFIebCeZnZrI9rktIQ==}
+
+  '@bufbuild/protobuf@2.14.1':
+    resolution: {integrity: sha512-agRJn3+EJDUe8AvxTx/LnHA/GErvLE62pSaSk7+MwFOtOv8eWBu/qCq2qoZjBjVZ3C2aiFJCveuSs17KMkYGOw==}
 
   '@changesets/apply-release-plan@7.1.0':
     resolution: {integrity: sha512-yq8ML3YS7koKQ/9bk1PqO0HMzApIFNwjlwCnwFEXMzNe8NpzeeYYKCmnhWJGkN8g7E51MnWaSbqRcTcdIxUgnQ==}
@@ -2014,8 +2110,8 @@ packages:
     resolution: {integrity: sha512-Ys+3g2TaW7gADOJzPt83SJtCDhMjndcDMFVQ/Tj9iA1BfJzFKD9mAUXT3OenpuPHbI6P/myECxRJrofUsDx/5g==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
 
-  '@google/genai@2.13.0':
-    resolution: {integrity: sha512-GM7C8Kaomvjz05x5JEO6+l3d/pciL9LxAG9dUjJLD7nTPZ9X0Cfsf2Z7eET6UjgWyUmxXCHtYnQoQ77F9+ZIOQ==}
+  '@google/genai@2.29.1':
+    resolution: {integrity: sha512-keU+JsY11fT4ykdFA6Q8iQHBgOAAVssFLxPtXRjCIEr5Zt2GzE75c22bBmq87XbhgtpuKaObnSgsrG60rj0ZMA==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.2
@@ -2058,160 +2154,160 @@ packages:
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
     engines: {node: '>=18'}
 
-  '@img/sharp-darwin-arm64@0.35.3':
-    resolution: {integrity: sha512-RMnFX7YQsMoh7lWfcM4NEHHymBX/rLuKNPVM84XE9ONPcaSCDgE7CHIHpSgPcO2xcRthgBy1HfNO319mwhIAkg==}
+  '@img/sharp-darwin-arm64@0.35.5':
+    resolution: {integrity: sha512-QRUlFQ0WxvdWyqqG/WtI3iupfD5rBzmCHXSdPsY91sAtVtTo7Q4cb6zOccZ3gqEqkr0f1As1ehLqmEpDsRf+lg==}
     engines: {node: '>=20.9.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@img/sharp-darwin-x64@0.35.3':
-    resolution: {integrity: sha512-Xo+5uFBtLN0BKqieTxiFzFPQAUlBbbH5iBKyRX/z1JrbnYsHTfKJnUfL8+p2TPXr1pXqao4eeL4Rl144uDpK9w==}
+  '@img/sharp-darwin-x64@0.35.5':
+    resolution: {integrity: sha512-+BR255RhDlpygUpOc/Jdt1nT6DQ3XG/ERo5wbcdOf5Q320dKtPCKPLR1LJs9VGXRaMa8l1uUa0tkCNOXiAxZUw==}
     engines: {node: '>=20.9.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@img/sharp-freebsd-wasm32@0.35.3':
-    resolution: {integrity: sha512-lUxcqWIj2wMQ9BrwNjngcr1gWUr5xgaGThBRqPPalIC2n67Cqj1uPh8NnA/ZhAg8hUbKl+kVHKwgUIwe6ZYPrg==}
+  '@img/sharp-freebsd-wasm32@0.35.5':
+    resolution: {integrity: sha512-Y/z91nEZ4uIBX5X3nfTovjU9lHNKFYbL2lpHCLVNmXQK03VIZvXBBt0KxbPGp2SdGSF+2mQU4e+hQaWOt86iAw==}
     engines: {node: '>=20.9.0'}
     os: [freebsd]
 
-  '@img/sharp-libvips-darwin-arm64@1.3.2':
-    resolution: {integrity: sha512-9J6ypZFpQBj4YnePGoq/S38w6nz+vqg5WZLrLGY4YuSemdMq47GMLBPO42MzwdGwpg/agZ7xzZcFHa48xlywfg==}
+  '@img/sharp-libvips-darwin-arm64@1.3.4':
+    resolution: {integrity: sha512-5R89nBYiRdUlSWJxPhO+GVtaXzXSxKnRu/xqMn3KTA3L9EB9Oy/P+Nn2f2vlhPuUdy/Zusb2DarbyTpGCfEDuw==}
     cpu: [arm64]
     os: [darwin]
 
-  '@img/sharp-libvips-darwin-x64@1.3.2':
-    resolution: {integrity: sha512-m2pW1n6cns9VaubNwsZ+c3CRYjxNQWgJ5gPlnL1nbBcpkBvFm6SCFN5o0psFHI8w9n11NKhFkeEDns98tiqbEw==}
+  '@img/sharp-libvips-darwin-x64@1.3.4':
+    resolution: {integrity: sha512-iR2OKH80yi0U+dUplyh3/xdpFvps6YkCwsXenIJxqxR1v9o+xtKTGbS9H7cps+2Vxjc8B1j96p75NmTGjIhtpQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@img/sharp-libvips-linux-arm64@1.3.2':
-    resolution: {integrity: sha512-dqVSFynCox4C/J8kT16V7SIFAns0IjgLwkvYT7p8LQVmJ5OS5b6tI9IGflxTeuBS//zXeFIUbwt5dwxyZ17cnA==}
+  '@img/sharp-libvips-linux-arm64@1.3.4':
+    resolution: {integrity: sha512-Y3dgX/6lE2QhQb+Gxy0WZxfg9MEm/JBjamZpS2IklP7xIQoKN4hzAm7KcMVGtaVDt3neE9OKBC7vAfonA/Lr1A==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-libvips-linux-arm@1.3.2':
-    resolution: {integrity: sha512-1eMLzy92I4J6rmi4mAT8yC3HxOtniyGELlzGbNMLLeqe052ahFQ0h6LFq+lh5DsDIdYViIDst08abvSbcEdLXQ==}
+  '@img/sharp-libvips-linux-arm@1.3.4':
+    resolution: {integrity: sha512-LmRtTsOHuvM2+wlO2Db37dx5MiZhB0FvSunciw48YjdOkZz9KAiRbm8ujeMOA1INqmei5NapFxYEK1D1ZSidmw==}
     cpu: [arm]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-libvips-linux-ppc64@1.3.2':
-    resolution: {integrity: sha512-3z0NHDxD6n5I9gc05U1eW1AyRm+Gznzq3naMrthPNqE6oYykcogW0l/jfpJdjYnuNl8R7yI9pNbE1XiUeyq0Aw==}
+  '@img/sharp-libvips-linux-ppc64@1.3.4':
+    resolution: {integrity: sha512-Le6boB8Tai0Nis+gIxIpKx68UDVVIqdR8Tin5Yf1z2LJJQLDJvCDRqRu+jC2qCoD+eIomonmOwB4smBRxfVpYQ==}
     cpu: [ppc64]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-libvips-linux-riscv64@1.3.2':
-    resolution: {integrity: sha512-bsb4rI+NldGOsXuej2r8OdSS8+zXDVaCWxyWrcv6kneTOlgAHtZABRzBBCwdsPiD90J4myNJuHpg6kA20ImW/w==}
+  '@img/sharp-libvips-linux-riscv64@1.3.4':
+    resolution: {integrity: sha512-aHkkIEHPRdQEegJN20MLmGtxYD9R2wQr3Cwpddnu5+YKMt6Uzax7S9h5gpZTo8wyrGuZSlfQ63OevL5mTyOC7Q==}
     cpu: [riscv64]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-libvips-linux-s390x@1.3.2':
-    resolution: {integrity: sha512-/ABshyj8gCpyIrNXnHn4LorDJ0HHm1VhXPBlxZ8zAtfVPAaSafXPGn+sUSIRiwaSBy0mmFjSjiXI5mkcwdChKQ==}
+  '@img/sharp-libvips-linux-s390x@1.3.4':
+    resolution: {integrity: sha512-ra/mB6MikESDUO7Yg+Mi95bFBb9GsObURuhnOv3OqknjGe9sZrG8tCe9q0xSIGrtLgvgw0gKnFWcK4blSgQOuQ==}
     cpu: [s390x]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-libvips-linux-x64@1.3.2':
-    resolution: {integrity: sha512-ITPEtgffGJ0S6G9dRyw/366tJQqFRcHWPHhC+Stpg3Z8AEMrDrTr2lhdz4f/Y/HMbRh//7Z5mBzEpVdi62Oc3w==}
+  '@img/sharp-libvips-linux-x64@1.3.4':
+    resolution: {integrity: sha512-GJ//SSXbnwSDes02umB3nDJLFcQzw8a18V8fyhqr6tV515tOEMdImjjxj1AoafMRz56F3PHgftnj1QEKSU1zkw==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-libvips-linuxmusl-arm64@1.3.2':
-    resolution: {integrity: sha512-zE9EdiUzUmg5mDT5a1rk5fYJ6GWPloTwWBYDS14naqHsL+EaMpDj1AWnpLgh3u0YCORv2Tt50wrcrpYqkP97Kw==}
+  '@img/sharp-libvips-linuxmusl-arm64@1.3.4':
+    resolution: {integrity: sha512-hvulFwtjUcagsis6BBxHwGFwWoNZjgYmULGVrZcyfNbjA8hKILbRxGg15/7w5HDyXHXUos/j6baAWqnCyQ2DWA==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@img/sharp-libvips-linuxmusl-x64@1.3.2':
-    resolution: {integrity: sha512-m0lrLiUt+lBYnCFr8qV/65yMR4E/c7/wf78I5eKTdkEakFAlZ9QlzEM3QIhhAwVeUhLAHLcCq7a7Vszq/oFNZQ==}
+  '@img/sharp-libvips-linuxmusl-x64@1.3.4':
+    resolution: {integrity: sha512-6zXKeE/p39I1AmA3cJG35eyBGNqNddLnUXjhwBnsGjFPWqf5VKkDBEqaEkPDoTEtkxwi2vv8Tcr2mDyP4So7Fg==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@img/sharp-linux-arm64@0.35.3':
-    resolution: {integrity: sha512-QgKDspHPnrU+GQ55XPhGwyhC8acLVOOSyAvo1oVfFmrIXLkDNmGWzAfDZ4xK8oSA1qBQrALcHX0G5UZni/SuFQ==}
+  '@img/sharp-linux-arm64@0.35.5':
+    resolution: {integrity: sha512-LYVx5JTsOM2CBzmxreh+nl64/3H6Xb09iSLknqH47z2T2DFFxDeFLP5y4dJwe6H7uGQlHPyEEtIqyo3DYsRwdQ==}
     engines: {node: '>=20.9.0'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-linux-arm@0.35.3':
-    resolution: {integrity: sha512-affVWCTLooy8TSxbDx2qkzuDeaWLNVBA+P//FNBirHsXpP2fuBhk5AuboYUnrDnzoXes8GFjpTx0SBFOCRg+FA==}
+  '@img/sharp-linux-arm@0.35.5':
+    resolution: {integrity: sha512-LEaXK2WdXVK5ykcw0buWyPMsmLLL2vpHLD6yrNSW+JGEL3BZPA4tpKN6iaMc4AxTTAoaX/sU1rOL51lcIz48ZQ==}
     engines: {node: '>=20.9.0'}
     cpu: [arm]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-linux-ppc64@0.35.3':
-    resolution: {integrity: sha512-sMd8rDxmpLOwv/7N44klFjOD5DUO7FLdjiXDI0hoxYaf7Ar262dQIEkosE98bps+5HPLtp/EvNqeqQtOycP/IA==}
+  '@img/sharp-linux-ppc64@0.35.5':
+    resolution: {integrity: sha512-QVxAAq8evVRI9ia2vqgwrmWucn5Dfv+JdWzj75pD8omHLPSP7f8p20O8jxzjCcuCEQEOtYOZUmX1hkiZ0kdevA==}
     engines: {node: '>=20.9.0'}
     cpu: [ppc64]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-linux-riscv64@0.35.3':
-    resolution: {integrity: sha512-0Eob78yjlYPfL5vMNWAW55l3R9Y6BQS/gOfe0ZcP9mEz9ohhKSt4im1hayiknXgf8AWrFqMvJcKIdmLmEe7yeQ==}
+  '@img/sharp-linux-riscv64@0.35.5':
+    resolution: {integrity: sha512-LtdreXguaavKODPIfzJ4kffx7UNt1omwtK0rch4EBbbSTXPnxWmYSayXdLJw0fJzQ97kHt1gL/yh4tvU+nCyRQ==}
     engines: {node: '>=20.9.0'}
     cpu: [riscv64]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-linux-s390x@0.35.3':
-    resolution: {integrity: sha512-KgAxQ0DxpNOq1rG2t5cgTgShJFGSuU7XO45cqC+1NVOuZnP6tlgZRuSYOfNupGkHID0o3cJOsw4DVeJpMovcGw==}
+  '@img/sharp-linux-s390x@0.35.5':
+    resolution: {integrity: sha512-UZasTOFiYzotTsGOCu42BfUzP6Tu6Do/947iRm1RsLKvlllxwGcn4RN27LibGWceix4Y+Pmw3jsnTcCQIgWjqA==}
     engines: {node: '>=20.9.0'}
     cpu: [s390x]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-linux-x64@0.35.3':
-    resolution: {integrity: sha512-8pqvxubL2PGdhlPy6GLqzDYMUjyRmKAwKHYKixpdJYBUK7PJ0C029XdsnpFIdgRZG68fZiGdHVWcKPvtiPB4cA==}
+  '@img/sharp-linux-x64@0.35.5':
+    resolution: {integrity: sha512-SxFtLTeJInhAA9Q836kux2vZNeOBQEx658qvbboZScr0wIARym3IcGmW7KpVD5sbVg0Ojy+udFQdayYIZyoNog==}
     engines: {node: '>=20.9.0'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@img/sharp-linuxmusl-arm64@0.35.3':
-    resolution: {integrity: sha512-Vz0iQjzzcSX3HCbfwFfCSG/9SCIqyO0mH2sXyiHaAYfBk0cRsCWXRyQYX0ovCK/PAQBbTzQ0dsPQHh5MAFL59w==}
+  '@img/sharp-linuxmusl-arm64@0.35.5':
+    resolution: {integrity: sha512-9HbMclmI1zlNkFRs3z9/eBtDjfD0sGlrX1z6b1qwmiFY5ElDLh4BC0LPBdVp7z1DXFiKlIcznf+ZlsuZzLxQqg==}
     engines: {node: '>=20.9.0'}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@img/sharp-linuxmusl-x64@0.35.3':
-    resolution: {integrity: sha512-6O1NPKcDVj9QEdg7Hx549EX8U0rp6yXQERqru6yRN7fGBn32UvIRJUlWnk+8xDCiG76hXVBbX82NZ/ZKr0euIg==}
+  '@img/sharp-linuxmusl-x64@0.35.5':
+    resolution: {integrity: sha512-4KOphqB035HrVdqLZfCgMzzERrQkkzOwRhl4OAkRO1YCldbaFjySXMaK534Mo0V+LndnlJk+sbUyLeU0ULyD1A==}
     engines: {node: '>=20.9.0'}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@img/sharp-wasm32@0.35.3':
-    resolution: {integrity: sha512-cZ0XkcYGpHZkqW6iCkqTcmUC0CD9DhD5d/qeZlZkfRBn6GnHniZXLUo5+9xw8Iv76YE6LQFN9YNBlKREcCG76w==}
+  '@img/sharp-wasm32@0.35.5':
+    resolution: {integrity: sha512-Ptsga1su4tQx+LLF1ECS9U6nz5kmrXKo6XVbtR48Ke3ZRxxgaWBu7IDtEe1quo8hiupwm6WFqxVlXaSf7IINGQ==}
     engines: {node: '>=20.9.0'}
 
-  '@img/sharp-webcontainers-wasm32@0.35.3':
-    resolution: {integrity: sha512-2rnq7bX3NzeR2T4YWgz8qiG4h3TSdMe+vN1iQXpJleSJ3SM5zQ8Fy2SyyXAWlbxpEZ2Y+Z4u1BePgJEYbSy80Q==}
+  '@img/sharp-webcontainers-wasm32@0.35.5':
+    resolution: {integrity: sha512-hfhF/FmoQyTUkA0bIKFOtw536BQSeBMe6BF6QyWlrPxT754+TFLaZ7sKKTfvvM0yJgKgaYTwnFCIZ/GuDw5SUA==}
     engines: {node: '>=20.9.0'}
     cpu: [wasm32]
 
-  '@img/sharp-win32-arm64@0.35.3':
-    resolution: {integrity: sha512-4bPwFdMbeC4JQ8L8LOyWp6nsHcboP5fxkp6iPOXz2Vg49R42TuMs2whkJ5OAP4/Ul035qOzy0AecOF9VOscn4w==}
+  '@img/sharp-win32-arm64@0.35.5':
+    resolution: {integrity: sha512-X4t7g+7ZA5DKblCBEXGjUqqemj4vczING/5viFwAL8h4N3qYeyjwdCvRLHi4EdOUI+2Z7UFlp1VM+p/AuEtm6Q==}
     engines: {node: '>=20.9.0'}
     cpu: [arm64]
     os: [win32]
 
-  '@img/sharp-win32-ia32@0.35.3':
-    resolution: {integrity: sha512-r53mXsBN6lFUDiST764SvgwUdHAqM4rPAiDzAmf4fLoB6X/rkfyTrLCg6+g17wJJiCmB3JYgHuUldCWUIRFSXw==}
+  '@img/sharp-win32-ia32@0.35.5':
+    resolution: {integrity: sha512-5Zm82LoBc43nhwNybZlG7Y1KO//Zhsn306fQl29ZOuStHLGTo3BWL83q3cznX0poxSAMuYL1On/BHBxkBeKr6A==}
     engines: {node: ^20.9.0}
     cpu: [ia32]
     os: [win32]
 
-  '@img/sharp-win32-x64@0.35.3':
-    resolution: {integrity: sha512-D4y1vNeZrIIJCN+uHaWVtH86B+aCrdMYYjicy9pXHvbGZeGYLLSd3wdVuC37FxVXlU1ARsk84eKWfWMXGYEqvA==}
+  '@img/sharp-win32-x64@0.35.5':
+    resolution: {integrity: sha512-x76eH0vEiHlcMQu8Y8IenntaACtddpT6W0wmXtWrnKcnKI7ME5DdgqhAD6SEWOEl1v2zDvkZDhFA9KnURwpfqg==}
     engines: {node: '>=20.9.0'}
     cpu: [x64]
     os: [win32]
@@ -2288,6 +2384,49 @@ packages:
 
   '@livekit/av@10.0.0':
     resolution: {integrity: sha512-i39au9JY9qqZ9b0yKa5+2E3BQD9JtbGlCxqDbSvFjxprdHTdP96NgsLHOViwLk84J+eCLIyNzcGw5G3zIK2ZhQ==}
+    engines: {node: '>=18.0.0'}
+
+  '@livekit/blingfire-darwin-arm64@1.2.0':
+    resolution: {integrity: sha512-T5VutjrRGhDjYlPGMpfTbu1FQ+fX+kne/Q6iXp+wjwlcslauxzc5fhjdhO4jfjC240vZy/51psWxxHW9YD1hyQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@livekit/blingfire-darwin-x64@1.2.0':
+    resolution: {integrity: sha512-85gLmr16ZF/7fKWzx3t2x+BSfWp6KebMH9k70pUFqzmfPxaw95ykiHME4Xh5tgbbBqe7RLF4gFIOGcfUZi9hGQ==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@livekit/blingfire-linux-arm64-gnu@1.2.0':
+    resolution: {integrity: sha512-ByYgnLPKE6PFFNwLKMmTaNPVo3daGl006nNCyIIP7PFTVQ7GUnP2nC6a42GlquSj1bKtaXI9JA/rUWbcVRT1JQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@livekit/blingfire-linux-arm64-musl@1.2.0':
+    resolution: {integrity: sha512-i52nJN3DxrJA0H7F0vIs7gsDKpxwuNqvc3/w/6SxpPJuV9X0UfvtZ5GcYKmcKUfLIZBk1pxW2ukRW3KagBcPaQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@livekit/blingfire-linux-x64-gnu@1.2.0':
+    resolution: {integrity: sha512-9GA+RaNikYlLhQd4i3aJQGAICd3kSFKN3xr8JZhi3YirhbU4GsPLC6FIdTC44QgOtciR/4tUGS1fCM/SkIJowg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@livekit/blingfire-linux-x64-musl@1.2.0':
+    resolution: {integrity: sha512-/Phblzva6LsWYgFrk3niZq4sBIDY9/3fFMCJo8lF65B2Rkz1BWNoxSCEjmyFeYdfjmgsDClRtR1lymGZrjT5hA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@livekit/blingfire-win32-x64-msvc@1.2.0':
+    resolution: {integrity: sha512-VAz0sr5ogT11CsviPSdbaGV0A7onGH9oW+vtN8XP1hwP5Mm1Dgz7rfG2ZYVi1pRuNqJfF2zmEVm9/Qmb6EYvDA==}
+    cpu: [x64]
+    os: [win32]
+
+  '@livekit/blingfire@1.2.0':
+    resolution: {integrity: sha512-NBkAm31MpXyatfstI5YlaPlU2TCcvwoyghgODeieZU63TjhGM9tTHDsh10P8FP5nJ67nJLN+ZqbH3L1Pkdvpjg==}
     engines: {node: '>=18.0.0'}
 
   '@livekit/changesets-changelog-github@0.2.0':
@@ -2390,6 +2529,9 @@ packages:
     cpu: [x64]
     os: [linux]
 
+  '@livekit/protocol@1.48.0':
+    resolution: {integrity: sha512-fYHYgltH6YavAsokl3qsHLkBdQeKCl4UORVTub5crS3t8JtKFZ0uinHDFQ+XXdNKS6Ub9gcOjV+UHcDiqnWXoQ==}
+
   '@livekit/protocol@1.50.4':
     resolution: {integrity: sha512-L1uggNQAqyY21smQY8AllyOYbcv9Me9TaxwuLytL1R8ck9nbYPmQLNwEDi3pOFGAMa5F8I2nUi2Jc59W5awxlA==}
 
@@ -2431,6 +2573,10 @@ packages:
 
   '@livekit/rtc-node@0.13.34':
     resolution: {integrity: sha512-22EWklyNUGJ5EamOcC/eUnLy0Gu3SpzxzUkuXCixCequwNDmj8PGjKgtpWThlqTWkzvh9xsAKmQoDWhlXhkrzA==}
+    engines: {node: '>= 18'}
+
+  '@livekit/rtc-node@1.1.0':
+    resolution: {integrity: sha512-KFNvPz7qQSJBTttDukanhMJ+bCNxj6O3A3fXl6GJvOEamJJk7GqKCWgAdLW3JLjuT1pPQDyQPJJnYdR25N+MXA==}
     engines: {node: '>= 18'}
 
   '@livekit/throws-transformer@0.1.8':
@@ -2517,6 +2663,18 @@ packages:
 
   '@opentelemetry/exporter-logs-otlp-proto@0.220.0':
     resolution: {integrity: sha512-8LZAxdJ0ENDAFwr4j0oY35mHBltiSzvlhdQAPGiC7p9VnxtuSq4SW1gfBAdW6t6hiQG6OwUl8w7KHaOdJPKHWg==}
+    engines: {node: ^18.19.0 || >=20.6.0}
+    peerDependencies:
+      '@opentelemetry/api': ^1.3.0
+
+  '@opentelemetry/exporter-metrics-otlp-http@0.220.0':
+    resolution: {integrity: sha512-Yqt3RBw/bRVncaE9qIIhk4WfjbAQqXuP9FgAaU+IKPndnLEp/cUqZlSC324+bpmduRz7DoTjig8Ub0PeILWXUA==}
+    engines: {node: ^18.19.0 || >=20.6.0}
+    peerDependencies:
+      '@opentelemetry/api': ^1.3.0
+
+  '@opentelemetry/exporter-metrics-otlp-proto@0.220.0':
+    resolution: {integrity: sha512-lyO+IQBdSvqHN/ZOW/OzrSWemtfD+HgWngn+HBNLhjy0YrCQQTz0OE/kSekH2Pl340dn9DWzhqHdz5Eftr+HLA==}
     engines: {node: ^18.19.0 || >=20.6.0}
     peerDependencies:
       '@opentelemetry/api': ^1.3.0
@@ -2631,6 +2789,9 @@ packages:
 
   '@protobufjs/utf8@1.1.1':
     resolution: {integrity: sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg==}
+
+  '@rimelabs/api@0.0.1':
+    resolution: {integrity: sha512-U8cHW3aRyzDWFU9ww4qZFOJyIH+2p7zQBkWwmpcKoOsrdUmsi6qVXVGohipbOxUCmX+qaGGtd/g8MD6LVwTpTg==}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     resolution: {integrity: sha512-6o7ZLZK+BeenkZCFNDXqpbjw9bD6nuWonvS/lwQJp7NoVVxm6p3qE7qQ5jGuBjiFsgvqjD8mZAU5oWxTmbOeOg==}
@@ -2982,43 +3143,43 @@ packages:
     resolution: {integrity: sha512-zuVdFrMJiuCDQUMCzQaD6KL28MjnqqN8XnAqiEq9PNm/hCPTSGfrXCOfwj1ow4LFb/tNymJPwsNbVePc1xFqrQ==}
     deprecated: Potential CWE-502 - Update to 1.3.1 or higher
 
-  '@vitest/coverage-v8@4.1.0':
-    resolution: {integrity: sha512-nDWulKeik2bL2Va/Wl4x7DLuTKAXa906iRFooIRPR+huHkcvp9QDkPQ2RJdmjOFrqOqvNfoSQLF68deE3xC3CQ==}
+  '@vitest/coverage-v8@4.1.11':
+    resolution: {integrity: sha512-8MVGEFnJIcdGjcbfKmeq8z0pZHH0JlVtoVZH9Q/qwUp6wyFnEJUBMrw9DCaj+ra3vShGmhavjalMIhPNxZAUcw==}
     peerDependencies:
-      '@vitest/browser': 4.1.0
-      vitest: 4.1.0
+      '@vitest/browser': 4.1.11
+      vitest: 4.1.11
     peerDependenciesMeta:
       '@vitest/browser':
         optional: true
 
-  '@vitest/expect@4.1.0':
-    resolution: {integrity: sha512-EIxG7k4wlWweuCLG9Y5InKFwpMEOyrMb6ZJ1ihYu02LVj/bzUwn2VMU+13PinsjRW75XnITeFrQBMH5+dLvCDA==}
+  '@vitest/expect@4.1.11':
+    resolution: {integrity: sha512-VX2x5vNJXET47KAFzwERI+KRMtTTCSWTfSMKsW7JsUsXV4psq++e3DvZpuTDOpHcxytiDs6p2nhVb2tVDiiUYw==}
 
-  '@vitest/mocker@4.1.0':
-    resolution: {integrity: sha512-evxREh+Hork43+Y4IOhTo+h5lGmVRyjqI739Rz4RlUPqwrkFFDF6EMvOOYjTx4E8Tl6gyCLRL8Mu7Ry12a13Tw==}
+  '@vitest/mocker@4.1.11':
+    resolution: {integrity: sha512-2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ==}
     peerDependencies:
       msw: ^2.4.9
-      vite: ^6.0.0 || ^7.0.0 || ^8.0.0-0
+      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
       msw:
         optional: true
       vite:
         optional: true
 
-  '@vitest/pretty-format@4.1.0':
-    resolution: {integrity: sha512-3RZLZlh88Ib0J7NQTRATfc/3ZPOnSUn2uDBUoGNn5T36+bALixmzphN26OUD3LRXWkJu4H0s5vvUeqBiw+kS0A==}
+  '@vitest/pretty-format@4.1.11':
+    resolution: {integrity: sha512-yiZzPbGTS9Sr/JpFl8zHrcIkAofNbFV6k21vIgQN/cY/oxZeXhJv5sc/MBJ5jFKWmWs+oJHw0UXLZjmf931+Vw==}
 
-  '@vitest/runner@4.1.0':
-    resolution: {integrity: sha512-Duvx2OzQ7d6OjchL+trw+aSrb9idh7pnNfxrklo14p3zmNL4qPCDeIJAK+eBKYjkIwG96Bc6vYuxhqDXQOWpoQ==}
+  '@vitest/runner@4.1.11':
+    resolution: {integrity: sha512-LztvUgdwMNJMIkj3hQnnxiC2Xy1zNxq928W/xhjCLaNCzqTZOudjwbQf6v9IntZGPw132i2Lq2rgTRZHD3JHNw==}
 
-  '@vitest/snapshot@4.1.0':
-    resolution: {integrity: sha512-0Vy9euT1kgsnj1CHttwi9i9o+4rRLEaPRSOJ5gyv579GJkNpgJK+B4HSv/rAWixx2wdAFci1X4CEPjiu2bXIMg==}
+  '@vitest/snapshot@4.1.11':
+    resolution: {integrity: sha512-pN7ikn1ON7h8ee4gIAp4AzyK+zBtJPzVbqOgu5LCEh4VaJVbPQcgYQYJIMGQPXVeJJq1fnfazis7a5pFNPahog==}
 
-  '@vitest/spy@4.1.0':
-    resolution: {integrity: sha512-pz77k+PgNpyMDv2FV6qmk5ZVau6c3R8HC8v342T2xlFxQKTrSeYw9waIJG8KgV9fFwAtTu4ceRzMivPTH6wSxw==}
+  '@vitest/spy@4.1.11':
+    resolution: {integrity: sha512-apNa/prQy2qCeywhnixOHPRCgGNhvg7T4Dapfl1GahLp/R+uhBm5cPyFoNVyqsNd2h1nJxL6BqqdIjiABL60YA==}
 
-  '@vitest/utils@4.1.0':
-    resolution: {integrity: sha512-XfPXT6a8TZY3dcGY8EdwsBulFCIw+BeeX0RZn2x/BtiY/75YGh8FeWGG8QISN/WhaqSrE2OrlDgtF8q5uhOTmw==}
+  '@vitest/utils@4.1.11':
+    resolution: {integrity: sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ==}
 
   '@yuuang/ffi-rs-android-arm64@1.3.2':
     resolution: {integrity: sha512-eDYLT0kVBkp7e2BwdRDmt6N1rkeDPUHDefk3ZX0/nok+GLsqfy1WBoSL3Yg7HVXN1EyW8OBVc2uK8Zq8HbmaSA==}
@@ -3104,8 +3265,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  adm-zip@0.6.0:
-    resolution: {integrity: sha512-XleryMhbuksdKtofnWZ9Sk+4CUTbms4Mb/EU32SZwToAyZ5RgVos/ki8n+yr0LWHOGKuakbXTuuYNHLQjhddgg==}
+  adm-zip@0.6.1:
+    resolution: {integrity: sha512-Xwrja8nx9e5o2N1my4DsKCeKpdrnACyr1wtbPxBDgGzKzKyE9kRtBFA8mWldI+RVlD7CBZNWY/wQ2+ydwOR6kQ==}
     engines: {node: '>=14.0'}
 
   agent-base@5.1.1:
@@ -3281,11 +3442,11 @@ packages:
     resolution: {integrity: sha512-d0II/GO9uf9lfUHH2BQsjxzRJZBdsjgsBiW4BvhWk/3qoKwQFjIDVN19PfX8F2D/r9PCMTtLWjYVCFrpeYUzsw==}
     deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
-  brace-expansion@1.1.16:
-    resolution: {integrity: sha512-IDw48K2/2kRkg9LdJxurvq3lV3aBgq0REY89duEqFRthjlPdXHKMj7EnQOXVckxzgisinf3nHfrcE2FufFLXMw==}
+  brace-expansion@1.1.21:
+    resolution: {integrity: sha512-9zeA+KLZNNzglF2TPKRQEDyx6Yby7daAkuy8MiPzpXPsYDWi/DRM8jmwUDxokQjYqBpv5DgPiwD4h4ZZSy1Ujw==}
 
-  brace-expansion@5.0.8:
-    resolution: {integrity: sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==}
+  brace-expansion@5.0.12:
+    resolution: {integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==}
     engines: {node: 20 || >=22}
 
   braces@3.0.3:
@@ -3813,8 +3974,8 @@ packages:
   fast-safe-stringify@2.1.1:
     resolution: {integrity: sha512-W+KJc2dmILlPplD/H4K9l9LcAHAfPtP6BY84uVLXQ6Evcz9Lcg33Y2z1IVblT6xdY54PXYVHEv+0Wpq8Io6zkA==}
 
-  fast-uri@3.1.4:
-    resolution: {integrity: sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==}
+  fast-uri@3.1.8:
+    resolution: {integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==}
 
   fastest-levenshtein@1.0.16:
     resolution: {integrity: sha512-eRnCtTTtGZFpQCwhJiUOuxPQWRXVKYDn0b2PeHfXL6/Zi53SLAzAHfVhVWK2AryC/WH05kGfxhFIPvTF0SXQzg==}
@@ -4278,8 +4439,8 @@ packages:
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
 
-  js-yaml@4.3.1:
-    resolution: {integrity: sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==}
+  js-yaml@4.3.2:
+    resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
     hasBin: true
 
   jsep@1.4.0:
@@ -4367,6 +4528,10 @@ packages:
 
   livekit-server-sdk@2.14.1:
     resolution: {integrity: sha512-kdpNXKJXps+5jzN4SmGN1w3TVSSDlS45c99R73oqz69EAlApiRT7AeEd3hAn0j2VOCFQ4tr8tegxnL+NbPA/WQ==}
+    engines: {node: '>=18'}
+
+  livekit-server-sdk@2.18.0:
+    resolution: {integrity: sha512-iUGmkbyi0g4DHKQ0Z4VSVs/V+ddp3T75ccQIe6LX94AYlqgyh+SVSM1lQMjFQuI3Qh6Z9v06T4xxV+vWmp7VeQ==}
     engines: {node: '>=18'}
 
   load-tsconfig@0.2.5:
@@ -4678,8 +4843,8 @@ packages:
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
 
-  phonic@0.32.22:
-    resolution: {integrity: sha512-adpg8W0ZaBwqEmNQkRrjq3DooTML/U/I6irMNtSIxZh789RLC9MRih/PXF2VQi0AefwydmsFapCOiMkABPUzSw==}
+  phonic@0.32.28:
+    resolution: {integrity: sha512-Xf2ro6ngBLoM1ngHwXzjcNd9xrKgdH8r3Owts+K1qeHBS+fp/6VEz+Pl7ABzOgpXptNIOt8HIU8Fz3XCb0uqgg==}
     engines: {node: '>=18.0.0'}
 
   picocolors@1.1.1:
@@ -4948,8 +5113,8 @@ packages:
     resolution: {integrity: sha512-7PGFlmtwsEADb0WYyvCMa1t+yke6daIG4Wirafur5kcf+MhUnPms1UeR0CKQdTZD81yESwMHbtn+TR+dMviakQ==}
     engines: {node: '>= 0.4'}
 
-  sharp@0.35.3:
-    resolution: {integrity: sha512-ej0zVHuZGHCiABXcNxeYhpRnPNPAcvbG8RMdBAhDAxLKkCRVSpK3Iyu7qbqw3JMzoj0REeM6f3tJLtVwl0023Q==}
+  sharp@0.35.5:
+    resolution: {integrity: sha512-Ywn4OnzGukp7CDMrp08RQ50YKmuwG47brZgIVPTvBaaAfQlRlygrRqSrxdCiL9M+LlzLBiJ68IR1QqvzHyjC7g==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       '@types/node': '*'
@@ -5325,21 +5490,23 @@ packages:
       yaml:
         optional: true
 
-  vitest@4.1.0:
-    resolution: {integrity: sha512-YbDrMF9jM2Lqc++2530UourxZHmkKLxrs4+mYhEwqWS97WJ7wOYEkcr+QfRgJ3PW9wz3odRijLZjHEaRLTNbqw==}
+  vitest@4.1.11:
+    resolution: {integrity: sha512-fhACrNXUidIbGSBr5FlbuBkO7VWC1ZyLl0DO4CU2DrQoAPxX84Ysxs+HeGQpii5lZWV1Q4gBZTTu49mF+A6Edw==}
     engines: {node: ^20.0.0 || ^22.0.0 || >=24.0.0}
     hasBin: true
     peerDependencies:
       '@edge-runtime/vm': '*'
       '@opentelemetry/api': ^1.9.0
       '@types/node': ^20.0.0 || ^22.0.0 || >=24.0.0
-      '@vitest/browser-playwright': 4.1.0
-      '@vitest/browser-preview': 4.1.0
-      '@vitest/browser-webdriverio': 4.1.0
-      '@vitest/ui': 4.1.0
+      '@vitest/browser-playwright': 4.1.11
+      '@vitest/browser-preview': 4.1.11
+      '@vitest/browser-webdriverio': 4.1.11
+      '@vitest/coverage-istanbul': 4.1.11
+      '@vitest/coverage-v8': 4.1.11
+      '@vitest/ui': 4.1.11
       happy-dom: '*'
       jsdom: '*'
-      vite: ^6.0.0 || ^7.0.0 || ^8.0.0-0
+      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
       '@edge-runtime/vm':
         optional: true
@@ -5352,6 +5519,10 @@ packages:
       '@vitest/browser-preview':
         optional: true
       '@vitest/browser-webdriverio':
+        optional: true
+      '@vitest/coverage-istanbul':
+        optional: true
+      '@vitest/coverage-v8':
         optional: true
       '@vitest/ui':
         optional: true
@@ -5582,6 +5753,8 @@ snapshots:
 
   '@bufbuild/protobuf@1.10.1': {}
 
+  '@bufbuild/protobuf@2.14.1': {}
+
   '@changesets/apply-release-plan@7.1.0':
     dependencies:
       '@changesets/config': 3.1.3
@@ -5694,7 +5867,7 @@ snapshots:
   '@changesets/parse@0.4.3':
     dependencies:
       '@changesets/types': 6.1.0
-      js-yaml: 4.3.1
+      js-yaml: 4.3.2
 
   '@changesets/pre@2.0.2':
     dependencies:
@@ -5904,7 +6077,7 @@ snapshots:
       globals: 13.24.0
       ignore: 5.3.1
       import-fresh: 3.3.0
-      js-yaml: 4.3.1
+      js-yaml: 4.3.2
       minimatch: 3.1.5
       strip-json-comments: 3.1.1
     transitivePeerDependencies:
@@ -5912,7 +6085,7 @@ snapshots:
 
   '@eslint/js@8.57.0': {}
 
-  '@google/genai@2.13.0':
+  '@google/genai@2.29.1':
     dependencies:
       google-auth-library: 10.6.2
       p-retry: 4.6.2
@@ -5939,7 +6112,7 @@ snapshots:
       '@huggingface/tokenizers': 0.1.3
       onnxruntime-node: 1.24.3
       onnxruntime-web: 1.26.0-dev.20260416-b7804b056c
-      sharp: 0.35.3(@types/node@25.6.0)
+      sharp: 0.35.5(@types/node@25.6.0)
     transitivePeerDependencies:
       - '@types/node'
 
@@ -5957,108 +6130,108 @@ snapshots:
 
   '@img/colour@1.1.0': {}
 
-  '@img/sharp-darwin-arm64@0.35.3':
+  '@img/sharp-darwin-arm64@0.35.5':
     optionalDependencies:
-      '@img/sharp-libvips-darwin-arm64': 1.3.2
+      '@img/sharp-libvips-darwin-arm64': 1.3.4
     optional: true
 
-  '@img/sharp-darwin-x64@0.35.3':
+  '@img/sharp-darwin-x64@0.35.5':
     optionalDependencies:
-      '@img/sharp-libvips-darwin-x64': 1.3.2
+      '@img/sharp-libvips-darwin-x64': 1.3.4
     optional: true
 
-  '@img/sharp-freebsd-wasm32@0.35.3':
+  '@img/sharp-freebsd-wasm32@0.35.5':
     dependencies:
-      '@img/sharp-wasm32': 0.35.3
+      '@img/sharp-wasm32': 0.35.5
     optional: true
 
-  '@img/sharp-libvips-darwin-arm64@1.3.2':
+  '@img/sharp-libvips-darwin-arm64@1.3.4':
     optional: true
 
-  '@img/sharp-libvips-darwin-x64@1.3.2':
+  '@img/sharp-libvips-darwin-x64@1.3.4':
     optional: true
 
-  '@img/sharp-libvips-linux-arm64@1.3.2':
+  '@img/sharp-libvips-linux-arm64@1.3.4':
     optional: true
 
-  '@img/sharp-libvips-linux-arm@1.3.2':
+  '@img/sharp-libvips-linux-arm@1.3.4':
     optional: true
 
-  '@img/sharp-libvips-linux-ppc64@1.3.2':
+  '@img/sharp-libvips-linux-ppc64@1.3.4':
     optional: true
 
-  '@img/sharp-libvips-linux-riscv64@1.3.2':
+  '@img/sharp-libvips-linux-riscv64@1.3.4':
     optional: true
 
-  '@img/sharp-libvips-linux-s390x@1.3.2':
+  '@img/sharp-libvips-linux-s390x@1.3.4':
     optional: true
 
-  '@img/sharp-libvips-linux-x64@1.3.2':
+  '@img/sharp-libvips-linux-x64@1.3.4':
     optional: true
 
-  '@img/sharp-libvips-linuxmusl-arm64@1.3.2':
+  '@img/sharp-libvips-linuxmusl-arm64@1.3.4':
     optional: true
 
-  '@img/sharp-libvips-linuxmusl-x64@1.3.2':
+  '@img/sharp-libvips-linuxmusl-x64@1.3.4':
     optional: true
 
-  '@img/sharp-linux-arm64@0.35.3':
+  '@img/sharp-linux-arm64@0.35.5':
     optionalDependencies:
-      '@img/sharp-libvips-linux-arm64': 1.3.2
+      '@img/sharp-libvips-linux-arm64': 1.3.4
     optional: true
 
-  '@img/sharp-linux-arm@0.35.3':
+  '@img/sharp-linux-arm@0.35.5':
     optionalDependencies:
-      '@img/sharp-libvips-linux-arm': 1.3.2
+      '@img/sharp-libvips-linux-arm': 1.3.4
     optional: true
 
-  '@img/sharp-linux-ppc64@0.35.3':
+  '@img/sharp-linux-ppc64@0.35.5':
     optionalDependencies:
-      '@img/sharp-libvips-linux-ppc64': 1.3.2
+      '@img/sharp-libvips-linux-ppc64': 1.3.4
     optional: true
 
-  '@img/sharp-linux-riscv64@0.35.3':
+  '@img/sharp-linux-riscv64@0.35.5':
     optionalDependencies:
-      '@img/sharp-libvips-linux-riscv64': 1.3.2
+      '@img/sharp-libvips-linux-riscv64': 1.3.4
     optional: true
 
-  '@img/sharp-linux-s390x@0.35.3':
+  '@img/sharp-linux-s390x@0.35.5':
     optionalDependencies:
-      '@img/sharp-libvips-linux-s390x': 1.3.2
+      '@img/sharp-libvips-linux-s390x': 1.3.4
     optional: true
 
-  '@img/sharp-linux-x64@0.35.3':
+  '@img/sharp-linux-x64@0.35.5':
     optionalDependencies:
-      '@img/sharp-libvips-linux-x64': 1.3.2
+      '@img/sharp-libvips-linux-x64': 1.3.4
     optional: true
 
-  '@img/sharp-linuxmusl-arm64@0.35.3':
+  '@img/sharp-linuxmusl-arm64@0.35.5':
     optionalDependencies:
-      '@img/sharp-libvips-linuxmusl-arm64': 1.3.2
+      '@img/sharp-libvips-linuxmusl-arm64': 1.3.4
     optional: true
 
-  '@img/sharp-linuxmusl-x64@0.35.3':
+  '@img/sharp-linuxmusl-x64@0.35.5':
     optionalDependencies:
-      '@img/sharp-libvips-linuxmusl-x64': 1.3.2
+      '@img/sharp-libvips-linuxmusl-x64': 1.3.4
     optional: true
 
-  '@img/sharp-wasm32@0.35.3':
+  '@img/sharp-wasm32@0.35.5':
     dependencies:
       '@emnapi/runtime': 1.11.3
     optional: true
 
-  '@img/sharp-webcontainers-wasm32@0.35.3':
+  '@img/sharp-webcontainers-wasm32@0.35.5':
     dependencies:
-      '@img/sharp-wasm32': 0.35.3
+      '@img/sharp-wasm32': 0.35.5
     optional: true
 
-  '@img/sharp-win32-arm64@0.35.3':
+  '@img/sharp-win32-arm64@0.35.5':
     optional: true
 
-  '@img/sharp-win32-ia32@0.35.3':
+  '@img/sharp-win32-ia32@0.35.5':
     optional: true
 
-  '@img/sharp-win32-x64@0.35.3':
+  '@img/sharp-win32-x64@0.35.5':
     optional: true
 
   '@inquirer/external-editor@1.0.3(@types/node@22.19.1)':
@@ -6125,6 +6298,39 @@ snapshots:
       '@livekit/av-linux-x64': 10.0.0
       '@livekit/av-win32-x64': 10.0.0
 
+  '@livekit/blingfire-darwin-arm64@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-darwin-x64@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-linux-arm64-gnu@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-linux-arm64-musl@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-linux-x64-gnu@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-linux-x64-musl@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-win32-x64-msvc@1.2.0':
+    optional: true
+
+  '@livekit/blingfire@1.2.0':
+    dependencies:
+      node-gyp-build: 4.8.4
+    optionalDependencies:
+      '@livekit/blingfire-darwin-arm64': 1.2.0
+      '@livekit/blingfire-darwin-x64': 1.2.0
+      '@livekit/blingfire-linux-arm64-gnu': 1.2.0
+      '@livekit/blingfire-linux-arm64-musl': 1.2.0
+      '@livekit/blingfire-linux-x64-gnu': 1.2.0
+      '@livekit/blingfire-linux-x64-musl': 1.2.0
+      '@livekit/blingfire-win32-x64-msvc': 1.2.0
+
   '@livekit/changesets-changelog-github@0.2.0':
     dependencies:
       '@changesets/get-github-info': 1.0.0-next.3
@@ -6190,10 +6396,10 @@ snapshots:
   '@livekit/plugins-krisp-viva-aarch64-unknown-linux-gnu@0.2.0':
     optional: true
 
-  '@livekit/plugins-krisp-viva-internal@0.2.0(@livekit/agents@agents)(@livekit/rtc-node@0.13.34)':
+  '@livekit/plugins-krisp-viva-internal@0.2.0(@livekit/agents@agents)(@livekit/rtc-node@1.1.0)':
     dependencies:
       '@livekit/agents': link:agents
-      '@livekit/rtc-node': 0.13.34
+      '@livekit/rtc-node': 1.1.0
       ffi-rs: 1.3.2
       pino: 9.6.0
       pino-pretty: 13.0.0
@@ -6213,6 +6419,10 @@ snapshots:
 
   '@livekit/plugins-krisp-viva-x86_64-unknown-linux-gnu@0.2.0':
     optional: true
+
+  '@livekit/protocol@1.48.0':
+    dependencies:
+      '@bufbuild/protobuf': 1.10.1
 
   '@livekit/protocol@1.50.4':
     dependencies:
@@ -6244,6 +6454,15 @@ snapshots:
       '@livekit/rtc-ffi-bindings-win32-x64-msvc': 0.12.73
 
   '@livekit/rtc-node@0.13.34':
+    dependencies:
+      '@datastructures-js/deque': 1.0.8
+      '@livekit/mutex': 1.1.1
+      '@livekit/rtc-ffi-bindings': 0.12.73
+      '@livekit/typed-emitter': 3.0.0
+      pino: 9.6.0
+      pino-pretty: 13.0.0
+
+  '@livekit/rtc-node@1.1.0':
     dependencies:
       '@datastructures-js/deque': 1.0.8
       '@livekit/mutex': 1.1.1
@@ -6403,6 +6622,25 @@ snapshots:
       '@opentelemetry/otlp-transformer': 0.220.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/sdk-logs': 0.220.0(@opentelemetry/api@1.9.0)
 
+  '@opentelemetry/exporter-metrics-otlp-http@0.220.0(@opentelemetry/api@1.9.0)':
+    dependencies:
+      '@opentelemetry/api': 1.9.0
+      '@opentelemetry/core': 2.9.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/otlp-exporter-base': 0.220.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/otlp-transformer': 0.220.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/resources': 2.9.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-metrics': 2.9.0(@opentelemetry/api@1.9.0)
+
+  '@opentelemetry/exporter-metrics-otlp-proto@0.220.0(@opentelemetry/api@1.9.0)':
+    dependencies:
+      '@opentelemetry/api': 1.9.0
+      '@opentelemetry/core': 2.9.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/exporter-metrics-otlp-http': 0.220.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/otlp-exporter-base': 0.220.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/otlp-transformer': 0.220.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/resources': 2.9.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-metrics': 2.9.0(@opentelemetry/api@1.9.0)
+
   '@opentelemetry/exporter-trace-otlp-http@0.220.0(@opentelemetry/api@1.9.0)':
     dependencies:
       '@opentelemetry/api': 1.9.0
@@ -6524,6 +6762,10 @@ snapshots:
   '@protobufjs/pool@1.1.0': {}
 
   '@protobufjs/utf8@1.1.1': {}
+
+  '@rimelabs/api@0.0.1':
+    dependencies:
+      '@bufbuild/protobuf': 2.14.1
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     optional: true
@@ -6889,10 +7131,10 @@ snapshots:
 
   '@ungap/structured-clone@1.2.0': {}
 
-  '@vitest/coverage-v8@4.1.0(vitest@4.1.0(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1)))':
+  '@vitest/coverage-v8@4.1.11(vitest@4.1.11)':
     dependencies:
       '@bcoe/v8-coverage': 1.0.2
-      '@vitest/utils': 4.1.0
+      '@vitest/utils': 4.1.11
       ast-v8-to-istanbul: 1.0.5
       istanbul-lib-coverage: 3.2.2
       istanbul-lib-report: 3.0.1
@@ -6901,54 +7143,54 @@ snapshots:
       obug: 2.1.3
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
 
-  '@vitest/expect@4.1.0':
+  '@vitest/expect@4.1.11':
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@types/chai': 5.2.3
-      '@vitest/spy': 4.1.0
-      '@vitest/utils': 4.1.0
+      '@vitest/spy': 4.1.11
+      '@vitest/utils': 4.1.11
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.0(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))':
+  '@vitest/mocker@4.1.11(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))':
     dependencies:
-      '@vitest/spy': 4.1.0
+      '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
       vite: 7.3.6(@types/node@22.19.1)(tsx@4.23.1)
 
-  '@vitest/mocker@4.1.0(vite@7.3.6(@types/node@25.6.0)(tsx@4.23.1))':
+  '@vitest/mocker@4.1.11(vite@7.3.6(@types/node@25.6.0)(tsx@4.23.1))':
     dependencies:
-      '@vitest/spy': 4.1.0
+      '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
       vite: 7.3.6(@types/node@25.6.0)(tsx@4.23.1)
 
-  '@vitest/pretty-format@4.1.0':
+  '@vitest/pretty-format@4.1.11':
     dependencies:
       tinyrainbow: 3.1.0
 
-  '@vitest/runner@4.1.0':
+  '@vitest/runner@4.1.11':
     dependencies:
-      '@vitest/utils': 4.1.0
+      '@vitest/utils': 4.1.11
       pathe: 2.0.3
 
-  '@vitest/snapshot@4.1.0':
+  '@vitest/snapshot@4.1.11':
     dependencies:
-      '@vitest/pretty-format': 4.1.0
-      '@vitest/utils': 4.1.0
+      '@vitest/pretty-format': 4.1.11
+      '@vitest/utils': 4.1.11
       magic-string: 0.30.21
       pathe: 2.0.3
 
-  '@vitest/spy@4.1.0': {}
+  '@vitest/spy@4.1.11': {}
 
-  '@vitest/utils@4.1.0':
+  '@vitest/utils@4.1.11':
     dependencies:
-      '@vitest/pretty-format': 4.1.0
+      '@vitest/pretty-format': 4.1.11
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
 
@@ -6995,7 +7237,7 @@ snapshots:
 
   acorn@8.15.0: {}
 
-  adm-zip@0.6.0: {}
+  adm-zip@0.6.1: {}
 
   agent-base@5.1.1: {}
 
@@ -7029,14 +7271,14 @@ snapshots:
   ajv@8.18.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.4
+      fast-uri: 3.1.8
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.4
+      fast-uri: 3.1.8
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -7190,12 +7432,12 @@ snapshots:
 
   boolean@3.2.0: {}
 
-  brace-expansion@1.1.16:
+  brace-expansion@1.1.21:
     dependencies:
       balanced-match: 1.0.2
       concat-map: 0.0.1
 
-  brace-expansion@5.0.8:
+  brace-expansion@5.0.12:
     dependencies:
       balanced-match: 4.0.4
 
@@ -7809,7 +8051,7 @@ snapshots:
       imurmurhash: 0.1.4
       is-glob: 4.0.3
       is-path-inside: 3.0.3
-      js-yaml: 4.3.1
+      js-yaml: 4.3.2
       json-stable-stringify-without-jsonify: 1.0.1
       levn: 0.4.1
       lodash.merge: 4.6.2
@@ -7875,7 +8117,7 @@ snapshots:
 
   fast-safe-stringify@2.1.1: {}
 
-  fast-uri@3.1.4: {}
+  fast-uri@3.1.8: {}
 
   fastest-levenshtein@1.0.16: {}
 
@@ -8373,7 +8615,7 @@ snapshots:
 
   js-tokens@4.0.0: {}
 
-  js-yaml@4.3.1:
+  js-yaml@4.3.2:
     dependencies:
       argparse: 2.0.1
 
@@ -8465,6 +8707,12 @@ snapshots:
       camelcase-keys: 9.1.3
       jose: 5.2.4
 
+  livekit-server-sdk@2.18.0:
+    dependencies:
+      '@bufbuild/protobuf': 1.10.1
+      '@livekit/protocol': 1.48.0
+      jose: 5.2.4
+
   load-tsconfig@0.2.5: {}
 
   locate-path@5.0.0:
@@ -8548,19 +8796,19 @@ snapshots:
 
   minimatch@10.2.3:
     dependencies:
-      brace-expansion: 5.0.8
+      brace-expansion: 5.0.12
 
   minimatch@10.2.4:
     dependencies:
-      brace-expansion: 5.0.8
+      brace-expansion: 5.0.12
 
   minimatch@3.1.5:
     dependencies:
-      brace-expansion: 1.1.16
+      brace-expansion: 1.1.21
 
   minimatch@9.0.9:
     dependencies:
-      brace-expansion: 5.0.8
+      brace-expansion: 5.0.12
 
   minimist@1.2.8: {}
 
@@ -8662,7 +8910,7 @@ snapshots:
 
   onnxruntime-node@1.24.3:
     dependencies:
-      adm-zip: 0.6.0
+      adm-zip: 0.6.1
       global-agent: 3.0.0
       onnxruntime-common: 1.24.3
 
@@ -8757,7 +9005,7 @@ snapshots:
 
   pathe@2.0.3: {}
 
-  phonic@0.32.22:
+  phonic@0.32.28:
     dependencies:
       ws: 8.21.3
     transitivePeerDependencies:
@@ -8922,7 +9170,7 @@ snapshots:
 
   read-yaml-file@2.1.0:
     dependencies:
-      js-yaml: 4.3.1
+      js-yaml: 4.3.2
       strip-bom: 4.0.0
 
   readable-stream@4.5.2:
@@ -9089,70 +9337,70 @@ snapshots:
       functions-have-names: 1.2.3
       has-property-descriptors: 1.0.2
 
-  sharp@0.35.3(@types/node@22.19.1):
+  sharp@0.35.5(@types/node@22.19.1):
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
       semver: 7.8.5
     optionalDependencies:
-      '@img/sharp-darwin-arm64': 0.35.3
-      '@img/sharp-darwin-x64': 0.35.3
-      '@img/sharp-freebsd-wasm32': 0.35.3
-      '@img/sharp-libvips-darwin-arm64': 1.3.2
-      '@img/sharp-libvips-darwin-x64': 1.3.2
-      '@img/sharp-libvips-linux-arm': 1.3.2
-      '@img/sharp-libvips-linux-arm64': 1.3.2
-      '@img/sharp-libvips-linux-ppc64': 1.3.2
-      '@img/sharp-libvips-linux-riscv64': 1.3.2
-      '@img/sharp-libvips-linux-s390x': 1.3.2
-      '@img/sharp-libvips-linux-x64': 1.3.2
-      '@img/sharp-libvips-linuxmusl-arm64': 1.3.2
-      '@img/sharp-libvips-linuxmusl-x64': 1.3.2
-      '@img/sharp-linux-arm': 0.35.3
-      '@img/sharp-linux-arm64': 0.35.3
-      '@img/sharp-linux-ppc64': 0.35.3
-      '@img/sharp-linux-riscv64': 0.35.3
-      '@img/sharp-linux-s390x': 0.35.3
-      '@img/sharp-linux-x64': 0.35.3
-      '@img/sharp-linuxmusl-arm64': 0.35.3
-      '@img/sharp-linuxmusl-x64': 0.35.3
-      '@img/sharp-webcontainers-wasm32': 0.35.3
-      '@img/sharp-win32-arm64': 0.35.3
-      '@img/sharp-win32-ia32': 0.35.3
-      '@img/sharp-win32-x64': 0.35.3
+      '@img/sharp-darwin-arm64': 0.35.5
+      '@img/sharp-darwin-x64': 0.35.5
+      '@img/sharp-freebsd-wasm32': 0.35.5
+      '@img/sharp-libvips-darwin-arm64': 1.3.4
+      '@img/sharp-libvips-darwin-x64': 1.3.4
+      '@img/sharp-libvips-linux-arm': 1.3.4
+      '@img/sharp-libvips-linux-arm64': 1.3.4
+      '@img/sharp-libvips-linux-ppc64': 1.3.4
+      '@img/sharp-libvips-linux-riscv64': 1.3.4
+      '@img/sharp-libvips-linux-s390x': 1.3.4
+      '@img/sharp-libvips-linux-x64': 1.3.4
+      '@img/sharp-libvips-linuxmusl-arm64': 1.3.4
+      '@img/sharp-libvips-linuxmusl-x64': 1.3.4
+      '@img/sharp-linux-arm': 0.35.5
+      '@img/sharp-linux-arm64': 0.35.5
+      '@img/sharp-linux-ppc64': 0.35.5
+      '@img/sharp-linux-riscv64': 0.35.5
+      '@img/sharp-linux-s390x': 0.35.5
+      '@img/sharp-linux-x64': 0.35.5
+      '@img/sharp-linuxmusl-arm64': 0.35.5
+      '@img/sharp-linuxmusl-x64': 0.35.5
+      '@img/sharp-webcontainers-wasm32': 0.35.5
+      '@img/sharp-win32-arm64': 0.35.5
+      '@img/sharp-win32-ia32': 0.35.5
+      '@img/sharp-win32-x64': 0.35.5
       '@types/node': 22.19.1
 
-  sharp@0.35.3(@types/node@25.6.0):
+  sharp@0.35.5(@types/node@25.6.0):
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
       semver: 7.8.5
     optionalDependencies:
-      '@img/sharp-darwin-arm64': 0.35.3
-      '@img/sharp-darwin-x64': 0.35.3
-      '@img/sharp-freebsd-wasm32': 0.35.3
-      '@img/sharp-libvips-darwin-arm64': 1.3.2
-      '@img/sharp-libvips-darwin-x64': 1.3.2
-      '@img/sharp-libvips-linux-arm': 1.3.2
-      '@img/sharp-libvips-linux-arm64': 1.3.2
-      '@img/sharp-libvips-linux-ppc64': 1.3.2
-      '@img/sharp-libvips-linux-riscv64': 1.3.2
-      '@img/sharp-libvips-linux-s390x': 1.3.2
-      '@img/sharp-libvips-linux-x64': 1.3.2
-      '@img/sharp-libvips-linuxmusl-arm64': 1.3.2
-      '@img/sharp-libvips-linuxmusl-x64': 1.3.2
-      '@img/sharp-linux-arm': 0.35.3
-      '@img/sharp-linux-arm64': 0.35.3
-      '@img/sharp-linux-ppc64': 0.35.3
-      '@img/sharp-linux-riscv64': 0.35.3
-      '@img/sharp-linux-s390x': 0.35.3
-      '@img/sharp-linux-x64': 0.35.3
-      '@img/sharp-linuxmusl-arm64': 0.35.3
-      '@img/sharp-linuxmusl-x64': 0.35.3
-      '@img/sharp-webcontainers-wasm32': 0.35.3
-      '@img/sharp-win32-arm64': 0.35.3
-      '@img/sharp-win32-ia32': 0.35.3
-      '@img/sharp-win32-x64': 0.35.3
+      '@img/sharp-darwin-arm64': 0.35.5
+      '@img/sharp-darwin-x64': 0.35.5
+      '@img/sharp-freebsd-wasm32': 0.35.5
+      '@img/sharp-libvips-darwin-arm64': 1.3.4
+      '@img/sharp-libvips-darwin-x64': 1.3.4
+      '@img/sharp-libvips-linux-arm': 1.3.4
+      '@img/sharp-libvips-linux-arm64': 1.3.4
+      '@img/sharp-libvips-linux-ppc64': 1.3.4
+      '@img/sharp-libvips-linux-riscv64': 1.3.4
+      '@img/sharp-libvips-linux-s390x': 1.3.4
+      '@img/sharp-libvips-linux-x64': 1.3.4
+      '@img/sharp-libvips-linuxmusl-arm64': 1.3.4
+      '@img/sharp-libvips-linuxmusl-x64': 1.3.4
+      '@img/sharp-linux-arm': 0.35.5
+      '@img/sharp-linux-arm64': 0.35.5
+      '@img/sharp-linux-ppc64': 0.35.5
+      '@img/sharp-linux-riscv64': 0.35.5
+      '@img/sharp-linux-s390x': 0.35.5
+      '@img/sharp-linux-x64': 0.35.5
+      '@img/sharp-linuxmusl-arm64': 0.35.5
+      '@img/sharp-linuxmusl-x64': 0.35.5
+      '@img/sharp-webcontainers-wasm32': 0.35.5
+      '@img/sharp-win32-arm64': 0.35.5
+      '@img/sharp-win32-ia32': 0.35.5
+      '@img/sharp-win32-x64': 0.35.5
       '@types/node': 25.6.0
 
   shebang-command@2.0.0:
@@ -9552,15 +9800,15 @@ snapshots:
       fsevents: 2.3.3
       tsx: 4.23.1
 
-  vitest@4.1.0(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1)):
+  vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1)):
     dependencies:
-      '@vitest/expect': 4.1.0
-      '@vitest/mocker': 4.1.0(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
-      '@vitest/pretty-format': 4.1.0
-      '@vitest/runner': 4.1.0
-      '@vitest/snapshot': 4.1.0
-      '@vitest/spy': 4.1.0
-      '@vitest/utils': 4.1.0
+      '@vitest/expect': 4.1.11
+      '@vitest/mocker': 4.1.11(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
+      '@vitest/pretty-format': 4.1.11
+      '@vitest/runner': 4.1.11
+      '@vitest/snapshot': 4.1.11
+      '@vitest/spy': 4.1.11
+      '@vitest/utils': 4.1.11
       es-module-lexer: 2.3.1
       expect-type: 1.4.0
       magic-string: 0.30.21
@@ -9577,18 +9825,19 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
       '@types/node': 22.19.1
+      '@vitest/coverage-v8': 4.1.11(vitest@4.1.11)
     transitivePeerDependencies:
       - msw
 
-  vitest@4.1.0(@opentelemetry/api@1.9.0)(@types/node@25.6.0)(vite@7.3.6(@types/node@25.6.0)(tsx@4.23.1)):
+  vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@25.6.0)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@25.6.0)(tsx@4.23.1)):
     dependencies:
-      '@vitest/expect': 4.1.0
-      '@vitest/mocker': 4.1.0(vite@7.3.6(@types/node@25.6.0)(tsx@4.23.1))
-      '@vitest/pretty-format': 4.1.0
-      '@vitest/runner': 4.1.0
-      '@vitest/snapshot': 4.1.0
-      '@vitest/spy': 4.1.0
-      '@vitest/utils': 4.1.0
+      '@vitest/expect': 4.1.11
+      '@vitest/mocker': 4.1.11(vite@7.3.6(@types/node@25.6.0)(tsx@4.23.1))
+      '@vitest/pretty-format': 4.1.11
+      '@vitest/runner': 4.1.11
+      '@vitest/snapshot': 4.1.11
+      '@vitest/spy': 4.1.11
+      '@vitest/utils': 4.1.11
       es-module-lexer: 2.3.1
       expect-type: 1.4.0
       magic-string: 0.30.21
@@ -9605,6 +9854,7 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
       '@types/node': 25.6.0
+      '@vitest/coverage-v8': 4.1.11(vitest@4.1.11)
     transitivePeerDependencies:
       - msw
 

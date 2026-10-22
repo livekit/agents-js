@@ -53,6 +53,7 @@ export interface RealtimeModelOptions {
   noInputPokeSec?: number;
   noInputPokeText?: string;
   noInputEndConversationSec?: number;
+  phonicModel?: 'phonic_v0_5' | 'phonic_v1' | 'phonic_v1_1';
   websocketTimeoutSec?: number;
   intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
   isWelcomeMessageInterruptible?: boolean;
@@ -106,6 +107,7 @@ export interface PhonicToolConfig {
   require_speech_before_tool_call?: boolean;
   forbid_speech_after_tool_call?: boolean;
   forbid_tool_call_after_speech?: boolean;
+  allow_tool_chaining?: boolean;
   // Built-in tools only (set on the matching `phonicTools` entry):
   respond_after_sec?: number; // choose_not_to_respond: seconds to wait before a follow-up (or omit)
   speech_before_tool_call?: string; // keypad_input / natural_conversation_ending: required|optional|suppressed
@@ -231,11 +233,16 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       noInputEndConversationSec?: number;
       /**
+       * Phonic model version. Defaults server-side to `phonic_v0_5` when omitted; `phonic_v1` /
+       * `phonic_v1_1` select newer versions.
+       */
+      phonicModel?: 'phonic_v0_5' | 'phonic_v1' | 'phonic_v1_1';
+      /**
        * Seconds of inactivity before the Phonic websocket is closed
        */
       websocketTimeoutSec?: number;
       /**
-       * LLM intelligence level, `standard` or `high`
+       * Model intelligence level, `standard` or `high`
        */
       intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
       /**
@@ -371,6 +378,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       noInputPokeSec: options.noInputPokeSec,
       noInputPokeText: options.noInputPokeText,
       noInputEndConversationSec: options.noInputEndConversationSec,
+      phonicModel: options.phonicModel,
       websocketTimeoutSec: options.websocketTimeoutSec,
       intelligenceLevel: options.intelligenceLevel,
       isWelcomeMessageInterruptible: options.isWelcomeMessageInterruptible,
@@ -550,7 +558,10 @@ export class RealtimeSession extends llm.RealtimeSession {
           output: item.output,
         });
         sentToolCallOutput = true;
-        if (item.name && this.configsForTools.get(item.name)?.forbid_speech_after_tool_call) {
+        if (
+          !item.replyRequired ||
+          (item.name && this.configsForTools.get(item.name)?.forbid_speech_after_tool_call)
+        ) {
           forbidSpeech = true;
         }
       }
@@ -635,11 +646,10 @@ export class RealtimeSession extends llm.RealtimeSession {
             },
           },
           tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
-          // fixed, not configurable: the plugin does not support tool chaining or tool calls
-          // during agent speech within the RealtimeSession generations framework
+          // fixed, not configurable: the plugin does not support tool calls during agent speech
           wait_for_speech_before_tool_call: true,
-          allow_tool_chaining: false,
           require_speech_before_tool_call: cfg?.require_speech_before_tool_call ?? false,
+          allow_tool_chaining: cfg?.allow_tool_chaining ?? false,
           forbid_speech_after_tool_call: cfg?.forbid_speech_after_tool_call ?? false,
           forbid_tool_call_after_speech: cfg?.forbid_tool_call_after_speech ?? false,
         };
@@ -1119,7 +1129,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         args: JSON.stringify(message.parameters),
       }),
     );
-    // At most 1 tool call is supported per turn due to `toolChaining: false`, allowing us to close the generation
+    // Close the generation after the tool call. With allow_tool_chaining enabled, any chained
+    // follow-up call arrives as a new generation.
     this.closeCurrentGeneration({ interrupted: false });
   }
 
@@ -1240,6 +1251,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     toolsPayload: Phonic.ToolDefinition[];
   }): Phonic.ConfigOptions {
     return {
+      phonic_model: this.options.phonicModel,
       agent: this.options.phonicAgent,
       project: this.options.project,
       welcome_message: this.options.welcomeMessage,

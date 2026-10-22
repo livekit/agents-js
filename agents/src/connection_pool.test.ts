@@ -363,6 +363,145 @@ describe('ConnectionPool', () => {
     });
   });
 
+  describe('releaseIdle', () => {
+    it('closes idle connections now and checked-out ones when they return', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      const idle = await pool.get();
+      pool.put(idle);
+
+      await pool.releaseIdle();
+
+      // only the idle connection closed; the in-flight one is untouched
+      expect(closeCb).toHaveBeenCalledTimes(1);
+      expect(closeCb).toHaveBeenCalledWith(idle);
+
+      // once returned it closes instead of rejoining the pool, and the next get connects fresh
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+      expect(await pool.get()).toBe('conn_3');
+    });
+
+    it('keeps a returned connection queued when its close fails, without an unhandled rejection', async () => {
+      let failOnce = true;
+      const closeCb = vi.fn(async (_conn: string) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error('close failed');
+        }
+      });
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      await pool.releaseIdle();
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledTimes(1));
+
+      // the failed close is retried by the next drain
+      await pool.close();
+      expect(closeCb).toHaveBeenCalledTimes(2);
+      expect(closeCb).toHaveBeenLastCalledWith(inUse);
+    });
+
+    it('does not let invalidate close a retired connection that is still in use', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      await pool.releaseIdle();
+      pool.invalidate();
+      await pool.get(); // drains the close queue
+      expect(closeCb).not.toHaveBeenCalledWith(inUse);
+
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+    });
+
+    it('does not close a connection invalidated mid-request, even when released afterwards', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      const idle = await pool.get();
+      pool.put(idle);
+
+      pool.invalidate(); // settings changed while inUse is still serving a request
+      await pool.releaseIdle(); // drains the close queue
+      expect(closeCb).toHaveBeenCalledTimes(1);
+      expect(closeCb).toHaveBeenCalledWith(idle);
+
+      // the request finishes: its connection closes on return and the next get connects fresh
+      pool.put(inUse);
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+      expect(await pool.get()).toBe('conn_3');
+    });
+
+    it('closes a released checked-out connection that is removed instead of returned', async () => {
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const inUse = await pool.get();
+      await pool.releaseIdle();
+      pool.remove(inUse);
+
+      await vi.waitFor(() => expect(closeCb).toHaveBeenCalledWith(inUse));
+    });
+
+    it('closes every idle connection even when one close fails', async () => {
+      let failOnce = true;
+      const closeCb = vi.fn(async (conn: string) => {
+        if (conn === 'conn_1' && failOnce) {
+          failOnce = false;
+          throw new Error('close failed');
+        }
+      });
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb(), closeCb });
+
+      const first = await pool.get();
+      const second = await pool.get();
+      pool.put(first);
+      pool.put(second);
+
+      await expect(pool.releaseIdle()).rejects.toThrow('close failed');
+
+      expect(closeCb).toHaveBeenCalledWith('conn_1');
+      expect(closeCb).toHaveBeenCalledWith('conn_2');
+      // the failed connection stays queued and is retried on the next drain
+      closeCb.mockClear();
+      await pool.close();
+      expect(closeCb).toHaveBeenCalledWith('conn_1');
+    });
+
+    it('aborts a pending prewarm before it connects', async () => {
+      const connectCb = makeConnectCb();
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb, closeCb });
+
+      pool.prewarm();
+      await pool.releaseIdle();
+
+      expect(connectCb).not.toHaveBeenCalled();
+      expect(closeCb).not.toHaveBeenCalled();
+      // the pool is still usable
+      expect(await pool.get()).toBe('conn_1');
+    });
+
+    it('closes a prewarmed idle connection and stays usable', async () => {
+      const connectCb = makeConnectCb();
+      const closeCb = vi.fn(async (_conn: string) => {});
+      const pool = new ConnectionPool<string>({ connectCb, closeCb });
+
+      pool.prewarm();
+      await vi.waitFor(() => expect(connectCb).toHaveBeenCalledTimes(1));
+      await pool.releaseIdle();
+
+      expect(closeCb).toHaveBeenCalledWith('conn_1');
+      expect(await pool.get()).toBe('conn_2');
+    });
+  });
+
   describe('close', () => {
     it('should close all connections', async () => {
       const connectCb = makeConnectCb();

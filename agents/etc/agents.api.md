@@ -10,28 +10,35 @@ import { Attributes } from '@opentelemetry/api';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
+import { default as default_2 } from 'ws';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
+import { IncomingRpcNext } from '@livekit/rtc-node';
 import { JobType } from '@livekit/protocol';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
-import type { LocalParticipant } from '@livekit/rtc-node';
+import { LocalParticipant } from '@livekit/rtc-node';
 import { LocalTrackPublication } from '@livekit/rtc-node';
 import { Logger } from 'pino';
 import type { LogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { NoiseCancellationOptions } from '@livekit/rtc-node';
 import OpenAI from 'openai';
+import { OutgoingRpcNext } from '@livekit/rtc-node';
 import { Participant } from '@livekit/rtc-node';
 import { ParticipantKind } from '@livekit/rtc-node';
 import type * as proto from '@livekit/protocol';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Reasoning as Reasoning_2 } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { RemoteTrackPublication } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
+import { RpcCallInfo } from '@livekit/rtc-node';
+import { RpcInterceptor } from '@livekit/rtc-node';
 import { RpcInvocationData } from '@livekit/rtc-node';
 import type { RtcConfiguration } from '@livekit/rtc-node';
 import { Scenario } from '@livekit/protocol';
@@ -45,7 +52,9 @@ import { SimulationRun_Job } from '@livekit/protocol';
 import type { SIPOutboundConfig } from '@livekit/protocol';
 import { Span } from '@opentelemetry/api';
 import type { Span as Span_2 } from '@opentelemetry/sdk-trace-base';
+import type { SpanContext } from '@opentelemetry/api';
 import type { SpanExporter } from '@opentelemetry/sdk-trace-base';
+import { SpanKind } from '@opentelemetry/api';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
@@ -63,8 +72,6 @@ import { WebSocket as WebSocket_2 } from 'ws';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 import { z } from 'zod';
 
-// Warning: (ae-missing-release-tag) "Aborted" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export type Aborted<T> = {
     result: T;
@@ -74,8 +81,21 @@ export type Aborted<T> = {
     isAborted: true;
 };
 
-// Warning: (ae-missing-release-tag) "Agent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+function active(): boolean;
+
+// @public
+export class AdaptiveNoiseGate implements AudioGate {
+    constructor(options?: AdaptiveNoiseGateOptions);
+    deactivate(): void;
+    update(frame: AudioFrame): boolean;
+}
+
+// @public
+export interface AdaptiveNoiseGateOptions extends AudioGateOptions {
+    window?: number;
+}
+
 // @public (undocumented)
 export class Agent<UserData = any> {
     constructor(input: AgentOptions<UserData>);
@@ -101,6 +121,7 @@ export class Agent<UserData = any> {
         transcriptionNode(agent: Agent, text: ReadableStream_2<string | TimedString> | AsyncIterable<string | TimedString>, _modelSettings: ModelSettings): Promise<ReadableStream_2<string | TimedString> | null>;
         realtimeAudioOutputNode(_agent: Agent, audio: ReadableStream_2<AudioFrame> | AsyncIterable<AudioFrame>, _modelSettings: ModelSettings): Promise<ReadableStream_2<AudioFrame> | null>;
     };
+    get duplexSession(): DuplexSession;
     get expressive(): boolean | ExpressiveOptions | undefined;
     // @internal (undocumented)
     _expressive?: boolean | ExpressiveOptions;
@@ -162,6 +183,8 @@ export class Agent<UserData = any> {
     updateOptions(options?: AgentUpdateOptions): Promise<void>;
     // (undocumented)
     updateTools(tools: ToolContextLike<UserData>): Promise<void>;
+    // @internal
+    _usesDefaultSttNode(): boolean;
     // (undocumented)
     get useTtsAlignedTranscript(): boolean | undefined;
     // (undocumented)
@@ -181,8 +204,6 @@ export type _AgentBackchannelOpportunityEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "AgentConfigUpdate" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class AgentConfigUpdate {
     constructor(params?: {
@@ -218,8 +239,6 @@ export class AgentConfigUpdate {
     readonly type: "agent_config_update";
 }
 
-// Warning: (ae-missing-release-tag) "AgentContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface AgentContext<UserData = unknown> {
     agent: Agent<UserData>;
@@ -237,14 +256,10 @@ export interface AgentContext<UserData = unknown> {
     vad: VAD | undefined;
 }
 
-// Warning: (ae-missing-release-tag) "AgentCreateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AgentCreateOptions<UserData = any> extends AgentOptions<UserData>, AgentHooks<UserData> {
 }
 
-// Warning: (ae-missing-release-tag) "AgentDefinition" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
     // (undocumented)
@@ -256,13 +271,10 @@ export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
 }
 
 // Warning: (ae-forgotten-export) The symbol "OverlappingSpeechEvent" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "AgentEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export type AgentEvent = UserInputTranscribedEvent | UserTranscriptionTimeoutEvent | UserStateChangedEvent | AgentStateChangedEvent | MetricsCollectedEvent | SessionUsageUpdatedEvent | ConversationItemAddedEvent | FunctionToolsExecutedEvent | SpeechCreatedEvent | AgentFalseInterruptionEvent | OverlappingSpeechEvent | ErrorEvent_2 | CloseEvent_2;
 
-// Warning: (ae-missing-release-tag) "AgentFalseInterruptionEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type AgentFalseInterruptionEvent = {
     type: 'agent_false_interruption';
@@ -270,8 +282,6 @@ export type AgentFalseInterruptionEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "AgentHandoff" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AgentHandoff {
     // (undocumented)
@@ -280,8 +290,6 @@ export interface AgentHandoff {
     returns?: any;
 }
 
-// Warning: (ae-missing-release-tag) "AgentHandoffAssert" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class AgentHandoffAssert extends EventAssert {
     constructor(event: AgentHandoffEvent, parent: RunAssert, index: number);
@@ -291,16 +299,12 @@ class AgentHandoffAssert extends EventAssert {
     protected _event: AgentHandoffEvent;
 }
 
-// Warning: (ae-missing-release-tag) "AgentHandoffAssertOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface AgentHandoffAssertOptions {
     // (undocumented)
     newAgentType?: new (...args: any[]) => Agent;
 }
 
-// Warning: (ae-missing-release-tag) "AgentHandoffEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface AgentHandoffEvent {
     // (undocumented)
@@ -313,8 +317,6 @@ interface AgentHandoffEvent {
     type: 'agent_handoff';
 }
 
-// Warning: (ae-missing-release-tag) "AgentHandoffItem" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class AgentHandoffItem {
     constructor(params: {
@@ -344,13 +346,9 @@ export class AgentHandoffItem {
     readonly type: "agent_handoff";
 }
 
-// Warning: (ae-missing-release-tag) "AgentHookNodeResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export type AgentHookNodeResult<T> = AsyncIterable<T> | Promise<AsyncIterable<T> | null> | null;
 
-// Warning: (ae-missing-release-tag) "AgentHooks" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AgentHooks<UserData, ContextT extends AgentContext<UserData> = AgentContext<UserData>> {
     llmNode?: (ctx: ContextT, chatCtx: ChatContext, toolCtx: ToolContext<UserData>, modelSettings: ModelSettings) => AgentHookNodeResult<ChatChunk | string>;
@@ -363,18 +361,12 @@ export interface AgentHooks<UserData, ContextT extends AgentContext<UserData> = 
     ttsNode?: (ctx: ContextT, text: AsyncIterable<string>, modelSettings: ModelSettings) => AgentHookNodeResult<AudioFrame>;
 }
 
-// Warning: (ae-missing-release-tag) "AgentMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type AgentMetrics = STTMetrics | LLMMetrics | TTSMetrics | VADMetrics | EOUMetrics | EOTInferenceMetrics | RealtimeModelMetrics | InterruptionMetrics | AvatarMetrics;
 
-// Warning: (ae-missing-release-tag) "AgentMood" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type AgentMood = 'excited' | 'happy' | 'playful' | 'curious' | 'surprised' | 'hopeful' | 'empathetic' | 'sad' | 'angry' | 'anxious' | 'calm';
 
-// Warning: (ae-missing-release-tag) "AgentOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AgentOptions<UserData> {
     // @deprecated (undocumented)
@@ -387,7 +379,7 @@ export interface AgentOptions<UserData> {
     // (undocumented)
     instructions: string | Instructions;
     // (undocumented)
-    llm?: LLM | RealtimeModel | LLMModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
     // (undocumented)
     minConsecutiveSpeechDelay?: number;
     // (undocumented)
@@ -410,7 +402,6 @@ export interface AgentOptions<UserData> {
     vad?: VAD | null;
 }
 
-// Warning: (ae-missing-release-tag) "AgentsConsole" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "enabled"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "acquireIo"
 //
@@ -436,7 +427,6 @@ export class AgentsConsole {
     transport?: SessionTransport;
 }
 
-// Warning: (ae-missing-release-tag) "AgentServer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 //
 // @public
@@ -460,13 +450,14 @@ export class AgentServer {
 
 // Warning: (ae-forgotten-export) The symbol "UnknownUserData" needs to be exported by the entry point index.d.ts
 // Warning: (ae-forgotten-export) The symbol "AgentSession_base" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "AgentSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export class AgentSession<UserData = UnknownUserData> extends AgentSession_base {
     constructor(options?: AgentSessionOptions<UserData>);
     // @internal
     get _activity(): AgentActivity | undefined;
+    // @internal
+    _addSessionEvent(name: string, attributes: Record<string, string | number | boolean>, timestampMs?: number): void;
     // @internal (undocumented)
     _aecWarmupRemaining: number;
     // (undocumented)
@@ -488,6 +479,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     }): void;
     // @internal
     get _closing(): boolean;
+    // @internal
+    get _closingSignal(): AbortSignal;
     // (undocumented)
     commitUserTurn(): void;
     // Warning: (ae-incompatible-release-tags) The symbol "connOptions" is marked as @public, but its signature references "ResolvedSessionConnectOptions" which is marked as @internal
@@ -562,10 +555,11 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     //
     // @internal (undocumented)
     _recorderIO?: RecorderIO;
+    // @internal (undocumented)
+    _recordLoopStall(durationInS: number, timestampMs: number, cause: string): void;
     // @internal
     _redactionEnabled: boolean;
-    // (undocumented)
-    resumeReplyAuthorization(): void;
+    resumeReplyAuthorization(): Throws<void, Error>;
     // @internal (undocumented)
     _roomIO?: RoomIO;
     // @internal (undocumented)
@@ -586,6 +580,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     //
     // (undocumented)
     readonly sessionOptions: InternalSessionOptions<UserData>;
+    // @internal
+    sessionStartContext?: Context;
     // @internal (undocumented)
     _sessionToolsetsSetup: boolean;
     // @internal
@@ -623,6 +619,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     tts?: TTS;
     // (undocumented)
     turnDetection?: TurnDetectionMode;
+    // @internal
+    _turnDetectionExplicit: boolean;
     // Warning: (ae-forgotten-export) The symbol "ActivityTransitionOptions" needs to be exported by the entry point index.d.ts
     //
     // @internal (undocumented)
@@ -669,15 +667,12 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     _warnedRealtimeAudioRedaction: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "AgentSessionEventTypes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export enum AgentSessionEventTypes {
     // (undocumented)
     AgentFalseInterruption = "agent_false_interruption",
     // (undocumented)
     AgentStateChanged = "agent_state_changed",
-    // (undocumented)
     Close = "close",
     // (undocumented)
     ConversationItemAdded = "conversation_item_added",
@@ -704,13 +699,11 @@ export enum AgentSessionEventTypes {
     UserTranscriptionTimeout = "user_transcription_timeout"
 }
 
-// Warning: (ae-missing-release-tag) "AgentSessionOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type AgentSessionOptions<UserData = UnknownUserData> = {
     stt?: STT | ModelWithLanguage;
     vad?: VAD | null;
-    llm?: LLM | RealtimeModel | LLMModels;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels;
     tts?: TTS | ModelWithVoice;
     userData?: UserData;
     connOptions?: SessionConnectOptions;
@@ -732,8 +725,6 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
     expressive?: boolean | ExpressiveOptions;
 };
 
-// Warning: (ae-missing-release-tag) "AgentSessionUpdateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type AgentSessionUpdateOptions = {
     expressive?: boolean | ExpressiveOptions;
@@ -745,20 +736,14 @@ export type AgentSessionUpdateOptions = {
     keyterms?: string[];
 };
 
-// Warning: (ae-missing-release-tag) "AgentSessionUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AgentSessionUsage {
     modelUsage: Array<Partial<ModelUsage>>;
 }
 
-// Warning: (ae-missing-release-tag) "AgentState" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type AgentState = 'initializing' | 'idle' | 'listening' | 'thinking' | 'speaking';
 
-// Warning: (ae-missing-release-tag) "AgentStateChangedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type AgentStateChangedEvent = {
     type: 'agent_state_changed';
@@ -767,8 +752,6 @@ export type AgentStateChangedEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "AgentTask" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData> {
     // Warning: (ae-forgotten-export) The symbol "AgentTaskOptions" needs to be exported by the entry point index.d.ts
@@ -779,37 +762,34 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     static create<ResultT = unknown, UserData = unknown>(options: AgentTaskCreateOptions<ResultT, UserData>): AgentTask<ResultT, UserData>;
     // (undocumented)
     get done(): boolean;
+    // @internal (undocumented)
+    _oldAgent?: Agent;
     // (undocumented)
     run(): Promise<ResultT>;
+    // @internal (undocumented)
+    _waitForInactive(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "AgentTaskContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface AgentTaskContext<ResultT = unknown, UserData = unknown> extends AgentContext<UserData> {
     agent: AgentTask<ResultT, UserData>;
     complete(result: ResultT | Error): void;
 }
 
-// Warning: (ae-missing-release-tag) "AgentTaskCreateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AgentTaskCreateOptions<ResultT = unknown, UserData = any> extends AgentTaskOptions<UserData>, AgentHooks<UserData, AgentTaskContext<ResultT, UserData>> {
 }
 
-// Warning: (ae-missing-release-tag) "AgentUpdateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface AgentUpdateOptions {
     expressive?: boolean | ExpressiveOptions;
-    llm?: LLM | RealtimeModel | LLMModels | null;
+    llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
     stt?: STT | ModelWithLanguage | null;
     tts?: TTS | ModelWithVoice | null;
     vad?: VAD | null;
 }
 
 // Warning: (ae-forgotten-export) The symbol "AMD_base" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "AMD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export class AMD extends AMD_base {
@@ -831,15 +811,11 @@ export class AMD extends AMD_base {
     onUserSpeechStarted(): void;
 }
 
-// Warning: (ae-missing-release-tag) "AMDCallbacks" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type AMDCallbacks = {
     amd_prediction: (event: AMDPredictionEvent) => void;
 };
 
-// Warning: (ae-missing-release-tag) "AMDCategory" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export enum AMDCategory {
     // (undocumented)
@@ -854,8 +830,6 @@ export enum AMDCategory {
     UNCERTAIN = "uncertain"
 }
 
-// Warning: (ae-missing-release-tag) "AMDOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AMDOptions {
     detectionTimeoutMs?: number;
@@ -863,20 +837,18 @@ export interface AMDOptions {
     humanSpeechThresholdMs?: number;
     // (undocumented)
     interruptOnMachine?: boolean;
-    llm?: LLM | string;
+    llm?: LLM | string | null;
     machineSilenceThresholdMs?: number;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "DEFAULT_MAX_ENDPOINTING_DELAY_MS"
     maxEndpointingDelayMs?: number;
     noSpeechTimeoutMs?: number;
     participantIdentity?: string;
     prompt?: string;
-    stt?: STT | string;
+    stt?: STT | string | null;
     suppressCompatibilityWarning?: boolean;
     waitUntilFinished?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "AMDPredictionEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AMDPredictionEvent {
     // (undocumented)
@@ -896,7 +868,6 @@ export interface AMDPredictionEvent {
 }
 
 // Warning: (ae-forgotten-export) The symbol "JSONObject" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "AnonFunctionTool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "tool" has more than one declaration; you need to add a TSDoc member reference selector
 //
 // @public
@@ -905,8 +876,6 @@ export type AnonFunctionTool<Parameters extends JSONObject = JSONObject, UserDat
     name?: never;
 };
 
-// Warning: (ae-missing-release-tag) "APIConnectionError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class APIConnectionError extends APIError {
     constructor(input: {
@@ -915,8 +884,6 @@ export class APIConnectionError extends APIError {
     });
 }
 
-// Warning: (ae-missing-release-tag) "APIConnectOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface APIConnectOptions {
     maxRetry: number;
@@ -924,21 +891,17 @@ export interface APIConnectOptions {
     timeoutMs: number;
 }
 
-// Warning: (ae-missing-release-tag) "APIError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class APIError extends Error {
     constructor(message: string, input?: APIErrorOptions);
     // (undocumented)
-    readonly body: object | null;
+    readonly body: object | string | number | boolean | null;
     // (undocumented)
     readonly retryable: boolean;
     // (undocumented)
     toString(): string;
 }
 
-// Warning: (ae-missing-release-tag) "APIStatusError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class APIStatusError extends APIError {
     constructor(input: {
@@ -953,8 +916,6 @@ export class APIStatusError extends APIError {
     toString(): string;
 }
 
-// Warning: (ae-missing-release-tag) "APITimeoutError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class APITimeoutError extends APIConnectionError {
     constructor(input: {
@@ -963,61 +924,47 @@ export class APITimeoutError extends APIConnectionError {
     });
 }
 
-// Warning: (ae-missing-release-tag) "applyTextTransforms" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function applyTextTransforms(text: ReadableStream_2<string>, transforms: readonly TextTransform[]): ReadableStream_2<string>;
 
-// Warning: (ae-missing-release-tag) "_applyTextTransforms" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const _applyTextTransforms: typeof applyTextTransforms;
 
-// Warning: (ae-missing-release-tag) "areLanguagesEquivalent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function areLanguagesEquivalent(left: string | null | undefined, right: string | null | undefined): boolean;
 
-// Warning: (ae-missing-release-tag) "asError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function asError(maybeError: unknown): Error;
 
-// Warning: (ae-missing-release-tag) "asLanguageCode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function asLanguageCode(language: string): LanguageCode;
 
-// Warning: (ae-missing-release-tag) "AssemblyaiModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
-type AssemblyaiModels = 'assemblyai/universal-streaming' | 'assemblyai/universal-streaming-multilingual' | 'assemblyai/u3-rt-pro' | 'assemblyai/universal-3-5-pro';
+type AssemblyaiModels = 'assemblyai/universal-streaming' | 'assemblyai/universal-streaming-multilingual' | 'assemblyai/u3-rt-pro' | 'assemblyai/universal-3-5-pro' | 'assemblyai/universal-3-6-pro';
 
-// Warning: (ae-missing-release-tag) "AssemblyAIOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface AssemblyAIOptions {
     agent_context?: string;
     end_of_turn_confidence_threshold?: number;
     format_turns?: boolean;
+    inactivity_timeout?: number;
     keyterms_prompt?: string[];
+    language_detection?: boolean;
     max_turn_silence?: number;
     min_end_of_turn_silence_when_confident?: number;
     mode?: 'min_latency' | 'balanced' | 'max_accuracy';
+    previous_context_n_turns?: number;
+    prompt?: string;
     speaker_labels?: boolean;
     voice_focus?: 'near-field' | 'far-field';
     voice_focus_threshold?: number;
 }
 
-// Warning: (ae-missing-release-tag) "AssertionError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class AssertionError extends Error {
     constructor(message: string);
 }
 
-// Warning: (ae-missing-release-tag) "AssignmentTimeoutError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class AssignmentTimeoutError extends Error {
     constructor(message?: string);
@@ -1041,8 +988,6 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
     put(item: T): void;
 }
 
-// Warning: (ae-missing-release-tag) "AsyncToolOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AsyncToolOptions {
     // (undocumented)
@@ -1060,8 +1005,6 @@ export interface AsyncToolOptions {
     updateTemplate: PromptTemplate<UpdatePromptArgs>;
 }
 
-// Warning: (ae-missing-release-tag) "AsyncToolset" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class AsyncToolset extends Toolset {
     // (undocumented)
@@ -1079,613 +1022,588 @@ export class AsyncToolset extends Toolset {
     readonly _executor: ToolExecutor;
 }
 
-// Warning: (ae-missing-release-tag) "AsyncToolsetCreateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AsyncToolsetCreateOptions extends ToolsetCreateOptions {
     // (undocumented)
     toolHandling?: ToolHandlingOptions;
 }
 
-// Warning: (ae-missing-release-tag) "ATTR_AGENT_LABEL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_AGENT_LABEL = "lk.agent_label";
 
-// Warning: (ae-missing-release-tag) "ATTR_AGENT_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_AGENT_NAME = "lk.agent_name";
 
-// Warning: (ae-missing-release-tag) "ATTR_AGENT_PARENT_TURN_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_AGENT_PARENT_TURN_ID = "lk.parent_generation_id";
 
-// Warning: (ae-missing-release-tag) "ATTR_AGENT_TURN_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
+// @public
 const ATTR_AGENT_TURN_ID = "lk.generation_id";
 
-// Warning: (ae-missing-release-tag) "ATTR_AMD_CATEGORY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_AMD_CATEGORY = "lk.amd.category";
 
-// Warning: (ae-missing-release-tag) "ATTR_AMD_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const ATTR_AMD_DELAY = "lk.amd.delay";
 
-// Warning: (ae-missing-release-tag) "ATTR_AMD_INTERRUPT_ON_MACHINE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_AMD_INTERRUPT_ON_MACHINE = "lk.amd.interrupt_on_machine";
 
-// Warning: (ae-missing-release-tag) "ATTR_AMD_IS_MACHINE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_AMD_IS_MACHINE = "lk.amd.is_machine";
 
-// Warning: (ae-missing-release-tag) "ATTR_AMD_REASON" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_AMD_REASON = "lk.amd.reason";
 
-// Warning: (ae-missing-release-tag) "ATTR_AMD_SPEECH_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const ATTR_AMD_SPEECH_DURATION = "lk.amd.speech_duration";
 
-// Warning: (ae-missing-release-tag) "ATTR_AMD_TRANSCRIPT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_AMD_TRANSCRIPT = "lk.pii.amd.transcript";
 
-// Warning: (ae-missing-release-tag) "ATTR_CHAT_CTX" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_BLOCKING_CAUSE = "lk.blocking.cause";
+
+// @public (undocumented)
+const ATTR_BLOCKING_COUNT = "lk.blocking.count";
+
+// @public
+const ATTR_BLOCKING_CPU_TIME = "lk.blocking.cpu_time";
+
+// @public
+const ATTR_BLOCKING_DURATION = "lk.blocking.duration";
+
+// @public
+const ATTR_BLOCKING_GC_TIME = "lk.blocking.gc_time";
+
+// @public
+const ATTR_BLOCKING_IMPORT = "lk.blocking.import";
+
+// @public (undocumented)
+const ATTR_BLOCKING_MAX_DURATION = "lk.blocking.max_duration";
+
+// @public (undocumented)
+const ATTR_BLOCKING_SEVERITY = "lk.blocking.severity";
+
+// @public
+const ATTR_BLOCKING_STACK = "lk.blocking.stack";
+
+// @public (undocumented)
+const ATTR_BLOCKING_SUPPRESSED = "lk.blocking.suppressed";
+
+// @public
+const ATTR_BLOCKING_TASK = "lk.blocking.task";
+
+// @public (undocumented)
+const ATTR_BLOCKING_THRESHOLD = "lk.blocking.threshold";
+
+// @public (undocumented)
+const ATTR_BLOCKING_TOTAL_DURATION = "lk.blocking.total_duration";
+
+// @public (undocumented)
+const ATTR_CALLBACK_NAME = "lk.callback.name";
+
 // @public (undocumented)
 const ATTR_CHAT_CTX = "lk.pii.chat_ctx";
 
-// Warning: (ae-missing-release-tag) "ATTR_CLOUD_AGENT_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const ATTR_CLOSE_DRAIN = "lk.close.drain";
+
+// @public (undocumented)
+const ATTR_CLOSE_REASON = "lk.close_reason";
+
 // @public (undocumented)
 const ATTR_CLOUD_AGENT_ID = "lk.cloud_agent_id";
 
-// Warning: (ae-missing-release-tag) "ATTR_DEPLOYMENT_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const ATTR_CONNECTION_STATE = "lk.connection_state";
+
 // @public (undocumented)
 const ATTR_DEPLOYMENT_ID = "lk.deployment_id";
 
-// Warning: (ae-missing-release-tag) "ATTR_E2E_LATENCY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const ATTR_DESTINATION_IDENTITY = "lk.pii.destination_identity";
+
+// @public (undocumented)
+const ATTR_DISCONNECT_REASON = "lk.disconnect_reason";
+
+// @public (undocumented)
+const ATTR_DISPATCH_ID = "lk.dispatch_id";
+
 // @public
 const ATTR_E2E_LATENCY = "lk.e2e_latency";
 
-// Warning: (ae-missing-release-tag) "ATTR_END_OF_TURN_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
+// @public
 const ATTR_END_OF_TURN_DELAY = "lk.end_of_turn_delay";
 
-// Warning: (ae-missing-release-tag) "ATTR_END_TIME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_END_TIME = "lk.end_time";
 
-// Warning: (ae-missing-release-tag) "ATTR_EOU_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
+// @public
 const ATTR_EOU_DELAY = "lk.eou.endpointing_delay";
 
-// Warning: (ae-missing-release-tag) "ATTR_EOU_DETECTION_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const ATTR_EOU_DETECTION_DELAY = "lk.eou.detection_delay";
 
-// Warning: (ae-missing-release-tag) "ATTR_EOU_FROM_CACHE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const ATTR_EOU_FROM_CACHE = "lk.eou.from_cache";
 
-// Warning: (ae-missing-release-tag) "ATTR_EOU_LANGUAGE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_EOU_LANGUAGE = "lk.eou.language";
 
-// Warning: (ae-missing-release-tag) "ATTR_EOU_PROBABILITY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_EOU_NOT_COMMITTED_COUNT = "lk.eou.not_committed_count";
+
+// @public
+const ATTR_EOU_OUTCOME = "lk.eou.outcome";
+
 // @public (undocumented)
 const ATTR_EOU_PROBABILITY = "lk.eou.probability";
 
-// Warning: (ae-missing-release-tag) "ATTR_EOU_SOURCE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_EOU_REARM_COUNT = "lk.eou.rearm_count";
+
+// @public
+const ATTR_EOU_RESUME_COUNT = "lk.eou.resume_count";
+
 // @public
 const ATTR_EOU_SOURCE = "lk.eou.source";
 
-// Warning: (ae-missing-release-tag) "ATTR_EOU_UNLIKELY_THRESHOLD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_EOU_UNLIKELY_THRESHOLD = "lk.eou.unlikely_threshold";
 
-// Warning: (ae-missing-release-tag) "ATTR_ERROR_TYPE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_EOU_WAIT_DURATION = "lk.eou.wait_duration";
+
 // @public (undocumented)
 const ATTR_ERROR_TYPE = "error.type";
 
-// Warning: (ae-missing-release-tag) "ATTR_EXCEPTION_MESSAGE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_EXCEPTION_MESSAGE = "exception.message";
 
-// Warning: (ae-missing-release-tag) "ATTR_EXCEPTION_TRACE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_EXCEPTION_TRACE = "exception.stacktrace";
 
-// Warning: (ae-missing-release-tag) "ATTR_EXCEPTION_TYPE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_EXCEPTION_TYPE = "exception.type";
 
-// Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_ARGS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const ATTR_FALLBACK_INDEX = "lk.fallback.index";
+
+// @public
+const ATTR_FALLBACK_LABEL = "lk.fallback.label";
+
+// @public
+const ATTR_FIRST_FRAME_DELAY = "lk.first_frame_delay";
+
 // @public (undocumented)
 const ATTR_FUNCTION_TOOL_ARGS = "lk.pii.function_tool.arguments";
 
-// Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_FUNCTION_TOOL_ID = "lk.function_tool.id";
 
-// Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_IS_ERROR" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_FUNCTION_TOOL_IS_ERROR = "lk.function_tool.is_error";
 
-// Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_FUNCTION_TOOL_NAME = "lk.function_tool.name";
 
-// Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOL_OUTPUT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_FUNCTION_TOOL_OUTPUT = "lk.pii.function_tool.output";
 
-// Warning: (ae-missing-release-tag) "ATTR_FUNCTION_TOOLS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_FUNCTION_TOOLS = "lk.function_tools";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_AGENT_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_AGENT_NAME = "gen_ai.agent.name";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_CONVERSATION_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_CONVERSATION_ID = "gen_ai.conversation.id";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_EVALUATION_EXPLANATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_EVALUATION_EXPLANATION = "gen_ai.evaluation.explanation";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_INPUT_MESSAGES" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_INPUT_MESSAGES = "gen_ai.input.messages";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_MEMORY_QUERY_TEXT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_MEMORY_QUERY_TEXT = "gen_ai.memory.query.text";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_MEMORY_RECORDS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_MEMORY_RECORDS = "gen_ai.memory.records";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_OPERATION_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_OPERATION_NAME = "gen_ai.operation.name";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_OUTPUT_MESSAGES" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_OUTPUT_MESSAGES = "gen_ai.output.messages";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_OUTPUT_TYPE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_OUTPUT_TYPE = "gen_ai.output.type";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_PROMPT_VARIABLE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const ATTR_GEN_AI_PROMPT_VARIABLE = "gen_ai.prompt.variable";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_PROVIDER_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_PROVIDER_NAME = "gen_ai.provider.name";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_REQUEST_MODEL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_REQUEST_MODEL = "gen_ai.request.model";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_REQUEST_STREAM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_REQUEST_STREAM = "gen_ai.request.stream";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_RESPONSE_FINISH_REASONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_RESPONSE_FINISH_REASONS = "gen_ai.response.finish_reasons";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_RESPONSE_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_RESPONSE_ID = "gen_ai.response.id";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_RESPONSE_MODEL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_RESPONSE_MODEL = "gen_ai.response.model";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const ATTR_GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK = "gen_ai.response.time_to_first_chunk";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_RETRIEVAL_DOCUMENTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_RETRIEVAL_DOCUMENTS = "gen_ai.retrieval.documents";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_RETRIEVAL_QUERY_TEXT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_RETRIEVAL_QUERY_TEXT = "gen_ai.retrieval.query.text";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_SYSTEM_INSTRUCTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_SYSTEM_INSTRUCTIONS = "gen_ai.system_instructions";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_TOOL_CALL_ARGUMENTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_TOOL_CALL_ARGUMENTS = "gen_ai.tool.call.arguments";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_TOOL_CALL_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_TOOL_CALL_ID = "gen_ai.tool.call.id";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_TOOL_CALL_RESULT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_TOOL_CALL_RESULT = "gen_ai.tool.call.result";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_TOOL_DEFINITIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_TOOL_DEFINITIONS = "gen_ai.tool.definitions";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_TOOL_DESCRIPTION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_TOOL_DESCRIPTION = "gen_ai.tool.description";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_TOOL_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_TOOL_NAME = "gen_ai.tool.name";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_TOOL_TYPE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_TOOL_TYPE = "gen_ai.tool.type";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_AUDIO_INPUT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_AUDIO_INPUT_TOKENS = "gen_ai.usage.audio.input_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_AUDIO_OUTPUT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_AUDIO_OUTPUT_TOKENS = "gen_ai.usage.audio.output_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS = "gen_ai.usage.cache_read.input_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_CACHE_WRITE_INPUT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_CACHE_WRITE_INPUT_TOKENS = "gen_ai.usage.cache_write.input_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_INPUT_AUDIO_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_INPUT_AUDIO_TOKENS = "gen_ai.usage.input_audio_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_INPUT_CACHED_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_INPUT_CACHED_TOKENS = "gen_ai.usage.input_cached_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_INPUT_TEXT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_INPUT_TEXT_TOKENS = "gen_ai.usage.input_text_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_INPUT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_OUTPUT_AUDIO_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_OUTPUT_AUDIO_TOKENS = "gen_ai.usage.output_audio_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_OUTPUT_TEXT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_OUTPUT_TEXT_TOKENS = "gen_ai.usage.output_text_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_OUTPUT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_REASONING_OUTPUT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_REASONING_OUTPUT_TOKENS = "gen_ai.usage.reasoning.output_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_REASONING_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_REASONING_TOKENS = "gen_ai.usage.reasoning_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_TEXT_INPUT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_TEXT_INPUT_TOKENS = "gen_ai.usage.text.input_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_USAGE_TEXT_OUTPUT_TOKENS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_USAGE_TEXT_OUTPUT_TOKENS = "gen_ai.usage.text.output_tokens";
 
-// Warning: (ae-missing-release-tag) "ATTR_GEN_AI_WORKFLOW_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_GEN_AI_WORKFLOW_NAME = "gen_ai.workflow.name";
 
-// Warning: (ae-missing-release-tag) "ATTR_INSTRUCTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_GENERATION_COUNT = "lk.generation_count";
+
+// @public (undocumented)
+const ATTR_INPUT_BASE_SPAN_ID = "lk.input.base_span_id";
+
+// @public
+const ATTR_INPUT_DELTA = "lk.input.delta";
+
+// @public
+const ATTR_INPUT_DROPPED_FROM_BASE = "lk.input.dropped_from_base";
+
 // @public (undocumented)
 const ATTR_INSTRUCTIONS = "lk.pii.instructions";
 
-// Warning: (ae-missing-release-tag) "ATTR_INTERRUPTION_DETECTION_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_INTERRUPTION_DETECTION_DELAY = "lk.interruption.detection_delay";
 
-// Warning: (ae-missing-release-tag) "ATTR_INTERRUPTION_PREDICTION_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_INTERRUPTION_PREDICTION_DURATION = "lk.interruption.prediction_duration";
 
-// Warning: (ae-missing-release-tag) "ATTR_INTERRUPTION_PROBABILITY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_INTERRUPTION_PROBABILITY = "lk.interruption.probability";
 
-// Warning: (ae-missing-release-tag) "ATTR_INTERRUPTION_TOTAL_DURATION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_INTERRUPTION_SOURCE = "lk.interruption.source";
+
 // @public (undocumented)
 const ATTR_INTERRUPTION_TOTAL_DURATION = "lk.interruption.total_duration";
 
-// Warning: (ae-missing-release-tag) "ATTR_IS_INTERRUPTION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_IS_INTERRUPTION = "lk.is_interruption";
 
-// Warning: (ae-missing-release-tag) "ATTR_JOB_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_JOB_ACCEPT_LATENCY = "lk.job.accept_latency";
+
+// @public (undocumented)
+const ATTR_JOB_AGENT_ID = "lk.job.agent_id";
+
+// @public
+const ATTR_JOB_ASSIGNMENT_LATENCY = "lk.job.assignment_latency";
+
+// @public
+const ATTR_JOB_DISPATCH_LATENCY = "lk.job.dispatch_latency";
+
+// @public
+const ATTR_JOB_ENTRYPOINT_LATENCY = "lk.job.entrypoint_latency";
+
 // @public (undocumented)
 const ATTR_JOB_ID = "lk.job_id";
 
-// Warning: (ae-missing-release-tag) "ATTR_LANGFUSE_COMPLETION_START_TIME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_JOB_LAUNCH_LATENCY = "lk.job.launch_latency";
+
+// @public (undocumented)
+const ATTR_KEYTERMS_ADDED = "lk.keyterms.added";
+
+// @public
+const ATTR_KEYTERMS_COUNT = "lk.keyterms.count";
+
+// @public (undocumented)
+const ATTR_KEYTERMS_REMOVED = "lk.keyterms.removed";
+
 // @public (undocumented)
 const ATTR_LANGFUSE_COMPLETION_START_TIME = "langfuse.observation.completion_start_time";
 
-// Warning: (ae-missing-release-tag) "ATTR_LLM_METRICS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_LLM_METRICS = "lk.llm_metrics";
 
-// Warning: (ae-missing-release-tag) "ATTR_PARTICIPANT_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const ATTR_NEW_STATE = "lk.new_state";
+
+// @public (undocumented)
+const ATTR_OLD_STATE = "lk.old_state";
+
+// @public
+const ATTR_ON_USER_TURN_COMPLETED_DELAY = "lk.on_user_turn_completed_delay";
+
 // @public (undocumented)
 const ATTR_PARTICIPANT_ID = "lk.participant_id";
 
-// Warning: (ae-missing-release-tag) "ATTR_PARTICIPANT_IDENTITY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_PARTICIPANT_IDENTITY = "lk.pii.participant_identity";
 
-// Warning: (ae-missing-release-tag) "ATTR_PARTICIPANT_KIND" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_PARTICIPANT_KIND = "lk.participant_kind";
 
-// Warning: (ae-missing-release-tag) "ATTR_PROVIDER_REQUEST_IDS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_PLAYOUT_POSITION = "lk.playout.position";
+
+// @public (undocumented)
+const ATTR_PRE_CONNECT_AUDIO_DURATION = "lk.pre_connect_audio.duration";
+
+// @public (undocumented)
+const ATTR_PREVIOUS_AGENT_LABEL = "lk.previous_agent_label";
+
 // @public
 const ATTR_PROVIDER_REQUEST_IDS = "lk.provider_request_ids";
 
-// Warning: (ae-missing-release-tag) "ATTR_PROVIDER_TOOLS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_PROVIDER_TOOLS = "lk.provider_tools";
 
-// Warning: (ae-missing-release-tag) "ATTR_REALTIME_MODEL_METRICS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_REALTIME_MODEL_METRICS = "lk.realtime_model_metrics";
 
-// Warning: (ae-missing-release-tag) "ATTR_RESPONSE_FUNCTION_CALLS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_RESPONSE_FUNCTION_CALLS = "lk.pii.response.function_calls";
 
-// Warning: (ae-missing-release-tag) "ATTR_RESPONSE_TEXT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_RESPONSE_TEXT = "lk.pii.response.text";
 
-// Warning: (ae-missing-release-tag) "ATTR_RESPONSE_TTFB" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const ATTR_RESPONSE_TTFB = "lk.response.ttfb";
 
-// Warning: (ae-missing-release-tag) "ATTR_RESPONSE_TTFT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const ATTR_RESPONSE_TTFT = "lk.response.ttft";
 
-// Warning: (ae-missing-release-tag) "ATTR_RETRY_COUNT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_RETRY_COUNT = "lk.retry_count";
 
-// Warning: (ae-missing-release-tag) "ATTR_ROOM_NAME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const ATTR_ROOM_AUTO_SUBSCRIBE = "lk.room.auto_subscribe";
+
+// @public (undocumented)
+const ATTR_ROOM_E2EE = "lk.room.e2ee";
+
+// @public
+const ATTR_ROOM_IO_PARTICIPANT_FILTER = "lk.room_io.participant_filter";
+
 // @public (undocumented)
 const ATTR_ROOM_NAME = "lk.pii.room_name";
 
-// Warning: (ae-missing-release-tag) "ATTR_SESSION_OPTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const ATTR_ROOM_REMOTE_PARTICIPANT_COUNT = "lk.room.remote_participant_count";
+
+// @public (undocumented)
+const ATTR_ROOM_SID = "lk.room_sid";
+
+// @public (undocumented)
+const ATTR_RPC_CALLER_IDENTITY = "lk.rpc.caller_identity";
+
+// @public (undocumented)
+const ATTR_RPC_DESTINATION_IDENTITY = "lk.rpc.destination_identity";
+
+// @public
+const ATTR_RPC_ERROR_CODE = "lk.rpc.error_code";
+
+// @public (undocumented)
+const ATTR_RPC_METHOD = "rpc.method";
+
+// @public
+const ATTR_RPC_PAYLOAD = "lk.pii.rpc.payload";
+
+// @public
+const ATTR_RPC_PAYLOAD_SIZE = "lk.rpc.payload_size";
+
+// @public (undocumented)
+const ATTR_RPC_REQUEST_ID = "lk.rpc.request_id";
+
+// @public
+const ATTR_RPC_RESPONSE = "lk.pii.rpc.response";
+
+// @public
+const ATTR_RPC_RESPONSE_SIZE = "lk.rpc.response_size";
+
+// @public
+const ATTR_RPC_RESPONSE_TIMEOUT = "lk.rpc.response_timeout";
+
 // @public (undocumented)
 const ATTR_SESSION_OPTIONS = "lk.session_options";
 
-// Warning: (ae-missing-release-tag) "ATTR_SPEECH_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_SHUTDOWN_REASON = "lk.shutdown.reason";
+
+// @public (undocumented)
+const ATTR_SHUTDOWN_USER_INITIATED = "lk.shutdown.user_initiated";
+
+// @public
+const ATTR_SIP_PHONE_NUMBER = "lk.pii.sip.phoneNumber";
+
+// @public
+const ATTR_SIP_PREFIX = "lk.sip.";
+
 // @public
 const ATTR_SPEECH_ID = "lk.speech_id";
 
-// Warning: (ae-missing-release-tag) "ATTR_SPEECH_INTERRUPTED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_SPEECH_INTERRUPTED = "lk.interrupted";
 
-// Warning: (ae-missing-release-tag) "ATTR_START_TIME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_SPEECH_QUEUE_WAIT = "lk.speech.queue_wait";
+
 // @public (undocumented)
 const ATTR_START_TIME = "lk.start_time";
 
-// Warning: (ae-missing-release-tag) "ATTR_TOOL_SETS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+const ATTR_STT_EVENTS = "lk.stt.events";
+
 // @public (undocumented)
 const ATTR_TOOL_SETS = "lk.tool_sets";
 
-// Warning: (ae-missing-release-tag) "ATTR_TRANSCRIPT_CONFIDENCE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const ATTR_TRACK_SID = "lk.track_sid";
+
+// @public (undocumented)
+const ATTR_TRACK_SOURCE = "lk.track_source";
+
 // @public (undocumented)
 const ATTR_TRANSCRIPT_CONFIDENCE = "lk.transcript_confidence";
 
-// Warning: (ae-missing-release-tag) "ATTR_TRANSCRIPTION_DELAY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
+// @public
 const ATTR_TRANSCRIPTION_DELAY = "lk.transcription_delay";
 
-// Warning: (ae-missing-release-tag) "ATTR_TTS_INPUT_TEXT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_TTS_INPUT_TEXT = "lk.pii.input_text";
 
-// Warning: (ae-missing-release-tag) "ATTR_TTS_LABEL" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_TTS_LABEL = "lk.tts.label";
 
-// Warning: (ae-missing-release-tag) "ATTR_TTS_METRICS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_TTS_METRICS = "lk.tts_metrics";
 
-// Warning: (ae-missing-release-tag) "ATTR_TTS_STREAMING" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_TTS_STREAMING = "lk.tts.streaming";
 
-// Warning: (ae-missing-release-tag) "ATTR_USER_INPUT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_USER_INPUT = "lk.pii.user_input";
 
-// Warning: (ae-missing-release-tag) "ATTR_USER_TRANSCRIPT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const ATTR_USER_TRANSCRIPT = "lk.pii.user_transcript";
 
-// Warning: (ae-missing-release-tag) "ATTRIBUTE_REDACTION_ENABLED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const ATTR_WORKER_ID = "lk.job.worker_id";
+
 // @public
 export const ATTRIBUTE_REDACTION_ENABLED = "lk.redaction.enabled";
 
-// Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATION_ENABLED" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const ATTRIBUTE_SIMULATION_ENABLED = "lk.simulation.enabled";
 
-// Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATION_JOB_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const ATTRIBUTE_SIMULATION_JOB_ID = "lk.simulation.job_id";
 
-// Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATION_RUN_ID" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const ATTRIBUTE_SIMULATION_RUN_ID = "lk.simulation.run_id";
 
-// Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATOR" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const ATTRIBUTE_SIMULATOR = "lk.simulator";
 
-// Warning: (ae-missing-release-tag) "ATTRIBUTE_SIMULATOR_DISPATCH" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const ATTRIBUTE_SIMULATOR_DISPATCH = "lk.simulator.dispatch";
 
-// Warning: (ae-missing-release-tag) "ATTRIBUTE_TRANSCRIPTION_EXPRESSION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const ATTRIBUTE_TRANSCRIPTION_EXPRESSION = "lk.expression";
 
-// Warning: (ae-missing-release-tag) "AudioBuffer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioFrame"
 //
 // @public
 type AudioBuffer_2 = AudioFrame[] | AudioFrame;
 export { AudioBuffer_2 as AudioBuffer }
 
-// Warning: (ae-missing-release-tag) "AudioByteStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class AudioByteStream {
     constructor(sampleRate: number, numChannels: number, samplesPerChannel?: number | null);
@@ -1695,8 +1613,6 @@ export class AudioByteStream {
     write(data: ArrayBufferLike | ArrayBufferView): AudioFrame[];
 }
 
-// Warning: (ae-missing-release-tag) "AudioConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AudioConfig {
     // (undocumented)
@@ -1707,8 +1623,6 @@ export interface AudioConfig {
     volume?: number;
 }
 
-// Warning: (ae-missing-release-tag) "AudioContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AudioContent {
     // (undocumented)
@@ -1719,8 +1633,6 @@ export interface AudioContent {
     type: 'audio_content';
 }
 
-// Warning: (ae-missing-release-tag) "AudioDecodeOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AudioDecodeOptions {
     // (undocumented)
@@ -1741,13 +1653,22 @@ export class AudioEnergyFilter {
     pushFrame(frame: AudioFrame): boolean;
 }
 
-// Warning: (ae-missing-release-tag) "audioFramesFromFile" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function audioFramesFromFile(filePath: string, options?: AudioDecodeOptions): ReadableStream_2<AudioFrame>;
 
-// Warning: (ae-missing-release-tag) "AudioInput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+export interface AudioGate {
+    deactivate(): void;
+    update(frame: AudioFrame): boolean;
+}
+
+// @public
+export interface AudioGateOptions {
+    activationRatio?: number;
+    deactivationRatio?: number;
+    minSilenceDuration?: number;
+}
+
 // @public (undocumented)
 export abstract class AudioInput {
     // (undocumented)
@@ -1768,8 +1689,6 @@ export abstract class AudioInput {
     get stream(): ReadableStream_2<AudioFrame>;
 }
 
-// Warning: (ae-missing-release-tag) "AudioOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export abstract class AudioOutput extends EventEmitter_2 {
     constructor(sampleRate?: number | undefined, nextInChain?: AudioOutput | undefined, capabilities?: AudioOutputCapabilities);
@@ -1785,11 +1704,15 @@ export abstract class AudioOutput extends EventEmitter_2 {
     // (undocumented)
     static readonly EVENT_PLAYBACK_FINISHED = "playbackFinished";
     // (undocumented)
+    static readonly EVENT_PLAYBACK_PROGRESSED = "playbackProgressed";
+    // (undocumented)
     static readonly EVENT_PLAYBACK_STARTED = "playbackStarted";
     // (undocumented)
     flush(): void;
     // (undocumented)
     protected logger: Logger;
+    // @internal (undocumented)
+    _markInputTruncated(): void;
     // (undocumented)
     protected readonly nextInChain?: AudioOutput | undefined;
     // (undocumented)
@@ -1797,6 +1720,7 @@ export abstract class AudioOutput extends EventEmitter_2 {
     // (undocumented)
     onDetached(): void;
     onPlaybackFinished(options: PlaybackFinishedEvent): void;
+    onPlaybackProgressed(ev: PlaybackProgressedEvent): void;
     onPlaybackStarted(createdAt: number): void;
     pause(): void;
     // @internal
@@ -1807,15 +1731,11 @@ export abstract class AudioOutput extends EventEmitter_2 {
     waitForPlayout(): Promise<PlaybackFinishedEvent>;
 }
 
-// Warning: (ae-missing-release-tag) "AudioOutputCapabilities" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AudioOutputCapabilities {
     pause: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "AudioOutputOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface AudioOutputOptions {
     // (undocumented)
@@ -1828,19 +1748,13 @@ export interface AudioOutputOptions {
     trackPublishOptions: TrackPublishOptions;
 }
 
-// Warning: (ae-missing-release-tag) "AudioSegmentEnd" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class AudioSegmentEnd {
 }
 
-// Warning: (ae-missing-release-tag) "AudioSourceType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type AudioSourceType = string | BuiltinAudioClip | AsyncIterable<AudioFrame>;
 
-// Warning: (ae-missing-release-tag) "AutoSubscribe" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export enum AutoSubscribe {
     // (undocumented)
@@ -1853,8 +1767,6 @@ export enum AutoSubscribe {
     VIDEO_ONLY = 2
 }
 
-// Warning: (ae-missing-release-tag) "AvailabilityChangedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface AvailabilityChangedEvent {
     // (undocumented)
@@ -1863,24 +1775,18 @@ export interface AvailabilityChangedEvent {
     llm: LLM;
 }
 
-// Warning: (ae-missing-release-tag) "AvailabilityChangedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface AvailabilityChangedEvent_2 {
     available: boolean;
     stt: STT;
 }
 
-// Warning: (ae-missing-release-tag) "AvailabilityChangedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface AvailabilityChangedEvent_3 {
     available: boolean;
     tts: TTS;
 }
 
-// Warning: (ae-missing-release-tag) "AvatarMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type AvatarMetrics = {
     type: 'avatar_metrics';
@@ -1891,13 +1797,10 @@ export type AvatarMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-missing-release-tag) "AvatarModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type AvatarModel = 'lemonslice' | `lemonslice/${string}` | (string & NonNullable<unknown>);
 
 // Warning: (ae-forgotten-export) The symbol "AvatarSession_base" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "AvatarSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export class AvatarSession extends AvatarSession_base {
@@ -1914,8 +1817,6 @@ export class AvatarSession extends AvatarSession_base {
     }): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "AvatarSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class AvatarSession_2 extends AvatarSession {
     constructor(options: AvatarSessionOptions);
@@ -1942,15 +1843,11 @@ class AvatarSession_2 extends AvatarSession {
     _terminateSession(providerSessionId: string, terminateToken: string): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "AvatarSessionCallbacks" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type AvatarSessionCallbacks = {
     metrics_collected: (metrics: AvatarMetrics) => void;
 };
 
-// Warning: (ae-missing-release-tag) "AvatarSessionOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface AvatarSessionOptions {
     apiKey?: string;
@@ -1965,8 +1862,6 @@ interface AvatarSessionOptions {
     model: AvatarModel;
 }
 
-// Warning: (ae-missing-release-tag) "AvatarSessionStartOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface AvatarSessionStartOptions {
     livekitApiKey?: string;
@@ -1974,8 +1869,6 @@ interface AvatarSessionStartOptions {
     livekitUrl?: string;
 }
 
-// Warning: (ae-missing-release-tag) "BackgroundAudioPlayer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class BackgroundAudioPlayer {
     constructor(options?: BackgroundAudioPlayerOptions);
@@ -1986,8 +1879,6 @@ export class BackgroundAudioPlayer {
     start(options: BackgroundAudioStartOptions): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "BackgroundAudioPlayerOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface BackgroundAudioPlayerOptions {
     ambientSound?: AudioSourceType | AudioConfig | AudioConfig[];
@@ -1995,8 +1886,6 @@ export interface BackgroundAudioPlayerOptions {
     thinkingSound?: AudioSourceType | AudioConfig | AudioConfig[];
 }
 
-// Warning: (ae-missing-release-tag) "BackgroundAudioStartOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface BackgroundAudioStartOptions {
     // (undocumented)
@@ -2007,8 +1896,6 @@ export interface BackgroundAudioStartOptions {
     trackPublishOptions?: TrackPublishOptions;
 }
 
-// Warning: (ae-missing-release-tag) "BaseEndpointing" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class BaseEndpointing {
     constructor(input: {
@@ -2073,8 +1960,31 @@ declare namespace beta {
     }
 }
 
-// Warning: (ae-missing-release-tag) "BufferedSentenceStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+declare namespace blingfire {
+    export {
+        SentenceTokenizer_3 as SentenceTokenizer
+    }
+}
+
+// @public (undocumented)
+interface BlockedReport {
+    cause: LoopStallCause;
+    cpuScope: LoopCpuScope;
+    cpuTime: number;
+    duration: number;
+    endedAt: number;
+    gcTime: number;
+    location?: string;
+    // (undocumented)
+    severity: LoopMonitorSeverity;
+    stack?: string;
+    startedAt: number;
+    // (undocumented)
+    warnThreshold: number;
+    watchdogGap: number;
+    windowStart: number;
+}
+
 // @public (undocumented)
 class BufferedSentenceStream extends SentenceStream {
     // Warning: (ae-forgotten-export) The symbol "TokenizeFunc" needs to be exported by the entry point index.d.ts
@@ -2092,8 +2002,6 @@ class BufferedSentenceStream extends SentenceStream {
     pushText(text: string): void;
 }
 
-// Warning: (ae-missing-release-tag) "BufferedTokenStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
     // (undocumented)
@@ -2114,8 +2022,6 @@ class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
     protected queue: AsyncIterableQueue<TokenData>;
 }
 
-// Warning: (ae-missing-release-tag) "BufferedWordStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class BufferedWordStream extends WordStream {
     constructor(func: TokenizeFunc, minTokenLength: number, minContextLength: number);
@@ -2131,8 +2037,6 @@ class BufferedWordStream extends WordStream {
     pushText(text: string): void;
 }
 
-// Warning: (ae-missing-release-tag) "BuiltinAudioClip" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export enum BuiltinAudioClip {
     // (undocumented)
@@ -2145,56 +2049,24 @@ export enum BuiltinAudioClip {
     OFFICE_AMBIENCE = "office-ambience.ogg"
 }
 
-// Warning: (ae-missing-release-tag) "BuiltinTextTransform" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type BuiltinTextTransform = 'filter_markdown' | 'filter_emoji';
 
-// Warning: (ae-missing-release-tag) "calculateAudioDurationSeconds" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function calculateAudioDurationSeconds(frame: AudioBuffer_2): number;
 
-// Warning: (ae-missing-release-tag) "cancelAndWait" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void>;
 
-// Warning: (ae-internal-missing-underscore) The name "CancellablePromise" should be prefixed with an underscore because the declaration is marked as @internal
-//
-// @internal (undocumented)
-export class CancellablePromise<T, E extends Error = Error> {
-    constructor(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason: E) => void, onCancel: (cancelFn: () => void) => void) => void);
-    // (undocumented)
-    cancel(): void;
-    // (undocumented)
-    catch<TResult = never>(onrejected?: ((reason: E) => TResult | Promise<TResult>) | null): Promise<Throws<T | TResult | undefined, E>>;
-    // (undocumented)
-    get error(): Error | null;
-    // (undocumented)
-    finally(onfinally?: (() => void) | null): Promise<Throws<T, E>>;
-    // (undocumented)
-    static from<T, E extends Error = Error>(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>;
-    // (undocumented)
-    static from<T>(promise: Promise<T>): CancellablePromise<T>;
-    // (undocumented)
-    get isCancelled(): boolean;
-    // (undocumented)
-    then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null, onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null): Promise<TResult1 | TResult2>;
-}
+// @public (undocumented)
+function captureContentEnabled(): boolean;
 
-// Warning: (ae-missing-release-tag) "CartesiaModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 
-// Warning: (ae-missing-release-tag) "CartesiaModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
-type CartesiaModels_2 = 'cartesia/sonic-3.5' | 'cartesia/sonic-3' | 'cartesia/sonic-2' | 'cartesia/sonic-turbo' | 'cartesia/sonic' | 'cartesia/sonic-3-latest' | 'cartesia/sonic-latest';
+type CartesiaModels_2 = 'cartesia/sonic-3.6' | 'cartesia/sonic-3.5' | 'cartesia/sonic-3' | 'cartesia/sonic-3-latest' | 'cartesia/sonic-latest';
 
-// Warning: (ae-missing-release-tag) "CartesiaOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface CartesiaOptions {
     keyterm?: string | string[];
@@ -2206,8 +2078,6 @@ interface CartesiaOptions {
     turn_start_threshold?: number;
 }
 
-// Warning: (ae-missing-release-tag) "CartesiaOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface CartesiaOptions_2 {
     // (undocumented)
@@ -2226,8 +2096,6 @@ interface CartesiaOptions_2 {
     volume?: number;
 }
 
-// Warning: (ae-missing-release-tag) "ChatChunk" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ChatChunk {
     // (undocumented)
@@ -2238,8 +2106,6 @@ export interface ChatChunk {
     usage?: CompletionUsage;
 }
 
-// Warning: (ae-missing-release-tag) "ChatCompletionOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface ChatCompletionOptions extends Record<string, unknown> {
     // (undocumented)
@@ -2308,13 +2174,9 @@ interface ChatCompletionOptions extends Record<string, unknown> {
     web_search_options?: WebSearchOptions;
 }
 
-// Warning: (ae-missing-release-tag) "ChatContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type ChatContent = ImageContent | AudioContent | Instructions | string;
 
-// Warning: (ae-missing-release-tag) "ChatContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class ChatContext {
     constructor(items?: ChatItem[]);
@@ -2380,8 +2242,6 @@ export class ChatContext {
     truncate(maxItems: number): ChatContext;
 }
 
-// Warning: (ae-missing-release-tag) "ChatContextValidationIssue" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ChatContextValidationIssue {
     // (undocumented)
@@ -2396,8 +2256,6 @@ export interface ChatContextValidationIssue {
     severity: ChatContextValidationSeverity;
 }
 
-// Warning: (ae-missing-release-tag) "ChatContextValidationResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ChatContextValidationResult {
     // (undocumented)
@@ -2410,18 +2268,12 @@ export interface ChatContextValidationResult {
     warnings: number;
 }
 
-// Warning: (ae-missing-release-tag) "ChatContextValidationSeverity" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type ChatContextValidationSeverity = 'error' | 'warning';
 
-// Warning: (ae-missing-release-tag) "ChatItem" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type ChatItem = ChatMessage | FunctionCall | FunctionCallOutput | AgentHandoffItem | AgentConfigUpdate;
 
-// Warning: (ae-missing-release-tag) "ChatMessage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class ChatMessage {
     constructor(params: {
@@ -2473,8 +2325,6 @@ export class ChatMessage {
     readonly type: "message";
 }
 
-// Warning: (ae-missing-release-tag) "ChatMessageEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface ChatMessageEvent {
     // (undocumented)
@@ -2483,8 +2333,6 @@ interface ChatMessageEvent {
     type: 'message';
 }
 
-// Warning: (ae-missing-release-tag) "ChatMessagePayload" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface ChatMessagePayload {
     // (undocumented)
@@ -2497,13 +2345,9 @@ interface ChatMessagePayload {
     role: string;
 }
 
-// Warning: (ae-missing-release-tag) "ChatRole" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 
-// Warning: (ae-missing-release-tag) "ChoiceDelta" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ChoiceDelta {
     // (undocumented)
@@ -2516,8 +2360,6 @@ export interface ChoiceDelta {
     toolCalls?: FunctionCall[];
 }
 
-// Warning: (ae-missing-release-tag) "ChunkedStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> {
     // (undocumented)
@@ -2531,6 +2373,9 @@ abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> 
     // (undocumented)
     protected closed: boolean;
     collect(): Promise<AudioFrame>;
+    protected emitMetrics: boolean;
+    // @internal
+    get error(): Error | undefined;
     // (undocumented)
     get inputText(): string;
     // (undocumented)
@@ -2549,12 +2394,16 @@ abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> 
     //
     // (undocumented)
     protected queue: AsyncIterableQueue<SynthesizedAudio>;
+    protected get responseModel(): string;
+    protected get responseProvider(): string;
     // (undocumented)
     protected abstract run(): Promise<void>;
     protected setTokenUsage(input?: {
         inputTokens?: number;
         outputTokens?: number;
     }): void;
+    // (undocumented)
+    protected get ttsRequestSpan(): Span | undefined;
 }
 
 declare namespace cli {
@@ -2564,8 +2413,6 @@ declare namespace cli {
     }
 }
 
-// Warning: (ae-missing-release-tag) "CloseEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type CloseEvent_2 = {
     type: 'close';
@@ -2575,8 +2422,6 @@ type CloseEvent_2 = {
 };
 export { CloseEvent_2 as CloseEvent }
 
-// Warning: (ae-missing-release-tag) "CloseReason" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export enum CloseReason {
     // (undocumented)
@@ -2589,8 +2434,6 @@ export enum CloseReason {
     USER_INITIATED = "user_initiated"
 }
 
-// Warning: (ae-missing-release-tag) "CloudSpanProcessorOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface CloudSpanProcessorOptions {
     exporter: SpanExporter;
@@ -2599,7 +2442,6 @@ interface CloudSpanProcessorOptions {
 }
 
 // Warning: (ae-forgotten-export) The symbol "StreamingTurnDetectionTransport" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "CloudTransport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 class CloudTransport implements StreamingTurnDetectionTransport {
@@ -2665,8 +2507,6 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     protected _ws: CloudWebSocket | undefined;
 }
 
-// Warning: (ae-missing-release-tag) "CloudTransportOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface CloudTransportOptions {
     // (undocumented)
@@ -2679,8 +2519,6 @@ interface CloudTransportOptions {
     connOptions: APIConnectOptions;
 }
 
-// Warning: (ae-missing-release-tag) "CollectedResponse" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface CollectedResponse {
     extra: Record<string, unknown>;
@@ -2692,13 +2530,9 @@ export interface CollectedResponse {
     usage?: CompletionUsage;
 }
 
-// Warning: (ae-missing-release-tag) "combineSignals" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const combineSignals: (a: AbortSignal, b: AbortSignal) => AbortSignal;
 
-// Warning: (ae-missing-release-tag) "CompletionUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface CompletionUsage {
     cacheCreationTokens?: number;
@@ -2708,29 +2542,26 @@ export interface CompletionUsage {
     promptCachedTokens: number;
     // (undocumented)
     promptTokens: number;
+    reasoningTokens?: number;
     serviceTier?: string;
     // (undocumented)
     totalTokens: number;
 }
 
+// @public
+function compute(site: InputDeltaSite, chatCtx: ChatContext, span: Span): InputDelta;
+
 // Warning: (ae-forgotten-export) The symbol "DiffOps" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "computeChatCtxDiff" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): DiffOps;
 
-// Warning: (ae-missing-release-tag) "concatInstructions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function concatInstructions(...parts: Array<string | Instructions>): string | Instructions;
 
-// Warning: (ae-missing-release-tag) "CONFIRM_DUPLICATE_PARAM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const CONFIRM_DUPLICATE_PARAM = "lk_agents_confirm_duplicate";
 
-// Warning: (ae-missing-release-tag) "ConnectionPool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class ConnectionPool<T> {
     constructor(options: ConnectionPoolOptions<T>);
@@ -2739,6 +2570,7 @@ export class ConnectionPool<T> {
     invalidate(): void;
     prewarm(): void;
     put(conn: T): void;
+    releaseIdle(): Promise<void>;
     remove(conn: T): void;
     withConnection<R>(fn: (conn: T) => Promise<R>, options?: {
         timeout?: number;
@@ -2746,8 +2578,6 @@ export class ConnectionPool<T> {
     }): Promise<R>;
 }
 
-// Warning: (ae-missing-release-tag) "ConnectionPoolOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface ConnectionPoolOptions<T> {
     closeCb?: (conn: T) => Promise<void>;
@@ -2757,13 +2587,9 @@ export interface ConnectionPoolOptions<T> {
     maxSessionDuration?: number;
 }
 
-// Warning: (ae-missing-release-tag) "conversationId" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function conversationId(): string | undefined;
 
-// Warning: (ae-missing-release-tag) "ConversationItemAddedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type ConversationItemAddedEvent = {
     type: 'conversation_item_added';
@@ -2771,8 +2597,9 @@ export type ConversationItemAddedEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "convertMarkup" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @internal (undocumented)
+function conversationMessages(items: readonly ChatItem[]): ChatMessagePayload[];
+
 // @public
 function convertMarkup(provider: string, text: string): string;
 
@@ -2786,49 +2613,33 @@ export const _createAgentBackchannelOpportunityEvent: (input: {
     createdAt?: number;
 }) => _AgentBackchannelOpportunityEvent;
 
-// Warning: (ae-missing-release-tag) "createAgentFalseInterruptionEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createAgentFalseInterruptionEvent: (input: {
     resumed: boolean;
     createdAt?: number;
 }) => AgentFalseInterruptionEvent;
 
-// Warning: (ae-missing-release-tag) "createAgentStateChangedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createAgentStateChangedEvent: (oldState: AgentState, newState: AgentState, createdAt?: number) => AgentStateChangedEvent;
 
-// Warning: (ae-missing-release-tag) "createAudioContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function createAudioContent(params: {
     frame: AudioFrame[];
     transcript?: string;
 }): AudioContent;
 
-// Warning: (ae-missing-release-tag) "createCloseEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createCloseEvent: (reason: ShutdownReason, error?: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | null, createdAt?: number) => CloseEvent_2;
 
-// Warning: (ae-missing-release-tag) "createConversationItemAddedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createConversationItemAddedEvent: (item: ChatMessage | AgentHandoffItem, createdAt?: number) => ConversationItemAddedEvent;
 
-// Warning: (ae-missing-release-tag) "createEndCallTool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function createEndCallTool<UserData = UnknownUserData>(input?: EndCallToolOptions<UserData>): Toolset;
 
-// Warning: (ae-missing-release-tag) "createEndpointing" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function createEndpointing(options: EndpointingOptions): BaseEndpointing;
 
-// Warning: (ae-missing-release-tag) "createEotPredictionEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createEotPredictionEvent: (input: {
     probability: number;
@@ -2838,13 +2649,9 @@ export const createEotPredictionEvent: (input: {
     createdAt?: number;
 }) => EotPredictionEvent;
 
-// Warning: (ae-missing-release-tag) "createErrorEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createErrorEvent: (error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError, source?: LLM | STT | TTS | RealtimeModel, createdAt?: number) => ErrorEvent_2;
 
-// Warning: (ae-missing-release-tag) "createFunctionToolsExecutedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createFunctionToolsExecutedEvent: (input: {
     functionCalls: FunctionCall[];
@@ -2852,8 +2659,6 @@ export const createFunctionToolsExecutedEvent: (input: {
     createdAt?: number;
 }) => FunctionToolsExecutedEvent;
 
-// Warning: (ae-missing-release-tag) "createImageContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function createImageContent(params: {
     image: string | VideoFrame_2;
@@ -2864,34 +2669,24 @@ export function createImageContent(params: {
     mimeType?: string;
 }): ImageContent;
 
-// Warning: (ae-missing-release-tag) "createImmutableArray" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function createImmutableArray<T>(array: T[], additionalErrorMessage?: string): T[];
 
-// Warning: (ae-missing-release-tag) "createMetricsCollectedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createMetricsCollectedEvent: (input: {
     metrics: AgentMetrics;
     createdAt?: number;
 }) => MetricsCollectedEvent;
 
-// Warning: (ae-missing-release-tag) "createSessionReport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function createSessionReport(opts: SessionReportOptions): SessionReport;
 
-// Warning: (ae-missing-release-tag) "createSessionUsageUpdatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createSessionUsageUpdatedEvent: (input: {
     usage: AgentSessionUsage;
     createdAt?: number;
 }) => SessionUsageUpdatedEvent;
 
-// Warning: (ae-missing-release-tag) "createSpeechCreatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createSpeechCreatedEvent: (input: {
     userInitiated: boolean;
@@ -2900,13 +2695,9 @@ export const createSpeechCreatedEvent: (input: {
     createdAt?: number;
 }) => SpeechCreatedEvent;
 
-// Warning: (ae-missing-release-tag) "createStreamChannel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function createStreamChannel<T, E extends Error = Error>(): StreamChannel<T, E>;
 
-// Warning: (ae-missing-release-tag) "createTimedString" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function createTimedString(opts: {
     text: string;
@@ -2917,13 +2708,14 @@ export function createTimedString(opts: {
     speakerId?: string | null;
 }): TimedString;
 
-// Warning: (ae-missing-release-tag) "createToolOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createToolOptions: <UserData extends UnknownUserData>(toolCallId: string, userData?: UserData) => ToolOptions<UserData>;
 
-// Warning: (ae-missing-release-tag) "createUserInputTranscribedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "TwilioConnectorWarmTransferTask"
 //
+// @public
+function createTwilioConnectorWarmTransferTask(options: TwilioConnectorWarmTransferTaskOptions): AgentTask<WarmTransferResult>;
+
 // @public (undocumented)
 export const createUserInputTranscribedEvent: (input: {
     transcript: string;
@@ -2934,13 +2726,9 @@ export const createUserInputTranscribedEvent: (input: {
     createdAt?: number;
 }) => UserInputTranscribedEvent;
 
-// Warning: (ae-missing-release-tag) "createUserStateChangedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createUserStateChangedEvent: (oldState: UserState, newState: UserState, createdAt?: number) => UserStateChangedEvent;
 
-// Warning: (ae-missing-release-tag) "createUserTranscriptionTimeoutEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createUserTranscriptionTimeoutEvent: (input: {
     speechDuration: number;
@@ -2948,8 +2736,6 @@ export const createUserTranscriptionTimeoutEvent: (input: {
     createdAt?: number;
 }) => UserTranscriptionTimeoutEvent;
 
-// Warning: (ae-missing-release-tag) "createUserTurnExceededEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const createUserTurnExceededEvent: (input: {
     transcript: string;
@@ -2959,14 +2745,11 @@ export const createUserTurnExceededEvent: (input: {
     createdAt?: number;
 }) => UserTurnExceededEvent;
 
-// Warning: (ae-missing-release-tag) "createWarmTransferTask" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTask"
 //
 // @public
 function createWarmTransferTask(input?: WarmTransferTaskOptions): AgentTask<WarmTransferResult>;
 
-// Warning: (ae-missing-release-tag) "DataStreamAudioOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class DataStreamAudioOutput extends AudioOutput {
     constructor(opts: DataStreamAudioOutputOptions);
@@ -2998,8 +2781,6 @@ export class DataStreamAudioOutput extends AudioOutput {
     }): void;
 }
 
-// Warning: (ae-missing-release-tag) "DataStreamAudioOutputOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface DataStreamAudioOutputOptions {
     // (undocumented)
@@ -3013,18 +2794,12 @@ export interface DataStreamAudioOutputOptions {
     waitRemoteTrack?: TrackKind;
 }
 
-// Warning: (ae-missing-release-tag) "dedent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function dedent(strings: TemplateStringsArray, ...values: unknown[]): string;
 
-// Warning: (ae-missing-release-tag) "DeepgramFluxModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type DeepgramFluxModels = 'deepgram/flux-general' | 'deepgram/flux-general-en' | 'deepgram/flux-general-multi';
 
-// Warning: (ae-missing-release-tag) "DeepgramFluxOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface DeepgramFluxOptions {
     detect_language?: boolean;
@@ -3036,13 +2811,9 @@ interface DeepgramFluxOptions {
     mip_opt_out?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "DeepgramModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type DeepgramModels = 'deepgram/nova-3' | 'deepgram/nova-3-medical' | 'deepgram/nova-2' | 'deepgram/nova-2-medical' | 'deepgram/nova-2-conversationalai' | 'deepgram/nova-2-phonecall';
 
-// Warning: (ae-missing-release-tag) "DeepgramOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface DeepgramOptions {
     diarize?: boolean;
@@ -3058,61 +2829,49 @@ interface DeepgramOptions {
     smart_format?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "DeepgramTTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type DeepgramTTSModels = 'deepgram/aura' | 'deepgram/aura-2';
 
-// Warning: (ae-missing-release-tag) "DeepgramTTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface DeepgramTTSOptions {
     mip_opt_out?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "DeepSeekModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type DeepSeekModels = 'deepseek-ai/deepseek-v3' | 'deepseek-ai/deepseek-v3.2';
 
-// Warning: (ae-missing-release-tag) "DEFAULT_API_CONNECT_OPTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions;
 
-// Warning: (ae-missing-release-tag) "DEFAULT_EXPRESSIVE_OPTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const DEFAULT_ERROR_THRESHOLD = 500;
+
 // @public (undocumented)
 export const DEFAULT_EXPRESSIVE_OPTIONS: ExpressiveOptions;
 
-// Warning: (ae-missing-release-tag) "DEFAULT_MOOD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const DEFAULT_MOOD: AgentMood;
 
-// Warning: (ae-missing-release-tag) "DEFAULT_PARTICIPANT_KINDS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[];
 
 // Warning: (ae-incompatible-release-tags) The symbol "DEFAULT_SESSION_CONNECT_OPTIONS" is marked as @public, but its signature references "ResolvedSessionConnectOptions" which is marked as @internal
-// Warning: (ae-missing-release-tag) "DEFAULT_SESSION_CONNECT_OPTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export const DEFAULT_SESSION_CONNECT_OPTIONS: ResolvedSessionConnectOptions;
 
-// Warning: (ae-missing-release-tag) "DEFAULT_SPEECH_STEERING_OPTIONS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const DEFAULT_SPEECH_STEERING_OPTIONS: SpeechSteeringOptions;
 
-// Warning: (ae-missing-release-tag) "DEFAULT_TEXT_INPUT_CALLBACK" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback;
 
-// Warning: (ae-missing-release-tag) "defaultEndpointingOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const DEFAULT_TICK_INTERVAL = 20;
+
+// @public (undocumented)
+const DEFAULT_WARN_THRESHOLD = 100;
+
 // @public (undocumented)
 export const defaultEndpointingOptions: {
     readonly mode: "fixed";
@@ -3126,18 +2885,12 @@ export const defaultEndpointingOptions: {
 // @internal (undocumented)
 export const defaultInitializeProcessFunc: (_: JobProcess) => JobProcess<Record<string, unknown>>;
 
-// Warning: (ae-missing-release-tag) "defaultTextSyncOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const defaultTextSyncOptions: TextSyncOptions;
 
-// Warning: (ae-missing-release-tag) "defaultUserTurnLimitOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const defaultUserTurnLimitOptions: UserTurnLimitOptions;
 
-// Warning: (ae-missing-release-tag) "DeferredReadableStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class DeferredReadableStream<T> {
     constructor();
@@ -3149,18 +2902,12 @@ class DeferredReadableStream<T> {
     get stream(): ReadableStream_2<T>;
 }
 
-// Warning: (ae-missing-release-tag) "defineAgent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function defineAgent<ProcessUserData = Record<string, unknown>>(agent: AgentDefinition<ProcessUserData>): AgentDefinition<ProcessUserData>;
 
-// Warning: (ae-missing-release-tag) "delay" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function delay(ms: number, options?: DelayOptions_2): Promise<void>;
 
-// Warning: (ae-missing-release-tag) "DelayOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type DelayOptions_2 = {
     signal?: AbortSignal;
@@ -3172,7 +2919,9 @@ interface DescribesOptions {
     describeOptions(): Readonly<Record<string, unknown>>;
 }
 
-// Warning: (ae-missing-release-tag) "dropBracketCues" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// @internal
+function discardPreparedCloudTracer(jobId: string): void;
+
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "convertMarkup"
 //
 // @public
@@ -3181,18 +2930,187 @@ function dropBracketCues(tokens: TimedString[], held: TimedString[], options?: {
 }): TimedString[];
 
 // Warning: (ae-forgotten-export) The symbol "DTMF_EVENTS" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "DtmfEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 type DtmfEvent = (typeof DTMF_EVENTS)[number];
 
-// Warning: (ae-missing-release-tag) "DuplicateMode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+declare namespace duplex {
+    export {
+        isDuplexModel,
+        OpenAIDuplexModels,
+        DuplexModels,
+        OpenAIResponsesOptions,
+        OpenAIDuplexOptions,
+        DuplexOptions,
+        DuplexModelOptions,
+        DuplexModel_2 as DuplexModel,
+        DuplexSession_2 as DuplexSession
+    }
+}
+
+// @public
+export interface DuplexAudioFrame {
+    frame: AudioFrame;
+    startMs?: number;
+}
+
+// @public
+export interface DuplexCapabilities {
+    autoToolReplyGeneration: boolean;
+    midSessionChatCtxUpdate?: boolean;
+    midSessionInstructionsUpdate?: boolean;
+    midSessionToolsUpdate?: boolean;
+    userTranscription: boolean;
+}
+
+// @public
+export abstract class DuplexModel {
+    constructor(
+    capabilities: DuplexCapabilities);
+    audioGate(): AudioGate | undefined;
+    readonly capabilities: DuplexCapabilities;
+    abstract close(): Promise<void>;
+    label(): string;
+    get model(): string;
+    get provider(): string;
+    abstract session(): DuplexSession;
+}
+
+// Warning: (ae-forgotten-export) The symbol "GPTLiveModel" needs to be exported by the entry point index.d.ts
 //
+// @public
+class DuplexModel_2<TModel extends DuplexModels | AnyString = DuplexModels | AnyString> extends GPTLiveModel {
+    constructor(options: DuplexModelOptions<TModel>);
+    // (undocumented)
+    static fromModelString(model: string): DuplexModel_2;
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions_2" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    readonly _inferenceOptions: InferenceOptions_2;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(): DuplexSession_2;
+}
+
+// @public (undocumented)
+interface DuplexModelOptions<TModel extends DuplexModels | AnyString> {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    maxSessionDuration?: number | null;
+    model: TModel;
+    modelOptions?: DuplexOptions<TModel>;
+    provider?: string;
+    voice?: string;
+}
+
+// @public
+type DuplexModels = OpenAIDuplexModels;
+
+// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+type DuplexOptions<TModel extends DuplexModels | AnyString> = TModel extends OpenAIDuplexModels ? OpenAIDuplexOptions : Record<string, unknown>;
+
+// @public
+export interface DuplexOutputTranscriptDelta {
+    endMs?: number;
+    startMs?: number;
+    text: string;
+}
+
+// @public
+export class DuplexRealtimeAdapter extends RealtimeModel {
+    constructor(
+    duplexModel: DuplexModel, options?: DuplexRealtimeAdapterOptions);
+    close(): Promise<void>;
+    readonly duplexModel: DuplexModel;
+    get model(): string;
+    get provider(): string;
+    session(): RealtimeSession;
+}
+
+// @public
+export interface DuplexRealtimeAdapterOptions {
+    audioTimeout?: number;
+    gate?: () => AudioGate;
+}
+
+// Warning: (ae-forgotten-export) The symbol "DuplexSession_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+export abstract class DuplexSession<Events extends EventMap = Record<never, never>> extends DuplexSession_base<Events> {
+    constructor(
+    duplexModel: DuplexModel);
+    abstract _appendItems(items: ChatItem[]): Promise<void>;
+    abstract get audioStream(): ReadableStream_2<DuplexAudioFrame>;
+    get capabilities(): DuplexCapabilities;
+    close(): Promise<void>;
+    protected abstract closeConnection(): Promise<void>;
+    protected _closing: boolean;
+    protected readonly _configured: {
+        readonly isSet: boolean;
+        wait(): Promise<boolean>;
+        set(): void;
+    };
+    readonly duplexModel: DuplexModel;
+    _generateReply(_instructions?: string, _options?: {
+        toolChoice?: ToolChoice;
+        tools?: ToolContext;
+    }): void;
+    abstract pushAudio(frame: AudioFrame): void;
+    pushVideo(_frame: VideoFrame_2): void;
+    protected _reportConnectionAcquired(acquireTimeMs: number): void;
+    abstract get tools(): ToolContext;
+    abstract _updateInstructions(instructions: string): Promise<void>;
+    abstract _updateOptions(options: {
+        toolChoice?: ToolChoice | null;
+    }): void;
+    _updateSession(instructions?: string, chatCtx?: ChatContext, tools?: ToolContext): Promise<void>;
+    abstract _updateTools(tools: ToolContext): Promise<void>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "GPTLiveSession" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+class DuplexSession_2 extends GPTLiveSession {
+    constructor(model: DuplexModel_2);
+    // (undocumented)
+    protected createWsUrlAndHeaders(): Promise<{
+        url: URL;
+        headers: Record<string, string>;
+    }>;
+    // Warning: (ae-forgotten-export) The symbol "ErrorBody" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected isFatalError(error: ErrorBody): boolean;
+    // (undocumented)
+    _updateTools(tools: ToolContext): Promise<void>;
+}
+
+// @public
+export type DuplexSessionCallbacks = {
+    transcript_delta: (event: DuplexOutputTranscriptDelta) => void;
+    function_call: (event: FunctionCall) => void;
+    input_speech_started: (event: InputSpeechStartedEvent) => void;
+    input_speech_stopped: (event: InputSpeechStoppedEvent) => void;
+    input_audio_transcription_completed: (event: InputTranscriptionCompleted) => void;
+    session_reconnected: (event: RealtimeSessionReconnectedEvent) => void;
+    metrics_collected: (event: RealtimeModelMetrics | LLMMetrics) => void;
+    error: (event: RealtimeModelError) => void;
+};
+
 // @public (undocumented)
 export type DuplicateMode = 'allow' | 'reject' | 'replace' | 'confirm';
 
-// Warning: (ae-missing-release-tag) "DuplicatePromptArgs" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface DuplicatePromptArgs {
     // (undocumented)
@@ -3203,8 +3121,6 @@ export interface DuplicatePromptArgs {
     functionName: string;
 }
 
-// Warning: (ae-missing-release-tag) "DynamicEndpointing" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class DynamicEndpointing extends BaseEndpointing {
     constructor(input: {
@@ -3236,13 +3152,9 @@ export class DynamicEndpointing extends BaseEndpointing {
     }): void;
 }
 
-// Warning: (ae-missing-release-tag) "emitToOtel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function emitToOtel(logObj: PinoLogObject): void;
 
-// Warning: (ae-missing-release-tag) "emptyAudioFrame" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function emptyAudioFrame(): AudioBuffer_2;
 
@@ -3251,23 +3163,15 @@ function emptyAudioFrame(): AudioBuffer_2;
 // @internal
 export const enableOtelLogging: () => void;
 
-// Warning: (ae-missing-release-tag) "END_CALL_DESCRIPTION" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const END_CALL_DESCRIPTION = "\nEnds the current call and disconnects immediately.\n\nCall when:\n- The user clearly indicates they are done (e.g., \"that's all, bye\").\n\nDo not call when:\n- The user asks to pause, hold, or transfer.\n- Intent is unclear.\n\nThis is the final action the agent can take.\nOnce called, no further interaction is possible with the user.\nDon't generate any other text or response when the tool is called.\n";
 
-// Warning: (ae-missing-release-tag) "EndCallToolCalledEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type EndCallToolCalledEvent<UserData = UnknownUserData> = ToolCalledEvent<UserData>;
 
-// Warning: (ae-missing-release-tag) "EndCallToolCompletedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type EndCallToolCompletedEvent<UserData = UnknownUserData> = ToolCompletedEvent<UserData>;
 
-// Warning: (ae-missing-release-tag) "EndCallToolOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type EndCallToolOptions<UserData = UnknownUserData> = {
     extraDescription?: string;
@@ -3278,8 +3182,6 @@ type EndCallToolOptions<UserData = UnknownUserData> = {
     onToolCompleted?: (event: EndCallToolCompletedEvent<UserData>) => Promise<void> | void;
 };
 
-// Warning: (ae-missing-release-tag) "EndpointingOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface EndpointingOptions {
     alpha: number;
@@ -3287,6 +3189,12 @@ export interface EndpointingOptions {
     minDelay: number;
     mode: 'fixed' | 'dynamic';
 }
+
+// @public (undocumented)
+const ENV_ERROR_THRESHOLD_MS = "LIVEKIT_AGENTS_LOOP_BLOCK_ERROR_MS";
+
+// @public (undocumented)
+const ENV_WARN_THRESHOLD_MS = "LIVEKIT_AGENTS_LOOP_BLOCK_WARN_MS";
 
 declare namespace eot {
     export {
@@ -3304,8 +3212,6 @@ declare namespace eot {
     }
 }
 
-// Warning: (ae-missing-release-tag) "EOTInferenceMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export type EOTInferenceMetrics = {
     type: 'eot_inference_metrics';
@@ -3317,8 +3223,6 @@ export type EOTInferenceMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-missing-release-tag) "EOTModelUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export type EOTModelUsage = {
     type: 'eot_usage';
@@ -3327,8 +3231,6 @@ export type EOTModelUsage = {
     totalRequests: number;
 };
 
-// Warning: (ae-missing-release-tag) "EotPredictionEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export type EotPredictionEvent = {
     type: 'eot_prediction';
@@ -3339,8 +3241,6 @@ export type EotPredictionEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "EOUMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type EOUMetrics = {
     type: 'eou_metrics';
@@ -3352,8 +3252,6 @@ export type EOUMetrics = {
     speechId?: string;
 };
 
-// Warning: (ae-missing-release-tag) "ErrorEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type ErrorEvent_2 = {
     type: 'error';
@@ -3378,38 +3276,24 @@ class Event_2 {
 // Warning: (ae-internal-missing-underscore) The name "Event" should be prefixed with an underscore because the declaration is marked as @internal
 export { Event_2 as Event }
 
-// Warning: (ae-missing-release-tag) "EVENT_GEN_AI_ASSISTANT_MESSAGE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const EVENT_GEN_AI_ASSISTANT_MESSAGE = "gen_ai.assistant.message";
 
-// Warning: (ae-missing-release-tag) "EVENT_GEN_AI_CHOICE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const EVENT_GEN_AI_CHOICE = "gen_ai.choice";
 
-// Warning: (ae-missing-release-tag) "EVENT_GEN_AI_CLIENT_INFERENCE_OPERATION_DETAILS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const EVENT_GEN_AI_CLIENT_INFERENCE_OPERATION_DETAILS = "gen_ai.client.inference.operation.details";
 
-// Warning: (ae-missing-release-tag) "EVENT_GEN_AI_SYSTEM_MESSAGE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const EVENT_GEN_AI_SYSTEM_MESSAGE = "gen_ai.system.message";
 
-// Warning: (ae-missing-release-tag) "EVENT_GEN_AI_TOOL_MESSAGE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const EVENT_GEN_AI_TOOL_MESSAGE = "gen_ai.tool.message";
 
-// Warning: (ae-missing-release-tag) "EVENT_GEN_AI_USER_MESSAGE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const EVENT_GEN_AI_USER_MESSAGE = "gen_ai.user.message";
 
-// Warning: (ae-missing-release-tag) "EventAssert" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class EventAssert {
     constructor(event: RunEvent, parent: RunAssert, index: number);
@@ -3428,8 +3312,39 @@ class EventAssert {
     protected _raise(message: string): never;
 }
 
-// Warning: (ae-missing-release-tag) "EventRangeAssert" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+class EventLoopMonitor {
+    constructor(options?: EventLoopMonitorOptions);
+    // (undocumented)
+    readonly errorThreshold: number;
+    onReport?: (report: BlockedReport) => void;
+    setReportContext(context: Context | undefined, runner?: ReportContextRunner): void;
+    get stackSamplingActive(): boolean;
+    start(): void;
+    stop(): void;
+    // (undocumented)
+    readonly tickInterval: number;
+    // (undocumented)
+    readonly warnThreshold: number;
+    get watchdogActive(): boolean;
+}
+
+// @public (undocumented)
+interface EventLoopMonitorOptions {
+    // (undocumented)
+    emitSpans?: boolean;
+    // (undocumented)
+    errorThreshold?: number;
+    // (undocumented)
+    name?: string;
+    stacks?: StackSamplingMode;
+    // (undocumented)
+    tickInterval?: number;
+    // (undocumented)
+    warnThreshold?: number;
+    watchdog?: boolean;
+}
+
 // @public
 class EventRangeAssert {
     constructor(events: RunEvent[], parent: RunAssert, range: {
@@ -3442,18 +3357,12 @@ class EventRangeAssert {
     containsMessage(options?: MessageAssertOptions): MessageAssert;
 }
 
-// Warning: (ae-missing-release-tag) "EventType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 type EventType = 'message' | 'function_call' | 'function_call_output' | 'agent_handoff';
 
-// Warning: (ae-missing-release-tag) "executeToolCall" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function executeToolCall(toolCall: FunctionCall, toolCtx: ToolContext): Promise<FunctionCallOutput>;
 
-// Warning: (ae-missing-release-tag) "Expand" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export type Expand<T> = T extends Function ? T : T extends object ? T extends Array<infer U> ? Array<Expand<U>> : T extends Map<infer K, infer V> ? Map<Expand<K>, Expand<V>> : T extends Set<infer M> ? Set<Expand<M>> : {
     [K in keyof T]: Expand<T[K]>;
@@ -3488,13 +3397,9 @@ export class ExpFilter {
     get value(): number | undefined;
 }
 
-// Warning: (ae-missing-release-tag) "expressionAttribute" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function expressionAttribute(tags: ExpressiveTag[]): Record<string, string> | undefined;
 
-// Warning: (ae-missing-release-tag) "ExpressiveOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface ExpressiveOptions {
     // (undocumented)
@@ -3505,8 +3410,6 @@ export interface ExpressiveOptions {
     ttsInstructionsTemplate?: Instructions | string;
 }
 
-// Warning: (ae-missing-release-tag) "ExpressiveTag" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface ExpressiveTag {
     // (undocumented)
@@ -3515,8 +3418,6 @@ interface ExpressiveTag {
     value: string;
 }
 
-// Warning: (ae-missing-release-tag) "ExtraDetailsProcessor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class ExtraDetailsProcessor implements LogRecordProcessor {
     // (undocumented)
@@ -3527,8 +3428,6 @@ class ExtraDetailsProcessor implements LogRecordProcessor {
     shutdown(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "FakeLLM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class FakeLLM extends LLM {
     constructor(responses?: FakeLLMResponse[]);
@@ -3547,8 +3446,6 @@ class FakeLLM extends LLM {
     lookup(input: string): FakeLLMResponse | undefined;
 }
 
-// Warning: (ae-missing-release-tag) "FakeLLMResponse" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface FakeLLMResponse {
     // (undocumented)
@@ -3568,7 +3465,6 @@ interface FakeLLMResponse {
     type?: 'llm';
 }
 
-// Warning: (ae-missing-release-tag) "FakeRecognizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "FakeSTT"
 //
 // @public
@@ -3583,7 +3479,6 @@ class FakeRecognizeStream extends SpeechStream {
     sendFakeTranscript(transcript: string, isFinal?: boolean): void;
 }
 
-// Warning: (ae-missing-release-tag) "FakeSTT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "FakeUserSpeech"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "recognizeCh"
@@ -3625,8 +3520,6 @@ class FakeSTT extends STT {
     updateOptions(opts: UpdateOptions): void;
 }
 
-// Warning: (ae-missing-release-tag) "FakeSTTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface FakeSTTOptions {
     // (undocumented)
@@ -3645,8 +3538,6 @@ interface FakeSTTOptions {
     label?: string;
 }
 
-// Warning: (ae-missing-release-tag) "FakeUserSpeech" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface FakeUserSpeech {
     // (undocumented)
@@ -3661,8 +3552,6 @@ interface FakeUserSpeech {
     transcript: string;
 }
 
-// Warning: (ae-missing-release-tag) "FallbackAdapter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class FallbackAdapter extends LLM {
     constructor(options: FallbackAdapterOptions);
@@ -3685,8 +3574,9 @@ export class FallbackAdapter extends LLM {
     readonly llms: LLM[];
     // (undocumented)
     readonly maxRetryPerLLM: number;
-    // (undocumented)
     get model(): string;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "model"
+    get provider(): string;
     // (undocumented)
     readonly retryInterval: number;
     // (undocumented)
@@ -3697,7 +3587,6 @@ export class FallbackAdapter extends LLM {
     _status: LLMStatus[];
 }
 
-// Warning: (ae-missing-release-tag) "FallbackAdapter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "StreamAdapter"
 //
 // @public
@@ -3713,9 +3602,8 @@ class FallbackAdapter_2 extends STT {
     label: string;
     // (undocumented)
     readonly maxRetryPerSTT: number;
-    // (undocumented)
     get model(): string;
-    // (undocumented)
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "model"
     get provider(): string;
     // (undocumented)
     _pushConversationItem(ev: ConversationItemAddedEvent): void;
@@ -3726,7 +3614,10 @@ class FallbackAdapter_2 extends STT {
     // (undocumented)
     readonly retryIntervalMs: number;
     // @internal
-    _setActiveStt(stt: STT): void;
+    _served?: {
+        stt: STT;
+        stream: object;
+    };
     // Warning: (ae-forgotten-export) The symbol "STTStatus" needs to be exported by the entry point index.d.ts
     get status(): STTStatus[];
     // (undocumented)
@@ -3739,8 +3630,6 @@ class FallbackAdapter_2 extends STT {
     _updateSessionKeyterms(keyterms: string[]): void;
 }
 
-// Warning: (ae-missing-release-tag) "FallbackAdapter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class FallbackAdapter_3 extends TTS {
     // Warning: (ae-forgotten-export) The symbol "FallbackAdapterOptions_3" needs to be exported by the entry point index.d.ts
@@ -3755,7 +3644,11 @@ class FallbackAdapter_3 extends TTS {
     // (undocumented)
     markUnAvailable(index: number): void;
     readonly maxRetryPerTTS: number;
+    get model(): string;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "model"
+    get provider(): string;
     readonly recoveryDelayMs: number;
+    releaseIdleConnections(): Promise<void>;
     // Warning: (ae-forgotten-export) The symbol "TTSStatus" needs to be exported by the entry point index.d.ts
     get status(): TTSStatus[];
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SynthesizeStream"
@@ -3765,10 +3658,10 @@ class FallbackAdapter_3 extends TTS {
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "ChunkedStream"
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
     readonly ttsInstances: TTS[];
+    // (undocumented)
+    get _wrappedTts(): readonly TTS[];
 }
 
-// Warning: (ae-missing-release-tag) "FallbackAdapterOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface FallbackAdapterOptions {
     attemptTimeout?: number;
@@ -3778,8 +3671,6 @@ export interface FallbackAdapterOptions {
     retryOnChunkSent?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "FallbackAdapterOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface FallbackAdapterOptions_2 {
     attemptTimeoutMs?: number;
@@ -3790,7 +3681,6 @@ interface FallbackAdapterOptions_2 {
     vad?: VAD;
 }
 
-// Warning: (ae-missing-release-tag) "FanoutSpanProcessor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "FanoutSpanProcessor"
 //
 // @public
@@ -3808,23 +3698,15 @@ class FanoutSpanProcessor implements SpanProcessor {
     shutdown(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "filterEmoji" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function filterEmoji(text: ReadableStream_2<string>): ReadableStream_2<string>;
 
-// Warning: (ae-missing-release-tag) "filterMarkdown" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function filterMarkdown(text: ReadableStream_2<string>): ReadableStream_2<string>;
 
-// Warning: (ae-missing-release-tag) "filterZeroValues" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function filterZeroValues<T extends ModelUsage>(usage: T): Partial<T>;
 
-// Warning: (ae-missing-release-tag) "FinalizeSimulationError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class FinalizeSimulationError extends Error {
     constructor(message: string, userVerdict?: AgentSession_2.SessionResponse_FinalizeSimulationResponse_SimulationVerdict);
@@ -3832,21 +3714,15 @@ export class FinalizeSimulationError extends Error {
     readonly userVerdict: AgentSession_2.SessionResponse_FinalizeSimulationResponse_SimulationVerdict | undefined;
 }
 
-// Warning: (ae-missing-release-tag) "finishReasonFor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function finishReasonFor(params: {
     functionCalls?: readonly unknown[];
     interrupted?: boolean;
 }): string;
 
-// Warning: (ae-missing-release-tag) "FishAudioModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type FishAudioModels = 'fishaudio' | 'fishaudio/s2.1-pro' | 'fishaudio/s2.1-pro-free' | 'fishaudio/s2-pro';
 
-// Warning: (ae-missing-release-tag) "FishAudioOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface FishAudioOptions {
     chunk_length?: number;
@@ -3863,30 +3739,34 @@ interface FishAudioOptions {
     volume?: number;
 }
 
+// @public
+export class FixedGate implements AudioGate {
+    constructor(silence: number, options?: AudioGateOptions);
+    deactivate(): void;
+    update(frame: AudioFrame): boolean;
+}
+
+// @internal
+function flushCloudMetrics(): Promise<void>;
+
+// @internal
+function flushCloudTraces(): Promise<void>;
+
 // @internal
 function flushOtelLogs(): Promise<void>;
 
-// Warning: (ae-missing-release-tag) "flushPinoLogs" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function flushPinoLogs(): Promise<void>;
 
-// Warning: (ae-missing-release-tag) "FlushSentinel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-missing-release-tag) "FlushSentinel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const FlushSentinel: unique symbol;
 
 // @public (undocumented)
 export type FlushSentinel = typeof FlushSentinel;
 
-// Warning: (ae-missing-release-tag) "formatChatHistory" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function formatChatHistory(chatCtx: ChatContext, options?: FormatChatHistoryOptions): string;
 
-// Warning: (ae-missing-release-tag) "FormatChatHistoryOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface FormatChatHistoryOptions {
     // (undocumented)
@@ -3900,8 +3780,6 @@ export interface FormatChatHistoryOptions {
 // @internal (undocumented)
 const formatDownloadFailureMessage: (failures: PluginDownloadFailure[]) => string;
 
-// Warning: (ae-missing-release-tag) "FunctionCall" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class FunctionCall {
     constructor(params: {
@@ -3945,8 +3823,6 @@ export class FunctionCall {
     readonly type: "function_call";
 }
 
-// Warning: (ae-missing-release-tag) "FunctionCallAssert" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class FunctionCallAssert extends EventAssert {
     constructor(event: FunctionCallEvent, parent: RunAssert, index: number);
@@ -3956,8 +3832,6 @@ class FunctionCallAssert extends EventAssert {
     protected _event: FunctionCallEvent;
 }
 
-// Warning: (ae-missing-release-tag) "FunctionCallAssertOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface FunctionCallAssertOptions {
     // (undocumented)
@@ -3966,8 +3840,6 @@ interface FunctionCallAssertOptions {
     name?: string;
 }
 
-// Warning: (ae-missing-release-tag) "FunctionCallEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface FunctionCallEvent {
     // (undocumented)
@@ -3976,8 +3848,6 @@ interface FunctionCallEvent {
     type: 'function_call';
 }
 
-// Warning: (ae-missing-release-tag) "FunctionCallOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class FunctionCallOutput {
     constructor(params: {
@@ -3987,6 +3857,7 @@ export class FunctionCallOutput {
         id?: string;
         createdAt?: number;
         name?: string;
+        replyRequired?: boolean;
     });
     // (undocumented)
     callId: string;
@@ -3998,6 +3869,7 @@ export class FunctionCallOutput {
         id?: string;
         createdAt?: number;
         name?: string;
+        replyRequired?: boolean;
     }): FunctionCallOutput;
     // (undocumented)
     createdAt: number;
@@ -4009,14 +3881,13 @@ export class FunctionCallOutput {
     name: string;
     // (undocumented)
     output: string;
+    replyRequired: boolean;
     // (undocumented)
     toJSON(excludeTimestamp?: boolean): JSONValue;
     // (undocumented)
     readonly type: "function_call_output";
 }
 
-// Warning: (ae-missing-release-tag) "FunctionCallOutputAssert" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class FunctionCallOutputAssert extends EventAssert {
     constructor(event: FunctionCallOutputEvent, parent: RunAssert, index: number);
@@ -4026,8 +3897,6 @@ class FunctionCallOutputAssert extends EventAssert {
     protected _event: FunctionCallOutputEvent;
 }
 
-// Warning: (ae-missing-release-tag) "FunctionCallOutputAssertOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface FunctionCallOutputAssertOptions {
     // (undocumented)
@@ -4036,8 +3905,6 @@ interface FunctionCallOutputAssertOptions {
     output?: string;
 }
 
-// Warning: (ae-missing-release-tag) "FunctionCallOutputEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface FunctionCallOutputEvent {
     // (undocumented)
@@ -4046,15 +3913,11 @@ interface FunctionCallOutputEvent {
     type: 'function_call_output';
 }
 
-// Warning: (ae-missing-release-tag) "FunctionExistsError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class FunctionExistsError extends Error {
     constructor(msg?: string);
 }
 
-// Warning: (ae-missing-release-tag) "FunctionTool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface FunctionTool<Parameters extends JSONObject = JSONObject, UserData = UnknownUserData, Result = unknown> extends Tool {
     // (undocumented)
@@ -4073,14 +3936,14 @@ export interface FunctionTool<Parameters extends JSONObject = JSONObject, UserDa
     type: 'function';
 }
 
-// Warning: (ae-missing-release-tag) "FunctionToolsExecutedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type FunctionToolsExecutedEvent = {
     type: 'function_tools_executed';
     functionCalls: FunctionCall[];
     functionCallOutputs: FunctionCallOutput[];
     createdAt: number;
+    readonly hasToolReply: boolean;
+    cancelToolReply(): void;
 };
 
 // Warning: (ae-internal-missing-underscore) The name "Future" should be prefixed with an underscore because the declaration is marked as @internal
@@ -4101,8 +3964,6 @@ export class Future<T = void, E extends Error = Error> {
     get result(): T;
 }
 
-// Warning: (ae-missing-release-tag) "GatewayOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface GatewayOptions {
     // (undocumented)
@@ -4111,18 +3972,21 @@ interface GatewayOptions {
     apiSecret: string;
 }
 
-// Warning: (ae-missing-release-tag) "GEN_AI_PROVIDER_NAMES" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const GEN_AI_PROVIDER_NAMES: ReadonlySet<string>;
 
 declare namespace genAI {
     export {
         setCaptureContent,
+        captureContentEnabled,
         withInferenceTracking,
         markInferenceSpanRecorded,
+        splitInstructions,
         toSystemInstructions,
         toInputMessages,
+        instructionParts,
+        conversationMessages,
+        messageLayout,
         toOutputMessages,
         toToolDefinitions,
         finishReasonFor,
@@ -4144,8 +4008,6 @@ declare namespace genAI {
     }
 }
 
-// Warning: (ae-missing-release-tag) "GenAIFinishReason" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const GenAIFinishReason: {
     readonly STOP: "stop";
@@ -4156,8 +4018,6 @@ const GenAIFinishReason: {
     readonly ERROR: "error";
 };
 
-// Warning: (ae-missing-release-tag) "GenAIOperationName" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const GenAIOperationName: {
     readonly CHAT: "chat";
@@ -4180,8 +4040,6 @@ const GenAIOperationName: {
     readonly DELETE_MEMORY_STORE: "delete_memory_store";
 };
 
-// Warning: (ae-missing-release-tag) "GenAIOutputType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const GenAIOutputType: {
     readonly TEXT: "text";
@@ -4190,13 +4048,9 @@ const GenAIOutputType: {
     readonly SPEECH: "speech";
 };
 
-// Warning: (ae-missing-release-tag) "genAIProviderName" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function genAIProviderName(provider: string | undefined | null): string | undefined;
 
-// Warning: (ae-missing-release-tag) "GenerationCreatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface GenerationCreatedEvent {
     // (undocumented)
@@ -4208,102 +4062,71 @@ export interface GenerationCreatedEvent {
     userInitiated: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "getBaseLanguage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function getBaseLanguage(language: string): string;
 
-// Warning: (ae-missing-release-tag) "getBuiltinAudioPath" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function getBuiltinAudioPath(clip: BuiltinAudioClip): string;
 
-// Warning: (ae-missing-release-tag) "getIsoLanguage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function getIsoLanguage(language: string): string;
 
-// Warning: (ae-missing-release-tag) "getJobContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-missing-release-tag) "getJobContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function getJobContext<ProcessUserData = Record<string, unknown>>(required?: true): JobContext<ProcessUserData>;
 
 // @public (undocumented)
 export function getJobContext<ProcessUserData = Record<string, unknown>>(required: false): JobContext<ProcessUserData> | undefined;
 
-// Warning: (ae-missing-release-tag) "getLanguageRegion" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function getLanguageRegion(language: string): string | undefined;
 
-// Warning: (ae-missing-release-tag) "GoogleModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
-type GoogleModels = 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
+function getMonitor(): EventLoopMonitor | undefined;
 
-// Warning: (ae-missing-release-tag) "GoogleSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+type GoogleModels = 'google/gemini-4-argon' | 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
+
+// @public (undocumented)
+type GoogleRealtimeModels = 'google/gemini-3.8-live' | 'google/gemini-3.8-live-extended-thinking' | 'google/gemini-live';
+
 // @public (undocumented)
 type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
 
-// Warning: (ae-missing-release-tag) "GoogleSTTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface GoogleSTTOptions {
     custom_vocabulary?: string[];
     language_codes?: string[];
 }
 
-// Warning: (ae-internal-missing-underscore) The name "gracefullyCancel" should be prefixed with an underscore because the declaration is marked as @internal
-//
-// @internal (undocumented)
-export function gracefullyCancel<T>(promise: CancellablePromise<T>): Promise<void>;
-
-// Warning: (ae-missing-release-tag) "handoff" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function handoff(options: {
     agent: Agent;
     returns?: any;
 }): AgentHandoff;
 
-// Warning: (ae-missing-release-tag) "hasAlignedTranscript" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function hasAlignedTranscript(model: string | undefined, modelOptions: Record<string, unknown> | undefined): boolean;
 
-// Warning: (ae-missing-release-tag) "hasResponse" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function hasResponse(chunk: ChatChunk): boolean;
 
-// Warning: (ae-missing-release-tag) "hyphenateWord" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const hyphenateWord: (word: string) => string[];
 
-// Warning: (ae-missing-release-tag) "IdentityTransform" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class IdentityTransform<T> extends TransformStream_2<T, T> {
     constructor();
 }
 
-// Warning: (ae-missing-release-tag) "IdleTimeoutError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class IdleTimeoutError extends Error {
     constructor(message?: string);
 }
 
-// Warning: (ae-missing-release-tag) "ImageContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ImageContent {
     // (undocumented)
     _cache: Record<any, any>;
-    // (undocumented)
     id: string;
     image: string | VideoFrame_2;
     // (undocumented)
@@ -4345,11 +4168,27 @@ declare namespace inference {
         LLMStream_2 as LLMStream,
         ChatCompletionOptions,
         GatewayOptions,
-        InferenceClass,
         InferenceLLMOptions,
         LLMModels,
         XAIModels,
         ZAIModels,
+        llmFromModelString,
+        InferenceClass,
+        RealtimeModel_2 as RealtimeModel,
+        RealtimeSession_3 as RealtimeSession,
+        isRealtimeModel,
+        OpenAIRealtimeModels,
+        RealtimeModelOptions,
+        RealtimeModels,
+        XAIRealtimeModels,
+        DuplexModel_2 as DuplexModel,
+        DuplexSession_2 as DuplexSession,
+        isDuplexModel,
+        DuplexModelOptions,
+        DuplexModels,
+        DuplexOptions,
+        OpenAIDuplexOptions,
+        OpenAIResponsesOptions,
         normalizeSTTFallback,
         parseSTTModelString,
         STT_2 as STT,
@@ -4375,28 +4214,24 @@ declare namespace inference {
         TTSOptions,
         XaiTTSModels,
         XaiTTSOptions,
+        duplex,
         llm_3 as llm,
+        realtime,
         stt_2 as stt,
         tts_2 as tts
     }
 }
 
-// Warning: (ae-missing-release-tag) "InferenceClass" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 type InferenceClass = 'priority' | 'standard' | 'low';
 
-// Warning: (ae-missing-release-tag) "InferenceExecutor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface InferenceExecutor {
     // (undocumented)
     doInference(method: string, data: unknown): Promise<unknown>;
 }
 
-// Warning: (ae-missing-release-tag) "InferenceLLMOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public (undocumented)
+// @public
 interface InferenceLLMOptions {
     // (undocumented)
     apiKey: string;
@@ -4416,10 +4251,9 @@ interface InferenceLLMOptions {
     strictToolSchema?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "InferenceMarker" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface InferenceMarker {
+    onRecorded?: () => void;
     // (undocumented)
     recorded: boolean;
 }
@@ -4442,8 +4276,6 @@ export abstract class InferenceRunner<InputType = unknown, OutputType = unknown>
     abstract run(data: InputType): Promise<OutputType>;
 }
 
-// Warning: (ae-missing-release-tag) "InferenceSTTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface InferenceSTTOptions<TModel extends STTModels> {
     // (undocumented)
@@ -4468,8 +4300,6 @@ interface InferenceSTTOptions<TModel extends STTModels> {
     sampleRate: number;
 }
 
-// Warning: (ae-missing-release-tag) "InferenceTTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface InferenceTTSOptions<TModel extends TTSModels> {
     // (undocumented)
@@ -4500,10 +4330,79 @@ interface InferenceTTSOptions<TModel extends TTSModels> {
 // @internal (undocumented)
 export const initializeLogger: (input: LoggerOptions) => void;
 
-// Warning: (ae-missing-release-tag) "initPinoCloudExporter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function initPinoCloudExporter(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig): void;
+
+// @internal (undocumented)
+interface InputBaseline {
+    // (undocumented)
+    instructions: string;
+    keys: Array<[string, string]>;
+    layout: Array<'new' | 'merged' | 'skipped'>;
+    // (undocumented)
+    spanContext: SpanContext;
+}
+
+// @public
+class InputDelta {
+    constructor(chatCtx: ChatContext, instructions: ChatItem[], conversation: ChatItem[], base?: SpanContext | undefined, droppedFromBase?: number | undefined);
+    // (undocumented)
+    readonly base?: SpanContext | undefined;
+    // (undocumented)
+    readonly chatCtx: ChatContext;
+    // (undocumented)
+    readonly conversation: ChatItem[];
+    // (undocumented)
+    readonly droppedFromBase?: number | undefined;
+    // (undocumented)
+    static full(chatCtx: ChatContext): InputDelta;
+    // (undocumented)
+    inputMessages(): ChatMessagePayload[];
+    // (undocumented)
+    readonly instructions: ChatItem[];
+    // (undocumented)
+    systemInstructions(): MessagePart[];
+}
+
+declare namespace inputDelta {
+    export {
+        runWithScope,
+        active,
+        compute,
+        setAttributes,
+        InputDeltaSite,
+        LLM_NODE,
+        LLM_REQUEST,
+        InputBaseline,
+        InputDelta,
+        InputDeltaTracker,
+        InputDeltaScope
+    }
+}
+
+// @public
+class InputDeltaScope {
+    constructor(tracker: InputDeltaTracker);
+    // (undocumented)
+    commit(): void;
+    // (undocumented)
+    delta(site: InputDeltaSite, chatCtx: ChatContext, span: Span): InputDelta;
+}
+
+// @public
+interface InputDeltaSite {
+    chatCtx: boolean;
+    // (undocumented)
+    name: 'llm_node' | 'llm_request';
+}
+
+// @public
+class InputDeltaTracker {
+    // @internal (undocumented)
+    readonly _baselines: Map<InputDeltaSite, InputBaseline>;
+    // (undocumented)
+    begin(): InputDeltaScope;
+}
 
 // @public
 export interface InputDetails {
@@ -4511,23 +4410,18 @@ export interface InputDetails {
     modality: 'audio' | 'text';
 }
 
-// Warning: (ae-missing-release-tag) "InputSpeechStartedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type InputSpeechStartedEvent = object;
 
-// Warning: (ae-missing-release-tag) "InputSpeechStoppedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface InputSpeechStoppedEvent {
     // (undocumented)
     userTranscriptionEnabled: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "InputTranscriptionCompleted" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface InputTranscriptionCompleted {
+    confidence?: number;
     // (undocumented)
     isFinal: boolean;
     // (undocumented)
@@ -4537,15 +4431,18 @@ export interface InputTranscriptionCompleted {
     turnStartedAt?: number;
 }
 
-// Warning: (ae-missing-release-tag) "InstructionParts" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+function install(localParticipant: LocalParticipant | undefined, jobCtx?: JobContext): TracingRpcInterceptor;
+
 // @public
 interface InstructionParts {
     extra?: Instructions | string;
     persona?: Instructions | string;
 }
 
-// Warning: (ae-missing-release-tag) "Instructions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// @internal (undocumented)
+function instructionParts(items: readonly ChatItem[]): MessagePart[];
+
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "asModality"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "asModality"
 //
@@ -4576,8 +4473,6 @@ export class Instructions {
     readonly value: string;
 }
 
-// Warning: (ae-missing-release-tag) "InterruptionMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type InterruptionMetrics = {
     type: 'interruption_metrics';
@@ -4591,8 +4486,6 @@ export type InterruptionMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-missing-release-tag) "InterruptionModelUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type InterruptionModelUsage = {
     type: 'interruption_usage';
@@ -4601,13 +4494,14 @@ export type InterruptionModelUsage = {
     totalRequests: number;
 };
 
+// @public
+export type InterruptionSource = 'audio_activity' | 'user_turn' | 'programmatic';
+
 // Warning: (ae-internal-missing-underscore) The name "intervalForRetry" should be prefixed with an underscore because the declaration is marked as @internal
 //
 // @internal
 export function intervalForRetry(connOptions: APIConnectOptions, numRetries: number): number;
 
-// Warning: (ae-missing-release-tag) "InvalidErrorType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class InvalidErrorType extends Error {
     constructor(error: unknown);
@@ -4615,13 +4509,9 @@ export class InvalidErrorType extends Error {
     readonly error: unknown;
 }
 
-// Warning: (ae-missing-release-tag) "InworldModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type InworldModels = 'inworld/inworld-tts-2' | 'inworld/inworld-tts-1.5-max' | 'inworld/inworld-tts-1.5-mini' | 'inworld/inworld-tts-1.5' | 'inworld/inworld-tts-1-max' | 'inworld/inworld-tts-1';
 
-// Warning: (ae-missing-release-tag) "InworldOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface InworldOptions {
     // (undocumented)
@@ -4635,13 +4525,9 @@ interface InworldOptions {
     timestamp_type?: 'TIMESTAMP_TYPE_UNSPECIFIED' | 'WORD' | 'CHARACTER';
 }
 
-// Warning: (ae-missing-release-tag) "InworldSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type InworldSTTModels = 'inworld/inworld-stt-1';
 
-// Warning: (ae-missing-release-tag) "InworldSTTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface InworldSTTOptions {
     audio_encoding?: 'LINEAR16' | 'AUTO_DETECT';
@@ -4666,38 +4552,27 @@ declare namespace ipc {
 // @internal
 export function isAgent(obj: unknown): obj is AgentDefinition;
 
-// Warning: (ae-missing-release-tag) "isAgentHandoffEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function isAgentHandoffEvent(event: RunEvent): event is AgentHandoffEvent;
 
-// Warning: (ae-missing-release-tag) "isAPIError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function isAPIError(error: unknown): error is APIError;
 
-// Warning: (ae-missing-release-tag) "isBuiltinAudioClip" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function isBuiltinAudioClip(source: AudioSourceType | AudioConfig | AudioConfig[]): source is BuiltinAudioClip;
 
-// Warning: (ae-missing-release-tag) "isChatMessageEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function isChatMessageEvent(event: RunEvent): event is ChatMessageEvent;
 
-// Warning: (ae-missing-release-tag) "isCloud" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const isCloud: (url: URL) => boolean;
 
-// Warning: (ae-missing-release-tag) "isDevMode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const isDevMode: () => boolean;
 
-// Warning: (ae-missing-release-tag) "isFfmpegTeardownError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+function isDuplexModel(model: string): model is DuplexModels;
+
 // @public
 export function isFfmpegTeardownError(error: unknown): boolean;
 
@@ -4706,68 +4581,45 @@ export function isFfmpegTeardownError(error: unknown): boolean;
 // @internal (undocumented)
 export function isFlushSentinel(value: unknown): value is FlushSentinel;
 
-// Warning: (ae-missing-release-tag) "isFunctionCallEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function isFunctionCallEvent(event: RunEvent): event is FunctionCallEvent;
 
-// Warning: (ae-missing-release-tag) "isFunctionCallOutputEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function isFunctionCallOutputEvent(event: RunEvent): event is FunctionCallOutputEvent;
 
-// Warning: (ae-missing-release-tag) "isFunctionTool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function isFunctionTool(tool: unknown): tool is FunctionTool;
 
-// Warning: (ae-missing-release-tag) "isHosted" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const isHosted: () => boolean;
 
-// Warning: (ae-missing-release-tag) "isImmutableArray" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function isImmutableArray(array: unknown): boolean;
 
-// Warning: (ae-missing-release-tag) "isPending" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const isPending: (promise: Promise<unknown>) => Promise<Throws<boolean, Error>>;
 
-// Warning: (ae-missing-release-tag) "isProviderTool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function isProviderTool(tool: any): tool is ProviderTool;
 
-// Warning: (ae-missing-release-tag) "isStreamClosedError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+function isRealtimeModel(model: string): boolean;
+
 // @public
 export function isStreamClosedError(error: unknown): boolean;
 
-// Warning: (ae-missing-release-tag) "isTimedString" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function isTimedString(value: unknown): value is TimedString;
 
-// Warning: (ae-missing-release-tag) "isTool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function isTool(tool: any): tool is Tool;
 
-// Warning: (ae-missing-release-tag) "isToolset" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function isToolset(value: any): value is Toolset;
 
-// Warning: (ae-missing-release-tag) "isWritableStreamClosedError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function isWritableStreamClosedError(error: unknown): boolean;
 
-// Warning: (ae-missing-release-tag) "JobAcceptArguments" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type JobAcceptArguments = {
     name: string;
@@ -4778,8 +4630,6 @@ export type JobAcceptArguments = {
     };
 };
 
-// Warning: (ae-missing-release-tag) "JobContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class JobContext<ProcessUserData = Record<string, unknown>> {
     constructor(proc: JobProcess<ProcessUserData>, info: RunningJobInfo, room: Room, onConnect: () => void, onShutdown: (s: string) => void, inferenceExecutor: InferenceExecutor);
@@ -4802,18 +4652,28 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     get isFakeJob(): boolean;
     // (undocumented)
     get job(): proto.Job;
+    // @internal
+    _jobSpanContext?: Context;
     // (undocumented)
     makeSessionReport(session?: AgentSession): SessionReport;
+    // @internal
+    _onCleanup(): void;
     // @internal (undocumented)
     onParticipantConnected(p: RemoteParticipant): void;
     // (undocumented)
     _onSessionEnd(): Promise<void>;
     // @internal (undocumented)
     _otelMetadata(options?: ResolvedRecordingOptions): Record<string, boolean | string> | undefined;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "initRecording"
+    //
+    // @internal
+    _prepareTelemetry(): Promise<void>;
     // @internal (undocumented)
     _primaryAgentSession?: AgentSession;
     // (undocumented)
     get proc(): JobProcess<ProcessUserData>;
+    // @internal
+    _recordingInitialized: boolean;
     // @internal (undocumented)
     _redactionEnabled: boolean;
     // (undocumented)
@@ -4834,8 +4694,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     get workerId(): string;
 }
 
-// Warning: (ae-missing-release-tag) "JobProcess" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class JobProcess<UserData = Record<string, unknown>> {
     // (undocumented)
@@ -4844,8 +4702,6 @@ export class JobProcess<UserData = Record<string, unknown>> {
     userData: UserData;
 }
 
-// Warning: (ae-missing-release-tag) "JobRequest" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class JobRequest {
     // @internal
@@ -4866,8 +4722,6 @@ export class JobRequest {
     get room(): proto.Room | undefined;
 }
 
-// Warning: (ae-missing-release-tag) "KeytermDetectionOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface KeytermDetectionOptions {
     enabled?: boolean;
@@ -4879,7 +4733,6 @@ export interface KeytermDetectionOptions {
 }
 
 // Warning: (ae-forgotten-export) The symbol "KeytermDetector_base" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "KeytermDetector" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export class KeytermDetector extends KeytermDetector_base {
@@ -4896,7 +4749,7 @@ export class KeytermDetector extends KeytermDetector_base {
     // @internal
     _pendingTerms: Map<string, number>;
     // @internal
-    runOnce(chatCtx: ChatContext, abortSignal?: AbortSignal): Promise<void>;
+    runOnce(chatCtx: ChatContext, abortSignal?: AbortSignal, parent?: Context): Promise<void>;
     // (undocumented)
     setStaticKeyterms(terms: string[]): void;
     // Warning: (ae-forgotten-export) The symbol "KeytermDetectorSession" needs to be exported by the entry point index.d.ts
@@ -4907,33 +4760,23 @@ export class KeytermDetector extends KeytermDetector_base {
     swapStt(stt: STT | undefined): void;
 }
 
-// Warning: (ae-missing-release-tag) "KeytermsOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface KeytermsOptions {
     keytermDetection?: KeytermDetectionOptions;
     keyterms?: string[];
 }
 
-// Warning: (ae-missing-release-tag) "KNOWN_LANGUAGE_CODES" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const KNOWN_LANGUAGE_CODES: readonly ["af", "am", "ar", "as", "az", "be", "bg", "bn", "bs", "ca", "cs", "cy", "da", "de", "el", "en", "es", "et", "eu", "fa", "ff", "fi", "fr", "ga", "gl", "gu", "ha", "he", "hi", "hr", "hu", "hy", "id", "ig", "is", "it", "ja", "jv", "ka", "kk", "km", "kn", "ko", "ku", "ky", "lb", "lg", "ln", "lo", "lt", "lv", "mi", "mk", "ml", "mn", "mr", "ms", "mt", "my", "ne", "nl", "no", "ny", "oc", "or", "pa", "pl", "ps", "pt", "ro", "ru", "sd", "sk", "sl", "sn", "so", "sq", "sr", "sv", "sw", "ta", "te", "tg", "th", "tl", "tr", "uk", "ur", "uz", "vi", "wo", "xh", "yo", "zh", "zu"];
 
-// Warning: (ae-missing-release-tag) "KnownLanguageCode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type KnownLanguageCode = (typeof KNOWN_LANGUAGE_CODES)[number];
 
-// Warning: (ae-missing-release-tag) "LanguageCode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type LanguageCode = string & {
     readonly [languageCodeBrand]: 'LanguageCode';
 };
 
-// Warning: (ae-missing-release-tag) "LemonSliceOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface LemonSliceOptions {
     // (undocumented)
@@ -4945,7 +4788,6 @@ interface LemonSliceOptions {
 }
 
 // Warning: (ae-forgotten-export) The symbol "LLM_base" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "LLM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export abstract class LLM extends LLM_base {
@@ -5005,6 +4847,19 @@ declare namespace llm {
         ToolType,
         AsyncToolset,
         AsyncToolsetCreateOptions,
+        DuplexModel,
+        DuplexSession,
+        DuplexAudioFrame,
+        DuplexCapabilities,
+        DuplexOutputTranscriptDelta,
+        DuplexSessionCallbacks,
+        AdaptiveNoiseGate,
+        DuplexRealtimeAdapter,
+        FixedGate,
+        AdaptiveNoiseGateOptions,
+        AudioGate,
+        AudioGateOptions,
+        DuplexRealtimeAdapterOptions,
         AsyncToolOptions,
         DuplicatePromptArgs,
         ReplyPromptArgs,
@@ -5050,7 +4905,6 @@ declare namespace llm {
         createToolOptions,
         executeToolCall,
         formatChatHistory,
-        oaiBuildFunctionInfo,
         oaiParams,
         serializeImage,
         toJsonSchema,
@@ -5068,7 +4922,6 @@ declare namespace llm {
 }
 
 // Warning: (ae-forgotten-export) The symbol "llm_2" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "LLM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 class LLM_2 extends llm_2.LLM {
@@ -5110,6 +4963,7 @@ class LLM_2 extends llm_2.LLM {
 
 declare namespace llm_3 {
     export {
+        llmFromModelString,
         OpenAIModels,
         GoogleModels,
         MoonshotModels,
@@ -5118,7 +4972,6 @@ declare namespace llm_3 {
         XAIModels,
         ChatCompletionOptions,
         LLMModels,
-        InferenceClass,
         InferenceLLMOptions,
         GatewayOptions,
         LLM_2 as LLM,
@@ -5126,22 +4979,26 @@ declare namespace llm_3 {
     }
 }
 
-// Warning: (ae-missing-release-tag) "LLMCallbacks" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const LLM_NODE: InputDeltaSite;
+
+// @public (undocumented)
+const LLM_REQUEST: InputDeltaSite;
+
 // @public (undocumented)
 export type LLMCallbacks = {
     ['metrics_collected']: (metrics: LLMMetrics) => void;
     ['error']: (error: LLMError) => void;
 };
 
-// Warning: (ae-missing-release-tag) "llmInstructions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// @public
+function llmFromModelString(model: string): LLM_2 | RealtimeModel_2 | DuplexModel_2;
+
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "convertMarkup"
 //
 // @public
 function llmInstructions(provider: string, steering?: SpeechSteeringOptions): string | undefined;
 
-// Warning: (ae-missing-release-tag) "LLMMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type LLMMetrics = {
     type: 'llm_metrics';
@@ -5155,20 +5012,16 @@ export type LLMMetrics = {
     promptTokens: number;
     promptCachedTokens: number;
     cacheCreationTokens?: number;
+    reasoningTokens?: number;
     totalTokens: number;
     tokensPerSecond: number;
     speechId?: string;
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "LLMModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type LLMModels = OpenAIModels | GoogleModels | MoonshotModels | DeepSeekModels | ZAIModels | XAIModels | AnyString;
 
-// Warning: (ae-missing-release-tag) "LLMModelUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type LLMModelUsage = {
     type: 'llm_usage';
@@ -5186,11 +5039,10 @@ export type LLMModelUsage = {
     outputTokens: number;
     outputAudioTokens: number;
     outputTextTokens: number;
+    outputReasoningTokens?: number;
     sessionDurationMs: number;
 };
 
-// Warning: (ae-missing-release-tag) "LLMStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     // (undocumented)
@@ -5211,6 +5063,9 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     get connOptions(): APIConnectOptions;
     // (undocumented)
     protected _connOptions: APIConnectOptions;
+    protected get genAIOperationName(): string | undefined;
+    // (undocumented)
+    protected get llmRequestSpan(): Span | undefined;
     // (undocumented)
     protected logger: Logger;
     // (undocumented)
@@ -5227,13 +5082,14 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     //
     // (undocumented)
     protected queue: AsyncIterableQueue<ChatChunk>;
+    protected get responseModel(): string;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "responseModel"
+    protected get responseProvider(): string;
     // (undocumented)
     protected abstract run(): Promise<void>;
     get toolCtx(): ToolContext | undefined;
 }
 
-// Warning: (ae-missing-release-tag) "LLMStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class LLMStream_2 extends llm_2.LLMStream {
     constructor(llm: LLM_2, input: {
@@ -5253,13 +5109,9 @@ class LLMStream_2 extends llm_2.LLMStream {
     protected run(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "LOCAL_LANGUAGES" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const LOCAL_LANGUAGES: Readonly<Record<string, number>>;
 
-// Warning: (ae-missing-release-tag) "LocalTransport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class LocalTransport implements StreamingTurnDetectionTransport {
     constructor(opts: {
@@ -5316,54 +5168,93 @@ export type LoggerOptions = {
 // @internal (undocumented)
 export const loggerOptions: () => LoggerOptions | undefined;
 
-// Warning: (ae-missing-release-tag) "logMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const logMetrics: (metrics: AgentMetrics) => void;
 
-// Warning: (ae-missing-release-tag) "loopAudioFramesFromFile" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function loopAudioFramesFromFile(filePath: string, options?: AudioDecodeOptions): AsyncGenerator<AudioFrame, void, unknown>;
 
-// Warning: (ae-missing-release-tag) "markInferenceSpanRecorded" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+type LoopCpuScope = 'thread' | 'process';
+
+declare namespace loopMonitor {
+    export {
+        startMonitoring,
+        stopMonitoring,
+        getMonitor,
+        DEFAULT_WARN_THRESHOLD,
+        DEFAULT_ERROR_THRESHOLD,
+        DEFAULT_TICK_INTERVAL,
+        ENV_WARN_THRESHOLD_MS,
+        ENV_ERROR_THRESHOLD_MS,
+        MAX_SPANS_PER_MINUTE,
+        MAX_LOGS_PER_MINUTE,
+        SPAN_NAME,
+        LoopMonitorSeverity,
+        LoopStallCause,
+        LoopCpuScope,
+        StackSamplingMode,
+        BlockedReport,
+        LoopMonitorThresholds,
+        EventLoopMonitorOptions,
+        ReportContextRunner,
+        EventLoopMonitor,
+        StartMonitoringOptions
+    }
+}
+
+// @public (undocumented)
+type LoopMonitorSeverity = 'warning' | 'error';
+
+// @public (undocumented)
+class LoopMonitorThresholds {
+    constructor(warn: number, error: number);
+    // (undocumented)
+    readonly error: number;
+    // (undocumented)
+    static fromEnv(env?: NodeJS.ProcessEnv): LoopMonitorThresholds | undefined;
+    // (undocumented)
+    readonly warn: number;
+}
+
+// @public
+type LoopStallCause = 'code' | 'host';
+
 // @public
 function markInferenceSpanRecorded(): void;
 
-// Warning: (ae-missing-release-tag) "MarkupInfo" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface MarkupInfo {
     // Warning: (ae-forgotten-export) The symbol "NonverbalField" needs to be exported by the entry point index.d.ts
     nonverbals: Partial<Record<NonverbalField, string[]>>;
 }
 
-// Warning: (ae-missing-release-tag) "matchMood" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "DEFAULT_MOOD"
 //
 // @public
 function matchMood(label: string, fallback?: AgentMood | null): AgentMood | null;
 
-// Warning: (ae-missing-release-tag) "maxInputLen" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const MAX_LOGS_PER_MINUTE = 5;
+
+// @public
+const MAX_PAYLOAD_ATTR_LEN = 1024;
+
+// @public (undocumented)
+const MAX_SPANS_PER_MINUTE = 6;
+
 // @public
 function maxInputLen(provider: string): number | undefined;
 
-// Warning: (ae-missing-release-tag) "mergeFrames" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioFrame"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioFrame"
 //
 // @public
 export const mergeFrames: (buffer: AudioBuffer_2) => AudioFrame;
 
-// Warning: (ae-missing-release-tag) "mergeReadableStreams" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function mergeReadableStreams<T>(...streams: ReadableStream_2<T>[]): ReadableStream_2<T>;
 
-// Warning: (ae-missing-release-tag) "MessageAssert" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class MessageAssert extends EventAssert {
     constructor(event: ChatMessageEvent, parent: RunAssert, index: number);
@@ -5376,16 +5267,12 @@ class MessageAssert extends EventAssert {
     }): Promise<MessageAssert>;
 }
 
-// Warning: (ae-missing-release-tag) "MessageAssertOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface MessageAssertOptions {
     // (undocumented)
     role?: ChatRole;
 }
 
-// Warning: (ae-missing-release-tag) "MessageGeneration" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface MessageGeneration {
     // (undocumented)
@@ -5397,8 +5284,9 @@ export interface MessageGeneration {
     textStream: ReadableStream_2<string | TimedString>;
 }
 
-// Warning: (ae-missing-release-tag) "MessagePart" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @internal (undocumented)
+function messageLayout(items: readonly ChatItem[]): Array<'new' | 'merged' | 'skipped'>;
+
 // @public (undocumented)
 interface MessagePart {
     // (undocumented)
@@ -5407,8 +5295,6 @@ interface MessagePart {
     type: string;
 }
 
-// Warning: (ae-missing-release-tag) "MetadataLogProcessor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class MetadataLogProcessor implements LogRecordProcessor {
     constructor(metadata: Attributes);
@@ -5419,6 +5305,9 @@ class MetadataLogProcessor implements LogRecordProcessor {
     // (undocumented)
     shutdown(): Promise<void>;
 }
+
+// @public
+const METRIC_GEN_AI_INVOKE_AGENT_DURATION = "gen_ai.invoke_agent.duration";
 
 declare namespace metrics {
     export {
@@ -5447,8 +5336,6 @@ declare namespace metrics {
     }
 }
 
-// Warning: (ae-missing-release-tag) "MetricsCollectedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type MetricsCollectedEvent = {
     type: 'metrics_collected';
@@ -5456,16 +5343,12 @@ export type MetricsCollectedEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "MetricsMetadata" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type MetricsMetadata = {
     modelProvider?: string;
     modelName?: string;
 };
 
-// Warning: (ae-missing-release-tag) "MetricsReport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface MetricsReport {
     // (undocumented)
@@ -5488,38 +5371,27 @@ export interface MetricsReport {
     ttsNodeTtfb?: number;
 }
 
-// Warning: (ae-missing-release-tag) "MissingCredentialsError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class MissingCredentialsError extends Error {
     constructor(msg?: string);
 }
 
-// Warning: (ae-missing-release-tag) "MockToolFn" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 type MockToolFn = (...args: any[]) => any;
 
 // Warning: (ae-forgotten-export) The symbol "AgentConstructor" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "MockToolsMap" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
 
-// Warning: (ae-missing-release-tag) "ModelSettings" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ModelSettings {
     toolChoice?: ToolChoice;
 }
 
-// Warning: (ae-missing-release-tag) "ModelUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type ModelUsage = LLMModelUsage | TTSModelUsage | STTModelUsage | InterruptionModelUsage | EOTModelUsage;
 
-// Warning: (ae-missing-release-tag) "ModelUsageCollector" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class ModelUsageCollector {
     collect(metrics: AgentMetrics): void;
@@ -5527,28 +5399,20 @@ export class ModelUsageCollector {
     flatten(): ModelUsage[];
 }
 
-// Warning: (ae-missing-release-tag) "ModelWithLanguage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type ModelWithLanguage = `${_STTModels}:${STTLanguages}` | STTModels;
 
 // Warning: (ae-forgotten-export) The symbol "_TTSModels" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "ModelWithVoice" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 type ModelWithVoice = `${_TTSModels}:${string}` | TTSModels;
 
-// Warning: (ae-missing-release-tag) "MOOD_PRIORITY" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 const MOOD_PRIORITY: AgentMood[];
 
-// Warning: (ae-missing-release-tag) "MoonshotModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type MoonshotModels = 'moonshotai/kimi-k2.5' | 'moonshotai/kimi-k2.6';
 
-// Warning: (ae-missing-release-tag) "MultiInputStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "ReadableStream"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "ReadableStream"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "DeferredReadableStream"
@@ -5569,8 +5433,6 @@ class MultiInputStream<T> {
     get stream(): ReadableStream_2<T>;
 }
 
-// Warning: (ae-missing-release-tag) "NonverbalOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface NonverbalOptions {
     breathing?: boolean;
@@ -5584,43 +5446,26 @@ export interface NonverbalOptions {
     vocalizing?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "noop" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const noop: () => void;
 
-// Warning: (ae-missing-release-tag) "normalizeLanguage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function normalizeLanguage(language: string): LanguageCode;
 
-// Warning: (ae-missing-release-tag) "normalizeMarkup" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function normalizeMarkup(provider: string, text: string): string;
 
-// Warning: (ae-missing-release-tag) "normalizeSTTFallback" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function normalizeSTTFallback(fallback: STTFallbackModelType | STTFallbackModelType[]): STTFallbackModel[];
 
-// Warning: (ae-missing-release-tag) "normalizeTTSFallback" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function normalizeTTSFallback(fallback: TTSFallbackModelType | TTSFallbackModelType[]): TTSFallbackModel[];
-
-// Warning: (ae-internal-missing-underscore) The name "oaiBuildFunctionInfo" should be prefixed with an underscore because the declaration is marked as @internal
-//
-// @internal (undocumented)
-export const oaiBuildFunctionInfo: (toolCtx: ToolContext, toolCallId: string, toolName: string, rawArgs: string) => FunctionCall;
 
 // Warning: (ae-internal-missing-underscore) The name "oaiParams" should be prefixed with an underscore because the declaration is marked as @internal
 //
 // @internal (undocumented)
 export const oaiParams: (schema: any, isOpenai?: boolean) => OpenAIFunctionParameters;
 
-// Warning: (ae-missing-release-tag) "ObservabilityEndpoint" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 type ObservabilityEndpoint = {
     observabilityUrl: string;
@@ -5630,8 +5475,15 @@ type ObservabilityEndpoint = {
     cloudHostname: string;
 };
 
-// Warning: (ae-missing-release-tag) "OpenAIFunctionParameters" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+type OpenAIDuplexModels = 'openai/gpt-live-1';
+
+// @public (undocumented)
+interface OpenAIDuplexOptions {
+    delegation?: 'responses' | 'client';
+    responsesOptions?: OpenAIResponsesOptions;
+}
+
 // @public
 export type OpenAIFunctionParameters = {
     type: 'object';
@@ -5642,13 +5494,29 @@ export type OpenAIFunctionParameters = {
     additionalProperties?: boolean;
 };
 
-// Warning: (ae-missing-release-tag) "OpenAIModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
-type OpenAIModels = 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
+type OpenAIModels = 'openai/gpt-5.6-luna' | 'openai/gpt-5.6-sol' | 'openai/gpt-5.6-terra' | 'openai/gpt-5.5' | 'openai/gpt-5.4' | 'openai/gpt-5.4-mini' | 'openai/gpt-5.4-nano' | 'openai/gpt-5.3-chat-latest' | 'openai/gpt-5.2' | 'openai/gpt-5.2-chat-latest' | 'openai/gpt-5.1' | 'openai/gpt-5.1-chat-latest' | 'openai/gpt-5' | 'openai/gpt-5-mini' | 'openai/gpt-5-nano' | 'openai/gpt-4.1' | 'openai/gpt-4.1-mini' | 'openai/gpt-4.1-nano' | 'openai/gpt-4o' | 'openai/gpt-4o-mini' | 'openai/chat-latest' | 'openai/gpt-oss-120b';
+
+// @public (undocumented)
+type OpenAIRealtimeModels = 'openai/gpt-realtime' | 'openai/gpt-realtime-mini' | 'openai/gpt-realtime-2.1' | 'openai/gpt-realtime-2.1-mini';
+
+// Warning: (ae-forgotten-export) The symbol "ResponsesDelegationOptions" needs to be exported by the entry point index.d.ts
+//
+// @public
+type OpenAIResponsesOptions = Omit<ResponsesDelegationOptions, 'serviceTier'>;
+
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferTaskOptions"
+//
+// @public
+type OriginateHumanAgent = (options: {
+    roomName: string;
+    identity: string;
+    room: Room;
+    jobCtx: JobContext;
+    signal: AbortSignal;
+}) => Promise<void>;
 
 // Warning: (ae-forgotten-export) The symbol "TextOutput" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "ParalellTextOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export class ParalellTextOutput extends TextOutput {
@@ -5661,28 +5529,28 @@ export class ParalellTextOutput extends TextOutput {
     _sinks: TextOutput[];
 }
 
-// Warning: (ae-missing-release-tag) "parseAvatarModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function parseAvatarModel(model: string): [provider: string, avatarId: string | undefined];
 
-// Warning: (ae-missing-release-tag) "parseSimulationDispatch" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function parseSimulationDispatch(raw: string): SimulationDispatch;
 
-// Warning: (ae-missing-release-tag) "parseSTTModelString" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function parseSTTModelString(model: string): [string, LanguageCode | undefined];
 
-// Warning: (ae-missing-release-tag) "parseTTSModelString" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function parseTTSModelString(model: string): [string, string | undefined];
 
-// Warning: (ae-missing-release-tag) "ParticipantAudioOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+function participantAttributes(participant: {
+    sid?: string;
+    identity?: string;
+    kind?: number;
+    info?: {
+        kind?: number;
+    };
+}): Attributes;
+
 // @public (undocumented)
 export class ParticipantAudioOutput extends AudioOutput {
     constructor(room: Room, options: AudioOutputOptions);
@@ -5698,13 +5566,12 @@ export class ParticipantAudioOutput extends AudioOutput {
     // (undocumented)
     resume(): void;
     // (undocumented)
-    start(signal: AbortSignal): Promise<void>;
+    start(signal: AbortSignal, traceContext?: Context): Promise<void>;
     // (undocumented)
     get subscribed(): boolean;
 }
 
 // Warning: (ae-forgotten-export) The symbol "BaseParticipantTranscriptionOutput" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "ParticipantLegacyTranscriptionOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscriptionOutput {
@@ -5718,8 +5585,6 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
     protected resetState(): void;
 }
 
-// Warning: (ae-missing-release-tag) "ParticipantTranscriptionOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class ParticipantTranscriptionOutput extends BaseParticipantTranscriptionOutput {
     constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null, options?: ParticipantTranscriptionOutputOptions);
@@ -5733,15 +5598,11 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     protected resetState(): void;
 }
 
-// Warning: (ae-missing-release-tag) "ParticipantTranscriptionOutputOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ParticipantTranscriptionOutputOptions extends TranscriptionOutputOptions {
     jsonFormat?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "PIIFilteringLogProcessor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class PIIFilteringLogProcessor implements LogRecordProcessor {
     // (undocumented)
@@ -5752,8 +5613,6 @@ class PIIFilteringLogProcessor implements LogRecordProcessor {
     shutdown(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "PinoCloudExporter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class PinoCloudExporter {
     constructor(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig);
@@ -5765,8 +5624,6 @@ class PinoCloudExporter {
     shutdown(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "PinoCloudExporterConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface PinoCloudExporterConfig {
     // (undocumented)
@@ -5785,8 +5642,6 @@ interface PinoCloudExporterConfig {
     roomId: string;
 }
 
-// Warning: (ae-missing-release-tag) "PinoCloudExporterUrlConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface PinoCloudExporterUrlConfig {
     // (undocumented)
@@ -5804,8 +5659,6 @@ interface PinoCloudExporterUrlConfig {
     roomId: string;
 }
 
-// Warning: (ae-missing-release-tag) "PinoLogObject" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface PinoLogObject {
     // (undocumented)
@@ -5822,8 +5675,6 @@ interface PinoLogObject {
     time: number;
 }
 
-// Warning: (ae-missing-release-tag) "PlaybackFinishedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface PlaybackFinishedEvent {
     interrupted: boolean;
@@ -5831,15 +5682,18 @@ export interface PlaybackFinishedEvent {
     synchronizedTranscript?: string;
 }
 
-// Warning: (ae-missing-release-tag) "PlaybackStartedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+export interface PlaybackProgressedEvent {
+    duration: number;
+    offset: number;
+    startedAt: number;
+}
+
 // @public (undocumented)
 export interface PlaybackStartedEvent {
     createdAt: number;
 }
 
-// Warning: (ae-missing-release-tag) "PlayHandle" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class PlayHandle {
     // (undocumented)
@@ -5852,8 +5706,6 @@ export class PlayHandle {
     waitForPlayout(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "Plugin" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 abstract class Plugin_2 {
     constructor(opts: {
@@ -5878,23 +5730,27 @@ abstract class Plugin_2 {
 }
 export { Plugin_2 as Plugin }
 
-// Warning: (ae-missing-release-tag) "PluginEventMap" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type PluginEventMap = {
     [PluginEventTypes.PluginRegistered]: [Plugin_2];
 };
 
-// Warning: (ae-missing-release-tag) "PluginEventTypes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export enum PluginEventTypes {
     // (undocumented)
     PluginRegistered = "plugin_registered"
 }
 
-// Warning: (ae-missing-release-tag) "ProviderFormat" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "setupCloudTracer"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "discardPreparedCloudTracer"
 //
+// @internal
+function prepareCloudTracer(options: ObservabilityEndpoint & {
+    roomId: string;
+    jobId: string;
+    agentName?: string;
+}): Promise<void>;
+
 // @public (undocumented)
 export type ProviderFormat = 'openai' | 'openai.responses' | 'google' | 'mistralai';
 
@@ -5905,8 +5761,6 @@ const _providerTables: {
     byName: Record<string, string>;
 };
 
-// Warning: (ae-missing-release-tag) "ProviderTool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export abstract class ProviderTool implements Tool {
     // (undocumented)
@@ -5937,7 +5791,6 @@ export class Queue<T> {
     put(item: T): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "QueueAudioOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "captureFrame"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "flush"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "clearBuffer"
@@ -5959,31 +5812,38 @@ export class QueueAudioOutput extends AudioOutput {
     stream(): ReturnType<StreamChannel<QueueAudioOutputItem>['stream']>;
 }
 
-// Warning: (ae-missing-release-tag) "QueueAudioOutputClearEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface QueueAudioOutputClearEvent {
     // (undocumented)
     wasCapturing: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "QueueAudioOutputItem" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AudioFrame"
 //
 // @public
 export type QueueAudioOutputItem = AudioFrame | AudioSegmentEnd;
 
-// Warning: (ae-missing-release-tag) "readStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function readStream<T>(stream: ReadableStream_2<T>, signal?: AbortSignal): AsyncGenerator<T>;
 
-// Warning: (ae-missing-release-tag) "RealtimeCapabilities" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+declare namespace realtime {
+    export {
+        isRealtimeModel,
+        OpenAIRealtimeModels,
+        GoogleRealtimeModels,
+        XAIRealtimeModels,
+        RealtimeModels,
+        RealtimeModelOptions,
+        RealtimeModel_2 as RealtimeModel,
+        RealtimeSession_3 as RealtimeSession
+    }
+}
+
 // @public (undocumented)
 export interface RealtimeCapabilities {
     audioOutput: boolean;
     autoToolReplyGeneration: boolean;
+    canDisableTurnDetection?: boolean;
     manualFunctionCalls: boolean;
     messageTruncation: boolean;
     midSessionChatCtxUpdate?: boolean;
@@ -5992,19 +5852,16 @@ export interface RealtimeCapabilities {
     // @deprecated
     nativeTranscriptSync?: boolean;
     perResponseToolChoice?: boolean;
+    supportsOverlappingSpeech?: boolean;
     turnDetection: boolean;
     userTranscription: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "RealtimeError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class RealtimeError extends Error {
     constructor(message: string, options?: ErrorOptions);
 }
 
-// Warning: (ae-missing-release-tag) "RealtimeModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export abstract class RealtimeModel {
     constructor(capabilities: RealtimeCapabilities);
@@ -6018,11 +5875,32 @@ export abstract class RealtimeModel {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    abstract session(): RealtimeSession;
+    abstract session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession;
 }
 
-// Warning: (ae-missing-release-tag) "RealtimeModelError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-forgotten-export) The symbol "RealtimeModel_3" needs to be exported by the entry point index.d.ts
 //
+// @public
+class RealtimeModel_2 extends RealtimeModel_3 {
+    constructor(options: RealtimeModelOptions);
+    // (undocumented)
+    static fromModelString(model: string): RealtimeModel_2;
+    // Warning: (ae-forgotten-export) The symbol "InferenceOptions" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    readonly _inferenceOptions: InferenceOptions;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession_3;
+}
+
 // @public (undocumented)
 export interface RealtimeModelError {
     // (undocumented)
@@ -6037,8 +5915,6 @@ export interface RealtimeModelError {
     type: 'realtime_model_error';
 }
 
-// Warning: (ae-missing-release-tag) "RealtimeModelMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type RealtimeModelMetrics = {
     type: 'realtime_model_metrics';
@@ -6047,10 +5923,13 @@ export type RealtimeModelMetrics = {
     timestamp: number;
     durationMs: number;
     sessionDurationMs?: number;
+    acquireTimeMs?: number;
+    connectionReused?: boolean;
     ttftMs: number;
     cancelled: boolean;
     inputTokens: number;
     outputTokens: number;
+    reasoningTokens?: number;
     totalTokens: number;
     tokensPerSecond: number;
     inputTokenDetails: RealtimeModelMetricsInputTokenDetails;
@@ -6058,8 +5937,44 @@ export type RealtimeModelMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-missing-release-tag) "RealtimeSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+interface RealtimeModelOptions {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    // (undocumented)
+    connOptions?: APIConnectOptions;
+    // (undocumented)
+    inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
+    // (undocumented)
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+    // (undocumented)
+    maxSessionDuration?: number | null;
+    // (undocumented)
+    modalities?: api_proto.Modality[];
+    // (undocumented)
+    model: RealtimeModels | AnyString;
+    provider?: string;
+    // (undocumented)
+    reasoning?: api_proto.Reasoning;
+    // (undocumented)
+    speed?: number;
+    // (undocumented)
+    toolChoice?: ToolChoice;
+    // (undocumented)
+    tracing?: api_proto.TracingConfig | null;
+    // (undocumented)
+    turnDetection?: api_proto.TurnDetectionType | null;
+    // (undocumented)
+    voice?: string;
+}
+
+// @public (undocumented)
+type RealtimeModels = OpenAIRealtimeModels | GoogleRealtimeModels | XAIRealtimeModels;
+
 // @public (undocumented)
 export abstract class RealtimeSession extends EventEmitter {
     constructor(realtimeModel: RealtimeModel);
@@ -6107,19 +6022,52 @@ export abstract class RealtimeSession extends EventEmitter {
     abstract updateTools(tools: ToolContext): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "RealtimeSessionReconnectedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
 //
+// @public (undocumented)
+class RealtimeSession_3 extends RealtimeSession_2 {
+    constructor(realtimeModel: RealtimeModel_2, options?: {
+        turnDetectionDisabled?: boolean;
+    });
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    protected createChatCtxUpdateEvents(chatCtx: llm_2.ChatContext, addMockAudio?: boolean): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]>;
+    // Warning: (ae-forgotten-export) The symbol "api_proto" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    protected createSessionUpdateEvent(): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createToolsUpdateEvent(tools: ToolContext): api_proto.SessionUpdateEvent;
+    // (undocumented)
+    protected createWsConn(): Promise<default_2>;
+    // (undocumented)
+    protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void;
+    // (undocumented)
+    protected handleConversationItemInputAudioTranscriptionCompleted(event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent): void;
+    // (undocumented)
+    protected handleInputAudioBufferSpeechStarted(event: api_proto.InputAudioBufferSpeechStartedEvent): void;
+    // (undocumented)
+    protected handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void;
+    // (undocumented)
+    protected handleResponseCreated(event: api_proto.ResponseCreatedEvent): void;
+    // (undocumented)
+    protected handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void;
+    // (undocumented)
+    interrupt(): Promise<void>;
+    // (undocumented)
+    protected isFatalError(error: unknown): boolean;
+    // (undocumented)
+    protected resetInputTurnState(): void;
+}
+
 // @public (undocumented)
 export interface RealtimeSessionReconnectedEvent {
 }
 
-// Warning: (ae-missing-release-tag) "realtimeUsageAttributes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function realtimeUsageAttributes(metrics: RealtimeModelMetrics): Attributes;
 
-// Warning: (ae-missing-release-tag) "RecognitionUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface RecognitionUsage {
     audioDuration: number;
@@ -6127,20 +6075,15 @@ interface RecognitionUsage {
     outputTokens?: number;
 }
 
-// Warning: (ae-missing-release-tag) "RecognizeSentinel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "FakeSTT"
 //
 // @public
 class RecognizeSentinel {
 }
 
-// Warning: (ae-missing-release-tag) "recordException" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function recordException(span: Span, error: Error, options?: RecordExceptionOptions): void;
 
-// Warning: (ae-missing-release-tag) "RecordExceptionOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface RecordExceptionOptions {
     redacted?: boolean;
@@ -6151,28 +6094,18 @@ interface RecordExceptionOptions {
 // @internal (undocumented)
 export function recordingEnabled(options: Record<string, unknown>): boolean;
 
-// Warning: (ae-missing-release-tag) "recordRealtimeMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function recordRealtimeMetrics(span: Span, metrics: RealtimeModelMetrics): void;
 
-// Warning: (ae-missing-release-tag) "REDACTED_EXCEPTION_MESSAGE" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const REDACTED_EXCEPTION_MESSAGE = "exception details redacted";
 
-// Warning: (ae-missing-release-tag) "redactionEnabled" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function redactionEnabled(spanAttributes?: Attributes): boolean;
 
-// Warning: (ae-missing-release-tag) "rejectOnAbort" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function rejectOnAbort(signal: AbortSignal): Promise<never>;
 
-// Warning: (ae-missing-release-tag) "RemoteChatContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class RemoteChatContext {
     // (undocumented)
@@ -6187,7 +6120,6 @@ export class RemoteChatContext {
 }
 
 // Warning: (ae-forgotten-export) The symbol "RemoteSession_base" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "RemoteSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export class RemoteSession extends RemoteSession_base {
@@ -6220,8 +6152,6 @@ export class RemoteSession extends RemoteSession_base {
     start(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "RemoteSessionCallbacks" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type RemoteSessionCallbacks = {
     agent_false_interruption: (ev: AgentSession_2.AgentSessionEvent_AgentFalseInterruption) => void;
@@ -6238,28 +6168,23 @@ export type RemoteSessionCallbacks = {
     error: (ev: AgentSession_2.AgentSessionEvent_Error) => void;
 };
 
-// Warning: (ae-missing-release-tag) "RemoteSessionEventTypes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'error';
 
-// Warning: (ae-missing-release-tag) "replace" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function replace(replacements: Record<string, string>, options?: {
     caseSensitive?: boolean;
 }): (text: ReadableStream_2<string>) => ReadableStream_2<string>;
 
-// Warning: (ae-missing-release-tag) "ReplyPromptArgs" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ReplyPromptArgs {
     // (undocumented)
     callIds: string[];
 }
 
-// Warning: (ae-missing-release-tag) "resampleStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+type ReportContextRunner = <T>(fn: () => T) => T;
+
 // @public
 export function resampleStream(input: {
     stream: ReadableStream_2<AudioFrame>;
@@ -6283,26 +6208,18 @@ export interface ResolvedSessionConnectOptions {
 // @public
 export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
 
-// Warning: (ae-missing-release-tag) "resolveEnvVar" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function resolveEnvVar(value: string | undefined, envVars: readonly string[], defaultValue?: string): string;
 
-// Warning: (ae-missing-release-tag) "resolveExpressiveOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function resolveExpressiveOptions(expr: ExpressiveOptions, options: {
     providerKey: string;
     defaults: ExpressiveOptions;
 }): ExpressiveOptions;
 
-// Warning: (ae-missing-release-tag) "RimeModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type RimeModels = 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
 
-// Warning: (ae-missing-release-tag) "RimeOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface RimeOptions {
     inline_speed_alpha?: string;
@@ -6314,8 +6231,6 @@ interface RimeOptions {
     time_scale_factor?: number;
 }
 
-// Warning: (ae-missing-release-tag) "RoomInputOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface RoomInputOptions {
     audioEnabled: boolean;
@@ -6335,8 +6250,6 @@ export interface RoomInputOptions {
     videoEnabled: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "RoomIO" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class RoomIO {
     constructor(input: {
@@ -6359,16 +6272,13 @@ export class RoomIO {
     // (undocumented)
     get rtcRoom(): Room;
     setParticipant(participantIdentity: string | null): void;
-    // (undocumented)
-    start(): void;
+    start(traceContext?: Context): void;
     // (undocumented)
     get transcriptionOutput(): TextOutput | undefined;
     // (undocumented)
     unsetParticipant(): void;
 }
 
-// Warning: (ae-missing-release-tag) "RoomOutputOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface RoomOutputOptions {
     audioEnabled: boolean;
@@ -6383,8 +6293,6 @@ export interface RoomOutputOptions {
     transcriptionEnabled: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "RoomSessionTransport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class RoomSessionTransport extends SessionTransport {
     // (undocumented)
@@ -6398,13 +6306,17 @@ export class RoomSessionTransport extends SessionTransport {
     start(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "runApp" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+declare namespace rpc {
+    export {
+        install,
+        MAX_PAYLOAD_ATTR_LEN,
+        TracingRpcInterceptor
+    }
+}
+
 // @public
 const runApp: (opts: ServerOptions) => void;
 
-// Warning: (ae-missing-release-tag) "RunAssert" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class RunAssert {
     constructor(runResult: RunResult);
@@ -6438,11 +6350,9 @@ class RunAssert {
     }): MessageAssert | FunctionCallAssert | FunctionCallOutputAssert | AgentHandoffAssert | undefined;
 }
 
-// Warning: (ae-missing-release-tag) "RunContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class RunContext<UserData = UnknownUserData> {
-    constructor(session: AgentSession<UserData>, speechHandle: SpeechHandle, functionCall: FunctionCall);
+    constructor(session: AgentSession<UserData>, speechHandle: SpeechHandle, functionCall: FunctionCall, activity?: AgentActivity | undefined);
     // Warning: (ae-forgotten-export) The symbol "AttachedToolExecutor" needs to be exported by the entry point index.d.ts
     // Warning: (ae-incompatible-release-tags) The symbol "_attachExecutor" is marked as @public, but its signature references "Future" which is marked as @internal
     // Warning: (ae-incompatible-release-tags) The symbol "_attachExecutor" is marked as @public, but its signature references "Future" which is marked as @internal
@@ -6451,7 +6361,6 @@ export class RunContext<UserData = UnknownUserData> {
     _attachExecutor(executor: AttachedToolExecutor<UserData>, firstUpdateFuture: Future<unknown>): object;
     // (undocumented)
     _detachExecutor(attachment: object): void;
-    // (undocumented)
     disallowInterruptions(): void;
     // (undocumented)
     _drainPendingReply(): Promise<void>;
@@ -6485,13 +6394,9 @@ export class RunContext<UserData = UnknownUserData> {
     waitForPlayout(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "RunEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 type RunEvent = ChatMessageEvent | FunctionCallEvent | FunctionCallOutputEvent | AgentHandoffEvent;
 
-// Warning: (ae-missing-release-tag) "RunningJobInfo" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type RunningJobInfo = {
     acceptArguments: JobAcceptArguments;
@@ -6502,18 +6407,18 @@ export type RunningJobInfo = {
     apiKey?: string;
     apiSecret?: string;
     fakeJob?: boolean;
+    receivedAt?: number;
+    acceptedAt?: number;
+    assignedAt?: number;
+    launchedAt?: number;
 };
 
-// Warning: (ae-missing-release-tag) "RunOutputOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export type RunOutputOptions = {
     maxRetries?: number;
     retryInstructions?: string;
 };
 
-// Warning: (ae-missing-release-tag) "RunResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class RunResult<T = unknown> {
     constructor(options?: {
@@ -6557,26 +6462,23 @@ export function runWithJobContext<T>(context: JobContext, fn: () => T): T;
 // @internal
 export function runWithJobContextAsync<T>(context: JobContext, fn: () => Promise<T>): Promise<T>;
 
+// @public
+function runWithScope<T>(scope: InputDeltaScope, fn: () => T): T;
+
 export { Scenario }
 
 export { ScenarioGroup }
 
-// Warning: (ae-missing-release-tag) "ScenarioUserdata" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export type ScenarioUserdata = {
     [key: string]: unknown;
 };
 
-// Warning: (ae-missing-release-tag) "sendDtmfEvents" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const sendDtmfEvents: FunctionTool<    {
 events: ("0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "#" | "*" | "A" | "B" | "C" | "D")[];
 }, unknown, string>;
 
-// Warning: (ae-missing-release-tag) "SentenceStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 abstract class SentenceStream {
     // (undocumented)
@@ -6603,8 +6505,6 @@ abstract class SentenceStream {
     protected queue: AsyncIterableQueue<TokenData>;
 }
 
-// Warning: (ae-missing-release-tag) "SentenceTokenizer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 abstract class SentenceTokenizer {
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SentenceStream"
@@ -6613,7 +6513,6 @@ abstract class SentenceTokenizer {
     abstract tokenize(text: string, language?: string): string[];
 }
 
-// Warning: (ae-missing-release-tag) "sentenceTokenizer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "EXPRESSIVE_BATCH_LEN"
 //
 // @public
@@ -6622,7 +6521,6 @@ function sentenceTokenizer(provider: string, options: {
 }): SentenceTokenizer;
 
 // Warning: (ae-forgotten-export) The symbol "tokenizer" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "SentenceTokenizer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 class SentenceTokenizer_2 extends tokenizer.SentenceTokenizer {
@@ -6634,8 +6532,16 @@ class SentenceTokenizer_2 extends tokenizer.SentenceTokenizer {
     tokenize(text: string, language?: string): string[];
 }
 
-// Warning: (ae-missing-release-tag) "SerializedImage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+class SentenceTokenizer_3 extends tokenizer.SentenceTokenizer {
+    // Warning: (ae-forgotten-export) The symbol "TokenizerOptions_2" needs to be exported by the entry point index.d.ts
+    constructor(options?: Partial<TokenizerOptions_2>);
+    // (undocumented)
+    stream(language?: string): tokenizer.SentenceStream;
+    // (undocumented)
+    tokenize(text: string, language?: string): string[];
+}
+
 // @public (undocumented)
 export interface SerializedImage {
     // (undocumented)
@@ -6648,12 +6554,9 @@ export interface SerializedImage {
     mimeType?: string;
 }
 
-// Warning: (ae-missing-release-tag) "serializeImage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function serializeImage(image: ImageContent): Promise<SerializedImage>;
 
-// Warning: (ae-missing-release-tag) "ServerOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 //
 // @public
@@ -6736,8 +6639,6 @@ export class ServerOptions {
     wsURL: string;
 }
 
-// Warning: (ae-missing-release-tag) "SessionConnectOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface SessionConnectOptions {
     llmConnOptions?: Partial<APIConnectOptions>;
@@ -6746,8 +6647,6 @@ export interface SessionConnectOptions {
     ttsConnOptions?: Partial<APIConnectOptions>;
 }
 
-// Warning: (ae-missing-release-tag) "SessionHost" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class SessionHost {
     constructor(transport: SessionTransport, audioInput?: TcpAudioInput, audioOutput?: TcpAudioOutput);
@@ -6763,8 +6662,6 @@ export class SessionHost {
     start(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "SessionReport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface SessionReport {
     audioRecordingPath?: string;
@@ -6791,8 +6688,6 @@ export interface SessionReport {
     timestamp: number;
 }
 
-// Warning: (ae-missing-release-tag) "SessionReportOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface SessionReportOptions {
     audioRecordingPath?: string;
@@ -6816,13 +6711,9 @@ export interface SessionReportOptions {
     timestamp?: number;
 }
 
-// Warning: (ae-missing-release-tag) "sessionReportToJSON" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function sessionReportToJSON(report: SessionReport): Record<string, unknown>;
 
-// Warning: (ae-missing-release-tag) "SessionTransport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export abstract class SessionTransport {
     // (undocumented)
@@ -6835,8 +6726,6 @@ export abstract class SessionTransport {
     start(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "SessionUsageUpdatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type SessionUsageUpdatedEvent = {
     type: 'session_usage_updated';
@@ -6844,8 +6733,6 @@ export type SessionUsageUpdatedEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "setAgentAttributes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function setAgentAttributes(span: Span, params: {
     operation: string;
@@ -6854,13 +6741,12 @@ function setAgentAttributes(span: Span, params: {
     provider?: string;
 }): void;
 
-// Warning: (ae-missing-release-tag) "setCaptureContent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+function setAttributes(span: Span, delta: InputDelta): void;
+
 // @public
 function setCaptureContent(enabled: boolean): void;
 
-// Warning: (ae-missing-release-tag) "setContentAttributes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function setContentAttributes(span: Span, content: {
     systemInstructions?: MessagePart[];
@@ -6869,24 +6755,18 @@ function setContentAttributes(span: Span, content: {
     toolDefinitions?: MessagePart[];
 }): void;
 
-// Warning: (ae-missing-release-tag) "setErrorType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function setErrorType(span: Span, error: Error | string): void;
 
-// Warning: (ae-missing-release-tag) "setRequestAttributes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function setRequestAttributes(span: Span, params: {
-    operation: string;
+    operation: string | undefined;
     provider?: string;
     model?: string;
     stream?: boolean;
     outputType?: string;
 }): void;
 
-// Warning: (ae-missing-release-tag) "setResponseAttributes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function setResponseAttributes(span: Span, params: {
     responseId?: string;
@@ -6895,8 +6775,6 @@ function setResponseAttributes(span: Span, params: {
     timeToFirstChunk?: number;
 }): void;
 
-// Warning: (ae-missing-release-tag) "setToolAttributes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function setToolAttributes(span: Span, params: {
     name: string;
@@ -6907,22 +6785,17 @@ function setToolAttributes(span: Span, params: {
     agentName?: string;
 }): void;
 
-// Warning: (ae-missing-release-tag) "setToolResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 function setToolResult(span: Span, params: {
     result?: string;
     isError: boolean;
 }): void;
 
-// Warning: (ae-missing-release-tag) "setTracerProvider" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "FanoutSpanProcessor"
 //
 // @public
 function setTracerProvider(provider: TracerProvider, options?: SetTracerProviderOptions): void;
 
-// Warning: (ae-missing-release-tag) "SetTracerProviderOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface SetTracerProviderOptions {
     allowPii?: boolean;
@@ -6942,8 +6815,6 @@ function setupCloudTracer(options: ObservabilityEndpoint & {
     metadata?: Attributes;
 }): Promise<void>;
 
-// Warning: (ae-missing-release-tag) "setUsageAttributes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function setUsageAttributes(span: Span, usage: {
     promptTokens?: number;
@@ -6953,25 +6824,17 @@ function setUsageAttributes(span: Span, usage: {
     reasoningTokens?: number;
 }): void;
 
-// Warning: (ae-missing-release-tag) "setWorkflowAttributes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function setWorkflowAttributes(span: Span, params: {
     name: string;
 }): void;
 
-// Warning: (ae-missing-release-tag) "shortuuid" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function shortuuid(prefix?: string): string;
 
-// Warning: (ae-missing-release-tag) "ShutdownReason" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type ShutdownReason = CloseReason | string;
 
-// Warning: (ae-missing-release-tag) "SimpleLogRecord" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface SimpleLogRecord {
     attributes: Record<string, unknown>;
@@ -6981,16 +6844,12 @@ interface SimpleLogRecord {
     timestampMs: number;
 }
 
-// Warning: (ae-missing-release-tag) "SimpleOTLPHttpLogExporter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class SimpleOTLPHttpLogExporter {
     constructor(config: SimpleOTLPHttpLogExporterConfig | SimpleOTLPHttpLogExporterUrlConfig);
     export(records: SimpleLogRecord[]): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "SimpleOTLPHttpLogExporterConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface SimpleOTLPHttpLogExporterConfig {
     // @deprecated (undocumented)
@@ -7000,8 +6859,6 @@ interface SimpleOTLPHttpLogExporterConfig {
     scopeName: string;
 }
 
-// Warning: (ae-missing-release-tag) "SimpleOTLPHttpLogExporterUrlConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface SimpleOTLPHttpLogExporterUrlConfig {
     observabilityUrl: string;
@@ -7010,7 +6867,6 @@ interface SimpleOTLPHttpLogExporterUrlConfig {
     scopeName: string;
 }
 
-// Warning: (ae-missing-release-tag) "SimulationContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "simulatorVerdict"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "userVerdict"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "fail"
@@ -7051,8 +6907,6 @@ export { SimulationRun }
 
 export { SimulationRun_Job }
 
-// Warning: (ae-missing-release-tag) "SimulationVerdict" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface SimulationVerdict {
     // (undocumented)
@@ -7071,13 +6925,12 @@ export function sortedToolEntries<UserData = UnknownUserData>(toolCtx: ToolConte
 // @internal
 export function sortedToolNames(toolCtx: ToolContext | undefined): string[];
 
-// Warning: (ae-missing-release-tag) "SpanProcessorLike" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+const SPAN_NAME = "event_loop_blocked";
+
 // @public @deprecated (undocumented)
 type SpanProcessorLike = SpanProcessor;
 
-// Warning: (ae-missing-release-tag) "SpeechCreatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type SpeechCreatedEvent = {
     type: 'speech_created';
@@ -7087,7 +6940,6 @@ export type SpeechCreatedEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "SpeechData" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SpeechEvent"
 //
 // @public
@@ -7106,12 +6958,11 @@ interface SpeechData {
     words?: TimedString[];
 }
 
-// Warning: (ae-missing-release-tag) "SpeechEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface SpeechEvent {
     // (undocumented)
     alternatives?: [SpeechData, ...SpeechData[]];
+    createdAt?: number;
     // (undocumented)
     recognitionUsage?: RecognitionUsage;
     // (undocumented)
@@ -7121,8 +6972,6 @@ interface SpeechEvent {
     type: SpeechEventType;
 }
 
-// Warning: (ae-missing-release-tag) "SpeechEventType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 enum SpeechEventType {
     END_OF_SPEECH = 3,
@@ -7144,18 +6993,33 @@ export class SpeechHandle {
     // @internal (undocumented)
     _addItemAddedCallback(callback: (item: ChatItem) => void): void;
     // @internal
+    _agentTurnAgentName?: string;
+    // @internal
     _agentTurnContext?: Context;
+    // @internal
+    _agentTurnGenerations: number;
+    // @internal
+    _agentTurnSpan?: Span;
+    // @internal
+    _agentTurnStartedAt?: number;
     // (undocumented)
     get allowInterruptions(): boolean;
     set allowInterruptions(value: boolean);
+    // @internal
+    _authorizedAt?: number;
     // @internal (undocumented)
     _authorizeGeneration(): void;
     // @internal (undocumented)
-    _cancel(): SpeechHandle;
+    _cancel(source?: InterruptionSource): SpeechHandle;
     // (undocumented)
     get chatItems(): ChatItem[];
     // @internal (undocumented)
     _clearAuthorization(): void;
+    // Warning: (ae-forgotten-export) The symbol "AgentTurnContinuation" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "_takeAgentTurn"
+    //
+    // @internal
+    _continueAgentTurn(carry: AgentTurnCarry, from: SpeechHandle, continuation?: AgentTurnContinuation): void;
     // (undocumented)
     static create(options?: {
         allowInterruptions?: boolean;
@@ -7165,7 +7029,19 @@ export class SpeechHandle {
     }): SpeechHandle;
     // (undocumented)
     done(): boolean;
+    // @internal
+    _emittedGenerationStep?: number;
+    // @internal
+    _error: unknown;
     exception(): unknown;
+    // @internal
+    _generationBaseId?: string;
+    // @internal
+    get _generationId(): string;
+    // @internal
+    get _generationStep(): number;
+    // @internal (undocumented)
+    _generationStepBase: number;
     // @internal (undocumented)
     get _hasGenerations(): boolean;
     // @internal (undocumented)
@@ -7174,9 +7050,11 @@ export class SpeechHandle {
     get id(): string;
     // (undocumented)
     get inputDetails(): InputDetails;
-    interrupt(force?: boolean): SpeechHandle;
+    interrupt(force?: boolean, source?: InterruptionSource): SpeechHandle;
     // (undocumented)
     get interrupted(): boolean;
+    // @internal
+    _interruptSource?: InterruptionSource;
     // @internal (undocumented)
     _itemAdded(items: ChatItem[]): void;
     // @internal (undocumented)
@@ -7193,6 +7071,12 @@ export class SpeechHandle {
     _numSteps: number;
     // (undocumented)
     readonly parent?: SpeechHandle | undefined;
+    // @internal
+    get _parentGenerationId(): string | undefined;
+    // @internal
+    _queueWait(): number | undefined;
+    // @internal
+    _queueWaitRecorded: boolean;
     // @internal (undocumented)
     _releaseInterruptions(): void;
     // (undocumented)
@@ -7201,14 +7085,22 @@ export class SpeechHandle {
     _removeItemAddedCallback(callback: (item: ChatItem) => void): void;
     // (undocumented)
     get scheduled(): boolean;
+    // @internal
+    _scheduledAt?: number;
     static SPEECH_PRIORITY_HIGH: number;
     static SPEECH_PRIORITY_LOW: number;
     static SPEECH_PRIORITY_NORMAL: number;
     // @internal (undocumented)
     _stepIndex: number;
+    // Warning: (ae-forgotten-export) The symbol "AgentTurnCarry" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
+    _takeAgentTurn(): AgentTurnCarry | undefined;
     // @internal (undocumented)
     _tasks: Task<void>[];
     then<R1 = ResolvedSpeechHandle, R2 = never>(onFulfilled?: ((value: ResolvedSpeechHandle) => R1 | PromiseLike<R1>) | null, onRejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null): Promise<R1 | R2>;
+    // @internal
+    get _turnSpeechId(): string;
     // @internal (undocumented)
     _waitForAuthorization(): Promise<void>;
     // @internal (undocumented)
@@ -7220,18 +7112,14 @@ export class SpeechHandle {
     waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void>;
 }
 
-// @public
+// @public (undocumented)
 export class SpeechHandleCircularWaitError extends Error {
     constructor(functionCallName: string);
 }
 
-// Warning: (ae-missing-release-tag) "SpeechmaticsModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard' | 'speechmatics/linden-1';
 
-// Warning: (ae-missing-release-tag) "SpeechmaticsOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface SpeechmaticsOptions {
     additional_vocab?: Array<Record<string, unknown>>;
@@ -7251,13 +7139,9 @@ interface SpeechmaticsOptions {
     transcript_filtering_config?: Record<string, unknown>;
 }
 
-// Warning: (ae-missing-release-tag) "SpeechSource" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type SpeechSource = 'say' | 'generate_reply' | 'tool_response';
 
-// Warning: (ae-missing-release-tag) "SpeechSteeringOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface SpeechSteeringOptions {
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "DEFAULT_SPEECH_STEERING_OPTIONS"
@@ -7267,8 +7151,6 @@ export interface SpeechSteeringOptions {
     pace?: 'slow' | 'normal' | 'fast';
 }
 
-// Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
     // (undocumented)
@@ -7284,6 +7166,8 @@ abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
     // (undocumented)
     detachInputStream(): void;
     endInput(): void;
+    // @internal
+    get _failed(): boolean;
     flush(): void;
     // (undocumented)
     protected static readonly FLUSH_SENTINEL: unique symbol;
@@ -7320,12 +7204,11 @@ abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
     // (undocumented)
     get startTimeOffset(): number;
     set startTimeOffset(value: number);
+    get terminalError(): Error | undefined;
     // (undocumented)
     updateInputStream(audioStream: ReadableStream_2<AudioFrame>): void;
 }
 
-// Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class SpeechStream_2<TModel extends STTModels> extends SpeechStream {
     constructor(sttImpl: STT_2<TModel>, opts: InferenceSTTOptions<TModel>, connOptions: APIConnectOptions);
@@ -7341,46 +7224,69 @@ class SpeechStream_2<TModel extends STTModels> extends SpeechStream {
     updateOptions(opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>): void;
 }
 
-// Warning: (ae-missing-release-tag) "speedUpFakeUserSpeech" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function speedUpFakeUserSpeech(speech: FakeUserSpeech, factor: number): FakeUserSpeech;
 
-// Warning: (ae-missing-release-tag) "splitAllMarkup" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "dropBracketCues"
 //
 // @public
-function splitAllMarkup(text: string): [string, ExpressiveTag[]];
+function splitAllMarkup(text: string, options?: {
+    atLineStart?: boolean;
+    atTextEnd?: boolean;
+}): [string, ExpressiveTag[]];
 
-// Warning: (ae-missing-release-tag) "splitWords" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "splitAllMarkup"
 //
+// @public
+function splitExprMarkup(text: string): [string, ExpressiveTag[]];
+
+// @internal (undocumented)
+function splitInstructions(items: readonly ChatItem[]): [ChatItem[], ChatItem[]];
+
 // @public
 const splitWords: (text: string, ignorePunctuation?: boolean) => [string, number, number][];
 
-// Warning: (ae-missing-release-tag) "startSoon" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+type StackSamplingMode = 'adaptive' | 'always' | 'never';
+
+// @public
+function startMonitoring(options?: StartMonitoringOptions): EventLoopMonitor | undefined;
+
+// @public (undocumented)
+interface StartMonitoringOptions {
+    // (undocumented)
+    emitSpans?: boolean;
+    // (undocumented)
+    name?: string;
+    // (undocumented)
+    stacks?: StackSamplingMode;
+    // (undocumented)
+    thresholds?: LoopMonitorThresholds;
+    // (undocumented)
+    watchdog?: boolean;
+}
+
 // @public
 export function startSoon(func: () => void): void;
 
-// Warning: (ae-missing-release-tag) "StartSpanOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface StartSpanOptions {
     attributes?: Attributes;
     context?: Context;
     endOnExit?: boolean;
+    kind?: SpanKind;
     name: string;
     startTime?: number;
 }
 
-// Warning: (ae-missing-release-tag) "steeringInstructions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "llmInstructions"
 //
 // @public
 function steeringInstructions(provider: string, steering: SpeechSteeringOptions): string;
 
-// Warning: (ae-missing-release-tag) "StopResponse" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+function stopMonitoring(monitor?: EventLoopMonitor): void;
+
 // @public (undocumented)
 export class StopResponse extends Error {
     constructor();
@@ -7397,11 +7303,11 @@ declare namespace stream {
     }
 }
 
-// Warning: (ae-missing-release-tag) "StreamAdapter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class StreamAdapter extends STT {
     constructor(stt: STT, vad: VAD);
+    // (undocumented)
+    close(): Promise<void>;
     // (undocumented)
     label: string;
     // (undocumented)
@@ -7416,25 +7322,33 @@ class StreamAdapter extends STT {
     _updateSessionKeyterms(keyterms: string[]): void;
 }
 
-// Warning: (ae-missing-release-tag) "StreamAdapter" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class StreamAdapter_2 extends TTS {
-    constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer);
+    constructor(tts: TTS, sentenceTokenizer?: SentenceTokenizer);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
     label: string;
+    // (undocumented)
+    protected markupProviderKey(): string;
+    // (undocumented)
+    releaseIdleConnections(): Promise<void>;
+    // @internal
+    _setExpressive(enabled: boolean): void;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
     }): StreamAdapterWrapper_2;
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
+    // @internal
+    _tokenizerFor(options: {
+        lowering: boolean;
+    }): SentenceTokenizer;
+    // (undocumented)
+    get _wrappedTts(): readonly TTS[];
 }
 
-// Warning: (ae-missing-release-tag) "StreamAdapterWrapper" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class StreamAdapterWrapper extends SpeechStream {
     constructor(stt: STT, vad: VAD, connOptions?: APIConnectOptions);
@@ -7448,19 +7362,21 @@ class StreamAdapterWrapper extends SpeechStream {
     protected run(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "StreamAdapterWrapper" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class StreamAdapterWrapper_2 extends SynthesizeStream {
     constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions);
+    // (undocumented)
+    protected emitMetrics: boolean;
+    // @internal
+    get error(): Error | undefined;
+    // @internal
+    get expressive(): boolean;
     // (undocumented)
     label: string;
     // (undocumented)
     protected run(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "StreamChannel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface StreamChannel<T, E extends Error = Error> {
     // (undocumented)
@@ -7477,8 +7393,6 @@ interface StreamChannel<T, E extends Error = Error> {
     write(chunk: T): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "streamingEndpointingOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const streamingEndpointingOptions: {
     readonly mode: "fixed";
@@ -7487,20 +7401,17 @@ export const streamingEndpointingOptions: {
     readonly alpha: 0.9;
 };
 
-// Warning: (ae-missing-release-tag) "stripAllMarkup" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "splitAllMarkup"
 //
 // @public
 function stripAllMarkup(text: string): string;
 
-// Warning: (ae-missing-release-tag) "stripExprMarkup" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "stripAllMarkup"
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "splitExprMarkup"
 //
 // @public
 function stripExprMarkup(text: string): string;
 
 // Warning: (ae-forgotten-export) The symbol "STT_base" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "STT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 abstract class STT extends STT_base {
@@ -7511,6 +7422,7 @@ abstract class STT extends STT_base {
     // (undocumented)
     abstract label: string;
     get model(): string;
+    prewarm(): void;
     get provider(): string;
     // @internal
     _pushConversationItem(_ev: ConversationItemAddedEvent): void;
@@ -7547,8 +7459,6 @@ declare namespace stt {
     }
 }
 
-// Warning: (ae-missing-release-tag) "STT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class STT_2<TModel extends STTModels> extends STT {
     constructor(opts?: {
@@ -7574,6 +7484,8 @@ class STT_2<TModel extends STTModels> extends STT {
     get model(): string;
     // (undocumented)
     get provider(): string;
+    // (undocumented)
+    _pushConversationItem(ev: ConversationItemAddedEvent): void;
     // (undocumented)
     protected _recognize(_: AudioBuffer_2): Promise<SpeechEvent>;
     // @internal
@@ -7623,16 +7535,12 @@ declare namespace stt_2 {
     }
 }
 
-// Warning: (ae-missing-release-tag) "STTCallbacks" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type STTCallbacks = {
     ['metrics_collected']: (metrics: STTMetrics) => void;
     ['error']: (error: STTError) => void;
 };
 
-// Warning: (ae-missing-release-tag) "STTCapabilities" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface STTCapabilities {
     alignedTranscript?: 'word' | 'chunk' | false;
@@ -7645,31 +7553,21 @@ interface STTCapabilities {
     streaming: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "STTEncoding" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type STTEncoding = 'pcm_s16le';
 
-// Warning: (ae-missing-release-tag) "STTFallbackModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface STTFallbackModel {
     extraKwargs?: Record<string, unknown>;
     model: string;
 }
 
-// Warning: (ae-missing-release-tag) "STTFallbackModelType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type STTFallbackModelType = STTFallbackModel | string;
 
-// Warning: (ae-missing-release-tag) "STTLanguages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type STTLanguages = 'multi' | 'en' | 'de' | 'es' | 'fr' | 'ja' | 'pt' | 'zh' | 'hi' | AnyString;
 
-// Warning: (ae-missing-release-tag) "STTMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type STTMetrics = {
     type: 'stt_metrics';
@@ -7685,13 +7583,10 @@ export type STTMetrics = {
 };
 
 // Warning: (ae-forgotten-export) The symbol "_STTModels" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "STTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 type STTModels = _STTModels | 'auto' | AnyString;
 
-// Warning: (ae-missing-release-tag) "STTModelUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type STTModelUsage = {
     type: 'stt_usage';
@@ -7702,18 +7597,12 @@ export type STTModelUsage = {
     audioDurationMs: number;
 };
 
-// Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxModels ? DeepgramFluxOptions : TModel extends DeepgramModels ? DeepgramOptions : TModel extends CartesiaModels ? CartesiaOptions : TModel extends AssemblyaiModels ? AssemblyAIOptions : TModel extends XaiSTTModels ? XaiOptions : TModel extends SpeechmaticsModels ? SpeechmaticsOptions : TModel extends InworldSTTModels ? InworldSTTOptions : TModel extends GoogleSTTModels ? GoogleSTTOptions : Record<string, unknown>;
 
-// Warning: (ae-missing-release-tag) "supportedNonverbals" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function supportedNonverbals(provider: string): Partial<Record<NonverbalField, string[]>>;
 
-// Warning: (ae-missing-release-tag) "SynthesizedAudio" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface SynthesizedAudio {
     deltaText?: string;
@@ -7724,8 +7613,6 @@ interface SynthesizedAudio {
     timedTranscripts?: TimedString[];
 }
 
-// Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM> {
     // (undocumented)
@@ -7740,9 +7627,12 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     protected closed: boolean;
     // (undocumented)
     protected connOptions: APIConnectOptions;
+    protected emitMetrics: boolean;
     // (undocumented)
     static readonly END_OF_STREAM: unique symbol;
     endInput(): void;
+    // @internal
+    get error(): Error | undefined;
     flush(): void;
     // (undocumented)
     protected static readonly FLUSH_SENTINEL: unique symbol;
@@ -7776,6 +7666,8 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     //
     // (undocumented)
     protected queue: AsyncIterableQueue<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>;
+    protected get responseModel(): string;
+    protected get responseProvider(): string;
     // (undocumented)
     protected abstract run(): Promise<void>;
     protected setTokenUsage(input?: {
@@ -7785,11 +7677,11 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     // @internal
     get startedTime(): SynthesizeStreamStartedTime | undefined;
     // (undocumented)
+    protected get ttsRequestSpan(): Span | undefined;
+    // (undocumented)
     updateInputStream(text: ReadableStream_2<string>): void;
 }
 
-// Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class SynthesizeStream_2<TModel extends TTSModels> extends SynthesizeStream {
     constructor(tts: TTS_2<TModel>, opts: InferenceTTSOptions<TModel>, connOptions: APIConnectOptions);
@@ -7801,8 +7693,6 @@ class SynthesizeStream_2<TModel extends TTSModels> extends SynthesizeStream {
     updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language' | 'modelOptions'>>): void;
 }
 
-// Warning: (ae-missing-release-tag) "Task" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class Task<T> {
     constructor(fn: (controller: AbortController) => Promise<T>, controller: AbortController, name?: string | undefined);
@@ -7829,8 +7719,6 @@ export class Task<T> {
     get result(): Promise<T>;
 }
 
-// Warning: (ae-missing-release-tag) "TaskCompletedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface TaskCompletedEvent {
     // (undocumented)
@@ -7841,8 +7729,6 @@ interface TaskCompletedEvent {
     taskId: string;
 }
 
-// Warning: (ae-missing-release-tag) "TaskGroup" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class TaskGroup extends AgentTask<TaskGroupResult> {
     constructor(options?: TaskGroupOptions);
@@ -7855,8 +7741,6 @@ class TaskGroup extends AgentTask<TaskGroupResult> {
     onEnter(): Promise<void>;
 }
 
-// Warning: (ae-missing-release-tag) "TaskGroupOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface TaskGroupOptions {
     // (undocumented)
@@ -7871,16 +7755,12 @@ interface TaskGroupOptions {
     summarizeChatCtx?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "TaskGroupResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface TaskGroupResult {
     // (undocumented)
     taskResults: Record<string, unknown>;
 }
 
-// Warning: (ae-missing-release-tag) "TaskResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export enum TaskResult {
     // (undocumented)
@@ -7891,8 +7771,6 @@ export enum TaskResult {
     Timeout = "timeout"
 }
 
-// Warning: (ae-missing-release-tag) "TcpAudioInput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class TcpAudioInput extends AudioInput {
     constructor();
@@ -7902,8 +7780,6 @@ export class TcpAudioInput extends AudioInput {
     pushFrame(frame: AgentSession_2.AgentSessionMessage_ConsoleIO_AudioFrame): void;
 }
 
-// Warning: (ae-missing-release-tag) "TcpAudioOutput" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class TcpAudioOutput extends AudioOutput {
     constructor(transport: SessionTransport);
@@ -7916,8 +7792,6 @@ export class TcpAudioOutput extends AudioOutput {
     notifyPlayoutFinished(): void;
 }
 
-// Warning: (ae-missing-release-tag) "TcpSessionTransport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class TcpSessionTransport extends SessionTransport {
     // (undocumented)
@@ -7949,10 +7823,17 @@ declare namespace telemetry {
         PinoCloudExporterUrlConfig,
         PinoLogObject,
         genAI,
+        inputDelta,
         REDACTED_EXCEPTION_MESSAGE,
+        loopMonitor,
+        rpc,
         traceTypes,
+        discardPreparedCloudTracer,
         FanoutSpanProcessor,
+        flushCloudMetrics,
+        flushCloudTraces,
         flushOtelLogs,
+        prepareCloudTracer,
         setTracerProvider,
         setupCloudTracer,
         tracer,
@@ -7962,6 +7843,7 @@ declare namespace telemetry {
         SetTracerProviderOptions,
         SpanProcessorLike,
         StartSpanOptions,
+        participantAttributes,
         recordException,
         recordRealtimeMetrics,
         redactionEnabled,
@@ -8016,7 +7898,6 @@ declare namespace testing_2 {
 }
 
 // Warning: (ae-forgotten-export) The symbol "TextAudioSynchronizer_base" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "TextAudioSynchronizer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export class TextAudioSynchronizer extends TextAudioSynchronizer_base {
@@ -8039,13 +7920,9 @@ export class TextAudioSynchronizer extends TextAudioSynchronizer_base {
     segmentPlayoutStarted(): void;
 }
 
-// Warning: (ae-missing-release-tag) "TextInputCallback" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type TextInputCallback = (session: AgentSession, ev: TextInputEvent) => void | Promise<void>;
 
-// Warning: (ae-missing-release-tag) "TextInputEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface TextInputEvent {
     // (undocumented)
@@ -8056,8 +7933,6 @@ export interface TextInputEvent {
     text: string;
 }
 
-// Warning: (ae-missing-release-tag) "TextSyncOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface TextSyncOptions {
     hyphenateWord: (word: string) => string[];
@@ -8068,8 +7943,6 @@ export interface TextSyncOptions {
     splitWords: (words: string) => [string, number, number][];
 }
 
-// Warning: (ae-missing-release-tag) "TextTransform" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type TextTransform = BuiltinTextTransform | ((text: ReadableStream_2<string>) => ReadableStream_2<string>);
 
@@ -8085,8 +7958,6 @@ declare namespace textTransforms {
     }
 }
 
-// Warning: (ae-missing-release-tag) "ThresholdOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class ThresholdOptions {
     constructor(model: TurnDetectorModel, overrides?: ThresholdOverride, backchannelOverrides?: ThresholdOverride);
@@ -8116,13 +7987,9 @@ class ThresholdOptions {
     updateOverrides(overrides: ThresholdOverride): void;
 }
 
-// Warning: (ae-missing-release-tag) "ThresholdOverride" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 type ThresholdOverride = number | Record<string, number> | undefined;
 
-// Warning: (ae-missing-release-tag) "TimedString" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface TimedString {
     // (undocumented)
@@ -8141,23 +8008,15 @@ export interface TimedString {
     text: string;
 }
 
-// Warning: (ae-missing-release-tag) "toError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function toError(error: unknown): Error;
 
-// Warning: (ae-missing-release-tag) "toInputMessages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function toInputMessages(chatCtx: ChatContext): ChatMessagePayload[];
 
-// Warning: (ae-missing-release-tag) "toJsonSchema" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function toJsonSchema(schema: ToolInputSchema<any>, isOpenai?: boolean, strict?: boolean): JSONSchema7;
 
-// Warning: (ae-missing-release-tag) "TokenData" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface TokenData {
     // (undocumented)
@@ -8176,22 +8035,17 @@ declare namespace tokenize {
         BufferedSentenceStream,
         BufferedTokenStream,
         BufferedWordStream,
-        basic
+        basic,
+        blingfire
     }
 }
 
-// Warning: (ae-missing-release-tag) "tokenizeParagraphs" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 const tokenizeParagraphs: (text: string) => string[];
 
-// Warning: (ae-missing-release-tag) "toLanguageName" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function toLanguageName(language: string): string | undefined;
 
-// Warning: (ae-missing-release-tag) "Tool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface Tool {
     // (undocumented)
@@ -8202,8 +8056,6 @@ export interface Tool {
 }
 
 // Warning: (ae-forgotten-export) The symbol "ToolArgs" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "tool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-missing-release-tag) "tool" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export function tool<UserData = UnknownUserData, Schema extends ToolInputSchema<any> | undefined = undefined, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
@@ -8227,8 +8079,6 @@ Result = unknown>(input: {
     onDuplicate?: DuplicateMode;
 }): AnonFunctionTool<ToolArgs<Schema>, UserData, Result>;
 
-// Warning: (ae-missing-release-tag) "ToolCalledEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ToolCalledEvent<UserData = UnknownUserData> {
     // (undocumented)
@@ -8237,8 +8087,6 @@ export interface ToolCalledEvent<UserData = UnknownUserData> {
     ctx: RunContext<UserData>;
 }
 
-// Warning: (ae-missing-release-tag) "ToolCallLike" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface ToolCallLike {
     // (undocumented)
@@ -8249,8 +8097,6 @@ interface ToolCallLike {
     name: string;
 }
 
-// Warning: (ae-missing-release-tag) "ToolChoice" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type ToolChoice = 'auto' | 'none' | 'required' | {
     type: 'function';
@@ -8259,8 +8105,6 @@ export type ToolChoice = 'auto' | 'none' | 'required' | {
     };
 };
 
-// Warning: (ae-missing-release-tag) "ToolCompletedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ToolCompletedEvent<UserData = UnknownUserData> {
     // (undocumented)
@@ -8275,8 +8119,6 @@ export interface ToolCompletedEvent<UserData = UnknownUserData> {
     };
 }
 
-// Warning: (ae-missing-release-tag) "ToolContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class ToolContext<UserData = UnknownUserData> {
     // Warning: (ae-forgotten-export) The symbol "ToolContextInit" needs to be exported by the entry point index.d.ts
@@ -8304,26 +8146,17 @@ export class ToolContext<UserData = UnknownUserData> {
     updateTools(tools: ToolContextInit<UserData>): void;
 }
 
-// Warning: (ae-missing-release-tag) "ToolContextEntry" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type ToolContextEntry<UserData = any> = FunctionTool<any, UserData, any> | ProviderTool | Toolset;
 
-// Warning: (ae-missing-release-tag) "ToolContextLike" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export type ToolContextLike<UserData = UnknownUserData> = ToolContext<UserData> | ToolContextInit<UserData>;
 
-// Warning: (ae-missing-release-tag) "ToolError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export class ToolError extends Error {
     constructor(message: string);
 }
 
-// Warning: (ae-missing-release-tag) "ToolFlag" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-missing-release-tag) "ToolFlag" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const ToolFlag: {
     readonly NONE: 0;
@@ -8334,16 +8167,12 @@ export const ToolFlag: {
 // @public (undocumented)
 export type ToolFlag = (typeof ToolFlag)[keyof typeof ToolFlag];
 
-// Warning: (ae-missing-release-tag) "ToolHandlingOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ToolHandlingOptions {
     // (undocumented)
     asyncOptions?: Partial<AsyncToolOptions>;
 }
 
-// Warning: (ae-missing-release-tag) "ToolOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface ToolOptions<UserData = UnknownUserData> {
     abortSignal: AbortSignal;
@@ -8351,8 +8180,6 @@ export interface ToolOptions<UserData = UnknownUserData> {
     toolCallId: string;
 }
 
-// Warning: (ae-missing-release-tag) "Toolset" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class Toolset {
     // (undocumented)
@@ -8374,15 +8201,11 @@ export class Toolset {
     get tools(): readonly ToolContextEntry[];
 }
 
-// Warning: (ae-missing-release-tag) "ToolsetContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface ToolsetContext {
     updateTools(tools: readonly ToolContextEntry[]): void;
 }
 
-// Warning: (ae-missing-release-tag) "ToolsetCreateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface ToolsetCreateOptions {
     aclose?: () => Promise<void>;
@@ -8392,13 +8215,9 @@ export interface ToolsetCreateOptions {
     tools: readonly ToolContextEntry[];
 }
 
-// Warning: (ae-missing-release-tag) "ToolType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type ToolType = 'function' | 'provider';
 
-// Warning: (ae-missing-release-tag) "toOutputMessages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function toOutputMessages(params: {
     text?: string;
@@ -8411,32 +8230,22 @@ function toOutputMessages(params: {
 // @internal
 export function toSnakeCaseDeep(value: unknown): unknown;
 
-// Warning: (ae-missing-release-tag) "toStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function toStream<T>(iterable: AsyncIterable<T>): ReadableStream_2<T>;
 
-// Warning: (ae-missing-release-tag) "toSystemInstructions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function toSystemInstructions(chatCtx: ChatContext): MessagePart[];
 
-// Warning: (ae-missing-release-tag) "toToolContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-missing-release-tag) "toToolContext" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function toToolContext<UserData = UnknownUserData>(input: ToolContextLike<UserData>): ToolContext<UserData>;
 
 // @public (undocumented)
 export function toToolContext<UserData = UnknownUserData>(input: ToolContextLike<UserData> | undefined): ToolContext<UserData> | undefined;
 
-// Warning: (ae-missing-release-tag) "toToolDefinitions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function toToolDefinitions(tools: readonly unknown[] | Record<string, unknown>): MessagePart[];
 
 // Warning: (ae-forgotten-export) The symbol "DynamicTracer" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "tracer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 const tracer: DynamicTracer;
@@ -8452,6 +8261,7 @@ declare namespace traceTypes {
         ATTR_PROVIDER_REQUEST_IDS,
         ATTR_PARTICIPANT_ID,
         ATTR_PARTICIPANT_IDENTITY,
+        ATTR_DESTINATION_IDENTITY,
         ATTR_PARTICIPANT_KIND,
         ATTR_JOB_ID,
         ATTR_AGENT_NAME,
@@ -8459,8 +8269,50 @@ declare namespace traceTypes {
         ATTR_DEPLOYMENT_ID,
         ATTR_ROOM_NAME,
         ATTR_SESSION_OPTIONS,
+        ATTR_ROOM_SID,
+        ATTR_DISPATCH_ID,
+        ATTR_WORKER_ID,
+        ATTR_JOB_AGENT_ID,
+        ATTR_SIP_PREFIX,
+        ATTR_SIP_PHONE_NUMBER,
+        ATTR_JOB_ACCEPT_LATENCY,
+        ATTR_JOB_ASSIGNMENT_LATENCY,
+        ATTR_JOB_LAUNCH_LATENCY,
+        ATTR_JOB_ENTRYPOINT_LATENCY,
+        ATTR_JOB_DISPATCH_LATENCY,
+        ATTR_KEYTERMS_COUNT,
+        ATTR_KEYTERMS_ADDED,
+        ATTR_KEYTERMS_REMOVED,
+        ATTR_ROOM_AUTO_SUBSCRIBE,
+        ATTR_ROOM_E2EE,
+        ATTR_ROOM_REMOTE_PARTICIPANT_COUNT,
+        ATTR_ROOM_IO_PARTICIPANT_FILTER,
+        ATTR_TRACK_SID,
+        ATTR_TRACK_SOURCE,
+        ATTR_FIRST_FRAME_DELAY,
+        ATTR_PRE_CONNECT_AUDIO_DURATION,
+        ATTR_CONNECTION_STATE,
+        ATTR_DISCONNECT_REASON,
+        ATTR_OLD_STATE,
+        ATTR_NEW_STATE,
+        ATTR_RPC_METHOD,
+        ATTR_RPC_REQUEST_ID,
+        ATTR_RPC_CALLER_IDENTITY,
+        ATTR_RPC_DESTINATION_IDENTITY,
+        ATTR_RPC_PAYLOAD,
+        ATTR_RPC_PAYLOAD_SIZE,
+        ATTR_RPC_RESPONSE,
+        ATTR_RPC_RESPONSE_SIZE,
+        ATTR_RPC_RESPONSE_TIMEOUT,
+        ATTR_RPC_ERROR_CODE,
+        ATTR_CLOSE_REASON,
+        ATTR_CLOSE_DRAIN,
+        ATTR_SHUTDOWN_REASON,
+        ATTR_SHUTDOWN_USER_INITIATED,
+        ATTR_CALLBACK_NAME,
         ATTR_AGENT_TURN_ID,
         ATTR_AGENT_PARENT_TURN_ID,
+        ATTR_GENERATION_COUNT,
         ATTR_USER_INPUT,
         ATTR_INSTRUCTIONS,
         ATTR_SPEECH_INTERRUPTED,
@@ -8471,6 +8323,9 @@ declare namespace traceTypes {
         ATTR_RESPONSE_TEXT,
         ATTR_RESPONSE_FUNCTION_CALLS,
         ATTR_RESPONSE_TTFT,
+        ATTR_INPUT_DELTA,
+        ATTR_INPUT_BASE_SPAN_ID,
+        ATTR_INPUT_DROPPED_FROM_BASE,
         ATTR_FUNCTION_TOOL_ID,
         ATTR_FUNCTION_TOOL_NAME,
         ATTR_FUNCTION_TOOL_ARGS,
@@ -8487,7 +8342,15 @@ declare namespace traceTypes {
         ATTR_EOU_SOURCE,
         ATTR_EOU_FROM_CACHE,
         ATTR_EOU_DETECTION_DELAY,
+        ATTR_EOU_OUTCOME,
+        ATTR_EOU_WAIT_DURATION,
+        ATTR_EOU_REARM_COUNT,
+        ATTR_EOU_NOT_COMMITTED_COUNT,
+        ATTR_EOU_RESUME_COUNT,
+        ATTR_ON_USER_TURN_COMPLETED_DELAY,
+        ATTR_SPEECH_QUEUE_WAIT,
         ATTR_USER_TRANSCRIPT,
+        ATTR_STT_EVENTS,
         ATTR_TRANSCRIPT_CONFIDENCE,
         ATTR_TRANSCRIPTION_DELAY,
         ATTR_END_OF_TURN_DELAY,
@@ -8498,6 +8361,11 @@ declare namespace traceTypes {
         ATTR_AMD_SPEECH_DURATION,
         ATTR_AMD_DELAY,
         ATTR_AMD_TRANSCRIPT,
+        ATTR_INTERRUPTION_SOURCE,
+        ATTR_PLAYOUT_POSITION,
+        ATTR_PREVIOUS_AGENT_LABEL,
+        ATTR_FALLBACK_LABEL,
+        ATTR_FALLBACK_INDEX,
         ATTR_IS_INTERRUPTION,
         ATTR_INTERRUPTION_PROBABILITY,
         ATTR_INTERRUPTION_TOTAL_DURATION,
@@ -8507,6 +8375,19 @@ declare namespace traceTypes {
         ATTR_TTS_METRICS,
         ATTR_REALTIME_MODEL_METRICS,
         ATTR_E2E_LATENCY,
+        ATTR_BLOCKING_DURATION,
+        ATTR_BLOCKING_THRESHOLD,
+        ATTR_BLOCKING_SEVERITY,
+        ATTR_BLOCKING_CAUSE,
+        ATTR_BLOCKING_TASK,
+        ATTR_BLOCKING_STACK,
+        ATTR_BLOCKING_GC_TIME,
+        ATTR_BLOCKING_CPU_TIME,
+        ATTR_BLOCKING_IMPORT,
+        ATTR_BLOCKING_SUPPRESSED,
+        ATTR_BLOCKING_COUNT,
+        ATTR_BLOCKING_TOTAL_DURATION,
+        ATTR_BLOCKING_MAX_DURATION,
         ATTR_GEN_AI_OPERATION_NAME,
         ATTR_GEN_AI_PROVIDER_NAME,
         ATTR_GEN_AI_REQUEST_MODEL,
@@ -8565,19 +8446,25 @@ declare namespace traceTypes {
         ATTR_EXCEPTION_TRACE,
         ATTR_EXCEPTION_TYPE,
         ATTR_EXCEPTION_MESSAGE,
-        ATTR_LANGFUSE_COMPLETION_START_TIME
+        ATTR_LANGFUSE_COMPLETION_START_TIME,
+        METRIC_GEN_AI_INVOKE_AGENT_DURATION
     }
 }
 
-// Warning: (ae-missing-release-tag) "TranscriptionOutputOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public
+class TracingRpcInterceptor implements RpcInterceptor {
+    constructor(job?: JobContext | undefined);
+    // (undocumented)
+    interceptIncoming(invocation: RpcInvocationData, next: IncomingRpcNext): Promise<string>;
+    // (undocumented)
+    interceptOutgoing(call: RpcCallInfo, next: OutgoingRpcNext): Promise<string>;
+}
+
 // @public (undocumented)
 export interface TranscriptionOutputOptions {
     expressiveEnabled?: () => boolean;
 }
 
-// Warning: (ae-missing-release-tag) "TranscriptMarkupStripper" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class TranscriptMarkupStripper {
     expressionAttribute(): Record<string, string> | undefined;
@@ -8587,7 +8474,6 @@ class TranscriptMarkupStripper {
 }
 
 // Warning: (ae-forgotten-export) The symbol "TTS_base" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 abstract class TTS extends TTS_base {
@@ -8604,7 +8490,9 @@ abstract class TTS extends TTS_base {
     protected markupProviderKey(): string;
     get model(): string;
     get numChannels(): number;
+    prewarm(): void;
     get provider(): string;
+    releaseIdleConnections(): Promise<void>;
     get sampleRate(): number;
     // @internal
     _setExpressive(enabled: boolean): void;
@@ -8614,6 +8502,8 @@ abstract class TTS extends TTS_base {
     }): SynthesizeStream;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "ChunkedStream"
     abstract synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
+    // @internal
+    get _wrappedTts(): readonly TTS[];
 }
 
 declare namespace tts {
@@ -8643,6 +8533,7 @@ declare namespace tts {
         normalizeMarkup,
         sentenceTokenizer,
         splitAllMarkup,
+        splitExprMarkup,
         steeringInstructions,
         stripAllMarkup,
         stripExprMarkup,
@@ -8654,8 +8545,6 @@ declare namespace tts {
     }
 }
 
-// Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class TTS_2<TModel extends TTSModels> extends TTS {
     constructor(opts: {
@@ -8695,6 +8584,7 @@ class TTS_2<TModel extends TTSModels> extends TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
+    releaseIdleConnections(): Promise<void>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
@@ -8733,21 +8623,15 @@ declare namespace tts_2 {
     }
 }
 
-// Warning: (ae-missing-release-tag) "TTS_INSTRUCTIONS_PLACEHOLDER" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const TTS_INSTRUCTIONS_PLACEHOLDER = "{tts.markup.llm_instructions}";
 
-// Warning: (ae-missing-release-tag) "TTSCallbacks" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type TTSCallbacks = {
     ['metrics_collected']: (metrics: TTSMetrics) => void;
     ['error']: (error: TTSError) => void;
 };
 
-// Warning: (ae-missing-release-tag) "TTSCapabilities" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface TTSCapabilities {
     // (undocumented)
@@ -8756,8 +8640,6 @@ interface TTSCapabilities {
     streaming: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "TTSFallbackModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 interface TTSFallbackModel {
     extraKwargs?: Record<string, unknown>;
@@ -8765,12 +8647,9 @@ interface TTSFallbackModel {
     voice: string;
 }
 
-// Warning: (ae-missing-release-tag) "TTSFallbackModelType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type TTSFallbackModelType = TTSFallbackModel | string;
 
-// Warning: (ae-missing-release-tag) "TTSMarkup" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "TTS"
 //
 // @public
@@ -8789,8 +8668,6 @@ class TTSMarkup {
     get supported(): boolean;
 }
 
-// Warning: (ae-missing-release-tag) "TTSMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type TTSMetrics = {
     type: 'tts_metrics';
@@ -8810,13 +8687,9 @@ export type TTSMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-missing-release-tag) "TTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type TTSModels = CartesiaModels_2 | DeepgramTTSModels | RimeModels | InworldModels | XaiTTSModels | FishAudioModels | AnyString;
 
-// Warning: (ae-missing-release-tag) "TTSModelUsage" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type TTSModelUsage = {
     type: 'tts_usage';
@@ -8828,13 +8701,10 @@ export type TTSModelUsage = {
     audioDurationMs: number;
 };
 
-// Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels_2 ? CartesiaOptions_2 : TModel extends DeepgramTTSModels ? DeepgramTTSOptions : TModel extends RimeModels ? RimeOptions : TModel extends InworldModels ? InworldOptions : TModel extends XaiTTSModels ? XaiTTSOptions : TModel extends FishAudioModels ? FishAudioOptions : Record<string, unknown>;
 
 // Warning: (ae-forgotten-export) The symbol "BaseStreamingTurnDetector" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "TurnDetector" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 class TurnDetector extends BaseStreamingTurnDetector {
@@ -8844,6 +8714,8 @@ class TurnDetector extends BaseStreamingTurnDetector {
     describeOptions(): Readonly<Record<string, unknown>>;
     // (undocumented)
     protected _executor: InferenceExecutor | undefined;
+    // (undocumented)
+    protected _localFallback: boolean;
     get model(): TurnDetectorModel;
     // (undocumented)
     protected _model: TurnDetectorModel;
@@ -8862,13 +8734,9 @@ class TurnDetector extends BaseStreamingTurnDetector {
     protected _warnThresholdOverride(): void;
 }
 
-// Warning: (ae-missing-release-tag) "TurnDetectorModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 type TurnDetectorModel = 'turn-detector-v1' | 'turn-detector-v1-mini';
 
-// Warning: (ae-missing-release-tag) "TurnDetectorOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface TurnDetectorOptions {
     // (undocumented)
@@ -8881,14 +8749,13 @@ interface TurnDetectorOptions {
     // (undocumented)
     connOptions?: APIConnectOptions;
     executor?: InferenceExecutor;
+    localFallback?: boolean;
     sampleRate?: number;
     // (undocumented)
     unlikelyThreshold?: number | Record<string, number>;
     version?: TurnDetectorVersion;
 }
 
-// Warning: (ae-missing-release-tag) "TurnDetectorStreamImpl" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
     // Warning: (ae-forgotten-export) The symbol "TurnDetectorStreamImplArgs" needs to be exported by the entry point index.d.ts
@@ -8902,11 +8769,13 @@ class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
     // (undocumented)
     protected _executor: InferenceExecutor | undefined;
     // @internal
-    _fallBackToLocal(reason: Error): void;
+    _fallBackToLocal(reason: Error): boolean;
     // (undocumented)
     get isFallback(): boolean;
     // (undocumented)
     protected _isFallback: boolean;
+    // (undocumented)
+    protected _localFallback: boolean;
     get model(): TurnDetectorModel;
     // (undocumented)
     protected _model: TurnDetectorModel;
@@ -8928,21 +8797,38 @@ class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
     protected _warnedLocalFailure: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "TurnDetectorVersion" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "TurnDetectorModel"
 //
 // @public
 type TurnDetectorVersion = 'v1' | 'v1-mini';
 
-// Warning: (ae-missing-release-tag) "UnexpectedModelBehavior" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "createTwilioConnectorWarmTransferTask"
 //
+// @public
+class TwilioConnectorWarmTransferTask extends AgentTask<WarmTransferResult> {
+    constructor(options: TwilioConnectorWarmTransferTaskOptions);
+    // (undocumented)
+    run(): Promise<WarmTransferResult>;
+}
+
+// Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "createTwilioConnectorWarmTransferTask"
+//
+// @public
+interface TwilioConnectorWarmTransferTaskOptions extends Omit<WarmTransferTaskOptions, 'sipCallTo' | 'sipTrunkId' | 'sipConnection' | 'sipNumber' | 'sipHeaders' | 'dtmf' | 'ringingTimeout' | 'humanAgentIdentity' | 'originateHumanAgent'> {
+    originalCallerNumber?: string;
+    phoneNumber: string;
+    ringingTimeout?: number | null;
+    twilioAccountSid?: string;
+    twilioAuthToken?: string;
+    twilioCallToken?: string;
+    twilioFromNumber: string;
+}
+
 // @public
 export class UnexpectedModelBehavior extends Error {
     constructor(message: string, options?: ErrorOptions);
 }
 
-// Warning: (ae-missing-release-tag) "uploadSessionReport" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 function uploadSessionReport(options: ObservabilityEndpoint & {
     agentName: string;
@@ -8950,8 +8836,6 @@ function uploadSessionReport(options: ObservabilityEndpoint & {
     metadata?: Attributes;
 }): Promise<void>;
 
-// Warning: (ae-missing-release-tag) "UsageCollector" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public @deprecated (undocumented)
 export class UsageCollector {
     constructor();
@@ -8961,8 +8845,6 @@ export class UsageCollector {
     getSummary(): UsageSummary;
 }
 
-// Warning: (ae-missing-release-tag) "UsageSummary" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public @deprecated (undocumented)
 export interface UsageSummary {
     // (undocumented)
@@ -8977,18 +8859,12 @@ export interface UsageSummary {
     ttsCharactersCount: number;
 }
 
-// Warning: (ae-missing-release-tag) "USERDATA_TIMED_TRANSCRIPT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const USERDATA_TIMED_TRANSCRIPT = "lk.timed_transcripts";
 
-// Warning: (ae-missing-release-tag) "USERDATA_TTS_STARTED_TIME" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export const USERDATA_TTS_STARTED_TIME = "lk.tts_started_time";
 
-// Warning: (ae-missing-release-tag) "UserInputTranscribedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type UserInputTranscribedEvent = {
     type: 'user_input_transcribed';
@@ -9000,13 +8876,9 @@ export type UserInputTranscribedEvent = {
     language: LanguageCode | null;
 };
 
-// Warning: (ae-missing-release-tag) "UserState" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type UserState = 'speaking' | 'listening' | 'away';
 
-// Warning: (ae-missing-release-tag) "UserStateChangedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type UserStateChangedEvent = {
     type: 'user_state_changed';
@@ -9015,8 +8887,6 @@ export type UserStateChangedEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "UserTranscriptionTimeoutEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type UserTranscriptionTimeoutEvent = {
     type: 'user_transcription_timeout';
@@ -9025,8 +8895,6 @@ export type UserTranscriptionTimeoutEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "UserTurnExceededEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type UserTurnExceededEvent = {
     type: 'user_turn_exceeded';
@@ -9037,8 +8905,6 @@ export type UserTurnExceededEvent = {
     createdAt: number;
 };
 
-// Warning: (ae-missing-release-tag) "UserTurnLimitOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export interface UserTurnLimitOptions {
     maxDuration: number | null;
@@ -9046,7 +8912,6 @@ export interface UserTurnLimitOptions {
 }
 
 // Warning: (ae-forgotten-export) The symbol "VAD_base" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "VAD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export abstract class VAD extends VAD_base {
@@ -9061,8 +8926,6 @@ export abstract class VAD extends VAD_base {
     abstract stream(): VADStream;
 }
 
-// Warning: (ae-missing-release-tag) "VAD" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class VAD_2 extends VAD {
     constructor(opts?: Partial<VADOptions> & {
@@ -9085,22 +8948,16 @@ class VAD_2 extends VAD {
     updateOptions(opts: Partial<VADOptions>): void;
 }
 
-// Warning: (ae-missing-release-tag) "VADCallbacks" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type VADCallbacks = {
     ['metrics_collected']: (metrics: VADMetrics) => void;
 };
 
-// Warning: (ae-missing-release-tag) "VADCapabilities" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface VADCapabilities {
     updateInterval: number;
 }
 
-// Warning: (ae-missing-release-tag) "VADEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export interface VADEvent {
     frames: AudioFrame[];
@@ -9116,8 +8973,6 @@ export interface VADEvent {
     type: VADEventType;
 }
 
-// Warning: (ae-missing-release-tag) "VADEventType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export enum VADEventType {
     // (undocumented)
@@ -9130,8 +8985,6 @@ export enum VADEventType {
     START_OF_SPEECH = 0
 }
 
-// Warning: (ae-missing-release-tag) "VADMetrics" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export type VADMetrics = {
     type: 'vad_metrics';
@@ -9142,13 +8995,9 @@ export type VADMetrics = {
     inferenceCount: number;
 };
 
-// Warning: (ae-missing-release-tag) "VADModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type VADModels = 'silero';
 
-// Warning: (ae-missing-release-tag) "VADOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface VADOptions {
     activationThreshold: number;
@@ -9159,8 +9008,6 @@ interface VADOptions {
     prefixPaddingDuration: number;
 }
 
-// Warning: (ae-missing-release-tag) "VADStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     // (undocumented)
@@ -9210,13 +9057,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     protected vad: VAD;
 }
 
-// Warning: (ae-missing-release-tag) "validateChatContextStructure" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function validateChatContextStructure(chatCtx: ChatContext): ChatContextValidationResult;
 
-// Warning: (ae-missing-release-tag) "version" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const version: string;
 
@@ -9265,6 +9108,7 @@ declare namespace voice {
         AudioOutput,
         AudioOutputCapabilities,
         PlaybackFinishedEvent,
+        PlaybackProgressedEvent,
         PlaybackStartedEvent,
         TimedString,
         createTimedString,
@@ -9274,6 +9118,7 @@ declare namespace voice {
         SpeechHandleCircularWaitError,
         InputDetails,
         ResolvedSpeechHandle,
+        InterruptionSource,
         testing,
         RunOutputOptions,
         textTransforms,
@@ -9365,8 +9210,6 @@ declare namespace voice {
     }
 }
 
-// Warning: (ae-missing-release-tag) "VoiceOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public @deprecated (undocumented)
 export type VoiceOptions = {
     maxToolSteps: number;
@@ -9380,19 +9223,12 @@ export type VoiceOptions = {
     maxEndpointingDelay?: number;
 };
 
-// Warning: (ae-missing-release-tag) "waitFor" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function waitFor(tasks: Task<void>[]): Promise<void>;
 
-// Warning: (ae-missing-release-tag) "waitForAbort" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function waitForAbort(signal: AbortSignal): Promise<Throws<void, Error>>;
 
-// Warning: (ae-missing-release-tag) "waitForParticipant" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-missing-release-tag) "waitForParticipant" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function waitForParticipant(input: {
     room: Room;
@@ -9411,8 +9247,6 @@ export function waitForParticipant(input: {
     signal?: AbortSignal;
 }): Promise<RemoteParticipant>;
 
-// Warning: (ae-missing-release-tag) "waitForParticipantAttribute" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function waitForParticipantAttribute(input: {
     room: Room;
@@ -9422,9 +9256,6 @@ export function waitForParticipantAttribute(input: {
     signal?: AbortSignal;
 }): Promise<void>;
 
-// Warning: (ae-missing-release-tag) "waitForTrackPublication" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-// Warning: (ae-missing-release-tag) "waitForTrackPublication" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function waitForTrackPublication(input: {
     room: Room;
@@ -9450,18 +9281,12 @@ export function waitForTrackPublication(input: {
 // @internal (undocumented)
 export function waitForWebSocketOpen(ws: WebSocket_2, provider: string): Promise<void>;
 
-// Warning: (ae-missing-release-tag) "waitUntilAborted" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<Aborted<T>>;
 
-// Warning: (ae-missing-release-tag) "waitUntilTimeout" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(promise: Promise<T>, timeoutMs: number, throwError?: () => E): Promise<Throws<T, E | IdleTimeoutError>>;
 
-// Warning: (ae-missing-release-tag) "WarmTransferResult" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface WarmTransferResult {
     // (undocumented)
@@ -9471,7 +9296,6 @@ interface WarmTransferResult {
 // @public
 type WarmTransferSpeech = string | ((session: AgentSession) => SpeechHandle);
 
-// Warning: (ae-missing-release-tag) "WarmTransferTask" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "createWarmTransferTask"
 //
 // @public
@@ -9481,8 +9305,6 @@ class WarmTransferTask extends AgentTask<WarmTransferResult> {
     run(): Promise<WarmTransferResult>;
 }
 
-// Warning: (ae-missing-release-tag) "WarmTransferTaskOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface WarmTransferTaskOptions {
     abortSignal?: AbortSignal;
@@ -9496,10 +9318,13 @@ interface WarmTransferTaskOptions {
     dtmf?: string | null;
     greetingSpeech?: WarmTransferSpeech;
     holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
+    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WarmTransferResult"
+    humanAgentIdentity?: string;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "InstructionParts"
     instructions?: InstructionParts | string;
     // (undocumented)
     llm?: LLM | RealtimeModel | LLMModels | null;
+    originateHumanAgent?: OriginateHumanAgent;
     ringingTimeout?: number | null;
     roomName?: string;
     sipCallTo?: string;
@@ -9519,19 +9344,16 @@ interface WarmTransferTaskOptions {
     vad?: VAD | null;
 }
 
-// Warning: (ae-missing-release-tag) "withInferenceTracking" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
-function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T): T;
+function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T, options?: {
+    onRecorded?: () => void;
+}): T;
 
-// Warning: (ae-missing-release-tag) "withMockTools" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "Disposable"
 //
 // @public
 function withMockTools(agent: AgentConstructor, mocks: Record<string, MockToolFn>): Disposable;
 
-// Warning: (ae-missing-release-tag) "withResolvers" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export function withResolvers<T = unknown>(): {
     promise: ThrowsPromise<T, Error>;
@@ -9539,8 +9361,6 @@ export function withResolvers<T = unknown>(): {
     reject: (reason: Error) => void;
 };
 
-// Warning: (ae-missing-release-tag) "WordStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 abstract class WordStream {
     // (undocumented)
@@ -9567,8 +9387,6 @@ abstract class WordStream {
     protected queue: AsyncIterableQueue<TokenData>;
 }
 
-// Warning: (ae-missing-release-tag) "WordTokenizer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 abstract class WordTokenizer {
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "WordStream"
@@ -9577,8 +9395,6 @@ abstract class WordTokenizer {
     abstract tokenize(text: string, language?: string): string[];
 }
 
-// Warning: (ae-missing-release-tag) "WordTokenizer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 class WordTokenizer_2 extends tokenizer.WordTokenizer {
     constructor(ignorePunctuation?: boolean);
@@ -9588,27 +9404,19 @@ class WordTokenizer_2 extends tokenizer.WordTokenizer {
     tokenize(text: string, language?: string): string[];
 }
 
-// Warning: (ae-missing-release-tag) "Worker" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public @deprecated (undocumented)
 const Worker_2: typeof AgentServer;
 export { Worker_2 as Worker }
 
-// Warning: (ae-missing-release-tag) "WorkerError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class WorkerError extends Error {
     constructor(msg?: string);
 }
 
-// Warning: (ae-missing-release-tag) "WorkerOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public @deprecated (undocumented)
 const WorkerOptions_2: typeof ServerOptions;
 export { WorkerOptions_2 as WorkerOptions }
 
-// Warning: (ae-missing-release-tag) "WorkerPermissions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public
 export class WorkerPermissions {
     constructor(canPublish?: boolean, canSubscribe?: boolean, canPublishData?: boolean, canUpdateMetadata?: boolean, canPublishSources?: TrackSource[], hidden?: boolean);
@@ -9632,8 +9440,12 @@ declare namespace workflows {
         TaskCompletedEvent,
         TaskGroupOptions,
         TaskGroupResult,
+        TwilioConnectorWarmTransferTask,
         WarmTransferTask,
+        createTwilioConnectorWarmTransferTask,
         createWarmTransferTask,
+        OriginateHumanAgent,
+        TwilioConnectorWarmTransferTaskOptions,
         WarmTransferSpeech,
         WarmTransferResult,
         WarmTransferTaskOptions,
@@ -9641,13 +9453,9 @@ declare namespace workflows {
     }
 }
 
-// Warning: (ae-missing-release-tag) "XAIModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type XAIModels = 'xai/grok-4-1-fast-non-reasoning' | 'xai/grok-4-1-fast-reasoning' | 'xai/grok-4.20-0309-non-reasoning' | 'xai/grok-4.20-0309-reasoning' | 'xai/grok-4.20-multi-agent-0309' | 'xai/grok-4.3' | 'xai/grok-4.5';
 
-// Warning: (ae-missing-release-tag) "XaiOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface XaiOptions {
     diarize?: boolean;
@@ -9656,31 +9464,24 @@ interface XaiOptions {
     interim_results?: boolean;
 }
 
-// Warning: (ae-missing-release-tag) "XaiSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
+// @public (undocumented)
+type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0';
+
 // @public (undocumented)
 type XaiSTTModels = 'xai/stt-1';
 
-// Warning: (ae-missing-release-tag) "XaiTTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type XaiTTSModels = 'xai/tts-1';
 
-// Warning: (ae-missing-release-tag) "XaiTTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 interface XaiTTSOptions {
     bit_rate?: 32000 | 64000 | 96000 | 128000 | 192000;
     speed?: number;
 }
 
-// Warning: (ae-missing-release-tag) "ZAIModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 type ZAIModels = 'zai/glm-5.1';
 
-// Warning: (ae-missing-release-tag) "zipFunctionCallsAndOutputs" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => Array<[FunctionCall, FunctionCallOutput]>;
 
@@ -9688,25 +9489,25 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:282:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
-// src/llm/chat_context.ts:76:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
+// src/inference/tts.ts:280:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:702:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:746:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
-// src/metrics/base.ts:194:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/metrics/base.ts:198:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:361:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
-// src/utils.ts:550:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:380:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:998:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1651:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1651:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1651:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
-// src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
-// src/voice/amd.ts:314:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:322:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
-// src/voice/amd.ts:511:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/events.ts:423:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
-// src/voice/room_io/_output.ts:178:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
+// src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
+// src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
+// src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
+// src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
+// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
+// src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
+// src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
+// src/voice/events.ts:437:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
+// src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 
 ```

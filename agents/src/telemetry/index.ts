@@ -24,11 +24,18 @@ export {
   type PinoLogObject,
 } from './pino_otel_transport.js';
 export * as genAI from './gen_ai.js';
+export * as inputDelta from './input_delta.js';
 export { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
+export * as loopMonitor from './loop_monitor.js';
+export * as rpc from './rpc.js';
 export * as traceTypes from './trace_types.js';
 export {
+  discardPreparedCloudTracer,
   FanoutSpanProcessor,
+  flushCloudMetrics,
+  flushCloudTraces,
   flushOtelLogs,
+  prepareCloudTracer,
   setTracerProvider,
   setupCloudTracer,
   tracer,
@@ -40,6 +47,7 @@ export {
   type StartSpanOptions,
 } from './traces.js';
 export {
+  participantAttributes,
   recordException,
   recordRealtimeMetrics,
   redactionEnabled,

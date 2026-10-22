@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
+import { APIConnectionError } from '../_exceptions.js';
+import { type JobContext, runWithJobContext } from '../job.js';
+import type { STTError } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
 import { AgentSessionEventTypes, CloseReason, createUserInputTranscribedEvent } from './events.js';
@@ -53,6 +56,59 @@ describe('AgentSession close', () => {
 
     expect(closeSessionHost).toHaveBeenCalledOnce();
   });
+
+  it('closes the transports even when a Close listener throws, then rethrows', async () => {
+    const session = new AgentSession({ vad: null });
+    const internals = session as unknown as AgentSessionCloseInternals & {
+      _roomIO?: { close: () => Promise<void> };
+    };
+    const closeSessionHost = vi.fn(async () => {});
+    const closeRoomIO = vi.fn(async () => {});
+    internals.started = true;
+    internals.sessionHost = { close: closeSessionHost };
+    internals._roomIO = { close: closeRoomIO };
+    session.on(AgentSessionEventTypes.Close, () => {
+      throw new Error('listener exploded');
+    });
+
+    await expect(session.close()).rejects.toThrow('listener exploded');
+
+    expect(closeSessionHost).toHaveBeenCalledOnce();
+    expect(closeRoomIO).toHaveBeenCalledOnce();
+    expect(internals.sessionHost).toBeUndefined();
+    expect(internals._roomIO).toBeUndefined();
+  });
+
+  it('closes the activity and the transports even when the recorder fails, then rethrows', async () => {
+    const session = new AgentSession({ vad: null });
+    const internals = session as unknown as AgentSessionCloseInternals & {
+      activity?: { agent: object; close: () => Promise<void> };
+      _roomIO?: { close: () => Promise<void> };
+      _recorderIO?: { close: () => Promise<void> };
+    };
+    const closeSessionHost = vi.fn(async () => {});
+    const closeRoomIO = vi.fn(async () => {});
+    const closeActivity = vi.fn(async () => {});
+    internals.sessionHost = { close: closeSessionHost };
+    internals._roomIO = { close: closeRoomIO };
+    // an activity that was never started (no drain to run), still to be closed
+    internals.started = false;
+    internals.activity = { agent: {}, close: closeActivity };
+    internals._recorderIO = {
+      close: async () => {
+        throw new Error('recorder stuck');
+      },
+    };
+
+    await expect(session.close()).rejects.toThrow('recorder stuck');
+
+    expect(closeActivity).toHaveBeenCalledOnce();
+    expect(internals.activity).toBeUndefined();
+    expect(closeSessionHost).toHaveBeenCalledOnce();
+    expect(closeRoomIO).toHaveBeenCalledOnce();
+    expect(internals.sessionHost).toBeUndefined();
+    expect(internals._roomIO).toBeUndefined();
+  });
 });
 
 describe('AgentSession AEC warmup', () => {
@@ -86,6 +142,28 @@ describe('AgentSession AEC warmup', () => {
 
       expect(session.sessionOptions.aecWarmupDuration).toBe(duration);
       expect(session._aecWarmupRemaining).toBe(duration ?? 0);
+    },
+  );
+
+  it.each([
+    [undefined, null],
+    [1500, 1500],
+  ] as const)(
+    'uses the expected AEC warmup in a simulation when configured as %s',
+    (explicit, expectedDuration) => {
+      const session = new AgentSession({ vad: null, aecWarmupDuration: explicit });
+      const participant = {
+        info: { kind: ParticipantKind.STANDARD },
+        attributes: {},
+      } as RemoteParticipant;
+      const jobContext = {
+        simulationContext: () => ({}),
+      } as unknown as JobContext;
+
+      runWithJobContext(jobContext, () => session._onRoomIOParticipantLinked(participant));
+
+      expect(session.sessionOptions.aecWarmupDuration).toBe(expectedDuration);
+      expect(session._aecWarmupRemaining).toBe(expectedDuration ?? 0);
     },
   );
 
@@ -134,6 +212,7 @@ describe('resolveRecordingOptions', () => {
       logs: true,
       transcript: true,
       redaction: false,
+      inputDelta: false,
     });
     expect(resolveRecordingOptions(false)).toEqual({
       audio: false,
@@ -141,6 +220,7 @@ describe('resolveRecordingOptions', () => {
       logs: false,
       transcript: false,
       redaction: false,
+      inputDelta: false,
     });
   });
 
@@ -151,6 +231,7 @@ describe('resolveRecordingOptions', () => {
       logs: true,
       transcript: true,
       redaction: false,
+      inputDelta: false,
     });
 
     expect(resolveRecordingOptions({ redaction: true })).toEqual({
@@ -159,6 +240,7 @@ describe('resolveRecordingOptions', () => {
       logs: true,
       transcript: true,
       redaction: true,
+      inputDelta: false,
     });
 
     // The granular form from the docs: keep audio, drop everything else.
@@ -176,7 +258,10 @@ describe('resolveRecordingOptions', () => {
       logs: false,
       transcript: false,
       redaction: true,
+      inputDelta: false,
     });
+
+    expect(resolveRecordingOptions({ inputDelta: true }).inputDelta).toBe(true);
   });
 
   it('returns a fresh object so callers cannot corrupt the shared defaults', () => {
@@ -252,5 +337,58 @@ describe('AgentSession user input transcription', () => {
     session.emit(AgentSessionEventTypes.UserInputTranscribed, finalTranscript);
     expect(setTimerWhileSpeaking).not.toHaveBeenCalled();
     setTimerWhileSpeaking.mockRestore();
+  });
+});
+
+describe('AgentSession STT error tolerance', () => {
+  function sttError(): STTError {
+    return {
+      type: 'stt_error',
+      timestamp: Date.now(),
+      label: 'test',
+      error: new APIConnectionError({ message: 'stt unavailable' }),
+      recoverable: false,
+    };
+  }
+
+  type Internals = AgentSessionCloseInternals & { sttErrorCounts: number };
+
+  it('tolerates STT connection failures up to maxUnrecoverableErrors', async () => {
+    const session = new AgentSession({ vad: null, connOptions: { maxUnrecoverableErrors: 1 } });
+    const internals = session as unknown as Internals;
+
+    session._onError(sttError());
+    expect(internals.closingTask).toBeNull();
+    expect(internals.sttErrorCounts).toBe(1);
+
+    session._onError(sttError());
+    expect(internals.closingTask).not.toBeNull();
+    await internals.closingTask;
+  });
+
+  it('resets the STT error count on a real user transcript', async () => {
+    const session = new AgentSession({ vad: null, connOptions: { maxUnrecoverableErrors: 1 } });
+    const internals = session as unknown as Internals;
+
+    session._onError(sttError());
+    expect(internals.sttErrorCounts).toBe(1);
+
+    session.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({ transcript: 'hello', isFinal: true }),
+    );
+    expect(internals.sttErrorCounts).toBe(0);
+
+    // an empty placeholder transcript is not a recovery
+    session._onError(sttError());
+    session.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({ transcript: '', isFinal: false }),
+    );
+    expect(internals.sttErrorCounts).toBe(1);
+
+    session._onError(sttError());
+    expect(internals.closingTask).not.toBeNull();
+    await internals.closingTask;
   });
 });

@@ -91,6 +91,20 @@ describe('session options report', () => {
     expect(description).toContain('backchannelThresholdOverrides={"en":0.7,"fr":0.6}');
   });
 
+  it('reports disabled local fallback', () => {
+    const detector = new TurnDetector({
+      version: 'v1',
+      localFallback: false,
+      baseUrl: 'https://inference.example.com',
+      apiKey: 'k',
+      apiSecret: 's',
+    });
+    const session = new AgentSession({ turnHandling: { turnDetection: detector } });
+
+    expect(turnDetection(session)).toContain('localFallback=false');
+    expect(detector.toJSON().localFallback).toBe(false);
+  });
+
   it('does not leak turn detector credentials or endpoints', () => {
     const detector = new TurnDetector({
       version: 'v1',
@@ -507,13 +521,13 @@ describe('setupCloudTracer with a user-configured provider', () => {
     // No span is created/ended here so the newly attached cloud BatchSpanProcessor has
     // nothing to flush over the network on shutdown.
     expect(tracer.getProvider()).toBe(userProvider);
-    // setTracerProvider registers the user metadata processor and the in-process PII
-    // stripper; setupCloudTracer registers the session metadata processor plus the built-in
-    // (SDK 2.x) cloud exporter.
-    expect(registeredProcessors).toHaveLength(4);
+    // setTracerProvider registers the user metadata processor, the in-process PII stripper
+    // and the loop monitor's blocked-span tracker; setupCloudTracer registers the session
+    // metadata processor plus the built-in (SDK 2.x) cloud exporter.
+    expect(registeredProcessors).toHaveLength(5);
     expect(registeredProcessors[1]).toBeInstanceOf(PIIFilteringSpanProcessor);
     const setAttributes = vi.fn();
-    registeredProcessors[2]!.onStart({ setAttributes } as never, otelContext.active());
+    registeredProcessors[3]!.onStart({ setAttributes } as never, otelContext.active());
     // agent_name rides the session metadata so spans (and logs) carry it even on
     // the custom-provider path, where the resource is left untouched.
     expect(setAttributes).toHaveBeenCalledWith({
@@ -521,7 +535,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
       job_id: 'job1',
       'lk.agent_name': 'my-agent',
     });
-    expect(registeredProcessors[3]).toBeInstanceOf(BatchSpanProcessor);
+    expect(registeredProcessors[4]).toBeInstanceOf(BatchSpanProcessor);
   });
 
   it('passes the gated exporter to a user-supplied cloud processor factory', async () => {
@@ -545,10 +559,11 @@ describe('setupCloudTracer with a user-configured provider', () => {
     });
 
     expect(createCloudSpanProcessor).toHaveBeenCalledOnce();
-    // the PII stripper, the session metadata processor, then the factory's cloud processor
-    expect(registeredProcessors).toHaveLength(3);
+    // the PII stripper, the loop monitor's blocked-span tracker, the session metadata
+    // processor, then the factory's cloud processor
+    expect(registeredProcessors).toHaveLength(4);
     expect(registeredProcessors[0]).toBeInstanceOf(PIIFilteringSpanProcessor);
-    expect(registeredProcessors[2]).toBe(factoryProcessor);
+    expect(registeredProcessors[3]).toBe(factoryProcessor);
   });
 
   it('requires registerSpanProcessor and never calls addSpanProcessor', async () => {
@@ -618,7 +633,7 @@ function fakeClientRequest(): ClientRequest {
 }
 
 function mockSuccessfulFormSubmit() {
-  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit(_opts, cb) {
+  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit() {
     const request = fakeClientRequest();
     const res = new PassThrough() as PassThrough & {
       statusCode: number;
@@ -631,7 +646,7 @@ function mockSuccessfulFormSubmit() {
       process.nextTick(() => res.emit('end'));
       return res;
     };
-    cb?.(null, res as never);
+    queueMicrotask(() => request.emit('response', res));
     return request;
   });
 }

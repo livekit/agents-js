@@ -31,7 +31,7 @@ import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-import { genAI, traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, inputDelta, traceTypes, tracer } from '../telemetry/index.js';
 import { stripAllMarkup } from '../tts/provider_format.js';
 import {
   type FlushSentinel,
@@ -101,6 +101,9 @@ export function _injectRunningToolCalls(
       chatCtx.insert(
         FunctionCall.create({
           ...runningCall,
+          // an id of its own, stable across turns: input-delta telemetry tells items apart by
+          // id, so the copy matches itself while the tool runs and never the real call
+          id: `${runningCall.id}_running`,
           extra: { ...runningCall.extra, [RUNNING_TOOL_PLACEHOLDER_KEY]: true },
         }),
       );
@@ -168,6 +171,8 @@ export interface _TTSGenerationData {
   timedTextsFut: Future<ReadableStream<TimedString> | null, never>;
   /** Time to first byte (set when first audio frame is received) */
   ttfb?: number;
+  /** The error that ended TTS inference, if any. */
+  error: unknown | null;
 }
 
 // TODO(brian): remove this class in favor of ToolOutput
@@ -184,30 +189,26 @@ export class _ToolOutput {
 // TODO(brian): remove this class in favor of ToolExecutionOutput
 export class _SanitizedOutput {
   toolCall: FunctionCall;
-  toolCallOutput?: FunctionCallOutput;
-  replyRequired: boolean;
+  toolCallOutput: FunctionCallOutput;
   agentTask?: Agent;
 
   constructor(
     toolCall: FunctionCall,
-    toolCallOutput: FunctionCallOutput | undefined,
-    replyRequired: boolean,
+    toolCallOutput: FunctionCallOutput,
     agentTask: Agent | undefined,
   ) {
     this.toolCall = toolCall;
     this.toolCallOutput = toolCallOutput;
-    this.replyRequired = replyRequired;
     this.agentTask = agentTask;
   }
 
   static create(params: {
     toolCall: FunctionCall;
-    toolCallOutput?: FunctionCallOutput;
-    replyRequired?: boolean;
+    toolCallOutput: FunctionCallOutput;
     agentTask?: Agent;
   }) {
-    const { toolCall, toolCallOutput, replyRequired = true, agentTask } = params;
-    return new _SanitizedOutput(toolCall, toolCallOutput, replyRequired, agentTask);
+    const { toolCall, toolCallOutput, agentTask } = params;
+    return new _SanitizedOutput(toolCall, toolCallOutput, agentTask);
   }
 }
 
@@ -246,37 +247,21 @@ function isValidToolOutput(toolOutput: unknown): boolean {
 export class ToolExecutionOutput {
   constructor(
     public readonly toolCall: FunctionCall,
-    public readonly toolCallOutput: FunctionCallOutput | undefined,
+    public readonly toolCallOutput: FunctionCallOutput,
     public readonly agentTask: Agent | undefined,
     public readonly rawOutput: unknown,
     public readonly rawException: Error | undefined,
-    public readonly replyRequired: boolean,
   ) {}
 
   static create(params: {
     toolCall: FunctionCall;
-    toolCallOutput?: FunctionCallOutput;
+    toolCallOutput: FunctionCallOutput;
     agentTask?: Agent;
     rawOutput: unknown;
     rawException?: Error;
-    replyRequired?: boolean;
   }) {
-    const {
-      toolCall,
-      toolCallOutput,
-      agentTask,
-      rawOutput,
-      rawException,
-      replyRequired = true,
-    } = params;
-    return new ToolExecutionOutput(
-      toolCall,
-      toolCallOutput,
-      agentTask,
-      rawOutput,
-      rawException,
-      replyRequired,
-    );
+    const { toolCall, toolCallOutput, agentTask, rawOutput, rawException } = params;
+    return new ToolExecutionOutput(toolCall, toolCallOutput, agentTask, rawOutput, rawException);
   }
 }
 
@@ -320,6 +305,13 @@ export class _JsOutput {
     if (isStopResponse(this.exception)) {
       return _SanitizedOutput.create({
         toolCall: FunctionCall.create({ ...this.toolCall }),
+        toolCallOutput: FunctionCallOutput.create({
+          name: this.toolCall.name,
+          callId: this.toolCall.callId,
+          output: '',
+          isError: false,
+          replyRequired: false,
+        }),
       });
     }
 
@@ -352,7 +344,12 @@ export class _JsOutput {
       );
       return _SanitizedOutput.create({
         toolCall: FunctionCall.create({ ...this.toolCall }),
-        toolCallOutput: undefined,
+        toolCallOutput: FunctionCallOutput.create({
+          name: this.toolCall.name,
+          callId: this.toolCall.callId,
+          output: 'the tool returned an invalid output',
+          isError: true,
+        }),
       });
     }
 
@@ -363,8 +360,8 @@ export class _JsOutput {
         callId: this.toolCall.callId,
         output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
         isError: false,
+        replyRequired: toolOutput !== undefined,
       }),
-      replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
       agentTask,
     });
   }
@@ -403,6 +400,13 @@ export function createToolOutput(params: {
   if (isStopResponse(finalException)) {
     return ToolExecutionOutput.create({
       toolCall: FunctionCall.create({ ...toolCall }),
+      toolCallOutput: FunctionCallOutput.create({
+        name: toolCall.name,
+        callId: toolCall.callId,
+        output: '',
+        isError: false,
+        replyRequired: false,
+      }),
       rawOutput: finalOutput,
       rawException: finalException,
     });
@@ -422,9 +426,40 @@ export function createToolOutput(params: {
     });
   }
 
-  let agentTask: Agent | undefined = undefined;
+  let agentTask: Agent | undefined;
   let toolOutput: unknown = finalOutput;
-  if (isAgentHandoff(finalOutput)) {
+  if (Array.isArray(finalOutput)) {
+    const handoffs = finalOutput.filter(isAgentHandoff);
+    if (handoffs.length > 1) {
+      logger.error(
+        { callId: toolCall.callId, 'lk.pii.output': finalOutput },
+        `AI function ${toolCall.name} returned more than one agent`,
+      );
+      return ToolExecutionOutput.create({
+        toolCall: FunctionCall.create({ ...toolCall }),
+        toolCallOutput: FunctionCallOutput.create({
+          name: toolCall.name,
+          callId: toolCall.callId,
+          output: 'the tool returned more than one agent',
+          isError: true,
+        }),
+        rawOutput: finalOutput,
+        rawException: finalException,
+      });
+    }
+    // a handoff's `returns` stays part of the output, as it does outside a list
+    const otherOutputs = finalOutput.flatMap((item) =>
+      !isAgentHandoff(item) ? [item] : item.returns === undefined ? [] : [item.returns],
+    );
+    agentTask = handoffs[0]?.agent;
+    toolOutput = agentTask
+      ? otherOutputs.length === 0
+        ? undefined
+        : otherOutputs.length === 1
+          ? otherOutputs[0]
+          : otherOutputs
+      : otherOutputs;
+  } else if (isAgentHandoff(finalOutput)) {
     agentTask = finalOutput.agent;
     toolOutput = finalOutput.returns;
   }
@@ -439,6 +474,12 @@ export function createToolOutput(params: {
     );
     return ToolExecutionOutput.create({
       toolCall: FunctionCall.create({ ...toolCall }),
+      toolCallOutput: FunctionCallOutput.create({
+        name: toolCall.name,
+        callId: toolCall.callId,
+        output: 'the tool returned an invalid output',
+        isError: true,
+      }),
       rawOutput: finalOutput,
       rawException: finalException,
     });
@@ -451,12 +492,25 @@ export function createToolOutput(params: {
       callId: toolCall.callId,
       output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
       isError: false,
+      replyRequired: toolOutput !== undefined,
     }),
-    replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
     agentTask,
     rawOutput: finalOutput,
     rawException: finalException,
   });
+}
+
+/**
+ * Record the output of a tool that finished on an interrupted turn. A handoff answers as an
+ * error, since the interruption left it unapplied. Either way, the output asks for no reply.
+ */
+export function interruptedToolOutput(output: ToolExecutionOutput): FunctionCallOutput {
+  if (output.agentTask !== undefined) {
+    output.toolCallOutput.output = 'the agent handoff was interrupted and did not happen';
+    output.toolCallOutput.isError = true;
+  }
+  output.toolCallOutput.replyRequired = false;
+  return output.toolCallOutput;
 }
 
 export const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
@@ -631,28 +685,33 @@ export function performLLMInference(
   const toolCallWriter = toolCallStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
+  // the configured model and provider describe the inference only once it is known that this
+  // LLM served it: they go on the node span the moment the nested `llm_request` span is created
+  // (see withInferenceTracking), so a fallback that failed over can then name the serving
+  // provider on top of them rather than be overwritten by them when the node completes
+  const recordConfiguredModel = (span: Span) => {
+    if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+    const normalizedProvider = traceTypes.genAIProviderName(provider);
+    if (normalizedProvider) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, normalizedProvider);
+    }
+  };
+
   const _performLLMInferenceImpl = async (
     signal: AbortSignal,
     span: Span,
     inference: genAI.InferenceMarker,
   ) => {
+    const delta = inputDelta.compute(inputDelta.LLM_NODE, chatCtx, span);
     span.setAttribute(
       traceTypes.ATTR_CHAT_CTX,
       // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
       // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
-      JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
+      JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
     );
+    inputDelta.setAttributes(span, delta);
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
-    // the configured model and provider describe the inference only once it is known that
-    // this LLM served it; that is decided below, when the nested span is (or is not) there
-    const recordConfiguredModel = () => {
-      if (model) span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
-      const normalizedProvider = traceTypes.genAIProviderName(provider);
-      if (normalizedProvider) {
-        span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, normalizedProvider);
-      }
-    };
     let nodeError: Error | string | undefined;
 
     // the GenAI inference attributes belong to the nested `llm_request` span, which is the
@@ -773,9 +832,7 @@ export function performLLMInference(
       }
       // a custom node may have generated this itself, with no nested `llm_request` span to
       // carry the convention's attributes; when there was one, they are already recorded
-      if (inference.recorded) {
-        recordConfiguredModel();
-      } else {
+      if (!inference.recorded) {
         // a third-party engine served this, so the configured model and provider are left
         // off rather than crediting it with a call it never made
         genAI.setRequestAttributes(span, {
@@ -793,8 +850,8 @@ export function performLLMInference(
           timeToFirstChunk: data.ttft,
         });
         genAI.setContentAttributes(span, {
-          systemInstructions: genAI.toSystemInstructions(chatCtx),
-          inputMessages: genAI.toInputMessages(chatCtx),
+          systemInstructions: delta.systemInstructions(),
+          inputMessages: delta.inputMessages(),
           toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
           outputMessages: genAI.toOutputMessages({
             text: data.generatedText,
@@ -816,7 +873,9 @@ export function performLLMInference(
   const inferenceTask = async (signal: AbortSignal) =>
     tracer.startActiveSpan(
       async (span) =>
-        genAI.withInferenceTracking((marker) => _performLLMInferenceImpl(signal, span, marker)),
+        genAI.withInferenceTracking((marker) => _performLLMInferenceImpl(signal, span, marker), {
+          onRecorded: () => recordConfiguredModel(span),
+        }),
       { name: 'llm_node', context: currentContext },
     );
 
@@ -875,6 +934,7 @@ export function performTTSInference(
     audioStream: audioOutputStream,
     timedTextsFut,
     ttfb: undefined,
+    error: null,
   };
 
   const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
@@ -951,6 +1011,8 @@ export function performTTSInference(
       } else if (error instanceof DOMException && error.name === 'AbortError') {
         return;
       } else {
+        // Set this before closing the audio stream so forwarding knows it was truncated.
+        genData.error = error;
         throw error;
       }
     } finally {
@@ -1079,7 +1141,7 @@ export interface _AudioOut {
  */
 export function forwardedTextFor(output: ForwardOutput): string {
   if (output.played === 'skipped') return '';
-  if (output.played === 'partial' && output.synchronizedTranscript) {
+  if (output.played === 'partial' && output.synchronizedTranscript !== undefined) {
     return output.synchronizedTranscript;
   }
   return output.textOut?.text ?? '';
@@ -1091,6 +1153,7 @@ async function forwardAudio(
   out: _AudioOut,
   reconcilePlayoutPause: () => void,
   idleTimeout: number,
+  ttsData: _TTSGenerationData | null,
   signal?: AbortSignal,
 ): Promise<void> {
   const logger = log();
@@ -1177,6 +1240,9 @@ async function forwardAudio(
     // listener's lifetime.
     signal?.removeEventListener('abort', cancelReader);
     reader?.releaseLock();
+    if (!signal?.aborted && ttsData?.error != null) {
+      audioOutput._markInputTruncated();
+    }
     audioOutput.flush();
     if (signal?.aborted) {
       audioOutput.clearBuffer();
@@ -1191,6 +1257,7 @@ export function performAudioForwarding(
   controller: AbortController,
   reconcilePlayoutPause: () => void,
   idleTimeout: number = DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS,
+  ttsData: _TTSGenerationData | null = null,
 ): [Task<void>, _AudioOut] {
   const out: _AudioOut = {
     firstFrameFut: new Future<number>(),
@@ -1230,6 +1297,7 @@ export function performAudioForwarding(
           out,
           reconcilePlayoutPause,
           idleTimeout,
+          ttsData,
           controller.signal,
         ),
       controller,
@@ -1436,21 +1504,6 @@ export function performToolExecutions({
             toolCall,
             output: result,
           });
-
-          if (toolOutput.toolCallOutput) {
-            span.setAttribute(
-              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
-              toolOutput.toolCallOutput.output,
-            );
-            span.setAttribute(
-              traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR,
-              toolOutput.toolCallOutput.isError,
-            );
-            genAI.setToolResult(span, {
-              result: toolOutput.toolCallOutput.output,
-              isError: toolOutput.toolCallOutput.isError,
-            });
-          }
         } catch (rawError) {
           logger.error(
             {
@@ -1464,17 +1517,15 @@ export function performToolExecutions({
             toolCall,
             exception: toError(rawError),
           });
-
-          if (toolOutput.toolCallOutput) {
-            span.setAttribute(
-              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
-              toolOutput.toolCallOutput.output,
-            );
-            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
-            genAI.setToolResult(span, { isError: true });
-          }
         } finally {
-          if (toolOutput) toolCompleted(toolOutput);
+          if (toolOutput) {
+            // read the output, not the branch: a StopResponse throws but is not an error
+            const { output, isError } = toolOutput.toolCallOutput;
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_OUTPUT, output);
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, isError);
+            genAI.setToolResult(span, { result: output, isError });
+            toolCompleted(toolOutput);
+          }
         }
       };
 
@@ -1498,7 +1549,7 @@ export function performToolExecutions({
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              const runCtx = new RunContext(session, speechHandle, toolCall);
+              const runCtx = new RunContext(session, speechHandle, toolCall, activity);
               const mock = getMockTool(session.currentAgent, toolCall.name);
               const toolToExecute = mock
                 ? {

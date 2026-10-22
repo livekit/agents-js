@@ -165,8 +165,9 @@ describe('AgentActivity parked preemptive generation', () => {
     }
   });
 
-  it('does not let a reply parked while pausing block the handoff', async () => {
+  it('does not start a parked preemptive reply during onExit', async () => {
     const llm = new GatedLLM();
+    const chat = vi.spyOn(llm, 'chat');
     const session = new AgentSession({ llm });
     session.output.setAudioEnabled(false);
 
@@ -178,7 +179,8 @@ describe('AgentActivity parked preemptive generation', () => {
       override async onExit(): Promise<void> {
         const activity = session._activity! as ActivityInternals;
         startPreemptiveGeneration(activity);
-        expect(activity._preemptiveGeneration).toBeDefined();
+        expect(activity._preemptiveGeneration).toBeUndefined();
+        expect(chat).not.toHaveBeenCalled();
       }
     }
 
@@ -193,6 +195,7 @@ describe('AgentActivity parked preemptive generation', () => {
     } finally {
       llm.release();
       await session.close().catch(() => {});
+      chat.mockRestore();
     }
   });
 });

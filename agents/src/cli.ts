@@ -58,7 +58,7 @@ const runServer = async (args: CliArgs) => {
     });
   }
 
-  process.once('SIGINT', async () => {
+  const onSigint = async () => {
     logger.debug('SIGINT received in CLI');
     // allow C-c C-c for force interrupt
     process.once('SIGINT', () => {
@@ -76,9 +76,15 @@ const runServer = async (args: CliArgs) => {
     await server.close();
     logger.debug('worker closed due to SIGINT.');
     process.exit(130); // SIGINT exit code
+  };
+  process.once('SIGINT', () => {
+    onSigint().catch((error) => {
+      logger.error(error, 'failed to close worker after SIGINT');
+      process.exit(1);
+    });
   });
 
-  process.once('SIGTERM', async () => {
+  const onSigterm = async () => {
     logger.debug('SIGTERM received in CLI.');
     if (args.production) {
       try {
@@ -91,6 +97,12 @@ const runServer = async (args: CliArgs) => {
     await server.close();
     logger.debug('worker closed due to SIGTERM.');
     process.exit(143); // SIGTERM exit code
+  };
+  process.once('SIGTERM', () => {
+    onSigterm().catch((error) => {
+      logger.error(error, 'failed to close worker after SIGTERM');
+      process.exit(1);
+    });
   });
 
   try {

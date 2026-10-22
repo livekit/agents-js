@@ -47,11 +47,11 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
         localFileOnly: true,
       });
 
-      // TODO(brian): support session config once onnxruntime-node supports it
       const sessOptions: InferenceSession.SessionOptions = {
         intraOpNumThreads: Math.max(1, Math.floor(os.cpus().length / 2)),
         interOpNumThreads: 1,
         executionProviders: [{ name: 'cpu' }],
+        extra: { session: { dynamic_block_base: '4' } },
       };
 
       this.session = await InferenceSession.create(onnxModelPath, sessOptions);

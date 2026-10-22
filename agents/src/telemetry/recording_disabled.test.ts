@@ -39,7 +39,7 @@ function makeReport(recordingOptions: SessionReport['options']['recordingOptions
 }
 
 function mockFormSubmit(statusCode: number, body: Buffer = Buffer.alloc(0)) {
-  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit(_opts, cb) {
+  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit() {
     const request = new EventEmitter() as ClientRequest;
     request.destroy = vi.fn(() => request);
     const res = new PassThrough() as PassThrough & {
@@ -56,7 +56,7 @@ function mockFormSubmit(statusCode: number, body: Buffer = Buffer.alloc(0)) {
       if (body.length > 0) res.emit('data', body);
       res.emit('end');
     });
-    cb?.(null, res as never);
+    queueMicrotask(() => request.emit('response', res));
     return request;
   });
 }
@@ -67,11 +67,17 @@ async function createTraceHarness(
   ) => { status: number; body: string } | Promise<{ status: number; body: string }>,
 ) {
   let requestCount = 0;
-  const server = http.createServer(async (_request, response) => {
+  const server = http.createServer((_request, response) => {
     requestCount += 1;
-    const { status, body } = await responseForRequest(requestCount);
-    response.statusCode = status;
-    response.end(body);
+    Promise.resolve(responseForRequest(requestCount))
+      .then(({ status, body }) => {
+        response.statusCode = status;
+        response.end(body);
+      })
+      .catch(() => {
+        response.statusCode = 500;
+        response.end();
+      });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();

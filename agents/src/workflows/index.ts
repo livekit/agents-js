@@ -8,8 +8,12 @@ export {
   type TaskGroupResult,
 } from './task_group.js';
 export {
+  TwilioConnectorWarmTransferTask,
   WarmTransferTask,
+  createTwilioConnectorWarmTransferTask,
   createWarmTransferTask,
+  type OriginateHumanAgent,
+  type TwilioConnectorWarmTransferTaskOptions,
   type WarmTransferSpeech,
   type WarmTransferResult,
   type WarmTransferTaskOptions,

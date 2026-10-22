@@ -24,6 +24,7 @@ import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
+import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { TrackPublishOptions } from '@livekit/rtc-node';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
@@ -91,6 +92,7 @@ class RealtimeModel extends llm.RealtimeModel {
         noInputPokeSec?: number;
         noInputPokeText?: string;
         noInputEndConversationSec?: number;
+        phonicModel?: 'phonic_v0_5' | 'phonic_v1' | 'phonic_v1_1';
         websocketTimeoutSec?: number;
         intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
         isWelcomeMessageInterruptible?: boolean;
@@ -192,6 +194,8 @@ interface RealtimeModelOptions {
     onConversationCreated?: (conversationId: string) => void;
     // (undocumented)
     phonicAgent?: string;
+    // (undocumented)
+    phonicModel?: 'phonic_v0_5' | 'phonic_v1' | 'phonic_v1_1';
     // (undocumented)
     phonicTools?: string[];
     // (undocumented)
