@@ -1,0 +1,39 @@
+.changeset/mcp-tool-metadata.md
+  s_de5d34fcc7db11::t_f35a8d5a653bb4 1-5
+agents/etc/agents.api.md
+  s_de5d34fcc7db11::t_3649bb9dacc591 3931,8246,8258,9677-9678
+agents/src/llm/mcp.test.ts
+  s_de5d34fcc7db11::t_b3a79467d17a57 115-127
+agents/src/llm/mcp.ts
+  s_de5d34fcc7db11::t_663d7e0f38eabc 375-376
+agents/src/llm/mcp_http.test.ts
+  s_de5d34fcc7db11::t_9fb3f309d2bc1e 110,116,180,258-260,592-621
+agents/src/llm/openai_realtime/realtime_model.test.ts
+  s_de5d34fcc7db11::t_a219d2a8972de2 81-111
+agents/src/llm/tool_context.test.ts
+  s_de5d34fcc7db11::t_7f421b9611614c 25-36
+agents/src/llm/tool_context.ts
+  s_de5d34fcc7db11::t_daaf2be632c256 206-208,681,691-692,728,738-739,796
+plugins/anthropic/src/llm.test.ts
+  s_de5d34fcc7db11::t_79c6b840547c4f 393,417,434-438
+plugins/google/src/utils.test.ts
+  s_de5d34fcc7db11::t_022f1266dded58 41-54
+plugins/openai/src/tool_utils.test.ts
+  s_de5d34fcc7db11::t_1ecc17113cffc4 41,46,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b72d909acbf2db89a13547c984fbe1e0aa66926",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
