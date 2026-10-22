@@ -1,0 +1,47 @@
+agents/src/voice/remote_session.test.ts
+  s_d267e71f3cdd6f::t_260438e0550e63 1049,1054,1072
+agents/src/voice/remote_session_lifecycle.test.ts
+  s_d267e71f3cdd6f::t_260438e0550e63 10,25,315-351,354-363,365-370,372-376,379-383,385-394
+  s_d267e71f3cdd6f::t_b6252abf286516 352-353,364,371,377-378,384,395
+.changeset/bright-sessions-wait.md
+  s_d267e71f3cdd6f::t_a8bc4cd680a778 8-9
+agents/src/voice/agent_activity_interrupted_commit.test.ts
+  s_d267e71f3cdd6f::t_b5645ed5769f41 231,234-236
+  s_d267e71f3cdd6f::t_3a6e2b277d1c6b 237
+agents/src/voice/agent_activity_say_stream.test.ts
+  s_d267e71f3cdd6f::t_c6e37893a9b44a 1-28,30-33,35-62,64-67,69-104,106-115,117-122,124-126,131-139,141-150,152,154-166,168-171,176-187,189-199,201,205-208,210-211,214-233,236-244,248-255,257,259-268,367-368,370,374,378
+  s_d267e71f3cdd6f::t_d9603b903daad5 209,234,258
+  s_d267e71f3cdd6f::t_10abb0a26fdb83 29,34,63,68,105,116,151,172-173,202-204
+  s_d267e71f3cdd6f::t_97f6d331a001ac 127-130,174-175,269-364,369,372-373,377,379-381
+  s_d267e71f3cdd6f::t_f77b85fc9cd367 123,140,153,167,188,200,212-213,235,245-247,256,365-366,371,375-376,382-410
+agents/src/voice/generation.ts
+  s_d267e71f3cdd6f::t_aa069e0965cd85 912-921,923-925,936-938,941,1088,1091,1121-1124,1148
+  s_d267e71f3cdd6f::t_79bce7700e824f 1047,1049-1052,1054-1060
+  s_d267e71f3cdd6f::t_28b0b82aeadb55 969,1061
+  s_d267e71f3cdd6f::t_d03d2c5c7e0b63 897,963-968,970-971,990,1001,1036,1040-1043,1048
+agents/src/voice/realtime_overlapping_speech.test.ts
+  s_d267e71f3cdd6f::t_09c09ce48f513a 12,59,74,101,171-193
+  s_d267e71f3cdd6f::t_dbd3cdba4e14d0 194-199
+agents/src/voice/agent_activity.ts
+  s_d267e71f3cdd6f::t_a8bc4cd680a778 3678,3681-3682,3689,3728,4731-4732,4734-4736,4742-4743,4777,4814,4880-4882
+  s_d267e71f3cdd6f::t_a909b11ecfee75 4733,4779,4883
+  s_d267e71f3cdd6f::t_28b0b82aeadb55 3658
+  s_d267e71f3cdd6f::t_79bce7700e824f 3703,3714,3725,3805,4737-4741,4885
+  s_d267e71f3cdd6f::t_27784293c5b3f7 1901,3602-3605,3621-3637,3641,3644-3655,3657,3659-3666,3669-3670,3672-3677,3679-3680,3683-3688,3691-3702,3704-3713,3715-3724,3726-3727,3729-3732,3745-3746,3798-3804,3806,4748,4774
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5b73d76d53c5a3639acccc210769f9664ad37bf1",
+  "prompts": {},
+  "sessions": {
+    "s_d267e71f3cdd6f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16493-5bd5-7db2-bd3a-36775e88b201",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
