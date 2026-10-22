@@ -9,3 +9,5 @@ Cancel pending transcription reads and join reply cleanup while preserving inter
 Release unused speech text branches and join synthesis input cleanup so streaming `say()` finishes on interruption or output failure.
 
 Keep transcription input available during deferred hook setup. Drain independent pipeline text after early TTS completion and always release segment queues when writer closure fails.
+
+Release pending SDK input readers before joining public async-generator transcription hooks, so session close and remote-run cancellation finish without late history changes.

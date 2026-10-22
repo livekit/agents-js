@@ -4,12 +4,15 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream, TransformStream } from 'node:stream/web';
 import { beforeAll, expect, it, vi } from 'vitest';
+import { tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
-import { TTS } from '../tts/tts.js';
+import { SynthesizeStream, TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import { AudioOutput, TextOutput } from './io.js';
+import type { SpeechHandle } from './speech_handle.js';
+import { FakeLLM } from './testing/fake_llm.js';
 
 beforeAll(() => initializeLogger({ pretty: false, level: 'warn' }));
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -91,7 +94,7 @@ class MockTTS extends TTS {
   synthesize(): never {
     throw new Error('use the deterministic ttsNode');
   }
-  stream(): never {
+  stream(): SynthesizeStream {
     throw new Error('use the deterministic ttsNode');
   }
 }
@@ -520,3 +523,128 @@ it.each(
     await f.session.close();
   }
 });
+
+it.each(
+  (['text', 'custom TTS', 'default TTS'] as const).flatMap((mode) =>
+    (['session close', 'run cancellation'] as const).map((ending) => ({ mode, ending })),
+  ),
+)(
+  'joins public transcription input and preserves history with $mode on $ending',
+  async ({ mode, ending }) => {
+    const source = textStream();
+    const output = new Output();
+    const audio = new Audio();
+    const tasks: Task<unknown>[] = [];
+    const from = Task.from;
+    const spy = vi.spyOn(Task, 'from').mockImplementation((fn, controller, name) => {
+      const task = from.call(Task, fn, controller, name);
+      tasks.push(task);
+      return task;
+    });
+    let iteratorExited = false;
+    let speech: SpeechHandle | undefined;
+    class Provider extends SynthesizeStream {
+      label = 'cooperative';
+      protected async run() {
+        for await (const _chunk of this.input) {
+          this.queue.put({ frame: frame(), requestId: 'test', segmentId: 'test', final: true });
+        }
+      }
+    }
+    class Model extends MockTTS {
+      override stream() {
+        return new Provider(this);
+      }
+    }
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'go', toolCalls: [{ name: 'speak', args: {} }] }]),
+      tts: mode === 'text' ? undefined : new Model(),
+      ttsTextTransforms: [],
+    });
+    const agent = Agent.create({
+      instructions: 'test',
+      tools: [
+        tool({
+          name: 'speak',
+          description: 'Say text',
+          execute: async () => {
+            speech = session.say(source.stream);
+            await speech;
+            return 'said';
+          },
+        }),
+      ],
+      async *transcriptionNode(_ctx, text) {
+        try {
+          for await (const chunk of text) yield chunk;
+        } finally {
+          iteratorExited = true;
+        }
+      },
+    });
+    if (mode === 'custom TTS') {
+      agent.ttsNode = async (text) =>
+        (text as ReadableStream<string>).pipeThrough(
+          new TransformStream<string, AudioFrame>({
+            transform(_chunk, controller) {
+              controller.enqueue(frame());
+            },
+          }),
+        );
+    }
+    session.output.transcription = output;
+    if (mode !== 'text') session.output.audio = audio;
+    let cancelling: Promise<void> | undefined;
+    try {
+      await session.start({ agent });
+      const run = ending === 'run cancellation' ? session.run({ userInput: 'go' }) : undefined;
+      if (run) void run.wait().catch(() => {});
+      else speech = session.say(source.stream);
+      await output.entered.await;
+      if (mode !== 'text') await expect.poll(() => audio.frames.length).toBeGreaterThan(0);
+      await tick();
+      if (run) {
+        let cancelled = false;
+        cancelling = run._cancel().then(() => {
+          cancelled = true;
+        });
+        await expect.poll(() => cancelled, { timeout: 1000 }).toBe(true);
+        await cancelling;
+      }
+      await session.close();
+      expect(iteratorExited).toBe(true);
+      expect(source.cancel).toHaveBeenCalledOnce();
+      expect(speech).toBeDefined();
+      expect(speech!._tasks.length).toBeGreaterThan(0);
+      expect(speech!._tasks.every((task) => task.done)).toBe(true);
+      expect(output.task?.done).toBe(true);
+      const inference = tasks.filter((task) => task.name === 'performTTSInference');
+      expect(inference).toHaveLength(mode === 'text' ? 0 : 1);
+      expect(inference.every((task) => task.done)).toBe(true);
+      if (mode !== 'text') expect(audio.task?.done).toBe(true);
+      for (const branch of source.tee.mock.results[0]?.value ?? [])
+        expect(branch.locked).toBe(false);
+      if (mode === 'text') expect(source.stream.locked).toBe(false);
+      expect(
+        session.history.items.some(
+          (item) => item.type === 'message' && item.textContent === 'early' && item.interrupted,
+        ),
+      ).toBe(true);
+      const history = session.history.toJSON();
+      const frames = audio.frames.length;
+      expect(() => source.controller.enqueue('late')).toThrow();
+      source.close();
+      await tick();
+      await tick();
+      expect(session.history.toJSON()).toEqual(history);
+      expect(output.captured).toEqual(['early']);
+      expect(audio.frames).toHaveLength(frames);
+    } finally {
+      source.close();
+      await cancelling;
+      await session.close();
+      spy.mockRestore();
+      source.tee.mockRestore();
+    }
+  },
+);

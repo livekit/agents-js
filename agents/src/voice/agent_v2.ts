@@ -456,9 +456,65 @@ class AgentHookAdapter<UserData, ContextT extends AgentContext<UserData>> {
       return fallback();
     }
 
-    const input = text instanceof ReadableStream ? readStream(text) : text;
-    const result = await this.hooks.transcriptionNode(this.context, input, modelSettings);
-    return result === null ? null : toStream(result);
+    if (!(text instanceof ReadableStream)) {
+      const result = await this.hooks.transcriptionNode(this.context, text, modelSettings);
+      return result === null ? null : toStream(result);
+    }
+
+    const inputAbort = new AbortController();
+    const input = readStream(text, inputAbort.signal);
+    let inputClosed: Promise<IteratorResult<string | TimedString>> | undefined;
+    const closeInput = () => {
+      // Release the SDK reader before joining the hook's pending next()/return().
+      // The activity owns source cancellation, including the native tee sibling.
+      inputAbort.abort();
+      return (inputClosed ??= input.return(undefined));
+    };
+    let iterator: AsyncIterator<string | TimedString>;
+    try {
+      const result = await this.hooks.transcriptionNode(this.context, input, modelSettings);
+      if (result === null) {
+        await closeInput();
+        return null;
+      }
+      iterator = result[Symbol.asyncIterator]();
+    } catch (error) {
+      await closeInput();
+      throw error;
+    }
+
+    let cancelled = false;
+    let forwarding: Promise<void>;
+    return new ReadableStream({
+      start(controller) {
+        forwarding = (async () => {
+          try {
+            try {
+              while (!cancelled) {
+                const { done, value } = await iterator.next();
+                if (done || cancelled) break;
+                controller.enqueue(value);
+              }
+            } finally {
+              await closeInput();
+            }
+            if (!cancelled) controller.close();
+          } catch (error) {
+            if (!cancelled) controller.error(error);
+          }
+        })();
+      },
+      async cancel(reason) {
+        cancelled = true;
+        const cleanup = await Promise.allSettled([
+          closeInput(),
+          Promise.resolve().then(() => iterator.return?.(reason)),
+          forwarding,
+        ]);
+        const failed = cleanup.find((result) => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
+      },
+    });
   }
 }
 
