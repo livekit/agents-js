@@ -775,9 +775,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         turns: [
           {
             parts: [{ text: instructions }],
-            // Both APIs error on role="system". Gemini 2.5 accepted an omitted role as the
-            // system role, but 3.1 and 3.8 reject it. "model" is accepted by all three.
-            role: 'model',
+            // On Vertex AI, role="system" replaces the session's system instruction. The Gemini
+            // API rejects role="system" (and 3.1/3.8 reject an omitted role), so it keeps "model".
+            role: this.options.vertexai ? 'system' : 'model',
           },
         ],
         turnComplete: false,
