@@ -2797,6 +2797,7 @@ export class AgentActivity implements RecognitionHooks {
         break;
       }
     }
+    signal.throwIfAborted();
   }
 
   private async waitForEndOfTurn(signal: AbortSignal): Promise<void> {

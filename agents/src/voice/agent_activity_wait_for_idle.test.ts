@@ -6,6 +6,7 @@ import { delay } from '../utils.js';
 import { Agent } from './agent.js';
 import type { AgentActivity } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes } from './events.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
 async function startSession(llm?: FakeLLM) {
@@ -14,7 +15,7 @@ async function startSession(llm?: FakeLLM) {
   const activity = (session as unknown as { activity: AgentActivity }).activity;
   // every pass of the idle loop checks for an end of turn first
   const passes = vi.spyOn(activity as never, 'waitForEndOfTurn');
-  return { session, passes };
+  return { session, activity, passes };
 }
 
 describe('AgentActivity.waitForIdle', () => {
@@ -49,5 +50,55 @@ describe('AgentActivity.waitForIdle', () => {
     } finally {
       await session.close();
     }
+  });
+
+  it.each(['close', 'shutdown'] as const)(
+    'rejects pending foreground work during %s',
+    async (method) => {
+      const { session } = await startSession();
+      const callback = vi.fn();
+      const event = AgentSessionEventTypes.UserStateChanged;
+      const listeners = session.listenerCount(event);
+      session._updateUserState('speaking');
+      const pending = session.waitForIdleAndHold(callback).catch((error: unknown) => error);
+
+      try {
+        await vi.waitFor(() => expect(session.listenerCount(event)).toBe(listeners + 1));
+        if (method === 'shutdown') session.shutdown({ drain: true });
+        await session.close();
+
+        expect(await pending).toMatchObject({ name: 'AbortError' });
+        expect(callback).not.toHaveBeenCalled();
+        expect(session.listenerCount(event)).toBe(listeners);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it('rejects pending foreground work when its activity is replaced', async () => {
+    const { session } = await startSession();
+    const callback = vi.fn();
+    const event = AgentSessionEventTypes.UserStateChanged;
+    const listeners = session.listenerCount(event);
+    session._updateUserState('speaking');
+    const pending = session.waitForIdleAndHold(callback).catch((error: unknown) => error);
+
+    try {
+      await vi.waitFor(() => expect(session.listenerCount(event)).toBe(listeners + 1));
+      await session._updateActivity(new Agent({ instructions: 'next agent' }));
+
+      expect(await pending).toMatchObject({ name: 'AbortError' });
+      expect(callback).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('rejects an idle wait on an already closed activity', async () => {
+    const { session, activity } = await startSession();
+    await session.close();
+
+    await expect(activity.waitForIdle()).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
