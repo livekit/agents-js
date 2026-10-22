@@ -19,6 +19,7 @@ import {
   STT,
   type STTFallbackModel,
   type STTModels,
+  type STTOptions,
   type XaiSTTModels,
   normalizeSTTFallback,
   parseSTTModelString,
@@ -773,6 +774,56 @@ describe('Inference STT connection lifecycle', () => {
       }
 
       expect(extra.additional_vocab).toEqual([userEntry, { content: 'LiveKit' }]);
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('sends the Deepgram Nova-3 language hint alongside multi language', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let settings: { language?: string; extra?: Record<string, unknown> } = {};
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          settings = event.settings ?? {};
+        } else if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'multi',
+        modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(settings.language).toBe('multi');
+      expect(settings.extra).toMatchObject({ language_hint: ['en', 'es'] });
     } finally {
       for (const client of server.clients) client.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));

@@ -106,6 +106,11 @@ export interface DeepgramOptions {
   mip_opt_out?: boolean;
   /** Enable speaker diarization. Default: false. */
   diarize?: boolean;
+  /**
+   * Languages to bias recognition toward. Only applies in Nova-3 multi language mode: the session
+   * must also set `language: 'multi'`. Requires the gateway's `deepgram_stt_language_hint` flag.
+   */
+  language_hint?: string | string[];
 }
 
 export interface DeepgramFluxOptions {
@@ -119,8 +124,8 @@ export interface DeepgramFluxOptions {
   keyterm?: string | string[];
   /** Always true for LiveKit Inference; the passed value is ignored. */
   mip_opt_out?: boolean;
-  /** Language hint. */
-  language_hint?: string;
+  /** Language hint. A list biases recognition toward several languages. */
+  language_hint?: string | string[];
   /** Enable automatic language detection. */
   detect_language?: boolean;
 }
