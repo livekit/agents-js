@@ -1,0 +1,39 @@
+agents/src/voice/agent.ts
+  s_bad3441f150473::t_f73009ebb1fd15 695
+.changeset/close-speech-stream-adapters.md
+  s_bad3441f150473::t_94a7ff35393282 6
+agents/src/voice/agent.test.ts
+  s_bad3441f150473::t_0a0b3b8763b673 12-14,82,84,88-92,94-97,100-106,108-112,114-117,547,550-556,558-563,571-576,578-582,585-602,604-608,610
+  s_bad3441f150473::t_2126870905ae55 93,98-99,107,113
+agents/src/tts/fallback_adapter.ts
+  s_bad3441f150473::t_94a7ff35393282 802
+  s_bad3441f150473::t_f73009ebb1fd15 590,725-731,767
+agents/src/tts/fallback_adapter.test.ts
+  s_bad3441f150473::t_cc4e930e5fcc29 18,49,115,117,120,163,182-194,275-325
+  s_bad3441f150473::t_2126870905ae55 328-337,339-345,348,350-352
+  s_d40fba722f3b4d::t_d001dad5141a77 326-327
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f787306dc3e6850d2723c8b0716d7000e4a9bd52",
+  "prompts": {},
+  "sessions": {
+    "s_bad3441f150473": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16339-3ea9-77a0-9f23-b58009135491",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    },
+    "s_d40fba722f3b4d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a155af-3962-7d90-aa05-b905479f1ae2",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
