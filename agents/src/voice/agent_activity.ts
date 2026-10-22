@@ -2790,14 +2790,20 @@ export class AgentActivity implements RecognitionHooks {
     options: { waitForAgent?: boolean; waitForUser?: boolean } = {},
   ): Promise<void> {
     const signal = AbortSignal.any([this.closeAbort.signal, this.agentSession._closingSignal]);
-    while (!signal.aborted) {
-      await this.waitForInactive(options, signal);
-      if (signal.aborted) break;
-      if (!(await this.agentSession._waitForIdleHoldReleased())) {
-        break;
+    try {
+      while (!signal.aborted) {
+        await this.waitForInactive(options, signal);
+        if (signal.aborted) break;
+        if (!(await this.agentSession._waitForIdleHoldReleased())) {
+          break;
+        }
       }
+    } catch (error) {
+      if (!signal.aborted) throw error;
     }
-    signal.throwIfAborted();
+    if (signal.aborted) {
+      throw new DOMException('This operation was aborted', 'AbortError');
+    }
   }
 
   private async waitForEndOfTurn(signal: AbortSignal): Promise<void> {

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
+import { APIConnectionError } from '../_exceptions.js';
 import { Future, delay } from '../utils.js';
 import { Agent } from './agent.js';
 import type { AgentActivity } from './agent_activity.js';
@@ -128,6 +129,41 @@ describe('AgentActivity.waitForIdle', () => {
 
       expect(await pending).toMatchObject({ name: 'AbortError' });
       expect(callback).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('reports provider-triggered shutdown as idle cancellation', async () => {
+    const session = new AgentSession({
+      vad: null,
+      turnHandling: { turnDetection: null },
+      connOptions: { maxUnrecoverableErrors: 0 },
+    });
+    await session.start({ agent: new Agent({ instructions: 'test' }) });
+    const activity = session._activity!;
+    const callback = vi.fn();
+    const providerError = new APIConnectionError({ message: 'STT unavailable' });
+    const event = AgentSessionEventTypes.UserStateChanged;
+    const listeners = session.listenerCount(event);
+    session._updateUserState('speaking');
+    const pending = session.waitForIdleAndHold(callback).catch((error: unknown) => error);
+
+    try {
+      await vi.waitFor(() => expect(session.listenerCount(event)).toBe(listeners + 1));
+      session._onError({
+        type: 'stt_error',
+        timestamp: Date.now(),
+        label: 'test',
+        error: providerError,
+        recoverable: false,
+      });
+
+      expect(await pending).toMatchObject({ name: 'AbortError' });
+      expect(callback).not.toHaveBeenCalled();
+      expect(session.listenerCount(event)).toBe(listeners);
+      expect(session._closingSignal.reason).toBe(providerError);
+      await expect(activity.waitForIdle()).rejects.toMatchObject({ name: 'AbortError' });
     } finally {
       await session.close();
     }
