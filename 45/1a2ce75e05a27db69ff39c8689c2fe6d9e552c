@@ -1,0 +1,23 @@
+.changeset/bright-sessions-wait.md
+  s_6b490992733d08::t_49fa77b0e32f30 1-5
+agents/src/voice/remote_session.test.ts
+  s_6b490992733d08::t_49fa77b0e32f30 5,210,801-1070
+agents/src/voice/remote_session.ts
+  s_6b490992733d08::t_49fa77b0e32f30 5,107-132,140-143,157-161,170-173,176-188,219,221-223,237-239,246-250,345,370,374-391,635-638,672,700,703-710,713-720,731-734,758-778,1396-1429
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "451a2ce75e05a27db69ff39c8689c2fe6d9e552c",
+  "prompts": {},
+  "sessions": {
+    "s_6b490992733d08": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16417-b82b-7312-a509-9ea1732c85e1",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
