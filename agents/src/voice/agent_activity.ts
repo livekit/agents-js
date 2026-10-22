@@ -2882,11 +2882,26 @@ export class AgentActivity implements RecognitionHooks {
     signal: AbortSignal,
     errorMessage: string,
   ): Promise<void> {
+    // The signal can outlive many calls (waitForIdle loops on closeAbort.signal), so the
+    // abort listener must go when the race settles, not when the signal aborts.
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<void>((resolve) => {
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+      onAbort = () => resolve();
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
     try {
-      await Promise.race([promise, waitForAbort(signal)]);
+      await Promise.race([promise, aborted]);
     } catch (error) {
       if (!signal.aborted) {
         this.logger.error({ error }, errorMessage);
+      }
+    } finally {
+      if (onAbort) {
+        signal.removeEventListener('abort', onAbort);
       }
     }
   }
