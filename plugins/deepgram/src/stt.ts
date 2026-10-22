@@ -276,6 +276,7 @@ export class SpeechStream extends stt.SpeechStream {
   /** @internal */
   _pendingKeyterm: string[] | null = null;
   #audioDurationCollector: PeriodicCollector<number>;
+  #sentSeconds = 0;
   label = 'deepgram.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
@@ -294,6 +295,9 @@ export class SpeechStream extends stt.SpeechStream {
     let ws: WebSocket;
 
     while (!this.input.closed && !this.closed) {
+      this.startTimeOffset += this.#sentSeconds;
+      this.#sentSeconds = 0;
+
       const streamURL = new URL(`${this.#opts.baseUrl}/v1/listen`);
       const params = {
         model: this.#opts.model,
@@ -466,6 +470,7 @@ export class SpeechStream extends stt.SpeechStream {
           for await (const frame of frames) {
             const frameDuration = frame.samplesPerChannel / frame.sampleRate;
             this.#audioDurationCollector.push(frameDuration);
+            this.#sentSeconds += frameDuration;
             ws.send(frame.data.buffer);
           }
 
