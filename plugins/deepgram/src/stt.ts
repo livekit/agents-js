@@ -29,8 +29,8 @@ export interface STTOptions {
   language?: STTLanguages | string;
   /**
    * Languages to bias recognition toward, sent as the repeatable `language_hint` parameter on the
-   * streaming connection. Deepgram applies the hint only in Nova-3 multi language mode, so the
-   * session must also set `language: 'multi'`. Any other language drops it with one warning.
+   * streaming connection. Deepgram applies the hint only to `nova-3` / `nova-3-general` in
+   * `language: 'multi'` mode; any other model or language drops it with one warning.
    */
   languageHint?: string[];
   detectLanguage: boolean;
@@ -95,16 +95,29 @@ function isMultiLanguage(language: string | undefined): boolean {
 }
 
 /**
- * Removes a `languageHint` the session language cannot apply, reporting whether one was removed.
- * Deepgram rejects the parameter outside Nova-3 multi language mode, so a hint set with any other
- * language would fail the session instead of biasing it.
+ * The Nova-3 models Deepgram accepts `language_hint` on. Mirrors the gateway's list
+ * (livekit/agent-gateway#1741): a model added elsewhere for another reason must not start
+ * receiving a parameter the vendor may reject.
+ */
+const LANGUAGE_HINT_MODELS = new Set(['nova-3', 'nova-3-general']);
+
+/** Whether the model and the session language together make a `languageHint` applicable. */
+function languageHintApplies(model: string | undefined, language: string | undefined): boolean {
+  return isMultiLanguage(language) && LANGUAGE_HINT_MODELS.has((model ?? '').trim().toLowerCase());
+}
+
+/**
+ * Removes a `languageHint` neither the model nor the session language can apply, reporting
+ * whether one was removed. Deepgram rejects the parameter outside Nova-3 multi language mode,
+ * so a hint set anywhere else would fail the session instead of biasing it.
  */
 function dropUnsupportedLanguageHint(opts: {
+  model?: string;
   language?: string;
   languageHint?: string[];
 }): boolean {
-  if (isMultiLanguage(opts.language)) return false;
   if (!opts.languageHint || opts.languageHint.length === 0) return false;
+  if (languageHintApplies(opts.model, opts.language)) return false;
 
   delete opts.languageHint;
   return true;
@@ -287,14 +300,14 @@ export class STT extends stt.STT {
 
   /**
    * Warn once per instance that a `languageHint` was removed rather than sent, since Deepgram
-   * applies one only in Nova-3 multi language mode.
+   * applies one only to nova-3 in multi language mode.
    */
   #warnLanguageHintRemoved(): void {
     if (this.#languageHintWarned) return;
     this.#languageHintWarned = true;
     this.#logger.warn(
       { model: this.#opts.model, language: this.#opts.language },
-      'Removed `languageHint`: it only applies with language "multi"',
+      'Removed `languageHint`: it only applies to nova-3 with language "multi"',
     );
   }
 
@@ -366,8 +379,10 @@ export class SpeechStream extends stt.SpeechStream {
         replace: this.#opts.replace,
         search: this.#opts.search,
         language: this.#opts.language,
-        // the hint only applies in multi language mode; Deepgram rejects it under any other
-        language_hint: isMultiLanguage(this.#opts.language) ? this.#opts.languageHint : undefined,
+        // the hint applies only to nova-3 in multi language mode; Deepgram rejects it anywhere else
+        language_hint: languageHintApplies(this.#opts.model, this.#opts.language)
+          ? this.#opts.languageHint
+          : undefined,
         mip_opt_out: this.#opts.mipOptOut,
         ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
       };
