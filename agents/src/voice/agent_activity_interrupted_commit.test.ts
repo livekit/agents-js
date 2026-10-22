@@ -228,9 +228,13 @@ class NoFrameAgent extends Agent {
   }
   async ttsNode(): Promise<ReadableStream<AudioFrame> | null> {
     this.onTtsStarted?.();
+    let timer: ReturnType<typeof setTimeout>;
     return new ReadableStream<AudioFrame>({
       start(controller) {
-        setTimeout(() => controller.close(), 500);
+        timer = setTimeout(() => controller.close(), 500);
+      },
+      cancel() {
+        clearTimeout(timer);
       },
     });
   }

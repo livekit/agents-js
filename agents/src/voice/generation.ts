@@ -894,6 +894,7 @@ export function performTTSInference(
   provider?: string,
   readIdleTimeout: number = DEFAULT_TTS_READ_IDLE_TIMEOUT_MS,
   textTransforms?: readonly TextTransform[] | null,
+  inputOptions?: { cancelOnFinish: boolean; onError: () => void },
 ): [Task<void>, _TTSGenerationData] {
   const logger = log();
   const audioStream = new IdentityTransform<AudioFrame>();
@@ -908,12 +909,20 @@ export function performTTSInference(
   const textOnlyStream = new IdentityTransform<string>();
   const textOnlyWriter = textOnlyStream.writable.getWriter();
   let startTime: number | undefined;
-  (async () => {
-    const reader = text.getReader();
+  const textReader = text.getReader();
+  let inputCancellation: Promise<void> | undefined;
+  const cancelInput = () => {
+    inputCancellation ??= textReader.cancel().catch((error) => {
+      logger.debug({ error }, 'failed to cancel TTS text reader');
+    });
+  };
+  controller.signal.addEventListener('abort', cancelInput, { once: true });
+  if (controller.signal.aborted) cancelInput();
+  const inputTask = (async () => {
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
+      while (!controller.signal.aborted) {
+        const { done, value } = await textReader.read();
+        if (done || controller.signal.aborted) {
           break;
         }
         startTime ??= performance.now() / 1000;
@@ -924,9 +933,12 @@ export function performTTSInference(
     } catch (e) {
       await textOnlyWriter.abort(e as Error);
     } finally {
-      reader.releaseLock();
+      cancelInput();
+      await inputCancellation;
+      textReader.releaseLock();
     }
   })();
+  void inputTask.catch((error) => logger.debug({ error }, 'TTS text forwarding failed'));
 
   let ttfb: number | undefined;
 
@@ -948,6 +960,15 @@ export function performTTSInference(
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
     let firstByteReceived = false;
+    let audioCancellation: Promise<void> | undefined;
+    const cancelAudio = () => {
+      if (ttsStreamReader) {
+        audioCancellation ??= ttsStreamReader.cancel().catch((error) => {
+          logger.debug({ error }, 'failed to cancel TTS audio reader');
+        });
+      }
+    };
+    signal.addEventListener('abort', cancelAudio, { once: true });
 
     try {
       const ttsInput = textTransforms
@@ -956,8 +977,6 @@ export function performTTSInference(
       ttsStream = await node(ttsInput, modelSettings);
       if (ttsStream === null) {
         timedTextsFut.resolve(null);
-        await outputWriter.close();
-        await timedTextsWriter.close();
         return;
       }
 
@@ -968,6 +987,7 @@ export function performTTSInference(
       }
 
       ttsStreamReader = ttsStream.getReader();
+      if (signal.aborted) cancelAudio();
 
       while (true) {
         if (signal.aborted) {
@@ -978,7 +998,7 @@ export function performTTSInference(
           ttsStreamReader.read(),
           readIdleTimeout,
         );
-        if (done) {
+        if (done || signal.aborted) {
           break;
         }
 
@@ -1013,16 +1033,32 @@ export function performTTSInference(
       } else {
         // Set this before closing the audio stream so forwarding knows it was truncated.
         genData.error = error;
+        inputOptions?.onError();
         throw error;
       }
     } finally {
+      // Pipeline inputs have a separate producer that must finish writing normally.
+      // Tee owners can stop their branch as soon as synthesis finishes.
+      if (inputOptions?.cancelOnFinish || signal.aborted || genData.error != null) cancelInput();
+      cancelAudio();
       if (!timedTextsFut.done) {
         timedTextsFut.resolve(null);
       }
+      const cleanup = await Promise.allSettled([
+        audioCancellation,
+        outputWriter.close(),
+        timedTextsWriter.close(),
+        inputTask,
+      ]);
       ttsStreamReader?.releaseLock();
-      await ttsStream?.cancel();
-      await outputWriter.close();
-      await timedTextsWriter.close();
+      signal.removeEventListener('abort', cancelAudio);
+      controller.signal.removeEventListener('abort', cancelInput);
+      // Cancelling the output can reject pending writes/close with an empty
+      // reason. Preserve the inference error that initiated sibling cleanup.
+      if (genData.error == null && !signal.aborted) {
+        const failed = cleanup.find((result) => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
+      }
     }
   };
 
@@ -1049,9 +1085,10 @@ export interface _TextOut {
 async function forwardText(
   source: ReadableStream<string | TimedString>,
   out: _TextOut,
-  signal: AbortSignal,
+  controller: AbortController,
   textOutput: TextOutput | null,
 ): Promise<void> {
+  const { signal } = controller;
   const reader = source.getReader();
   let cancellation: Promise<void> | undefined;
   const cancelReader = () => {
@@ -1081,6 +1118,10 @@ async function forwardText(
         out.firstTextFut.resolve();
       }
     }
+  } catch (error) {
+    // A tee reader cannot finish cancelling until its sibling is released.
+    controller.abort();
+    throw error;
   } finally {
     signal.removeEventListener('abort', cancelReader);
     cancelReader();
@@ -1104,7 +1145,7 @@ export function performTextForwarding(
   };
   return [
     Task.from(
-      (controller) => forwardText(source, out, controller.signal, textOutput),
+      (controller) => forwardText(source, out, controller, textOutput),
       controller,
       'performTextForwarding',
     ),

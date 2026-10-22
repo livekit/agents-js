@@ -1046,11 +1046,12 @@ describe('session response delivery', () => {
     const warn = vi.spyOn(log(), 'warn');
     const [clientTransport, hostTransport] = createConnectedTransportPair();
     const never = new Promise<void>(() => {});
+    const cancel = vi.fn(async () => {});
     const session = {
       on: () => {},
       off: () => {},
       interrupt: () => ({ await: Promise.resolve() }),
-      run: () => ({ wait: () => never, events: [] }),
+      run: () => ({ wait: () => never, _cancel: cancel, events: [] }),
     } as unknown as AgentSession;
     const host = new SessionHost(hostTransport);
     host.registerSession(session);
@@ -1068,6 +1069,7 @@ describe('session response delivery', () => {
       { requestTypes: ['runInput'] },
       'cancelled in-flight session requests while closing',
     );
+    expect(cancel).toHaveBeenCalledOnce();
     await client.close();
   });
 });

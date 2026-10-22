@@ -9,6 +9,7 @@ import { ChatContext, type FunctionCall } from '../llm/chat_context.js';
 import { type GenerationCreatedEvent, RealtimeModel, RealtimeSession } from '../llm/realtime.js';
 import { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
+import { TTS } from '../tts/tts.js';
 import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
@@ -55,6 +56,7 @@ class FakeRealtimeSession extends RealtimeSession {
   asks = 0;
   audio?: ReadableStreamDefaultController<AudioFrame>;
   text?: ReadableStreamDefaultController<string>;
+  modalities: ('audio' | 'text')[] = ['audio', 'text'];
   async updateInstructions(): Promise<void> {}
   async updateChatCtx(context: ChatContext): Promise<void> {
     this.chatCtx = context;
@@ -69,6 +71,7 @@ class FakeRealtimeSession extends RealtimeSession {
     return this.generation(true);
   }
   generation(userInitiated: boolean): GenerationCreatedEvent {
+    const modalities = this.modalities;
     const audioStream = new ReadableStream<AudioFrame>({
       start: (controller) => {
         this.audio = controller;
@@ -95,7 +98,7 @@ class FakeRealtimeSession extends RealtimeSession {
             messageId: 'msg-1',
             audioStream,
             textStream,
-            modalities: Promise.resolve(['audio', 'text'] as ('audio' | 'text')[]),
+            modalities: Promise.resolve(modalities),
           });
           controller.close();
         },
@@ -165,6 +168,35 @@ async function start(overlap: boolean, turnDetection = true) {
 }
 
 describe('realtime overlapping speech', () => {
+  it('cancels realtime text without an unused TTS sibling when audio output is disabled', async () => {
+    class UnusedTTS extends TTS {
+      label = 'unused';
+      constructor() {
+        super(24000, 1, { streaming: true });
+      }
+      synthesize(): never {
+        throw new Error('audio output is disabled');
+      }
+      stream(): never {
+        throw new Error('audio output is disabled');
+      }
+    }
+    const model = new FakeRealtimeModel(false);
+    const session = new AgentSession({ llm: model, tts: new UnusedTTS(), vad: null });
+    await session.start({ agent: new Agent({ instructions: 'test' }) });
+    model.activeSession.modalities = ['text'];
+    try {
+      const speech = session.generateReply();
+      await setImmediate();
+      session.interrupt({ force: true });
+      await expect.poll(() => speech._tasks.every((t) => t.done), { timeout: 1000 }).toBe(true);
+      expect(model.activeSession.text).toBeUndefined();
+    } finally {
+      model.activeSession.endSpeech();
+      await session.close();
+    }
+  });
+
   it('hands realtime playout from VAD to adaptive interruption after the start boundary', async () => {
     class FakeVAD extends VAD {
       label = 'fake';

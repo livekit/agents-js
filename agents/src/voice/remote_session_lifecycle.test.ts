@@ -7,6 +7,7 @@ import { ByteStreamReader, LocalParticipant, type Room } from '@livekit/rtc-node
 import * as net from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LLM, LLMStream } from '../llm/llm.js';
+import { tool } from '../llm/tool_context.js';
 import { initializeLogger, log } from '../log.js';
 import { DEFAULT_API_CONNECT_OPTIONS, FlushSentinel } from '../types.js';
 import { Future, Task } from '../utils.js';
@@ -21,6 +22,7 @@ import {
   TcpSessionTransport,
 } from './remote_session.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { FakeLLM } from './testing/fake_llm.js';
 import type { RunResult } from './testing/run_result.js';
 
 beforeAll(() => initializeLogger({ pretty: false, level: 'warn' }));
@@ -309,6 +311,87 @@ it('cancels the real run and releases its handles when the drain deadline expire
     ),
   ).toBe(false);
 }, 8000);
+
+it('joins a tool say and cancels its open source before host and session close return', async () => {
+  const first = new Future<void>();
+  const captured: string[] = [];
+  let forwarding: Task<unknown> | undefined;
+  let speech: SpeechHandle | undefined;
+  let source!: ReadableStreamDefaultController<string>;
+  const cancelled = vi.fn();
+  const stream = new ReadableStream<string>({
+    start(c) {
+      source = c;
+      c.enqueue('early');
+    },
+    cancel: cancelled,
+  });
+  class Output extends TextOutput {
+    async captureText(text: string) {
+      forwarding = Task.current();
+      captured.push(text);
+      first.resolve();
+    }
+    flush() {}
+  }
+  const session = new AgentSession({
+    llm: new FakeLLM([{ input: 'go', toolCalls: [{ name: 'speak', args: {} }] }]),
+  });
+  session.output.transcription = new Output();
+  const agent = new Agent({
+    instructions: 'test',
+    tools: [
+      tool({
+        name: 'speak',
+        description: 'Say text',
+        execute: async () => {
+          speech = session.say(stream);
+          await speech;
+          return 'said';
+        },
+      }),
+    ],
+  });
+  const transport = new Transport();
+  const host = new SessionHost(transport);
+  await session.start({ agent });
+  host.registerSession(session);
+  await host.start();
+  transport.push(
+    request('say', {
+      case: 'runInput',
+      value: new pb.SessionRequest_RunInput({ text: 'go' }),
+    }),
+  );
+  try {
+    await first.await;
+    await host.close();
+    await session.close();
+    expect(forwarding?.done).toBe(true);
+    expect(speech?._tasks.every((t) => t.done)).toBe(true);
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(stream.locked).toBe(false);
+    const history = session.history.toJSON();
+    expect(
+      session.history.items.some(
+        (i) => i.type === 'message' && i.textContent === 'early' && i.interrupted,
+      ),
+    ).toBe(true);
+    expect(() => source.enqueue('late')).toThrow();
+    await tick();
+    expect(captured).toEqual(['early']);
+    expect(session.history.toJSON()).toEqual(history);
+    expect(transport.sent.some((m) => m.message.case === 'response')).toBe(false);
+  } finally {
+    try {
+      source.close();
+    } catch {
+      /* already cancelled */
+    }
+    await host.close();
+    await session.close();
+  }
+}, 10000);
 
 it('joins the writer and discards queued events at the shared drain deadline', async () => {
   vi.useFakeTimers();
