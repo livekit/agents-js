@@ -1034,6 +1034,27 @@ export function serializeSessionOptions(
 }
 
 /**
+ * Builds the session summary that agent evals read from the recording header. Its schema is
+ * evalschema/session-summary.schema.json in livekit/cloud-protocol. An absent key means "not
+ * sent", so this omits `tags` (agents-js has no tagger) and `usage`.
+ */
+function sessionSummary(agentName: string, report: SessionReport): Record<string, unknown> {
+  const userTurns = report.chatHistory.items.filter(
+    (item) => item.type === 'message' && item.role === 'user',
+  ).length;
+  const summary: Record<string, unknown> = {
+    version: 1,
+    agent_name: agentName,
+    user_turns: userTurns,
+  };
+  // The report has no duration when audio was not recorded.
+  if (report.duration !== undefined) {
+    summary.duration_ms = Math.round(report.duration);
+  }
+  return summary;
+}
+
+/**
  * Upload session report to LiveKit Cloud observability.
  * @param options - Configuration with agentName, observabilityUrl, and report
  */
@@ -1166,13 +1187,14 @@ export async function uploadSessionReport(
   const headerMsg = new MetricsRecordingHeader({
     roomId: report.roomId,
     jobId: report.jobId,
-    duration: BigInt(0), // TODO: Calculate actual duration from report
+    duration: BigInt(Math.round(report.duration ?? 0)),
     startTime: {
       seconds: BigInt(Math.floor(audioStartTime / 1000)),
       nanos: Math.floor((audioStartTime % 1000) * 1e6),
     },
     simulated: metadata[ATTRIBUTE_SIMULATION_ENABLED] === true,
     redactionEnabled: metadata[ATTRIBUTE_REDACTION_ENABLED] === true,
+    sessionSummary: JSON.stringify(sessionSummary(agentName, report)),
   });
 
   const headerBytes = Buffer.from(headerMsg.toBinary());

@@ -802,6 +802,39 @@ describe('uploadSessionReport metadata', () => {
     expect(header.redactionEnabled).toBe(true);
   });
 
+  it('sends a session summary in the header', async () => {
+    vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
+    const submitSpy = mockSuccessfulFormSubmit();
+    const report = makeReport({
+      audio: false,
+      traces: false,
+      logs: false,
+      transcript: true,
+      redaction: false,
+    });
+    report.duration = 12500;
+    report.chatHistory.addMessage({ role: 'user', content: 'hi' });
+    report.chatHistory.addMessage({ role: 'assistant', content: 'hello' });
+    report.chatHistory.addMessage({ role: 'user', content: 'bye' });
+
+    await uploadSessionReport({
+      agentName: 'support',
+      observabilityUrl: 'https://example.livekit.cloud',
+      report,
+    });
+
+    const formData = submitSpy.mock.instances[0] as FormData;
+    const header = MetricsRecordingHeader.fromBinary(getMultipartBuffer(formData, 'header'));
+    expect(header.duration).toBe(BigInt(12500));
+    // agents-js has no tagger, so the summary never has a tags key.
+    expect(JSON.parse(header.sessionSummary)).toEqual({
+      version: 1,
+      agent_name: 'support',
+      duration_ms: 12500,
+      user_turns: 2,
+    });
+  });
+
   it('returns before exporting when only redaction is enabled', async () => {
     const exportSpy = vi
       .spyOn(SimpleOTLPHttpLogExporter.prototype, 'export')
