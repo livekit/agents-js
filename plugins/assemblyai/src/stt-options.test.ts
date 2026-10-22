@@ -67,6 +67,53 @@ describe('AssemblyAI streaming configuration', () => {
     });
   });
 
+  it('sends PII redaction and filtering options on connection', async () => {
+    await withProvider(
+      {
+        redactPii: true,
+        redactPiiPolicies: ['person_name', 'phone_number'],
+        redactPiiSub: 'entity_name',
+        includePartialTurns: true,
+        filterProfanity: false,
+      },
+      async (_provider, query) => {
+        expect(query.get('redact_pii')).toBe('true');
+        expect(JSON.parse(query.get('redact_pii_policies')!)).toEqual([
+          'person_name',
+          'phone_number',
+        ]);
+        expect(query.get('redact_pii_sub')).toBe('entity_name');
+        expect(query.get('include_partial_turns')).toBe('true');
+        expect(query.get('filter_profanity')).toBe('false');
+      },
+    );
+  });
+
+  it('omits PII redaction options by default', async () => {
+    await withProvider({ redactPii: true, redactPiiPolicies: [] }, async (_provider, query) => {
+      expect(query.get('redact_pii')).toBe('true');
+      for (const key of [
+        'redact_pii_policies',
+        'redact_pii_sub',
+        'include_partial_turns',
+        'filter_profanity',
+      ]) {
+        expect(query.has(key)).toBe(false);
+      }
+    });
+  });
+
+  it.each([{ redactPiiPolicies: ['person_name'] }, { redactPiiSub: 'hash' as const }])(
+    'rejects %o without redactPii',
+    async (option) => {
+      expect(() => new STT({ apiKey: 'test', ...option })).toThrow(/requires 'redactPii'/);
+      await withProvider({ redactPii: true, ...option }, async (provider, _q, _m, stream) => {
+        expect(() => provider.updateOptions({ redactPii: false })).toThrow(/requires 'redactPii'/);
+        expect(() => stream.updateOptions({ redactPii: false })).toThrow(/requires 'redactPii'/);
+      });
+    },
+  );
+
   it('sends both partial controls in a live update', async () => {
     await withProvider({}, async (provider, _query, messages) => {
       provider.updateOptions({ continuousPartials: false, interruptionDelay: 0 });
