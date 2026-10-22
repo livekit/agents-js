@@ -63,6 +63,8 @@ agents/src/llm/tool_context.ts
   s_de5d34fcc7db11::t_2190d717965e25 206-208,680,690-691,727,737-738,795
 agents/src/llm/tool_context.test.ts
   s_de5d34fcc7db11::t_24e0646f6a3b6c 25-36
+agents/src/llm/openai_realtime/realtime_model.test.ts
+  s_de5d34fcc7db11::t_8319237c9af68a 81-111
 ---
 {
   "schema_version": "authorship/3.0.0",
