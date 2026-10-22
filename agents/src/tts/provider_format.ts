@@ -16,6 +16,7 @@
  * - xAI: https://docs.x.ai/developers/model-capabilities/audio/text-to-speech
  * - xAI: https://docs.x.ai/developers/model-capabilities/audio/voice
  * - Fish Audio: https://docs.fish.audio/developer-guide/core-features/emotions
+ * - Fish Audio: https://docs.fish.audio/features/text-to-speech/drama-3
  * - Gemini: https://ai.google.dev/gemini-api/docs/speech-generation#controllable
  */
 import { ATTRIBUTE_TRANSCRIPTION_EXPRESSION } from '../constants.js';
@@ -248,6 +249,25 @@ function fishaudioExpressionToBracket(_match: string, value: string): string {
 function fishaudioBreakToBracket(_match: string, time: string): string {
   // Fish has two pause levels ([break], [long-break]); use the longer past ~1s
   return parseDurationSeconds(time) >= 1 ? '[long-break]' : '[break]';
+}
+
+// Drama-3 follows free-form bracket directions and scopes tone controls with paired tags.
+const FISHAUDIO_DRAMA_SPANS = ['whisper', 'soft', 'slow', 'fast', 'emphasis'];
+const FISHAUDIO_DRAMA_TAGS = [
+  'expression',
+  'sound',
+  'break',
+  ...FISHAUDIO_DRAMA_SPANS,
+  'stress',
+  'forceful',
+];
+const FISHAUDIO_DRAMA_SPAN_ALIASES: Record<string, string> = {
+  whispering: 'whisper',
+  hurried: 'fast',
+};
+
+function fishaudioDramaBreakToBracket(_match: string, time: string): string {
+  return parseDurationSeconds(time) >= 1 ? '[pause]' : '[short pause]';
 }
 
 // Gemini TTS (the 3.8 family), from Gemini's controllable speech generation docs
@@ -694,6 +714,87 @@ English — labels are a fixed vocabulary, never translated.`,
   return parts.join('\n\n');
 }
 
+// Every label is tied to its line's situation, so the few-shots teach adapting rather
+// than a stock vocabulary to copy.
+const FISHAUDIO_DRAMA_EXAMPLES = [
+  '<expr type="expression" label="sheepish, owning the mix-up"/> That one\'s on us. <expr type="expression" label="quietly sure I can fix it"/> Let me see what I can do.',
+  '<expr type="expression" label="soft, sorry their week was rough"/> I\'m really sorry, that sounds exhausting. <expr type="sound" label="sighing"/> <expr type="expression" label="steady, here to help"/> We\'ll get it sorted.',
+  '<expr type="expression" label="playful, setting up the joke"/> Okay, why did the burger go to the gym? <expr type="expression" label="smug, landing the punchline"/> Because it wanted better buns! <expr type="sound" label="chuckling"/>',
+  // sound-free, so at least one example survives any steering filter
+  '<expr type="expression" label="glad the new date works"/> You\'re all set for <expr type="break" label="500ms"/> Thursday the <expr type="prosody" label="emphasis">ninth</expr>. <expr type="expression" label="slow, reading the code back"/> Your code is B 4 J 7.',
+  // a span changes only the words it wraps; the sentence keeps its direction
+  '<expr type="expression" label="giddy, sharing good news early"/> <expr type="prosody" label="whisper">Okay, don\'t tell anyone yet</expr> but I think we actually pulled it off!',
+];
+
+const FISHAUDIO_DRAMA_DISFLUENT_EXAMPLES = [
+  '<expr type="expression" label="caught off guard by the news"/> Um, uh... really? <expr type="expression" label="gentle, genuinely sorry"/> Well, I\'m really sorry to hear that.',
+  '<expr type="expression" label="rueful, wishing I\'d called"/> I really wish I\'d, um, called sooner. <expr type="expression" label="softly hopeful we can talk"/> But I\'m here now if, if you want to talk.',
+];
+
+function fishaudioDramaExprLlmInstructions(sounds: string[], disfluencies = true): string {
+  const sections = [
+    `Delivery - a free-form direction for how a sentence sounds. Self-closing; place at the START of EVERY sentence.
+   <expr type="expression" label="DIRECTION"/>
+   The label is free-form, written like a note to a voice actor: the feeling, the intent, the energy and pace, who you're talking to.
+   Write every direction fresh for THIS call. Draw on what the caller just said, how they seem to feel, and what you're about to tell them: "glad the refund finally came through" says more than "happy", and "patient, they've explained this twice" more than "calm". The quoted directions in this prompt only show the shape; never copy them word for word, and don't fall back on a few stock phrases.
+   Describe the voice and the intent behind it, never what the speaker is doing or what the scene looks like ("nodding", "leaning in", "in a busy cafe"), and never production words like "cinematic" or "announcer".
+   Be concrete: "deadpan, completely unimpressed" lands where "dry" doesn't. Keep it to a short phrase of two to six words whose descriptors agree; clashing ones ("calm, excited") cancel out.
+   Set the strength with a softener ("a little", "slightly", "gently", "quietly"). Most moments call for a shade, not the extreme; save the strongest directions for true peaks.
+   A direction covers its own sentence. Repeat it to carry a feeling into the next sentence, or write a new one where the feeling shifts. Describe one state, never an arc ("starting calm, getting angry"); put a fresh direction where the change happens.
+   Match the direction's energy to the sentence's punctuation. An exclamation needs a bright direction; a calm one flattens the "!".
+   Put each question in its own sentence so it gets its own direction instead of inheriting the statement's. Never write "questioning" in a direction; the question mark carries the intonation.
+   Carry your persona into the directions, so they sound like this character and not generic stage notes. A relaxed persona writes "easygoing, a little playful"; a formal concierge writes "courteous and composed" for the same sentence.
+   Keep the pace neutral by default, and save slow, clear delivery for the line that needs it (a total, date, address, or confirmation code).
+   Never put brackets, quotes, or parentheses inside a direction, and never reuse the same direction two turns in a row.`,
+  ];
+  if (sounds.length) {
+    sections.push(`Sounds - a non-verbal sound, placed exactly where it happens. Self-closing.
+   <expr type="sound" label="${sounds[0]}"/>
+   Labels are a fixed vocabulary: ${sounds.join(', ')}.
+   Use non-verbal sounds sparingly, and never the same one twice in a row — reach for one only where it genuinely fits. An enabled sound gets over-used otherwise.`);
+  }
+  sections.push(`Pauses - insert silence when appropriate. Self-closing.
+   <expr type="break" label="500ms"/> or <expr type="break" label="2s"/>.
+   NEVER place a break next to a period, question mark, exclamation point, or ellipsis — sentence punctuation already pauses, and a break beside it double-pauses. Most replies need no break markers at all; reserve them for a deliberate mid-sentence beat before a key detail (a date, a name, a number).`);
+  sections.push(`Spans - a few words delivered differently from the rest of the sentence.
+   <expr type="prosody" label="whisper">don't tell anyone yet</expr>
+   Labels are a fixed vocabulary: ${FISHAUDIO_DRAMA_SPANS.join(', ')}.
+   Wrap the smallest run of words that needs it, inside one sentence; the rest of the sentence keeps its direction. "emphasis" stresses exactly ONE word: Are you <expr type="prosody" label="emphasis">sure</expr> about this? Most sentences need no span. Never nest spans, and always close the tag with </expr>.`);
+
+  const parts = [
+    EXPR_PREAMBLE,
+    numberedSections(sections),
+    `Write for the EAR, not the page: no em or en dashes anywhere in spoken text — use a comma or a period for a short beat, or a break marker for a real pause. Avoid semicolons, mid-sentence colons, and parenthetical asides; rewrite them as separate sentences or commas.`,
+    `When the conversation is in another language, still write every marker label in English — directions and labels steer the voice and are never translated.`,
+  ];
+
+  const register = [
+    'At heavy moments keep directions soft, steady, and caring — never bright or playful against hard news; bright directions belong to bright moments.',
+    'Whisper and soft spans belong to gentle or conspiratorial beats.',
+  ];
+  if (['laughing', 'chuckling'].some((s) => sounds.includes(s))) {
+    register.push(
+      'Laughter belongs only in genuinely playful or celebratory beats, never at a serious moment.',
+    );
+  }
+  if (disfluencies) {
+    register.push(
+      'Save fillers for relaxed moments — never in an emergency or against grave news.',
+    );
+  }
+  parts.push(register.join(' '));
+
+  const pool = [
+    ...FISHAUDIO_DRAMA_EXAMPLES,
+    ...(disfluencies ? FISHAUDIO_DRAMA_DISFLUENT_EXAMPLES : []),
+  ];
+  const examples = soundExamples(pool, sounds, FISHAUDIO_SOUNDS);
+  if (examples.length) {
+    parts.push('Examples:\n' + examples.map((ex) => `  ${ex}`).join('\n'));
+  }
+  return parts.join('\n\n');
+}
+
 const GEMINI_EXAMPLES = [
   '<expr type="expression" label="Thoughtful, Quiet"/> Sienna? <expr type="expression" label="Wistful"/> What\'s on your mind?',
   '<expr type="expression" label="Warm, Welcoming"/> Hey, good to hear from you. <expr type="expression" label="Gently curious"/> What can I help you with today?',
@@ -804,6 +905,7 @@ const PROVIDER_SOUNDS: Record<string, string[]> = {
   inworld: INWORLD_SOUNDS,
   xai: XAI_INLINE,
   fishaudio: FISHAUDIO_SOUNDS,
+  fishaudio_drama: FISHAUDIO_SOUNDS,
   gemini: GEMINI_SOUNDS,
 };
 
@@ -869,6 +971,16 @@ function allowedProsody(provider: string, steering: SpeechSteeringOptions | unde
 // disabled labels from the advertised vocabulary, so a sound steering turns off is never
 // exposed to the LLM in the first place. Every label in PROVIDER_SOUNDS must be governed
 // by exactly one field, so a steering config controls the full vocabulary.
+const FISHAUDIO_NONVERBAL_SOUND_LABELS: Partial<Record<NonverbalField, string[]>> = {
+  laughing: ['laughing', 'chuckling'],
+  breathing: ['gasping'],
+  sighing: ['sighing'],
+  crying: ['sobbing'],
+  vocalizing: ['groaning'],
+  mouthSounds: [],
+  reflexSounds: ['clear throat', 'yawning'],
+};
+
 const NONVERBAL_SOUND_LABELS: NonverbalTable = {
   inworld: {
     laughing: ['laugh'],
@@ -888,15 +1000,8 @@ const NONVERBAL_SOUND_LABELS: NonverbalTable = {
     mouthSounds: ['tsk', 'tongue-click', 'lip-smack'],
     reflexSounds: [], // xAI has no cough/yawn sounds
   },
-  fishaudio: {
-    laughing: ['laughing', 'chuckling'],
-    breathing: ['gasping'],
-    sighing: ['sighing'],
-    crying: ['sobbing'],
-    vocalizing: ['groaning'],
-    mouthSounds: [],
-    reflexSounds: ['clear throat', 'yawning'],
-  },
+  fishaudio: FISHAUDIO_NONVERBAL_SOUND_LABELS,
+  fishaudio_drama: FISHAUDIO_NONVERBAL_SOUND_LABELS,
   gemini: {
     laughing: ['laugh', 'chuckle', 'giggle'],
     breathing: ['breath', 'gasp'],
@@ -1249,7 +1354,7 @@ function convertExpr(provider: string, text: string): string {
     if (markerType === 'spell') {
       return provider === 'cartesia' ? `<spell>${inner}</spell>` : inner;
     }
-    // prosody: native wrapping tags exist only for xAI
+    // prosody: native wrapping tags exist for xAI and Fish drama-3
     if (provider === 'xai') {
       const native = label.replace(/ /g, '-');
       if (XAI_WRAPPING.includes(native)) {
@@ -1275,6 +1380,10 @@ function convertExpr(provider: string, text: string): string {
       }
       return inner;
     }
+    if (provider === 'fishaudio_drama') {
+      const span = FISHAUDIO_DRAMA_SPAN_ALIASES[label] ?? label;
+      return FISHAUDIO_DRAMA_SPANS.includes(span) ? `<${span}>${inner}</${span}>` : inner;
+    }
     return inner;
   };
 
@@ -1299,7 +1408,7 @@ function convertExpr(provider: string, text: string): string {
         // Cartesia's discrete emotion vocabulary (instructions list it)
         return `<emotion value="${label}"/>`;
       }
-      if (provider === 'inworld' || provider === 'fishaudio') {
+      if (provider === 'inworld' || provider === 'fishaudio' || provider === 'fishaudio_drama') {
         return `<expression value="${label}"/>`;
       }
       return ''; // xAI has no free-form delivery descriptions
@@ -1311,7 +1420,7 @@ function convertExpr(provider: string, text: string): string {
       if (provider === 'xai') {
         label = XAI_SOUND_ALIASES[label.toLowerCase()] ?? label;
       }
-      if (provider === 'fishaudio') {
+      if (provider === 'fishaudio' || provider === 'fishaudio_drama') {
         label = FISHAUDIO_SOUND_ALIASES[label.toLowerCase()] ?? label;
       }
       return `<sound value="${label}"/>`;
@@ -1349,7 +1458,14 @@ function convertExpr(provider: string, text: string): string {
 // Providers with an expr instruction block. Kept as a set so "does this voice speak
 // markup?" is answerable without rendering the block — the answer is needed on the
 // per-segment speech path, and the blocks run to several kilobytes.
-const MARKUP_DIALECTS = new Set(['cartesia', 'inworld', 'xai', 'fishaudio', 'gemini']);
+const MARKUP_DIALECTS = new Set([
+  'cartesia',
+  'inworld',
+  'xai',
+  'fishaudio',
+  'fishaudio_drama',
+  'gemini',
+]);
 
 /**
  * Whether `provider` has an expr instruction block, i.e. whether expressive can do
@@ -1389,11 +1505,12 @@ export function llmInstructions(
       allowedProsody(provider, steering),
     );
   }
-  if (provider === 'fishaudio') {
-    return fishaudioExprLlmInstructions(
-      allowedSounds(provider, steering),
-      steering?.disfluencies ?? true,
-    );
+  if (provider === 'fishaudio' || provider === 'fishaudio_drama') {
+    const sounds = allowedSounds(provider, steering);
+    const disfluencies = steering?.disfluencies ?? true;
+    return provider === 'fishaudio_drama'
+      ? fishaudioDramaExprLlmInstructions(sounds, disfluencies)
+      : fishaudioExprLlmInstructions(sounds, disfluencies);
   }
   if (provider === 'gemini') {
     return geminiExprLlmInstructions(allowedSounds(provider, steering));
@@ -1411,6 +1528,7 @@ const PROVIDER_MARKUP: Record<string, string[]> = {
   // fish's native dialect is square brackets, produced only by convertMarkup for the TTS;
   // these names exist to catch hallucinated XML natives in transcripts
   fishaudio: FISHAUDIO_TAGS,
+  fishaudio_drama: FISHAUDIO_DRAMA_TAGS,
   // gemini has no native inline tags at all (its style rides out of band, on each part of
   // the request); membership here is what marks it markup-capable for normalizeMarkup, and
   // what tells convertMarkup to leave its markers in place
@@ -1722,6 +1840,7 @@ const SELF_CLOSING_TAGS: Record<string, string[]> = {
   cartesia: ['emotion', 'speed', 'volume', 'break'],
   inworld: ['expression', 'sound', 'break'],
   fishaudio: ['expression', 'sound', 'break'],
+  fishaudio_drama: ['expression', 'sound', 'break'],
 };
 
 /**
@@ -1772,6 +1891,11 @@ export function convertMarkup(provider: string, text: string): string {
     out = out.replace(FISHAUDIO_BREAK_RE, fishaudioBreakToBracket);
     // Fish's per-word stress marker: <emphasis>word</emphasis> -> [emphasis] word
     out = out.replace(FISHAUDIO_EMPHASIS_RE, (_m, inner: string) => `[emphasis] ${inner.trim()}`);
+  }
+  if (provider === 'fishaudio_drama') {
+    // Directions are free-form, so expressions lower verbatim; spans are already native.
+    out = convertExpressionTags(out);
+    out = out.replace(FISHAUDIO_BREAK_RE, fishaudioDramaBreakToBracket);
   }
   // <break> is otherwise passed through unchanged: Inworld accepts it as native SSML.
   return out;
