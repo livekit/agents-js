@@ -1973,6 +1973,43 @@ describe('AgentActivity - transcriptsEquivalent', () => {
   });
 });
 
+describe('AgentActivity - stale preflight', () => {
+  function makeActivity(preflightTranscript: string) {
+    const cancelPreemptiveGeneration = vi.fn();
+    const activity = {
+      _preemptiveGeneration: {
+        info: { newTranscript: preflightTranscript },
+      },
+      cancelPreemptiveGeneration,
+    };
+    Object.setPrototypeOf(activity, AgentActivity.prototype);
+    return { activity: activity as unknown as AgentActivity, cancelPreemptiveGeneration };
+  }
+
+  it('cancels the preemptive reply when an interim moves past the preflight', () => {
+    const { activity, cancelPreemptiveGeneration } = makeActivity(
+      'I need to cancel my subscription.',
+    );
+
+    activity.onPreflightStale({
+      newTranscript: 'I need to cancel my subscription please',
+    });
+
+    expect(cancelPreemptiveGeneration).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['same transcript', 'Hello, how are you?'],
+    ['same words', 'hello how are you'],
+  ])('keeps the preemptive reply for %s', (_name, interim) => {
+    const { activity, cancelPreemptiveGeneration } = makeActivity('Hello, how are you?');
+
+    activity.onPreflightStale({ newTranscript: interim });
+
+    expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
+  });
+});
+
 /**
  * The pipeline task retains the speculative ChatMessage built at preflight time, so when the
  * preemptive generation is reused that message — not the finalized one — is what lands in

@@ -119,6 +119,7 @@ import {
   AudioRecognition,
   type EndOfTurnInfo,
   type PreemptiveGenerationInfo,
+  type PreflightStaleInfo,
   type RecognitionHooks,
   type STTPipeline,
 } from './audio_recognition.js';
@@ -2503,6 +2504,16 @@ export class AgentActivity implements RecognitionHooks {
       toolChoice: this.toolChoice,
       createdAt: Date.now(),
     };
+  }
+
+  /** Cancel a parked reply once the turn transcript no longer matches its preflight. */
+  onPreflightStale(info: PreflightStaleInfo): void {
+    if (
+      this._preemptiveGeneration !== undefined &&
+      !transcriptsEquivalent(this._preemptiveGeneration.info.newTranscript, info.newTranscript)
+    ) {
+      this.cancelPreemptiveGeneration();
+    }
   }
 
   onUserTurnExceeded(ev: UserTurnExceededEvent): void {
