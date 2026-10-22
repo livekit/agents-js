@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
-import { normalizeLanguage } from '../language.js';
+import { asLanguageCode, normalizeLanguage } from '../language.js';
 import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
 import { initializeLogger, log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
@@ -1009,6 +1009,208 @@ describe('Inference STT connection lifecycle', () => {
         ([message]) => typeof message === 'string' && message.includes('language_hint'),
       );
       expect(hintWarnings).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('drops a language hint added mid-session while the language is not multi', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const updates: Array<Record<string, unknown>> = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.update') updates.push(event.settings?.extra ?? {});
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await sessionCreated;
+        // let run() install the socket before updating it
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.updateOptions({
+          modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        });
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).not.toHaveProperty('language_hint');
+      // the drop applies to the frame, not to what the caller configured
+      expect(stream['opts'].modelOptions).toHaveProperty('language_hint', ['en', 'es']);
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toHaveLength(1);
+      expect(hintWarnings[0]?.[0]).toBe(
+        'Removed `language_hint` for deepgram/nova-3: it only applies with language "multi" (session language "en")',
+      );
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('does not warn again when a later update repeats an already dropped hint', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const updates: Array<Record<string, unknown>> = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.update') updates.push(event.settings?.extra ?? {});
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await sessionCreated;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.updateOptions({
+          modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        });
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).not.toHaveProperty('language_hint');
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      // the connect-time drop already spoke for this session
+      expect(hintWarnings).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('keeps a mid-session hint when the same update switches to multi language', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const updates: Array<{ language?: string; extra?: Record<string, unknown> }> = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.update') updates.push(event.settings ?? {});
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await sessionCreated;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.updateOptions({
+          language: asLanguageCode('multi'),
+          modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        });
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.language).toBe('multi');
+      expect(updates[0]?.extra).toMatchObject({ language_hint: ['en', 'es'] });
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toEqual([]);
     } finally {
       warn.mockRestore();
       for (const client of server.clients) client.terminate();

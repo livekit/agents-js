@@ -745,13 +745,18 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     return stream;
   }
 
-  /** Warn once: a reconnect re-runs the same drop, and repeating it would only add noise. */
-  #warnLanguageHintDropped(): void {
+  /**
+   * Warn once per instance that a `language_hint` was dropped, whether the drop happened at
+   * connect time or in a mid-session update.
+   *
+   * @internal
+   */
+  _warnLanguageHintDropped(model: string | undefined, language: string | undefined): void {
     if (this.#languageHintWarned) return;
     this.#languageHintWarned = true;
-    const sessionLanguage = this.opts.language?.trim() ? this.opts.language : 'unset';
+    const sessionLanguage = language?.trim() ? language : 'unset';
     this.#logger.warn(
-      `Removed \`language_hint\` for ${this.opts.model}: it only applies with language "multi" (session language "${sessionLanguage}")`,
+      `Removed \`language_hint\` for ${model}: it only applies with language "multi" (session language "${sessionLanguage}")`,
     );
   }
 
@@ -765,7 +770,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     } as Record<string, unknown>;
 
     if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
-      this.#warnLanguageHintDropped();
+      this._warnLanguageHintDropped(this.opts.model, this.opts.language);
     }
 
     const params = {
@@ -878,7 +883,15 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       const settings: Record<string, unknown> = {};
       if (opts.model !== undefined) settings.model = opts.model;
       if (opts.language !== undefined) settings.language = normalizeLanguage(opts.language);
-      if (opts.modelOptions !== undefined) settings.extra = opts.modelOptions;
+      if (opts.modelOptions !== undefined) {
+        // judged against the language this.opts already merged, so an update that sets `multi`
+        // keeps a hint supplied in the same call
+        const extra = { ...opts.modelOptions } as Record<string, unknown>;
+        if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
+          this.stt._warnLanguageHintDropped(this.opts.model, this.opts.language);
+        }
+        settings.extra = extra;
+      }
       if (Object.keys(settings).length > 0) {
         try {
           this.activeWs.send(JSON.stringify({ type: 'session.update', settings }));

@@ -7682,6 +7682,8 @@ class STT_2<TModel extends STTModels> extends STT {
     // (undocumented)
     _updateSessionKeyterms(keyterms: string[]): void;
     get vadPromise(): Promise<VAD | undefined>;
+    // @internal
+    _warnLanguageHintDropped(model: string | undefined, language: string | undefined): void;
 }
 
 declare namespace stt_2 {
