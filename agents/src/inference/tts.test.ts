@@ -258,6 +258,24 @@ describe('Inference TTS gateway notices', () => {
     expect(result.audioEvents).toHaveLength(1);
   });
 
+  it('drops malformed fallback activation notices without interrupting audio', async () => {
+    const result = await runGatewayEvents([
+      { type: 'session.created', session_id: 'session-1' },
+      {
+        type: 'fallback_activated',
+        session_id: 'session-1',
+        fallback_type: 'fallback',
+        model: 42,
+        cause: 'timeout',
+      },
+      audioEvent,
+      doneEvent,
+    ]);
+
+    expect(result.fallbackEvents).toEqual([]);
+    expect(result.audioEvents).toHaveLength(1);
+  });
+
   it('normalizes unsupported fallback causes without interrupting audio', async () => {
     const result = await runGatewayEvents([
       { type: 'session.created', session_id: 'session-1' },
