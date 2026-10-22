@@ -266,7 +266,14 @@ describe('realtime overlapping speech', () => {
       model.activeSession.emit('input_speech_started', {});
       await setImmediate();
       expect(speech.interrupted).toBe(!overlap);
-      expect(output.clears).toBe(overlap ? 0 : 1);
+      if (overlap) {
+        expect(output.clears).toBe(0);
+      } else {
+        await speech.waitForPlayout();
+        // Audio forwarding and message cleanup each clear their output.
+        expect(output.clears).toBe(2);
+        expect(model.activeSession.text).toBeUndefined();
+      }
       expect(session.userState).toBe('speaking');
     } finally {
       model.activeSession.endSpeech();
