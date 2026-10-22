@@ -692,6 +692,7 @@ export class Agent<UserData = any> {
               }
               controller.enqueue(chunk.frame);
             }
+            if (stream.error) throw stream.error;
           } finally {
             await cleanup();
           }

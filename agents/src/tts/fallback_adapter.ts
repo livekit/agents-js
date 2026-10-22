@@ -587,6 +587,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     })();
 
     for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
+      if (this.abortSignal.aborted) return;
       const originalTts = this.adapter.ttsInstances[i]!;
       const status = this.adapter.status[i]!;
       let lastRequestId: string = '';
@@ -721,6 +722,13 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             throw err;
           }),
         ]);
+        if (this.abortSignal.aborted) {
+          if (this.audioPushed) {
+            this.servedTts = originalTts;
+            recordFallbackServed(originalTts, i, this.ttsRequestSpan, this.callerSpan);
+          }
+          return;
+        }
         if (outputResult.status === 'rejected') {
           stream.close();
           throw outputResult.reason;
@@ -756,6 +764,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         await readInputLLMStream.catch(() => {});
         return;
       } catch (error) {
+        if (this.abortSignal.aborted) return;
         if (this.audioPushed) {
           this._logger.error(
             { tts: originalTts.label, error: providerError ?? error },
@@ -790,6 +799,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       }
     }
     await readInputLLMStream.catch(() => {});
+    if (this.abortSignal.aborted) return;
     const labels = this.adapter.ttsInstances.map((t) => t.label).join(', ');
     throw new APIConnectionError({
       message: `all TTS instances failed (${labels})`,

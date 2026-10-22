@@ -9,13 +9,9 @@ import { APIConnectionError } from '../_exceptions.js';
 import { ChatContext, ChatMessage, ToolError, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { FakeSTT } from '../stt/testing/fake_stt.js';
-import {
-  type ChunkedStream,
-  SynthesizeStream,
-  TTS,
-  StreamAdapter as TTSStreamAdapter,
-} from '../tts/index.js';
-import { Task } from '../utils.js';
+import { ChunkedStream, SynthesizeStream, TTS } from '../tts/index.js';
+import type { APIConnectOptions } from '../types.js';
+import { Future, Task } from '../utils.js';
 import { VAD, VADStream } from '../vad.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
 import { AgentActivity, agentActivityStorage } from './agent_activity.js';
@@ -83,13 +79,42 @@ class NonStreamingSTT extends FakeSTT {
 class NonStreamingTTS extends TTS {
   label = 'non-streaming-tts';
   closeCount = 0;
+  synthesisStarted = new Future();
 
-  constructor() {
+  constructor(readonly mode: 'success' | 'failure' | 'blocked' = 'success') {
     super(24_000, 1, { streaming: false });
   }
 
-  synthesize(): ChunkedStream {
-    throw new Error('not used by the node lifecycle test');
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    const { mode, synthesisStarted, sampleRate } = this;
+    return new (class extends ChunkedStream {
+      label = 'test.ChunkedStream';
+
+      protected async run(): Promise<void> {
+        synthesisStarted.resolve();
+        if (mode === 'blocked') {
+          if (!this.abortSignal.aborted) {
+            await new Promise<void>((resolve) =>
+              this.abortSignal.addEventListener('abort', () => resolve(), { once: true }),
+            );
+          }
+          return;
+        }
+        if (mode === 'failure') {
+          throw new APIConnectionError({ message: 'probe failure' });
+        }
+        this.queue.put({
+          requestId: 'test-request',
+          segmentId: 'test-segment',
+          frame: new AudioFrame(new Int16Array(240), sampleRate, 1, 240),
+          final: true,
+        });
+      }
+    })(text, this, connOptions, abortSignal);
   }
 
   stream(): SynthesizeStream {
@@ -99,16 +124,6 @@ class NonStreamingTTS extends TTS {
   override async close(): Promise<void> {
     this.closeCount++;
   }
-}
-
-function bindTestActivity(agent: Agent, models: { stt?: FakeSTT; tts?: TTS; vad?: VAD }): void {
-  (agent as any)._agentActivity = {
-    ...models,
-    agentSession: {
-      connOptions: { sttConnOptions: {}, ttsConnOptions: {} },
-    },
-    _resolveExpressiveOptions: () => undefined,
-  };
 }
 
 async function closeWithTimeout(session: AgentSession): Promise<void> {
@@ -529,19 +544,23 @@ describe('Agent', () => {
   });
 
   describe('temporary speech stream adapters', () => {
-    it('closes the STT adapter when the node is cancelled', async () => {
+    it('closes the STT adapter when the session closes', async () => {
       const stt = new NonStreamingSTT();
       const baseline = stt.listenerCount('metrics_collected');
-      const agent = new Agent({ instructions: 'test' });
-      bindTestActivity(agent, { stt, vad: new FakeVAD() });
-      const input = new ReadableStream<AudioFrame>();
+      const agent = new Agent({
+        instructions: 'test',
+        llm: new FakeLLM(),
+        stt,
+        vad: new FakeVAD(),
+      });
+      const session = new AgentSession({ vad: null, turnHandling: { turnDetection: null } });
 
-      const output = await Agent.default.sttNode(agent, input, {});
-      expect(output).not.toBeNull();
-      expect(stt.listenerCount('metrics_collected')).toBeGreaterThan(baseline);
-
-      await output!.cancel();
-
+      await session.start({ agent });
+      try {
+        expect(stt.listenerCount('metrics_collected')).toBeGreaterThan(baseline);
+      } finally {
+        await withTimeout(session.close(), 1_000);
+      }
       expect(stt.listenerCount('metrics_collected')).toBe(baseline);
       expect(stt.closeCount).toBe(0);
     });
@@ -549,58 +568,46 @@ describe('Agent', () => {
     it.each(['success', 'failure', 'blocked'] as const)(
       'closes the TTS adapter after %s',
       async (mode) => {
-        const tts = new NonStreamingTTS();
-        tts.on('error', () => {});
+        const tts = new NonStreamingTTS(mode);
+        const agent = new Agent({ instructions: 'test', llm: new FakeLLM(), tts });
+        const session = new AgentSession({
+          vad: null,
+          turnHandling: { turnDetection: null },
+          connOptions: { ttsConnOptions: { maxRetry: 0, timeoutMs: 120_000 } },
+        });
+        await session.start({ agent });
+        const onMetrics = vi.fn();
+        tts.on('metrics_collected', onMetrics);
         const baseline = tts.listenerCount('metrics_collected');
-        const agent = new Agent({ instructions: 'test' });
-        bindTestActivity(agent, { tts });
-        const frame = new AudioFrame(new Int16Array(160), 24_000, 1, 160);
-        let unblock!: () => void;
-        const blocked = new Promise<void>((resolve) => {
-          unblock = resolve;
-        });
-        const adaptedStream = {
-          updateInputStream() {},
-          close: unblock,
-          async *[Symbol.asyncIterator]() {
-            if (mode === 'failure') {
-              throw new APIConnectionError({ message: 'probe failure' });
-            }
-            if (mode === 'blocked') {
-              await blocked;
-              return;
-            }
-            yield { frame, timedTranscripts: [] };
-            yield SynthesizeStream.END_OF_STREAM;
-          },
-        } as unknown as SynthesizeStream;
-        const streamSpy = vi
-          .spyOn(TTSStreamAdapter.prototype, 'stream')
-          .mockReturnValue(adaptedStream);
-        const input = new ReadableStream<string>({
-          start(controller) {
-            controller.enqueue('Hello world, this is a complete sentence.');
-            controller.close();
-          },
-        });
+        const errorBaseline = tts.listenerCount('error');
 
         try {
-          const output = await Agent.default.ttsNode(agent, input, {});
-          expect(output).not.toBeNull();
+          for (let turn = 0; turn < (mode === 'success' ? 3 : 1); turn++) {
+            const input = new ReadableStream<string>({
+              start(controller) {
+                controller.enqueue('Hello world, this is a complete sentence.');
+                controller.close();
+              },
+            });
+            const output = await Agent.default.ttsNode(agent, input, {});
+            expect(output).not.toBeNull();
 
-          if (mode === 'success') {
-            expect(await collectReadableStream(output!)).toHaveLength(1);
-          } else if (mode === 'failure') {
-            await expect(collectReadableStream(output!)).rejects.toThrow('probe failure');
-          } else {
-            await output!.cancel();
+            if (mode === 'success') {
+              expect(await collectReadableStream(output!)).toHaveLength(1);
+            } else if (mode === 'failure') {
+              await expect(collectReadableStream(output!)).rejects.toThrow('probe failure');
+            } else {
+              await withTimeout(tts.synthesisStarted.await, 1_000);
+              await output!.cancel();
+            }
+
+            expect(tts.listenerCount('metrics_collected')).toBe(baseline);
+            expect(tts.listenerCount('error')).toBe(errorBaseline);
+            expect(tts.closeCount).toBe(0);
           }
-
-          expect(tts.listenerCount('metrics_collected')).toBe(baseline);
-          expect(tts.closeCount).toBe(0);
+          if (mode === 'success') expect(onMetrics).toHaveBeenCalledTimes(3);
         } finally {
-          unblock();
-          streamSpy.mockRestore();
+          await withTimeout(session.close(), 1_000);
         }
       },
     );

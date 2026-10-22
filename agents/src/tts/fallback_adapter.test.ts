@@ -15,7 +15,7 @@ import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import { basic } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TTS_STARTED_TIME } from '../types.js';
-import { delay } from '../utils.js';
+import { Future, delay } from '../utils.js';
 import { FallbackAdapter } from './fallback_adapter.js';
 import { StreamAdapter } from './stream_adapter.js';
 import { ChunkedStream, SynthesizeStream, TTS, type TTSError } from './tts.js';
@@ -46,6 +46,7 @@ class MockSynthesizeStream extends SynthesizeStream {
   }
 
   protected async run(): Promise<void> {
+    this.mockTts.started.resolve();
     if (this.blocked) {
       if (this.abortSignal.aborted) return;
       await new Promise<void>((resolve) => {
@@ -111,10 +112,12 @@ class MockChunkedStream extends ChunkedStream {
     private shouldFail: boolean,
     private blocked: boolean,
     connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
   ) {
-    super(text, mockTts, connOptions);
+    super(text, mockTts, connOptions, abortSignal);
   }
   protected async run(): Promise<void> {
+    this.mockTts.started.resolve();
     if (this.blocked) {
       if (this.abortSignal.aborted) return;
       await new Promise<void>((resolve) => {
@@ -157,6 +160,7 @@ class MockTTS extends TTS {
   label: string;
   shouldFail = false;
   blocked = false;
+  started = new Future();
   /** When failing, first consume a token (and mark started) before throwing. */
   failAfterInput = false;
   /** When failing, first emit one frame of audio before throwing. */
@@ -175,8 +179,19 @@ class MockTTS extends TTS {
     this.label = label;
   }
 
-  synthesize(text: string, connOptions?: APIConnectOptions): ChunkedStream {
-    return new MockChunkedStream(this, text, this.shouldFail, this.blocked, connOptions);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    return new MockChunkedStream(
+      this,
+      text,
+      this.shouldFail,
+      this.blocked,
+      connOptions,
+      abortSignal,
+    );
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
@@ -257,33 +272,84 @@ describe('TTS FallbackAdapter', () => {
     }
   });
 
-  it('closes a temporary stream adapter after cancellation', async () => {
-    const nonStreaming = new MockTTS('non-streaming', SAMPLE_RATE, false);
-    nonStreaming.blocked = true;
-    const adapter = new FallbackAdapter({ ttsInstances: [nonStreaming] });
-    const baseline = nonStreaming.listenerCount('metrics_collected');
+  describe.each([true, false])('cancellation with streaming=%s', (streaming) => {
+    it.each(['before synthesis', 'during synthesis'] as const)(
+      'preserves provider health when cancelled %s',
+      async (when) => {
+        const primary = new MockTTS('primary', SAMPLE_RATE, streaming);
+        primary.blocked = true;
+        const secondary = new MockTTS('secondary', SAMPLE_RATE, streaming);
+        const adapter = new FallbackAdapter({
+          ttsInstances: [primary, secondary],
+          maxRetryPerTTS: 0,
+        });
+        const errors: TTSError[] = [];
+        adapter.on('error', (error) => errors.push(error));
+        const primaryStream = vi.spyOn(primary, 'stream');
+        const primarySynthesize = vi.spyOn(primary, 'synthesize');
+        const secondaryStream = vi.spyOn(secondary, 'stream');
+        const secondarySynthesize = vi.spyOn(secondary, 'synthesize');
+        const metricsBaseline = primary.listenerCount('metrics_collected');
+        const errorBaseline = primary.listenerCount('error');
+        const stream = adapter.stream();
+        stream.updateInputStream(textInput());
+
+        try {
+          if (when === 'during synthesis') {
+            await primary.started.await;
+          }
+          stream.close();
+          await delay(50);
+
+          expect(adapter.status.map((status) => status.available)).toEqual([true, true]);
+          expect(adapter.status.every((status) => status.recoveringTask === null)).toBe(true);
+          expect(primaryStream).toHaveBeenCalledTimes(
+            when === 'during synthesis' && streaming ? 1 : 0,
+          );
+          expect(primarySynthesize).toHaveBeenCalledTimes(
+            when === 'during synthesis' && !streaming ? 1 : 0,
+          );
+          expect(secondaryStream).not.toHaveBeenCalled();
+          expect(secondarySynthesize).not.toHaveBeenCalled();
+          expect(errors).toEqual([]);
+          expect(stream.error).toBeUndefined();
+          expect(primary.listenerCount('metrics_collected')).toBe(metricsBaseline);
+          expect(primary.listenerCount('error')).toBe(errorBaseline);
+          expect(primary.closeCount).toBe(0);
+          expect(unhandledRejections).toEqual([]);
+        } finally {
+          stream.close();
+          await adapter.close();
+        }
+      },
+    );
+  });
+
+  it('does not report exhaustion when cancelled while input is still open', async () => {
+    const primary = new MockTTS('primary');
+    primary.shouldFail = true;
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+    const errors: TTSError[] = [];
+    adapter.on('error', (error) => errors.push(error));
     const stream = adapter.stream();
-    stream.updateInputStream(textInput());
+    stream.updateInputStream(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue('hello test');
+        },
+      }),
+    );
 
     try {
-      const deadline = Date.now() + 1_000;
-      while (
-        nonStreaming.listenerCount('metrics_collected') === baseline &&
-        Date.now() < deadline
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      expect(nonStreaming.listenerCount('metrics_collected')).toBeGreaterThan(baseline);
-
+      await vi.waitFor(() => expect(adapter.status[0]!.available).toBe(false));
       stream.close();
-      const closeDeadline = Date.now() + 1_000;
-      while (
-        nonStreaming.listenerCount('metrics_collected') > baseline &&
-        Date.now() < closeDeadline
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      expect(nonStreaming.listenerCount('metrics_collected')).toBe(baseline);
+      await delay(50);
+      expect(errors).toEqual([]);
+      expect(stream.error).toBeUndefined();
     } finally {
       stream.close();
       await adapter.close();
