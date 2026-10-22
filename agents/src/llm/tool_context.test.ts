@@ -22,6 +22,18 @@ import {
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('tools object compatibility', () => {
+  it('preserves metadata on named tools and through anonymous tool normalization', () => {
+    const meta = { guardrails: { requiresApproval: true }, tags: ['orders'] };
+    const options = { description: 'Look up an order', meta, execute: async () => 'found' };
+    const namedTool = tool({ name: 'lookup', ...options });
+    const anonymousTool = tool(options);
+
+    expect(namedTool.meta).toEqual(meta);
+    expect(anonymousTool.meta).toEqual(meta);
+    const toolCtx = new ToolContext({ lookup: anonymousTool });
+    expect(toolCtx.copy().getFunctionTool('lookup')?.meta).toEqual(meta);
+  });
+
   it('normalizes object tools into named function tools', () => {
     const getWeather = tool({
       description: 'Get the weather',

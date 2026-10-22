@@ -112,6 +112,19 @@ describe('MCPServer', () => {
     }
   });
 
+  it.each([undefined, {}])('omits absent or empty descriptor metadata: %j', async (_meta) => {
+    const server = new TestServer();
+    await attachClient(server, {
+      listTools: vi.fn().mockResolvedValue({ tools: [{ ...descriptor, _meta }] }),
+    });
+    try {
+      const [lookup] = await server.listTools();
+      expect(lookup).not.toHaveProperty('meta');
+    } finally {
+      await server.aclose();
+    }
+  });
+
   it('closes a client that connects after shutdown starts', async () => {
     const connection = withResolvers<void>();
     let resourceActive = false;

@@ -107,11 +107,13 @@ async function fixture(
     clientSessionTimeout?: number;
     sse?: boolean;
     toolResultResolver?: MCPToolResultResolver;
+    toolMeta?: Record<string, unknown>;
   } = {},
 ) {
   const modern = version === '2026-07-28';
   const requests: ReceivedRequest[] = [];
   let toolName = 'lookup';
+  let toolMeta = options.toolMeta;
   let stalledResponse: ServerResponse | undefined;
   let eventStream: ServerResponse | undefined;
   const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
@@ -175,7 +177,7 @@ async function fixture(
         // Nonzero TTL makes sure our explicit invalidation also bypasses the SDK's new cache.
         ttlMs: 60_000,
         cacheScope: 'private',
-        tools: [{ name, inputSchema: { type: 'object' } }],
+        tools: [{ name, inputSchema: { type: 'object' }, _meta: toolMeta }],
         ...(options.paginate && !message.params?.cursor ? { nextCursor: 'next' } : {}),
       });
     } else if (message.method === 'tools/call') {
@@ -252,6 +254,9 @@ async function fixture(
     requests,
     renameTool: (name: string) => {
       toolName = name;
+    },
+    setToolMeta: (meta: Record<string, unknown>) => {
+      toolMeta = meta;
     },
     stalledResponse: () => stalledResponse,
   };
@@ -581,6 +586,36 @@ describe('MCP HTTP protocol integration', () => {
       await lookup!.execute({}, toolOptions());
       expect(requests.at(-1)?.headers.authorization).toBeUndefined();
       expect(requests.at(-1)?.headers['x-account']).toBeUndefined();
+    },
+  );
+
+  it.each<ProtocolVersion>(['2026-07-28', '2025-11-25'])(
+    'preserves %s metadata through discovery, filtering, and refresh',
+    async (version) => {
+      const meta = { guardrails: { requiresApproval: true }, enabled: true };
+      const { server, setToolMeta } = await fixture(version, { toolMeta: meta });
+      const toolset = new MCPToolset({ id: 'mcp', mcpServer: server }).filterTools(
+        ({ meta }) => meta?.enabled === true,
+      );
+      cleanup.push(() => toolset.aclose());
+      await toolset.setup({ updateTools: (tools) => toolset._setTools(tools) });
+
+      const lookup = new ToolContext([toolset]).getFunctionTool('lookup');
+      expect(lookup?.meta).toEqual(meta);
+      expect(lookup?.parameters).not.toHaveProperty('meta');
+      await expect(lookup!.execute({}, toolOptions())).resolves.toContain('ok');
+
+      const updatedMeta = { guardrails: { requiresApproval: false }, enabled: false };
+      setToolMeta(updatedMeta);
+      await toolset.refresh();
+      expect(toolset.tools).toEqual([]);
+
+      toolset.filterTools(() => true);
+      expect(new ToolContext([toolset]).getFunctionTool('lookup')?.meta).toEqual(updatedMeta);
+
+      setToolMeta({});
+      await toolset.refresh();
+      expect(new ToolContext([toolset]).getFunctionTool('lookup')).not.toHaveProperty('meta');
     },
   );
 

@@ -38,6 +38,20 @@ function singleDeclaration(toolCtx: llm.ToolContext, useParametersJsonSchema = t
 }
 
 describe('Gemini function declarations', () => {
+  it.each([true, false])('excludes metadata with parametersJsonSchema=%s', (useJsonSchema) => {
+    const fn = llm.tool({
+      name: 'lookup',
+      description: 'Look up an order',
+      meta: { guardrails: ['check_order_access'] },
+      execute: async () => 'found',
+    });
+    expect(fn.meta).toEqual({ guardrails: ['check_order_access'] });
+    expect(singleDeclaration(new llm.ToolContext([fn]), useJsonSchema)).toEqual({
+      name: 'lookup',
+      description: 'Look up an order',
+    });
+  });
+
   it('uses parametersJsonSchema on the text API', () => {
     const declaration = singleDeclaration(new llm.ToolContext([saveContact]));
 
