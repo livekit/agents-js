@@ -67,6 +67,20 @@ describe('AssemblyAI streaming configuration', () => {
     });
   });
 
+  it('leaves max turn silence to the mode preset when only min is set', async () => {
+    await withProvider({ mode: 'max_accuracy', minTurnSilence: 200 }, async (_p, query) => {
+      expect(query.get('min_turn_silence')).toBe('200');
+      expect(query.has('max_turn_silence')).toBe(false);
+    });
+  });
+
+  it('defaults both turn silences to 100ms without a mode preset', async () => {
+    await withProvider({}, async (_p, query) => {
+      expect(query.get('min_turn_silence')).toBe('100');
+      expect(query.get('max_turn_silence')).toBe('100');
+    });
+  });
+
   it('sends both partial controls in a live update', async () => {
     await withProvider({}, async (provider, _query, messages) => {
       provider.updateOptions({ continuousPartials: false, interruptionDelay: 0 });
