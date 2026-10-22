@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { log } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { STTv2, type STTv2Options } from './stt_v2.js';
 
 type TestSpeechStream = {
@@ -16,6 +17,10 @@ type TestSpeechStream = {
 function makeStream(opts: Partial<STTv2Options> = {}): TestSpeechStream {
   return new STTv2({ apiKey: 'test-api-key', ...opts }).stream() as unknown as TestSpeechStream;
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('Deepgram STTv2 connection options', () => {
   it.each([
@@ -51,6 +56,65 @@ describe('Deepgram STTv2 connection options', () => {
     expect(defaultStream._liveConfig()).not.toHaveProperty('profanity_filter');
     expect(defaultStream._liveConfig()).not.toHaveProperty('redact');
     defaultStream.close();
+  });
+});
+
+describe('Deepgram STTv2 language hints', () => {
+  // Flux is the only model Deepgram accepts `language_hint` on: any other one is a 400 at
+  // connect, so the option has to be dropped rather than sent.
+  it('drops the hint for a model that cannot take it', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const stream = makeStream({ model: 'flux-general-en', languageHint: ['en', 'es'] });
+
+    expect(stream._liveConfig()).not.toHaveProperty('language_hint');
+    expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
+      { model: 'flux-general-en' },
+      'Removed `languageHint`: it is only supported by `flux-general-multi`',
+    );
+    stream.close();
+  });
+
+  it('sends the hint for flux-general-multi', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const stream = makeStream({ model: 'flux-general-multi', languageHint: ['en', 'es'] });
+
+    expect(stream._liveConfig().language_hint).toEqual(['en', 'es']);
+    expect(warnSpy).not.toHaveBeenCalled();
+    stream.close();
+  });
+
+  it('drops a hint a later update sets for a model that cannot take it', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const provider = new STTv2({ apiKey: 'test-api-key', model: 'flux-general-en' });
+    const stream = provider.stream() as unknown as TestSpeechStream;
+
+    provider.updateOptions({ languageHint: ['en', 'es'] });
+
+    expect(stream._liveConfig()).not.toHaveProperty('language_hint');
+    expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
+      { model: 'flux-general-en' },
+      'Removed `languageHint`: it is only supported by `flux-general-multi`',
+    );
+    stream.close();
+  });
+
+  it('keeps a hint an update sets for flux-general-multi', () => {
+    const provider = new STTv2({ apiKey: 'test-api-key', model: 'flux-general-multi' });
+    const stream = provider.stream() as unknown as TestSpeechStream;
+
+    provider.updateOptions({ languageHint: ['en'] });
+
+    expect(stream._liveConfig().language_hint).toEqual(['en']);
+    stream.close();
+  });
+
+  it('never puts the hint on the live config of a model that cannot take it', () => {
+    const stream = makeStream({ model: 'flux-general-en' });
+
+    stream.updateOptions({ languageHint: ['en', 'es'] });
+
+    expect(stream._liveConfig()).not.toHaveProperty('language_hint');
+    stream.close();
   });
 });
 

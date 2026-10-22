@@ -51,7 +51,7 @@ export interface STTv2Options {
   tags?: string[];
   /**
    * List of language hints to bias the model for improved accuracy.
-   * Only usable with `flux-general-multi`.
+   * Only usable with `flux-general-multi`; any other model drops it with a warning.
    */
   // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 61 line
   languageHint?: string[];
@@ -75,6 +75,22 @@ function validateTags(tags: string[]): string[] {
     }
   }
   return tags;
+}
+
+// Deepgram answers `language_hint` with a 400 on every model but this one.
+const FLUX_MULTI_MODEL = 'flux-general-multi';
+
+/**
+ * Removes a `languageHint` the model cannot apply, reporting whether one was removed. Deepgram
+ * accepts `language_hint` only on `flux-general-multi`, so a session on any other model fails
+ * instead of degrading.
+ */
+function dropUnsupportedLanguageHint(model: string, opts: { languageHint?: string[] }): boolean {
+  if (model === FLUX_MULTI_MODEL) return false;
+  if (!opts.languageHint || opts.languageHint.length === 0) return false;
+
+  delete opts.languageHint;
+  return true;
 }
 
 /**
@@ -117,6 +133,7 @@ export class STTv2 extends stt.STT {
   #streams = new Set<WeakRef<SpeechStreamv2>>();
   #userKeyterms: string[];
   #sessionKeyterms: string[] = [];
+  #languageHintWarned = false;
 
   /**
    * Create a new Deepgram STTv2 instance.
@@ -151,15 +168,8 @@ export class STTv2 extends stt.STT {
     }
 
     // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 134-138 lines
-    if (
-      this.#opts.languageHint &&
-      this.#opts.languageHint.length > 0 &&
-      this.#opts.model !== 'flux-general-multi'
-    ) {
-      this.#logger.warn(
-        { model: this.#opts.model },
-        '`languageHint` is only supported by `flux-general-multi` and will be ignored for this model',
-      );
+    if (dropUnsupportedLanguageHint(this.#opts.model, this.#opts)) {
+      this.#warnLanguageHintRemoved();
     }
   }
 
@@ -212,6 +222,14 @@ export class STTv2 extends stt.STT {
     };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
 
+    // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 244-249 lines
+    const hintRemoved = dropUnsupportedLanguageHint(this.#opts.model, this.#opts);
+    // every stream keeps its own copy of the options, so drop the hint there too
+    dropUnsupportedLanguageHint(this.#opts.model, nextOpts);
+    if (hintRemoved) {
+      this.#warnLanguageHintRemoved();
+    }
+
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
@@ -221,17 +239,6 @@ export class STTv2 extends stt.STT {
       }
     }
 
-    // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 244-249 lines
-    if (
-      this.#opts.languageHint &&
-      this.#opts.languageHint.length > 0 &&
-      this.#opts.model !== 'flux-general-multi'
-    ) {
-      this.#logger.warn(
-        { model: this.#opts.model },
-        '`languageHint` is only supported by `flux-general-multi` and will be ignored for this model',
-      );
-    }
     this.#logger.debug('Updated STTv2 options');
   }
 
@@ -258,6 +265,19 @@ export class STTv2 extends stt.STT {
         stream.updateOptions({ keyterms: merged });
       }
     }
+  }
+
+  /**
+   * Warn once per instance that a `languageHint` was removed rather than sent. Deepgram fails a
+   * session on a model that has no hint support.
+   */
+  #warnLanguageHintRemoved(): void {
+    if (this.#languageHintWarned) return;
+    this.#languageHintWarned = true;
+    this.#logger.warn(
+      { model: this.#opts.model },
+      'Removed `languageHint`: it is only supported by `flux-general-multi`',
+    );
   }
 }
 
@@ -629,7 +649,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
     if (this.#opts.tags && this.#opts.tags.length > 0) params.tag = this.#opts.tags;
 
     // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 480-481 lines
-    if (this.#opts.languageHint && this.#opts.languageHint.length > 0) {
+    // Deepgram rejects the parameter on any other model, so only send it where it applies.
+    if (this.#opts.model === FLUX_MULTI_MODEL && this.#opts.languageHint?.length) {
       params.language_hint = this.#opts.languageHint;
     }
 

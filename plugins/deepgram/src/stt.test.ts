@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIStatusError, DEFAULT_API_CONNECT_OPTIONS } from '@livekit/agents';
+import { APIStatusError, DEFAULT_API_CONNECT_OPTIONS, log } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT } from './stt.js';
 
@@ -39,6 +39,10 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<vo
   }
   throw new Error('timed out waiting for condition');
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('Deepgram streaming language detection', () => {
   // Deepgram only supports language detection for prerecorded audio, so a
@@ -127,6 +131,92 @@ describe('Deepgram streaming flush', () => {
       stream.pushFrame(makeFrame(480));
       stream.flush();
       await waitUntil(() => wire.join(',') === 'audio,Finalize');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+describe('Deepgram streaming language hints', () => {
+  it('sends language_hint once per language in multi language mode', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_socket, request) => urls.push(request.url ?? ''));
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseUrl,
+      language: 'multi',
+      languageHint: ['en', 'es'],
+    }).stream();
+    try {
+      await waitUntil(() => urls.length > 0);
+      const url = new URL(urls[0]!, 'ws://127.0.0.1');
+      expect(url.searchParams.getAll('language_hint')).toEqual(['en', 'es']);
+      expect(url.searchParams.get('language')).toBe('multi');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('drops the hint and warns once for any other language', async () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const { wss, baseUrl } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_socket, request) => urls.push(request.url ?? ''));
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseUrl,
+      language: 'en-US',
+      languageHint: ['en', 'es'],
+    }).stream();
+    try {
+      await waitUntil(() => urls.length > 0);
+      expect(urls[0]).not.toContain('language_hint');
+      expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
+        { model: 'nova-3', language: 'en-US' },
+        'Removed `languageHint`: it only applies with language "multi"',
+      );
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('stops sending the hint when the language leaves multi', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const urls: string[] = [];
+    const wire: string[] = [];
+    wss.on('connection', (socket, request) => {
+      urls.push(request.url ?? '');
+      socket.on('message', (_data, isBinary) => {
+        if (isBinary) wire.push('audio');
+      });
+    });
+
+    const provider = new STT({
+      apiKey: 'test-key',
+      baseUrl,
+      language: 'multi',
+      languageHint: ['en', 'es'],
+    });
+    const stream = provider.stream({
+      connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0, retryIntervalMs: 1 },
+    });
+    try {
+      // The first audio frame proves the stream reached its connection loop, so the update below
+      // cannot race the initial connect and get dropped.
+      stream.pushFrame(makeFrame(1600));
+      await waitUntil(() => wire.length > 0);
+      expect(urls[0]).toContain('language_hint=en');
+
+      stream.updateOptions({ language: 'en-US' });
+
+      await waitUntil(() => urls.length === 2);
+      expect(urls[1]).not.toContain('language_hint');
     } finally {
       stream.close();
       await closeWebSocketServer(wss);
