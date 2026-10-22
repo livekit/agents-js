@@ -1,0 +1,19 @@
+agents/src/voice/realtime_overlapping_speech.test.ts
+  s_7b536f18239596::t_ec6139ed0910ab 269-276
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de36a554a325188cb415f3a5c21f903127180e13",
+  "prompts": {},
+  "sessions": {
+    "s_7b536f18239596": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16454-34dd-7782-8ca2-5ac476814edb",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
