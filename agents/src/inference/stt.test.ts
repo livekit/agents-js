@@ -9,7 +9,7 @@ import { APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, type VADStream } from '../vad.js';
@@ -780,6 +780,62 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
+  it('drops the Deepgram Nova-3 language hint when the language is not multi', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let settings: { language?: string; extra?: Record<string, unknown> } = {};
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          settings = event.settings ?? {};
+        } else if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(settings.extra).not.toHaveProperty('language_hint');
+      expect(warn).toHaveBeenCalledWith(
+        'Removed `language_hint` for deepgram/nova-3: it only applies with language "multi" (session language "en")',
+      );
+      // the drop is per session, not a rewrite of what the caller configured
+      expect(stt['opts'].modelOptions).toHaveProperty('language_hint', ['en', 'es']);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('sends the Deepgram Nova-3 language hint alongside multi language', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
@@ -825,6 +881,136 @@ describe('Inference STT connection lifecycle', () => {
       expect(settings.language).toBe('multi');
       expect(settings.extra).toMatchObject({ language_hint: ['en', 'es'] });
     } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('keeps the language hint for Deepgram Flux under a non-multi language', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let settings: { language?: string; extra?: Record<string, unknown> } = {};
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          settings = event.settings ?? {};
+        } else if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/flux-general-multi',
+        language: 'en',
+        modelOptions: {
+          language_hint: ['en', 'es'],
+        } satisfies STTOptions<'deepgram/flux-general-multi'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(settings.extra).toMatchObject({ language_hint: ['en', 'es'] });
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('drops the hint and warns once across a reconnect', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const frames: Array<Record<string, unknown>> = [];
+    let connectionCount = 0;
+    let resolveSecondConnection!: () => void;
+    const secondConnection = new Promise<void>((resolve) => {
+      resolveSecondConnection = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      const connection = connectionCount;
+      if (connection === 2) resolveSecondConnection();
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          frames.push(event.settings?.extra ?? {});
+          if (connection === 1) {
+            socket.send(JSON.stringify({ type: 'session.closed' }), () => socket.close());
+          }
+        }
+        if (connection === 2 && event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'final words', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await secondConnection;
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(connectionCount).toBe(2);
+      expect(frames).toHaveLength(2);
+      for (const extra of frames) {
+        expect(extra).not.toHaveProperty('language_hint');
+      }
+      // `log()` is a shared singleton, so the spy also sees the framework's own retry warning
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
       for (const client of server.clients) client.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

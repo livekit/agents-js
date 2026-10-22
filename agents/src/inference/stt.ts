@@ -444,6 +444,27 @@ function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VA
   return vad;
 }
 
+/**
+ * Deepgram applies `language_hint` only in Nova-3 multi language mode, and the gateway drops the
+ * key for every other language, so sending one there is silently ignored. The Flux provider
+ * forwards its hint under any language, so Flux models are exempt; non-Deepgram models have no
+ * such option.
+ *
+ * Removes the key from `extra` in place and reports whether it removed one.
+ */
+function dropUnsupportedLanguageHint(
+  model: string | undefined,
+  language: string | undefined,
+  extra: Record<string, unknown>,
+): boolean {
+  if (!model?.startsWith('deepgram/') || model.startsWith('deepgram/flux')) return false;
+  if ((language ?? '').trim().toLowerCase() === 'multi') return false;
+  if (!('language_hint' in extra)) return false;
+
+  delete extra.language_hint;
+  return true;
+}
+
 export type STTEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
@@ -476,6 +497,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   private _vadPromise?: Promise<VAD | undefined>;
   /** framework-managed; merged into modelOptions @internal */
   _sessionKeyterms: string[] = [];
+  #languageHintWarned = false;
 
   /**
    * Resolves to the VAD instance for the current model, or `undefined` if the model
@@ -723,19 +745,35 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     return stream;
   }
 
+  /** Warn once: a reconnect re-runs the same drop, and repeating it would only add noise. */
+  #warnLanguageHintDropped(): void {
+    if (this.#languageHintWarned) return;
+    this.#languageHintWarned = true;
+    const sessionLanguage = this.opts.language?.trim() ? this.opts.language : 'unset';
+    this.#logger.warn(
+      `Removed \`language_hint\` for ${this.opts.model}: it only applies with language "multi" (session language "${sessionLanguage}")`,
+    );
+  }
+
   async connectWs(timeout: number): Promise<WebSocket> {
+    const extra = {
+      ...this.opts.modelOptions,
+      ...(keytermsExtraForModel(this.opts.model, {
+        extraKwargs: this.opts.modelOptions as Record<string, unknown>,
+        sessionKeyterms: this._sessionKeyterms,
+      }) ?? {}),
+    } as Record<string, unknown>;
+
+    if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
+      this.#warnLanguageHintDropped();
+    }
+
     const params = {
       settings: {
         sample_rate: String(this.opts.sampleRate),
         encoding: this.opts.encoding,
         // the framework session keyterms into the user's extra_kwargs keyterm key)
-        extra: {
-          ...this.opts.modelOptions,
-          ...(keytermsExtraForModel(this.opts.model, {
-            extraKwargs: this.opts.modelOptions as Record<string, unknown>,
-            sessionKeyterms: this._sessionKeyterms,
-          }) ?? {}),
-        },
+        extra,
       },
     } as Record<string, unknown>;
 
