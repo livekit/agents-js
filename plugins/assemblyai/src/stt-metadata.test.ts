@@ -225,6 +225,52 @@ describe('AssemblyAI STT metadata', () => {
   });
 });
 
+describe('AssemblyAI STT PII redaction', () => {
+  it('emits only the redacted transcript text for final turns', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    wss.on('connection', (ws) => {
+      ws.once('message', () => {
+        ws.send(
+          JSON.stringify({
+            type: 'Turn',
+            transcript: 'My name is [PERSON_NAME].',
+            utterance: 'My name is Sonny.',
+            end_of_turn: true,
+            words: [
+              { text: 'My', start: 0, end: 200, confidence: 0.9 },
+              { text: 'name', start: 200, end: 400, confidence: 0.9 },
+              { text: 'is', start: 400, end: 500, confidence: 0.9 },
+              { text: 'Sonny.', start: 500, end: 900, confidence: 0.9 },
+            ],
+          }),
+        );
+      });
+    });
+
+    try {
+      const stream = new STT({ apiKey: 'test-key', baseUrl, redactPii: true }).stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      await waitUntil(() => wss.clients.size > 0);
+      stream.pushFrame(makeFrame());
+      stream.endInput();
+
+      const events = await collectUntilEnd(stream);
+      stream.close();
+
+      const alternatives = events.flatMap((event) => event.alternatives ?? []);
+      expect(alternatives).toHaveLength(3);
+      for (const alternative of alternatives) {
+        expect(alternative.text).toBe('My name is [PERSON_NAME].');
+        expect(alternative.words).toEqual([]);
+        expect(alternative.endTime).toBeGreaterThan(alternative.startTime);
+      }
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
 describe('AssemblyAI STT speaker labels', () => {
   it('surfaces the turn speaker label as speakerId', async () => {
     const transcript = await collectTranscript(

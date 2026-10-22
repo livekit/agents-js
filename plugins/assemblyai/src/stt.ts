@@ -770,13 +770,18 @@ export class SpeechStream extends stt.SpeechStream {
       }),
     );
 
+    // AssemblyAI only guarantees redaction of `transcript`, so redacted final turns emit no
+    // per-word or utterance text; turn timing and confidence still come from `words`.
+    const redactFinal = this.#opts.redactPii === true && endOfTurn;
+    const emittedWords = redactFinal ? [] : timedWords;
+
     let startTime = 0;
     let endTime = 0;
     let confidence = 0;
 
     // `words` are cumulative for the turn — emit as an interim transcript.
     if (timedWords.length > 0) {
-      const interimText = timedWords.map((w) => w.text).join(' ');
+      const interimText = redactFinal ? transcript : timedWords.map((w) => w.text).join(' ');
       startTime = timedWords[0]!.startTime ?? 0;
       endTime = timedWords[timedWords.length - 1]!.endTime ?? 0;
       confidence = this.#averageConfidence(timedWords);
@@ -790,7 +795,7 @@ export class SpeechStream extends stt.SpeechStream {
             startTime,
             endTime,
             confidence,
-            words: timedWords,
+            words: emittedWords,
             speakerId,
             ...(metadata ? { metadata } : {}),
           },
@@ -815,11 +820,11 @@ export class SpeechStream extends stt.SpeechStream {
         alternatives: [
           {
             language,
-            text: utterance,
+            text: redactFinal ? transcript : utterance,
             startTime: this.#lastPreflightStartTime,
             endTime,
             confidence: utteranceConfidence,
-            words: utteranceWords,
+            words: redactFinal ? [] : utteranceWords,
             speakerId,
             ...(metadata ? { metadata } : {}),
           },
@@ -841,7 +846,7 @@ export class SpeechStream extends stt.SpeechStream {
             startTime,
             endTime,
             confidence,
-            words: timedWords,
+            words: emittedWords,
             speakerId,
             ...(metadata ? { metadata } : {}),
           },
