@@ -276,13 +276,18 @@ export class RoomSessionTransport extends SessionTransport {
       if (remoteIdentity) {
         opts.destinationIdentities = [remoteIdentity];
       }
-      // rtc-node exposes no abort for streamBytes/write/close. Stop our waits and
-      // never start another operation if an already-submitted one finishes late.
-      const writer = await abortable(this.room.localParticipant!.streamBytes(opts), signal);
-      signal.throwIfAborted();
-      await abortable(writer.write(new Uint8Array(data)), signal);
-      signal.throwIfAborted();
-      await abortable(writer.close(), signal);
+      // rtc-node cannot cancel an in-flight open/write. Keep its cleanup attached
+      // after abort, but never submit payload through a writer that arrives late.
+      const sending = (async () => {
+        const writer = await this.room.localParticipant!.streamBytes(opts);
+        try {
+          signal.throwIfAborted();
+          await writer.write(new Uint8Array(data));
+        } finally {
+          await writer.close();
+        }
+      })();
+      await abortable(sending, signal);
     } catch (e) {
       // An abandoned SDK write may still be in flight. Prevent another stream
       // from overlapping it when this sender releases the serialization lock.
@@ -499,6 +504,7 @@ export class TcpSessionTransport extends SessionTransport {
           const length = buffer.readUInt32BE(0);
           if (length > TCP_MAX_MESSAGE_SIZE) {
             log().error({ length }, 'TCP session message too large, closing transport');
+            await this.close();
             return;
           }
           if (buffer.length < TCP_HEADER_SIZE + length) break;

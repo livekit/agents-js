@@ -268,9 +268,11 @@ export class RunResult<T = unknown> {
     }
     if (this.session?._globalRunState === this) this.session._globalRunState = undefined;
     this.session = undefined;
-    // SpeechHandle bounds interruption cleanup with its existing watchdog. Do not
-    // await arbitrary observed tasks or provider promises, which may ignore abort.
-    await Promise.allSettled(speeches.map((handle) => handle.waitForPlayout()));
+    // The playout watchdog can mark a handle done while its reply still runs.
+    // Join the actual speech tasks before releasing ownership of their cleanup.
+    await Promise.allSettled(
+      speeches.flatMap((handle) => handle._tasks.map((task) => task.result)),
+    );
   }
 
   /** @internal – Reject the run with an error (e.g. when deferred generateReply fails). */

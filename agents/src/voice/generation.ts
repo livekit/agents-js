@@ -1053,13 +1053,21 @@ async function forwardText(
   textOutput: TextOutput | null,
 ): Promise<void> {
   const reader = source.getReader();
+  let cancellation: Promise<void> | undefined;
+  const cancelReader = () => {
+    cancellation ??= reader.cancel().catch((error) => {
+      log().debug({ error }, 'failed to cancel transcription stream reader');
+    });
+  };
+  signal.addEventListener('abort', cancelReader, { once: true });
+  if (signal.aborted) cancelReader();
   try {
     while (true) {
       if (signal.aborted) {
         break;
       }
       const { done, value: delta } = await reader.read();
-      if (done) break;
+      if (done || signal.aborted) break;
 
       const deltaIsTimedString = isTimedString(delta);
       const textDelta = deltaIsTimedString ? delta.text : delta;
@@ -1074,10 +1082,14 @@ async function forwardText(
       }
     }
   } finally {
-    if (textOutput !== null) {
-      textOutput.flush();
+    signal.removeEventListener('abort', cancelReader);
+    cancelReader();
+    try {
+      await cancellation;
+    } finally {
+      reader.releaseLock();
+      textOutput?.flush();
     }
-    reader?.releaseLock();
   }
 }
 

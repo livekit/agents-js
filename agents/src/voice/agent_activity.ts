@@ -4085,7 +4085,9 @@ export class AgentActivity implements RecognitionHooks {
       const segmentAbortController = new AbortController();
       const abortSegment = () => segmentAbortController.abort();
       replyAbortController.signal.addEventListener('abort', abortSegment, { once: true });
+      if (replyAbortController.signal.aborted) abortSegment();
       const forwardTasks: Task<void>[] = [];
+      let textForwardTask: Task<void> | undefined;
 
       try {
         let transcriptionInput: ReadableStream<string | TimedString> = segment.textStream;
@@ -4102,14 +4104,29 @@ export class AgentActivity implements RecognitionHooks {
           }
         }
 
-        const trNodeResult = await this.agent.transcriptionNode(transcriptionInput, modelSettings);
+        const transcription = this.agent.transcriptionNode(transcriptionInput, modelSettings);
+        await speechHandle.waitIfNotInterrupted([
+          raceWithAbort(transcription, replyAbortController.signal),
+        ]);
+        if (speechHandle.interrupted || replyAbortController.signal.aborted) {
+          // The hook may ignore cancellation. Retain only cleanup for its eventual
+          // stream; it must not resume forwarding or history mutation in this reply.
+          void transcription
+            .then((source) => source?.cancel())
+            .catch((error) => {
+              this.logger.debug({ error }, 'failed to close cancelled transcription node');
+            });
+          return output;
+        }
+        const trNodeResult = await transcription;
         if (trNodeResult) {
-          const [textForwardTask, textOut] = performTextForwarding(
+          const [task, textOut] = performTextForwarding(
             trNodeResult,
             segmentAbortController,
             transcriptionOutput,
           );
-          forwardTasks.push(textForwardTask);
+          textForwardTask = task;
+          forwardTasks.push(task);
           output.textOut = textOut;
         }
 
@@ -4209,6 +4226,8 @@ export class AgentActivity implements RecognitionHooks {
       } finally {
         replyAbortController.signal.removeEventListener('abort', abortSegment);
         await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
+        // Join the reader's cancellation cleanup, not just the bounded task wait.
+        await Promise.allSettled(textForwardTask ? [textForwardTask.result] : []);
         // The segment's playout window is over; settle a still-pending
         // firstFrameFut so the playback-started listener is detached.
         this.settleFirstFrameFut(output.audioOut);

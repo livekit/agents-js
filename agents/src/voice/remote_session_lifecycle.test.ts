@@ -3,15 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Mutex } from '@livekit/mutex';
 import { AgentSession as pb } from '@livekit/protocol';
-import { ByteStreamReader, type Room } from '@livekit/rtc-node';
+import { ByteStreamReader, LocalParticipant, type Room } from '@livekit/rtc-node';
 import * as net from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LLM, LLMStream } from '../llm/llm.js';
 import { initializeLogger, log } from '../log.js';
-import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { DEFAULT_API_CONNECT_OPTIONS, FlushSentinel } from '../types.js';
 import { Future, Task } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
+import { TextOutput } from './io.js';
 import {
   RemoteSession,
   RoomSessionTransport,
@@ -336,8 +337,254 @@ it('joins the writer and discards queued events at the shared drain deadline', a
   gate.resolve();
   await vi.advanceTimersByTimeAsync(0);
   expect(f.room.localParticipant.streamBytes).toHaveBeenCalledTimes(1);
-  expect(closeWriter).not.toHaveBeenCalled();
+  expect(closeWriter).toHaveBeenCalledOnce();
 });
+
+it.each(['interrupt', 'session close', 'host close'] as const)(
+  'joins pending text forwarding and preserves partial history on %s',
+  async (ending) => {
+    const captured: string[] = [];
+    const first = new Future<void>();
+    const cancelled = vi.fn();
+    let source!: ReadableStreamDefaultController<string>;
+    let stream!: ReadableStream<string>;
+    let forwardTask: Task<unknown> | undefined;
+    class Output extends TextOutput {
+      async captureText(text: string) {
+        forwardTask = Task.current();
+        captured.push(text);
+        first.resolve();
+      }
+      flush() {}
+    }
+    class TestAgent extends Agent {
+      override async llmNode() {
+        return new ReadableStream<string>({
+          start(c) {
+            c.enqueue('reply');
+            c.close();
+          },
+        });
+      }
+      override async transcriptionNode() {
+        stream = new ReadableStream<string>({
+          start(c) {
+            source = c;
+            c.enqueue('early');
+          },
+          cancel: cancelled,
+        });
+        return stream;
+      }
+    }
+    const session = new AgentSession({ llm: new GatedLLM() });
+    session.output.transcription = new Output();
+    await session.start({ agent: new TestAgent({ instructions: 'test' }) });
+    const transport = new Transport();
+    const host = new SessionHost(transport);
+    host.registerSession(session);
+    await host.start();
+    const run = vi.spyOn(session, 'run');
+    transport.push(
+      request('held', {
+        case: 'runInput',
+        value: new pb.SessionRequest_RunInput({ text: 'hello' }),
+      }),
+    );
+    try {
+      await first.await;
+      await tick();
+      const result = run.mock.results[0]!.value as RunResult;
+      const handles = [...(result as unknown as { handles: Set<SpeechHandle> }).handles];
+      if (ending === 'interrupt') {
+        await session.interrupt({ force: true }).await;
+        await Promise.all(handles.map((h) => h.waitForPlayout()));
+        await tick();
+      } else if (ending === 'session close') await session.close();
+      else await host.close();
+      expect(forwardTask?.done).toBe(true);
+      expect(handles.every((h) => h._tasks.every((t) => t.done))).toBe(true);
+      expect(cancelled).toHaveBeenCalledOnce();
+      expect(stream.locked).toBe(false);
+      const history = session.history.toJSON();
+      expect(
+        session.history.items
+          .filter((i) => i.type === 'message' && i.role === 'assistant')
+          .map((i) => ({ text: i.textContent, interrupted: i.interrupted })),
+      ).toEqual([{ text: 'early', interrupted: true }]);
+      await host.close();
+      await session.close();
+      expect(() => source.enqueue('late')).toThrow();
+      await tick();
+      expect(captured).toEqual(['early']);
+      expect(session.history.toJSON()).toEqual(history);
+      if (ending === 'host close')
+        expect(transport.sent.some((m) => m.message.case === 'response')).toBe(false);
+    } finally {
+      try {
+        source.close();
+      } catch {
+        /* already cancelled */
+      }
+      await host.close();
+      await session.close();
+    }
+  },
+  10000,
+);
+
+it.each(['resolve', 'reject'] as const)(
+  'joins SDK reply work before a cancelled transcription hook can %s',
+  async (settlement) => {
+    const entered = new Future<void>();
+    const release = new Future<void>();
+    const cancelled = vi.fn();
+    let replyTask: Task<unknown> | undefined;
+    let segments = 0;
+    class TestAgent extends Agent {
+      override async llmNode() {
+        return new ReadableStream<string | typeof FlushSentinel>({
+          start(c) {
+            c.enqueue('first');
+            c.enqueue(FlushSentinel);
+            c.enqueue('second');
+            c.close();
+          },
+        });
+      }
+      override async transcriptionNode(text: Parameters<Agent['transcriptionNode']>[0]) {
+        const chunks: string[] = [];
+        for await (const part of text) chunks.push(String(part));
+        if (++segments === 2) {
+          replyTask = Task.current();
+          entered.resolve();
+          await release.await;
+          if (settlement === 'reject') throw new Error('late transcription failure');
+        }
+        return new ReadableStream<string>({
+          start(c) {
+            chunks.forEach((chunk) => c.enqueue(chunk));
+            c.close();
+          },
+          cancel: cancelled,
+        });
+      }
+    }
+    const session = new AgentSession({ llm: new GatedLLM() });
+    await session.start({ agent: new TestAgent({ instructions: 'test' }) });
+    const transport = new Transport();
+    const host = new SessionHost(transport);
+    host.registerSession(session);
+    await host.start();
+    transport.push(
+      request('held', {
+        case: 'runInput',
+        value: new pb.SessionRequest_RunInput({ text: 'hello' }),
+      }),
+    );
+    try {
+      await entered.await;
+      await host.close();
+      expect(replyTask?.done).toBe(true);
+      const history = session.history.toJSON();
+      expect(
+        session.history.items
+          .filter((i) => i.type === 'message' && i.role === 'assistant')
+          .map((i) => ({ text: i.textContent, interrupted: i.interrupted })),
+      ).toEqual([{ text: 'first', interrupted: true }]);
+      await session.close();
+      release.resolve();
+      await tick();
+      await tick();
+      expect(session.history.toJSON()).toEqual(history);
+      expect(transport.sent.some((m) => m.message.case === 'response')).toBe(false);
+      expect(cancelled).toHaveBeenCalledTimes(settlement === 'resolve' ? 1 : 0);
+    } finally {
+      release.resolve();
+      await host.close();
+      await session.close();
+    }
+  },
+  12000,
+);
+
+it.each(['open', 'write', 'close'] as const)(
+  'releases a native RTC writer after an aborted %s settles',
+  async (phase) => {
+    const previousFfi = globalThis._ffiClientInstance;
+    const entered = new Future<void>();
+    const release = new Future<void>();
+    const operations: string[] = [];
+    const participant = {
+      ffi_handle: { handle: 100n },
+      identity: 'test',
+      disconnectSignal: new AbortController().signal,
+      openStreamWriters: new Set<bigint>(),
+      byteStreamWriterWrite: async () => {
+        operations.push('write');
+        if (phase === 'write') {
+          entered.resolve();
+          await release.await;
+        }
+      },
+      byteStreamWriterClose: async () => {
+        operations.push('close');
+        if (phase === 'close') {
+          entered.resolve();
+          await release.await;
+        }
+      },
+      streamBytes: LocalParticipant.prototype.streamBytes,
+    };
+    globalThis._ffiClientInstance = {
+      request: () => ({ asyncId: 1n }),
+      waitFor: async () => {
+        if (phase === 'open') {
+          entered.resolve();
+          await release.await;
+        }
+        operations.push('open');
+        return {
+          result: {
+            case: 'writer',
+            value: {
+              handle: { id: 200n },
+              info: {
+                streamId: 'test',
+                name: 'test',
+                mimeType: 'application/octet-stream',
+                topic: 'lk.agent.session',
+                timestamp: 0n,
+                attributes: {},
+              },
+            },
+          },
+        };
+      },
+    } as never;
+    const transport = new RoomSessionTransport(
+      { isConnected: true, localParticipant: participant } as unknown as Room,
+      { linkedParticipant: undefined } as never,
+    );
+    try {
+      const sending = transport.sendMessage(new pb.AgentSessionMessage()).catch((e) => e);
+      await entered.await;
+      const queued = transport.sendMessage(new pb.AgentSessionMessage()).catch((e) => e);
+      await transport.close();
+      expect(await sending).toBeInstanceOf(Error);
+      expect(await queued).toBeInstanceOf(Error);
+      release.resolve();
+      await tick();
+      expect(participant.openStreamWriters.size).toBe(0);
+      expect(operations).toEqual(phase === 'open' ? ['open', 'close'] : ['open', 'write', 'close']);
+    } finally {
+      release.resolve();
+      await transport.close();
+      await tick();
+      globalThis._ffiClientInstance = previousFfi;
+    }
+  },
+);
 
 it('uses one deadline for accepted handlers and the event writer', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
@@ -431,7 +678,7 @@ it.each(['open', 'write'] as const)(
     await tick();
     expect(f.room.localParticipant.streamBytes).toHaveBeenCalledTimes(1);
     expect(writer.write).toHaveBeenCalledTimes(phase === 'write' ? 1 : 0);
-    expect(writer.close).not.toHaveBeenCalled();
+    expect(writer.close).toHaveBeenCalledOnce();
   },
 );
 
@@ -459,6 +706,36 @@ it('stops all Room sends when an active sender is aborted', async () => {
   await tick();
   expect(f.room.localParticipant.streamBytes).toHaveBeenCalledTimes(1);
 });
+
+it.each(['open', 'write', 'close'] as const)(
+  'consumes a late Room %s failure and releases acquired writers',
+  async (stage) => {
+    const f = fakeRoom();
+    const entered = new Future<void>();
+    const release = new Future<void>();
+    const fail = async () => {
+      entered.resolve();
+      await release.await;
+      throw new Error(`${stage} failed after close`);
+    };
+    const writer = {
+      write: vi.fn(stage === 'write' ? fail : async () => {}),
+      close: vi.fn(stage === 'close' ? fail : async () => {}),
+    };
+    f.room.localParticipant.streamBytes.mockImplementation(async () => {
+      if (stage === 'open') await fail();
+      return writer;
+    });
+    const sending = f.transport.sendMessage(new pb.AgentSessionMessage()).catch((e) => e);
+    await entered.await;
+    await f.transport.close();
+    expect(await sending).toBeInstanceOf(Error);
+    release.resolve();
+    await tick();
+    expect(writer.close).toHaveBeenCalledTimes(stage === 'open' ? 0 : 1);
+    expect(f.room.localParticipant.streamBytes).toHaveBeenCalledOnce();
+  },
+);
 
 it('closes active and queued RTC readers and joins the single read task', async () => {
   const f = fakeRoom();
@@ -566,6 +843,31 @@ describe('TCP send failure', () => {
     await expect(
       transport.sendMessage(request('lost', { case: 'ping', value: new pb.SessionRequest_Ping() })),
     ).rejects.toThrow();
+  });
+  it('closes the socket on an oversized frame', async () => {
+    const { transport, peer, socket } = await connection();
+    const next = transport[Symbol.asyncIterator]().next();
+    const header = Buffer.alloc(4);
+    header.writeUInt32BE((1 << 20) + 1);
+    peer.write(header);
+    expect((await next).done).toBe(true);
+    expect(socket.destroyed).toBe(true);
+    await expect(transport.sendMessage(new pb.AgentSessionMessage())).rejects.toThrow();
+  });
+
+  it('keeps accepted TCP responses writable after intake aborts', async () => {
+    const { transport, peer, socket } = await connection();
+    const controller = new AbortController();
+    const next = transport[Symbol.asyncIterator](controller.signal).next();
+    controller.abort();
+    expect((await next).done).toBe(true);
+    const received = new Future<Buffer>();
+    peer.once('data', (data) => received.resolve(data));
+    peer.resume();
+    const msg = request('accepted', { case: 'ping', value: new pb.SessionRequest_Ping() });
+    await transport.sendMessage(msg);
+    expect((await received.await).subarray(4)).toEqual(Buffer.from(msg.toBinary()));
+    expect(socket.destroyed).toBe(false);
   });
   it('rejects a backpressured valid-size frame when a real peer resets', async () => {
     const { transport, peer, socket } = await connection();
