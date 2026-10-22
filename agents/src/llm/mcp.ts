@@ -612,7 +612,10 @@ export class MCPToolset extends AsyncToolset {
     return this.closePromise;
   }
 
-  /** Reload tools from the server. The toolset must be active in an agent session. */
+  /**
+   * Reload tools from the server. The toolset must be active in an agent session.
+   * Concurrent calls wait for all pending reloads and share the final result.
+   */
   async refresh(): Promise<void> {
     if (!this.context || this.closed) throw new Error('MCPToolset is not active');
     this.server.invalidateCache();
@@ -695,7 +698,13 @@ export class MCPToolset extends AsyncToolset {
           context.updateTools(filtered);
         }
       } catch (error) {
-        if (context === this.context && generation === this.refreshGeneration) throw error;
+        if (
+          context === this.context &&
+          generation === this.refreshGeneration &&
+          !this.refreshRequested
+        ) {
+          throw error;
+        }
       }
     }
   }
