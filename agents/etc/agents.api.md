@@ -6333,6 +6333,7 @@ export class RemoteSession extends RemoteSession_base {
     sendMessage(text: string, responseTimeout?: number): Promise<AgentSession_2.SessionResponse_RunInputResponse>;
     // (undocumented)
     start(): Promise<void>;
+    waitForReady(timeout?: number, retryInterval?: number): Promise<void>;
 }
 
 // @public (undocumented)
@@ -6479,12 +6480,12 @@ export interface RoomOutputOptions {
 // @public (undocumented)
 export class RoomSessionTransport extends SessionTransport {
     // (undocumented)
-    [Symbol.asyncIterator](): AsyncIterator<AgentSession_2.AgentSessionMessage>;
+    [Symbol.asyncIterator](signal?: AbortSignal): AsyncIterator<AgentSession_2.AgentSessionMessage>;
     constructor(room: Room, roomIO: RoomIO);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
-    sendMessage(msg: AgentSession_2.AgentSessionMessage): Promise<void>;
+    sendMessage(msg: AgentSession_2.AgentSessionMessage, signal?: AbortSignal): Promise<void>;
     // (undocumented)
     start(): Promise<void>;
 }
@@ -6616,6 +6617,8 @@ class RunResult<T = unknown> {
         oldAgent?: Agent;
         newAgent: Agent;
     }): void;
+    // @internal
+    _cancel(): Promise<void>;
     done(): boolean;
     get events(): RunEvent[];
     get expect(): RunAssert;
@@ -6899,12 +6902,10 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
 
 // @public (undocumented)
 export abstract class SessionTransport {
-    // (undocumented)
-    abstract [Symbol.asyncIterator](): AsyncIterator<AgentSession_2.AgentSessionMessage>;
+    abstract [Symbol.asyncIterator](signal?: AbortSignal): AsyncIterator<AgentSession_2.AgentSessionMessage>;
     // (undocumented)
     abstract close(): Promise<void>;
-    // (undocumented)
-    abstract sendMessage(msg: AgentSession_2.AgentSessionMessage): Promise<void>;
+    abstract sendMessage(msg: AgentSession_2.AgentSessionMessage, signal?: AbortSignal): Promise<void>;
     // (undocumented)
     start(): Promise<void>;
 }
@@ -7976,12 +7977,12 @@ export class TcpAudioOutput extends AudioOutput {
 // @public
 export class TcpSessionTransport extends SessionTransport {
     // (undocumented)
-    [Symbol.asyncIterator](): AsyncIterableIterator<AgentSession_2.AgentSessionMessage>;
+    [Symbol.asyncIterator](signal?: AbortSignal): AsyncIterableIterator<AgentSession_2.AgentSessionMessage>;
     constructor(host: string, port: number);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
-    sendMessage(msg: AgentSession_2.AgentSessionMessage): Promise<void>;
+    sendMessage(msg: AgentSession_2.AgentSessionMessage, signal?: AbortSignal): Promise<void>;
     // (undocumented)
     start(): Promise<void>;
 }
@@ -9682,9 +9683,9 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1809:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1809:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1809:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"

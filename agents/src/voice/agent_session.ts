@@ -1540,6 +1540,7 @@ export class AgentSession<
       try {
         const unlock = await this.activityLock.lock();
         unlock();
+        if (runState.done()) return;
         this.generateReply({ userInput, inputModality });
       } catch (e) {
         runState._reject(asError(e));

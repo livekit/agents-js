@@ -12,6 +12,7 @@ import {
   type RunningJobInfo,
   runWithJobContextAsync,
 } from '../job.js';
+import { ChatMessage } from '../llm/chat_context.js';
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import type { AgentSession } from './agent_session.js';
@@ -162,7 +163,7 @@ describe('TcpSessionTransport framing', () => {
     await expect(t.start()).rejects.toThrow();
   });
 
-  it('unblocks a backpressured sendMessage when the transport closes', async () => {
+  it('rejects a backpressured sendMessage when the transport closes', async () => {
     // Self-contained: a non-reading server leaves its connection open, so we
     // manage its lifecycle here rather than via the shared afterEach.
     let serverSocket: net.Socket | undefined;
@@ -174,8 +175,7 @@ describe('TcpSessionTransport framing', () => {
     const t = new TcpSessionTransport('127.0.0.1', port);
     await t.start();
     try {
-      // 4 MiB payload guarantees we exceed the 64 KiB drain threshold and park
-      // in waitForDrain (the peer never reads, so no natural 'drain').
+      // Fill the socket buffer so the write callback must wait for the peer.
       const huge = 'x'.repeat(4 * 1024 * 1024);
       const msg = new pb.AgentSessionMessage({
         message: {
@@ -188,11 +188,12 @@ describe('TcpSessionTransport framing', () => {
       });
 
       const sendPromise = t.sendMessage(msg);
+      const rejected = expect(sendPromise).rejects.toThrow();
       await new Promise((r) => setTimeout(r, 50)); // ensure we're parked in the drain wait
       await t.close();
 
       // Without the close/error race this would hang until the test times out.
-      await expect(sendPromise).resolves.toBeUndefined();
+      await rejected;
     } finally {
       await t.close();
       serverSocket?.destroy();
@@ -306,6 +307,7 @@ describe('SessionTransport failures surface to the caller', () => {
       }
     })();
     const host = new SessionHost(transport, fakeSimJobContext());
+    await host.start();
     const rejections: unknown[] = [];
     const onRejection = (e: unknown) => rejections.push(e);
     process.on('unhandledRejection', onRejection);
@@ -316,6 +318,7 @@ describe('SessionTransport failures surface to the caller', () => {
       });
       await new Promise((r) => setTimeout(r, 20));
     } finally {
+      await host.close();
       process.off('unhandledRejection', onRejection);
     }
     expect(rejections).toEqual([]);
@@ -848,22 +851,21 @@ describe('session response delivery', () => {
       on: () => {},
       off: () => {},
       interrupt: () => ({ await: Promise.resolve() }),
-      run: () => ({
+      run: vi.fn(() => ({
         wait: () => waiting,
         events: [
           {
-            item: {
-              type: 'message',
+            item: new ChatMessage({
               id: 'm-slow',
               role: 'assistant',
               content: ['done'],
               interrupted: false,
               metrics: {},
               createdAt: Date.now(),
-            },
+            }),
           },
         ],
-      }),
+      })),
     } as unknown as AgentSession;
 
     const host = new SessionHost(hostTransport);
@@ -873,7 +875,7 @@ describe('session response delivery', () => {
     await client.start();
 
     const response = client.sendMessage('order a big mac', 1000);
-    await vi.waitFor(() => expect(clientTransport.sent).toHaveLength(1));
+    await vi.waitFor(() => expect(session.run).toHaveBeenCalledOnce());
     const close = host.close();
     setTimeout(release, 50);
     await close;
