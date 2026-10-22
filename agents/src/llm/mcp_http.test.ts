@@ -7,9 +7,66 @@ import {
   type ServerResponse,
   createServer,
 } from 'node:http';
+import { ReadableStream } from 'node:stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MCPServerHTTP, MCPServerStdio } from './mcp.js';
-import type { ToolOptions } from './tool_context.js';
+import { Future } from '../utils.js';
+import { Agent } from '../voice/agent.js';
+import { AgentSession } from '../voice/agent_session.js';
+import { FakeLLM } from '../voice/testing/fake_llm.js';
+import { ChatContext } from './chat_context.js';
+import { MCPServerHTTP, MCPServerStdio, type MCPToolResultResolver, MCPToolset } from './mcp.js';
+import { type GenerationCreatedEvent, RealtimeModel, RealtimeSession } from './realtime.js';
+import { ToolContext, ToolFlag, type ToolOptions, tool } from './tool_context.js';
+
+class RecordingRealtimeModel extends RealtimeModel {
+  readonly client: RecordingRealtimeSession;
+  constructor() {
+    super({
+      messageTruncation: false,
+      turnDetection: false,
+      userTranscription: false,
+      autoToolReplyGeneration: false,
+      audioOutput: false,
+      manualFunctionCalls: true,
+      midSessionChatCtxUpdate: true,
+      midSessionInstructionsUpdate: true,
+      midSessionToolsUpdate: true,
+    });
+    this.client = new RecordingRealtimeSession(this);
+  }
+  get model() {
+    return 'mcp-test';
+  }
+  session() {
+    return this.client;
+  }
+  async close() {
+    await this.client.close();
+  }
+}
+
+class RecordingRealtimeSession extends RealtimeSession {
+  chatCtx = ChatContext.empty();
+  tools = new ToolContext();
+  readonly advertisedTools: string[][] = [];
+  async updateInstructions() {}
+  async updateChatCtx(chatCtx: ChatContext) {
+    this.chatCtx = chatCtx;
+  }
+  async updateTools(tools: ToolContext) {
+    this.advertisedTools.push(tools.flatten().map((tool) => tool.id));
+    this.tools = tools.copy();
+  }
+  updateOptions() {}
+  pushAudio() {}
+  async generateReply(): Promise<GenerationCreatedEvent> {
+    throw new Error('No reply expected');
+  }
+  async commitAudio() {}
+  async clearAudio() {}
+  async interrupt() {}
+  async truncate() {}
+}
 
 type ProtocolVersion = '2025-11-25' | '2026-07-28';
 interface WireRequest {
@@ -17,6 +74,7 @@ interface WireRequest {
   method: string;
   params?: {
     name?: string;
+    cursor?: string;
     arguments?: Record<string, unknown>;
     _meta?: Record<string, unknown>;
   };
@@ -44,18 +102,34 @@ async function fixture(
   options: {
     status?: number;
     stallDiscovery?: boolean;
-    clientSessionTimeout?: number | null;
+    stallSSE?: 'headers' | 'endpoint';
+    paginate?: boolean;
+    clientSessionTimeout?: number;
+    sse?: boolean;
+    toolResultResolver?: MCPToolResultResolver;
   } = {},
 ) {
   const modern = version === '2026-07-28';
   const requests: ReceivedRequest[] = [];
   let toolName = 'lookup';
   let stalledResponse: ServerResponse | undefined;
+  let eventStream: ServerResponse | undefined;
   const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     const received: ReceivedRequest = { httpMethod: req.method, headers: req.headers };
     requests.push(received);
     if (options.status) {
       res.writeHead(options.status).end();
+      return;
+    }
+    if (options.sse && req.method === 'GET') {
+      if (options.stallSSE === 'headers') return;
+      eventStream = res;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      if (options.stallSSE === 'endpoint') {
+        res.flushHeaders();
+        return;
+      }
+      res.write('event: endpoint\ndata: /messages\n\n');
       return;
     }
     if (req.method !== 'POST') {
@@ -75,13 +149,17 @@ async function fixture(
       return;
     }
     const reply = (result: Record<string, unknown>) => {
-      res.writeHead(200, { 'content-type': 'application/json' }).end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: message.id,
-          result: { ...(modern ? { resultType: 'complete' } : {}), ...result },
-        }),
-      );
+      const messageData = JSON.stringify({
+        jsonrpc: '2.0',
+        id: message.id,
+        result: { ...(modern ? { resultType: 'complete' } : {}), ...result },
+      });
+      if (eventStream) {
+        eventStream.write(`data: ${messageData}\n\n`);
+        res.writeHead(202).end();
+      } else {
+        res.writeHead(200, { 'content-type': 'application/json' }).end(messageData);
+      }
     };
     if (message.method === 'server/discover' && modern) {
       reply({ supportedVersions: [version], capabilities: { tools: {} } });
@@ -92,11 +170,13 @@ async function fixture(
         serverInfo: { name: 'stateless-fixture', version: '1.0.0' },
       });
     } else if (message.method === 'tools/list') {
+      const name = message.params?.cursor === 'next' ? 'second' : toolName;
       reply({
         // Nonzero TTL makes sure our explicit invalidation also bypasses the SDK's new cache.
         ttlMs: 60_000,
         cacheScope: 'private',
-        tools: [{ name: toolName, inputSchema: { type: 'object' } }],
+        tools: [{ name, inputSchema: { type: 'object' } }],
+        ...(options.paginate && !message.params?.cursor ? { nextCursor: 'next' } : {}),
       });
     } else if (message.method === 'tools/call') {
       if (message.params?.arguments?.stall) {
@@ -131,13 +211,17 @@ async function fixture(
         reply(result);
       }
     } else {
-      res.writeHead(200, { 'content-type': 'application/json' }).end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: message.id,
-          error: { code: -32601, message: 'Method not found' },
-        }),
-      );
+      const errorMessage = JSON.stringify({
+        jsonrpc: '2.0',
+        id: message.id,
+        error: { code: -32601, message: 'Method not found' },
+      });
+      if (eventStream) {
+        eventStream.write(`data: ${errorMessage}\n\n`);
+        res.writeHead(202).end();
+      } else {
+        res.writeHead(200, { 'content-type': 'application/json' }).end(errorMessage);
+      }
     }
   };
   const http = createServer((req, res) => {
@@ -155,9 +239,10 @@ async function fixture(
   if (address === null || typeof address === 'string') throw new Error('Expected TCP address');
   const server = new MCPServerHTTP({
     url: `http://127.0.0.1:${address.port}/tools`,
-    transportType: 'streamable_http',
+    transportType: options.sse ? 'sse' : 'streamable_http',
     allowInsecureHttp: true,
     headers: { authorization: 'Bearer fixture-token' },
+    toolResultResolver: options.toolResultResolver,
     clientSessionTimeout:
       options.clientSessionTimeout === undefined ? 1000 : options.clientSessionTimeout,
   });
@@ -173,6 +258,356 @@ async function fixture(
 }
 
 describe('MCP HTTP protocol integration', () => {
+  it.each<ProtocolVersion>(['2026-07-28', '2025-11-25'])(
+    'discovers all tool pages through the SDK (%s)',
+    async (version) => {
+      const { server, requests } = await fixture(version, { paginate: true });
+      await server.initialize();
+      expect((await server.listTools()).map((tool) => tool.id)).toEqual(['lookup', 'second']);
+      expect(
+        requests
+          .filter(({ message }) => message?.method === 'tools/list')
+          .map(({ message }) => message?.params?.cursor),
+      ).toEqual([undefined, 'next']);
+    },
+  );
+
+  it.each(['headers', 'endpoint'] as const)(
+    'times out SSE initialization while waiting for %s',
+    async (stallSSE) => {
+      const { server } = await fixture('2025-11-25', {
+        sse: true,
+        stallSSE,
+        clientSessionTimeout: 50,
+      });
+      await expect(server.initialize()).rejects.toThrow('MCP server connection timed out');
+      expect(server.initialized).toBe(false);
+      await server.aclose();
+    },
+    1000,
+  );
+
+  it.each(['headers', 'endpoint'] as const)(
+    'closes SSE initialization while waiting for %s',
+    async (stallSSE) => {
+      const { server, requests } = await fixture('2025-11-25', {
+        sse: true,
+        stallSSE,
+        clientSessionTimeout: 120_000,
+      });
+      const initializing = expect(server.initialize()).rejects.toThrow();
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
+      await server.aclose();
+      await initializing;
+      expect(server.initialized).toBe(false);
+    },
+    1000,
+  );
+
+  it.each(['agent', 'session'])(
+    'waits for realtime publication before resolving a toolset refresh (%s)',
+    async (scope) => {
+      const { server, renameTool } = await fixture('2026-07-28');
+      const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+      const model = new RecordingRealtimeModel();
+      const session = new AgentSession({
+        llm: model,
+        vad: null,
+        tools: scope === 'session' ? [toolset] : [],
+      });
+      const publishing = new Future<void>();
+      const finishPublishing = new Future<void>();
+      let afterRefresh: Promise<void> | undefined;
+      const generateReply = vi
+        .spyOn(model.client, 'generateReply')
+        .mockImplementation(async () => ({
+          messageStream: new ReadableStream({ start: (controller) => controller.close() }),
+          functionStream: new ReadableStream({ start: (controller) => controller.close() }),
+          userInitiated: true,
+        }));
+      try {
+        await session.start({
+          agent: new Agent({ instructions: '', tools: scope === 'agent' ? [toolset] : [] }),
+        });
+        vi.spyOn(model.client, 'updateTools').mockImplementationOnce(async (tools) => {
+          publishing.resolve();
+          await finishPublishing.await;
+          await RecordingRealtimeSession.prototype.updateTools.call(model.client, tools);
+        });
+        renameTool('new_lookup');
+        afterRefresh = toolset.refresh().then(() => {
+          session.generateReply({ userInput: 'use the refreshed tools' });
+        });
+        await publishing.await;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(generateReply).not.toHaveBeenCalled();
+        finishPublishing.resolve();
+        await afterRefresh;
+        await session.waitForIdle();
+        expect(generateReply).toHaveBeenCalledOnce();
+        expect(Object.keys(model.client.tools.functionTools)).toEqual(['new_lookup']);
+      } finally {
+        finishPublishing.resolve();
+        await afterRefresh?.catch(() => undefined);
+        await session.close();
+      }
+    },
+  );
+
+  it('reports a realtime publication failure to the refresh caller', async () => {
+    const { server, renameTool } = await fixture('2026-07-28');
+    const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+    const model = new RecordingRealtimeModel();
+    const session = new AgentSession({ llm: model, vad: null, tools: [toolset] });
+    try {
+      await session.start({ agent: new Agent({ instructions: '' }) });
+      const error = new Error('provider update failed');
+      vi.spyOn(model.client, 'updateTools').mockRejectedValueOnce(error);
+      renameTool('new_lookup');
+      await expect(toolset.refresh()).rejects.toBe(error);
+      await toolset.refresh();
+      expect(Object.keys(model.client.tools.functionTools)).toEqual(['new_lookup']);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('closes a toolset without waiting for realtime publication', async () => {
+    const { server, renameTool } = await fixture('2026-07-28');
+    const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+    const model = new RecordingRealtimeModel();
+    const session = new AgentSession({ llm: model, vad: null, tools: [toolset] });
+    const publishing = new Future<void>();
+    const finishPublishing = new Future<void>();
+    let refreshing: Promise<void> | undefined;
+    let closing: Promise<void> | undefined;
+    try {
+      await session.start({ agent: new Agent({ instructions: '' }) });
+      vi.spyOn(model.client, 'updateTools').mockImplementationOnce(async () => {
+        publishing.resolve();
+        await finishPublishing.await;
+      });
+      renameTool('new_lookup');
+      refreshing = toolset.refresh();
+      await publishing.await;
+      let closed = false;
+      closing = toolset.aclose().then(() => {
+        closed = true;
+      });
+      await vi.waitFor(() => expect(closed).toBe(true));
+      await refreshing;
+      expect(finishPublishing.done).toBe(false);
+      expect(server.initialized).toBe(false);
+    } finally {
+      finishPublishing.resolve();
+      await Promise.allSettled([refreshing, closing]);
+      await session.close();
+    }
+  });
+
+  it.each([false, true])(
+    'refreshes session tools after a handoff and applies filters (realtime: %s)',
+    async (realtime) => {
+      const { server, renameTool } = await fixture('2026-07-28');
+      const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+      const model = realtime ? new RecordingRealtimeModel() : new FakeLLM();
+      const session = new AgentSession({ llm: model, vad: null, tools: [toolset] });
+      const expectTools = async (names: string[]) => {
+        await vi.waitFor(() => {
+          expect(Object.keys(session._activity!.tools.functionTools)).toEqual(names);
+          if (model instanceof RecordingRealtimeModel) {
+            expect(Object.keys(model.client.tools.functionTools)).toEqual(names);
+          }
+        });
+      };
+      try {
+        await session.start({ agent: new Agent({ instructions: 'first agent' }) });
+        await expectTools(['lookup']);
+        session.updateAgent(new Agent({ instructions: 'second agent' }));
+        await session.waitForIdle();
+        renameTool('new_lookup');
+        await toolset.refresh();
+        await expectTools(['new_lookup']);
+        toolset.filterTools(() => false);
+        await expectTools([]);
+        toolset.filterTools(() => true);
+        await expectTools(['new_lookup']);
+      } finally {
+        await session.close();
+      }
+      expect(server.initialized).toBe(false);
+      await expect(toolset.refresh()).rejects.toThrow('MCPToolset is not active');
+    },
+  );
+
+  it.each([
+    { change: 'filter', ignoredInitially: true },
+    { change: 'refresh', ignoredInitially: true },
+    { change: 'refresh', ignoredInitially: false },
+  ])(
+    'preserves an MCP $change during a realtime greeting (ignored initially: $ignoredInitially)',
+    async ({ change, ignoredInitially }) => {
+      const { server, renameTool } = await fixture('2026-07-28');
+      const toolset = new MCPToolset({
+        id: 'mcp',
+        mcpServer: server,
+        toolOptions: { new_lookup: { flags: ToolFlag.IGNORE_ON_ENTER } },
+      });
+      const model = new RecordingRealtimeModel();
+      const greetingStarted = new Future<void>();
+      const finishGreeting = new Future<void>();
+      vi.spyOn(model.client, 'generateReply').mockImplementation(async () => {
+        greetingStarted.resolve();
+        await finishGreeting.await;
+        return {
+          messageStream: new ReadableStream({ start: (controller) => controller.close() }),
+          functionStream: new ReadableStream({ start: (controller) => controller.close() }),
+          userInitiated: true,
+        };
+      });
+      class GreetingAgent extends Agent {
+        override async onEnter() {
+          this.session.generateReply({ userInput: 'greeting' });
+        }
+      }
+      const session = new AgentSession({ llm: model, vad: null, tools: [toolset] });
+      try {
+        await session.start({ agent: new Agent({ instructions: 'first agent' }) });
+        session.updateAgent(
+          new GreetingAgent({
+            instructions: 'second agent',
+            tools: ignoredInitially
+              ? [
+                  tool({
+                    name: 'end_call',
+                    description: '',
+                    flags: ToolFlag.IGNORE_ON_ENTER,
+                    execute: async () => undefined,
+                  }),
+                ]
+              : [],
+          }),
+        );
+        await greetingStarted.await;
+        expect(model.client.advertisedTools.at(-1)).toEqual(['lookup']);
+        if (change === 'filter') {
+          toolset.filterTools(() => false);
+        } else {
+          renameTool('new_lookup');
+          await toolset.refresh();
+        }
+        const mcpTools = change === 'filter' ? [] : ['new_lookup'];
+        await vi.waitFor(() => expect(model.client.advertisedTools.at(-1)).toEqual([]));
+        finishGreeting.resolve();
+        await session.waitForIdle();
+        const expected = [...mcpTools, ...(ignoredInitially ? ['end_call'] : [])];
+        expect(model.client.advertisedTools.at(-1)).toEqual(expected);
+        expect(Object.keys(session._activity!.tools.functionTools)).toEqual(expected);
+      } finally {
+        finishGreeting.resolve();
+        await session.close();
+      }
+    },
+  );
+
+  it.each([null, undefined])(
+    'records empty MCP completion after progress in a real session (%s)',
+    async (result) => {
+      const { server } = await fixture('2026-07-28', { toolResultResolver: () => result });
+      const toolset = new MCPToolset({
+        id: 'mcp',
+        mcpServer: server,
+        toolOptions: { lookup: { reportProgress: true } },
+      });
+      const session = new AgentSession({
+        llm: new FakeLLM([
+          { input: 'look up my order', toolCalls: [{ name: 'lookup', args: { progress: true } }] },
+        ]),
+        vad: null,
+        tools: [toolset],
+      });
+      try {
+        await session.start({ agent: new Agent({ instructions: 'test' }) });
+        await session.run({ userInput: 'look up my order' }).wait();
+        await vi.waitFor(() =>
+          expect(session.history.items).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: 'function_call_output',
+                callId: 'fake_call_0_final',
+                output: '',
+                isError: false,
+              }),
+            ]),
+          ),
+        );
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it.each([
+    ['2026-07-28', false],
+    ['2025-11-25', false],
+    ['2025-11-25', true],
+  ] as const)(
+    'uses replacement headers on an existing %s connection (SSE: %s)',
+    async (version, sse) => {
+      const { server, requests } = await fixture(version, { sse });
+      await server.initialize();
+      const [lookup] = await server.listTools();
+      await lookup!.execute({}, toolOptions());
+      const beforeRotation = requests.length;
+      server.headers = { authorization: 'Bearer refreshed-token', 'x-account': 'new-account' };
+      await lookup!.execute({}, toolOptions());
+      server.invalidateCache();
+      await server.listTools();
+      expect(requests.slice(beforeRotation).map(({ headers }) => headers.authorization)).toEqual([
+        'Bearer refreshed-token',
+        'Bearer refreshed-token',
+      ]);
+      expect(
+        requests
+          .slice(beforeRotation)
+          .every(({ headers }) => headers['x-account'] === 'new-account'),
+      ).toBe(true);
+      expect(requests.slice(beforeRotation).map(({ message }) => message?.method)).toEqual([
+        'tools/call',
+        'tools/list',
+      ]);
+
+      server.headers = {};
+      await lookup!.execute({}, toolOptions());
+      expect(requests.at(-1)?.headers.authorization).toBeUndefined();
+      expect(requests.at(-1)?.headers['x-account']).toBeUndefined();
+    },
+  );
+
+  it.each<ProtocolVersion>(['2026-07-28', '2025-11-25'])(
+    'manually refreshes a %s toolset without server notifications',
+    async (version) => {
+      const { server, renameTool } = await fixture(version);
+      const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+      cleanup.push(() => toolset.aclose());
+      await toolset.setup({ updateTools: (tools) => toolset._setTools(tools) });
+      expect(toolset.tools.map(({ id }) => id)).toEqual(['lookup']);
+      renameTool('new_lookup');
+      await toolset.refresh();
+      expect(toolset.tools.map(({ id }) => id)).toEqual(['new_lookup']);
+    },
+  );
+
+  it('times out a stalled HTTP call using milliseconds and keeps the client usable', async () => {
+    const { server } = await fixture('2026-07-28', { clientSessionTimeout: 100 });
+    await server.initialize();
+    const [lookup] = await server.listTools();
+    await expect(lookup!.execute({ stall: true }, toolOptions())).rejects.toThrow(
+      'MCP tool call failed unexpectedly.',
+    );
+    await expect(lookup!.execute({}, toolOptions())).resolves.toContain('ok');
+  }, 2000);
+
   it.each<ProtocolVersion>(['2026-07-28', '2025-11-25'])(
     'lists and calls tools on a stateless %s server without notifications or persistent streams',
     async (version) => {
@@ -318,10 +753,10 @@ describe('MCP HTTP protocol integration', () => {
     },
   );
 
-  it('closes a stalled discovery probe without waiting for an unbounded connection request', async () => {
+  it('closes a stalled discovery probe without waiting for the connection timeout', async () => {
     const { server, stalledResponse } = await fixture('2026-07-28', {
       stallDiscovery: true,
-      clientSessionTimeout: null,
+      clientSessionTimeout: 120_000,
     });
     const initializing = expect(server.initialize()).rejects.toThrow();
     await vi.waitFor(() => expect(stalledResponse()).toBeDefined());
