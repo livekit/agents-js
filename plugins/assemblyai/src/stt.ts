@@ -499,7 +499,7 @@ export class SpeechStream extends stt.SpeechStream {
     let maxSilence = this.#opts.maxTurnSilence;
     if (isU3ProModel(this.#opts.speechModel)) {
       if (minSilence === undefined && this.#opts.mode === undefined) minSilence = 100;
-      if (maxSilence === undefined) maxSilence = minSilence;
+      if (maxSilence === undefined && this.#opts.mode === undefined) maxSilence = minSilence;
     }
 
     // Default language_detection to true for multilingual / u3-rt-pro-family models, false otherwise.

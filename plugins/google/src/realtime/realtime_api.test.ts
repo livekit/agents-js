@@ -259,6 +259,53 @@ function createSessionForTest(
   return session;
 }
 
+describe('Google Realtime instruction updates', () => {
+  it.each([
+    { vertexai: true, expectedRole: 'system' },
+    { vertexai: false, expectedRole: 'model' },
+  ] as const)(
+    'uses role=$expectedRole with vertexai=$vertexai',
+    async ({ vertexai, expectedRole }) => {
+      const never = new Promise<void>(() => {});
+      const closeActiveSession = vi
+        .spyOn(
+          RealtimeSession.prototype as unknown as { closeActiveSession(): Promise<void> },
+          'closeActiveSession',
+        )
+        .mockReturnValue(never);
+      const session = new RealtimeModel({
+        vertexai,
+        apiKey: 'fake-key',
+        project: 'test-project',
+        location: 'eu',
+      }).session();
+      closeActiveSession.mockRestore();
+      const internals = session as unknown as {
+        activeSession: { close(): Promise<void> };
+        sendClientEvent: ReturnType<typeof vi.fn>;
+      };
+      internals.activeSession = { close: vi.fn(async () => {}) };
+      internals.sendClientEvent = vi.fn();
+
+      await session.updateInstructions('replacement instructions');
+
+      expect(internals.sendClientEvent).toHaveBeenCalledWith({
+        type: 'content',
+        value: {
+          turns: [
+            {
+              parts: [{ text: 'replacement instructions' }],
+              role: expectedRole,
+            },
+          ],
+          turnComplete: false,
+        },
+      });
+      await session.close();
+    },
+  );
+});
+
 describe('Google Realtime non-blocking tool scheduling', () => {
   it.each(schedulingModes)(
     'sends %s on the immediate willContinue response',

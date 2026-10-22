@@ -31,7 +31,14 @@ import {
   RealtimeModel,
   type RealtimeSession,
 } from '../llm/realtime.js';
-import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
+import {
+  type Tool,
+  ToolContext,
+  ToolFlag,
+  Toolset,
+  type ToolsetContext,
+  tool,
+} from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Event, Future, Task } from '../utils.js';
@@ -120,6 +127,7 @@ function buildMainTaskRunner() {
     _schedulingPaused: false,
     _authorizationPaused: false,
     _drainBlockedTasks: new Set<Task<void>>(),
+    currentSpeechCleared: new Future<void, never>(),
     _mainTask: undefined as { result: Promise<void> } | undefined,
     cancelPreemptiveGeneration: vi.fn(),
     logger: {
@@ -1152,7 +1160,7 @@ describe('AgentActivity - onToolsetToolsChanged (dynamic toolset push)', () => {
     const toolB = makeFn('toolB');
 
     // Capture the wired ctx.updateTools the framework hands the toolset during setup.
-    let pushTools!: (tools: readonly Tool[]) => void;
+    let pushTools!: ToolsetContext['updateTools'];
     const toolset = Toolset.create({
       id: 'dynamic',
       tools: [toolA],

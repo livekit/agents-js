@@ -532,6 +532,7 @@ export class AgentActivity implements RecognitionHooks {
   private closed = false;
   private audioRecognition?: AudioRecognition;
   private realtimeSession?: RealtimeSession;
+  private realtimeOnEnterScopes = new Set<{ toolsUpdated: boolean }>();
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
   private turnDetectionMode?: TurnDetectionMode;
   private rtTurnDetectionEnabled = false;
@@ -546,6 +547,8 @@ export class AgentActivity implements RecognitionHooks {
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private userSilenceEvent = new Event();
   private q_updated: Future<void, never>;
+  // resolved each time mainTask clears _currentSpeech, so idle waiters can sleep until then
+  private currentSpeechCleared = new Future<void, never>();
   private speechTasks: Set<Task<void>> = new Set();
   // Handles whose TTS playout has finished but whose tool execution is still running.
   // Tracking them lets interrupt() reach handles that are no longer _currentSpeech but
@@ -1472,9 +1475,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.history.insert(configUpdate);
     }
 
-    if (this.realtimeSession) {
-      await this.realtimeSession.updateTools(this.tools);
-    }
+    await this.updateRealtimeTools();
 
     if (this.llm instanceof LLM) {
       // for realtime LLM, we assume the server will remove unvalid tool messages
@@ -2836,7 +2837,15 @@ export class AgentActivity implements RecognitionHooks {
         } else {
           agentActive = true;
           const currentUpdate = this.q_updated;
-          if (currentUpdate.done) {
+          if (this._currentSpeech) {
+            // q_updated stays resolved while mainTask drains the queue, so it cannot tell
+            // when the current speech ends
+            await this.waitForOrAbort(
+              this.currentSpeechCleared.await,
+              signal,
+              'error waiting for the current speech',
+            );
+          } else if (currentUpdate.done) {
             await delay(0, { signal });
           } else {
             await this.waitForOrAbort(
@@ -2849,9 +2858,21 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       if (waitForUser) {
-        userActive = this.agentSession.userState !== 'listening';
+        // Only a speaking user keeps this activity busy. `away` means the user went quiet, so
+        // treating it as active spun this loop on `delay(0)` and blocked every idle waiter,
+        // including the deferred reply of a non-blocking tool (`ToolExecutor.deliverReply`).
+        userActive = this.agentSession.userState === 'speaking';
         if (userActive) {
-          await delay(0, { signal });
+          let onChange!: () => void;
+          const changed = new Promise<void>((resolve) => {
+            onChange = () => resolve();
+            this.agentSession.on(AgentSessionEventTypes.UserStateChanged, onChange);
+          });
+          try {
+            await this.waitForOrAbort(changed, signal, 'error waiting for a user state change');
+          } finally {
+            this.agentSession.off(AgentSessionEventTypes.UserStateChanged, onChange);
+          }
         }
         await this.waitForEndOfTurn(signal);
       }
@@ -2863,11 +2884,26 @@ export class AgentActivity implements RecognitionHooks {
     signal: AbortSignal,
     errorMessage: string,
   ): Promise<void> {
+    // The signal can outlive many calls (waitForIdle loops on closeAbort.signal), so the
+    // abort listener must go when the race settles, not when the signal aborts.
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<void>((resolve) => {
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+      onAbort = () => resolve();
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
     try {
-      await Promise.race([promise, waitForAbort(signal)]);
+      await Promise.race([promise, aborted]);
     } catch (error) {
       if (!signal.aborted) {
         this.logger.error({ error }, errorMessage);
+      }
+    } finally {
+      if (onAbort) {
+        signal.removeEventListener('abort', onAbort);
       }
     }
   }
@@ -2924,6 +2960,8 @@ export class AgentActivity implements RecognitionHooks {
           }
         }
         this._currentSpeech = undefined;
+        this.currentSpeechCleared.resolve();
+        this.currentSpeechCleared = new Future();
       }
 
       // if we're draining/pausing and there are no more speech tasks, we can exit.
@@ -5328,15 +5366,15 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const originalToolChoice = this.toolChoice;
-    let originalTools: ToolContext | undefined;
+    const onEnterData = onEnterStorage.getStore();
+    const onEnterScope =
+      onEnterData?.agent === this.agent && onEnterData?.session === this.agentSession
+        ? { toolsUpdated: false }
+        : undefined;
+    if (onEnterScope) this.realtimeOnEnterScopes.add(onEnterScope);
     try {
-      const sessionTools = this.realtimeSession.tools;
-      const onEnterIgnoredTools = this._onEnterIgnoredTools(sessionTools);
-      if (onEnterIgnoredTools.length > 0) {
-        originalTools = sessionTools;
-        const turnTools = sessionTools._flattenedCopy();
-        turnTools._exclude(onEnterIgnoredTools);
-        await this.realtimeSession.updateTools(turnTools);
+      if (this._onEnterIgnoredTools(this.realtimeSession.tools).length > 0) {
+        await this.updateRealtimeTools();
       }
 
       if (toolChoice !== undefined) {
@@ -5366,6 +5404,7 @@ export class AgentActivity implements RecognitionHooks {
         abortController,
       );
     } finally {
+      if (onEnterScope) this.realtimeOnEnterScopes.delete(onEnterScope);
       // reset toolChoice value
       if (toolChoice !== undefined && toolChoice !== originalToolChoice) {
         try {
@@ -5374,9 +5413,9 @@ export class AgentActivity implements RecognitionHooks {
           this.logger.error({ error }, 'failed to reset tool_choice');
         }
       }
-      if (originalTools !== undefined) {
+      if (onEnterScope?.toolsUpdated) {
         try {
-          await this.realtimeSession.updateTools(originalTools);
+          await this.updateRealtimeTools();
         } catch (error) {
           this.logger.error({ error }, 'failed to reset tools');
         }
@@ -6227,9 +6266,29 @@ export class AgentActivity implements RecognitionHooks {
   private async onToolsetToolsChanged(): Promise<void> {
     if (!this._toolsetsSetup) return;
     const current = this.agent._toolCtx;
-    if (new ToolContext(current.tools).equals(current)) return;
+    if (new ToolContext(current.tools).equals(current)) {
+      // Session toolsets are outside the agent's context but still change the provider's tools.
+      await this.updateRealtimeTools();
+      return;
+    }
     // Same toolset entries, so updateTools' setup/close steps are no-ops (no re-entrancy here).
     await this.updateTools(current.tools);
+  }
+
+  /** Publish current tools while preserving any active onEnter exclusions. */
+  private async updateRealtimeTools(): Promise<void> {
+    if (!this.realtimeSession) return;
+    let tools = this.tools;
+    if (this.realtimeOnEnterScopes.size > 0) {
+      for (const scope of this.realtimeOnEnterScopes) scope.toolsUpdated = true;
+      tools = tools._flattenedCopy();
+      tools._exclude(
+        tools
+          .flatten()
+          .filter((tool) => isFunctionTool(tool) && !!(tool.flags & ToolFlag.IGNORE_ON_ENTER)),
+      );
+    }
+    await this.realtimeSession.updateTools(tools);
   }
 
   private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {
@@ -6244,11 +6303,11 @@ export class AgentActivity implements RecognitionHooks {
             ts._setTools(tools);
             if (this._suppressToolsetConfigUpdate) return;
             const activity = this.agentSession._activity ?? this;
-            void activity
-              .onToolsetToolsChanged()
-              .catch((error) =>
-                activity.logger.error({ error }, 'error re-advertising toolset tools'),
-              );
+            const update = activity.onToolsetToolsChanged();
+            void update.catch((error) =>
+              activity.logger.error({ error }, 'error re-advertising toolset tools'),
+            );
+            return update;
           },
         }),
       ),
