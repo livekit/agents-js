@@ -1,0 +1,39 @@
+.changeset/mcp-parity-controls.md
+  s_de5d34fcc7db11::t_0ff3207e18d2df 1-5
+agents/etc/agents.api.md
+  s_de5d34fcc7db11::t_f632d63ec57956 5300-5301,5323,5413-5414,8386,9674-9675
+agents/src/llm/mcp.test.ts
+  s_de5d34fcc7db11::t_b476eeca121de0 5-9,18-114,116-117,119-125,130-132,134-135,139-143,156,164-166,187,196-198,205,515-570,660,685-703
+agents/src/llm/mcp.ts
+  s_de5d34fcc7db11::t_cbf54958310dc2 12-13,23,57-58,156-160,165,171-179,226,229,249-250,252-254,258-270,276,280-285,301,308,313,341-344,454-455,463-464,501,520-529,533,605-607,619-620,633-654,656-657,663-664,669-670,698,703-707,709-724,727-728,736-737
+agents/src/llm/mcp_http.test.ts
+  s_de5d34fcc7db11::t_201158b776ee02 10,12-69,77,105-109,116,124-134,152-162,173,178-179,214-224,242,245,261-610,756,759
+agents/src/llm/mcp_test_helpers.ts
+  s_de5d34fcc7db11::t_91016d735e8e5b 1-50
+agents/src/llm/mcp_toolset.test.ts
+  s_de5d34fcc7db11::t_04a0938b939404 1-656
+agents/src/llm/tool_context.test.ts
+  s_de5d34fcc7db11::t_e3fc7cb13524e4 888
+agents/src/llm/tool_context.ts
+  s_de5d34fcc7db11::t_57a48b9ed07c38 254,256
+agents/src/voice/agent_activity.test.ts
+  s_de5d34fcc7db11::t_953cdc68dcf64a 34-41,1163
+agents/src/voice/agent_activity.ts
+  s_de5d34fcc7db11::t_391cc63839a153 535,1478,5366-5371,5373-5374,5404,5413,5415,6266-6270,6275-6290,6303-6307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f2c53101125aa348b4b9a210647fd37275c18e88",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
