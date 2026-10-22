@@ -908,6 +908,13 @@ export function performTTSInference(
   // Transform stream to extract text from TimedString objects
   const textOnlyStream = new IdentityTransform<string>();
   const textOnlyWriter = textOnlyStream.writable.getWriter();
+  const synthesisFinished = new Future<void>();
+  const genData: _TTSGenerationData = {
+    audioStream: audioOutputStream,
+    timedTextsFut,
+    ttfb: undefined,
+    error: null,
+  };
   let startTime: number | undefined;
   const textReader = text.getReader();
   let inputCancellation: Promise<void> | undefined;
@@ -919,6 +926,7 @@ export function performTTSInference(
   controller.signal.addEventListener('abort', cancelInput, { once: true });
   if (controller.signal.aborted) cancelInput();
   const inputTask = (async () => {
+    let acceptingText = true;
     try {
       while (!controller.signal.aborted) {
         const { done, value } = await textReader.read();
@@ -927,13 +935,30 @@ export function performTTSInference(
         }
         startTime ??= performance.now() / 1000;
         const textValue = typeof value === 'string' ? value : value.text;
-        await textOnlyWriter.write(textValue);
+        if (acceptingText) {
+          try {
+            await textOnlyWriter.write(textValue);
+          } catch {
+            // Synthesis can close its input before the independent producer reaches
+            // EOF. Drain only after successful synthesis; failures still propagate.
+            await synthesisFinished.await;
+            if (genData.error != null) throw genData.error;
+            acceptingText = false;
+          }
+        }
       }
-      await textOnlyWriter.close();
+      if (acceptingText) {
+        try {
+          await textOnlyWriter.close();
+        } catch {
+          await synthesisFinished.await;
+          if (genData.error != null) throw genData.error;
+        }
+      }
     } catch (e) {
-      await textOnlyWriter.abort(e as Error);
+      await textOnlyWriter.abort(e as Error).catch(() => {});
+      throw e;
     } finally {
-      cancelInput();
       await inputCancellation;
       textReader.releaseLock();
     }
@@ -941,13 +966,6 @@ export function performTTSInference(
   void inputTask.catch((error) => logger.debug({ error }, 'TTS text forwarding failed'));
 
   let ttfb: number | undefined;
-
-  const genData: _TTSGenerationData = {
-    audioStream: audioOutputStream,
-    timedTextsFut,
-    ttfb: undefined,
-    error: null,
-  };
 
   const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
     if (model) {
@@ -1037,6 +1055,8 @@ export function performTTSInference(
         throw error;
       }
     } finally {
+      // Release a pump waiting for the synthesis outcome before joining it below.
+      synthesisFinished.resolve();
       // Pipeline inputs have a separate producer that must finish writing normally.
       // Tee owners can stop their branch as soon as synthesis finishes.
       if (inputOptions?.cancelOnFinish || signal.aborted || genData.error != null) cancelInput();

@@ -3635,6 +3635,9 @@ export class AgentActivity implements RecognitionHooks {
         );
       }
     };
+    const cancelTextSource = () => cancelUnused(textSource);
+    forwardingController.signal.addEventListener('abort', cancelTextSource, { once: true });
+    if (forwardingController.signal.aborted) cancelTextSource();
 
     const tasks: Array<Task<void>> = [];
 
@@ -3655,7 +3658,6 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
       const trNode = await transcription;
-      if (trNode !== textSource) cancelUnused(textSource);
       if (trNode) {
         const [textForwardTask, _textOut] = performTextForwarding(
           trNode,
@@ -3664,6 +3666,10 @@ export class AgentActivity implements RecognitionHooks {
         );
         textOut = _textOut;
         tasks.push(textForwardTask);
+        // A returned stream can acquire its input reader after asynchronous setup.
+        textForwardTask.addDoneCallback(cancelTextSource);
+      } else {
+        cancelTextSource();
       }
 
       let replyStartedSpeakingAt: number | undefined;
@@ -3799,6 +3805,7 @@ export class AgentActivity implements RecognitionHooks {
       // Release every sibling before joining cancellation, including consumers
       // skipped by a null or failed hook.
       abortForwarding();
+      forwardingController.signal.removeEventListener('abort', cancelTextSource);
       cancelUnused(textSource);
       cancelUnused(audioSource);
       cancelUnused(audio);
@@ -4014,9 +4021,14 @@ export class AgentActivity implements RecognitionHooks {
 
       const endSegment = async () => {
         if (!current) return;
-        await current.textWriter.close();
-        await current.ttsTextWriter?.close();
+        const segment = current;
         current = null;
+        const closed = await Promise.allSettled([
+          segment.textWriter.close(),
+          segment.ttsTextWriter?.close(),
+        ]);
+        const failed = closed.find((result) => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
       };
 
       try {
@@ -4036,9 +4048,12 @@ export class AgentActivity implements RecognitionHooks {
           await current.ttsTextWriter?.write(value);
         }
       } finally {
-        await endSegment();
-        segmentQueue.close();
-        reader.releaseLock();
+        try {
+          await endSegment();
+        } finally {
+          segmentQueue.close();
+          reader.releaseLock();
+        }
       }
     };
 
@@ -4741,6 +4756,10 @@ export class AgentActivity implements RecognitionHooks {
           );
         }
       };
+      const cancelTranscriptionInput = () => cancelUnusedInput(trTextInput);
+      messageAbortController.signal.addEventListener('abort', cancelTranscriptionInput, {
+        once: true,
+      });
       try {
         const msgModalities = msg.modalities ? await msg.modalities : undefined;
         output.modalities = msgModalities;
@@ -4811,7 +4830,6 @@ export class AgentActivity implements RecognitionHooks {
         }
 
         const trNodeResult = await this.agent.transcriptionNode(trTextInput, modelSettings);
-        if (trNodeResult !== trTextInput) cancelUnusedInput(trTextInput);
         if (trNodeResult) {
           const [textForwardTask, textOut] = performTextForwarding(
             trNodeResult,
@@ -4820,6 +4838,9 @@ export class AgentActivity implements RecognitionHooks {
           );
           forwardTasks.push(textForwardTask);
           output.textOut = textOut;
+          textForwardTask.addDoneCallback(cancelTranscriptionInput);
+        } else {
+          cancelTranscriptionInput();
         }
 
         if (!output.audioOut && output.textOut) {
@@ -4878,6 +4899,7 @@ export class AgentActivity implements RecognitionHooks {
       } finally {
         abortController.signal.removeEventListener('abort', abortMessage);
         abortMessage();
+        messageAbortController.signal.removeEventListener('abort', cancelTranscriptionInput);
         cancelUnusedInput(trTextInput);
         cancelUnusedInput(ttsTextInput);
         cancelUnusedInput(generatedAudio);

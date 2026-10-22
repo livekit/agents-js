@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
-import { ReadableStream, type ReadableStreamDefaultController } from 'node:stream/web';
+import {
+  ReadableStream,
+  type ReadableStreamDefaultController,
+  TransformStream,
+} from 'node:stream/web';
 import { setImmediate } from 'node:timers/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatContext, type FunctionCall } from '../llm/chat_context.js';
@@ -10,11 +14,12 @@ import { type GenerationCreatedEvent, RealtimeModel, RealtimeSession } from '../
 import { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { TTS } from '../tts/tts.js';
+import { Future } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import { AudioRecognition } from './audio_recognition.js';
-import { AudioOutput } from './io.js';
+import { AudioOutput, TextOutput, type TimedString } from './io.js';
 
 class TracingAudioOutput extends AudioOutput {
   frames = 0;
@@ -378,3 +383,157 @@ describe('realtime overlapping speech', () => {
     },
   );
 });
+
+it.each(
+  ['text', 'fallback TTS'].flatMap((mode) =>
+    (['complete', 'interrupt', 'error', 'replacement'] as const).map((outcome) => ({
+      mode,
+      outcome,
+    })),
+  ),
+)(
+  'retains deferred realtime transcription input until $outcome with $mode',
+  async ({ mode, outcome }) => {
+    const entered = new Future<void>();
+    const release = new Future<void>();
+    const failure = new Error('realtime transcription setup failed');
+    let input: ReadableStream<string | TimedString> | undefined;
+    let setup: Promise<void> | undefined;
+    class DeferredAgent extends Agent {
+      override async transcriptionNode(text: ReadableStream<string | TimedString>) {
+        input = text;
+        let cancelled = false;
+        let reader: ReadableStreamDefaultReader<string | TimedString> | undefined;
+        return new ReadableStream<string>({
+          start(controller) {
+            setup = (async () => {
+              entered.resolve();
+              await release.await;
+              if (cancelled) return;
+              if (outcome === 'error') {
+                controller.error(failure);
+                return;
+              }
+              if (outcome === 'replacement') {
+                controller.enqueue('replacement');
+                controller.close();
+                return;
+              }
+              reader = text.getReader();
+              try {
+                for (;;) {
+                  const { done, value } = await reader.read();
+                  if (done || cancelled) break;
+                  controller.enqueue(String(value).toUpperCase());
+                }
+                if (!cancelled) controller.close();
+              } catch (error) {
+                controller.error(error);
+              } finally {
+                reader.releaseLock();
+              }
+            })();
+          },
+          async cancel() {
+            cancelled = true;
+            release.resolve();
+            await reader?.cancel();
+            await setup;
+          },
+        });
+      }
+      override async ttsNode(text: ReadableStream<string>) {
+        if (outcome === 'replacement') return empty<AudioFrame>();
+        return text.pipeThrough(
+          new TransformStream<string, AudioFrame>({
+            transform(_text, controller) {
+              controller.enqueue(new AudioFrame(new Int16Array(480), 24000, 1, 480));
+            },
+          }),
+        );
+      }
+    }
+    class MockTTS extends TTS {
+      label = 'deferred';
+      constructor() {
+        super(24000, 1, { streaming: true });
+      }
+      synthesize(): never {
+        throw new Error('unused');
+      }
+      stream(): never {
+        throw new Error('unused');
+      }
+    }
+    class Output extends TextOutput {
+      text: string[] = [];
+      override async captureText(text: string) {
+        this.text.push(text);
+      }
+      override flush() {}
+    }
+    const model = new FakeRealtimeModel(false);
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      tts: mode === 'fallback TTS' ? new MockTTS() : undefined,
+      ttsTextTransforms: [],
+    });
+    const output = new Output();
+    session.output.transcription = output;
+    if (mode === 'fallback TTS') session.output.audio = new TracingAudioOutput();
+    await session.start({ agent: new DeferredAgent({ instructions: 'test' }) });
+    model.activeSession.modalities = ['text'];
+    const speech = session.generateReply();
+    let ended = false;
+    const end = () => {
+      if (!ended) {
+        ended = true;
+        model.activeSession.endSpeech();
+      }
+    };
+    try {
+      await entered.await;
+      await setImmediate();
+      expect(input?.locked).toBe(false);
+      expect(model.activeSession.text).toBeDefined();
+      if (outcome === 'interrupt') speech.interrupt();
+      else {
+        if (outcome === 'complete') end();
+        release.resolve();
+      }
+      await expect
+        .poll(() => speech._tasks.every((task) => task.done), { timeout: 1000 })
+        .toBe(true);
+      await speech.waitForPlayout();
+      await setup;
+      expect(input?.locked).toBe(false);
+      const expected =
+        outcome === 'complete'
+          ? ['THE WEATHER TODAY IS']
+          : outcome === 'replacement'
+            ? ['replacement']
+            : [];
+      expect(output.text).toEqual(expected);
+      if (expected.length)
+        expect(
+          session.history.items.some(
+            (item) =>
+              item.type === 'message' &&
+              item.role === 'assistant' &&
+              item.textContent === expected[0],
+          ),
+        ).toBe(true);
+      if (outcome !== 'complete') expect(model.activeSession.text).toBeUndefined();
+      const history = session.history.toJSON();
+      release.resolve();
+      await setImmediate();
+      expect(session.history.toJSON()).toEqual(history);
+      expect(output.text).toEqual(expected);
+    } finally {
+      release.resolve();
+      end();
+      await session.close();
+    }
+  },
+);

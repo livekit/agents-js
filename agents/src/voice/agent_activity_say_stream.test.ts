@@ -408,3 +408,115 @@ it('cancels a pending TTS audio read and both text consumers on interruption', a
     await f.session.close();
   }
 });
+
+it.each(
+  modes.flatMap((mode) =>
+    (['complete', 'interrupt', 'error', 'replacement'] as const).map((outcome) => ({
+      mode,
+      outcome,
+    })),
+  ),
+)('owns deferred transcription input until $outcome in $mode say', async ({ mode, outcome }) => {
+  const f = fixture(mode);
+  const source = textStream(outcome === 'complete');
+  const entered = new Future<void>();
+  const release = new Future<void>();
+  const failure = new Error('transcription setup failed');
+  let input: ReadableStream<string> | undefined;
+  let returned: ReadableStream<string> | undefined;
+  let setup: Promise<void> | undefined;
+  vi.spyOn(f.agent, 'transcriptionNode').mockImplementation(async (text) => {
+    input = text as ReadableStream<string>;
+    let reader: ReadableStreamDefaultReader<string> | undefined;
+    let cancelled = false;
+    returned = new ReadableStream<string>({
+      start(controller) {
+        setup = (async () => {
+          entered.resolve();
+          await release.await;
+          if (cancelled) return;
+          if (outcome === 'error') {
+            controller.error(failure);
+            return;
+          }
+          if (outcome === 'replacement') {
+            controller.enqueue('replacement');
+            controller.close();
+            return;
+          }
+          reader = input!.getReader();
+          try {
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done || cancelled) break;
+              controller.enqueue(value.toUpperCase());
+            }
+            if (!cancelled) controller.close();
+          } catch (error) {
+            controller.error(error);
+          } finally {
+            reader.releaseLock();
+          }
+        })();
+      },
+      async cancel() {
+        cancelled = true;
+        release.resolve();
+        await reader?.cancel();
+        await setup;
+      },
+    });
+    return returned;
+  });
+  if (outcome === 'replacement' && mode === 'generated audio') {
+    // Both results finish without reading the SDK's tee branches.
+    vi.spyOn(f.agent, 'ttsNode').mockResolvedValue(
+      new ReadableStream({
+        start(c) {
+          c.enqueue(frame());
+          c.close();
+        },
+      }),
+    );
+  }
+  await f.session.start({ agent: f.agent });
+  const speech = f.session.say(source.stream, f.options);
+  try {
+    await entered.await;
+    await tick();
+    expect(input?.locked).toBe(false);
+    expect(source.cancel).not.toHaveBeenCalled();
+    if (outcome === 'interrupt') speech.interrupt();
+    else release.resolve();
+    await expect.poll(() => speech._tasks.every((task) => task.done), { timeout: 1000 }).toBe(true);
+    await speech.waitForPlayout();
+    await setup;
+    expect(speech.exception()).toBe(outcome === 'error' ? failure : undefined);
+    if (outcome === 'error') await expect(speech._tasks[0]!.result).rejects.toBe(failure);
+    expect(input?.locked).toBe(false);
+    expect(returned?.locked).toBe(false);
+    const expected =
+      outcome === 'complete' ? ['EARLY'] : outcome === 'replacement' ? ['replacement'] : [];
+    expect(f.output.captured).toEqual(expected);
+    if (expected.length) {
+      expect(
+        f.session.history.items.some(
+          (item) =>
+            item.type === 'message' &&
+            item.role === 'assistant' &&
+            item.textContent === expected[0],
+        ),
+      ).toBe(true);
+    }
+    if (outcome !== 'complete') expect(source.cancel).toHaveBeenCalledOnce();
+    const history = f.session.history.toJSON();
+    release.resolve();
+    await tick();
+    expect(f.session.history.toJSON()).toEqual(history);
+    expect(f.output.captured).toEqual(expected);
+  } finally {
+    release.resolve();
+    source.close();
+    await f.session.close();
+  }
+});
