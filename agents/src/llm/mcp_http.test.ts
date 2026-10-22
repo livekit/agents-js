@@ -253,6 +253,107 @@ async function fixture(
 }
 
 describe('MCP HTTP protocol integration', () => {
+  it.each(['agent', 'session'])(
+    'waits for realtime publication before resolving a toolset refresh (%s)',
+    async (scope) => {
+      const { server, renameTool } = await fixture('2026-07-28');
+      const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+      const model = new RecordingRealtimeModel();
+      const session = new AgentSession({
+        llm: model,
+        vad: null,
+        tools: scope === 'session' ? [toolset] : [],
+      });
+      const publishing = new Future<void>();
+      const finishPublishing = new Future<void>();
+      let afterRefresh: Promise<void> | undefined;
+      const generateReply = vi
+        .spyOn(model.client, 'generateReply')
+        .mockImplementation(async () => ({
+          messageStream: new ReadableStream({ start: (controller) => controller.close() }),
+          functionStream: new ReadableStream({ start: (controller) => controller.close() }),
+          userInitiated: true,
+        }));
+      try {
+        await session.start({
+          agent: new Agent({ instructions: '', tools: scope === 'agent' ? [toolset] : [] }),
+        });
+        vi.spyOn(model.client, 'updateTools').mockImplementationOnce(async (tools) => {
+          publishing.resolve();
+          await finishPublishing.await;
+          await RecordingRealtimeSession.prototype.updateTools.call(model.client, tools);
+        });
+        renameTool('new_lookup');
+        afterRefresh = toolset.refresh().then(() => {
+          session.generateReply({ userInput: 'use the refreshed tools' });
+        });
+        await publishing.await;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(generateReply).not.toHaveBeenCalled();
+        finishPublishing.resolve();
+        await afterRefresh;
+        await session.waitForIdle();
+        expect(generateReply).toHaveBeenCalledOnce();
+        expect(Object.keys(model.client.tools.functionTools)).toEqual(['new_lookup']);
+      } finally {
+        finishPublishing.resolve();
+        await afterRefresh?.catch(() => undefined);
+        await session.close();
+      }
+    },
+  );
+
+  it('reports a realtime publication failure to the refresh caller', async () => {
+    const { server, renameTool } = await fixture('2026-07-28');
+    const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+    const model = new RecordingRealtimeModel();
+    const session = new AgentSession({ llm: model, vad: null, tools: [toolset] });
+    try {
+      await session.start({ agent: new Agent({ instructions: '' }) });
+      const error = new Error('provider update failed');
+      vi.spyOn(model.client, 'updateTools').mockRejectedValueOnce(error);
+      renameTool('new_lookup');
+      await expect(toolset.refresh()).rejects.toBe(error);
+      await toolset.refresh();
+      expect(Object.keys(model.client.tools.functionTools)).toEqual(['new_lookup']);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('closes a toolset without waiting for realtime publication', async () => {
+    const { server, renameTool } = await fixture('2026-07-28');
+    const toolset = new MCPToolset({ id: 'mcp', mcpServer: server });
+    const model = new RecordingRealtimeModel();
+    const session = new AgentSession({ llm: model, vad: null, tools: [toolset] });
+    const publishing = new Future<void>();
+    const finishPublishing = new Future<void>();
+    let refreshing: Promise<void> | undefined;
+    let closing: Promise<void> | undefined;
+    try {
+      await session.start({ agent: new Agent({ instructions: '' }) });
+      vi.spyOn(model.client, 'updateTools').mockImplementationOnce(async () => {
+        publishing.resolve();
+        await finishPublishing.await;
+      });
+      renameTool('new_lookup');
+      refreshing = toolset.refresh();
+      await publishing.await;
+      let closed = false;
+      closing = toolset.aclose().then(() => {
+        closed = true;
+      });
+      await vi.waitFor(() => expect(closed).toBe(true));
+      await refreshing;
+      expect(finishPublishing.done).toBe(false);
+      expect(server.initialized).toBe(false);
+    } finally {
+      finishPublishing.resolve();
+      await Promise.allSettled([refreshing, closing]);
+      await session.close();
+    }
+  });
+
   it.each([false, true])(
     'refreshes session tools after a handoff and applies filters (realtime: %s)',
     async (realtime) => {

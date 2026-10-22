@@ -254,8 +254,9 @@ export interface ToolsetContext {
   /**
    * Replace the toolset's tools. Useful for dynamic sources
    * (e.g. an MCP server) whose tools are discovered after `setup` or change at runtime.
+   * Await the result to wait for tool changes to reach the active session.
    */
-  updateTools(tools: readonly ToolContextEntry[]): void;
+  updateTools(tools: readonly ToolContextEntry[]): void | Promise<void>;
 }
 
 /**
