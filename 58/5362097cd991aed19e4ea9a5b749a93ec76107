@@ -1,0 +1,29 @@
+agents/src/voice/agent_transcription_node.test.ts
+  s_4eb1f8fd343bc7::t_06289db6fd99bb 20,36,46,48,54,56,101,115-116,124-125,151,156,160-162,198,201,204-221,225-241,247-252
+  s_4eb1f8fd343bc7::t_04351e8de66b2e 222-224,242-246
+  s_4eb1f8fd343bc7::t_64530f78520f11 1-19,21-35,37-45,47,49-53,55,57-100,102-114,117-123,126-150,152-155,157-159,163-197,199-200,202-203,253
+agents/src/voice/agent_activity_say_stream.test.ts
+  s_4eb1f8fd343bc7::t_21af19074f40e1 7,9,14-15,97
+  s_4eb1f8fd343bc7::t_d59a5dbe60fa15 526-650
+.changeset/bright-sessions-wait.md
+  s_4eb1f8fd343bc7::t_2a39a15731b3ea 12-13
+agents/src/voice/agent_v2.ts
+  s_4eb1f8fd343bc7::t_57fd3d397a88c6 509-515
+  s_4eb1f8fd343bc7::t_be4787e22ae938 459-508,516-517
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "585362097cd991aed19e4ea9a5b749a93ec76107",
+  "prompts": {},
+  "sessions": {
+    "s_4eb1f8fd343bc7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1653c-94b8-77e3-b6ec-18df6caa7393",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
