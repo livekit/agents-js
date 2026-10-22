@@ -1033,24 +1033,65 @@ export function serializeSessionOptions(
   return serializeOptionValue(options) as Record<string, unknown>;
 }
 
+// Maps an ErrorEvent's error type to its key in the session summary's error counts.
+const SUMMARY_ERROR_KEYS: Record<string, string> = {
+  llm_error: 'llm',
+  stt_error: 'stt',
+  tts_error: 'tts',
+  realtime_model_error: 'realtime',
+  interruption_detection_error: 'interruption',
+};
+
 /**
  * Builds the session summary that agent evals read from the recording header. Its schema is
  * evalschema/session-summary.schema.json in livekit/cloud-protocol. An absent key means "not
- * sent", so this omits `tags` (agents-js has no tagger) and `usage`.
+ * sent", so this omits `tags` (agents-js has no tagger) and `usage`, and omits `duration_ms`,
+ * `models` and `close_reason` when the report has no value for them.
  */
 function sessionSummary(agentName: string, report: SessionReport): Record<string, unknown> {
   const userTurns = report.chatHistory.items.filter(
     (item) => item.type === 'message' && item.role === 'user',
   ).length;
   const summary: Record<string, unknown> = {
-    version: 1,
     agent_name: agentName,
+    sdk_version: version,
     user_turns: userTurns,
   };
   // The report has no duration when audio was not recorded.
   if (report.duration !== undefined) {
     summary.duration_ms = Math.round(report.duration);
   }
+
+  if (report.modelUsage && report.modelUsage.length > 0) {
+    const models = new Map<string, { type: string; provider: string; model: string }>();
+    for (const usage of report.modelUsage) {
+      const type = usage.type.replace(/_usage$/, '');
+      models.set(`${type}\0${usage.provider}\0${usage.model}`, {
+        type,
+        provider: usage.provider,
+        model: usage.model,
+      });
+    }
+    summary.models = [...models.keys()].sort().map((key) => models.get(key));
+  }
+
+  // Events are not uploaded, so the header is the only way evals can see them.
+  const errors: Record<string, number> = {};
+  for (const key of Object.values(SUMMARY_ERROR_KEYS)) {
+    errors[key] = 0;
+  }
+  for (const event of report.events) {
+    if (event.type === 'error') {
+      const key = SUMMARY_ERROR_KEYS[event.error.type];
+      if (key !== undefined) {
+        errors[key] = (errors[key] ?? 0) + 1;
+      }
+    } else if (event.type === 'close') {
+      summary.close_reason = event.reason;
+    }
+  }
+  summary.errors = errors;
+
   return summary;
 }
 

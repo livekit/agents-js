@@ -22,6 +22,7 @@ import { ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { version } from '../version.js';
 import { AgentSession } from '../voice/agent_session.js';
+import { CloseReason, createCloseEvent, createErrorEvent } from '../voice/events.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { PIIFilteringSpanProcessor } from './pii.js';
@@ -816,6 +817,23 @@ describe('uploadSessionReport metadata', () => {
     report.chatHistory.addMessage({ role: 'user', content: 'hi' });
     report.chatHistory.addMessage({ role: 'assistant', content: 'hello' });
     report.chatHistory.addMessage({ role: 'user', content: 'bye' });
+    const llmError = {
+      type: 'llm_error' as const,
+      timestamp: 0,
+      label: 'llm',
+      error: new Error('x'),
+      recoverable: true,
+    };
+    report.events = [
+      createErrorEvent(llmError),
+      createErrorEvent(llmError),
+      createErrorEvent({ ...llmError, type: 'tts_error' as const }),
+      createCloseEvent(CloseReason.PARTICIPANT_DISCONNECTED),
+    ];
+    report.modelUsage = [
+      { type: 'tts_usage', provider: 'p', model: 'm' },
+      { type: 'llm_usage', provider: 'p', model: 'm' },
+    ] as SessionReport['modelUsage'];
 
     await uploadSessionReport({
       agentName: 'support',
@@ -828,10 +846,16 @@ describe('uploadSessionReport metadata', () => {
     expect(header.duration).toBe(BigInt(12500));
     // agents-js has no tagger, so the summary never has a tags key.
     expect(JSON.parse(header.sessionSummary)).toEqual({
-      version: 1,
       agent_name: 'support',
+      sdk_version: version,
       duration_ms: 12500,
       user_turns: 2,
+      models: [
+        { type: 'llm', provider: 'p', model: 'm' },
+        { type: 'tts', provider: 'p', model: 'm' },
+      ],
+      errors: { llm: 2, stt: 0, tts: 1, realtime: 0, interruption: 0 },
+      close_reason: 'participant_disconnected',
     });
   });
 
