@@ -1116,6 +1116,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                   options: {
                     statusCode: event.code ?? -1,
                     body: event,
+                    retryable: event.retryable !== false,
                   },
                 });
             }
