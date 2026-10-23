@@ -447,8 +447,8 @@ function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VA
 /**
  * Deepgram applies `language_hint` only in Nova-3 multi language mode, and the gateway drops the
  * key for every other language, so sending one there is silently ignored. The Flux provider
- * forwards its hint under any language, so Flux models are exempt; non-Deepgram models have no
- * such option.
+ * forwards its hint under any language, so Flux models are exempt. False for a non-Deepgram model,
+ * whose hint Deepgram's rules say nothing about and which therefore passes through.
  */
 function languageHintSendable(model: string | undefined, language: string | undefined): boolean {
   if (!model?.startsWith('deepgram/')) return false;
@@ -457,15 +457,17 @@ function languageHintSendable(model: string | undefined, language: string | unde
 }
 
 /**
- * Removes the key from `extra` in place and reports whether it removed one. Every caller passes a
- * copy of the outgoing frame, so the hint stays in the caller's own options and a later language
- * or model change can send it again.
+ * Removes the key from `extra` in place and reports whether it removed one. Only Deepgram's
+ * language rules make the key ours to withhold, so another provider's hint is left untouched.
+ * Every caller passes a copy of the outgoing frame, so the hint stays in the caller's own options
+ * and a later language or model change can send it again.
  */
 function dropUnsupportedLanguageHint(
   model: string | undefined,
   language: string | undefined,
   extra: Record<string, unknown>,
 ): boolean {
+  if (!model?.startsWith('deepgram/')) return false;
   if (languageHintSendable(model, language)) return false;
   if (!('language_hint' in extra)) return false;
 
@@ -891,6 +893,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     // reconnecting. Unsupported providers ignore the message.
     if (this.activeWs && this.activeWs.readyState === 1) {
       const settings: Record<string, unknown> = {};
+      // the hint the model and language can carry right now, if the caller configured one
+      const hint = languageHintSendable(this.opts.model, this.opts.language)
+        ? (this.opts.modelOptions as Record<string, unknown>).language_hint
+        : undefined;
       if (opts.model !== undefined) settings.model = opts.model;
       if (opts.language !== undefined) settings.language = normalizeLanguage(opts.language);
       if (opts.modelOptions !== undefined) {
@@ -900,12 +906,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
           this.stt._warnLanguageHintIgnored(this.opts.model, this.opts.language);
         }
+        // this frame carries the caller's keys alone, so a configured hint that no earlier frame
+        // could send is added to it, and only that key
+        if (hint !== undefined) extra.language_hint = hint;
         settings.extra = extra;
       } else if (opts.language !== undefined || opts.model !== undefined) {
         // A language or model change decides whether the configured hint can go on the wire, and
         // no frame carried it while it could not: send it now that it can.
-        const hint = (this.opts.modelOptions as Record<string, unknown>).language_hint;
-        if (hint !== undefined && languageHintSendable(this.opts.model, this.opts.language)) {
+        if (hint !== undefined) {
           settings.extra = { language_hint: hint };
         }
       }
