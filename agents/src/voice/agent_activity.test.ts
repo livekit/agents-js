@@ -31,7 +31,14 @@ import {
   RealtimeModel,
   type RealtimeSession,
 } from '../llm/realtime.js';
-import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
+import {
+  type Tool,
+  ToolContext,
+  ToolFlag,
+  Toolset,
+  type ToolsetContext,
+  tool,
+} from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Event, Future, Task } from '../utils.js';
@@ -120,6 +127,7 @@ function buildMainTaskRunner() {
     _schedulingPaused: false,
     _authorizationPaused: false,
     _drainBlockedTasks: new Set<Task<void>>(),
+    currentSpeechCleared: new Future<void, never>(),
     _mainTask: undefined as { result: Promise<void> } | undefined,
     cancelPreemptiveGeneration: vi.fn(),
     logger: {
@@ -1152,7 +1160,7 @@ describe('AgentActivity - onToolsetToolsChanged (dynamic toolset push)', () => {
     const toolB = makeFn('toolB');
 
     // Capture the wired ctx.updateTools the framework hands the toolset during setup.
-    let pushTools!: (tools: readonly Tool[]) => void;
+    let pushTools!: ToolsetContext['updateTools'];
     const toolset = Toolset.create({
       id: 'dynamic',
       tools: [toolA],
@@ -1390,7 +1398,6 @@ describe('AgentActivity - interrupted tool completion', () => {
           toolCall: call,
           toolCallOutput: output,
           rawOutput: 'charged',
-          replyRequired: true,
         }),
       ],
       firstToolStartedFuture: new Future<void>(),
@@ -1407,12 +1414,13 @@ describe('AgentActivity - interrupted tool completion', () => {
 
     expect(chatCtx.items).toContain(output);
     expect(output.createdAt).toBe(300);
+    expect(output.replyRequired).toBe(false);
     expect(chatCtx.items).toEqual([call, output]);
     expect(toolItemsAdded).toHaveBeenCalledWith([output]);
     expect(generateReply).not.toHaveBeenCalled();
   });
 
-  it('does not persist an interrupted handoff as completed', () => {
+  it('records an interrupted handoff as a silent error', () => {
     const emit = vi.fn();
     const toolItemsAdded = vi.fn();
     const activity = Object.create(AgentActivity.prototype) as AgentActivity;
@@ -1446,7 +1454,6 @@ describe('AgentActivity - interrupted tool completion', () => {
           toolCall: call,
           toolCallOutput: output,
           rawOutput: 'transferred',
-          replyRequired: false,
           agentTask: new AgentTask({ instructions: 'Handle the specialist request.' }),
         }),
       ],
@@ -1462,11 +1469,16 @@ describe('AgentActivity - interrupted tool completion', () => {
       }
     )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create());
 
-    expect(chatCtx.items).not.toContain(call);
-    expect(chatCtx.items).not.toContain(output);
-    expect(sessionHistory.items).not.toContain(call);
-    expect(emit).not.toHaveBeenCalled();
-    expect(toolItemsAdded).not.toHaveBeenCalled();
+    expect(chatCtx.items).toEqual([call, output]);
+    expect(sessionHistory.items).toEqual([call]);
+    expect(output.isError).toBe(true);
+    expect(output.output).toContain('handoff was interrupted');
+    expect(output.replyRequired).toBe(false);
+    expect(emit).toHaveBeenCalledWith(
+      AgentSessionEventTypes.FunctionToolsExecuted,
+      expect.objectContaining({ functionCalls: [call], functionCallOutputs: [output] }),
+    );
+    expect(toolItemsAdded).toHaveBeenCalledWith([output]);
   });
 
   it('commits and emits only completed regular tools from a mixed interrupted batch', () => {
@@ -1510,13 +1522,11 @@ describe('AgentActivity - interrupted tool completion', () => {
           toolCall: completedCall,
           toolCallOutput: completedOutput,
           rawOutput: 'saved',
-          replyRequired: true,
         }),
         ToolExecutionOutput.create({
           toolCall: handoffCall,
           toolCallOutput: handoffOutput,
           rawOutput: 'transferred',
-          replyRequired: false,
           agentTask: new AgentTask({ instructions: 'Handle the specialist request.' }),
         }),
       ],
@@ -1532,15 +1542,16 @@ describe('AgentActivity - interrupted tool completion', () => {
       }
     )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create());
 
-    expect(chatCtx.items).toHaveLength(2);
-    expect(chatCtx.items).toEqual(expect.arrayContaining([completedCall, completedOutput]));
-    expect(sessionHistory.items).toEqual([completedCall]);
-    expect(toolItemsAdded).toHaveBeenCalledWith([completedOutput]);
+    expect(chatCtx.items).toEqual([completedCall, handoffCall, completedOutput, handoffOutput]);
+    expect(sessionHistory.items).toEqual([completedCall, handoffCall]);
+    expect(completedOutput.replyRequired).toBe(false);
+    expect(handoffOutput).toMatchObject({ isError: true, replyRequired: false });
+    expect(toolItemsAdded).toHaveBeenCalledWith([completedOutput, handoffOutput]);
     expect(emit).toHaveBeenCalledWith(
       AgentSessionEventTypes.FunctionToolsExecuted,
       expect.objectContaining({
-        functionCalls: [completedCall],
-        functionCallOutputs: [completedOutput],
+        functionCalls: [completedCall, handoffCall],
+        functionCallOutputs: [completedOutput, handoffOutput],
       }),
     );
   });
@@ -1666,7 +1677,6 @@ describe('AgentActivity - interruption while waiting for tools', () => {
           toolCall: call,
           toolCallOutput: output,
           rawOutput: 'saved',
-          replyRequired: true,
         }),
       ],
       firstToolStartedFuture: new Future<void>(),

@@ -561,6 +561,9 @@ export class FunctionCallOutput {
 
   isError: boolean;
 
+  /** Whether a realtime model should answer after receiving this output. */
+  replyRequired: boolean;
+
   createdAt: number;
 
   constructor(params: {
@@ -570,6 +573,7 @@ export class FunctionCallOutput {
     id?: string;
     createdAt?: number;
     name?: string;
+    replyRequired?: boolean;
   }) {
     const {
       callId,
@@ -578,6 +582,7 @@ export class FunctionCallOutput {
       id = shortuuid('item_'),
       createdAt = Date.now(),
       name = '',
+      replyRequired = true,
     } = params;
     this.id = id;
     this.callId = callId;
@@ -585,6 +590,7 @@ export class FunctionCallOutput {
     this.isError = isError;
     this.name = name;
     this.createdAt = createdAt;
+    this.replyRequired = replyRequired;
   }
 
   static create(params: {
@@ -594,6 +600,7 @@ export class FunctionCallOutput {
     id?: string;
     createdAt?: number;
     name?: string;
+    replyRequired?: boolean;
   }) {
     return new FunctionCallOutput(params);
   }
@@ -606,6 +613,7 @@ export class FunctionCallOutput {
       callId: this.callId,
       output: this.output,
       isError: this.isError,
+      replyRequired: this.replyRequired,
     };
 
     if (!excludeTimestamp) {

@@ -11,12 +11,16 @@ import {
   RealtimeModel,
   RealtimeSession,
 } from '../llm/realtime.js';
-import { type ToolChoice, ToolContext, tool } from '../llm/tool_context.js';
+import { type ToolChoice, ToolContext, handoff, tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
 import { Future } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
-import { AgentSessionEventTypes, type SpeechCreatedEvent } from './events.js';
+import {
+  AgentSessionEventTypes,
+  type FunctionToolsExecutedEvent,
+  type SpeechCreatedEvent,
+} from './events.js';
 import { AudioOutput, type PlaybackFinishedEvent } from './io.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -95,6 +99,8 @@ class FakeRealtimeSession extends RealtimeSession {
   private toolChoice: ToolChoice | null = null;
   private generationCount = 0;
   includeTool = true;
+  toolName = 'lookup_order';
+  emitAudio = false;
   readonly generatedToolChoices: (ToolChoice | null)[] = [];
 
   get chatCtx(): ChatContext {
@@ -126,15 +132,17 @@ class FakeRealtimeSession extends RealtimeSession {
       messageStream: stream({
         messageId: `message-${generation}`,
         textStream: stream('Let me check that.'),
-        audioStream: stream<AudioFrame>(),
-        modalities: Promise.resolve(['text']),
+        audioStream: this.emitAudio
+          ? stream(new AudioFrame(new Int16Array(24_000), 24_000, 1, 24_000))
+          : stream<AudioFrame>(),
+        modalities: Promise.resolve(this.emitAudio ? ['audio', 'text'] : ['text']),
       }),
       functionStream:
         this.includeTool && this.toolChoice !== 'none'
           ? stream(
               FunctionCall.create({
                 callId: generation === 0 ? TOOL_CALL_ID : `${TOOL_CALL_ID}-${generation}`,
-                name: 'lookup_order',
+                name: this.toolName,
                 args: '{}',
               }),
             )
@@ -142,6 +150,18 @@ class FakeRealtimeSession extends RealtimeSession {
       userInitiated: generation === 0,
       responseId: `response-${generation}`,
     };
+  }
+}
+
+class InterruptibleAudioOutput extends AudioOutput {
+  override async captureFrame(frame: AudioFrame): Promise<void> {
+    await super.captureFrame(frame);
+    this.onPlaybackStarted(Date.now());
+  }
+
+  override clearBuffer(): void {
+    this.flush();
+    this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
   }
 }
 
@@ -369,5 +389,136 @@ describe('Realtime tool output commit', () => {
     expect(output?.output).toBe(JSON.stringify('ships tomorrow'));
     // The output must follow its call so summarization renders them in order.
     expect(items.indexOf(output!)).toBeGreaterThan(items.indexOf(call!));
+  });
+
+  it('carries cancelToolReply to the realtime session output', async () => {
+    const model = new FakeRealtimeModel();
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    const agent = new Agent({
+      instructions: 'test',
+      tools: { lookup_order: tool({ description: 'x', execute: async () => 'ok' }) },
+    });
+    session.on(AgentSessionEventTypes.FunctionToolsExecuted, (event) => event.cancelToolReply());
+
+    await session.start({ agent });
+    try {
+      await session.generateReply().waitForPlayout();
+      await vi.waitFor(() =>
+        expect(
+          model.activeSession.chatCtx.items.some(
+            (item) => item.type === 'function_call_output' && !item.replyRequired,
+          ),
+        ).toBe(true),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('preserves and syncs a completed tool output when a realtime turn is interrupted', async () => {
+    const model = new FakeRealtimeModel();
+    model.activeSession.emitAudio = true;
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    session.output.audio = new InterruptibleAudioOutput();
+    let toolExecuted!: () => void;
+    const toolFinished = new Promise<void>((resolve) => (toolExecuted = resolve));
+    const events: FunctionToolsExecutedEvent[] = [];
+    session.on(AgentSessionEventTypes.FunctionToolsExecuted, (event) => events.push(event));
+    const agent = new Agent({
+      instructions: 'test',
+      tools: {
+        lookup_order: tool({
+          description: 'x',
+          execute: async () => {
+            toolExecuted();
+            return 'ships tomorrow';
+          },
+        }),
+      },
+    });
+
+    await session.start({ agent });
+    try {
+      const speech = session.generateReply();
+      await toolFinished;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      session.interrupt();
+      await speech.waitForPlayout();
+    } finally {
+      await session.close();
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.functionCallOutputs[0]).toMatchObject({
+      callId: TOOL_CALL_ID,
+      output: JSON.stringify('ships tomorrow'),
+      replyRequired: false,
+    });
+    const synced = model.activeSession.chatCtx.items.filter(
+      (item) => item.type === 'function_call_output',
+    );
+    expect(synced).toHaveLength(1);
+    expect(synced[0]).toMatchObject({ callId: TOOL_CALL_ID, replyRequired: false });
+  });
+
+  it('answers an interrupted realtime handoff as a silent error', async () => {
+    const model = new FakeRealtimeModel();
+    model.activeSession.emitAudio = true;
+    model.activeSession.toolName = 'transfer_to_billing';
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    session.output.audio = new InterruptibleAudioOutput();
+    const toolFinished = new Future<void>();
+    const agent = new Agent({
+      instructions: 'test',
+      tools: {
+        transfer_to_billing: tool({
+          description: 'Transfer the user to billing.',
+          execute: async () => {
+            toolFinished.resolve();
+            return handoff({ agent: new Agent({ instructions: 'You are the billing agent.' }) });
+          },
+        }),
+      },
+    });
+
+    await session.start({ agent });
+    try {
+      const speech = session.generateReply();
+      await toolFinished.await;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      session.interrupt();
+      await speech.waitForPlayout();
+      expect(session.currentAgent, 'the handoff must not be applied').toBe(agent);
+    } finally {
+      await session.close();
+    }
+
+    // The realtime session holds the call open until it is answered, and an empty success
+    // would claim a transfer that never happened.
+    for (const [label, items] of [
+      ['agent chat context', agent.chatCtx.items],
+      ['session history', session.history.items],
+      ['realtime session', model.activeSession.chatCtx.items],
+    ] as const) {
+      const outputs = items.filter((item) => item.type === 'function_call_output');
+      expect(outputs, label).toHaveLength(1);
+      expect(outputs[0], label).toMatchObject({
+        callId: TOOL_CALL_ID,
+        isError: true,
+        replyRequired: false,
+      });
+    }
   });
 });

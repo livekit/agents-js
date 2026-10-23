@@ -59,6 +59,7 @@ export interface SessionReportOptions {
 
 export function createSessionReport(opts: SessionReportOptions): SessionReport {
   const timestamp = opts.timestamp ?? Date.now();
+  const startedAt = opts.startedAt ?? Date.now();
   const audioRecordingStartedAt = opts.audioRecordingStartedAt;
 
   return {
@@ -69,12 +70,16 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     events: opts.events,
     chatHistory: opts.chatHistory,
     enableRecording: opts.enableRecording ?? false,
-    startedAt: opts.startedAt ?? Date.now(),
+    startedAt,
     timestamp,
     audioRecordingPath: opts.audioRecordingPath,
     audioRecordingStartedAt,
     duration:
-      audioRecordingStartedAt !== undefined ? timestamp - audioRecordingStartedAt : undefined,
+      audioRecordingStartedAt !== undefined
+        ? timestamp - audioRecordingStartedAt
+        : opts.startedAt !== undefined
+          ? timestamp - startedAt
+          : undefined,
     modelUsage: opts.modelUsage,
   };
 }
@@ -168,6 +173,11 @@ function eventToJSON(event: AgentEvent): Record<string, unknown> {
     case 'overlapping_speech':
       // Raw PCM is not part of the wire format.
       delete e.speechInput;
+      break;
+    case 'function_tools_executed':
+      // Derived from the outputs' replyRequired, so Python's model_dump() omits them.
+      delete e.hasToolReply;
+      delete e.cancelToolReply;
       break;
     case 'error':
       e.source = serializeEventSource(e.source);
