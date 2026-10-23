@@ -171,6 +171,21 @@ describe('AssemblyAI streaming configuration', () => {
     );
   });
 
+  it('keeps constructor redaction policies when the caller mutates its array', async () => {
+    const policies = ['person_name'];
+    await withProvider({ redactPii: true, redactPiiPolicies: policies }, async (provider) => {
+      policies[0] = 'phone_number';
+      expect(() => provider.updateOptions({ redactPiiPolicies: policies })).toThrow(
+        /cannot be changed via updateOptions/,
+      );
+
+      const same = ['person_name'];
+      provider.updateOptions({ redactPiiPolicies: same });
+      same[0] = 'phone_number';
+      expect(() => provider.updateOptions({ redactPiiPolicies: ['person_name'] })).not.toThrow();
+    });
+  });
+
   it('reports interim results only when partial turns are emitted', () => {
     expect(new STT({ apiKey: 'test' }).capabilities.interimResults).toBe(true);
     expect(new STT({ apiKey: 'test', redactPii: true }).capabilities.interimResults).toBe(false);

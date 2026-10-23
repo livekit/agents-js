@@ -125,6 +125,7 @@ function normalizeUpdateOptions(
     if (key in nextOpts && JSON.stringify(nextOpts[key]) !== JSON.stringify(current[key])) {
       throw new Error(`${key} cannot be changed via updateOptions; create a new STT instead.`);
     }
+    delete nextOpts[key];
   }
   validateModelOptions(nextOpts, current.speechModel);
   validateAgentContext(nextOpts.agentContext);
@@ -337,6 +338,7 @@ export class STT extends stt.STT {
       ...opts,
       apiKey,
       minTurnSilence,
+      ...(opts.redactPiiPolicies && { redactPiiPolicies: [...opts.redactPiiPolicies] }),
     };
     this.#userKeyterms = [...(this.#opts.keytermsPrompt ?? [])];
   }
