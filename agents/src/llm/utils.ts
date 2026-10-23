@@ -512,17 +512,30 @@ function injectSchemaDefaults(
     const properties = schema.properties;
     const additional = schema.additionalProperties;
     if (isJsonObject(properties) || isJsonObject(additional)) {
+      const required = Array.isArray(schema.required) ? schema.required : [];
       return Object.fromEntries(
-        Object.entries(value).map(([key, item]) => {
-          const prop = isJsonObject(properties) ? properties[key] : undefined;
-          if (isJsonObject(prop)) {
-            return [key, injectSchemaDefaults(item, prop, root)];
-          }
-          if (isJsonObject(additional)) {
-            return [key, injectSchemaDefaults(item, additional, root)];
-          }
-          return [key, item];
-        }),
+        Object.entries(value)
+          .filter(([key, item]) => {
+            const prop = isJsonObject(properties) ? properties[key] : undefined;
+            // null for an omittable, non-nullable property means "not provided".
+            return !(
+              item === null &&
+              isJsonObject(prop) &&
+              !required.includes(key) &&
+              !('default' in prop) &&
+              !jsonSchemaAllowsNull(prop, root)
+            );
+          })
+          .map(([key, item]) => {
+            const prop = isJsonObject(properties) ? properties[key] : undefined;
+            if (isJsonObject(prop)) {
+              return [key, injectSchemaDefaults(item, prop, root)];
+            }
+            if (isJsonObject(additional)) {
+              return [key, injectSchemaDefaults(item, additional, root)];
+            }
+            return [key, item];
+          }),
       );
     }
   }
