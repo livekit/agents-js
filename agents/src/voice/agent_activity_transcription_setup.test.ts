@@ -364,6 +364,60 @@ it.each(modes)('cancels pipeline transcription setup with %s', async (mode) => {
   }
 });
 
+it.each(
+  (['custom TTS', 'default TTS'] as const).flatMap((mode) =>
+    (['null', 'early output'] as const).map((ending) => ({ mode, ending })),
+  ),
+)(
+  'drains the pipeline producer when transcription returns $ending with $mode',
+  async ({ mode, ending }) => {
+    const ready = new Future<void>();
+    const f = fixture(mode, async (_ctx, text) => {
+      const first = await text[Symbol.asyncIterator]().next();
+      ready.resolve();
+      if (ending === 'null') return null;
+      return (async function* () {
+        if (!first.done) yield first.value;
+      })();
+    });
+    f.agent.llmNode = async () => f.source;
+    const ttsText: string[] = [];
+    const ttsNode = f.agent.ttsNode.bind(f.agent);
+    f.agent.ttsNode = async (text, settings) =>
+      ttsNode(
+        (text as ReadableStream<string>).pipeThrough(
+          new TransformStream<string, string>({
+            transform(chunk, controller) {
+              ttsText.push(chunk);
+              controller.enqueue(chunk);
+            },
+          }),
+        ),
+        settings,
+      );
+    try {
+      await f.session.start({ agent: f.agent });
+      const speech = f.session.generateReply({ userInput: 'go' });
+      await ready.await;
+      await tick();
+      expect(f.cancel).not.toHaveBeenCalled();
+      f.producer.enqueue(' second');
+      f.release();
+      await speech;
+      expect(speech.exception()).toBeUndefined();
+      expect(speech._tasks.every((task) => task.done)).toBe(true);
+      expect(ttsText.join('')).toBe('first second');
+      expect(f.audio.frames).toBeGreaterThan(0);
+      expect(f.text.chunks).toEqual(ending === 'null' ? [] : ['first']);
+      expect(f.cancel).not.toHaveBeenCalled();
+    } finally {
+      f.release();
+      await f.session.close();
+      f.restore();
+    }
+  },
+);
+
 it('reports an already locked transcription source without retaining the input pipe', async () => {
   const f = fixture('text', (_ctx, text) => text);
   const reader = f.source.getReader();

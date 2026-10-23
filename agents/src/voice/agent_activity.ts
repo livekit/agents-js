@@ -340,6 +340,7 @@ async function raceWithAbort<T>(
 function createTranscriptionInput(
   source: ReadableStream<string | TimedString>,
   signal: AbortSignal,
+  { preventCancel = false }: { preventCancel?: boolean } = {},
 ) {
   let controller!: TransformStreamDefaultController<string | TimedString>;
   const input = new TransformStream<string | TimedString>({
@@ -353,7 +354,7 @@ function createTranscriptionInput(
   signal.addEventListener('abort', cancel, { once: true });
   if (signal.aborted) cancel();
   const done = source
-    .pipeTo(input.writable)
+    .pipeTo(input.writable, { preventCancel })
     // Pipe setup can fail before it forwards an error to the readable side.
     .catch((error) => controller.error(error))
     .finally(() => signal.removeEventListener('abort', cancel));
@@ -4186,7 +4187,10 @@ export class AgentActivity implements RecognitionHooks {
           }
         }
 
-        nodeInput = createTranscriptionInput(transcriptionInput, segmentAbortController.signal);
+        // The segment producer also feeds TTS and must finish independently.
+        nodeInput = createTranscriptionInput(transcriptionInput, segmentAbortController.signal, {
+          preventCancel: true,
+        });
         const transcription = this.agent.transcriptionNode(nodeInput.stream, modelSettings);
         await speechHandle.waitIfNotInterrupted([
           raceWithAbort(transcription, replyAbortController.signal),
