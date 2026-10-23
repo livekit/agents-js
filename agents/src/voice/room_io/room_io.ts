@@ -294,19 +294,10 @@ export class RoomIO {
   };
 
   private onParticipantDisconnected = (participant: RemoteParticipant) => {
-    if (participant.identity !== this.participantIdentity || !this.linkedParticipant) {
+    if (participant.identity !== this.participantIdentity) {
       return;
     }
-    this.agentSession.emit(
-      AgentSessionEventTypes.ParticipantDisconnected,
-      createParticipantDisconnectedEvent({
-        participantIdentity: participant.identity,
-        disconnectReason: participant.disconnectReason ?? DisconnectReason.UNKNOWN_REASON,
-        participantAttributes: {
-          ...(participantAttributes(participant) as Record<string, string | number | boolean>),
-        },
-      }),
-    );
+    const wasLinked = this.linkedParticipant !== undefined;
     this.agentSession._addSessionEvent?.('participant_disconnected', {
       ...(participantAttributes(participant) as Record<string, string>),
       [traceTypes.ATTR_DISCONNECT_REASON]:
@@ -330,6 +321,18 @@ export class RoomIO {
       this.agentSession._closeSoon({
         reason: CloseReason.PARTICIPANT_DISCONNECTED,
       });
+    }
+    if (wasLinked) {
+      this.agentSession.emit(
+        AgentSessionEventTypes.ParticipantDisconnected,
+        createParticipantDisconnectedEvent({
+          participantIdentity: participant.identity,
+          disconnectReason: participant.disconnectReason ?? DisconnectReason.UNKNOWN_REASON,
+          participantAttributes: {
+            ...(participantAttributes(participant) as Record<string, string | number | boolean>),
+          },
+        }),
+      );
     }
   };
 

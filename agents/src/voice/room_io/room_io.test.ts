@@ -139,7 +139,7 @@ describe('RoomIO participant disconnect event', () => {
     });
     (listener as (participant: unknown) => void)({
       identity: 'linked',
-      disconnectReason: DisconnectReason.CLIENT_INITIATED,
+      disconnectReason: DisconnectReason.UNKNOWN_REASON,
     });
     expect(events).toHaveLength(0);
 
@@ -170,6 +170,45 @@ describe('RoomIO participant disconnect event', () => {
     });
     await roomIO.close();
   });
+});
+
+it('runs disconnect cleanup and close behavior before notifying throwing listeners', async () => {
+  const room = createFakeRoom();
+  const session = createFakeSession();
+  session.on(AgentSessionEventTypes.ParticipantDisconnected, () => {
+    throw new Error('listener failure');
+  });
+  const roomIO = new RoomIO({
+    agentSession: session as unknown as RoomIOArgs['agentSession'],
+    room: room as unknown as RoomIOArgs['room'],
+    inputOptions: { audioEnabled: false, textEnabled: false, participantIdentity: 'linked' },
+    outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+  });
+
+  roomIO.start();
+  const connectListener = room.on.mock.calls.find(
+    ([event]) => event === RoomEvent.ParticipantConnected,
+  )?.[1];
+  const disconnectListener = room.on.mock.calls.find(
+    ([event]) => event === RoomEvent.ParticipantDisconnected,
+  )?.[1];
+  (connectListener as (participant: unknown) => void)({
+    identity: 'linked',
+    info: { kind: 0 },
+    attributes: {},
+  });
+
+  expect(() =>
+    (disconnectListener as (participant: unknown) => void)({
+      identity: 'linked',
+      disconnectReason: DisconnectReason.CLIENT_INITIATED,
+    }),
+  ).toThrow('listener failure');
+  expect(session._closeSoon).toHaveBeenCalledWith({
+    reason: CloseReason.PARTICIPANT_DISCONNECTED,
+  });
+  expect(Reflect.get(roomIO, 'participantAvailableFuture').done).toBe(false);
+  await roomIO.close();
 });
 
 describe('RoomIO agent state attributes', () => {
