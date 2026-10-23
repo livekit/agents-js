@@ -449,16 +449,24 @@ function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VA
  * key for every other language, so sending one there is silently ignored. The Flux provider
  * forwards its hint under any language, so Flux models are exempt; non-Deepgram models have no
  * such option.
- *
- * Removes the key from `extra` in place and reports whether it removed one.
+ */
+function languageHintSendable(model: string | undefined, language: string | undefined): boolean {
+  if (!model?.startsWith('deepgram/')) return false;
+  if (model.startsWith('deepgram/flux')) return true;
+  return (language ?? '').trim().toLowerCase() === 'multi';
+}
+
+/**
+ * Removes the key from `extra` in place and reports whether it removed one. Every caller passes a
+ * copy of the outgoing frame, so the hint stays in the caller's own options and a later language
+ * or model change can send it again.
  */
 function dropUnsupportedLanguageHint(
   model: string | undefined,
   language: string | undefined,
   extra: Record<string, unknown>,
 ): boolean {
-  if (!model?.startsWith('deepgram/') || model.startsWith('deepgram/flux')) return false;
-  if ((language ?? '').trim().toLowerCase() === 'multi') return false;
+  if (languageHintSendable(model, language)) return false;
   if (!('language_hint' in extra)) return false;
 
   delete extra.language_hint;
@@ -746,21 +754,23 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   }
 
   /**
-   * Warn once per instance that a `language_hint` was dropped, whether the drop happened at
-   * connect time or in a mid-session update.
+   * Warn once per instance that a `language_hint` is being left off the wire, whether that happens
+   * at connect time or in a mid-session update. The hint stays in the caller's `modelOptions`, so
+   * a later change that makes it applicable sends it again.
    *
    * @internal
    */
-  _warnLanguageHintDropped(model: string | undefined, language: string | undefined): void {
+  _warnLanguageHintIgnored(model: string | undefined, language: string | undefined): void {
     if (this.#languageHintWarned) return;
     this.#languageHintWarned = true;
     const sessionLanguage = language?.trim() ? language : 'unset';
     this.#logger.warn(
-      `Removed \`language_hint\` for ${model}: it only applies with language "multi" (session language "${sessionLanguage}")`,
+      `Ignoring \`language_hint\` for ${model}: it only applies with language "multi" (session language "${sessionLanguage}")`,
     );
   }
 
   async connectWs(timeout: number): Promise<WebSocket> {
+    // a copy of the caller's options: the hint is gated on this frame, never cleared from them
     const extra = {
       ...this.opts.modelOptions,
       ...(keytermsExtraForModel(this.opts.model, {
@@ -770,7 +780,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     } as Record<string, unknown>;
 
     if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
-      this._warnLanguageHintDropped(this.opts.model, this.opts.language);
+      this._warnLanguageHintIgnored(this.opts.model, this.opts.language);
     }
 
     const params = {
@@ -888,9 +898,16 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         // keeps a hint supplied in the same call
         const extra = { ...opts.modelOptions } as Record<string, unknown>;
         if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
-          this.stt._warnLanguageHintDropped(this.opts.model, this.opts.language);
+          this.stt._warnLanguageHintIgnored(this.opts.model, this.opts.language);
         }
         settings.extra = extra;
+      } else if (opts.language !== undefined || opts.model !== undefined) {
+        // A language or model change decides whether the configured hint can go on the wire, and
+        // no frame carried it while it could not: send it now that it can.
+        const hint = (this.opts.modelOptions as Record<string, unknown>).language_hint;
+        if (hint !== undefined && languageHintSendable(this.opts.model, this.opts.language)) {
+          settings.extra = { language_hint: hint };
+        }
       }
       if (Object.keys(settings).length > 0) {
         try {

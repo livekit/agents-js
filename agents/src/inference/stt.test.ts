@@ -825,7 +825,7 @@ describe('Inference STT connection lifecycle', () => {
 
       expect(settings.extra).not.toHaveProperty('language_hint');
       expect(warn).toHaveBeenCalledWith(
-        'Removed `language_hint` for deepgram/nova-3: it only applies with language "multi" (session language "en")',
+        'Ignoring `language_hint` for deepgram/nova-3: it only applies with language "multi" (session language "en")',
       );
       // the drop is per session, not a rewrite of what the caller configured
       expect(stt['opts'].modelOptions).toHaveProperty('language_hint', ['en', 'es']);
@@ -1077,7 +1077,7 @@ describe('Inference STT connection lifecycle', () => {
       );
       expect(hintWarnings).toHaveLength(1);
       expect(hintWarnings[0]?.[0]).toBe(
-        'Removed `language_hint` for deepgram/nova-3: it only applies with language "multi" (session language "en")',
+        'Ignoring `language_hint` for deepgram/nova-3: it only applies with language "multi" (session language "en")',
       );
     } finally {
       warn.mockRestore();
@@ -1211,6 +1211,83 @@ describe('Inference STT connection lifecycle', () => {
         ([message]) => typeof message === 'string' && message.includes('language_hint'),
       );
       expect(hintWarnings).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  // The hint is the caller's configuration, not a one-shot: a session that starts on a language
+  // that cannot use it has to send it once the language can, without a new `modelOptions`.
+  it('sends the hint again when the effective language returns to multi', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const created: Array<{ extra?: Record<string, unknown> }> = [];
+    const updates: Array<{ language?: string; extra?: Record<string, unknown> }> = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          created.push(event.settings ?? {});
+          resolveSessionCreated();
+        }
+        if (event.type === 'session.update') updates.push(event.settings ?? {});
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const modelOptions = { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>;
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        modelOptions,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await sessionCreated;
+        expect(created[0]?.extra).not.toHaveProperty('language_hint');
+
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.updateOptions({ language: asLanguageCode('multi') });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.language).toBe('multi');
+      expect(updates[0]?.extra).toMatchObject({ language_hint: ['en', 'es'] });
+      // the gate is on the frames, never on what the caller configured
+      expect(modelOptions.language_hint).toEqual(['en', 'es']);
+      expect(stt['opts'].modelOptions).toBe(modelOptions);
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toHaveLength(1);
     } finally {
       warn.mockRestore();
       for (const client of server.clients) client.terminate();
