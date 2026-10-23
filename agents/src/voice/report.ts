@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { AgentSession as pb } from '@livekit/protocol';
 import type { ChatContext } from '../llm/chat_context.js';
 import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
 import { msToUnixSeconds } from '../proto.js';
@@ -10,7 +11,7 @@ import type {
   ResolvedRecordingOptions,
   VoiceOptions,
 } from './agent_session.js';
-import type { AgentEvent } from './events.js';
+import { type AgentEvent, CloseReason } from './events.js';
 
 type ReportOptions = AgentSessionOptions &
   Partial<VoiceOptions> & { recordingOptions: ResolvedRecordingOptions };
@@ -19,6 +20,8 @@ export interface SessionReport {
   jobId: string;
   roomId: string;
   room: string;
+  /** Name the agent was dispatched with (if any) */
+  agentName?: string;
   options: ReportOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
@@ -41,6 +44,8 @@ export interface SessionReportOptions {
   jobId: string;
   roomId: string;
   room: string;
+  /** Name the agent was dispatched with (if any) */
+  agentName?: string;
   options: ReportOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
@@ -65,6 +70,7 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     jobId: opts.jobId,
     roomId: opts.roomId,
     room: opts.room,
+    agentName: opts.agentName,
     options: opts.options,
     events: opts.events,
     chatHistory: opts.chatHistory,
@@ -226,6 +232,54 @@ function chatHistoryToStandardJSON(chatHistory: ChatContext): unknown {
   return toSnakeCaseDeep(json);
 }
 
+// Maps an ErrorEvent's error type to its key in the `errors` counts.
+const SUMMARY_ERROR_KEYS: Record<string, string> = {
+  llm_error: 'llm',
+  stt_error: 'stt',
+  tts_error: 'tts',
+  realtime_model_error: 'realtime',
+  interruption_detection_error: 'interruption',
+};
+
+// Maps an SDK close reason to its livekit.agent.CloseReason value name, which agent evals read.
+// Names only (no enum values), so this module does not need the enum at runtime.
+const CLOSE_REASON_NAMES: Record<string, keyof typeof pb.CloseReason> = {
+  [CloseReason.ERROR]: 'CR_ERROR',
+  [CloseReason.JOB_SHUTDOWN]: 'CR_JOB_SHUTDOWN',
+  [CloseReason.PARTICIPANT_DISCONNECTED]: 'CR_PARTICIPANT_DISCONNECTED',
+  [CloseReason.USER_INITIATED]: 'CR_USER_INITIATED',
+  // Python has this reason; agents-js can only get it as a custom shutdown string.
+  task_completed: 'CR_TASK_COMPLETED',
+};
+
+function countErrors(events: AgentEvent[]): Record<string, number> {
+  const errors: Record<string, number> = {};
+  for (const key of Object.values(SUMMARY_ERROR_KEYS)) {
+    errors[key] = 0;
+  }
+  for (const event of events) {
+    if (event.type !== 'error') {
+      continue;
+    }
+    const key = SUMMARY_ERROR_KEYS[event.error.type];
+    if (key !== undefined) {
+      errors[key] = (errors[key] ?? 0) + 1;
+    }
+  }
+  return errors;
+}
+
+function lastCloseReasonName(events: AgentEvent[]): string | null {
+  let name: string | null = null;
+  for (const event of events) {
+    if (event.type === 'close') {
+      // Custom shutdown strings have no proto value, so they map to CR_UNKNOWN.
+      name = CLOSE_REASON_NAMES[event.reason] ?? 'CR_UNKNOWN';
+    }
+  }
+  return name;
+}
+
 export interface SessionReportJSONOptions {
   /** Include `chat_history`. Defaults to true; false omits the key. */
   includeChatHistory?: boolean;
@@ -243,6 +297,9 @@ export function sessionReportToJSON(
 ): Record<string, unknown> {
   const includeChatHistory = jsonOptions.includeChatHistory ?? true;
   const includeEvents = jsonOptions.includeEvents ?? true;
+  const userTurns = report.chatHistory.items.filter(
+    (item) => item.type === 'message' && item.role === 'user',
+  ).length;
   const events: Record<string, unknown>[] = [];
   const options = report.options;
   const interruptionConfig = options.turnHandling?.interruption;
@@ -310,5 +367,12 @@ export function sessionReportToJSON(
     timestamp: report.timestamp,
     usage: report.modelUsage ? report.modelUsage.map(modelUsageToJSON) : null,
     sdk_version: version,
+    agent_name: report.agentName ?? null,
+    // The report has no duration when audio was not recorded.
+    duration_ms: report.duration !== undefined ? Math.round(report.duration) : null,
+    user_turns: userTurns,
+    // Error and close events are counted even when `events` is omitted, so summaries keep them.
+    errors: countErrors(report.events),
+    close_reason: lastCloseReasonName(report.events),
   };
 }

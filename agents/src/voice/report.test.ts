@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AgentSession as pb } from '@livekit/protocol';
 import { describe, expect, it } from 'vitest';
 import type { AudioContent, ImageContent } from '../llm/chat_context.js';
 import {
@@ -17,7 +18,10 @@ import type {
 } from './agent_session.js';
 import {
   AgentSessionEventTypes,
+  CloseReason,
+  createCloseEvent,
   createConversationItemAddedEvent,
+  createErrorEvent,
   createFunctionToolsExecutedEvent,
   createSessionUsageUpdatedEvent,
   createUserInputTranscribedEvent,
@@ -380,7 +384,74 @@ describe('sessionReportToJSON', () => {
       'timestamp',
       'usage',
       'sdk_version',
+      'agent_name',
+      'duration_ms',
+      'user_turns',
+      'errors',
+      'close_reason',
     ]);
+  });
+
+  it('adds the session summary fields', () => {
+    const chatHistory = ChatContext.empty();
+    chatHistory.addMessage({ role: 'user', content: 'hi' });
+    chatHistory.addMessage({ role: 'assistant', content: 'hello' });
+    chatHistory.addMessage({ role: 'user', content: 'bye' });
+    const llmError = {
+      type: 'llm_error' as const,
+      timestamp: 0,
+      label: 'llm',
+      error: new Error('x'),
+      recoverable: true,
+    };
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      agentName: 'support',
+      options: baseOptions(),
+      events: [
+        createErrorEvent(llmError),
+        createErrorEvent(llmError),
+        createErrorEvent({ ...llmError, type: 'tts_error' as const }),
+        createCloseEvent(CloseReason.ERROR),
+        createCloseEvent(CloseReason.PARTICIPANT_DISCONNECTED),
+      ],
+      chatHistory,
+      timestamp: 12_600,
+      audioRecordingStartedAt: 100.4,
+    });
+
+    // Computed from events and chat history even when those keys are omitted.
+    const payload = sessionReportToJSON(report, {
+      includeChatHistory: false,
+      includeEvents: false,
+    });
+    expect(payload.agent_name).toBe('support');
+    expect(payload.duration_ms).toBe(12500);
+    expect(payload.user_turns).toBe(2);
+    expect(payload.errors).toEqual({ llm: 2, stt: 0, tts: 1, realtime: 0, interruption: 0 });
+    // The last close event wins.
+    expect(payload.close_reason).toBe('CR_PARTICIPANT_DISCONNECTED');
+    expect(payload).not.toHaveProperty('tags');
+  });
+
+  it('sets unknown session summary fields to null', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory: ChatContext.empty(),
+    });
+
+    const payload = sessionReportToJSON(report);
+    expect(payload.agent_name).toBeNull();
+    expect(payload.duration_ms).toBeNull();
+    expect(payload.close_reason).toBeNull();
+    expect(payload.user_turns).toBe(0);
+    expect(payload.errors).toEqual({ llm: 0, stt: 0, tts: 0, realtime: 0, interruption: 0 });
   });
 
   it('omits chat history and events when excluded', () => {
@@ -530,6 +601,32 @@ describe('sessionReportToJSON', () => {
     const eventType: AgentSessionEventTypes = AgentSessionEventTypes.SessionUsageUpdated;
     expect(usage.modelUsage).toEqual([]);
     expect(eventType).toBe('session_usage_updated');
+  });
+});
+
+describe('sessionReportToJSON close_reason', () => {
+  function closeReasonFor(reason: string): unknown {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [createCloseEvent(reason)],
+      chatHistory: ChatContext.empty(),
+    });
+    return sessionReportToJSON(report).close_reason;
+  }
+
+  it('maps every SDK close reason to a proto value other than CR_UNKNOWN', () => {
+    for (const reason of Object.values(CloseReason)) {
+      const name = closeReasonFor(reason);
+      expect(name).not.toBe('CR_UNKNOWN');
+      expect(pb.CloseReason[name as keyof typeof pb.CloseReason]).toBeDefined();
+    }
+  });
+
+  it('maps custom shutdown reasons to CR_UNKNOWN', () => {
+    expect(closeReasonFor('my_custom_reason')).toBe('CR_UNKNOWN');
   });
 });
 

@@ -6847,6 +6847,7 @@ export class SessionHost {
 
 // @public (undocumented)
 export interface SessionReport {
+    agentName?: string;
     audioRecordingPath?: string;
     audioRecordingStartedAt?: number;
     // (undocumented)
@@ -6879,6 +6880,7 @@ export interface SessionReportJSONOptions {
 
 // @public (undocumented)
 export interface SessionReportOptions {
+    agentName?: string;
     audioRecordingPath?: string;
     audioRecordingStartedAt?: number;
     // (undocumented)
