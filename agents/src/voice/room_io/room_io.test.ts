@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, DisconnectReason, RoomEvent } from '@livekit/rtc-node';
 import { ROOT_CONTEXT, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
@@ -13,7 +13,12 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { setTracerProvider, tracer } from '../../telemetry/index.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import { AgentSessionEventTypes, CloseReason, createCloseEvent } from '../events.js';
+import {
+  AgentSessionEventTypes,
+  CloseReason,
+  type ParticipantDisconnectedEvent,
+  createCloseEvent,
+} from '../events.js';
 import { AudioInput, AudioOutput, TextOutput } from '../io.js';
 import type { TimedString } from '../io.js';
 import { RoomIO } from './room_io.js';
@@ -83,6 +88,7 @@ type FakeSession = {
   off: ReturnType<typeof vi.fn>;
   emit: (event: string | symbol, value: unknown) => boolean;
   _closeSoon: ReturnType<typeof vi.fn>;
+  _onRoomIOParticipantLinked: ReturnType<typeof vi.fn>;
 };
 
 function createFakeSession(llm?: RealtimeModel): FakeSession {
@@ -103,8 +109,112 @@ function createFakeSession(llm?: RealtimeModel): FakeSession {
     }),
     emit: (event: string | symbol, value: unknown) => emitter.emit(event, value),
     _closeSoon: vi.fn(),
+    _onRoomIOParticipantLinked: vi.fn(),
   };
 }
+
+describe('RoomIO participant disconnect event', () => {
+  it('emits details only for the linked participant and preserves close behavior', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const events: ParticipantDisconnectedEvent[] = [];
+    session.on(AgentSessionEventTypes.ParticipantDisconnected, (event) =>
+      events.push(event as ParticipantDisconnectedEvent),
+    );
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false, participantIdentity: 'linked' },
+      outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+    });
+
+    roomIO.start();
+    const listener = room.on.mock.calls.find(
+      ([event]) => event === RoomEvent.ParticipantDisconnected,
+    )?.[1];
+    expect(listener).toBeDefined();
+    (listener as (participant: unknown) => void)({
+      identity: 'other',
+      disconnectReason: DisconnectReason.CLIENT_INITIATED,
+    });
+    (listener as (participant: unknown) => void)({
+      identity: 'linked',
+      disconnectReason: DisconnectReason.UNKNOWN_REASON,
+    });
+    expect(events).toHaveLength(0);
+
+    const connectListener = room.on.mock.calls.find(
+      ([event]) => event === RoomEvent.ParticipantConnected,
+    )?.[1];
+    expect(connectListener).toBeDefined();
+    (connectListener as (participant: unknown) => void)({
+      identity: 'linked',
+      info: { kind: 0 },
+      attributes: {},
+    });
+    (listener as (participant: unknown) => void)({
+      identity: 'linked',
+      disconnectReason: DisconnectReason.CLIENT_INITIATED,
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'participant_disconnected',
+      participantIdentity: 'linked',
+      disconnectReason: DisconnectReason.CLIENT_INITIATED,
+      participantAttributes: expect.objectContaining({ 'lk.pii.participant_identity': 'linked' }),
+    });
+    expect(events[0]!.createdAt).toEqual(expect.any(Number));
+    expect(session._closeSoon).toHaveBeenCalledWith({
+      reason: CloseReason.PARTICIPANT_DISCONNECTED,
+    });
+    await roomIO.close();
+  });
+});
+
+it('runs disconnect cleanup and close behavior before notifying throwing listeners', async () => {
+  const room = createFakeRoom();
+  const session = createFakeSession();
+  const listenerError = new Error('listener failure');
+  const errorSpy = vi.spyOn(log(), 'error');
+  session.on(AgentSessionEventTypes.ParticipantDisconnected, () => {
+    throw listenerError;
+  });
+  const roomIO = new RoomIO({
+    agentSession: session as unknown as RoomIOArgs['agentSession'],
+    room: room as unknown as RoomIOArgs['room'],
+    inputOptions: { audioEnabled: false, textEnabled: false, participantIdentity: 'linked' },
+    outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+  });
+
+  roomIO.start();
+  const connectListener = room.on.mock.calls.find(
+    ([event]) => event === RoomEvent.ParticipantConnected,
+  )?.[1];
+  const disconnectListener = room.on.mock.calls.find(
+    ([event]) => event === RoomEvent.ParticipantDisconnected,
+  )?.[1];
+  (connectListener as (participant: unknown) => void)({
+    identity: 'linked',
+    info: { kind: 0 },
+    attributes: {},
+  });
+
+  (disconnectListener as (participant: unknown) => void)({
+    identity: 'linked',
+    disconnectReason: DisconnectReason.CLIENT_INITIATED,
+  });
+  expect(errorSpy).toHaveBeenCalledWith(
+    { error: listenerError },
+    'ParticipantDisconnected listener threw an error',
+  );
+  expect(session._closeSoon).toHaveBeenCalledWith({
+    reason: CloseReason.PARTICIPANT_DISCONNECTED,
+  });
+  expect(Reflect.get(roomIO, 'participantAvailableFuture').done).toBe(false);
+  await roomIO.close();
+  errorSpy.mockRestore();
+});
 
 describe('RoomIO agent state attributes', () => {
   it('handles a failed update and publishes later state changes', async () => {
