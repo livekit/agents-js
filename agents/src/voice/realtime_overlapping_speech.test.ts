@@ -2,18 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
-import { ReadableStream, type ReadableStreamDefaultController } from 'node:stream/web';
+import {
+  ReadableStream,
+  type ReadableStreamDefaultController,
+  TransformStream,
+} from 'node:stream/web';
 import { setImmediate } from 'node:timers/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatContext, type FunctionCall } from '../llm/chat_context.js';
 import { type GenerationCreatedEvent, RealtimeModel, RealtimeSession } from '../llm/realtime.js';
 import { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
+import { TTS } from '../tts/tts.js';
+import { Future, Task } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import { AudioRecognition } from './audio_recognition.js';
-import { AudioOutput } from './io.js';
+import { AudioOutput, TextOutput, type TimedString } from './io.js';
 
 class TracingAudioOutput extends AudioOutput {
   frames = 0;
@@ -55,6 +61,7 @@ class FakeRealtimeSession extends RealtimeSession {
   asks = 0;
   audio?: ReadableStreamDefaultController<AudioFrame>;
   text?: ReadableStreamDefaultController<string>;
+  modalities: ('audio' | 'text')[] = ['audio', 'text'];
   async updateInstructions(): Promise<void> {}
   async updateChatCtx(context: ChatContext): Promise<void> {
     this.chatCtx = context;
@@ -69,6 +76,7 @@ class FakeRealtimeSession extends RealtimeSession {
     return this.generation(true);
   }
   generation(userInitiated: boolean): GenerationCreatedEvent {
+    const modalities = this.modalities;
     const audioStream = new ReadableStream<AudioFrame>({
       start: (controller) => {
         this.audio = controller;
@@ -95,7 +103,7 @@ class FakeRealtimeSession extends RealtimeSession {
             messageId: 'msg-1',
             audioStream,
             textStream,
-            modalities: Promise.resolve(['audio', 'text'] as ('audio' | 'text')[]),
+            modalities: Promise.resolve(modalities),
           });
           controller.close();
         },
@@ -165,6 +173,35 @@ async function start(overlap: boolean, turnDetection = true) {
 }
 
 describe('realtime overlapping speech', () => {
+  it('cancels realtime text without an unused TTS sibling when audio output is disabled', async () => {
+    class UnusedTTS extends TTS {
+      label = 'unused';
+      constructor() {
+        super(24000, 1, { streaming: true });
+      }
+      synthesize(): never {
+        throw new Error('audio output is disabled');
+      }
+      stream(): never {
+        throw new Error('audio output is disabled');
+      }
+    }
+    const model = new FakeRealtimeModel(false);
+    const session = new AgentSession({ llm: model, tts: new UnusedTTS(), vad: null });
+    await session.start({ agent: new Agent({ instructions: 'test' }) });
+    model.activeSession.modalities = ['text'];
+    try {
+      const speech = session.generateReply();
+      await setImmediate();
+      session.interrupt({ force: true });
+      await expect.poll(() => speech._tasks.every((t) => t.done), { timeout: 1000 }).toBe(true);
+      expect(model.activeSession.text).toBeUndefined();
+    } finally {
+      model.activeSession.endSpeech();
+      await session.close();
+    }
+  });
+
   it('hands realtime playout from VAD to adaptive interruption after the start boundary', async () => {
     class FakeVAD extends VAD {
       label = 'fake';
@@ -266,7 +303,14 @@ describe('realtime overlapping speech', () => {
       model.activeSession.emit('input_speech_started', {});
       await setImmediate();
       expect(speech.interrupted).toBe(!overlap);
-      expect(output.clears).toBe(overlap ? 0 : 1);
+      if (overlap) {
+        expect(output.clears).toBe(0);
+      } else {
+        await speech.waitForPlayout();
+        // Audio forwarding and message cleanup each clear their output.
+        expect(output.clears).toBe(2);
+        expect(model.activeSession.text).toBeUndefined();
+      }
       expect(session.userState).toBe('speaking');
     } finally {
       model.activeSession.endSpeech();
@@ -339,3 +383,268 @@ describe('realtime overlapping speech', () => {
     },
   );
 });
+
+it.each(
+  ['text', 'fallback TTS'].flatMap((mode) =>
+    (['complete', 'interrupt', 'error', 'replacement'] as const).map((outcome) => ({
+      mode,
+      outcome,
+    })),
+  ),
+)(
+  'retains deferred realtime transcription input until $outcome with $mode',
+  async ({ mode, outcome }) => {
+    const entered = new Future<void>();
+    const release = new Future<void>();
+    const failure = new Error('realtime transcription setup failed');
+    let input: ReadableStream<string | TimedString> | undefined;
+    let setup: Promise<void> | undefined;
+    class DeferredAgent extends Agent {
+      override async transcriptionNode(text: ReadableStream<string | TimedString>) {
+        input = text;
+        let cancelled = false;
+        let reader: ReadableStreamDefaultReader<string | TimedString> | undefined;
+        return new ReadableStream<string>({
+          start(controller) {
+            setup = (async () => {
+              entered.resolve();
+              await release.await;
+              if (cancelled) return;
+              if (outcome === 'error') {
+                controller.error(failure);
+                return;
+              }
+              if (outcome === 'replacement') {
+                controller.enqueue('replacement');
+                controller.close();
+                return;
+              }
+              reader = text.getReader();
+              try {
+                for (;;) {
+                  const { done, value } = await reader.read();
+                  if (done || cancelled) break;
+                  controller.enqueue(String(value).toUpperCase());
+                }
+                if (!cancelled) controller.close();
+              } catch (error) {
+                controller.error(error);
+              } finally {
+                reader.releaseLock();
+              }
+            })();
+          },
+          async cancel() {
+            cancelled = true;
+            release.resolve();
+            await reader?.cancel();
+            await setup;
+          },
+        });
+      }
+      override async ttsNode(text: ReadableStream<string>) {
+        if (outcome === 'replacement') return empty<AudioFrame>();
+        return text.pipeThrough(
+          new TransformStream<string, AudioFrame>({
+            transform(_text, controller) {
+              controller.enqueue(new AudioFrame(new Int16Array(480), 24000, 1, 480));
+            },
+          }),
+        );
+      }
+    }
+    class MockTTS extends TTS {
+      label = 'deferred';
+      constructor() {
+        super(24000, 1, { streaming: true });
+      }
+      synthesize(): never {
+        throw new Error('unused');
+      }
+      stream(): never {
+        throw new Error('unused');
+      }
+    }
+    class Output extends TextOutput {
+      text: string[] = [];
+      override async captureText(text: string) {
+        this.text.push(text);
+      }
+      override flush() {}
+    }
+    const model = new FakeRealtimeModel(false);
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      tts: mode === 'fallback TTS' ? new MockTTS() : undefined,
+      ttsTextTransforms: [],
+    });
+    const output = new Output();
+    session.output.transcription = output;
+    if (mode === 'fallback TTS') session.output.audio = new TracingAudioOutput();
+    await session.start({ agent: new DeferredAgent({ instructions: 'test' }) });
+    model.activeSession.modalities = ['text'];
+    const speech = session.generateReply();
+    let ended = false;
+    const end = () => {
+      if (!ended) {
+        ended = true;
+        model.activeSession.endSpeech();
+      }
+    };
+    try {
+      await entered.await;
+      await setImmediate();
+      expect(input?.locked).toBe(false);
+      expect(model.activeSession.text).toBeDefined();
+      if (outcome === 'interrupt') speech.interrupt();
+      else {
+        if (outcome === 'complete') end();
+        release.resolve();
+      }
+      await expect
+        .poll(() => speech._tasks.every((task) => task.done), { timeout: 1000 })
+        .toBe(true);
+      await speech.waitForPlayout();
+      await setup;
+      expect(input?.locked).toBe(false);
+      const expected =
+        outcome === 'complete'
+          ? ['THE WEATHER TODAY IS']
+          : outcome === 'replacement'
+            ? ['replacement']
+            : [];
+      expect(output.text).toEqual(expected);
+      if (expected.length)
+        expect(
+          session.history.items.some(
+            (item) =>
+              item.type === 'message' &&
+              item.role === 'assistant' &&
+              item.textContent === expected[0],
+          ),
+        ).toBe(true);
+      if (outcome !== 'complete') expect(model.activeSession.text).toBeUndefined();
+      const history = session.history.toJSON();
+      release.resolve();
+      await setImmediate();
+      expect(session.history.toJSON()).toEqual(history);
+      expect(output.text).toEqual(expected);
+    } finally {
+      release.resolve();
+      end();
+      await session.close();
+    }
+  },
+);
+
+it.each(
+  ['text', 'fallback TTS'].flatMap((mode) =>
+    ['interruption', 'session close'].map((ending) => ({ mode, ending })),
+  ),
+)(
+  'releases pending public realtime transcription setup with $mode on $ending',
+  async ({ mode, ending }) => {
+    const waiting = new Future<void>();
+    let setupExited = false;
+    const tasks: Task<unknown>[] = [];
+    const from = Task.from;
+    const spy = vi.spyOn(Task, 'from').mockImplementation((fn, controller, name) => {
+      const task = from.call(Task, fn, controller, name);
+      tasks.push(task);
+      return task;
+    });
+    const agent = Agent.create({
+      instructions: 'test',
+      async transcriptionNode(_ctx, text) {
+        const input = text[Symbol.asyncIterator]();
+        const first = await input.next();
+        waiting.resolve();
+        try {
+          await input.next();
+        } finally {
+          setupExited = true;
+        }
+        return (async function* () {
+          if (!first.done) yield first.value;
+          for await (const chunk of text) yield chunk;
+        })();
+      },
+    });
+    agent.ttsNode = async (text) =>
+      (text as ReadableStream<string>).pipeThrough(
+        new TransformStream<string, AudioFrame>({
+          transform(_text, controller) {
+            controller.enqueue(new AudioFrame(new Int16Array(480), 24000, 1, 480));
+          },
+        }),
+      );
+    class Model extends TTS {
+      label = 'cooperative';
+      constructor() {
+        super(24000, 1, { streaming: true });
+      }
+      synthesize(): never {
+        throw new Error('unused');
+      }
+      stream(): never {
+        throw new Error('unused');
+      }
+    }
+    class Output extends TextOutput {
+      chunks: string[] = [];
+      async captureText(text: string) {
+        this.chunks.push(text);
+      }
+      flush() {}
+    }
+    const model = new FakeRealtimeModel(false);
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      tts: mode === 'fallback TTS' ? new Model() : undefined,
+      ttsTextTransforms: [],
+    });
+    const text = new Output();
+    const audio = new TracingAudioOutput();
+    session.output.transcription = text;
+    if (mode === 'fallback TTS') session.output.audio = audio;
+    let ended = false;
+    const end = () => {
+      if (ended) return;
+      ended = true;
+      model.activeSession?.endSpeech();
+    };
+    try {
+      await session.start({ agent });
+      model.activeSession.modalities = ['text'];
+      const speech = session.generateReply();
+      await waiting.await;
+      if (ending === 'interruption') {
+        speech.interrupt();
+        await expect
+          .poll(() => speech._tasks.every((task) => task.done), { timeout: 1000 })
+          .toBe(true);
+      } else await session.close();
+      expect(setupExited).toBe(true);
+      expect(model.activeSession.text).toBeUndefined();
+      expect(speech._tasks.every((task) => task.done)).toBe(true);
+      await session.close();
+      expect(tasks.every((task) => task.done)).toBe(true);
+      const history = session.history.toJSON();
+      const frames = audio.frames;
+      end();
+      await setImmediate();
+      expect(text.chunks).toEqual([]);
+      expect(audio.frames).toBe(frames);
+      expect(session.history.toJSON()).toEqual(history);
+    } finally {
+      try {
+        end();
+        await session.close();
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  },
+);

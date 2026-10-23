@@ -8,7 +8,7 @@ import type { Context, Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream, TransformStream } from 'node:stream/web';
+import { ReadableStream, type ReadableStreamDefaultReader, TransformStream } from 'node:stream/web';
 import type { Logger } from 'pino';
 import {
   BaseStreamingTurnDetector,
@@ -336,6 +336,79 @@ async function raceWithAbort<T>(
     ThrowsPromise.fromPromise<T | undefined, Error>(p),
     ThrowsPromise.fromPromise<undefined, Error>(waitForAbort(signal).then(() => undefined)),
   ]);
+}
+
+function createTranscriptionInput(
+  source: ReadableStream<string | TimedString>,
+  signal: AbortSignal,
+  { preventCancel = false }: { preventCancel?: boolean } = {},
+) {
+  const finished = new Future<void>();
+  let reader: ReadableStreamDefaultReader<string | TimedString> | undefined;
+  let cancelled = false;
+  let outputCancelled = false;
+  const releaseReader = () => {
+    reader?.releaseLock();
+    reader = undefined;
+  };
+  const finish = () => {
+    releaseReader();
+    signal.removeEventListener('abort', cancel);
+    finished.resolve();
+  };
+  const cancel = () => {
+    if (cancelled || finished.done) return;
+    cancelled = true;
+    // Release the reader before a native tee waits for its other consumer.
+    const cancellation = preventCancel
+      ? Promise.resolve()
+      : reader
+        ? reader.cancel()
+        : source.cancel();
+    releaseReader();
+    void cancellation.catch(() => {}).finally(finish);
+  };
+  const stream = new ReadableStream<string | TimedString>(
+    {
+      start(controller) {
+        try {
+          if (!signal.aborted) reader = source.getReader();
+        } catch (error) {
+          controller.error(error);
+          finish();
+        }
+      },
+      async pull(controller) {
+        try {
+          const result = cancelled ? undefined : await reader!.read();
+          if (outputCancelled) return;
+          if (cancelled || result?.done) {
+            controller.close();
+            if (!cancelled) finish();
+          } else if (result) {
+            controller.enqueue(result.value);
+          }
+        } catch (error) {
+          if (!outputCancelled) {
+            if (cancelled) controller.close();
+            else controller.error(error);
+          }
+          if (!cancelled) finish();
+        }
+      },
+      cancel() {
+        outputCancelled = true;
+        cancel();
+        return finished.await;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  if (!finished.done) {
+    signal.addEventListener('abort', cancel, { once: true });
+    if (signal.aborted) cancel();
+  }
+  return { stream, cancel, done: finished.await };
 }
 
 /**
@@ -1899,7 +1972,7 @@ export class AgentActivity implements RecognitionHooks {
       name: 'AgentActivity.tts_say',
     });
 
-    task.result.finally(() => this.onPipelineReplyDone(stateLease));
+    task.addDoneCallback(() => this.onPipelineReplyDone(stateLease));
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
   }
@@ -3607,6 +3680,10 @@ export class AgentActivity implements RecognitionHooks {
 
     if (speechHandle.interrupted) {
       recordInterruption(speechHandle);
+      await Promise.allSettled([
+        text instanceof ReadableStream ? text.cancel() : undefined,
+        audio?.cancel(),
+      ]);
       return;
     }
 
@@ -3622,90 +3699,124 @@ export class AgentActivity implements RecognitionHooks {
       });
     }
 
-    const [textSource, audioSource] = baseStream.tee();
+    // Only synthesis needs a second text consumer. A cancelled tee branch waits
+    // for its sibling, so an unused branch would prevent forwarding from settling.
+    const [textSource, audioSource] = audioOutput && !audio ? baseStream.tee() : [baseStream, null];
+    const forwardingController = new AbortController();
+    const abortForwarding = () => forwardingController.abort();
+    replyAbortController.signal.addEventListener('abort', abortForwarding, { once: true });
+    if (replyAbortController.signal.aborted) abortForwarding();
+    const unusedSources: Promise<unknown>[] = [];
+    const cancelUnused = (source: ReadableStream<unknown> | null | undefined) => {
+      if (source && !source.locked) {
+        unusedSources.push(
+          source.cancel().catch((error) => {
+            this.logger.debug({ error }, 'failed to cancel unused say stream');
+          }),
+        );
+      }
+    };
+    const transcriptionInput = createTranscriptionInput(textSource, forwardingController.signal);
 
     const tasks: Array<Task<void>> = [];
 
-    const trNode = await this.agent.transcriptionNode(textSource, {});
-    let textOut: _TextOut | null = null;
-    if (trNode) {
-      const [textForwardTask, _textOut] = performTextForwarding(
-        trNode,
-        replyAbortController,
-        transcriptionOutput,
-      );
-      textOut = _textOut;
-      tasks.push(textForwardTask);
-    }
-
-    let replyStartedSpeakingAt: number | undefined;
-    let replyStartedForwardingAt: number | undefined;
-    let replyTtsGenData: _TTSGenerationData | null = null;
-
-    const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt: number = Date.now()) => {
-      replyStartedSpeakingAt = startedSpeakingAt;
-      replyStartedForwardingAt = audioOut?.startedForwardingAt ?? replyStartedSpeakingAt;
-      if (!this.tryStartAgentSpeech(stateLease, startedSpeakingAt)) return;
-      if (this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech(replyStartedSpeakingAt);
-      }
-      if (this.isInterruptionDetectionEnabled) {
-        this.disableVadInterruptionSoon();
-      }
-    };
-
     let audioOut: _AudioOut | null = null;
-    if (!audioOutput) {
-      if (textOut) {
-        textOut.firstTextFut.await
-          .then(() => onFirstFrame(null))
-          .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
-      }
-    } else {
-      if (!audio) {
-        // generate audio using TTS
-        const [ttsTask, ttsGenData] = performTTSInference(
-          (...args) => this.agent.ttsNode(...args),
-          audioSource,
-          modelSettings,
-          replyAbortController,
-          this.tts?.model,
-          this.tts?.provider,
-          this.agentSession.sessionOptions.ttsReadIdleTimeout,
-          this.agentSession.sessionOptions.ttsTextTransforms,
-        );
-        tasks.push(ttsTask);
-        replyTtsGenData = ttsGenData;
-
-        const [forwardTask, _audioOut] = performAudioForwarding(
-          ttsGenData.audioStream,
-          audioOutput,
-          replyAbortController,
-          () => this.reconcilePlayoutPause(speechHandle),
-          this.agentSession.sessionOptions.forwardAudioIdleTimeout,
-          ttsGenData,
-        );
-        tasks.push(forwardTask);
-        audioOut = _audioOut;
-      } else {
-        // use the provided audio
-        const [forwardTask, _audioOut] = performAudioForwarding(
-          audio,
-          audioOutput,
-          replyAbortController,
-          () => this.reconcilePlayoutPause(speechHandle),
-          this.agentSession.sessionOptions.forwardAudioIdleTimeout,
-        );
-        tasks.push(forwardTask);
-        audioOut = _audioOut;
-      }
-      const audioOutForCb = audioOut;
-      audioOut.firstFrameFut.await
-        .then((ts) => onFirstFrame(audioOutForCb, ts))
-        .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
-    }
-
+    let textOut: _TextOut | null = null;
+    let replyTtsGenData: _TTSGenerationData | null = null;
     try {
+      const transcription = this.agent.transcriptionNode(transcriptionInput.stream, {});
+      await speechHandle.waitIfNotInterrupted([
+        raceWithAbort(transcription, replyAbortController.signal),
+      ]);
+      if (speechHandle.interrupted || replyAbortController.signal.aborted) {
+        void transcription
+          .then((source) => source?.cancel())
+          .catch((error) => {
+            this.logger.debug({ error }, 'failed to close cancelled say transcription node');
+          });
+        return;
+      }
+      const trNode = await transcription;
+      if (trNode) {
+        const [textForwardTask, _textOut] = performTextForwarding(
+          trNode,
+          forwardingController,
+          transcriptionOutput,
+        );
+        textOut = _textOut;
+        tasks.push(textForwardTask);
+        // A returned stream can acquire its input reader after asynchronous setup.
+        textForwardTask.addDoneCallback(transcriptionInput.cancel);
+      } else {
+        transcriptionInput.cancel();
+      }
+
+      let replyStartedSpeakingAt: number | undefined;
+      let replyStartedForwardingAt: number | undefined;
+
+      const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt: number = Date.now()) => {
+        replyStartedSpeakingAt = startedSpeakingAt;
+        replyStartedForwardingAt = audioOut?.startedForwardingAt ?? replyStartedSpeakingAt;
+        if (!this.tryStartAgentSpeech(stateLease, startedSpeakingAt)) return;
+        if (this.audioRecognition) {
+          this.audioRecognition.onStartOfAgentSpeech(replyStartedSpeakingAt);
+        }
+        if (this.isInterruptionDetectionEnabled) {
+          this.disableVadInterruptionSoon();
+        }
+      };
+
+      if (!audioOutput) {
+        if (textOut) {
+          textOut.firstTextFut.await
+            .then(() => onFirstFrame(null))
+            .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
+        }
+      } else {
+        if (audioSource) {
+          // generate audio using TTS
+          const [ttsTask, ttsGenData] = performTTSInference(
+            (...args) => this.agent.ttsNode(...args),
+            audioSource,
+            modelSettings,
+            forwardingController,
+            this.tts?.model,
+            this.tts?.provider,
+            this.agentSession.sessionOptions.ttsReadIdleTimeout,
+            this.agentSession.sessionOptions.ttsTextTransforms,
+            { cancelOnFinish: true, onError: abortForwarding },
+          );
+          tasks.push(ttsTask);
+          replyTtsGenData = ttsGenData;
+
+          const [forwardTask, _audioOut] = performAudioForwarding(
+            ttsGenData.audioStream,
+            audioOutput,
+            forwardingController,
+            () => this.reconcilePlayoutPause(speechHandle),
+            this.agentSession.sessionOptions.forwardAudioIdleTimeout,
+            ttsGenData,
+          );
+          tasks.push(forwardTask);
+          audioOut = _audioOut;
+        } else {
+          // use the provided audio
+          const [forwardTask, _audioOut] = performAudioForwarding(
+            audio!,
+            audioOutput,
+            forwardingController,
+            () => this.reconcilePlayoutPause(speechHandle),
+            this.agentSession.sessionOptions.forwardAudioIdleTimeout,
+          );
+          tasks.push(forwardTask);
+          audioOut = _audioOut;
+        }
+        const audioOutForCb = audioOut;
+        audioOut.firstFrameFut.await
+          .then((ts) => onFirstFrame(audioOutForCb, ts))
+          .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
+      }
+
       await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
       let playbackEv: PlaybackFinishedEvent | undefined;
@@ -3716,8 +3827,8 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       if (speechHandle.interrupted) {
-        replyAbortController.abort();
-        await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
+        abortForwarding();
+        await Promise.allSettled(tasks.map((task) => task.result));
         if (audioOutput) {
           audioOutput.clearBuffer();
           playbackEv = await audioOutput.waitForPlayout();
@@ -3769,8 +3880,20 @@ export class AgentActivity implements RecognitionHooks {
         this.restoreInterruptionByAudioActivity();
       }
     } finally {
-      // In a finally so the listener is dropped even if an await above throws —
-      // otherwise it would leak on the shared audioOutput.
+      replyAbortController.signal.removeEventListener('abort', abortForwarding);
+      // Release every sibling before joining cancellation, including consumers
+      // skipped by a null or failed hook.
+      abortForwarding();
+      transcriptionInput.cancel();
+      cancelUnused(textSource);
+      cancelUnused(audioSource);
+      cancelUnused(audio);
+      cancelUnused(replyTtsGenData?.audioStream);
+      await Promise.allSettled([
+        transcriptionInput.done,
+        ...tasks.map((task) => task.result),
+        ...unusedSources,
+      ]);
       this.settleFirstFrameFut(audioOut);
     }
   }
@@ -3981,9 +4104,14 @@ export class AgentActivity implements RecognitionHooks {
 
       const endSegment = async () => {
         if (!current) return;
-        await current.textWriter.close();
-        await current.ttsTextWriter?.close();
+        const segment = current;
         current = null;
+        const closed = await Promise.allSettled([
+          segment.textWriter.close(),
+          segment.ttsTextWriter?.close(),
+        ]);
+        const failed = closed.find((result) => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
       };
 
       try {
@@ -4003,9 +4131,12 @@ export class AgentActivity implements RecognitionHooks {
           await current.ttsTextWriter?.write(value);
         }
       } finally {
-        await endSegment();
-        segmentQueue.close();
-        reader.releaseLock();
+        try {
+          await endSegment();
+        } finally {
+          segmentQueue.close();
+          reader.releaseLock();
+        }
       }
     };
 
@@ -4093,7 +4224,10 @@ export class AgentActivity implements RecognitionHooks {
       const segmentAbortController = new AbortController();
       const abortSegment = () => segmentAbortController.abort();
       replyAbortController.signal.addEventListener('abort', abortSegment, { once: true });
+      if (replyAbortController.signal.aborted) abortSegment();
       const forwardTasks: Task<void>[] = [];
+      let textForwardTask: Task<void> | undefined;
+      let nodeInput: ReturnType<typeof createTranscriptionInput> | undefined;
 
       try {
         let transcriptionInput: ReadableStream<string | TimedString> = segment.textStream;
@@ -4110,15 +4244,37 @@ export class AgentActivity implements RecognitionHooks {
           }
         }
 
-        const trNodeResult = await this.agent.transcriptionNode(transcriptionInput, modelSettings);
+        // The segment producer also feeds TTS and must finish independently.
+        nodeInput = createTranscriptionInput(transcriptionInput, segmentAbortController.signal, {
+          preventCancel: true,
+        });
+        const transcription = this.agent.transcriptionNode(nodeInput.stream, modelSettings);
+        await speechHandle.waitIfNotInterrupted([
+          raceWithAbort(transcription, replyAbortController.signal),
+        ]);
+        if (speechHandle.interrupted || replyAbortController.signal.aborted) {
+          // The hook may ignore cancellation. Retain only cleanup for its eventual
+          // stream; it must not resume forwarding or history mutation in this reply.
+          void transcription
+            .then((source) => source?.cancel())
+            .catch((error) => {
+              this.logger.debug({ error }, 'failed to close cancelled transcription node');
+            });
+          return output;
+        }
+        const trNodeResult = await transcription;
         if (trNodeResult) {
-          const [textForwardTask, textOut] = performTextForwarding(
+          const [task, textOut] = performTextForwarding(
             trNodeResult,
             segmentAbortController,
             transcriptionOutput,
           );
-          forwardTasks.push(textForwardTask);
+          textForwardTask = task;
+          forwardTasks.push(task);
           output.textOut = textOut;
+          task.addDoneCallback(nodeInput.cancel);
+        } else {
+          nodeInput.cancel();
         }
 
         if (audioOutput && segment.ttsGenData) {
@@ -4216,7 +4372,10 @@ export class AgentActivity implements RecognitionHooks {
         return output;
       } finally {
         replyAbortController.signal.removeEventListener('abort', abortSegment);
+        nodeInput?.cancel();
         await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
+        // Join the reader's cancellation cleanup, not just the bounded task wait.
+        await Promise.allSettled([nodeInput?.done, textForwardTask?.result]);
         // The segment's playout window is over; settle a still-pending
         // firstFrameFut so the playback-started listener is detached.
         this.settleFirstFrameFut(output.audioOut);
@@ -4680,13 +4839,25 @@ export class AgentActivity implements RecognitionHooks {
       };
 
       const forwardTasks: Array<Task<void>> = [];
+      let ttsTextInput: ReadableStream<string | TimedString> | null = null;
+      let trTextInput: ReadableStream<string | TimedString> | undefined;
+      let nodeInput: ReturnType<typeof createTranscriptionInput> | undefined;
+      let generatedAudio: ReadableStream<AudioFrame> | undefined;
+      const unusedInputs: Promise<unknown>[] = [];
+      const cancelUnusedInput = (source: ReadableStream<unknown> | null | undefined) => {
+        if (source && !source.locked) {
+          unusedInputs.push(
+            source.cancel().catch((error) => {
+              this.logger.debug({ error }, 'failed to cancel unused realtime text input');
+            }),
+          );
+        }
+      };
       try {
         const msgModalities = msg.modalities ? await msg.modalities : undefined;
         output.modalities = msgModalities;
-        let ttsTextInput: ReadableStream<string | TimedString> | null = null;
-        let trTextInput: ReadableStream<string | TimedString>;
 
-        if (msgModalities && !msgModalities.includes('audio') && this.tts) {
+        if (audioOutput && msgModalities && !msgModalities.includes('audio') && this.tts) {
           if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
             this.logger.warn(
               'text response received from realtime API, falling back to use a TTS model.',
@@ -4712,9 +4883,12 @@ export class AgentActivity implements RecognitionHooks {
               this.tts?.provider,
               this.agentSession.sessionOptions.ttsReadIdleTimeout,
               this.agentSession.sessionOptions.ttsTextTransforms,
+              { cancelOnFinish: true, onError: abortMessage },
             );
             tasks.push(ttsTask);
+            forwardTasks.push(ttsTask);
             realtimeAudioResult = ttsGenData.audioStream;
+            generatedAudio = ttsGenData.audioStream;
           } else if (msgModalities && msgModalities.includes('audio')) {
             realtimeAudioResult = await this.agent.realtimeAudioOutputNode(
               msg.audioStream,
@@ -4748,7 +4922,8 @@ export class AgentActivity implements RecognitionHooks {
           }
         }
 
-        const trNodeResult = await this.agent.transcriptionNode(trTextInput, modelSettings);
+        nodeInput = createTranscriptionInput(trTextInput, messageAbortController.signal);
+        const trNodeResult = await this.agent.transcriptionNode(nodeInput.stream, modelSettings);
         if (trNodeResult) {
           const [textForwardTask, textOut] = performTextForwarding(
             trNodeResult,
@@ -4757,6 +4932,9 @@ export class AgentActivity implements RecognitionHooks {
           );
           forwardTasks.push(textForwardTask);
           output.textOut = textOut;
+          textForwardTask.addDoneCallback(nodeInput.cancel);
+        } else {
+          nodeInput.cancel();
         }
 
         if (!output.audioOut && output.textOut) {
@@ -4814,7 +4992,17 @@ export class AgentActivity implements RecognitionHooks {
         return output;
       } finally {
         abortController.signal.removeEventListener('abort', abortMessage);
+        abortMessage();
+        nodeInput?.cancel();
+        cancelUnusedInput(trTextInput);
+        cancelUnusedInput(ttsTextInput);
+        cancelUnusedInput(generatedAudio);
         await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
+        await Promise.allSettled([
+          nodeInput?.done,
+          ...forwardTasks.map((task) => task.result),
+          ...unusedInputs,
+        ]);
         // The message's playout window is over; settle a still-pending
         // firstFrameFut so the playback-started listener is detached.
         this.settleFirstFrameFut(output.audioOut);

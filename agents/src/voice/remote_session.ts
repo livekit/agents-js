@@ -2,11 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Duration, Timestamp } from '@bufbuild/protobuf';
+import { Mutex } from '@livekit/mutex';
 import { SimulationRun, AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
+import { on } from 'node:events';
 import * as net from 'node:net';
 import { TOPIC_SESSION_MESSAGES } from '../constants.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
@@ -98,9 +100,69 @@ export type RemoteSessionCallbacks = {
 
 export abstract class SessionTransport {
   async start(): Promise<void> {}
-  abstract sendMessage(msg: pb.AgentSessionMessage): Promise<void>;
+  /** Stop sending when the signal aborts. An aborted send may close the transport. */
+  abstract sendMessage(msg: pb.AgentSessionMessage, signal?: AbortSignal): Promise<void>;
   abstract close(): Promise<void>;
-  abstract [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage>;
+  /** Aborting intake must leave the send side open for accepted responses. */
+  abstract [Symbol.asyncIterator](signal?: AbortSignal): AsyncIterator<pb.AgentSessionMessage>;
+}
+
+const SHUTDOWN_DRAIN_TIMEOUT = 3000;
+
+// Only use this around external operations or waits with separate cancellation ownership.
+// It stops our continuation; it cannot cancel a promise supplied by another library.
+async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  let onAbort: () => void = () => {};
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        onAbort = () => reject(signal.reason);
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      }),
+    ]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
+async function lockForSend(lock: Mutex, signal?: AbortSignal): Promise<() => void> {
+  signal?.throwIfAborted();
+  const acquiring = lock.lock();
+  try {
+    return await abortable(acquiring, signal);
+  } catch (error) {
+    // A cancelled waiter must still release its FIFO slot once it acquires the lock.
+    void acquiring.then((unlock) => unlock());
+    throw error;
+  }
+}
+
+async function drainTasks(tasks: Set<Task<void>>, deadline: number): Promise<Set<Task<void>>> {
+  const pending = new Set([...tasks].filter((task) => !task.done));
+  if (pending.size === 0) return pending;
+
+  const remaining = Math.max(0, deadline - performance.now());
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    Promise.allSettled([...pending].map((task) => task.result)),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, remaining);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+
+  for (const task of pending) {
+    if (task.done) {
+      pending.delete(task);
+    } else {
+      task.cancel();
+    }
+  }
+  await Promise.allSettled([...pending].map((task) => task.result));
+  return pending;
 }
 
 export class RoomSessionTransport extends SessionTransport {
@@ -110,6 +172,11 @@ export class RoomSessionTransport extends SessionTransport {
   private pendingMessages: pb.AgentSessionMessage[] = [];
   private waitingResolve: ((value: IteratorResult<pb.AgentSessionMessage>) => void) | null = null;
   private roomIO: RoomIO;
+  private readonly sendLock = new Mutex();
+  private readonly incomingReaders: ByteStreamReader[] = [];
+  private incomingResolve: (() => void) | null = null;
+  private readTask: Task<void> | undefined;
+  private readonly closing = new AbortController();
 
   constructor(room: Room, roomIO: RoomIO) {
     super();
@@ -123,6 +190,11 @@ export class RoomSessionTransport extends SessionTransport {
 
   override async start(): Promise<void> {
     if (this.handlerRegistered) return;
+    this.readTask = Task.from(
+      async ({ signal }) => this.readLoop(signal),
+      undefined,
+      'RoomSessionTransport.readLoop',
+    );
     this.room.registerByteStreamHandler(TOPIC_SESSION_MESSAGES, this.onByteStream);
     this.handlerRegistered = true;
   }
@@ -131,14 +203,34 @@ export class RoomSessionTransport extends SessionTransport {
     if (this.getRemoteIdentity() && participantInfo.identity !== this.getRemoteIdentity()) {
       return;
     }
-    this.readStream(reader).catch((e) => {
-      log().warn({ error: e }, 'failed to read binary stream message');
-    });
+    if (this.closed) return;
+    this.incomingReaders.push(reader);
+    this.incomingResolve?.();
+    this.incomingResolve = null;
   };
 
-  private async readStream(reader: ByteStreamReader): Promise<void> {
+  private async readLoop(signal: AbortSignal): Promise<void> {
+    while (!this.closed) {
+      const reader = this.incomingReaders.shift();
+      if (reader) {
+        await this.readStream(reader, signal);
+        continue;
+      }
+      await new Promise<void>((resolve) => {
+        this.incomingResolve = resolve;
+      });
+    }
+  }
+
+  private async readStream(reader: ByteStreamReader, signal: AbortSignal): Promise<void> {
+    const closeReader = () => {
+      void reader.close();
+    };
+    signal.addEventListener('abort', closeReader, { once: true });
     try {
+      signal.throwIfAborted();
       const chunks = await reader.readAll();
+      if (signal.aborted) return;
       let totalLength = 0;
       for (const chunk of chunks) {
         totalLength += chunk.length;
@@ -155,10 +247,12 @@ export class RoomSessionTransport extends SessionTransport {
       if (!this.closed) {
         log().warn({ error: e }, 'failed to parse binary stream message');
       }
+    } finally {
+      signal.removeEventListener('abort', closeReader);
     }
   }
 
-  override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
+  override async sendMessage(msg: pb.AgentSessionMessage, signal?: AbortSignal): Promise<void> {
     // a dropped message is a request the caller waits out in full, so failures
     // are thrown rather than logged: only the caller knows whether anyone is
     // waiting on this one
@@ -166,7 +260,13 @@ export class RoomSessionTransport extends SessionTransport {
       throw new Error('room session transport is closed');
     }
 
+    signal = signal ? AbortSignal.any([signal, this.closing.signal]) : this.closing.signal;
+    const unlock = await lockForSend(this.sendLock, signal);
     try {
+      signal.throwIfAborted();
+      if (this.closed || !this.room.isConnected) {
+        throw new Error('room session transport is closed');
+      }
       const data = msg.toBinary();
       const opts: Record<string, unknown> = {
         topic: TOPIC_SESSION_MESSAGES,
@@ -176,17 +276,41 @@ export class RoomSessionTransport extends SessionTransport {
       if (remoteIdentity) {
         opts.destinationIdentities = [remoteIdentity];
       }
-      const writer = await this.room.localParticipant!.streamBytes(opts);
-      await writer.write(new Uint8Array(data));
-      await writer.close();
+      // rtc-node cannot cancel an in-flight open/write. Keep its cleanup attached
+      // after abort, but never submit payload through a writer that arrives late.
+      const sending = (async () => {
+        const writer = await this.room.localParticipant!.streamBytes(opts);
+        try {
+          signal.throwIfAborted();
+          await writer.write(new Uint8Array(data));
+        } finally {
+          await writer.close();
+        }
+      })();
+      await abortable(sending, signal);
     } catch (e) {
-      throw new Error(`failed to send binary stream message: ${e}`, { cause: e });
+      // An abandoned SDK write may still be in flight. Prevent another stream
+      // from overlapping it when this sender releases the serialization lock.
+      if (signal.aborted) this.closing.abort(signal.reason);
+      throw new Error(`failed to send binary stream message: ${asError(e).message}`, { cause: e });
+    } finally {
+      unlock();
     }
   }
 
   override async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.closing.abort();
+    const readers = this.incomingReaders.splice(0);
+    this.incomingResolve?.();
+    this.incomingResolve = null;
+    this.readTask?.cancel();
+    await Promise.allSettled([
+      ...readers.map((reader) => reader.close()),
+      ...(this.readTask ? [this.readTask.result] : []),
+    ]);
+    this.readTask = undefined;
 
     if (this.handlerRegistered) {
       try {
@@ -218,10 +342,10 @@ export class RoomSessionTransport extends SessionTransport {
     }
   }
 
-  override [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage> {
+  override [Symbol.asyncIterator](signal?: AbortSignal): AsyncIterator<pb.AgentSessionMessage> {
     return {
       next: (): Promise<IteratorResult<pb.AgentSessionMessage>> => {
-        if (this.closed && this.pendingMessages.length === 0) {
+        if (signal?.aborted || (this.closed && this.pendingMessages.length === 0)) {
           return ThrowsPromise.resolve({
             value: undefined as unknown as pb.AgentSessionMessage,
             done: true,
@@ -233,16 +357,21 @@ export class RoomSessionTransport extends SessionTransport {
           return ThrowsPromise.resolve({ value: pending, done: false });
         }
 
-        return new ThrowsPromise<IteratorResult<pb.AgentSessionMessage>, never>((resolve) => {
-          this.waitingResolve = resolve;
+        const waiting = new ThrowsPromise<IteratorResult<pb.AgentSessionMessage>, never>(
+          (resolve) => {
+            this.waitingResolve = resolve;
+          },
+        );
+        return abortable(waiting, signal).finally(() => {
+          this.waitingResolve = null;
         });
       },
-      return: (): Promise<IteratorResult<pb.AgentSessionMessage>> => {
-        this.close();
-        return ThrowsPromise.resolve({
+      return: async (): Promise<IteratorResult<pb.AgentSessionMessage>> => {
+        await this.close();
+        return {
           value: undefined as unknown as pb.AgentSessionMessage,
           done: true,
-        });
+        };
       },
     };
   }
@@ -250,24 +379,41 @@ export class RoomSessionTransport extends SessionTransport {
 
 const TCP_HEADER_SIZE = 4;
 const TCP_MAX_MESSAGE_SIZE = 1 << 20; // 1 MiB
-const TCP_DRAIN_THRESHOLD = 64 * 1024; // 64 KiB
-
-/**
- * Resolve once the socket's write buffer drains, or when the socket closes or
- * errors. Unlike a bare `once('drain')`, this can't hang forever if the peer
- * stops reading and the socket is then torn down.
- */
-function waitForDrain(socket: net.Socket): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const done = () => {
-      socket.removeListener('drain', done);
-      socket.removeListener('close', done);
-      socket.removeListener('error', done);
-      resolve();
+// Await the write callback even below the backpressure threshold: write() returning
+// true says only that the socket accepted the buffer, not that the write succeeded.
+function writeFrame(socket: net.Socket, data: Uint8Array, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      socket.off('error', fail);
+      socket.off('close', onClose);
+      signal?.removeEventListener('abort', onAbort);
     };
-    socket.once('drain', done);
-    socket.once('close', done);
-    socket.once('error', done);
+    const fail = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => fail(new Error('tcp session transport closed before write completed'));
+    const onAbort = () => {
+      socket.destroy();
+      fail(signal!.reason);
+    };
+    socket.once('error', fail);
+    socket.once('close', onClose);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      signal?.throwIfAborted();
+      if (socket.destroyed || !socket.writable) {
+        onClose();
+        return;
+      }
+      socket.write(data, (error) => {
+        cleanup();
+        if (error) reject(error);
+        else resolve();
+      });
+    } catch (error) {
+      fail(asError(error));
+    }
   });
 }
 
@@ -280,7 +426,9 @@ export class TcpSessionTransport extends SessionTransport {
   private readonly host: string;
   private readonly port: number;
   private socket: net.Socket | null = null;
+  private socketError: Error | undefined;
   private closed = false;
+  private readonly sendLock = new Mutex();
 
   constructor(host: string, port: number) {
     super();
@@ -293,6 +441,10 @@ export class TcpSessionTransport extends SessionTransport {
       const socket = net.createConnection({ host: this.host, port: this.port }, () => {
         socket.setNoDelay(true);
         socket.removeListener('error', onConnectError);
+        // A write callback can fail before the socket emits its error event.
+        socket.on('error', (error) => {
+          this.socketError = error;
+        });
         this.socket = socket;
         resolve();
       });
@@ -304,21 +456,25 @@ export class TcpSessionTransport extends SessionTransport {
     });
   }
 
-  override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
-    const socket = this.socket;
-    if (this.closed || socket === null) {
+  override async sendMessage(msg: pb.AgentSessionMessage, signal?: AbortSignal): Promise<void> {
+    if (this.closed || this.socket === null) {
       throw new Error('tcp session transport is closed');
     }
 
-    const data = msg.toBinary();
-    const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
-    header.writeUInt32BE(data.length, 0);
-    const flushed = socket.write(Buffer.concat([header, data]));
-
-    // Only block on backpressure once the write buffer is backed up. The wait
-    // also settles on close/error so a stalled reader can't hang teardown.
-    if (!flushed && socket.writableLength > TCP_DRAIN_THRESHOLD) {
-      await waitForDrain(socket);
+    const unlock = await lockForSend(this.sendLock, signal);
+    try {
+      signal?.throwIfAborted();
+      const socket = this.socket;
+      if (this.socketError) throw this.socketError;
+      if (this.closed || socket === null || socket.destroyed || !socket.writable) {
+        throw new Error('tcp session transport is closed');
+      }
+      const data = msg.toBinary();
+      const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
+      header.writeUInt32BE(data.length, 0);
+      await writeFrame(socket, Buffer.concat([header, data]), signal);
+    } finally {
+      unlock();
     }
   }
 
@@ -329,19 +485,26 @@ export class TcpSessionTransport extends SessionTransport {
     this.socket = null;
   }
 
-  override async *[Symbol.asyncIterator](): AsyncIterableIterator<pb.AgentSessionMessage> {
+  override async *[Symbol.asyncIterator](
+    signal?: AbortSignal,
+  ): AsyncIterableIterator<pb.AgentSessionMessage> {
     const socket = this.socket;
-    if (socket === null) return;
+    if (socket === null || socket.destroyed || signal?.aborted) return;
 
     let buffer = Buffer.alloc(0);
     try {
-      for await (const chunk of socket) {
+      for await (const [chunk] of on(socket, 'data', {
+        signal,
+        close: ['end', 'close'],
+        highWaterMark: 16,
+      })) {
         buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
 
         while (buffer.length >= TCP_HEADER_SIZE) {
           const length = buffer.readUInt32BE(0);
           if (length > TCP_MAX_MESSAGE_SIZE) {
             log().error({ length }, 'TCP session message too large, closing transport');
+            await this.close();
             return;
           }
           if (buffer.length < TCP_HEADER_SIZE + length) break;
@@ -360,7 +523,7 @@ export class TcpSessionTransport extends SessionTransport {
         }
       }
     } catch (e) {
-      if (!this.closed) {
+      if (!this.closed && !signal?.aborted) {
         log().warn({ error: e }, 'TCP session transport read error');
       }
     }
@@ -562,6 +725,10 @@ export class SessionHost {
   private eventsRegistered = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
+  private readonly eventMessages: pb.AgentSessionMessage[] = [];
+  private eventResolve: (() => void) | null = null;
+  private eventsClosed = false;
+  private writeTask: Task<void> | undefined;
 
   constructor(
     transport: SessionTransport,
@@ -595,7 +762,12 @@ export class SessionHost {
     if (this.started) return;
     this.started = true;
     await this.transport.start();
-    this.recvTask = Task.from(async () => this.recvLoop());
+    this.writeTask = Task.from(
+      async ({ signal }) => this.writeLoop(signal),
+      undefined,
+      'SessionHost.writeLoop',
+    );
+    this.recvTask = Task.from(async ({ signal }) => this.recvLoop(signal));
   }
 
   async close(): Promise<void> {
@@ -621,24 +793,51 @@ export class SessionHost {
     }
 
     if (this.recvTask) {
-      this.recvTask.cancel();
+      await this.recvTask.cancelAndWait();
+      this.recvTask = undefined;
     }
 
-    await ThrowsPromise.allSettled([...this.tasks].map((task) => task.cancelAndWait()));
+    const deadline = performance.now() + SHUTDOWN_DRAIN_TIMEOUT;
+    // Cancelling a run may need speech cleanup. Stop event writes at the same
+    // deadline, even while that cleanup is still joining the request task.
+    const writerDeadline = setTimeout(() => this.writeTask?.cancel(), SHUTDOWN_DRAIN_TIMEOUT);
+    const cancelled = await drainTasks(this.tasks, deadline);
+    if (cancelled.size > 0) {
+      log().warn(
+        { requestTypes: [...new Set([...cancelled].map((task) => task.name ?? 'unknown'))].sort() },
+        'cancelled in-flight session requests while closing',
+      );
+    }
     this.tasks.clear();
+
+    this.eventsClosed = true;
+    this.eventResolve?.();
+    this.eventResolve = null;
+    if (this.writeTask) {
+      await drainTasks(new Set([this.writeTask]), deadline);
+      this.writeTask = undefined;
+    }
+    this.eventMessages.length = 0;
+    clearTimeout(writerDeadline);
 
     await this.transport.close();
   }
 
-  private async recvLoop(): Promise<void> {
+  private async recvLoop(signal: AbortSignal): Promise<void> {
     try {
-      for await (const msg of this.transport) {
+      const iterator = this.transport[Symbol.asyncIterator](signal);
+      while (!signal.aborted) {
+        const { value: msg, done } = await abortable(iterator.next(), signal);
+        if (done || signal.aborted || !this.started) break;
         switch (msg.message.case) {
           case 'request':
             if (this.session) {
               this.trackTask(
-                Task.from(async () =>
-                  this.handleRequestSafe(msg.message.value as pb.SessionRequest),
+                Task.from(
+                  async ({ signal }) =>
+                    this.handleRequestSafe(msg.message.value as pb.SessionRequest, signal),
+                  undefined,
+                  (msg.message.value as pb.SessionRequest).request.case ?? 'unknown',
                 ),
               );
             }
@@ -662,16 +861,38 @@ export class SessionHost {
     const msg = new pb.AgentSessionMessage({
       message: { case: 'event', value: event },
     });
-    // nobody awaits an event, so a failed one is logged rather than thrown
-    this.trackTask(
-      Task.from(async () => {
+    if (this.eventsClosed) return;
+    this.eventMessages.push(msg);
+    this.eventResolve?.();
+    this.eventResolve = null;
+  }
+
+  private async writeLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted && (!this.eventsClosed || this.eventMessages.length > 0)) {
+      const msg = this.eventMessages.shift();
+      if (!msg) {
         try {
-          await this.transport.sendMessage(msg);
-        } catch (e) {
-          log().warn({ error: e }, 'failed to send session event');
+          await abortable(
+            new Promise<void>((resolve) => {
+              this.eventResolve = resolve;
+            }),
+            signal,
+          );
+        } catch (error) {
+          if (!signal.aborted) throw error;
+          return;
+        } finally {
+          this.eventResolve = null;
         }
-      }),
-    );
+        continue;
+      }
+      try {
+        await abortable(this.transport.sendMessage(msg, signal), signal);
+      } catch (error) {
+        if (signal.aborted) return;
+        log().warn({ error }, 'failed to send session event');
+      }
+    }
   }
 
   private emitEvent<Event extends pb.AgentSessionEvent['event']>(
@@ -852,10 +1073,11 @@ export class SessionHost {
     });
   }
 
-  private async handleRequestSafe(req: pb.SessionRequest): Promise<void> {
+  private async handleRequestSafe(req: pb.SessionRequest, signal: AbortSignal): Promise<void> {
     try {
-      await this.handleRequest(req);
+      await this.handleRequest(req, signal);
     } catch (e) {
+      if (signal.aborted) return;
       log().warn({ error: e, requestId: req.requestId }, 'error handling session request');
       try {
         const resp = new pb.AgentSessionMessage({
@@ -867,32 +1089,33 @@ export class SessionHost {
             }),
           },
         });
-        await this.transport.sendMessage(resp);
+        await abortable(this.transport.sendMessage(resp, signal), signal);
       } catch (e) {
         log().debug({ error: e }, 'failed to send error response');
       }
     }
   }
 
-  private async handleRequest(req: pb.SessionRequest): Promise<void> {
+  private async handleRequest(req: pb.SessionRequest, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
     if (!this.session) return;
 
     switch (req.request.case) {
       case 'ping':
-        return this.sendResponse(req.requestId, {
+        return this.sendResponse(signal, req.requestId, {
           case: 'pong',
           value: new pb.SessionResponse_Pong(),
         });
       case 'getChatHistory':
-        return this.handleGetChatHistory(req.requestId);
+        return this.handleGetChatHistory(req.requestId, signal);
       case 'getAgentInfo':
-        return this.handleGetAgentInfo(req.requestId);
+        return this.handleGetAgentInfo(req.requestId, signal);
       case 'runInput':
-        return this.handleRunInput(req.requestId, req.request.value);
+        return this.handleRunInput(req.requestId, req.request.value, signal);
       case 'getSessionState':
-        return this.handleGetSessionState(req.requestId);
+        return this.handleGetSessionState(req.requestId, signal);
       case 'getRtcStats':
-        return this.sendResponse(req.requestId, {
+        return this.sendResponse(signal, req.requestId, {
           case: 'getRtcStats',
           value: new pb.SessionResponse_GetRTCStatsResponse({
             publisherStats: [],
@@ -900,9 +1123,9 @@ export class SessionHost {
           }),
         });
       case 'getSessionUsage':
-        return this.handleGetSessionUsage(req.requestId);
+        return this.handleGetSessionUsage(req.requestId, signal);
       case 'getFrameworkInfo':
-        return this.sendResponse(req.requestId, {
+        return this.sendResponse(signal, req.requestId, {
           case: 'getFrameworkInfo',
           value: new pb.SessionResponse_GetFrameworkInfoResponse({
             sdk: 'js',
@@ -910,15 +1133,16 @@ export class SessionHost {
           }),
         });
       case 'updateIo':
-        return this.handleUpdateIo(req.requestId, req.request.value);
+        return this.handleUpdateIo(req.requestId, req.request.value, signal);
       case 'finalizeSimulation':
-        return this.handleFinalizeSimulation(req.requestId, req.request.value);
+        return this.handleFinalizeSimulation(req.requestId, req.request.value, signal);
     }
   }
 
   private async handleFinalizeSimulation(
     requestId: string,
     req: pb.SessionRequest_FinalizeSimulation,
+    signal: AbortSignal,
   ): Promise<void> {
     // The simulator's verdict is passed in so onSimulationEnd can read it
     // (ctx.simulatorVerdict); the agent records its OWN verdict via ctx.fail().
@@ -938,10 +1162,12 @@ export class SessionHost {
         });
         const fnc = jobCtx._simulationEndFnc;
         if (fnc) {
-          await fnc(simCtx);
+          await abortable(Promise.resolve(fnc(simCtx)), signal);
+          signal.throwIfAborted();
         }
       }
     } catch (error) {
+      if (signal.aborted) throw error;
       simError = asError(error).message;
       log().error({ error }, 'error while executing the onSimulationEnd callback');
     }
@@ -952,6 +1178,7 @@ export class SessionHost {
       });
     }
     return this.sendResponse(
+      signal,
       requestId,
       {
         case: 'finalizeSimulation',
@@ -964,6 +1191,7 @@ export class SessionHost {
   private async handleUpdateIo(
     requestId: string,
     update: pb.SessionRequest_UpdateIO,
+    signal: AbortSignal,
   ): Promise<void> {
     const session = this.session!;
     // Each field is proto3 `optional`; only apply the ones the peer actually set.
@@ -980,23 +1208,23 @@ export class SessionHost {
       }
     }
 
-    return this.sendResponse(requestId, {
+    return this.sendResponse(signal, requestId, {
       case: 'updateIo',
       value: new pb.SessionResponse_UpdateIOResponse(),
     });
   }
 
-  private async handleGetChatHistory(requestId: string): Promise<void> {
+  private async handleGetChatHistory(requestId: string, signal: AbortSignal): Promise<void> {
     const items = chatItemsToProto(this.session!.history.items);
-    return this.sendResponse(requestId, {
+    return this.sendResponse(signal, requestId, {
       case: 'getChatHistory',
       value: new pb.SessionResponse_GetChatHistoryResponse({ items }),
     });
   }
 
-  private async handleGetAgentInfo(requestId: string): Promise<void> {
+  private async handleGetAgentInfo(requestId: string, signal: AbortSignal): Promise<void> {
     const agent = this.session!.currentAgent;
-    return this.sendResponse(requestId, {
+    return this.sendResponse(signal, requestId, {
       case: 'getAgentInfo',
       value: new pb.SessionResponse_GetAgentInfoResponse({
         id: agent.id,
@@ -1010,6 +1238,7 @@ export class SessionHost {
   private async handleRunInput(
     requestId: string,
     input: pb.SessionRequest_RunInput,
+    signal: AbortSignal,
   ): Promise<void> {
     const text = input.text;
     let items: pb.ChatContext_ChatItem[] = [];
@@ -1025,17 +1254,23 @@ export class SessionHost {
       // always return empty responses to the remote driver. This mirrors the
       // Python SessionHost behavior.
       try {
-        await this.session!.interrupt({ force: true }).await;
+        await abortable(this.session!.interrupt({ force: true }).await, signal);
       } catch {
         // ignore
       }
 
+      signal.throwIfAborted();
       const result = this.session!.run({ userInput: text });
       try {
-        await result.wait();
+        await abortable(result.wait(), signal);
       } catch (e) {
+        if (signal.aborted) {
+          await result._cancel();
+          throw signal.reason;
+        }
         error = e instanceof Error ? e.message : String(e);
       }
+      signal.throwIfAborted();
       items = chatItemsToProto(result.events.map((ev) => ev.item));
 
       if (items.length === 0 && !error) {
@@ -1044,6 +1279,7 @@ export class SessionHost {
     }
 
     return this.sendResponse(
+      signal,
       requestId,
       {
         case: 'runInput',
@@ -1053,10 +1289,10 @@ export class SessionHost {
     );
   }
 
-  private async handleGetSessionState(requestId: string): Promise<void> {
+  private async handleGetSessionState(requestId: string, signal: AbortSignal): Promise<void> {
     const agent = this.session!.currentAgent;
     const startedAt = this.session!._startedAt ?? Date.now();
-    return this.sendResponse(requestId, {
+    return this.sendResponse(signal, requestId, {
       case: 'getSessionState',
       value: new pb.SessionResponse_GetSessionStateResponse({
         agentState: AGENT_STATE_MAP[this.session!.agentState],
@@ -1074,8 +1310,8 @@ export class SessionHost {
     });
   }
 
-  private async handleGetSessionUsage(requestId: string): Promise<void> {
-    return this.sendResponse(requestId, {
+  private async handleGetSessionUsage(requestId: string, signal: AbortSignal): Promise<void> {
+    return this.sendResponse(signal, requestId, {
       case: 'getSessionUsage',
       value: new pb.SessionResponse_GetSessionUsageResponse({
         usage: sessionUsageToProto(this.session!.usage),
@@ -1085,17 +1321,23 @@ export class SessionHost {
   }
 
   private async sendResponse(
+    signal: AbortSignal,
     requestId: string,
     response: pb.SessionResponse['response'],
     error?: string,
   ): Promise<void> {
-    await this.transport.sendMessage(
-      new pb.AgentSessionMessage({
-        message: {
-          case: 'response',
-          value: new pb.SessionResponse({ requestId, response, error }),
-        },
-      }),
+    signal.throwIfAborted();
+    await abortable(
+      this.transport.sendMessage(
+        new pb.AgentSessionMessage({
+          message: {
+            case: 'response',
+            value: new pb.SessionResponse({ requestId, response, error }),
+          },
+        }),
+        signal,
+      ),
+      signal,
     );
   }
 
@@ -1287,6 +1529,42 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
       throw new Error(response.error);
     }
     return response;
+  }
+
+  /** Poll until the host answers a ping. Both timeout and retryInterval are in milliseconds. */
+  async waitForReady(timeout = 5000, retryInterval = 500): Promise<void> {
+    const deadline = performance.now() + timeout;
+    let sendError: unknown;
+
+    while (true) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) {
+        if (sendError) throw sendError;
+        throw new Error('waitForReady timed out');
+      }
+
+      try {
+        await this.sendRequest(
+          (id) =>
+            new pb.SessionRequest({
+              requestId: id,
+              request: { case: 'ping', value: new pb.SessionRequest_Ping() },
+            }),
+          Math.min(retryInterval, remaining),
+        );
+        return;
+      } catch (error) {
+        if (asError(error).message === 'RemoteSession request timed out') {
+          if (performance.now() >= deadline) throw new Error('waitForReady timed out');
+          continue;
+        }
+        sendError = error;
+        if (performance.now() >= deadline) throw error;
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(retryInterval, Math.max(0, deadline - performance.now()))),
+        );
+      }
+    }
   }
 
   async fetchSessionState(): Promise<pb.SessionResponse_GetSessionStateResponse> {

@@ -172,6 +172,7 @@ export class RunResult<T = unknown> {
    * Records an agent handoff event.
    */
   _agentHandoff(params: { item: AgentHandoffItem; oldAgent?: Agent; newAgent: Agent }): void {
+    if (this.done()) return;
     const event: AgentHandoffEvent = {
       type: 'agent_handoff',
       item: params.item,
@@ -212,7 +213,7 @@ export class RunResult<T = unknown> {
    * Watch a speech handle or task for completion.
    */
   _watchHandle(handle: SpeechHandle | Task<void>): void {
-    if (this.handles.has(handle)) return;
+    if (this.done() || this.handles.has(handle)) return;
 
     this.handles.add(handle);
 
@@ -249,6 +250,29 @@ export class RunResult<T = unknown> {
   /** @internal */
   _watchedHandleCount(): number {
     return this.handles.size;
+  }
+
+  /** @internal Stop a remote run and join its interrupted speech cleanup. */
+  async _cancel(): Promise<void> {
+    this._reject(new DOMException('Remote session run cancelled', 'AbortError'));
+    const speeches: SpeechHandle[] = [];
+    for (const handle of this.handles) {
+      this._unwatchHandle(handle);
+      if (isSpeechHandle(handle)) {
+        handle.interrupt(true);
+        for (const task of handle._tasks) task.cancel();
+        speeches.push(handle);
+      }
+      // Non-speech tasks (such as activity transitions) belong to the session.
+      // The run observes them but does not own their lifetime.
+    }
+    if (this.session?._globalRunState === this) this.session._globalRunState = undefined;
+    this.session = undefined;
+    // The playout watchdog can mark a handle done while its reply still runs.
+    // Join the actual speech tasks before releasing ownership of their cleanup.
+    await Promise.allSettled(
+      speeches.flatMap((handle) => handle._tasks.map((task) => task.result)),
+    );
   }
 
   /** @internal – Reject the run with an error (e.g. when deferred generateReply fails). */
