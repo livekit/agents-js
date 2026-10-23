@@ -226,11 +226,23 @@ function chatHistoryToStandardJSON(chatHistory: ChatContext): unknown {
   return toSnakeCaseDeep(json);
 }
 
+export interface SessionReportJSONOptions {
+  /** Include `chat_history`. Defaults to true; false omits the key. */
+  includeChatHistory?: boolean;
+  /** Include `events`. Defaults to true; false omits the key. */
+  includeEvents?: boolean;
+}
+
 //   - header: protobuf MetricsRecordingHeader (room_id, duration, start_time)
 //   - chat_history: JSON serialized chat history (use sessionReportToJSON)
 //   - audio: audio recording file if available (ogg format)
 //   - Uploads to LiveKit Cloud observability endpoint with JWT auth
-export function sessionReportToJSON(report: SessionReport): Record<string, unknown> {
+export function sessionReportToJSON(
+  report: SessionReport,
+  jsonOptions: SessionReportJSONOptions = {},
+): Record<string, unknown> {
+  const includeChatHistory = jsonOptions.includeChatHistory ?? true;
+  const includeEvents = jsonOptions.includeEvents ?? true;
   const events: Record<string, unknown>[] = [];
   const options = report.options;
   const interruptionConfig = options.turnHandling?.interruption;
@@ -264,19 +276,21 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
     options.maxEndpointingDelay ??
     options.voiceOptions?.maxEndpointingDelay;
 
-  for (const event of report.events) {
-    if (event.type === 'metrics_collected' || event.type === 'session_usage_updated') {
-      continue; // metrics are too noisy, Cloud is using the chat_history as the source of truth
-    }
+  if (includeEvents) {
+    for (const event of report.events) {
+      if (event.type === 'metrics_collected' || event.type === 'session_usage_updated') {
+        continue; // metrics are too noisy, Cloud is using the chat_history as the source of truth
+      }
 
-    events.push(eventToJSON(event));
+      events.push(eventToJSON(event));
+    }
   }
 
   return {
     job_id: report.jobId,
     room_id: report.roomId,
     room: report.room,
-    events,
+    ...(includeEvents ? { events } : {}),
     audio_recording_path: report.audioRecordingPath ?? null,
     audio_recording_started_at: report.audioRecordingStartedAt ?? null,
     options: {
@@ -291,7 +305,7 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       preemptive_generation: options.turnHandling?.preemptiveGeneration ?? {},
       recording_options: { ...options.recordingOptions },
     },
-    chat_history: chatHistoryToStandardJSON(report.chatHistory),
+    ...(includeChatHistory ? { chat_history: chatHistoryToStandardJSON(report.chatHistory) } : {}),
     enable_user_data_training: report.enableRecording,
     timestamp: report.timestamp,
     usage: report.modelUsage ? report.modelUsage.map(modelUsageToJSON) : null,

@@ -347,6 +347,69 @@ describe('sessionReportToJSON', () => {
     expect((payload.options as Record<string, unknown>).user_away_timeout).toBe(15);
   });
 
+  it('includes chat history and events by default', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [createUserStateChangedEvent('listening', 'speaking', 0)],
+      chatHistory: ChatContext.empty(),
+      enableRecording: false,
+      timestamp: 0,
+      startedAt: 0,
+    });
+
+    const payload = sessionReportToJSON(report);
+    expect(sessionReportToJSON(report, {})).toEqual(payload);
+    expect(sessionReportToJSON(report, { includeChatHistory: true, includeEvents: true })).toEqual(
+      payload,
+    );
+    expect(payload.events).toHaveLength(1);
+    // Key order is part of the JSON written to disk, so it must not change.
+    expect(Object.keys(payload)).toEqual([
+      'job_id',
+      'room_id',
+      'room',
+      'events',
+      'audio_recording_path',
+      'audio_recording_started_at',
+      'options',
+      'chat_history',
+      'enable_user_data_training',
+      'timestamp',
+      'usage',
+      'sdk_version',
+    ]);
+  });
+
+  it('omits chat history and events when excluded', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [createUserStateChangedEvent('listening', 'speaking', 0)],
+      chatHistory: ChatContext.empty(),
+      enableRecording: false,
+      timestamp: 0,
+      startedAt: 0,
+    });
+
+    const full = sessionReportToJSON(report);
+    const trimmed = sessionReportToJSON(report, {
+      includeChatHistory: false,
+      includeEvents: false,
+    });
+    expect(trimmed).not.toHaveProperty('chat_history');
+    expect(trimmed).not.toHaveProperty('events');
+    const { chat_history: _chatHistory, events: _events, ...rest } = full;
+    expect(trimmed).toEqual(rest);
+
+    expect(sessionReportToJSON(report, { includeEvents: false })).toHaveProperty('chat_history');
+    expect(sessionReportToJSON(report, { includeChatHistory: false })).toHaveProperty('events');
+  });
+
   it('serializes chat item timestamps as Unix seconds', () => {
     const chatHistory = ChatContext.empty();
     chatHistory.addMessage({

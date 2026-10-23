@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { MetricsRecordingHeader } from '@livekit/protocol';
+import { MetricsRecordingHeader, AgentSession as pb } from '@livekit/protocol';
 import { ProxyTracerProvider, context as otelContext, trace } from '@opentelemetry/api';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import {
@@ -23,11 +23,12 @@ import { log } from '../log.js';
 import { version } from '../version.js';
 import { AgentSession } from '../voice/agent_session.js';
 import { CloseReason, createCloseEvent, createErrorEvent } from '../voice/events.js';
-import type { SessionReport } from '../voice/report.js';
+import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { PIIFilteringSpanProcessor } from './pii.js';
 import {
   type CloudSpanProcessorOptions,
+  closeReasonName,
   describeOptionObject,
   serializeOptionValue,
   serializeSessionOptions,
@@ -844,19 +845,64 @@ describe('uploadSessionReport metadata', () => {
     const formData = submitSpy.mock.instances[0] as FormData;
     const header = MetricsRecordingHeader.fromBinary(getMultipartBuffer(formData, 'header'));
     expect(header.duration).toBe(BigInt(12500));
+    const { options, ...summary } = JSON.parse(header.sessionSummary);
+    expect(options).toEqual(sessionReportToJSON(report).options);
     // agents-js has no tagger, so the summary never has a tags key.
-    expect(JSON.parse(header.sessionSummary)).toEqual({
-      agent_name: 'support',
+    expect(summary).toEqual({
+      job_id: 'job1',
+      room_id: 'room1',
+      room: 'room-name',
+      audio_recording_started_at: null,
+      enable_user_data_training: true,
+      timestamp: 1_700_000_001_000,
       sdk_version: version,
+      usage: [
+        { type: 'tts_usage', provider: 'p', model: 'm' },
+        { type: 'llm_usage', provider: 'p', model: 'm' },
+      ],
+      agent_name: 'support',
       duration_ms: 12500,
       user_turns: 2,
-      models: [
-        { type: 'llm', provider: 'p', model: 'm' },
-        { type: 'tts', provider: 'p', model: 'm' },
-      ],
       errors: { llm: 2, stt: 0, tts: 1, realtime: 0, interruption: 0 },
-      close_reason: 'participant_disconnected',
+      close_reason: 'CR_PARTICIPANT_DISCONNECTED',
     });
+  });
+
+  it('omits session summary keys the report has no value for', async () => {
+    vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
+    const submitSpy = mockSuccessfulFormSubmit();
+    const report = makeReport({
+      audio: false,
+      traces: false,
+      logs: false,
+      transcript: true,
+      redaction: false,
+    });
+    report.audioRecordingPath = '/tmp/recording.ogg';
+    report.modelUsage = [];
+
+    await uploadSessionReport({
+      agentName: 'support',
+      observabilityUrl: 'https://example.livekit.cloud',
+      report,
+    });
+
+    const formData = submitSpy.mock.instances[0] as FormData;
+    const header = MetricsRecordingHeader.fromBinary(getMultipartBuffer(formData, 'header'));
+    const summary = JSON.parse(header.sessionSummary);
+    for (const key of [
+      'chat_history',
+      'events',
+      'audio_recording_path',
+      'usage',
+      'duration_ms',
+      'close_reason',
+      'tags',
+    ]) {
+      expect(summary).not.toHaveProperty(key);
+    }
+    expect(summary.user_turns).toBe(0);
+    expect(summary.errors).toEqual({ llm: 0, stt: 0, tts: 0, realtime: 0, interruption: 0 });
   });
 
   it('returns before exporting when only redaction is enabled', async () => {
@@ -915,6 +961,20 @@ describe('uploadSessionReport metadata', () => {
     expect(streams.some((part) => typeof part === 'string' && part.includes('name="audio"'))).toBe(
       false,
     );
+  });
+});
+
+describe('closeReasonName', () => {
+  it('maps every SDK close reason to a proto value other than CR_UNKNOWN', () => {
+    for (const reason of Object.values(CloseReason)) {
+      const name = closeReasonName(reason);
+      expect(name).not.toBe('CR_UNKNOWN');
+      expect(pb.CloseReason[name as keyof typeof pb.CloseReason]).toBeDefined();
+    }
+  });
+
+  it('maps custom shutdown reasons to CR_UNKNOWN', () => {
+    expect(closeReasonName('my_custom_reason')).toBe('CR_UNKNOWN');
   });
 });
 

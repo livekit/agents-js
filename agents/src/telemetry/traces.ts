@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { MetricsRecordingHeader } from '@livekit/protocol';
+import { MetricsRecordingHeader, AgentSession as pb } from '@livekit/protocol';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Attributes,
@@ -50,6 +50,7 @@ import {
   recordingEnabled,
 } from '../types.js';
 import { version } from '../version.js';
+import { CloseReason, type ShutdownReason } from '../voice/events.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { blockedSpanTracker } from './blocked_span_tracker.js';
 import { conversationId } from './gen_ai.js';
@@ -1042,38 +1043,50 @@ const SUMMARY_ERROR_KEYS: Record<string, string> = {
   interruption_detection_error: 'interruption',
 };
 
+// Maps an SDK close reason to the livekit.agent.CloseReason value that evals read.
+const PROTO_CLOSE_REASONS: Record<string, pb.CloseReason> = {
+  [CloseReason.ERROR]: pb.CloseReason.CR_ERROR,
+  [CloseReason.JOB_SHUTDOWN]: pb.CloseReason.CR_JOB_SHUTDOWN,
+  [CloseReason.PARTICIPANT_DISCONNECTED]: pb.CloseReason.CR_PARTICIPANT_DISCONNECTED,
+  [CloseReason.USER_INITIATED]: pb.CloseReason.CR_USER_INITIATED,
+  // Python has this reason; agents-js can only get it as a custom shutdown string.
+  task_completed: pb.CloseReason.CR_TASK_COMPLETED,
+};
+
 /**
- * Builds the session summary that agent evals read from the recording header. Its schema is
- * evalschema/session-summary.schema.json in livekit/cloud-protocol. An absent key means "not
- * sent", so this omits `tags` (agents-js has no tagger) and `usage`, and omits `duration_ms`,
- * `models` and `close_reason` when the report has no value for them.
+ * Returns the livekit.agent.CloseReason value name (e.g. `CR_ERROR`) for an SDK close reason.
+ * Custom shutdown strings have no proto value, so they map to `CR_UNKNOWN`.
+ *
+ * @internal Exported for tests.
+ */
+export function closeReasonName(reason: ShutdownReason): string {
+  const value = PROTO_CLOSE_REASONS[reason] ?? pb.CloseReason.CR_UNKNOWN;
+  // The generated enum is a numeric TS enum, so indexing by value gives the value name.
+  return pb.CloseReason[value]!;
+}
+
+/**
+ * Builds the session summary that agent evals read from the recording header: the session report
+ * without chat history, events and the local recording path, plus counts derived from them.
+ * Absent keys mean "not sent": `usage` without model usage, `duration_ms` without a recording,
+ * `close_reason` without a close event. agents-js has no tagger, so there is never a `tags` key.
  */
 function sessionSummary(agentName: string, report: SessionReport): Record<string, unknown> {
-  const userTurns = report.chatHistory.items.filter(
-    (item) => item.type === 'message' && item.role === 'user',
-  ).length;
-  const summary: Record<string, unknown> = {
-    agent_name: agentName,
-    sdk_version: version,
-    user_turns: userTurns,
-  };
+  const summary = sessionReportToJSON(report, { includeChatHistory: false, includeEvents: false });
+  delete summary.audio_recording_path;
+  // Each usage entry already carries its `type` (e.g. `llm_usage`).
+  if (!report.modelUsage || report.modelUsage.length === 0) {
+    delete summary.usage;
+  }
+
+  summary.agent_name = agentName;
   // The report has no duration when audio was not recorded.
   if (report.duration !== undefined) {
     summary.duration_ms = Math.round(report.duration);
   }
-
-  if (report.modelUsage && report.modelUsage.length > 0) {
-    const models = new Map<string, { type: string; provider: string; model: string }>();
-    for (const usage of report.modelUsage) {
-      const type = usage.type.replace(/_usage$/, '');
-      models.set(`${type}\0${usage.provider}\0${usage.model}`, {
-        type,
-        provider: usage.provider,
-        model: usage.model,
-      });
-    }
-    summary.models = [...models.keys()].sort().map((key) => models.get(key));
-  }
+  summary.user_turns = report.chatHistory.items.filter(
+    (item) => item.type === 'message' && item.role === 'user',
+  ).length;
 
   // Events are not uploaded, so the header is the only way evals can see them.
   const errors: Record<string, number> = {};
@@ -1087,7 +1100,7 @@ function sessionSummary(agentName: string, report: SessionReport): Record<string
         errors[key] = (errors[key] ?? 0) + 1;
       }
     } else if (event.type === 'close') {
-      summary.close_reason = event.reason;
+      summary.close_reason = closeReasonName(event.reason);
     }
   }
   summary.errors = errors;
