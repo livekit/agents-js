@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { enableOtelLogging, initializeLogger, log } from './log.js';
 import {
@@ -19,6 +21,15 @@ vi.mock('pino-pretty', async () => {
 });
 
 const OTEL_ENABLED_KEY = Symbol.for('@livekit/agents:otelEnabled');
+
+function entrypoint() {
+  log().info('hello');
+}
+
+const entrypointLogLine =
+  readFileSync(fileURLToPath(import.meta.url), 'utf8')
+    .split('\n')
+    .findIndex((line) => line.includes("log().info('hello')")) + 1;
 
 function resetOtelLoggingState() {
   delete (globalThis as Record<symbol, unknown>)[OTEL_ENABLED_KEY];
@@ -239,4 +250,30 @@ describe('OTEL logging', () => {
       }
     },
   );
+});
+
+describe('JSON logging', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetOtelLoggingState();
+  });
+
+  it('adds code attributes', async () => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+
+    entrypoint();
+
+    await vi.waitFor(() => {
+      const record = emitSpy.mock.calls
+        .map(([logObj]) => logObj)
+        .find(({ msg }) => msg === 'hello');
+      expect(record).toMatchObject({
+        'code.file.path': fileURLToPath(import.meta.url),
+        'code.function.name': 'entrypoint',
+        'code.line.number': entrypointLogLine,
+      });
+    });
+  });
 });

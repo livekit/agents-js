@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Writable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import type { DestinationStream, Logger } from 'pino';
 import { multistream, pino } from 'pino';
 import { build as pinoPretty } from 'pino-pretty';
@@ -20,6 +21,32 @@ const globals = globalThis as typeof globalThis & GlobalState;
 const deployedRegion = process.env.LIVEKIT_REGION_NAME || undefined;
 
 export { log, loggerOptions, type LoggerOptions };
+
+const CALLSITE_PATTERN = /^\s*at (?:(.*?) \()?(.+?):(\d+):\d+\)?$/;
+const PINO_FRAME_PATTERN = /[\\/]node_modules[\\/]pino[\\/]/;
+
+function codeAttributes(): Record<string, string | number> {
+  const holder: { stack?: string } = {};
+  Error.captureStackTrace(holder, logMixin);
+  const frames = holder.stack?.split('\n').slice(1) ?? [];
+  for (const frame of frames) {
+    const match = CALLSITE_PATTERN.exec(frame);
+    if (!match || PINO_FRAME_PATTERN.test(match[2]!)) continue;
+
+    let filePath = match[2]!;
+    if (filePath.startsWith('file:')) filePath = fileURLToPath(filePath);
+    return {
+      'code.file.path': filePath,
+      'code.function.name': match[1] || '<anonymous>',
+      'code.line.number': Number(match[3]),
+    };
+  }
+  return {};
+}
+
+function logMixin(): Record<string, unknown> {
+  return { ...(deployedRegion && { region: deployedRegion }), ...codeAttributes() };
+}
 
 const createLogger = ({ pretty, level }: LoggerOptions): Logger => {
   const logLevel = level || 'info';
@@ -42,7 +69,9 @@ const createLogger = ({ pretty, level }: LoggerOptions): Logger => {
     {
       level: logLevel,
       serializers: { error: pino.stdSerializers.err },
-      ...(deployedRegion && { mixin: () => ({ region: deployedRegion }) }),
+      ...(!pretty
+        ? { mixin: logMixin }
+        : deployedRegion && { mixin: () => ({ region: deployedRegion }) }),
     },
     multistream(streams),
   );
