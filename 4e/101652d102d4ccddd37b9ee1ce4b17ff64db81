@@ -1,0 +1,31 @@
+agents/src/voice/realtime_overlapping_speech.test.ts
+  s_fc15f841f097ac::t_9c8ce9abc7c161 17
+  s_fc15f841f097ac::t_ff8e219bd16d7e 540-650
+agents/src/voice/agent_activity.ts
+  s_fc15f841f097ac::t_bee3d8953f9923 340-356,359-362
+  s_fc15f841f097ac::t_4ec46d3e0a2dfe 357-358
+  s_fc15f841f097ac::t_5e16238ba3a145 3661,3669,3691,3693,3829,3834-3838,4172,4189-4190,4214-4216,4314,4317,4779,4860-4861,4870,4872,4931,4936-4940
+agents/src/voice/agent_activity_transcription_setup.test.ts
+  s_fc15f841f097ac::t_a16de0b939a4e6 193,268-270,330-359
+  s_fc15f841f097ac::t_d6fc1d650ad2ba 1-13,15-135,144-169,171-180,182-192,194-234,239-250,260-261,263-267,277-315,317-318,328-329,360-366,370-373,376-377,379-384
+  s_fc15f841f097ac::t_d8db3072469716 14,138-143,235-238,251-259,271-276,319-327,367-369,374-375,378,385-496
+  s_fc15f841f097ac::t_665032021381d3 136-137,170,181,262,316
+.changeset/bright-sessions-wait.md
+  s_fc15f841f097ac::t_30a71e6cc7aa44 14-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e101652d102d4ccddd37b9ee1ce4b17ff64db81",
+  "prompts": {},
+  "sessions": {
+    "s_fc15f841f097ac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16567-d397-7133-8c31-8372992588e8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
