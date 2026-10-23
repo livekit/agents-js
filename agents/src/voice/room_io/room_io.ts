@@ -294,7 +294,7 @@ export class RoomIO {
   };
 
   private onParticipantDisconnected = (participant: RemoteParticipant) => {
-    if (participant.identity !== this.participantIdentity) {
+    if (participant.identity !== this.participantIdentity || !this.linkedParticipant) {
       return;
     }
     this.agentSession.emit(

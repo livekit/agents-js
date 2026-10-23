@@ -88,6 +88,7 @@ type FakeSession = {
   off: ReturnType<typeof vi.fn>;
   emit: (event: string | symbol, value: unknown) => boolean;
   _closeSoon: ReturnType<typeof vi.fn>;
+  _onRoomIOParticipantLinked: ReturnType<typeof vi.fn>;
 };
 
 function createFakeSession(llm?: RealtimeModel): FakeSession {
@@ -108,6 +109,7 @@ function createFakeSession(llm?: RealtimeModel): FakeSession {
     }),
     emit: (event: string | symbol, value: unknown) => emitter.emit(event, value),
     _closeSoon: vi.fn(),
+    _onRoomIOParticipantLinked: vi.fn(),
   };
 }
 
@@ -139,13 +141,28 @@ describe('RoomIO participant disconnect event', () => {
       identity: 'linked',
       disconnectReason: DisconnectReason.CLIENT_INITIATED,
     });
+    expect(events).toHaveLength(0);
+
+    const connectListener = room.on.mock.calls.find(
+      ([event]) => event === RoomEvent.ParticipantConnected,
+    )?.[1];
+    expect(connectListener).toBeDefined();
+    (connectListener as (participant: unknown) => void)({
+      identity: 'linked',
+      info: { kind: 0 },
+      attributes: {},
+    });
+    (listener as (participant: unknown) => void)({
+      identity: 'linked',
+      disconnectReason: DisconnectReason.CLIENT_INITIATED,
+    });
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       type: 'participant_disconnected',
       participantIdentity: 'linked',
       disconnectReason: DisconnectReason.CLIENT_INITIATED,
-      participantAttributes: expect.objectContaining({ identity: 'linked' }),
+      participantAttributes: expect.objectContaining({ 'lk.pii.participant_identity': 'linked' }),
     });
     expect(events[0]!.createdAt).toEqual(expect.any(Number));
     expect(session._closeSoon).toHaveBeenCalledWith({
