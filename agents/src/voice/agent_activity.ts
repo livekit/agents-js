@@ -4419,7 +4419,11 @@ export class AgentActivity implements RecognitionHooks {
       const respondToolChoice =
         maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none'
           ? 'none'
-          : _replyToolChoice(toolOutput.output.map((out) => out.replyToolChoice)) ?? 'auto';
+          : _replyToolChoice(
+              toolOutput.output
+                .filter((out) => out.toolCallOutput !== undefined && out.replyRequired)
+                .map((out) => out.replyToolChoice),
+            ) ?? 'auto';
 
       // Reuse the same speechHandle for the tool response.
       const toolResponseLease = this.createAgentStateLease(speechHandle);
@@ -5121,7 +5125,11 @@ export class AgentActivity implements RecognitionHooks {
     const toolChoice =
       maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none'
         ? 'none'
-        : _replyToolChoice(toolOutput.output.map((out) => out.replyToolChoice)) ?? 'auto';
+        : _replyToolChoice(
+            toolOutput.output
+              .filter((out) => out.toolCallOutput !== undefined && out.replyRequired)
+              .map((out) => out.replyToolChoice),
+          ) ?? 'auto';
     // the reply is the next step of the same handle, as in the pipeline path
     const replyLease = this.createAgentStateLease(speechHandle);
     this.createSpeechTask({
