@@ -297,7 +297,7 @@ export class RoomIO {
     if (participant.identity !== this.participantIdentity) {
       return;
     }
-    const wasLinked = this.linkedParticipant !== undefined;
+    const linkedParticipant = this.linkedParticipant;
     this.agentSession._addSessionEvent?.('participant_disconnected', {
       ...(participantAttributes(participant) as Record<string, string>),
       [traceTypes.ATTR_DISCONNECT_REASON]:
@@ -322,18 +322,19 @@ export class RoomIO {
         reason: CloseReason.PARTICIPANT_DISCONNECTED,
       });
     }
-    if (wasLinked) {
-      this.agentSession.emit(
-        AgentSessionEventTypes.ParticipantDisconnected,
-        createParticipantDisconnectedEvent({
-          participantIdentity: participant.identity,
-          disconnectReason: participant.disconnectReason ?? DisconnectReason.UNKNOWN_REASON,
-          participantAttributes: {
-            ...(participantAttributes(participant) as Record<string, string | number | boolean>),
-          },
-        }),
-      );
+    if (!linkedParticipant) {
+      return;
     }
+    this.agentSession.emit(
+      AgentSessionEventTypes.ParticipantDisconnected,
+      createParticipantDisconnectedEvent({
+        participantIdentity: participant.identity,
+        disconnectReason: participant.disconnectReason ?? DisconnectReason.UNKNOWN_REASON,
+        participantAttributes: {
+          ...(participantAttributes(participant) as Record<string, string | number | boolean>),
+        },
+      }),
+    );
   };
 
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
