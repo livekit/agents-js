@@ -75,7 +75,7 @@ abstract class EOUModel {
     // Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    predictEndOfTurn(chatCtx: llm.ChatContext, _timeoutMs?: number): Promise<number>;
+    predictEndOfTurn(chatCtx: llm.ChatContext, timeoutMs?: number): Promise<number>;
     // (undocumented)
     get provider(): string;
     // (undocumented)
