@@ -101,18 +101,32 @@ function emitsPartialTurns(opts: Pick<STTOptions, 'includePartialTurns' | 'redac
   return opts.includePartialTurns ?? opts.redactPii !== true;
 }
 
+// Fixed for the STT's lifetime: open sockets keep them until reconnect, while transcript
+// handling and the interimResults capability would switch immediately.
+const CONSTRUCTOR_ONLY_OPTIONS = [
+  'redactPii',
+  'redactPiiPolicies',
+  'redactPiiSub',
+  'includePartialTurns',
+] as const;
+
 function normalizeUpdateOptions(
   opts: Partial<STTOptions>,
-  speechModel: STTModels,
+  current: STTOptions,
 ): Partial<STTOptions> {
   const nextOpts = { ...opts };
   if (nextOpts.speechModel === 'u3-pro') nextOpts.speechModel = 'universal-3-5-pro';
   // UpdateConfiguration cannot change the model of an existing provider session.
-  if (nextOpts.speechModel !== undefined && nextOpts.speechModel !== speechModel) {
+  if (nextOpts.speechModel !== undefined && nextOpts.speechModel !== current.speechModel) {
     throw new Error('speechModel cannot be changed via updateOptions; create a new STT instead.');
   }
   delete nextOpts.speechModel;
-  validateModelOptions(nextOpts, speechModel);
+  for (const key of CONSTRUCTOR_ONLY_OPTIONS) {
+    if (key in nextOpts && JSON.stringify(nextOpts[key]) !== JSON.stringify(current[key])) {
+      throw new Error(`${key} cannot be changed via updateOptions; create a new STT instead.`);
+    }
+  }
+  validateModelOptions(nextOpts, current.speechModel);
   validateAgentContext(nextOpts.agentContext);
   if (nextOpts.languageCodes !== undefined) {
     nextOpts.languageCodes = normalizeLanguageCodes(nextOpts.languageCodes);
@@ -219,22 +233,23 @@ export interface STTOptions {
   languageCodes?: string | string[];
   /**
    * Redact PII from final turns. AssemblyAI disables partial turns when this is enabled unless
-   * `includePartialTurns` is set; partials are never redacted. Connect-time only.
+   * `includePartialTurns` is set; partials are never redacted. Set at construction; cannot be
+   * changed via `updateOptions`.
    */
   redactPii?: boolean;
   /**
    * PII policies to redact, such as `person_name` or `phone_number`. Redacts all detected PII
-   * when unset. Requires `redactPii`. Connect-time only.
+   * when unset. Requires `redactPii`. Set at construction.
    */
   redactPiiPolicies?: string[];
   /**
    * Replacement for redacted PII: `hash` (AssemblyAI default) or `entity_name`, which writes
-   * `[PERSON_NAME]`-style placeholders. Requires `redactPii`. Connect-time only.
+   * `[PERSON_NAME]`-style placeholders. Requires `redactPii`. Set at construction.
    */
   redactPiiSub?: PiiRedactionSubstitution;
   /**
    * Emit partial (non-final) turns. AssemblyAI defaults this to true, or false when `redactPii`
-   * is enabled. Connect-time only.
+   * is enabled. Set at construction; cannot be changed via `updateOptions`.
    */
   includePartialTurns?: boolean;
   /** Filter profanity from transcripts. Connect-time only. */
@@ -332,14 +347,12 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    const nextOpts = normalizeUpdateOptions(opts, this.#opts.speechModel);
-    validateRedactionOptions({ ...this.#opts, ...nextOpts });
+    const nextOpts = normalizeUpdateOptions(opts, this.#opts);
     if (nextOpts.keytermsPrompt !== undefined) {
       this.#userKeyterms = [...nextOpts.keytermsPrompt];
       nextOpts.keytermsPrompt = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
     }
     this.#opts = { ...this.#opts, ...nextOpts };
-    this.updateCapabilities({ interimResults: emitsPartialTurns(this.#opts) });
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
@@ -425,8 +438,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    opts = normalizeUpdateOptions(opts, this.#opts.speechModel);
-    validateRedactionOptions({ ...this.#opts, ...opts });
+    opts = normalizeUpdateOptions(opts, this.#opts);
     this.#opts = { ...this.#opts, ...opts };
 
     const configMsg: Record<string, unknown> = { type: 'UpdateConfiguration' };

@@ -107,12 +107,28 @@ describe('AssemblyAI streaming configuration', () => {
     'rejects %o without redactPii',
     async (option) => {
       expect(() => new STT({ apiKey: 'test', ...option })).toThrow(/requires 'redactPii'/);
-      await withProvider({ redactPii: true, ...option }, async (provider, _q, _m, stream) => {
-        expect(() => provider.updateOptions({ redactPii: false })).toThrow(/requires 'redactPii'/);
-        expect(() => stream.updateOptions({ redactPii: false })).toThrow(/requires 'redactPii'/);
-      });
     },
   );
+
+  it.each([
+    { redactPii: false },
+    { redactPiiPolicies: ['phone_number'] },
+    { redactPiiSub: 'hash' as const },
+    { includePartialTurns: true },
+  ])('rejects changing %o via updateOptions', async (option) => {
+    const initial = {
+      redactPii: true,
+      redactPiiPolicies: ['person_name'],
+      redactPiiSub: 'entity_name' as const,
+      includePartialTurns: false,
+    };
+    await withProvider(initial, async (provider, _q, _m, stream) => {
+      expect(() => provider.updateOptions(option)).toThrow(/cannot be changed via updateOptions/);
+      expect(() => stream.updateOptions(option)).toThrow(/cannot be changed via updateOptions/);
+      expect(() => provider.updateOptions(initial)).not.toThrow();
+      expect(provider.capabilities.interimResults).toBe(false);
+    });
+  });
 
   it('leaves max turn silence to the mode preset when only min is set', async () => {
     await withProvider({ mode: 'max_accuracy', minTurnSilence: 200 }, async (_p, query) => {
@@ -165,12 +181,6 @@ describe('AssemblyAI streaming configuration', () => {
     expect(
       new STT({ apiKey: 'test', includePartialTurns: false }).capabilities.interimResults,
     ).toBe(false);
-
-    const updated = new STT({ apiKey: 'test' });
-    updated.updateOptions({ redactPii: true });
-    expect(updated.capabilities.interimResults).toBe(false);
-    updated.updateOptions({ includePartialTurns: true });
-    expect(updated.capabilities.interimResults).toBe(true);
   });
 
   it('enables carryover for the existing default model, with explicit opt-out', () => {
