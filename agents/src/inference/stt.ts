@@ -106,6 +106,11 @@ export interface DeepgramOptions {
   mip_opt_out?: boolean;
   /** Enable speaker diarization. Default: false. */
   diarize?: boolean;
+  /**
+   * Languages to bias recognition toward. Only applies in Nova-3 multi language mode: the session
+   * must also set `language: 'multi'`. Requires the gateway's `deepgram_stt_language_hint` flag.
+   */
+  language_hint?: string | string[];
 }
 
 export interface DeepgramFluxOptions {
@@ -119,8 +124,8 @@ export interface DeepgramFluxOptions {
   keyterm?: string | string[];
   /** Always true for LiveKit Inference; the passed value is ignored. */
   mip_opt_out?: boolean;
-  /** Language hint. */
-  language_hint?: string;
+  /** Language hint. A list biases recognition toward several languages. */
+  language_hint?: string | string[];
   /** Enable automatic language detection. */
   detect_language?: boolean;
 }
@@ -439,6 +444,37 @@ function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VA
   return vad;
 }
 
+/**
+ * Deepgram applies `language_hint` only in Nova-3 multi language mode, and the gateway drops the
+ * key for every other language, so sending one there is silently ignored. The Flux provider
+ * forwards its hint under any language, so Flux models are exempt. False for a non-Deepgram model,
+ * whose hint Deepgram's rules say nothing about and which therefore passes through.
+ */
+function languageHintSendable(model: string | undefined, language: string | undefined): boolean {
+  if (!model?.startsWith('deepgram/')) return false;
+  if (model.startsWith('deepgram/flux')) return true;
+  return (language ?? '').trim().toLowerCase() === 'multi';
+}
+
+/**
+ * Removes the key from `extra` in place and reports whether it removed one. Only Deepgram's
+ * language rules make the key ours to withhold, so another provider's hint is left untouched.
+ * Every caller passes a copy of the outgoing frame, so the hint stays in the caller's own options
+ * and a later language or model change can send it again.
+ */
+function dropUnsupportedLanguageHint(
+  model: string | undefined,
+  language: string | undefined,
+  extra: Record<string, unknown>,
+): boolean {
+  if (!model?.startsWith('deepgram/')) return false;
+  if (languageHintSendable(model, language)) return false;
+  if (!('language_hint' in extra)) return false;
+
+  delete extra.language_hint;
+  return true;
+}
+
 export type STTEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
@@ -471,6 +507,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   private _vadPromise?: Promise<VAD | undefined>;
   /** framework-managed; merged into modelOptions @internal */
   _sessionKeyterms: string[] = [];
+  #languageHintWarned = false;
 
   /**
    * Resolves to the VAD instance for the current model, or `undefined` if the model
@@ -718,19 +755,42 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     return stream;
   }
 
+  /**
+   * Warn once per instance that a `language_hint` is being left off the wire, whether that happens
+   * at connect time or in a mid-session update. The hint stays in the caller's `modelOptions`, so
+   * a later change that makes it applicable sends it again.
+   *
+   * @internal
+   */
+  _warnLanguageHintIgnored(model: string | undefined, language: string | undefined): void {
+    if (this.#languageHintWarned) return;
+    this.#languageHintWarned = true;
+    const sessionLanguage = language?.trim() ? language : 'unset';
+    this.#logger.warn(
+      `Ignoring \`language_hint\` for ${model}: it only applies with language "multi" (session language "${sessionLanguage}")`,
+    );
+  }
+
   async connectWs(timeout: number): Promise<WebSocket> {
+    // a copy of the caller's options: the hint is gated on this frame, never cleared from them
+    const extra = {
+      ...this.opts.modelOptions,
+      ...(keytermsExtraForModel(this.opts.model, {
+        extraKwargs: this.opts.modelOptions as Record<string, unknown>,
+        sessionKeyterms: this._sessionKeyterms,
+      }) ?? {}),
+    } as Record<string, unknown>;
+
+    if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
+      this._warnLanguageHintIgnored(this.opts.model, this.opts.language);
+    }
+
     const params = {
       settings: {
         sample_rate: String(this.opts.sampleRate),
         encoding: this.opts.encoding,
         // the framework session keyterms into the user's extra_kwargs keyterm key)
-        extra: {
-          ...this.opts.modelOptions,
-          ...(keytermsExtraForModel(this.opts.model, {
-            extraKwargs: this.opts.modelOptions as Record<string, unknown>,
-            sessionKeyterms: this._sessionKeyterms,
-          }) ?? {}),
-        },
+        extra,
       },
     } as Record<string, unknown>;
 
@@ -833,9 +893,30 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     // reconnecting. Unsupported providers ignore the message.
     if (this.activeWs && this.activeWs.readyState === 1) {
       const settings: Record<string, unknown> = {};
+      // the hint the model and language can carry right now, if the caller configured one
+      const hint = languageHintSendable(this.opts.model, this.opts.language)
+        ? (this.opts.modelOptions as Record<string, unknown>).language_hint
+        : undefined;
       if (opts.model !== undefined) settings.model = opts.model;
       if (opts.language !== undefined) settings.language = normalizeLanguage(opts.language);
-      if (opts.modelOptions !== undefined) settings.extra = opts.modelOptions;
+      if (opts.modelOptions !== undefined) {
+        // judged against the language this.opts already merged, so an update that sets `multi`
+        // keeps a hint supplied in the same call
+        const extra = { ...opts.modelOptions } as Record<string, unknown>;
+        if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
+          this.stt._warnLanguageHintIgnored(this.opts.model, this.opts.language);
+        }
+        // this frame carries the caller's keys alone, so a configured hint that no earlier frame
+        // could send is added to it, and only that key
+        if (hint !== undefined) extra.language_hint = hint;
+        settings.extra = extra;
+      } else if (opts.language !== undefined || opts.model !== undefined) {
+        // A language or model change decides whether the configured hint can go on the wire, and
+        // no frame carried it while it could not: send it now that it can.
+        if (hint !== undefined) {
+          settings.extra = { language_hint: hint };
+        }
+      }
       if (Object.keys(settings).length > 0) {
         try {
           this.activeWs.send(JSON.stringify({ type: 'session.update', settings }));
