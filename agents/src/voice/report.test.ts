@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AgentSession as pb } from '@livekit/protocol';
 import { describe, expect, it } from 'vitest';
 import type { AudioContent, ImageContent } from '../llm/chat_context.js';
 import {
@@ -17,7 +18,10 @@ import type {
 } from './agent_session.js';
 import {
   AgentSessionEventTypes,
+  CloseReason,
+  createCloseEvent,
   createConversationItemAddedEvent,
+  createErrorEvent,
   createFunctionToolsExecutedEvent,
   createSessionUsageUpdatedEvent,
   createUserInputTranscribedEvent,
@@ -347,6 +351,136 @@ describe('sessionReportToJSON', () => {
     expect((payload.options as Record<string, unknown>).user_away_timeout).toBe(15);
   });
 
+  it('includes chat history and events by default', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [createUserStateChangedEvent('listening', 'speaking', 0)],
+      chatHistory: ChatContext.empty(),
+      enableRecording: false,
+      timestamp: 0,
+      startedAt: 0,
+    });
+
+    const payload = sessionReportToJSON(report);
+    expect(sessionReportToJSON(report, {})).toEqual(payload);
+    expect(sessionReportToJSON(report, { includeChatHistory: true, includeEvents: true })).toEqual(
+      payload,
+    );
+    expect(payload.events).toHaveLength(1);
+    // Key order is part of the JSON written to disk, so it must not change.
+    expect(Object.keys(payload)).toEqual([
+      'job_id',
+      'room_id',
+      'room',
+      'events',
+      'audio_recording_path',
+      'audio_recording_started_at',
+      'options',
+      'chat_history',
+      'enable_user_data_training',
+      'timestamp',
+      'usage',
+      'sdk_version',
+      'agent_name',
+      'duration_ms',
+      'user_turns',
+      'errors',
+      'close_reason',
+    ]);
+  });
+
+  it('adds the session summary fields', () => {
+    const chatHistory = ChatContext.empty();
+    chatHistory.addMessage({ role: 'user', content: 'hi' });
+    chatHistory.addMessage({ role: 'assistant', content: 'hello' });
+    chatHistory.addMessage({ role: 'user', content: 'bye' });
+    const llmError = {
+      type: 'llm_error' as const,
+      timestamp: 0,
+      label: 'llm',
+      error: new Error('x'),
+      recoverable: true,
+    };
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      agentName: 'support',
+      options: baseOptions(),
+      events: [
+        createErrorEvent(llmError),
+        createErrorEvent(llmError),
+        createErrorEvent({ ...llmError, type: 'tts_error' as const }),
+        createCloseEvent(CloseReason.ERROR),
+        createCloseEvent(CloseReason.PARTICIPANT_DISCONNECTED),
+      ],
+      chatHistory,
+      startedAt: 100,
+      timestamp: 12_600,
+      audioRecordingStartedAt: 100.4,
+    });
+
+    // Computed from events and chat history even when those keys are omitted.
+    const payload = sessionReportToJSON(report, {
+      includeChatHistory: false,
+      includeEvents: false,
+    });
+    expect(payload.agent_name).toBe('support');
+    expect(payload.duration_ms).toBe(12500);
+    expect(payload.user_turns).toBe(2);
+    expect(payload.errors).toEqual({ llm: 2, stt: 0, tts: 1, realtime: 0, interruption: 0 });
+    // The last close event wins.
+    expect(payload.close_reason).toBe('CR_PARTICIPANT_DISCONNECTED');
+    expect(payload).not.toHaveProperty('tags');
+  });
+
+  it('sets unknown session summary fields to null', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory: ChatContext.empty(),
+    });
+
+    const payload = sessionReportToJSON(report);
+    expect(payload.agent_name).toBeNull();
+    expect(payload.close_reason).toBeNull();
+    expect(payload.user_turns).toBe(0);
+    expect(payload.errors).toEqual({ llm: 0, stt: 0, tts: 0, realtime: 0, interruption: 0 });
+  });
+
+  it('omits chat history and events when excluded', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [createUserStateChangedEvent('listening', 'speaking', 0)],
+      chatHistory: ChatContext.empty(),
+      enableRecording: false,
+      timestamp: 0,
+      startedAt: 0,
+    });
+
+    const full = sessionReportToJSON(report);
+    const trimmed = sessionReportToJSON(report, {
+      includeChatHistory: false,
+      includeEvents: false,
+    });
+    expect(trimmed).not.toHaveProperty('chat_history');
+    expect(trimmed).not.toHaveProperty('events');
+    const { chat_history: _chatHistory, events: _events, ...rest } = full;
+    expect(trimmed).toEqual(rest);
+
+    expect(sessionReportToJSON(report, { includeEvents: false })).toHaveProperty('chat_history');
+    expect(sessionReportToJSON(report, { includeChatHistory: false })).toHaveProperty('events');
+  });
+
   it('serializes chat item timestamps as Unix seconds', () => {
     const chatHistory = ChatContext.empty();
     chatHistory.addMessage({
@@ -467,6 +601,56 @@ describe('sessionReportToJSON', () => {
     const eventType: AgentSessionEventTypes = AgentSessionEventTypes.SessionUsageUpdated;
     expect(usage.modelUsage).toEqual([]);
     expect(eventType).toBe('session_usage_updated');
+  });
+});
+
+describe('sessionReportToJSON close_reason', () => {
+  function closeReasonFor(reason: string): unknown {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [createCloseEvent(reason)],
+      chatHistory: ChatContext.empty(),
+    });
+    return sessionReportToJSON(report).close_reason;
+  }
+
+  it('maps every SDK close reason to a proto value other than CR_UNKNOWN', () => {
+    for (const reason of Object.values(CloseReason)) {
+      const name = closeReasonFor(reason);
+      expect(name).not.toBe('CR_UNKNOWN');
+      expect(pb.CloseReason[name as keyof typeof pb.CloseReason]).toBeDefined();
+    }
+  });
+
+  it('maps custom shutdown reasons to CR_UNKNOWN', () => {
+    expect(closeReasonFor('my_custom_reason')).toBe('CR_UNKNOWN');
+    // matches a proto value name, but is not an SDK reason
+    expect(closeReasonFor('completed')).toBe('CR_UNKNOWN');
+  });
+
+  it('maps task_completed to CR_COMPLETED', () => {
+    expect(closeReasonFor('task_completed')).toBe('CR_COMPLETED');
+  });
+});
+
+describe('sessionReportToJSON duration_ms', () => {
+  it('is the session length even when recording started earlier', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory: ChatContext.empty(),
+      audioRecordingStartedAt: 1_000,
+      startedAt: 6_000,
+      timestamp: 66_000,
+    });
+    expect(report.duration).toBe(65_000);
+    expect(sessionReportToJSON(report).duration_ms).toBe(60_000);
   });
 });
 

@@ -1166,13 +1166,22 @@ export async function uploadSessionReport(
   const headerMsg = new MetricsRecordingHeader({
     roomId: report.roomId,
     jobId: report.jobId,
-    duration: BigInt(0), // TODO: Calculate actual duration from report
+    duration: BigInt(Math.round(report.duration ?? 0)),
     startTime: {
       seconds: BigInt(Math.floor(audioStartTime / 1000)),
       nanos: Math.floor((audioStartTime % 1000) * 1e6),
     },
     simulated: metadata[ATTRIBUTE_SIMULATION_ENABLED] === true,
     redactionEnabled: metadata[ATTRIBUTE_REDACTION_ENABLED] === true,
+    // Agent evals read this to pick sessions. Schema: evalschema/session-summary.schema.json in
+    // livekit/cloud-protocol.
+    // A report built outside the job may lack agentName; the upload's own name fills it in.
+    sessionSummary: JSON.stringify(
+      sessionReportToJSON(
+        { ...report, agentName: report.agentName ?? agentName },
+        { includeChatHistory: false, includeEvents: false },
+      ),
+    ),
   });
 
   const headerBytes = Buffer.from(headerMsg.toBinary());

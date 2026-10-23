@@ -6847,6 +6847,7 @@ export class SessionHost {
 
 // @public (undocumented)
 export interface SessionReport {
+    agentName?: string;
     audioRecordingPath?: string;
     audioRecordingStartedAt?: number;
     // (undocumented)
@@ -6872,7 +6873,14 @@ export interface SessionReport {
 }
 
 // @public (undocumented)
+export interface SessionReportJSONOptions {
+    includeChatHistory?: boolean;
+    includeEvents?: boolean;
+}
+
+// @public (undocumented)
 export interface SessionReportOptions {
+    agentName?: string;
     audioRecordingPath?: string;
     audioRecordingStartedAt?: number;
     // (undocumented)
@@ -6895,7 +6903,7 @@ export interface SessionReportOptions {
 }
 
 // @public (undocumented)
-export function sessionReportToJSON(report: SessionReport): Record<string, unknown>;
+export function sessionReportToJSON(report: SessionReport, jsonOptions?: SessionReportJSONOptions): Record<string, unknown>;
 
 // @public (undocumented)
 export abstract class SessionTransport {
@@ -9370,6 +9378,7 @@ declare namespace voice {
         sessionReportToJSON,
         SessionReport,
         SessionReportOptions,
+        SessionReportJSONOptions,
         TranscriptionOutputOptions,
         ParticipantTranscriptionOutputOptions,
         ParticipantTranscriptionOutput,
