@@ -1207,9 +1207,6 @@ async function forwardAudio(
       audioOutput._markInputTruncated();
     }
     audioOutput.flush();
-    if (signal?.aborted) {
-      audioOutput.clearBuffer();
-    }
     resampler?.close();
   }
 }

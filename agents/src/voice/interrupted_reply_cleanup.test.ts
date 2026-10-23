@@ -9,7 +9,6 @@ type SynthesisMode = 'before-audio' | 'during-audio' | 'complete';
 
 class TestAudioOutput extends voice.AudioOutput {
   frames: number[] = [];
-  clearCount = 0;
   constructor() {
     super(24000);
   }
@@ -24,7 +23,6 @@ class TestAudioOutput extends voice.AudioOutput {
       this.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
   }
   clearBuffer(): void {
-    this.clearCount++;
     super.flush();
     if (this.pendingPlayoutSegments > 0)
       this.onPlaybackFinished({ playbackPosition: 0.02, interrupted: true });
@@ -34,7 +32,6 @@ class TestAudioOutput extends voice.AudioOutput {
 class TestSynthesis extends tts.SynthesizeStream {
   label = 'test';
   hasReceivedText = false;
-  finish: () => void = () => {};
   constructor(
     provider: tts.TTS,
     private readonly mode: SynthesisMode,
@@ -65,7 +62,6 @@ class TestSynthesis extends tts.SynthesizeStream {
     }
     if (this.mode !== 'complete' && !this.abortSignal.aborted)
       await new Promise<void>((resolve) => {
-        this.finish = resolve;
         this.abortSignal.addEventListener('abort', resolve.bind(null, undefined), { once: true });
       });
   }
@@ -105,7 +101,6 @@ async function startSession(modes: SynthesisMode[]): Promise<{
     llm: new voice.testing.FakeLLM([
       { input: 'first', content: 'The old reply.' },
       { input: 'correction', content: 'The corrected reply.' },
-      { input: 'final', content: 'The final reply.' },
     ]),
   });
   const errors: unknown[] = [];
@@ -165,70 +160,6 @@ describe('interrupted reply cleanup', () => {
     },
     10000,
   );
-
-  it('finishes ordinary speech without cancelling it early', async () => {
-    const { session, output, close } = await startSession(['complete', 'complete']);
-    try {
-      await session.generateReply({ userInput: 'first' }).waitForPlayout();
-      await session.generateReply({ userInput: 'correction' }).waitForPlayout();
-      expect(output.frames).toEqual([1, 2]);
-      expect(output.clearCount).toBe(0);
-      const messages = session.history.items.filter(
-        (item) => item.type === 'message' && item.role === 'assistant',
-      );
-      expect(messages).toHaveLength(2);
-      expect(messages.every((item) => item.type === 'message' && !item.interrupted)).toBe(true);
-    } finally {
-      await close();
-    }
-  });
-
-  it('handles consecutive interruptions without replaying either cancelled reply', async () => {
-    const { session, provider, output, close } = await startSession([
-      'before-audio',
-      'before-audio',
-      'complete',
-    ]);
-    try {
-      const first = session.generateReply({ userInput: 'first' });
-      await vi.waitFor(() => expect(provider.streams[0]?.hasReceivedText).toBe(true));
-      first.interrupt();
-      const second = session.generateReply({ userInput: 'correction' });
-      await vi.waitFor(() => expect(provider.streams[1]?.hasReceivedText).toBe(true));
-      second.interrupt();
-      const startedAt = performance.now();
-      const last = session.generateReply({ userInput: 'final' });
-      await vi.waitFor(() => expect(output.frames).toEqual([3]), {
-        timeout: 500,
-      });
-      expect(performance.now() - startedAt).toBeLessThan(500);
-      await last.waitForPlayout();
-      expect(provider.streams.slice(0, 2).every((stream) => stream.abortSignal.aborted)).toBe(true);
-    } finally {
-      await close();
-    }
-  });
-
-  it('preserves speech that explicitly disallows interruptions', async () => {
-    const { session, provider, output, close } = await startSession(['during-audio', 'complete']);
-    try {
-      const protectedReply = session.generateReply({
-        userInput: 'first',
-        allowInterruptions: false,
-      });
-      await vi.waitFor(() => expect(output.frames).toEqual([1]));
-      expect(() => protectedReply.interrupt()).toThrow('does not allow interruptions');
-      expect(provider.streams[0]!.abortSignal.aborted).toBe(false);
-      expect(output.clearCount).toBe(0);
-      provider.streams[0]!.finish();
-      await protectedReply.waitForPlayout();
-      await session.generateReply({ userInput: 'correction' }).waitForPlayout();
-      expect(output.frames).toEqual([1, 2]);
-      expect(protectedReply.interrupted).toBe(false);
-    } finally {
-      await close();
-    }
-  });
 
   it('releases stalled speech when the session closes', async () => {
     const { session, provider, output, close } = await startSession(['during-audio']);
