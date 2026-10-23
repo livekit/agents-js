@@ -110,10 +110,8 @@ export type TranslationModelSessionCallbacks = {
 
 /** Node EventEmitter argument tuples for standard and provider-specific translation events. */
 export type TranslationModelSessionEventMap<Events extends EventMap = Record<never, never>> = {
-  [
-    K in keyof (Omit<Events, keyof TranslationModelSessionCallbacks> &
-      TranslationModelSessionCallbacks)
-  ]: (Omit<Events, keyof TranslationModelSessionCallbacks> &
+  [K in keyof (Omit<Events, keyof TranslationModelSessionCallbacks> &
+    TranslationModelSessionCallbacks)]: (Omit<Events, keyof TranslationModelSessionCallbacks> &
     TranslationModelSessionCallbacks)[K] extends (...args: infer Args) => unknown
     ? Args
     : never;

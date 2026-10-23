@@ -245,7 +245,7 @@ export class ParticipantAudioInputStream extends AudioInput {
         [traceTypes.ATTR_TRACK_SID]: publication.sid ?? '',
         [traceTypes.ATTR_TRACK_SOURCE]:
           publication.source !== undefined
-            ? (TrackSource[publication.source] ?? String(publication.source))
+            ? TrackSource[publication.source] ?? String(publication.source)
             : 'unknown',
       });
     }
