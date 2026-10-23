@@ -38,7 +38,7 @@ export interface ConnectionPoolOptions<T> {
    * @param timeout - Connection timeout in milliseconds
    * @returns A new connection object
    */
-  connectCb: (timeout: number) => Promise<T>;
+  connectCb: (timeout: number, signal?: AbortSignal) => Promise<T>;
 
   /**
    * Optional async callback to close connections.
@@ -62,7 +62,7 @@ export interface ConnectionPoolOptions<T> {
 export class ConnectionPool<T> {
   private readonly maxSessionDuration?: number;
   private readonly markRefreshedOnGet: boolean;
-  private readonly connectCb: (timeout: number) => Promise<T>;
+  private readonly connectCb: (timeout: number, signal?: AbortSignal) => Promise<T>;
   private readonly closeCb?: (conn: T) => Promise<void>;
   private readonly connectTimeout: number;
 
@@ -94,8 +94,9 @@ export class ConnectionPool<T> {
    * @returns The new connection object
    * @throws If connectCb is not provided or connection fails
    */
-  private async _connect(timeout: number): Promise<T> {
-    const connection = await this.connectCb(timeout);
+  private async _connect(timeout: number, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
+    const connection = await this.connectCb(timeout, signal);
     this.connections.set(connection, Date.now());
     return connection;
   }
@@ -133,9 +134,10 @@ export class ConnectionPool<T> {
    * Get an available connection or create a new one if needed.
    *
    * @param timeout - Connection timeout in milliseconds
+   * @param signal - Optional signal for cancelling a new connection attempt
    * @returns An active connection object
    */
-  async get(timeout?: number): Promise<T> {
+  async get(timeout?: number, signal?: AbortSignal): Promise<T> {
     const unlock = await this.connectLock.lock();
     try {
       await this._drainToClose();
@@ -165,7 +167,7 @@ export class ConnectionPool<T> {
         await this._maybeCloseConnection(conn);
       }
 
-      return await this._connect(timeout ?? this.connectTimeout);
+      return await this._connect(timeout ?? this.connectTimeout, signal);
     } finally {
       unlock();
     }
@@ -331,7 +333,7 @@ export class ConnectionPool<T> {
       }
 
       if (this.connections.size === 0) {
-        const conn = await this._connect(this.connectTimeout);
+        const conn = await this._connect(this.connectTimeout, signal);
         this.available.add(conn);
       }
     } finally {
@@ -359,9 +361,13 @@ export class ConnectionPool<T> {
       throw this._abortError();
     }
 
-    const conn = await this.get(options?.timeout);
+    const conn = await this.get(options?.timeout, options?.signal);
 
     const signal = options?.signal;
+    if (signal?.aborted) {
+      this.put(conn);
+      throw this._abortError();
+    }
 
     try {
       const fnPromise = fn(conn);
