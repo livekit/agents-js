@@ -286,7 +286,6 @@ export class STT extends stt.STT {
         'nova-2-medical',
         'nova-2-drivethru',
         'nova-2-automotive',
-        'nova-3-general',
       ].includes(model)
     ) {
       this.#logger.warn(

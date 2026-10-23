@@ -186,10 +186,9 @@ describe('Deepgram streaming language hints', () => {
     }
   });
 
-  // The plugin's own model validator treats nova-3-general as English-only, so `multi` rewrites it
-  // to nova-2-general before the hint guard runs: the hint is dropped on that model, and the
-  // warning names the model actually in use. Lifting the validator's rule is a separate change.
-  it('drops the hint on nova-3-general, which the model validator rewrites under multi', async () => {
+  // nova-3-general is the same multilingual model as nova-3 (Deepgram's model table lists them on
+  // one row), so the validator must not rewrite it the way it does the English-only nova-2 tiers.
+  it('sends the hint on nova-3-general in multi mode', async () => {
     const warnSpy = vi.spyOn(log(), 'warn');
     const { wss, baseUrl } = await startWebSocketServer();
     const urls: string[] = [];
@@ -204,17 +203,32 @@ describe('Deepgram streaming language hints', () => {
     }).stream();
     try {
       await waitUntil(() => urls.length > 0);
-      expect(urls[0]).toContain('model=nova-2-general');
-      expect(urls[0]).not.toContain('language_hint');
-      expect(warnSpy).toHaveBeenNthCalledWith(
-        1,
-        'nova-3-general does not support language multi, falling back to nova-2-general',
-      );
-      expect(warnSpy).toHaveBeenNthCalledWith(
-        2,
-        { model: 'nova-2-general', language: 'multi' },
-        'Removed `languageHint`: it only applies to nova-3 with language "multi"',
-      );
+      expect(urls[0]).toContain('model=nova-3-general');
+      expect(urls[0]).toContain('language_hint=en');
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('keeps nova-3-general for a non-English language instead of falling back', async () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const { wss, baseUrl } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_socket, request) => urls.push(request.url ?? ''));
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseUrl,
+      model: 'nova-3-general',
+      language: 'es',
+    }).stream();
+    try {
+      await waitUntil(() => urls.length > 0);
+      expect(urls[0]).toContain('model=nova-3-general');
+      expect(urls[0]).toContain('language=es');
+      expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       stream.close();
       await closeWebSocketServer(wss);
