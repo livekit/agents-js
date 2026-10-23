@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AudioTrackFeature } from '@livekit/protocol';
 import {
   type AudioFrame,
   AudioStream,
@@ -337,6 +338,20 @@ export class ParticipantAudioInputStream extends AudioInput {
   };
 
   private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
+    if (
+      (this.frameProcessor || this.noiseCancellation) &&
+      this.publication?.info?.audioFeatures.includes(
+        AudioTrackFeature.TF_ENHANCED_NOISE_CANCELLATION,
+      )
+    ) {
+      this.logger.warn(
+        { participant: this.participantIdentity, trackId: track.sid },
+        "the participant's audio track already has enhanced noise cancellation enabled, " +
+          'applying noise cancellation again on the agent side degrades audio quality. ' +
+          'disable it on either the client or the agent',
+      );
+    }
+
     return new AudioStream(track, {
       sampleRate: this.sampleRate,
       numChannels: this.numChannels,
