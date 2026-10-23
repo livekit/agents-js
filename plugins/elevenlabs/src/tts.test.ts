@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APITimeoutError, log } from '@livekit/agents';
+import { APITimeoutError, log, type tts } from '@livekit/agents';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -421,6 +421,66 @@ describe('ElevenLabs text-to-dialogue', () => {
     );
 
     expect(events.length).toBeGreaterThan(0);
+  });
+
+  it('places each dialogue message on the context clock (character times restart at 0)', async () => {
+    // 4410 bytes of 16-bit PCM at 22050 Hz: 100 ms of audio per message
+    const chars = (text: string) => ({
+      chars: [...text],
+      char_start_times_ms: [...text].map((_, i) => i * 20),
+      char_durations_ms: [...text].map(() => 20),
+    });
+    const { events } = await synthesizeWithMessages(
+      (ws, messages) => {
+        if (messages.length === 2) {
+          const context_id = messages[0]?.context_id;
+          ws.send(JSON.stringify({ context_id, audio, alignment: chars('hello ') }));
+          ws.send(JSON.stringify({ context_id, audio, alignment: chars('world.') }));
+          ws.send(JSON.stringify({ context_id, is_final: true }));
+        }
+      },
+      { model: 'eleven_v4_turbo' },
+    );
+
+    const words = (events as tts.SynthesizedAudio[]).flatMap(
+      (event) => event.timedTranscripts ?? [],
+    );
+    const world = words.find((word) => word.text.startsWith('world'));
+    // the second message follows the first: its characters run 0-120 ms, but its audio ends at 100 ms
+    expect(world?.startTime).toBeCloseTo(0.1);
+    expect(words.map((word) => word.startTime)).toEqual(
+      [...words.map((word) => word.startTime)].sort((a, b) => (a ?? 0) - (b ?? 0)),
+    );
+  });
+
+  it('starts a dialogue turn at audio that arrives before its first characters', async () => {
+    const { events } = await synthesizeWithMessages(
+      (ws, messages) => {
+        if (messages.length === 2) {
+          const context_id = messages[0]?.context_id;
+          // 100 ms of audio with no characters, then the turn's first characters (from 0 ms)
+          ws.send(JSON.stringify({ context_id, audio }));
+          ws.send(
+            JSON.stringify({
+              context_id,
+              audio,
+              alignment: {
+                chars: [...'hello world.'],
+                char_start_times_ms: [...'hello world.'].map((_, i) => i * 10),
+                char_durations_ms: [...'hello world.'].map(() => 10),
+              },
+            }),
+          );
+          ws.send(JSON.stringify({ context_id, is_final: true }));
+        }
+      },
+      { model: 'eleven_v4_turbo' },
+    );
+
+    const words = (events as tts.SynthesizedAudio[]).flatMap(
+      (event) => event.timedTranscripts ?? [],
+    );
+    expect(words[0]?.startTime).toBeCloseTo(0);
   });
 
   it('reports dialogue errors', async () => {
