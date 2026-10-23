@@ -31,7 +31,7 @@ const DEFAULT_VOICE = 'Jason';
 const DEFAULT_TEMPERATURE = 1.1;
 const DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY = 'ASYNC';
 const DEFAULT_SPEAKING_RATE = 1.0;
-const DEFAULT_BUFFER_CHAR_THRESHOLD = 100;
+const DEFAULT_BUFFER_CHAR_THRESHOLD = 250;
 const DEFAULT_MAX_BUFFER_DELAY_MS = 3000;
 const NUM_CHANNELS = 1;
 
@@ -44,6 +44,7 @@ export type TimestampTransportStrategy =
   | 'SYNC'
   | 'ASYNC';
 export type DeliveryMode = 'DELIVERY_MODE_UNSPECIFIED' | 'STABLE' | 'BALANCED' | 'CREATIVE';
+type AutoModeStrategy = 'CLIENT_SEGMENTED' | 'SENTENCE_BOUNDARY';
 
 export interface TTSOptions {
   apiKey?: string;
@@ -61,10 +62,19 @@ export interface TTSOptions {
   /** Controls output variation on inworld-tts-2 only. */
   deliveryMode?: DeliveryMode;
   timestampTransportStrategy?: TimestampTransportStrategy;
-  bufferCharThreshold: number;
+  /**
+   * Buffered characters that trigger synthesis. Defaults to 250, or to the server default when the
+   * server splits sentences.
+   */
+  bufferCharThreshold?: number;
   maxBufferDelayMs: number;
   baseURL: string;
   wsURL: string;
+  /**
+   * Splits streamed text into sentences before sending. When unset, inworld-tts-2 models stream
+   * text as it arrives and the server splits it at sentence boundaries; other models use the blingfire
+   * sentence tokenizer.
+   */
   tokenizer?: tokenize.SentenceTokenizer;
 }
 
@@ -96,13 +106,14 @@ interface CreateContextConfig {
   audioConfig: AudioConfig;
   temperature: number;
   language?: string;
-  bufferCharThreshold: number;
+  bufferCharThreshold?: number;
   maxBufferDelayMs: number;
   timestampType?: TimestampType;
   applyTextNormalization?: TextNormalization;
   deliveryMode?: DeliveryMode;
   timestampTransportStrategy?: TimestampTransportStrategy;
   autoMode?: boolean;
+  autoModeStrategy?: AutoModeStrategy;
 }
 
 interface WordAlignment {
@@ -165,11 +176,15 @@ const defaultTTSOptionsBase: Omit<TTSOptions, 'tokenizer'> = {
   speakingRate: DEFAULT_SPEAKING_RATE,
   temperature: DEFAULT_TEMPERATURE,
   timestampTransportStrategy: DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY as TimestampTransportStrategy,
-  bufferCharThreshold: DEFAULT_BUFFER_CHAR_THRESHOLD,
   maxBufferDelayMs: DEFAULT_MAX_BUFFER_DELAY_MS,
   baseURL: DEFAULT_URL,
   wsURL: DEFAULT_WS_URL,
 };
+
+const defaultTokenizer = new tokenize.blingfire.SentenceTokenizer({ retainFormat: true });
+
+// The SENTENCE_BOUNDARY auto-mode strategy is only served by inworld-tts-2 models.
+const supportsSentenceBoundary = (model: string) => model.startsWith('inworld-tts-2');
 
 const CONNECT_TIMEOUT_MS = 10_000; // WebSocket handshake timeout
 
@@ -324,9 +339,6 @@ export class TTS extends tts.TTS {
     });
 
     this.#opts = mergedOpts as TTSOptions;
-    if (!this.#opts.tokenizer) {
-      this.#opts.tokenizer = new tokenize.blingfire.SentenceTokenizer({ retainFormat: true });
-    }
     this.#authorization = `Basic ${mergedOpts.apiKey}`;
     this.#pool = new WSConnectionPool(this.#opts.wsURL, this.#authorization);
   }
@@ -569,7 +581,11 @@ class SynthesizeStream extends tts.SynthesizeStream {
     const pool = this.#tts.pool;
     const ws = await pool.getConnection();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
-    const tokenizerStream = this.#opts.tokenizer!.stream();
+    const autoModeStrategy: AutoModeStrategy =
+      !this.#opts.tokenizer && supportsSentenceBoundary(this.#opts.model)
+        ? 'SENTENCE_BOUNDARY'
+        : 'CLIENT_SEGMENTED';
+    const tokenizerStream = (this.#opts.tokenizer ?? defaultTokenizer).stream();
 
     let resolveProcessing: () => void;
     let rejectProcessing: (err: Error) => void;
@@ -741,10 +757,17 @@ class SynthesizeStream extends tts.SynthesizeStream {
     const sendPromise = sendLoop();
 
     try {
-      await this.#createContext(ws);
+      await this.#createContext(ws, autoModeStrategy);
 
       for await (const text of this.input) {
-        if (text === tts.SynthesizeStream.FLUSH_SENTINEL) {
+        if (autoModeStrategy === 'SENTENCE_BOUNDARY') {
+          // the server buffers partial sentences until it finds a boundary
+          if (text === tts.SynthesizeStream.FLUSH_SENTINEL) {
+            await this.#flushContext(ws);
+          } else if (text) {
+            await this.#sendText(ws, text);
+          }
+        } else if (text === tts.SynthesizeStream.FLUSH_SENTINEL) {
           tokenizerStream.flush();
         } else {
           tokenizerStream.pushText(text);
@@ -753,7 +776,10 @@ class SynthesizeStream extends tts.SynthesizeStream {
       tokenizerStream.endInput();
       await sendPromise;
 
-      await this.#flushContext(ws);
+      // endInput() already flushed the server-segmented stream
+      if (autoModeStrategy === 'CLIENT_SEGMENTED') {
+        await this.#flushContext(ws);
+      }
       await this.#closeContext(ws);
 
       // Wait for the server to finish the context, but bound it so a stalled
@@ -812,7 +838,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
     });
   }
 
-  #createContext(ws: WebSocket): Promise<void> {
+  #createContext(ws: WebSocket, autoModeStrategy: AutoModeStrategy): Promise<void> {
     const config: CreateContextConfig = {
       voiceId: this.#opts.voice,
       modelId: this.#opts.model,
@@ -824,16 +850,20 @@ class SynthesizeStream extends tts.SynthesizeStream {
       },
       temperature: this.#opts.temperature,
       language: this.#opts.language,
-      bufferCharThreshold: this.#opts.bufferCharThreshold,
+      // with SENTENCE_BOUNDARY the threshold also cuts long sentences, so only a set value is sent
+      bufferCharThreshold:
+        this.#opts.bufferCharThreshold ??
+        (autoModeStrategy === 'SENTENCE_BOUNDARY' ? undefined : DEFAULT_BUFFER_CHAR_THRESHOLD),
       maxBufferDelayMs: this.#opts.maxBufferDelayMs,
       timestampType: this.#opts.timestampType,
       applyTextNormalization: this.#opts.textNormalization,
       deliveryMode: this.#opts.deliveryMode,
       timestampTransportStrategy: this.#opts.timestampTransportStrategy,
-      // Always enable auto_mode since we use sentence tokenizer and don't expose
-      // mid-stream flush_context control to users yet
       autoMode: true,
     };
+    if (autoModeStrategy === 'SENTENCE_BOUNDARY') {
+      config.autoModeStrategy = autoModeStrategy;
+    }
 
     return this.#send(ws, { create: config, contextId: this.#contextId });
   }

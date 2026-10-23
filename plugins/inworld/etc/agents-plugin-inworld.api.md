@@ -154,8 +154,7 @@ export interface TTSOptions {
     baseURL: string;
     // (undocumented)
     bitRate: number;
-    // (undocumented)
-    bufferCharThreshold: number;
+    bufferCharThreshold?: number;
     deliveryMode?: DeliveryMode;
     // (undocumented)
     encoding: Encoding;
@@ -177,8 +176,6 @@ export interface TTSOptions {
     // (undocumented)
     timestampType?: TimestampType;
     // Warning: (ae-forgotten-export) The symbol "tokenize" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
     tokenizer?: tokenize.SentenceTokenizer;
     // (undocumented)
     voice: string;
