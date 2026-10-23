@@ -8,7 +8,7 @@ import type { Context, Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream, TransformStream } from 'node:stream/web';
+import { ReadableStream, type ReadableStreamDefaultReader, TransformStream } from 'node:stream/web';
 import type { Logger } from 'pino';
 import {
   BaseStreamingTurnDetector,
@@ -342,23 +342,72 @@ function createTranscriptionInput(
   signal: AbortSignal,
   { preventCancel = false }: { preventCancel?: boolean } = {},
 ) {
-  let controller!: TransformStreamDefaultController<string | TimedString>;
-  const input = new TransformStream<string | TimedString>({
-    start(c) {
-      controller = c;
+  const finished = new Future<void>();
+  let reader: ReadableStreamDefaultReader<string | TimedString> | undefined;
+  let cancelled = false;
+  let outputCancelled = false;
+  const releaseReader = () => {
+    reader?.releaseLock();
+    reader = undefined;
+  };
+  const finish = () => {
+    releaseReader();
+    signal.removeEventListener('abort', cancel);
+    finished.resolve();
+  };
+  const cancel = () => {
+    if (cancelled || finished.done) return;
+    cancelled = true;
+    // Release the reader before a native tee waits for its other consumer.
+    const cancellation = preventCancel
+      ? Promise.resolve()
+      : reader
+        ? reader.cancel()
+        : source.cancel();
+    releaseReader();
+    void cancellation.catch(() => {}).finally(finish);
+  };
+  const stream = new ReadableStream<string | TimedString>(
+    {
+      start(controller) {
+        try {
+          if (!signal.aborted) reader = source.getReader();
+        } catch (error) {
+          controller.error(error);
+          finish();
+        }
+      },
+      async pull(controller) {
+        try {
+          const result = cancelled ? undefined : await reader!.read();
+          if (outputCancelled) return;
+          if (cancelled || result?.done) {
+            controller.close();
+            if (!cancelled) finish();
+          } else if (result) {
+            controller.enqueue(result.value);
+          }
+        } catch (error) {
+          if (!outputCancelled) {
+            if (cancelled) controller.close();
+            else controller.error(error);
+          }
+          if (!cancelled) finish();
+        }
+      },
+      cancel() {
+        outputCancelled = true;
+        cancel();
+        return finished.await;
+      },
     },
-  });
-  // A hook can read during setup, before it returns a cancellable output stream.
-  // Error both sides to release pending reads and backpressured pipe writes.
-  const cancel = () => controller.error(new DOMException('Transcription cancelled', 'AbortError'));
-  signal.addEventListener('abort', cancel, { once: true });
-  if (signal.aborted) cancel();
-  const done = source
-    .pipeTo(input.writable, { preventCancel })
-    // Pipe setup can fail before it forwards an error to the readable side.
-    .catch((error) => controller.error(error))
-    .finally(() => signal.removeEventListener('abort', cancel));
-  return { stream: input.readable, cancel, done };
+    { highWaterMark: 0 },
+  );
+  if (!finished.done) {
+    signal.addEventListener('abort', cancel, { once: true });
+    if (signal.aborted) cancel();
+  }
+  return { stream, cancel, done: finished.await };
 }
 
 /**
