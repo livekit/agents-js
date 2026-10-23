@@ -174,6 +174,7 @@ import {
 } from './speech_handle.js';
 import {
   ToolExecutor,
+  _replyToolChoice,
   cancelTaskTool,
   getRunningTasks,
   getRunningTasksTool,
@@ -4455,7 +4456,11 @@ export class AgentActivity implements RecognitionHooks {
       const respondToolChoice =
         maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none'
           ? 'none'
-          : 'auto';
+          : _replyToolChoice(
+              toolOutput.output
+                .filter((out) => out.toolCallOutput.replyRequired)
+                .map((out) => out.replyToolChoice),
+            ) ?? 'auto';
 
       // Reuse the same speechHandle for the tool response.
       const toolResponseLease = this.createAgentStateLease(speechHandle);
@@ -5167,7 +5172,13 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const toolChoice =
-      maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+      maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none'
+        ? 'none'
+        : _replyToolChoice(
+            toolOutput.output
+              .filter((out) => out.toolCallOutput.replyRequired)
+              .map((out) => out.replyToolChoice),
+          ) ?? 'auto';
     // the reply is the next step of the same handle, as in the pipeline path
     const replyLease = this.createAgentStateLease(speechHandle);
     this.createSpeechTask({
