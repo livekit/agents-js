@@ -14,6 +14,11 @@ import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 
+// Warning: (ae-missing-release-tag) "PiiRedactionSubstitution" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type PiiRedactionSubstitution = 'entity_name' | 'hash';
+
 // Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -92,9 +97,11 @@ export interface STTOptions {
     encoding: STTEncoding;
     // (undocumented)
     endOfTurnConfidenceThreshold?: number;
+    filterProfanity?: boolean;
     // (undocumented)
     formatTurns?: boolean;
     inactivityTimeout?: number;
+    includePartialTurns?: boolean;
     interruptionDelay?: number;
     // (undocumented)
     keytermsPrompt?: string[];
@@ -108,6 +115,9 @@ export interface STTOptions {
     mode?: 'min_latency' | 'balanced' | 'max_accuracy';
     previousContextNTurns?: number;
     prompt?: string;
+    redactPii?: boolean;
+    redactPiiPolicies?: string[];
+    redactPiiSub?: PiiRedactionSubstitution;
     // (undocumented)
     sampleRate: number;
     speakerLabels?: boolean;
