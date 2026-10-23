@@ -107,6 +107,39 @@ async function toolChoice(
   return capturedParams!.tool_choice;
 }
 
+async function request({
+  llmOptions = {},
+  ...chatOptions
+}: {
+  llmOptions?: Partial<ConstructorParameters<typeof LLM>[0]>;
+  toolCtx?: llm.ToolContextLike;
+  parallelToolCalls?: boolean;
+  toolChoice?: llm.ToolChoice;
+}): Promise<Anthropic.MessageCreateParamsStreaming> {
+  let capturedParams: Anthropic.MessageCreateParamsStreaming | undefined;
+  const client = {
+    messages: {
+      create: async (params: Anthropic.MessageCreateParamsStreaming) => {
+        capturedParams = params;
+        return (async function* (): AsyncGenerator<Anthropic.MessageStreamEvent> {
+          yield messageStartEvent();
+        })();
+      },
+    },
+  } as unknown as Anthropic;
+  const anthropicLlm = new LLM({
+    apiKey: 'dummy',
+    client,
+    model: 'claude-sonnet-5',
+    ...llmOptions,
+  });
+  const stream = anthropicLlm.chat({ chatCtx: new llm.ChatContext(), ...chatOptions });
+  for await (const _ of stream) {
+    // drain
+  }
+  return capturedParams!;
+}
+
 async function collectTextFromEvents(
   events: Anthropic.MessageStreamEvent[],
   toolCtx?: llm.ToolContextLike,
@@ -138,6 +171,69 @@ async function collectTextFromEvents(
 }
 
 describe('Anthropic LLM', () => {
+  it('sends parallel tool calls without tool choice', async () => {
+    expect(
+      (await request({ toolCtx: { getWeather }, parallelToolCalls: false })).tool_choice,
+    ).toEqual({ type: 'auto', disable_parallel_tool_use: true });
+    expect(
+      (await request({ toolCtx: { getWeather }, parallelToolCalls: true })).tool_choice,
+    ).toEqual({ type: 'auto', disable_parallel_tool_use: false });
+
+    expect(
+      (await request({ toolCtx: { getWeather }, llmOptions: { parallelToolCalls: false } }))
+        .tool_choice,
+    ).toEqual({ type: 'auto', disable_parallel_tool_use: true });
+
+    expect(
+      (
+        await request({
+          toolCtx: { getWeather },
+          parallelToolCalls: true,
+          llmOptions: { parallelToolCalls: false },
+        })
+      ).tool_choice,
+    ).toEqual({ type: 'auto', disable_parallel_tool_use: false });
+  });
+
+  it('leaves tool choice unchanged without parallel tool calls', async () => {
+    expect((await request({ toolCtx: { getWeather } })).tool_choice).toBeUndefined();
+
+    const withoutTools = await request({ parallelToolCalls: false });
+    expect(withoutTools.tool_choice).toBeUndefined();
+    expect(withoutTools.tools).toBeUndefined();
+
+    const none = await request({
+      toolCtx: { getWeather },
+      toolChoice: 'none',
+      parallelToolCalls: false,
+    });
+    expect(none.tool_choice).toBeUndefined();
+    expect(none.tools).toBeUndefined();
+
+    expect(
+      (
+        await request({
+          toolCtx: { getWeather },
+          toolChoice: 'required',
+          parallelToolCalls: false,
+        })
+      ).tool_choice,
+    ).toEqual({ type: 'any', disable_parallel_tool_use: true });
+    expect(
+      (
+        await request({
+          toolCtx: { getWeather },
+          toolChoice: namedToolChoice,
+          parallelToolCalls: false,
+        })
+      ).tool_choice,
+    ).toEqual({
+      type: 'tool',
+      name: 'getWeather',
+      disable_parallel_tool_use: true,
+    });
+  });
+
   it('sends forced tool choice as auto only for rejecting models', async () => {
     for (const model of [
       'claude-opus-5-5',
