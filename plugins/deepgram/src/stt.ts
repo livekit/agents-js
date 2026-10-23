@@ -27,6 +27,13 @@ import type { STTLanguages, STTModels } from './models.js';
 export interface STTOptions {
   apiKey?: string;
   language?: STTLanguages | string;
+  /**
+   * Languages to bias recognition toward, sent as the repeatable `language_hint` parameter on the
+   * streaming connection. Deepgram applies the hint only to `nova-3` / `nova-3-general` in
+   * `language: 'multi'` mode; on any other model or language it is kept here but left off the
+   * wire, with one warning.
+   */
+  languageHint?: string[];
   detectLanguage: boolean;
   interimResults: boolean;
   punctuate: boolean;
@@ -83,6 +90,23 @@ const defaultSTTOptions: STTOptions = {
   baseUrl: 'wss://api.deepgram.com',
 };
 
+/** Deepgram applies `language_hint` only in Nova-3 multi language mode. */
+function isMultiLanguage(language: string | undefined): boolean {
+  return (language ?? '').trim().toLowerCase() === 'multi';
+}
+
+/**
+ * The Nova-3 models Deepgram accepts `language_hint` on. Mirrors the gateway's list
+ * (livekit/agent-gateway#1741): a model added elsewhere for another reason must not start
+ * receiving a parameter the vendor may reject.
+ */
+const LANGUAGE_HINT_MODELS = new Set(['nova-3', 'nova-3-general']);
+
+/** Whether the model and the session language together make a `languageHint` applicable. */
+function languageHintApplies(model: string | undefined, language: string | undefined): boolean {
+  return isMultiLanguage(language) && LANGUAGE_HINT_MODELS.has((model ?? '').trim().toLowerCase());
+}
+
 export class STT extends stt.STT {
   #opts: STTOptions;
   #logger = log();
@@ -90,6 +114,7 @@ export class STT extends stt.STT {
   #streams = new Set<WeakRef<SpeechStream>>();
   #userKeyterm: string[];
   #sessionKeyterms: string[] = [];
+  #languageHintWarned = false;
   label = 'deepgram.STT';
   private abortController = new AbortController();
 
@@ -125,6 +150,8 @@ export class STT extends stt.STT {
     } else {
       this.#opts.model = this.#validateModel(this.#opts.model, this.#opts.language);
     }
+
+    this.#warnLanguageHintIgnored();
 
     this.#userKeyterm = [...this.#opts.keyterm];
   }
@@ -196,6 +223,8 @@ export class STT extends stt.STT {
       language,
       model,
     };
+
+    this.#warnLanguageHintIgnored();
   }
 
   override _updateSessionKeyterms(keyterms: string[]): void {
@@ -237,7 +266,6 @@ export class STT extends stt.STT {
         'nova-2-medical',
         'nova-2-drivethru',
         'nova-2-automotive',
-        'nova-3-general',
       ].includes(model)
     ) {
       this.#logger.warn(
@@ -247,6 +275,22 @@ export class STT extends stt.STT {
     }
 
     return model;
+  }
+
+  /**
+   * Warn once per instance that a `languageHint` is being left off the wire, since Deepgram
+   * applies one only to nova-3 in multi language mode. The hint stays in the options, so a later
+   * language change back into `multi` sends it again.
+   */
+  #warnLanguageHintIgnored(): void {
+    if (this.#languageHintWarned) return;
+    if (!this.#opts.languageHint?.length) return;
+    if (languageHintApplies(this.#opts.model, this.#opts.language)) return;
+    this.#languageHintWarned = true;
+    this.#logger.warn(
+      { model: this.#opts.model, language: this.#opts.language },
+      'Ignoring `languageHint`: it only applies to nova-3 with language "multi"',
+    );
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
@@ -317,6 +361,12 @@ export class SpeechStream extends stt.SpeechStream {
         replace: this.#opts.replace,
         search: this.#opts.search,
         language: this.#opts.language,
+        // the hint applies only to nova-3 in multi language mode; Deepgram rejects it anywhere
+        // else. The option itself is never cleared, so a language change back into `multi`
+        // sends it again.
+        language_hint: languageHintApplies(this.#opts.model, this.#opts.language)
+          ? this.#opts.languageHint
+          : undefined,
         mip_opt_out: this.#opts.mipOptOut,
         ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
       };
