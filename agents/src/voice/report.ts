@@ -249,7 +249,7 @@ const CLOSE_REASON_NAMES: Record<string, keyof typeof pb.CloseReason> = {
   [CloseReason.PARTICIPANT_DISCONNECTED]: 'CR_PARTICIPANT_DISCONNECTED',
   [CloseReason.USER_INITIATED]: 'CR_USER_INITIATED',
   // Python has this reason; agents-js can only get it as a custom shutdown string.
-  task_completed: 'CR_TASK_COMPLETED',
+  task_completed: 'CR_COMPLETED',
 };
 
 function countErrors(events: AgentEvent[]): Record<string, number> {
