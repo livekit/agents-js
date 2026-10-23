@@ -112,15 +112,6 @@ describe('ToolExecutor deferred reply', () => {
     expect(replies.map((reply) => reply.toolChoice)).toEqual(['none']);
   });
 
-  it('lets a report ask for the tools', async () => {
-    const { replies } = await run(async (ctx) => {
-      await ctx.update('on it');
-      await ctx.update('three matches, which one?', { toolChoice: 'auto' });
-      return undefined;
-    });
-    expect(replies.map((reply) => reply.toolChoice)).toEqual(['auto']);
-  });
-
   it('leaves the reply to a result on the default tool choice', async () => {
     const { replies } = await run(async (ctx) => {
       await ctx.update('on it');

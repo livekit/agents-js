@@ -258,7 +258,10 @@ export class ToolExecutionOutput {
     public replyRequired: boolean,
   ) {}
 
-  /** What the reply to this output may call, when the tool released through `update()`. */
+  /**
+   * Tool choice of the reply to this output: `'none'` for a report from `update()`, undefined
+   * for a final answer, whose reply may make the next tool call.
+   */
   replyToolChoice?: ToolChoice;
 
   static create(params: {

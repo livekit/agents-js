@@ -31,12 +31,6 @@ export interface RunContextUpdateOptions {
    * without speaking. A realtime model that cannot keep a tool result silent may still answer it.
    */
   silent?: boolean;
-  /**
-   * What the reply to this update may call. `'none'` by default: a report is not a result, so
-   * the model speaks to it rather than acting on it, and without that it can answer a report by
-   * calling the same tool again. Set it where the report is genuinely something to act on.
-   */
-  toolChoice?: ToolChoice;
 }
 
 export type FillerSource = string | ((step: number) => SpeechHandle | string | null | undefined);
@@ -180,16 +174,17 @@ export class RunContext<UserData = UnknownUserData> {
     }
 
     const silent = options.silent ?? false;
-    const toolChoice = options.toolChoice ?? 'none';
     if (this._firstUpdateFuture && !this._firstUpdateFuture.done) {
       this._suppressReply = silent;
-      this._replyToolChoice = toolChoice;
+      // a report is not a result: a model free to call tools can answer
+      // "still searching" by calling the same tool again
+      this._replyToolChoice = 'none';
       this._firstUpdateFuture.resolve(renderedMessage);
       this.functionCall.extra.__livekit_agents_tool_non_blocking = true;
       return;
     }
 
-    await this._executor.enqueueReply(this, pair, { silent, toolChoice });
+    await this._executor.enqueueReply(this, pair, { silent, toolChoice: 'none' });
   }
 
   async foreground<T>(fn: (activity: AgentActivity) => Promise<T> | T): Promise<T> {
