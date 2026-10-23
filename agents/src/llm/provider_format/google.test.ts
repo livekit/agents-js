@@ -536,6 +536,31 @@ describe('Google Provider Format - toChatCtx', () => {
     expect(formatData.systemMessages).toBeNull();
   });
 
+  it('should inject dummy user message when trailing user message is empty', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+    ctx.addMessage({ role: 'assistant', content: 'Partial reply' });
+    ctx.addMessage({ role: 'user', content: '' });
+
+    const [result, formatData] = await toChatCtx(ctx, true);
+
+    expect(result).toEqual([
+      {
+        role: 'user',
+        parts: [{ text: 'Hello' }],
+      },
+      {
+        role: 'model',
+        parts: [{ text: 'Partial reply' }],
+      },
+      {
+        role: 'user',
+        parts: [{ text: '.' }],
+      },
+    ]);
+    expect(formatData.systemMessages).toBeNull();
+  });
+
   it('should not inject dummy user message when disabled', async () => {
     const ctx = ChatContext.empty();
     ctx.addMessage({ role: 'user', content: 'Hello' });
