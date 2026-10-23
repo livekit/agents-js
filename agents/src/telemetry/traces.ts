@@ -1034,16 +1034,6 @@ export function serializeSessionOptions(
 }
 
 /**
- * Builds the session summary that agent evals read from the recording header: the session report
- * without chat history, events and the local recording path.
- */
-function sessionSummary(report: SessionReport): Record<string, unknown> {
-  const summary = sessionReportToJSON(report, { includeChatHistory: false, includeEvents: false });
-  delete summary.audio_recording_path;
-  return summary;
-}
-
-/**
  * Upload session report to LiveKit Cloud observability.
  * @param options - Configuration with agentName, observabilityUrl, and report
  */
@@ -1183,7 +1173,11 @@ export async function uploadSessionReport(
     },
     simulated: metadata[ATTRIBUTE_SIMULATION_ENABLED] === true,
     redactionEnabled: metadata[ATTRIBUTE_REDACTION_ENABLED] === true,
-    sessionSummary: JSON.stringify(sessionSummary(report)),
+    // Agent evals read this to pick sessions. Schema: evalschema/session-summary.schema.json in
+    // livekit/cloud-protocol.
+    sessionSummary: JSON.stringify(
+      sessionReportToJSON(report, { includeChatHistory: false, includeEvents: false }),
+    ),
   });
 
   const headerBytes = Buffer.from(headerMsg.toBinary());

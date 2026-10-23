@@ -832,7 +832,6 @@ describe('uploadSessionReport metadata', () => {
       includeChatHistory: false,
       includeEvents: false,
     });
-    delete expected.audio_recording_path;
     expect(JSON.parse(header.sessionSummary)).toEqual(JSON.parse(JSON.stringify(expected)));
   });
 
