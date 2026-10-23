@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AgentSession as pb } from '@livekit/protocol';
+import { AgentSession as pb } from '@livekit/protocol';
 import type { ChatContext } from '../llm/chat_context.js';
 import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
 import { msToUnixSeconds } from '../proto.js';
@@ -11,7 +11,7 @@ import type {
   ResolvedRecordingOptions,
   VoiceOptions,
 } from './agent_session.js';
-import { type AgentEvent, CloseReason } from './events.js';
+import type { AgentEvent } from './events.js';
 
 type ReportOptions = AgentSessionOptions &
   Partial<VoiceOptions> & { recordingOptions: ResolvedRecordingOptions };
@@ -246,16 +246,13 @@ const SUMMARY_ERROR_KEYS: Record<string, string> = {
   interruption_detection_error: 'interruption',
 };
 
-// Maps an SDK close reason to its livekit.agent.CloseReason value name, which agent evals read.
-// Names only (no enum values), so this module does not need the enum at runtime.
-const CLOSE_REASON_NAMES: Record<string, keyof typeof pb.CloseReason> = {
-  [CloseReason.ERROR]: 'CR_ERROR',
-  [CloseReason.JOB_SHUTDOWN]: 'CR_JOB_SHUTDOWN',
-  [CloseReason.PARTICIPANT_DISCONNECTED]: 'CR_PARTICIPANT_DISCONNECTED',
-  [CloseReason.USER_INITIATED]: 'CR_USER_INITIATED',
-  // Python has this reason; agents-js can only get it as a custom shutdown string.
-  task_completed: 'CR_COMPLETED',
-};
+/** Name of the livekit.agent.CloseReason proto value for an SDK close reason. */
+function closeReasonName(reason: string): string {
+  // The proto calls task completion CR_COMPLETED; every other reason is CR_<REASON>.
+  const name = reason === 'task_completed' ? 'CR_COMPLETED' : `CR_${reason.toUpperCase()}`;
+  // Custom shutdown strings have no proto value.
+  return name in pb.CloseReason ? name : 'CR_UNKNOWN';
+}
 
 function countErrors(events: AgentEvent[]): Record<string, number> {
   const errors: Record<string, number> = {};
@@ -278,8 +275,7 @@ function lastCloseReasonName(events: AgentEvent[]): string | null {
   let name: string | null = null;
   for (const event of events) {
     if (event.type === 'close') {
-      // Custom shutdown strings have no proto value, so they map to CR_UNKNOWN.
-      name = CLOSE_REASON_NAMES[event.reason] ?? 'CR_UNKNOWN';
+      name = closeReasonName(event.reason);
     }
   }
   return name;
