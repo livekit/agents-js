@@ -309,9 +309,10 @@ describe('textTransforms.replace', () => {
     expect(await collect(transform(streamText('ab', 100)))).toBe('Y');
   });
 
-  it('retains the source split-overlap fallback policy', async () => {
+  it('prefers longest overlapping key split across source chunks', async () => {
     const transform = replace({ a: 'X', ab: 'Y' });
-    expect(await collectChunks(transform(streamChunks(['a', 'b'])))).toEqual(['X', 'b']);
+    expect(await collectChunks(transform(streamChunks(['a', 'b'])))).toEqual(['Y']);
+    expect(await collectChunks(transform(streamChunks(['a'])))).toEqual(['X']);
   });
 
   it('does not cascade', async () => {
@@ -323,6 +324,27 @@ describe('textTransforms.replace', () => {
     const transform = replace({ a: 'b', bc: 'X' });
     expect(await collectChunks(transform(streamChunks(['a', 'c'])))).toEqual(['b', 'c']);
   });
+
+  for (const [replacements, text] of [
+    [{ ab: 'a' }, 'abb'],
+    [{ Texas: 'Tex' }, 'Texasas'],
+    [{ hello: 'hi', 'hi there': 'GT' }, 'hello there, hello there'],
+    [{ LiveKit: 'Lyve Kit' }, 'a LiveKit and livekit agent'],
+    [{ um: '' }, 'um well um'],
+    [{ a: 'X', ab: 'Y' }, 'ab'],
+    [{ SQL: 'sequel', LiveKit: 'Lyve Kit' }, 'uses SQL, LiveKit'],
+    [{ ab: 'cab' }, 'xabc ab'],
+    [{ ab: 'X', bab: 'Y' }, 'abab'],
+  ] as const) {
+    it(`produces chunk-independent output for ${JSON.stringify(text)}`, async () => {
+      const outputs = await Promise.all(
+        [1, 2, 3, 4, 7, 13, 100].map((chunkSize) =>
+          collect(replace(replacements)(streamText(text, chunkSize))),
+        ),
+      );
+      expect(new Set(outputs).size).toBe(1);
+    });
+  }
 
   it('replaces Unicode regex case equivalents', async () => {
     const transform = replace({ S: 'ess', Σ: 'sigma' });
