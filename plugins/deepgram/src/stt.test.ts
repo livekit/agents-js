@@ -161,7 +161,7 @@ describe('Deepgram streaming language hints', () => {
     }
   });
 
-  it('drops the hint and warns once for any other language', async () => {
+  it('leaves the hint off the wire and warns once for any other language', async () => {
     const warnSpy = vi.spyOn(log(), 'warn');
     const { wss, baseUrl } = await startWebSocketServer();
     const urls: string[] = [];
@@ -178,7 +178,7 @@ describe('Deepgram streaming language hints', () => {
       expect(urls[0]).not.toContain('language_hint');
       expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
         { model: 'nova-3', language: 'en-US' },
-        'Removed `languageHint`: it only applies to nova-3 with language "multi"',
+        'Ignoring `languageHint`: it only applies to nova-3 with language "multi"',
       );
     } finally {
       stream.close();
@@ -235,7 +235,7 @@ describe('Deepgram streaming language hints', () => {
     }
   });
 
-  it('drops the hint and warns when the model is not nova-3, even in multi mode', async () => {
+  it('leaves the hint off the wire and warns when the model is not nova-3, even in multi mode', async () => {
     const warnSpy = vi.spyOn(log(), 'warn');
     const { wss, baseUrl } = await startWebSocketServer();
     const urls: string[] = [];
@@ -253,7 +253,7 @@ describe('Deepgram streaming language hints', () => {
       expect(urls[0]).not.toContain('language_hint');
       expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
         { model: 'nova-2-general', language: 'multi' },
-        'Removed `languageHint`: it only applies to nova-3 with language "multi"',
+        'Ignoring `languageHint`: it only applies to nova-3 with language "multi"',
       );
     } finally {
       stream.close();
@@ -261,7 +261,7 @@ describe('Deepgram streaming language hints', () => {
     }
   });
 
-  it('drops the hint on nova-3-medical, which the gateway also excludes', async () => {
+  it('leaves the hint off the wire on nova-3-medical, which the gateway also excludes', async () => {
     const warnSpy = vi.spyOn(log(), 'warn');
     const { wss, baseUrl } = await startWebSocketServer();
     const urls: string[] = [];
@@ -279,7 +279,7 @@ describe('Deepgram streaming language hints', () => {
       expect(urls[0]).not.toContain('language_hint');
       expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
         { model: 'nova-3-medical', language: 'multi' },
-        'Removed `languageHint`: it only applies to nova-3 with language "multi"',
+        'Ignoring `languageHint`: it only applies to nova-3 with language "multi"',
       );
     } finally {
       stream.close();
@@ -318,6 +318,110 @@ describe('Deepgram streaming language hints', () => {
 
       await waitUntil(() => urls.length === 2);
       expect(urls[1]).not.toContain('language_hint');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  // The hint belongs to the caller's configuration, so a language that stops applying it must not
+  // delete it: coming back to `multi` has to put it on the wire again.
+  it('sends the hint again when the language returns to multi', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const urls: string[] = [];
+    const wire: string[] = [];
+    wss.on('connection', (socket, request) => {
+      urls.push(request.url ?? '');
+      socket.on('message', (_data, isBinary) => {
+        if (isBinary) wire.push('audio');
+      });
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseUrl,
+      language: 'multi',
+      languageHint: ['en', 'es'],
+    }).stream({
+      connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0, retryIntervalMs: 1 },
+    });
+    try {
+      stream.pushFrame(makeFrame(1600));
+      await waitUntil(() => wire.length > 0);
+      expect(urls[0]).toContain('language_hint=en');
+
+      stream.updateOptions({ language: 'en-US' });
+      await waitUntil(() => urls.length === 2);
+      expect(urls[1]).not.toContain('language_hint');
+
+      stream.updateOptions({ language: 'multi' });
+      await waitUntil(() => urls.length === 3);
+      expect(urls[2]).toContain('language_hint=en');
+      expect(urls[2]).toContain('language_hint=es');
+      expect(urls[2]).toContain('language=multi');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('keeps a hint configured on a language that cannot apply it', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const urls: string[] = [];
+    const wire: string[] = [];
+    wss.on('connection', (socket, request) => {
+      urls.push(request.url ?? '');
+      socket.on('message', (_data, isBinary) => {
+        if (isBinary) wire.push('audio');
+      });
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseUrl,
+      language: 'en-US',
+      languageHint: ['en', 'es'],
+    }).stream({
+      connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0, retryIntervalMs: 1 },
+    });
+    try {
+      stream.pushFrame(makeFrame(1600));
+      await waitUntil(() => wire.length > 0);
+      expect(urls[0]).not.toContain('language_hint');
+
+      stream.updateOptions({ language: 'multi' });
+      await waitUntil(() => urls.length === 2);
+      expect(urls[1]).toContain('language_hint=en');
+      expect(urls[1]).toContain('language_hint=es');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('keeps the hint across provider updates that stop it applying', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_socket, request) => urls.push(request.url ?? ''));
+
+    const provider = new STT({
+      apiKey: 'test-key',
+      baseUrl,
+      language: 'multi',
+      languageHint: ['en', 'es'],
+    });
+    provider.updateOptions({ language: 'en-US' });
+    provider.updateOptions({ language: 'multi' });
+
+    // a stream built after the round trip reads the provider's options, which the round trip
+    // must not have emptied
+    const stream = provider.stream({
+      connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0, retryIntervalMs: 1 },
+    });
+    try {
+      await waitUntil(() => urls.length > 0);
+      expect(urls[0]).toContain('language_hint=en');
+      expect(urls[0]).toContain('language_hint=es');
     } finally {
       stream.close();
       await closeWebSocketServer(wss);
