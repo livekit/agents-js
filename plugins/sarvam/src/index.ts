@@ -4,6 +4,7 @@
 import { Plugin } from '@livekit/agents';
 
 export * from './models.js';
+export { LLM, type LLMOptions } from './llm.js';
 export {
   STT,
   SpeechStream,

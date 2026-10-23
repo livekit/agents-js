@@ -42,9 +42,11 @@
     "@types/ws": "catalog:",
     "@microsoft/api-extractor": "^7.58.12",
     "tsup": "^8.3.5",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "zod": "^3.25.76"
   },
   "dependencies": {
+    "openai": "^6.8.1",
     "ws": "catalog:"
   },
   "peerDependencies": {
