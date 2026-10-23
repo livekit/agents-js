@@ -83,6 +83,36 @@ describe('Deepgram STTv2 language hints', () => {
     stream.close();
   });
 
+  // The default model is flux-general-en, so a session with no hint at all is the common case:
+  // warning there would name an option nobody set. The once-per-instance flag has to survive it
+  // too, or the warning a caller should get for a hint they did set is spent before they set it.
+  it('does not warn for a session with no hint', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const provider = new STTv2({ apiKey: 'test-api-key' });
+    const stream = provider.stream() as unknown as TestSpeechStream;
+
+    expect(stream._liveConfig()).not.toHaveProperty('language_hint');
+    expect(warnSpy).not.toHaveBeenCalled();
+    stream.close();
+  });
+
+  it('warns once for a hint an update sets after a hint-free construction', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const provider = new STTv2({ apiKey: 'test-api-key' });
+    const stream = provider.stream() as unknown as TestSpeechStream;
+
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    provider.updateOptions({ languageHint: ['en', 'es'] });
+
+    expect(stream._liveConfig()).not.toHaveProperty('language_hint');
+    expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
+      { model: 'flux-general-en' },
+      'Ignoring `languageHint`: it is only supported by `flux-general-multi`',
+    );
+    stream.close();
+  });
+
   it('leaves a hint a later update sets for a model that cannot take it off the wire', () => {
     const warnSpy = vi.spyOn(log(), 'warn');
     const provider = new STTv2({ apiKey: 'test-api-key', model: 'flux-general-en' });

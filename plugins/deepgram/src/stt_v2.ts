@@ -258,6 +258,8 @@ export class STTv2 extends stt.STT {
    */
   #warnLanguageHintIgnored(): void {
     if (this.#languageHintWarned) return;
+    // no hint to leave off: returning before the flag keeps the warning for a hint that is set
+    if (!this.#opts.languageHint?.length) return;
     if (languageHintApplies(this.#opts.model, this.#opts.languageHint)) return;
     this.#languageHintWarned = true;
     this.#logger.warn(
