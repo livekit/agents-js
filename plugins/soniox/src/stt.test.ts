@@ -637,6 +637,92 @@ describe('SpeechStream config', () => {
   );
 });
 
+describe('SpeechStream flush', () => {
+  it('asks Soniox to finalize when the stream is flushed', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const finalizePromise = new Promise<Record<string, unknown>>((resolve) => {
+      wss.on('connection', (ws) => {
+        ws.on('message', (data, isBinary) => {
+          if (isBinary) return;
+          const message = JSON.parse(data.toString()) as Record<string, unknown>;
+          if (message.type !== 'finalize') return;
+          resolve(message);
+          ws.send(JSON.stringify({ finished: true }));
+        });
+      });
+    });
+
+    try {
+      const soniox = new STT({ apiKey: 'test-key', baseUrl });
+      const stream = soniox.stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      const drain = consumeSpeechStream(stream);
+
+      stream.pushFrame(new AudioFrame(new Int16Array(160), 16000, 1, 160));
+      stream.flush();
+
+      expect(await finalizePromise).toEqual({ type: 'finalize' });
+
+      stream.close();
+      await drain.catch(() => {});
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it.each([
+    ['a flush with no audio', ['flush'], 0],
+    ['two flushes after one frame', ['frame', 'flush', 'flush'], 1],
+    ['two separate utterances', ['frame', 'flush', 'frame', 'flush'], 2],
+    ['a flush followed by endInput', ['frame', 'flush'], 1],
+  ] as const)('sends finalize once per stretch of audio: %s', async (_name, steps, expected) => {
+    expect(await countFinalizes(steps)).toBe(expected);
+  });
+});
+
+// Runs `steps` on a stream, ends its input, and returns how many finalize requests the mock
+// server received before the end-of-audio frame.
+async function countFinalizes(steps: readonly ('frame' | 'flush')[]): Promise<number> {
+  const { wss, baseUrl } = await startWebSocketServer();
+  const countPromise = new Promise<number>((resolve) => {
+    wss.on('connection', (ws) => {
+      let finalizes = 0;
+      ws.on('message', (data: Buffer, isBinary) => {
+        if (isBinary && data.length === 0) {
+          resolve(finalizes);
+          ws.send(JSON.stringify({ finished: true }));
+          return;
+        }
+        if (isBinary) return;
+        const message = JSON.parse(data.toString()) as Record<string, unknown>;
+        if (message.type === 'finalize') finalizes += 1;
+      });
+    });
+  });
+
+  try {
+    const soniox = new STT({ apiKey: 'test-key', baseUrl });
+    const stream = soniox.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    const drain = consumeSpeechStream(stream);
+
+    for (const step of steps) {
+      if (step === 'frame') stream.pushFrame(makeFrame());
+      else stream.flush();
+    }
+    stream.endInput();
+
+    const count = await countPromise;
+    stream.close();
+    await drain.catch(() => {});
+    return count;
+  } finally {
+    await closeWebSocketServer(wss);
+  }
+}
+
 async function consumeSpeechStream(stream: AsyncIterable<stt.SpeechEvent>): Promise<void> {
   for await (const _ of stream) {
     // Consume all events.
