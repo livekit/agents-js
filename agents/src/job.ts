@@ -169,14 +169,6 @@ export type RunningJobInfo = {
   launchedAt?: number;
 };
 
-/** Attempted to add a function callback, but the function already exists. */
-export class FunctionExistsError extends Error {
-  constructor(msg?: string) {
-    super(msg);
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-}
-
 /** The job and environment context as seen by the agent, accessible by the entrypoint function. */
 export class JobContext<ProcessUserData = Record<string, unknown>> {
   #proc: JobProcess<ProcessUserData>;
@@ -186,16 +178,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   #onShutdown: (s: string) => void;
   /** @internal */
   shutdownCallbacks: (() => Promise<void>)[] = [];
-  #participantEntrypoints: ((
-    job: JobContext<ProcessUserData>,
-    p: RemoteParticipant,
-  ) => Promise<void>)[] = [];
-  #participantTasks: {
-    [id: string]: {
-      callback: (job: JobContext<ProcessUserData>, p: RemoteParticipant) => Promise<void>;
-      result: Promise<void>;
-    };
-  } = {};
   #logger: Logger;
   #inferenceExecutor: InferenceExecutor;
 
@@ -242,8 +224,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#room = room;
     this.#onConnect = onConnect;
     this.#onShutdown = onShutdown;
-    this.onParticipantConnected = this.onParticipantConnected.bind(this);
-    this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.onParticipantDisconnected = this.onParticipantDisconnected.bind(this);
     // Registered unconditionally: a simulator participant identifies itself by
     // its lk.simulator attribute, and gating on simulationContext() here would
@@ -524,8 +504,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     );
     this.#onConnect();
 
-    this.#room.remoteParticipants.forEach(this.onParticipantConnected);
-
     if ([AutoSubscribe.AUDIO_ONLY, AutoSubscribe.VIDEO_ONLY].includes(autoSubscribe)) {
       const desiredKind =
         autoSubscribe === AutoSubscribe.AUDIO_ONLY ? TrackKind.KIND_AUDIO : TrackKind.KIND_VIDEO;
@@ -684,40 +662,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     }
     this.#logger.debug('simulator disconnected, shutting down the job');
     this.shutdown('simulation completed');
-  }
-
-  /** @internal */
-  onParticipantConnected(p: RemoteParticipant) {
-    for (const callback of this.#participantEntrypoints) {
-      if (this.#participantTasks[p.identity!]?.callback == callback) {
-        this.#logger.warn(
-          'a participant has joined before a prior prticipant task matching the same identity has finished:',
-          p.identity,
-        );
-      }
-      const result = callback(this, p);
-      result.finally(() => {
-        if (this.#participantTasks[p.identity!]?.result === result) {
-          delete this.#participantTasks[p.identity!];
-        }
-      });
-      this.#participantTasks[p.identity!] = { callback, result };
-    }
-  }
-
-  /**
-   * Adds a promise to be awaited whenever a new participant joins the room.
-   *
-   * @throws {@link FunctionExistsError} if an entrypoint already exists
-   */
-  addParticipantEntrypoint(
-    callback: (job: JobContext<ProcessUserData>, p: RemoteParticipant) => Promise<void>,
-  ) {
-    if (this.#participantEntrypoints.includes(callback)) {
-      throw new FunctionExistsError('entrypoints cannot be added more than once');
-    }
-
-    this.#participantEntrypoints.push(callback);
   }
 
   async initRecording(options: ResolvedRecordingOptions) {
