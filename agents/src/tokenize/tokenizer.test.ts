@@ -200,6 +200,22 @@ describe('tokenizer', () => {
       }
     });
 
+    it.each([
+      [
+        '这是中文。 これは日本語です。',
+        false,
+        ['这', '是', '中', '文', '。', 'こ', 'れ', 'は', '日', '本', '語', 'で', 'す', '。'],
+      ],
+      ['你好，我很好。', true, ['你', '好', '我', '很', '好']],
+      ['LiveKitは voice agentsです', false, ['LiveKit', 'は', 'voice', 'agents', 'で', 'す']],
+      ['Hi ไทย, LiveKit!', false, ['Hi', 'ไ', 'ท', 'ย', ',', 'LiveKit!']],
+    ])(
+      'splits Chinese, Japanese and Thai per character in %s',
+      (text, ignorePunctuation, expected) => {
+        expect(new WordTokenizer(ignorePunctuation, true).tokenize(text)).toEqual(expected);
+      },
+    );
+
     describe('punctuation handling', () => {
       const tokenizerPunct = new WordTokenizer(false);
 

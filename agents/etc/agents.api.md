@@ -7427,7 +7427,7 @@ function splitExprMarkup(text: string): [string, ExpressiveTag[]];
 function splitInstructions(items: readonly ChatItem[]): [ChatItem[], ChatItem[]];
 
 // @public
-const splitWords: (text: string, ignorePunctuation?: boolean) => [string, number, number][];
+const splitWords: (text: string, ignorePunctuation?: boolean, splitCharacter?: boolean) => [string, number, number][];
 
 // @public
 type StackSamplingMode = 'adaptive' | 'always' | 'never';
@@ -9580,7 +9580,7 @@ abstract class WordTokenizer {
 
 // @public (undocumented)
 class WordTokenizer_2 extends tokenizer.WordTokenizer {
-    constructor(ignorePunctuation?: boolean);
+    constructor(ignorePunctuation?: boolean, splitCharacter?: boolean);
     // (undocumented)
     stream(language?: string): tokenizer.WordStream;
     // (undocumented)

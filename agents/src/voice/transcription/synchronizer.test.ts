@@ -279,6 +279,85 @@ describe('TranscriptionSynchronizer enabled behavior', () => {
     expect(downstream.captured).toEqual(['hello']);
     await synchronizer.close();
   });
+
+  it('forwards each Chinese, Japanese or Thai character as its own word', async () => {
+    const text = 'LiveKitは voice agentsのplatformです。';
+    const downstream = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream);
+    await synchronizer.barrier();
+    const impl = synchronizer._impl;
+    try {
+      impl.pushText(text);
+      impl.endTextInput();
+      impl.pushAudio(new AudioFrame(new Int16Array(16_000), 16_000, 1, 16_000));
+      impl.endAudioInput();
+      impl.markPlaybackFinished(1, false);
+      impl.onPlaybackStarted(Date.now());
+      await vi.waitFor(() => expect(downstream.captured.join('')).toBe(text), { timeout: 2000 });
+      expect(downstream.captured).toEqual([
+        'LiveKit',
+        'は',
+        ' voice',
+        ' agents',
+        'の',
+        'platform',
+        'で',
+        'す',
+        '。',
+      ]);
+    } finally {
+      await synchronizer.close();
+    }
+  });
+
+  it.each([
+    'こんにちは！今日は動画の編集やサービスについて、何をお手伝いしましょうか？',
+    '你好！今天想让我帮你处理视频编辑还是我们的服务方面的问题？',
+    'สวัสดีครับวันนี้อยากให้ช่วยเรื่องการตัดต่อวิดีโอหรือบริการของเราครับ',
+  ])('keeps only the played part of an interrupted reply without spaces: %s', async (text) => {
+    const downstream = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream);
+    await synchronizer.barrier();
+    const impl = synchronizer._impl;
+    try {
+      impl.pushAudio(new AudioFrame(new Int16Array(80_000), 16_000, 1, 80_000));
+      impl.endAudioInput();
+      impl.onPlaybackStarted(Date.now());
+      impl.pushText(text);
+      impl.endTextInput();
+      await vi.waitFor(() => expect(downstream.captured.length).toBeGreaterThan(1), {
+        timeout: 2000,
+      });
+      impl.markPlaybackFinished(1, true);
+      const transcript = impl.synchronizedTranscript;
+      expect(transcript).not.toBe('');
+      expect(text.startsWith(transcript)).toBe(true);
+      expect(transcript.length).toBeLessThan(text.length / 2);
+    } finally {
+      await synchronizer.close();
+    }
+  });
+
+  it('paces a reply without spaces to the length of its audio', async () => {
+    const text = 'สวัสดีครับวันนี้อยากให้ช่วยเรื่องการตัดต่อวิดีโอหรือบริการของเราครับ';
+    const downstream = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream);
+    await synchronizer.barrier();
+    const impl = synchronizer._impl;
+    try {
+      impl.pushText(text);
+      impl.endTextInput();
+      impl.pushAudio(new AudioFrame(new Int16Array(16_000), 16_000, 1, 16_000));
+      impl.endAudioInput();
+      const startTime = Date.now();
+      impl.onPlaybackStarted(startTime);
+      // at the default 3.83 hyphens per second, one per Thai character, this would take 17 s
+      await vi.waitFor(() => expect(downstream.captured.join('')).toBe(text), { timeout: 2000 });
+      expect(Date.now() - startTime).toBeGreaterThan(500);
+    } finally {
+      await synchronizer.close();
+    }
+  });
 });
 
 describe('TranscriptionSynchronizer attachment warnings', () => {
