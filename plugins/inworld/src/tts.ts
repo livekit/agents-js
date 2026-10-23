@@ -747,6 +747,9 @@ class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
     const sendPromise = sendLoop();
+    // An aborted stream returns without awaiting the sender, so a send that fails
+    // afterwards must not become an unhandled rejection.
+    sendPromise.catch(() => {});
 
     try {
       await this.#createContext(ws);
@@ -771,6 +774,10 @@ class SynthesizeStream extends tts.SynthesizeStream {
       }
 
       await this.#flushContext(ws);
+      if (this.abortSignal.aborted) {
+        await this.#cancelContext(ws);
+        return;
+      }
       await this.#closeContext(ws);
 
       // Wait for the server to finish the context, but bound it so a stalled

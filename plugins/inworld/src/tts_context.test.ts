@@ -66,9 +66,36 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const client of server.clients) client.terminate();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
+
+type SendCallback = (err?: Error) => void;
+
+// Holds the client's send callback for the first payload of `kind`, so a test can
+// settle that send after closing the stream.
+function holdSend(kind: string, forward: boolean) {
+  const original = ws.WebSocket.prototype.send;
+  let release!: (cb: SendCallback) => void;
+  const held = new Promise<SendCallback>((resolve) => (release = resolve));
+  let holding = true;
+  vi.spyOn(ws.WebSocket.prototype, 'send').mockImplementation(function (
+    this: ws.WebSocket,
+    data: unknown,
+    ...rest: unknown[]
+  ) {
+    const cb = rest.find((r): r is SendCallback => typeof r === 'function');
+    if (holding && cb && String(data).includes(`"${kind}"`)) {
+      holding = false;
+      if (forward) original.call(this, data as string);
+      release(cb);
+      return;
+    }
+    return (original as (...args: unknown[]) => void).call(this, data, ...rest);
+  });
+  return held;
+}
 
 describe('inworld TTS context lifecycle', () => {
   it('closes the context when the input ends', async () => {
@@ -106,5 +133,41 @@ describe('inworld TTS context lifecycle', () => {
     await waitFor('cancel_context');
 
     expect(kinds().slice(-2)).toEqual(['close_context', 'cancel_context']);
+  });
+
+  it('cancels without closing when the stream is closed during the flush', async () => {
+    await startServer({ answerClose: false });
+    const flushSent = holdSend('flush_context', true);
+    const stream = startStream();
+    stream.pushText('Hello there. How are you doing today?');
+    stream.endInput();
+    const settleFlush = await flushSent;
+    stream.close();
+    settleFlush();
+    await waitFor('cancel_context');
+
+    expect(kinds()).toContain('flush_context');
+    expect(kinds()).not.toContain('close_context');
+  });
+
+  it('ignores a text send that fails after the stream is closed', async () => {
+    await startServer({ answerClose: true });
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const textSent = holdSend('send_text', false);
+      const stream = startStream();
+      stream.pushText('Hello there. How are you doing today? ');
+      stream.flush();
+      const failText = await textSent;
+      stream.close();
+      await waitFor('cancel_context');
+      failText(new Error('send failed'));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
   });
 });
