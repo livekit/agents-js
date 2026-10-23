@@ -106,6 +106,8 @@ class FakeRealtimeSession extends RealtimeSession {
   endSpeech(): void {
     this.audio?.close();
     this.text?.close();
+    this.audio = undefined;
+    this.text = undefined;
   }
   async commitAudio(): Promise<void> {}
   async clearAudio(): Promise<void> {}
@@ -268,6 +270,19 @@ describe('realtime overlapping speech', () => {
       expect(speech.interrupted).toBe(!overlap);
       expect(output.clears).toBe(overlap ? 0 : 1);
       expect(session.userState).toBe('speaking');
+      if (!overlap) {
+        await speech.waitForPlayout();
+        expect(model.activeSession.audio).toBeUndefined();
+        expect(model.activeSession.text).toBeUndefined();
+        model.activeSession.emit('input_speech_stopped', { userTranscriptionEnabled: false });
+        const previousFrames = output.frames;
+        const replacement = session.generateReply();
+        await vi.waitFor(() => expect(output.frames).toBeGreaterThan(previousFrames));
+        model.activeSession.endSpeech();
+        await replacement.waitForPlayout();
+        expect(replacement.interrupted).toBe(false);
+        expect(output.clears).toBe(1);
+      }
     } finally {
       model.activeSession.endSpeech();
       await session.close();

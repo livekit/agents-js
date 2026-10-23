@@ -954,6 +954,10 @@ export function performTTSInference(
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
     let firstByteReceived = false;
+    const cancelReader = (): void => {
+      void ttsStreamReader?.cancel().catch(() => {});
+    };
+    signal.addEventListener('abort', cancelReader, { once: true });
 
     try {
       const ttsInput = textTransforms
@@ -974,6 +978,7 @@ export function performTTSInference(
       }
 
       ttsStreamReader = ttsStream.getReader();
+      if (signal.aborted) cancelReader();
 
       while (true) {
         if (signal.aborted) {
@@ -984,7 +989,7 @@ export function performTTSInference(
           ttsStreamReader.read(),
           readIdleTimeout,
         );
-        if (done) {
+        if (done || signal.aborted) {
           break;
         }
 
@@ -1022,6 +1027,7 @@ export function performTTSInference(
         throw error;
       }
     } finally {
+      signal.removeEventListener('abort', cancelReader);
       if (!timedTextsFut.done) {
         timedTextsFut.resolve(null);
       }
@@ -1059,13 +1065,18 @@ async function forwardText(
   textOutput: TextOutput | null,
 ): Promise<void> {
   const reader = source.getReader();
+  const cancelReader = (): void => {
+    void reader.cancel().catch(() => {});
+  };
+  signal.addEventListener('abort', cancelReader, { once: true });
+  if (signal.aborted) cancelReader();
   try {
     while (true) {
       if (signal.aborted) {
         break;
       }
       const { done, value: delta } = await reader.read();
-      if (done) break;
+      if (done || signal.aborted) break;
 
       const deltaIsTimedString = isTimedString(delta);
       const textDelta = deltaIsTimedString ? delta.text : delta;
@@ -1080,6 +1091,7 @@ async function forwardText(
       }
     }
   } finally {
+    signal.removeEventListener('abort', cancelReader);
     if (textOutput !== null) {
       textOutput.flush();
     }
@@ -1250,9 +1262,6 @@ async function forwardAudio(
       audioOutput._markInputTruncated();
     }
     audioOutput.flush();
-    if (signal?.aborted) {
-      audioOutput.clearBuffer();
-    }
     resampler?.close();
   }
 }
