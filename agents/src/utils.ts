@@ -576,11 +576,21 @@ export class Task<T> {
         }),
     ];
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
     if (timeout) {
-      promises.push(delay(timeout).then(() => TaskResult.Timeout));
+      promises.push(
+        new Promise<TaskResult>((resolve) => {
+          timer = setTimeout(() => resolve(TaskResult.Timeout), timeout);
+        }),
+      );
     }
 
-    const result = await ThrowsPromise.race(promises);
+    let result: TaskResult;
+    try {
+      result = await ThrowsPromise.race(promises);
+    } finally {
+      clearTimeout(timer);
+    }
 
     // Check what happened
     if (result === TaskResult.Timeout) {

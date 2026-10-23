@@ -1614,3 +1614,100 @@ it('retries a failed WebSocket handshake', async () => {
     });
   }
 });
+
+describe('RealtimeSession.close', () => {
+  const servers: WebSocketServer[] = [];
+
+  afterEach(async () => {
+    for (const server of servers.splice(0)) {
+      server.clients.forEach((socket) => socket.terminate());
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  const listen = async (
+    options: Omit<ConstructorParameters<typeof WebSocketServer>[0], 'port'> = {},
+  ) => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0, ...options });
+    servers.push(server);
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    return { server, baseURL: `http://127.0.0.1:${port}/v1` };
+  };
+
+  const settlesWithin = (promise: Promise<unknown>, ms: number) =>
+    Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
+    ]);
+
+  it('closes an idle websocket before it resolves', async () => {
+    const { server, baseURL } = await listen();
+    const connected = once(server, 'connection') as Promise<[WebSocket]>;
+    const session = new RealtimeModel({ apiKey: 'test-key', baseURL }).session();
+
+    const [socket] = await connected;
+    const socketClosed = once(socket, 'close');
+    // Let the session flush its opening events, so close() finds the send loop idle.
+    await once(socket, 'message');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    await session.close();
+
+    expect(await settlesWithin(socketClosed, 1000)).toBe(true);
+  });
+
+  it('closes the websocket when the session duration ran out during a reply', async () => {
+    const { server, baseURL } = await listen();
+    const replyStarted = new Future<void>();
+    const connected = once(server, 'connection') as Promise<[WebSocket]>;
+    server.on('connection', (socket) => {
+      socket.on('message', (data) => {
+        const event = JSON.parse(data.toString()) as api_proto.ClientEvent;
+        if (event.type !== 'response.create') return;
+        const response = {
+          id: 'resp_1',
+          object: 'realtime.response',
+          status: 'in_progress',
+          output: [],
+          metadata: event.response?.metadata,
+        };
+        // The reply never finishes: no response.done follows.
+        socket.send(JSON.stringify({ type: 'response.created', event_id: 'ev_created', response }));
+        replyStarted.resolve();
+      });
+    });
+    const session = new RealtimeModel({
+      apiKey: 'test-key',
+      baseURL,
+      modalities: ['text'],
+      maxSessionDuration: 300,
+    }).session();
+
+    const [socket] = await connected;
+    const socketClosed = once(socket, 'close');
+    session.generateReply().catch(() => {});
+    await replyStarted.await;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const closed = session.close();
+
+    expect(await settlesWithin(socketClosed, 1000)).toBe(true);
+    expect(await settlesWithin(closed, 1000)).toBe(true);
+  });
+
+  it('abandons a handshake still in progress', async () => {
+    const { server, baseURL } = await listen({
+      verifyClient: (_info, done) => setTimeout(() => done(true), 1500),
+    });
+    const session = new RealtimeModel({ apiKey: 'test-key', baseURL }).session();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(await settlesWithin(session.close(), 1000)).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    expect([...server.clients].filter((socket) => socket.readyState === socket.OPEN)).toEqual([]);
+  });
+});
