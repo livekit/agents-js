@@ -30,6 +30,7 @@ import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { DEFAULT_SESSION_END_TIMEOUT, validateSessionEndTimeout } from './job_lifecycle.js';
 import { log } from './log.js';
+import { handOffLogsToSidecar } from './telemetry/hosted_logs.js';
 import {
   type EventLoopMonitor,
   startMonitoring,
@@ -465,6 +466,7 @@ export class AgentServer {
       await this.#inferenceExecutor.initialize();
     }
 
+    handOffLogsToSidecar();
     this.#logger.info('starting worker');
     this.#closed = false;
     this.#loopMonitor = startMonitoring({ name: 'worker', emitSpans: false });

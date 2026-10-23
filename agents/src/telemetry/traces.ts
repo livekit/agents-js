@@ -53,6 +53,7 @@ import { version } from '../version.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { blockedSpanTracker } from './blocked_span_tracker.js';
 import { conversationId } from './gen_ai.js';
+import { logsHandledBySidecar } from './hosted_logs.js';
 import type { ObservabilityEndpoint } from './observability_endpoint.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
@@ -848,7 +849,7 @@ export async function setupCloudTracer(
       }
     }
 
-    if (enableLogs) {
+    if (enableLogs && !logsHandledBySidecar()) {
       // Initialize standalone Pino cloud exporter (no OTEL SDK dependency)
       initPinoCloudExporter({
         observabilityUrl,
