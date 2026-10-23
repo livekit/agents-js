@@ -630,7 +630,7 @@ describe('sessionReportToJSON close_reason', () => {
   });
 });
 
-describe('createSessionReport recordingOptions', () => {
+describe('createSessionReport', () => {
   function makeReport(recordingOptions: ResolvedRecordingOptions) {
     const options = baseOptions();
     options.recordingOptions = recordingOptions;
@@ -643,6 +643,22 @@ describe('createSessionReport recordingOptions', () => {
       chatHistory: ChatContext.empty(),
     });
   }
+
+  it('sets duration without audio recording', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory: ChatContext.empty(),
+      startedAt: Date.now() - 5000,
+    });
+
+    expect(report.audioRecordingStartedAt).toBeUndefined();
+    expect(report.duration).toBeDefined();
+    expect(report.duration).toBeGreaterThan(0);
+  });
 
   it('includes recording options in report options and serializes a defensive copy', () => {
     const recordingOptions: ResolvedRecordingOptions = {

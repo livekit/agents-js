@@ -64,6 +64,7 @@ export interface SessionReportOptions {
 
 export function createSessionReport(opts: SessionReportOptions): SessionReport {
   const timestamp = opts.timestamp ?? Date.now();
+  const startedAt = opts.startedAt ?? Date.now();
   const audioRecordingStartedAt = opts.audioRecordingStartedAt;
 
   return {
@@ -75,12 +76,16 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     events: opts.events,
     chatHistory: opts.chatHistory,
     enableRecording: opts.enableRecording ?? false,
-    startedAt: opts.startedAt ?? Date.now(),
+    startedAt,
     timestamp,
     audioRecordingPath: opts.audioRecordingPath,
     audioRecordingStartedAt,
     duration:
-      audioRecordingStartedAt !== undefined ? timestamp - audioRecordingStartedAt : undefined,
+      audioRecordingStartedAt !== undefined
+        ? timestamp - audioRecordingStartedAt
+        : opts.startedAt !== undefined
+          ? timestamp - startedAt
+          : undefined,
     modelUsage: opts.modelUsage,
   };
 }

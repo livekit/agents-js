@@ -174,6 +174,7 @@ import {
 } from './speech_handle.js';
 import {
   ToolExecutor,
+  _replyToolChoice,
   cancelTaskTool,
   getRunningTasks,
   getRunningTasksTool,
@@ -2788,13 +2789,20 @@ export class AgentActivity implements RecognitionHooks {
   async waitForIdle(
     options: { waitForAgent?: boolean; waitForUser?: boolean } = {},
   ): Promise<void> {
-    const signal = this.closeAbort.signal;
-    while (!signal.aborted) {
-      await this.waitForInactive(options, signal);
-      if (signal.aborted) break;
-      if (!(await this.agentSession._waitForIdleHoldReleased())) {
-        break;
+    const signal = AbortSignal.any([this.closeAbort.signal, this.agentSession._closingSignal]);
+    try {
+      while (!signal.aborted) {
+        await this.waitForInactive(options, signal);
+        if (signal.aborted) break;
+        if (!(await this.agentSession._waitForIdleHoldReleased())) {
+          break;
+        }
       }
+    } catch (error) {
+      if (!signal.aborted) throw error;
+    }
+    if (signal.aborted) {
+      throw new DOMException('This operation was aborted', 'AbortError');
     }
   }
 
@@ -4455,7 +4463,11 @@ export class AgentActivity implements RecognitionHooks {
       const respondToolChoice =
         maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none'
           ? 'none'
-          : 'auto';
+          : _replyToolChoice(
+              toolOutput.output
+                .filter((out) => out.toolCallOutput.replyRequired)
+                .map((out) => out.replyToolChoice),
+            ) ?? 'auto';
 
       // Reuse the same speechHandle for the tool response.
       const toolResponseLease = this.createAgentStateLease(speechHandle);
@@ -5167,7 +5179,13 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const toolChoice =
-      maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+      maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none'
+        ? 'none'
+        : _replyToolChoice(
+            toolOutput.output
+              .filter((out) => out.toolCallOutput.replyRequired)
+              .map((out) => out.replyToolChoice),
+          ) ?? 'auto';
     // the reply is the next step of the same handle, as in the pipeline path
     const replyLease = this.createAgentStateLease(speechHandle);
     this.createSpeechTask({
