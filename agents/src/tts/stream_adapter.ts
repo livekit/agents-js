@@ -8,14 +8,18 @@ import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Task } from '../utils.js';
 import { createTimedString } from '../voice/io.js';
+import { SentenceStreamPacer } from './stream_pacer.js';
 import type { ChunkedStream, TTSError } from './tts.js';
 import { SynthesizeStream, TTS } from './tts.js';
+
+const streamPacers = new WeakMap<StreamAdapterWrapper, SentenceStreamPacer>();
 
 export class StreamAdapter extends TTS {
   #tts: TTS;
   #sentenceTokenizer: SentenceTokenizer;
   #explicitTokenizer: boolean;
   #markupTokenizer?: SentenceTokenizer;
+  #streamPacer?: SentenceStreamPacer;
   label: string;
 
   #forwardMetrics = (metrics: TTSMetrics) => {
@@ -26,12 +30,22 @@ export class StreamAdapter extends TTS {
     this.emit('error', error);
   };
 
-  constructor(tts: TTS, sentenceTokenizer?: SentenceTokenizer) {
+  constructor(
+    tts: TTS,
+    sentenceTokenizer?: SentenceTokenizer,
+    textPacing: SentenceStreamPacer | boolean = false,
+  ) {
     super(tts.sampleRate, tts.numChannels, { streaming: true, alignedTranscript: true });
     this.#tts = tts;
     this.#explicitTokenizer = sentenceTokenizer !== undefined;
     this.#sentenceTokenizer =
       sentenceTokenizer ?? new blingfire.SentenceTokenizer({ retainFormat: true });
+    this.#streamPacer =
+      textPacing === true
+        ? new SentenceStreamPacer()
+        : textPacing === false
+          ? undefined
+          : textPacing;
     this.label = this.#tts.label;
     this.label = `tts.StreamAdapter<${this.#tts.label}>`;
 
@@ -103,11 +117,13 @@ export class StreamAdapter extends TTS {
   stream(options?: { connOptions?: APIConnectOptions }): StreamAdapterWrapper {
     // decided now, alongside the wrapper's own snapshot of the expressive flag
     const lowering = !!this.#tts.markup.providerKey && this.#tts.expressive;
-    return new StreamAdapterWrapper(
+    const wrapper = new StreamAdapterWrapper(
       this.#tts,
       this._tokenizerFor({ lowering }),
       options?.connOptions,
     );
+    if (this.#streamPacer) streamPacers.set(wrapper, this.#streamPacer);
+    return wrapper;
   }
 }
 
@@ -154,26 +170,29 @@ export class StreamAdapterWrapper extends SynthesizeStream {
     // sentences exist
     const markup = this.#tts.markup;
     const lowering = !!markup.providerKey && this.#expressive;
+    const streamPacer = streamPacers.get(this);
+    const sentenceStream = streamPacer
+      ? streamPacer.wrap(this.#sentenceStream, () => cumulativeDuration * 1000)
+      : this.#sentenceStream;
 
     const forwardInput = async () => {
       for await (const input of this.input) {
         if (this.abortController.signal.aborted) break;
 
         if (input === SynthesizeStream.FLUSH_SENTINEL) {
-          this.#sentenceStream.flush();
+          sentenceStream.flush();
         } else {
-          this.#sentenceStream.pushText(lowering ? markup.normalize(input) : input);
+          sentenceStream.pushText(lowering ? markup.normalize(input) : input);
         }
       }
-      this.#sentenceStream.endInput();
-      this.#sentenceStream.close();
+      sentenceStream.endInput();
     };
 
     const synthesizeSentenceStream = async () => {
       let task: Task<void> | undefined;
       const tokenCompletionTasks: Task<void>[] = [];
 
-      for await (const ev of this.#sentenceStream) {
+      for await (const ev of sentenceStream) {
         if (this.abortController.signal.aborted) break;
 
         let text = ev.token;
@@ -238,6 +257,10 @@ export class StreamAdapterWrapper extends SynthesizeStream {
       this.#sentenceError ??= audioStream.error;
     };
 
-    await ThrowsPromise.all([forwardInput(), synthesizeSentenceStream()]);
+    try {
+      await ThrowsPromise.all([forwardInput(), synthesizeSentenceStream()]);
+    } finally {
+      sentenceStream.close();
+    }
   }
 }

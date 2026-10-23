@@ -6689,6 +6689,13 @@ abstract class SentenceStream {
 }
 
 // @public (undocumented)
+class SentenceStreamPacer {
+    constructor(options?: Partial<StreamPacerOptions>);
+    // @internal (undocumented)
+    wrap(sentStream: SentenceStream, pushedAudioDuration: () => number): SentenceStream;
+}
+
+// @public (undocumented)
 abstract class SentenceTokenizer {
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SentenceStream"
     abstract stream(): SentenceStream;
@@ -7505,7 +7512,7 @@ class StreamAdapter extends STT {
 
 // @public (undocumented)
 class StreamAdapter_2 extends TTS {
-    constructor(tts: TTS, sentenceTokenizer?: SentenceTokenizer);
+    constructor(tts: TTS, sentenceTokenizer?: SentenceTokenizer, textPacing?: SentenceStreamPacer | boolean);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
@@ -7581,6 +7588,12 @@ export const streamingEndpointingOptions: {
     readonly maxDelay: 2500;
     readonly alpha: 0.9;
 };
+
+// @public (undocumented)
+interface StreamPacerOptions {
+    maxTextLength: number;
+    minRemainingAudio: number;
+}
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "splitAllMarkup"
 //
@@ -8700,6 +8713,8 @@ declare namespace tts {
         ChunkedStream,
         StreamAdapter_2 as StreamAdapter,
         StreamAdapterWrapper_2 as StreamAdapterWrapper,
+        SentenceStreamPacer,
+        StreamPacerOptions,
         FallbackAdapter_3 as FallbackAdapter,
         AvailabilityChangedEvent_3 as AvailabilityChangedEvent,
         ExpressiveTag,
