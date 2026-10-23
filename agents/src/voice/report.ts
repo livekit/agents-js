@@ -11,7 +11,7 @@ import type {
   ResolvedRecordingOptions,
   VoiceOptions,
 } from './agent_session.js';
-import type { AgentEvent } from './events.js';
+import { type AgentEvent, CloseReason } from './events.js';
 
 type ReportOptions = AgentSessionOptions &
   Partial<VoiceOptions> & { recordingOptions: ResolvedRecordingOptions };
@@ -246,11 +246,20 @@ const SUMMARY_ERROR_KEYS: Record<string, string> = {
   interruption_detection_error: 'interruption',
 };
 
+const SDK_CLOSE_REASONS: ReadonlySet<string> = new Set(Object.values(CloseReason));
+
 /** Name of the livekit.agent.CloseReason proto value for an SDK close reason. */
 function closeReasonName(reason: string): string {
-  // The proto calls task completion CR_COMPLETED; every other reason is CR_<REASON>.
-  const name = reason === 'task_completed' ? 'CR_COMPLETED' : `CR_${reason.toUpperCase()}`;
-  // Custom shutdown strings have no proto value.
+  // The proto calls task completion CR_COMPLETED. Python has that reason; agents-js only gets it
+  // as a shutdown string.
+  if (reason === 'task_completed') {
+    return 'CR_COMPLETED';
+  }
+  // Other custom shutdown strings (e.g. 'completed') must not match a proto value by accident.
+  if (!SDK_CLOSE_REASONS.has(reason)) {
+    return 'CR_UNKNOWN';
+  }
+  const name = `CR_${reason.toUpperCase()}`;
   return name in pb.CloseReason ? name : 'CR_UNKNOWN';
 }
 
@@ -369,8 +378,9 @@ export function sessionReportToJSON(
     usage: report.modelUsage ? report.modelUsage.map(modelUsageToJSON) : null,
     sdk_version: version,
     agent_name: report.agentName ?? null,
-    // The report has no duration when audio was not recorded.
-    duration_ms: report.duration !== undefined ? Math.round(report.duration) : null,
+    // Session length. Not `duration`, which is the recording's length when audio is recorded, and
+    // recording starts during session setup, before `startedAt`.
+    duration_ms: Math.round(report.timestamp - report.startedAt),
     user_turns: userTurns,
     // Error and close events are counted even when `events` is omitted, so summaries keep them.
     errors: countErrors(report.events),

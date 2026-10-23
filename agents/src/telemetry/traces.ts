@@ -1175,8 +1175,12 @@ export async function uploadSessionReport(
     redactionEnabled: metadata[ATTRIBUTE_REDACTION_ENABLED] === true,
     // Agent evals read this to pick sessions. Schema: evalschema/session-summary.schema.json in
     // livekit/cloud-protocol.
+    // A report built outside the job may lack agentName; the upload's own name fills it in.
     sessionSummary: JSON.stringify(
-      sessionReportToJSON(report, { includeChatHistory: false, includeEvents: false }),
+      sessionReportToJSON(
+        { ...report, agentName: report.agentName ?? agentName },
+        { includeChatHistory: false, includeEvents: false },
+      ),
     ),
   });
 

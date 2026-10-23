@@ -835,6 +835,30 @@ describe('uploadSessionReport metadata', () => {
     expect(JSON.parse(header.sessionSummary)).toEqual(JSON.parse(JSON.stringify(expected)));
   });
 
+  it('fills a missing report agentName from the upload', async () => {
+    vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
+    const submitSpy = mockSuccessfulFormSubmit();
+    const report = makeReport({
+      audio: false,
+      traces: false,
+      logs: false,
+      transcript: true,
+      redaction: false,
+    });
+    report.agentName = undefined;
+
+    await uploadSessionReport({
+      agentName: 'support',
+      observabilityUrl: 'https://example.livekit.cloud',
+      report,
+    });
+
+    const formData = submitSpy.mock.instances[0] as FormData;
+    const header = MetricsRecordingHeader.fromBinary(getMultipartBuffer(formData, 'header'));
+    expect(JSON.parse(header.sessionSummary).agent_name).toBe('support');
+    expect(report.agentName).toBeUndefined();
+  });
+
   it('returns before exporting when only redaction is enabled', async () => {
     const exportSpy = vi
       .spyOn(SimpleOTLPHttpLogExporter.prototype, 'export')

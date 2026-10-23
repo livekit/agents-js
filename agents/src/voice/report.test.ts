@@ -418,6 +418,7 @@ describe('sessionReportToJSON', () => {
         createCloseEvent(CloseReason.PARTICIPANT_DISCONNECTED),
       ],
       chatHistory,
+      startedAt: 100,
       timestamp: 12_600,
       audioRecordingStartedAt: 100.4,
     });
@@ -448,7 +449,6 @@ describe('sessionReportToJSON', () => {
 
     const payload = sessionReportToJSON(report);
     expect(payload.agent_name).toBeNull();
-    expect(payload.duration_ms).toBeNull();
     expect(payload.close_reason).toBeNull();
     expect(payload.user_turns).toBe(0);
     expect(payload.errors).toEqual({ llm: 0, stt: 0, tts: 0, realtime: 0, interruption: 0 });
@@ -627,6 +627,30 @@ describe('sessionReportToJSON close_reason', () => {
 
   it('maps custom shutdown reasons to CR_UNKNOWN', () => {
     expect(closeReasonFor('my_custom_reason')).toBe('CR_UNKNOWN');
+    // matches a proto value name, but is not an SDK reason
+    expect(closeReasonFor('completed')).toBe('CR_UNKNOWN');
+  });
+
+  it('maps task_completed to CR_COMPLETED', () => {
+    expect(closeReasonFor('task_completed')).toBe('CR_COMPLETED');
+  });
+});
+
+describe('sessionReportToJSON duration_ms', () => {
+  it('is the session length even when recording started earlier', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory: ChatContext.empty(),
+      audioRecordingStartedAt: 1_000,
+      startedAt: 6_000,
+      timestamp: 66_000,
+    });
+    expect(report.duration).toBe(65_000);
+    expect(sessionReportToJSON(report).duration_ms).toBe(60_000);
   });
 });
 
