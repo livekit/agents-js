@@ -21,6 +21,8 @@ function frame(durationMs = 20, sampleRate = 24000): AudioFrame {
 class InterruptibleOutput extends AudioOutput {
   onFirstFrame?: () => void;
   synchronizedTranscript?: string;
+  // ParticipantAudioOutput reports from its flush task, after clearBuffer() returns.
+  reportAfterClear = false;
   private started = false;
   constructor() {
     super(24000);
@@ -37,11 +39,17 @@ class InterruptibleOutput extends AudioOutput {
     super.flush();
   }
   clearBuffer(): void {
-    this.onPlaybackFinished({
-      playbackPosition: 0.02,
-      interrupted: true,
-      synchronizedTranscript: this.synchronizedTranscript,
-    });
+    const report = () =>
+      this.onPlaybackFinished({
+        playbackPosition: 0.02,
+        interrupted: true,
+        synchronizedTranscript: this.synchronizedTranscript,
+      });
+    if (this.reportAfterClear) {
+      queueMicrotask(report);
+    } else {
+      report();
+    }
   }
 }
 
@@ -337,6 +345,34 @@ describe('AgentActivity interrupted-speech commit', () => {
           .filter((item) => item.type === 'message' && item.role === 'assistant')
           .map((item) => item.textContent);
         expect(assistantMessages).toEqual(expected);
+      }
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('uses the synchronized transcript an output reports after clearBuffer returns', async () => {
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'hello', content: 'A fairly long spoken reply.' }]),
+    });
+    const audioOut = new InterruptibleOutput();
+    audioOut.synchronizedTranscript = 'A fairly';
+    audioOut.reportAfterClear = true;
+    // Interrupt while the reply waits for playout, after forwarding has finished.
+    audioOut.onFirstFrame = () => setTimeout(() => session.interrupt({ force: true }), 50);
+    session.output.audio = audioOut;
+    const agent = new FrameAgent();
+
+    await session.start({ agent });
+    try {
+      await session.generateReply({ userInput: 'hello' }).waitForPlayout();
+      await session.close();
+
+      for (const chatCtx of [agent.chatCtx, session.history]) {
+        const assistantMessages = chatCtx.items
+          .filter((item) => item.type === 'message' && item.role === 'assistant')
+          .map((item) => item.textContent);
+        expect(assistantMessages).toEqual(['A fairly']);
       }
     } finally {
       await session.close();
