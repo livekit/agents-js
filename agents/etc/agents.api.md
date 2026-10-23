@@ -2604,6 +2604,9 @@ function conversationMessages(items: readonly ChatItem[]): ChatMessagePayload[];
 // @public
 function convertMarkup(provider: string, text: string): string;
 
+// @public
+export function convertMidConversationInstructions(chatCtx: ChatContext, role?: 'user' | 'assistant', template?: string): ChatContext;
+
 // @internal (undocumented)
 export const _createAgentBackchannelOpportunityEvent: (input: {
     probability: number;
@@ -4883,6 +4886,7 @@ declare namespace llm {
         ImageContent,
         MetricsReport,
         ProviderFormat,
+        convertMidConversationInstructions,
         LLM,
         LLMStream,
         hasResponse,

@@ -79,6 +79,7 @@ export {
 } from './chat_context.js';
 
 export type { ProviderFormat } from './provider_format/index.js';
+export { convertMidConversationInstructions } from './provider_format/utils.js';
 
 export {
   LLM,
