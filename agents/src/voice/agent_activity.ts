@@ -2454,6 +2454,14 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
+    // end of turn reuses an attempt whose transcript differs only in formatting
+    if (
+      this._preemptiveGeneration !== undefined &&
+      transcriptsEquivalent(this._preemptiveGeneration.info.newTranscript, info.newTranscript)
+    ) {
+      return;
+    }
+
     // a newer attempt supersedes the current one; if one is created below it continues the
     // discarded attempt's agent_turn (the cancelled speech only ends once the loop runs). More
     // of the user's turn arrived: the attempt answered a transcript that is now stale
