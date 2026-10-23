@@ -14,7 +14,7 @@ import { type GenerationCreatedEvent, RealtimeModel, RealtimeSession } from '../
 import { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { TTS } from '../tts/tts.js';
-import { Future } from '../utils.js';
+import { Future, Task } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
@@ -534,6 +534,117 @@ it.each(
       release.resolve();
       end();
       await session.close();
+    }
+  },
+);
+
+it.each(
+  ['text', 'fallback TTS'].flatMap((mode) =>
+    ['interruption', 'session close'].map((ending) => ({ mode, ending })),
+  ),
+)(
+  'releases pending public realtime transcription setup with $mode on $ending',
+  async ({ mode, ending }) => {
+    const waiting = new Future<void>();
+    let setupExited = false;
+    const tasks: Task<unknown>[] = [];
+    const from = Task.from;
+    const spy = vi.spyOn(Task, 'from').mockImplementation((fn, controller, name) => {
+      const task = from.call(Task, fn, controller, name);
+      tasks.push(task);
+      return task;
+    });
+    const agent = Agent.create({
+      instructions: 'test',
+      async transcriptionNode(_ctx, text) {
+        const input = text[Symbol.asyncIterator]();
+        const first = await input.next();
+        waiting.resolve();
+        try {
+          await input.next();
+        } finally {
+          setupExited = true;
+        }
+        return (async function* () {
+          if (!first.done) yield first.value;
+          for await (const chunk of text) yield chunk;
+        })();
+      },
+    });
+    agent.ttsNode = async (text) =>
+      (text as ReadableStream<string>).pipeThrough(
+        new TransformStream<string, AudioFrame>({
+          transform(_text, controller) {
+            controller.enqueue(new AudioFrame(new Int16Array(480), 24000, 1, 480));
+          },
+        }),
+      );
+    class Model extends TTS {
+      label = 'cooperative';
+      constructor() {
+        super(24000, 1, { streaming: true });
+      }
+      synthesize(): never {
+        throw new Error('unused');
+      }
+      stream(): never {
+        throw new Error('unused');
+      }
+    }
+    class Output extends TextOutput {
+      chunks: string[] = [];
+      async captureText(text: string) {
+        this.chunks.push(text);
+      }
+      flush() {}
+    }
+    const model = new FakeRealtimeModel(false);
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      tts: mode === 'fallback TTS' ? new Model() : undefined,
+      ttsTextTransforms: [],
+    });
+    const text = new Output();
+    const audio = new TracingAudioOutput();
+    session.output.transcription = text;
+    if (mode === 'fallback TTS') session.output.audio = audio;
+    let ended = false;
+    const end = () => {
+      if (ended) return;
+      ended = true;
+      model.activeSession?.endSpeech();
+    };
+    try {
+      await session.start({ agent });
+      model.activeSession.modalities = ['text'];
+      const speech = session.generateReply();
+      await waiting.await;
+      if (ending === 'interruption') {
+        speech.interrupt();
+        await expect
+          .poll(() => speech._tasks.every((task) => task.done), { timeout: 1000 })
+          .toBe(true);
+      } else await session.close();
+      expect(setupExited).toBe(true);
+      expect(model.activeSession.text).toBeUndefined();
+      expect(speech._tasks.every((task) => task.done)).toBe(true);
+      await session.close();
+      expect(tasks.every((task) => task.done)).toBe(true);
+      const history = session.history.toJSON();
+      const frames = audio.frames;
+      end();
+      await setImmediate();
+      expect(text.chunks).toEqual([]);
+      expect(audio.frames).toBe(frames);
+      expect(session.history.toJSON()).toEqual(history);
+    } finally {
+      try {
+        end();
+        await session.close();
+      } finally {
+        spy.mockRestore();
+      }
     }
   },
 );
