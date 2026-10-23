@@ -6836,6 +6836,8 @@ export class SessionHost {
     // (undocumented)
     close(): Promise<void>;
     // @internal
+    _holdForSimulationFinalize(): Promise<void>;
+    // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
     // @internal
     _onEotPrediction(event: EotPredictionEvent): void;

@@ -28,7 +28,7 @@ import type {
 } from '../metrics/model_usage.js';
 import { encodeChatItem, msToTimestamp } from '../proto.js';
 import type { SimulationContext } from '../simulation.js';
-import { Future, Task, asError, shortuuid } from '../utils.js';
+import { Event, Future, Task, asError, shortuuid, waitUntilTimeout } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
@@ -370,6 +370,9 @@ export class TcpSessionTransport extends SessionTransport {
 // ===========================================================================
 // Enum maps
 // ===========================================================================
+// the simulator judges the run (a few LLM calls) before it sends finalize_simulation
+const SIMULATION_FINALIZE_TIMEOUT = 10_000;
+
 const AGENT_STATE_MAP: Record<AgentState, pb.AgentState> = {
   initializing: pb.AgentState.AS_INITIALIZING,
   idle: pb.AgentState.AS_IDLE,
@@ -562,6 +565,9 @@ export class SessionHost {
   private eventsRegistered = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
+  // set once the simulator no longer needs this channel after the session ends
+  private readonly simulationReleased = new Event();
+  private sessionEnded = false;
 
   constructor(
     transport: SessionTransport,
@@ -596,6 +602,20 @@ export class SessionHost {
     this.started = true;
     await this.transport.start();
     this.recvTask = Task.from(async () => this.recvLoop());
+  }
+
+  /**
+   * @internal — under a simulation, keep serving requests past the session's end
+   * until the simulator finalizes: it asks for the onSimulationEnd verdict only
+   * after the run is over, which an agent ending the call is.
+   */
+  async _holdForSimulationFinalize(): Promise<void> {
+    if (!getJobContext(false)?.simulationContext()) return;
+
+    this.sessionEnded = true;
+    await waitUntilTimeout(this.simulationReleased.wait(), SIMULATION_FINALIZE_TIMEOUT).catch(
+      () => {},
+    );
   }
 
   async close(): Promise<void> {
@@ -888,6 +908,12 @@ export class SessionHost {
       case 'getAgentInfo':
         return this.handleGetAgentInfo(req.requestId);
       case 'runInput':
+        if (this.sessionEnded) {
+          // the simulator is still driving turns and has yet to notice the call ended;
+          // leaving unanswered is how it learns, and an error would read as an agent fault
+          this.simulationReleased.set();
+          return;
+        }
         return this.handleRunInput(req.requestId, req.request.value);
       case 'getSessionState':
         return this.handleGetSessionState(req.requestId);
@@ -951,7 +977,7 @@ export class SessionHost {
         reason: simCtx.userVerdict.reason,
       });
     }
-    return this.sendResponse(
+    await this.sendResponse(
       requestId,
       {
         case: 'finalizeSimulation',
@@ -959,6 +985,7 @@ export class SessionHost {
       },
       simError,
     );
+    this.simulationReleased.set();
   }
 
   private async handleUpdateIo(
