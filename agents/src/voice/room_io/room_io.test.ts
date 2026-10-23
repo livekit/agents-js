@@ -175,8 +175,10 @@ describe('RoomIO participant disconnect event', () => {
 it('runs disconnect cleanup and close behavior before notifying throwing listeners', async () => {
   const room = createFakeRoom();
   const session = createFakeSession();
+  const listenerError = new Error('listener failure');
+  const errorSpy = vi.spyOn(log(), 'error');
   session.on(AgentSessionEventTypes.ParticipantDisconnected, () => {
-    throw new Error('listener failure');
+    throw listenerError;
   });
   const roomIO = new RoomIO({
     agentSession: session as unknown as RoomIOArgs['agentSession'],
@@ -198,17 +200,20 @@ it('runs disconnect cleanup and close behavior before notifying throwing listene
     attributes: {},
   });
 
-  expect(() =>
-    (disconnectListener as (participant: unknown) => void)({
-      identity: 'linked',
-      disconnectReason: DisconnectReason.CLIENT_INITIATED,
-    }),
-  ).toThrow('listener failure');
+  (disconnectListener as (participant: unknown) => void)({
+    identity: 'linked',
+    disconnectReason: DisconnectReason.CLIENT_INITIATED,
+  });
+  expect(errorSpy).toHaveBeenCalledWith(
+    { error: listenerError },
+    'ParticipantDisconnected listener threw an error',
+  );
   expect(session._closeSoon).toHaveBeenCalledWith({
     reason: CloseReason.PARTICIPANT_DISCONNECTED,
   });
   expect(Reflect.get(roomIO, 'participantAvailableFuture').done).toBe(false);
   await roomIO.close();
+  errorSpy.mockRestore();
 });
 
 describe('RoomIO agent state attributes', () => {
