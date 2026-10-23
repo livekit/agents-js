@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, DisconnectReason, RoomEvent } from '@livekit/rtc-node';
 import { ROOT_CONTEXT, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
@@ -13,7 +13,12 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { setTracerProvider, tracer } from '../../telemetry/index.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import { AgentSessionEventTypes, CloseReason, createCloseEvent } from '../events.js';
+import {
+  AgentSessionEventTypes,
+  CloseReason,
+  type ParticipantDisconnectedEvent,
+  createCloseEvent,
+} from '../events.js';
 import { AudioInput, AudioOutput, TextOutput } from '../io.js';
 import type { TimedString } from '../io.js';
 import { RoomIO } from './room_io.js';
@@ -105,6 +110,50 @@ function createFakeSession(llm?: RealtimeModel): FakeSession {
     _closeSoon: vi.fn(),
   };
 }
+
+describe('RoomIO participant disconnect event', () => {
+  it('emits details only for the linked participant and preserves close behavior', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const events: ParticipantDisconnectedEvent[] = [];
+    session.on(AgentSessionEventTypes.ParticipantDisconnected, (event) =>
+      events.push(event as ParticipantDisconnectedEvent),
+    );
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false, participantIdentity: 'linked' },
+      outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+    });
+
+    roomIO.start();
+    const listener = room.on.mock.calls.find(
+      ([event]) => event === RoomEvent.ParticipantDisconnected,
+    )?.[1];
+    expect(listener).toBeDefined();
+    (listener as (participant: unknown) => void)({
+      identity: 'other',
+      disconnectReason: DisconnectReason.CLIENT_INITIATED,
+    });
+    (listener as (participant: unknown) => void)({
+      identity: 'linked',
+      disconnectReason: DisconnectReason.CLIENT_INITIATED,
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'participant_disconnected',
+      participantIdentity: 'linked',
+      disconnectReason: DisconnectReason.CLIENT_INITIATED,
+      participantAttributes: expect.objectContaining({ identity: 'linked' }),
+    });
+    expect(events[0]!.createdAt).toEqual(expect.any(Number));
+    expect(session._closeSoon).toHaveBeenCalledWith({
+      reason: CloseReason.PARTICIPANT_DISCONNECTED,
+    });
+    await roomIO.close();
+  });
+});
 
 describe('RoomIO agent state attributes', () => {
   it('handles a failed update and publishes later state changes', async () => {

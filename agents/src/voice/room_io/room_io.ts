@@ -33,6 +33,7 @@ import {
   CloseReason,
   type ConversationItemAddedEvent,
   type UserInputTranscribedEvent,
+  createParticipantDisconnectedEvent,
 } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
 import type { TextInputCallback } from '../remote_session.js';
@@ -296,6 +297,16 @@ export class RoomIO {
     if (participant.identity !== this.participantIdentity) {
       return;
     }
+    this.agentSession.emit(
+      AgentSessionEventTypes.ParticipantDisconnected,
+      createParticipantDisconnectedEvent({
+        participantIdentity: participant.identity,
+        disconnectReason: participant.disconnectReason ?? DisconnectReason.UNKNOWN_REASON,
+        participantAttributes: {
+          ...(participantAttributes(participant) as Record<string, string | number | boolean>),
+        },
+      }),
+    );
     this.agentSession._addSessionEvent?.('participant_disconnected', {
       ...(participantAttributes(participant) as Record<string, string>),
       [traceTypes.ATTR_DISCONNECT_REASON]:
