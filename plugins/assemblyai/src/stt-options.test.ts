@@ -155,6 +155,24 @@ describe('AssemblyAI streaming configuration', () => {
     );
   });
 
+  it('reports interim results only when partial turns are emitted', () => {
+    expect(new STT({ apiKey: 'test' }).capabilities.interimResults).toBe(true);
+    expect(new STT({ apiKey: 'test', redactPii: true }).capabilities.interimResults).toBe(false);
+    expect(
+      new STT({ apiKey: 'test', redactPii: true, includePartialTurns: true }).capabilities
+        .interimResults,
+    ).toBe(true);
+    expect(
+      new STT({ apiKey: 'test', includePartialTurns: false }).capabilities.interimResults,
+    ).toBe(false);
+
+    const updated = new STT({ apiKey: 'test' });
+    updated.updateOptions({ redactPii: true });
+    expect(updated.capabilities.interimResults).toBe(false);
+    updated.updateOptions({ includePartialTurns: true });
+    expect(updated.capabilities.interimResults).toBe(true);
+  });
+
   it('enables carryover for the existing default model, with explicit opt-out', () => {
     expect(new STT({ apiKey: 'test' }).capabilities.chatContext).toBe(true);
     expect(new STT({ apiKey: 'test', agentContextCarryover: false }).capabilities.chatContext).toBe(

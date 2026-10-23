@@ -97,6 +97,10 @@ function validateRedactionOptions(opts: Partial<STTOptions>): void {
   }
 }
 
+function emitsPartialTurns(opts: Pick<STTOptions, 'includePartialTurns' | 'redactPii'>): boolean {
+  return opts.includePartialTurns ?? opts.redactPii !== true;
+}
+
 function normalizeUpdateOptions(
   opts: Partial<STTOptions>,
   speechModel: STTModels,
@@ -288,7 +292,7 @@ export class STT extends stt.STT {
     }
     super({
       streaming: true,
-      interimResults: true,
+      interimResults: emitsPartialTurns(opts),
       alignedTranscript: 'word',
       keyterms: true,
       diarization: opts.speakerLabels === true,
@@ -335,6 +339,7 @@ export class STT extends stt.STT {
       nextOpts.keytermsPrompt = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
     }
     this.#opts = { ...this.#opts, ...nextOpts };
+    this.updateCapabilities({ interimResults: emitsPartialTurns(this.#opts) });
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
