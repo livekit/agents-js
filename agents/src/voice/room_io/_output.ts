@@ -50,6 +50,8 @@ export interface TranscriptionOutputOptions {
    * `<break time="1s"/>` should not have it silently deleted.
    */
   expressiveEnabled?: () => boolean;
+  /** Stamp transcripts with this publication instead of resolving a microphone track. */
+  trackSid?: string | null;
 }
 
 abstract class BaseParticipantTranscriptionOutput extends TextOutput {
@@ -57,6 +59,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected isDeltaStream: boolean;
   protected participantIdentity: string | null = null;
   protected trackId?: string;
+  protected pinnedTrackId?: string;
   protected capturing: boolean = false;
   protected latestText: string = '';
   protected currentId: string = this.generateCurrentId();
@@ -73,6 +76,8 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
     this.room = room;
     this.isDeltaStream = isDeltaStream;
     this.expressiveEnabled = options.expressiveEnabled ?? (() => false);
+    this.pinnedTrackId = options.trackSid ?? undefined;
+    this.trackId = this.pinnedTrackId;
 
     this.room.on(RoomEvent.TrackPublished, this.onTrackPublished);
     this.room.on(RoomEvent.LocalTrackPublished, this.onLocalTrackPublished);
@@ -81,37 +86,93 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   }
 
   setParticipant(participant: Participant | string | null) {
-    if (typeof participant === 'string' || participant === null) {
-      this.participantIdentity = participant;
-    } else {
-      this.participantIdentity = participant.identity;
-    }
+    const participantIdentity =
+      typeof participant === 'string' || participant === null ? participant : participant.identity;
+
+    // Finalization is asynchronous, so snapshot the old link before exposing the new identity.
+    this.flush();
+    this.participantIdentity = participantIdentity;
 
     if (!this.participantIdentity) {
+      if (this.pinnedTrackId === undefined) this.trackId = undefined;
+      this.resetState();
       return;
     }
 
-    try {
-      this.trackId = findMicrophoneTrackId(this.room, this.participantIdentity);
-    } catch (error) {
-      // track id is optional for TextStream when audio is not published
+    if (this.pinnedTrackId === undefined) {
+      try {
+        this.trackId = findMicrophoneTrackId(this.room, this.participantIdentity);
+      } catch (error) {
+        // track id is optional for TextStream when audio is not published
+        this.trackId = undefined;
+      }
     }
 
+    this.resetState();
+  }
+
+  /**
+   * Atomically move subsequent transcript segments to a participant and exact publication.
+   *
+   * The open segment is finalized before either field changes, so its closing packet retains
+   * both the old sender and old track.
+   */
+  setLink(participant: Participant | string | null, trackSid: string | null): void {
+    const participantIdentity =
+      typeof participant === 'string' || participant === null ? participant : participant.identity;
     this.flush();
+    this.participantIdentity = participantIdentity;
+    this.pinnedTrackId = trackSid ?? undefined;
+    this.trackId = this.pinnedTrackId;
+    this.onParticipantSelected(participantIdentity);
+    this.resetState();
+  }
+
+  /**
+   * Stamp subsequent transcript segments with an exact publication.
+   *
+   * Passing `null` restores microphone-track resolution from the linked participant. Any open
+   * segment is finalized with its previous participant and track before the new stamp applies.
+   */
+  setTrack(trackSid: string | null): void {
+    const pinned = trackSid ?? undefined;
+    if (this.pinnedTrackId === pinned) return;
+
+    this.flush();
+    this.pinnedTrackId = pinned;
+    if (pinned === undefined) {
+      this.setParticipant(this.participantIdentity);
+      return;
+    }
+    this.trackId = pinned;
     this.resetState();
   }
 
   protected onTrackPublished = (track: RemoteTrackPublication, participant: RemoteParticipant) => {
     if (
       !this.participantIdentity ||
-      participant.identity !== this.participantIdentity ||
+      !this.acceptsTrackParticipant(participant) ||
       track.source !== TrackSource.SOURCE_MICROPHONE
     ) {
       return;
     }
 
+    if (this.pinnedTrackId !== undefined) return;
+
     this.trackId = track.sid;
+    this.onTrackSelected(participant);
   };
+
+  /** @internal */
+  protected acceptsTrackParticipant(participant: RemoteParticipant): boolean {
+    return participant.identity === this.participantIdentity;
+  }
+
+  /** @internal */
+  protected onTrackSelected(_participant: RemoteParticipant): void {}
+
+  /** @internal */
+  protected onParticipantSelected(_participantIdentity: string | null): void {}
 
   protected onLocalTrackPublished = (track: LocalTrackPublication | undefined) => {
     if (!track) {
@@ -126,6 +187,8 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
     ) {
       return;
     }
+
+    if (this.pinnedTrackId !== undefined) return;
 
     this.trackId = track.sid;
   };
@@ -299,8 +362,21 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     const remaining = expressive && this.isDeltaStream ? this.stripper.flush() : '';
     const tags = !expressive ? [] : this.isDeltaStream ? this.stripper.tags : this.segmentTags;
     const pendingText = remaining ? this.encode(remaining) : '';
+    const trackId = this.trackId;
+    const senderIdentity = this.participantIdentity;
+    const segmentId = this.currentId;
+    const latestText = this.latestText;
     this.flushTask = Task.from((controller) =>
-      this.flushTaskImpl(currWriter, controller.signal, expressionAttribute(tags), pendingText),
+      this.flushTaskImpl(
+        currWriter,
+        controller.signal,
+        expressionAttribute(tags),
+        pendingText,
+        trackId,
+        senderIdentity,
+        segmentId,
+        latestText,
+      ),
     );
   }
 
@@ -313,8 +389,11 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   private async createTextWriter(
     attributes?: Record<string, string>,
     extra?: Record<string, string>,
+    senderIdentity = this.participantIdentity,
+    segmentId = this.currentId,
+    trackId = this.trackId,
   ): Promise<TextStreamWriter> {
-    if (!this.participantIdentity) {
+    if (!senderIdentity) {
       throw new Error('participantIdentity not found');
     }
 
@@ -326,11 +405,11 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       attributes = {
         [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'false',
       };
-      if (this.trackId) {
-        attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
+      if (trackId) {
+        attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = trackId;
       }
     }
-    attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = this.currentId;
+    attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = segmentId;
     // overlaid rather than replacing, so the caller can add a key without dropping the
     // transcription attributes the protocol requires
     if (extra) {
@@ -339,7 +418,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
 
     return await this.room.localParticipant.streamText({
       topic: TOPIC_TRANSCRIPTION,
-      senderIdentity: this.participantIdentity,
+      senderIdentity,
       attributes,
     });
   }
@@ -349,12 +428,16 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     signal: AbortSignal,
     extraAttributes?: Record<string, string>,
     pendingText = '',
+    trackId = this.trackId,
+    senderIdentity = this.participantIdentity,
+    segmentId = this.currentId,
+    latestText = this.latestText,
   ): Promise<void> {
     const attributes: Record<string, string> = {
       [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'true',
     };
-    if (this.trackId) {
-      attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
+    if (trackId) {
+      attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = trackId;
     }
     for (const [key, value] of Object.entries(extraAttributes ?? {})) {
       attributes[key] ??= value;
@@ -372,7 +455,10 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
           // than dropping the transcript
           let deltaWriter: TextStreamWriter | null = writer;
           if (!deltaWriter && pendingText) {
-            const opened = await Promise.race([this.createTextWriter(attributes), abortPromise]);
+            const opened = await Promise.race([
+              this.createTextWriter(attributes, undefined, senderIdentity, segmentId, trackId),
+              abortPromise,
+            ]);
             if (signal.aborted || !opened) {
               return;
             }
@@ -385,11 +471,14 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
             await Promise.race([deltaWriter.close(), abortPromise]);
           }
         } else {
-          const tmpWriter = await Promise.race([this.createTextWriter(attributes), abortPromise]);
+          const tmpWriter = await Promise.race([
+            this.createTextWriter(attributes, undefined, senderIdentity, segmentId, trackId),
+            abortPromise,
+          ]);
           if (signal.aborted || !tmpWriter) {
             return;
           }
-          await Promise.race([tmpWriter.write(this.latestText), abortPromise]);
+          await Promise.race([tmpWriter.write(latestText), abortPromise]);
           if (signal.aborted) {
             return;
           }
@@ -398,6 +487,18 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       }
     } catch (error) {
       this.logger.error(error, 'failed to publish transcription');
+    }
+  }
+
+  /** Stop publishing and release listeners and any open text writer. */
+  async close(): Promise<void> {
+    this.room.off(RoomEvent.TrackPublished, this.onTrackPublished);
+    this.room.off(RoomEvent.LocalTrackPublished, this.onLocalTrackPublished);
+    if (this.flushTask) await this.flushTask.result;
+    if (this.writer) {
+      const writer = this.writer;
+      this.writer = null;
+      await writer.close();
     }
   }
 }
@@ -439,9 +540,34 @@ function legacyTranscriptionNeeded(room: Room): boolean {
 export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscriptionOutput {
   private pushedText: string = '';
   private flushTask: Promise<void> | null = null;
+  private representedBy!: string | null;
   /** the last status written to the log, so only transitions are logged. This never takes part
    * in the decision itself. */
   private legacyStatusLogged: boolean | null = null;
+
+  override setParticipant(participant: Participant | string | null): void {
+    super.setParticipant(participant);
+    this.representedBy =
+      typeof participant === 'string' || participant === null ? participant : participant.identity;
+  }
+
+  /** @internal */
+  protected override acceptsTrackParticipant(participant: RemoteParticipant): boolean {
+    return (
+      participant.identity === this.participantIdentity ||
+      participant.attributes[ATTRIBUTE_PUBLISH_ON_BEHALF] === this.participantIdentity
+    );
+  }
+
+  /** @internal */
+  protected override onTrackSelected(participant: RemoteParticipant): void {
+    this.representedBy = participant.identity;
+  }
+
+  /** @internal */
+  protected override onParticipantSelected(participantIdentity: string | null): void {
+    this.representedBy = participantIdentity;
+  }
 
   protected async handleCaptureText(text: string): Promise<void> {
     if (!this.trackId) {
@@ -482,7 +608,17 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
       return;
     }
 
-    this.flushTask = this.publishTranscription(this.currentId, this.visibleText(), true);
+    this.flushTask = this.publishTranscriptionSnapshot(
+      this.currentId,
+      this.visibleText(),
+      true,
+      undefined,
+      {
+        participantIdentity: this.participantIdentity,
+        trackId: this.trackId,
+        representedBy: this.representedBy,
+      },
+    );
     this.resetState();
   }
 
@@ -500,7 +636,28 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
   }
 
   async publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal) {
-    if (!this.participantIdentity || !this.trackId) {
+    await this.publishTranscriptionSnapshot(id, text, final, signal, {
+      participantIdentity: this.participantIdentity,
+      trackId: this.trackId,
+      representedBy: this.representedBy,
+    });
+  }
+
+  private async publishTranscriptionSnapshot(
+    id: string,
+    text: string,
+    final: boolean,
+    signal: AbortSignal | undefined,
+    snapshot: {
+      participantIdentity: string | null;
+      trackId?: string;
+      representedBy?: string | null;
+    },
+  ) {
+    const participantIdentity = snapshot.participantIdentity;
+    const trackId = snapshot.trackId;
+    const representedBy = snapshot.representedBy;
+    if (!participantIdentity || !trackId) {
       return;
     }
 
@@ -519,8 +676,8 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
         }
 
         await this.room.localParticipant?.publishTranscription({
-          participantIdentity: this.participantIdentity,
-          trackSid: this.trackId,
+          participantIdentity: representedBy ?? participantIdentity,
+          trackSid: trackId,
           segments: [{ id, text, final, startTime: BigInt(0), endTime: BigInt(0), language: '' }],
         });
       }
@@ -532,6 +689,13 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
   protected resetState() {
     super.resetState();
     this.pushedText = '';
+  }
+
+  /** Stop publishing and release room listeners. */
+  async close(): Promise<void> {
+    this.room.off(RoomEvent.TrackPublished, this.onTrackPublished);
+    this.room.off(RoomEvent.LocalTrackPublished, this.onLocalTrackPublished);
+    if (this.flushTask) await this.flushTask;
   }
 }
 
@@ -546,12 +710,25 @@ export class ParalellTextOutput extends TextOutput {
 
   async captureText(text: string | TimedString) {
     await Promise.all(this._sinks.map((sink) => sink.captureText(text)));
+    await this.nextInChain?.captureText(text);
   }
 
   flush() {
     for (const sink of this._sinks) {
       sink.flush();
     }
+    this.nextInChain?.flush();
+  }
+
+  /** Close child sinks that own room resources. */
+  async close(): Promise<void> {
+    await Promise.all(
+      this._sinks.map((sink) =>
+        'close' in sink && typeof sink.close === 'function'
+          ? (sink.close as () => Promise<void>)()
+          : Promise.resolve(),
+      ),
+    );
   }
 }
 
@@ -560,6 +737,8 @@ export interface AudioOutputOptions {
   numChannels: number;
   trackPublishOptions: TrackPublishOptions;
   queueSizeMs?: number;
+  /** Name of the published audio track. */
+  trackName?: string;
 }
 export class ParticipantAudioOutput extends AudioOutput {
   private room: Room;
@@ -578,6 +757,8 @@ export class ParticipantAudioOutput extends AudioOutput {
   private forwardingIdleFuture: Future<void> = new Future();
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
+  private closedFuture: Future<void> = new Future();
+  private closed = false;
   // playbackStarted fires once per segment; a mid-segment pause/resume does not re-arm this.
   private firstFrameEmitted: boolean = false;
   /** Gate held closed while the output is paused; frame forwarding awaits it. */
@@ -652,10 +833,14 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
+    if (this.closed) return;
     const interruptionGeneration = this.interruptionGeneration;
     if (!this.startedFuture.done) {
-      await this.startedFuture.await;
-      if (interruptionGeneration !== this.interruptionGeneration) {
+      await Promise.race([
+        this.startedFuture.await,
+        this.closedFuture?.await ?? new Promise<void>(() => {}),
+      ]);
+      if (this.closed || interruptionGeneration !== this.interruptionGeneration) {
         return;
       }
     }
@@ -796,7 +981,10 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   private async publishTrack(signal: AbortSignal) {
-    const track = LocalAudioTrack.createAudioTrack('roomio_audio', this.audioSource);
+    const track = LocalAudioTrack.createAudioTrack(
+      this.options.trackName ?? 'roomio_audio',
+      this.audioSource,
+    );
     this.publication = await this.room.localParticipant?.publishTrack(
       track,
       this.options.trackPublishOptions ??
@@ -807,7 +995,18 @@ export class ParticipantAudioOutput extends AudioOutput {
       return;
     }
 
-    await this.publication?.waitForSubscription();
+    if (this.publication) {
+      await Promise.race([
+        this.publication.waitForSubscription(),
+        new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener('abort', () => resolve(), { once: true });
+        }),
+        this.closedFuture?.await ?? new Promise<void>(() => {}),
+      ]);
+    }
+
+    if (signal.aborted || this.closed) return;
 
     if (!this.startedFuture.done) {
       this.startedFuture.resolve();
@@ -815,6 +1014,10 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   async close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.closedFuture.resolve();
+    this.clearBuffer();
     await this.audioSource.close();
   }
 }

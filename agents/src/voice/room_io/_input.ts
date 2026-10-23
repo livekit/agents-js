@@ -25,11 +25,14 @@ export class ParticipantAudioInputStream extends AudioInput {
   private room: Room;
   private sampleRate: number;
   private numChannels: number;
+  private frameSizeMs: number;
   private noiseCancellation?: NoiseCancellationOptions;
   private frameProcessor?: FrameProcessor<AudioFrame>;
   private publication: RemoteTrackPublication | null = null;
   private track: RemoteTrack | null = null;
   private participantIdentity: string | null = null;
+  private trackSid: string | null = null;
+  private acceptedSources: Set<TrackSource>;
   private currentInput: {
     id: string;
     stream: ReadableStream<AudioFrame>;
@@ -53,16 +56,25 @@ export class ParticipantAudioInputStream extends AudioInput {
     sampleRate,
     numChannels,
     noiseCancellation,
+    trackSource = TrackSource.SOURCE_MICROPHONE,
+    frameSizeMs = 50,
   }: {
     room: Room;
     sampleRate: number;
     numChannels: number;
     noiseCancellation?: NoiseCancellationOptions | FrameProcessor<AudioFrame>;
+    /** Track sources accepted when no exact publication is pinned. */
+    trackSource?: TrackSource | TrackSource[];
+    /** Audio frame duration in milliseconds. Defaults to 50. */
+    frameSizeMs?: number;
   }) {
     super();
     this.room = room;
     this.sampleRate = sampleRate;
     this.numChannels = numChannels;
+    if (frameSizeMs <= 0) throw new Error('frameSizeMs must be greater than 0');
+    this.frameSizeMs = frameSizeMs;
+    this.acceptedSources = new Set(Array.isArray(trackSource) ? trackSource : [trackSource]);
     if (isFrameProcessor<FrameProcessor<AudioFrame>>(noiseCancellation)) {
       this.frameProcessor = noiseCancellation;
     } else {
@@ -72,6 +84,27 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.on(RoomEvent.TrackUnsubscribed, this.onTrackUnsubscribed);
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
+  }
+
+  /**
+   * Pin this input to one publication of the linked participant.
+   *
+   * Passing `null` restores source-based selection.
+   */
+  setTrackSid(trackSid: string | null): void {
+    if (this.trackSid === trackSid) return;
+
+    this.trackSid = trackSid;
+    this.closeStream();
+    if (!this.participantIdentity) return;
+
+    const participant = this.room.remoteParticipants.get(this.participantIdentity);
+    if (!participant) return;
+    for (const publication of participant.trackPublications.values()) {
+      if (publication.track) {
+        this.onTrackSubscribed(publication.track, publication, participant);
+      }
+    }
   }
 
   setParticipant(participant: RemoteParticipant | string | null) {
@@ -113,9 +146,13 @@ export class ParticipantAudioInputStream extends AudioInput {
     // in case we miss the tracksubscribed event
     if (participantValue) {
       for (const publication of participantValue.trackPublications.values()) {
-        if (publication.track && publication.source === TrackSource.SOURCE_MICROPHONE) {
+        if (
+          publication.track &&
+          this.acceptedSources.has(publication.source ?? TrackSource.SOURCE_UNKNOWN) &&
+          (this.trackSid === null || publication.sid === this.trackSid)
+        ) {
           this.onTrackSubscribed(publication.track, publication, participantValue);
-          break;
+          if (this.trackSid === null) break;
         }
       }
     }
@@ -208,7 +245,7 @@ export class ParticipantAudioInputStream extends AudioInput {
         [traceTypes.ATTR_TRACK_SID]: publication.sid ?? '',
         [traceTypes.ATTR_TRACK_SOURCE]:
           publication.source !== undefined
-            ? TrackSource[publication.source] ?? String(publication.source)
+            ? (TrackSource[publication.source] ?? String(publication.source))
             : 'unknown',
       });
     }
@@ -301,7 +338,8 @@ export class ParticipantAudioInputStream extends AudioInput {
     if (
       this.closed ||
       this.participantIdentity !== participant.identity ||
-      publication.source !== TrackSource.SOURCE_MICROPHONE ||
+      !this.acceptedSources.has(publication.source ?? TrackSource.SOURCE_UNKNOWN) ||
+      (this.trackSid !== null && publication.sid !== this.trackSid) ||
       (this.publication?.sid === publication.sid && this.track === track)
     ) {
       return false;
@@ -340,6 +378,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     return new AudioStream(track, {
       sampleRate: this.sampleRate,
       numChannels: this.numChannels,
+      frameSizeMs: this.frameSizeMs,
       noiseCancellation: this.frameProcessor || this.noiseCancellation,
       // Don't let the AudioStream close the processor when the track switches —
       // this input stream owns the processor across track changes and closes it

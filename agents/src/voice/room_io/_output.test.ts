@@ -73,6 +73,8 @@ type TestParticipantAudioOutput = ParticipantAudioOutput & {
   startedFuture: Future<void>;
   playbackEnabledFuture: Future<void>;
   interruptedFuture: Future<void>;
+  closedFuture: Future<void>;
+  closed: boolean;
   forwardingIdleFuture: Future<void>;
   firstFrameEmitted: boolean;
   pushedDuration: number;
@@ -848,6 +850,61 @@ describe('ParticipantAudioOutput publishTrack', () => {
 
     expect(publishTrack).toHaveBeenCalledWith(fakeTrack, trackPublishOptions);
     expect(output.startedFuture.done).toBe(true);
+  });
+
+  it('stops waiting for subscription when startup is aborted', async () => {
+    const output = Object.create(ParticipantAudioOutput.prototype) as ParticipantAudioOutput & {
+      options: { trackPublishOptions: TrackPublishOptions };
+      audioSource: unknown;
+      startedFuture: Future<void>;
+      closedFuture: Future<void>;
+      closed: boolean;
+      room: unknown;
+      publishTrack: (signal: AbortSignal) => Promise<void>;
+    };
+    const fakeTrack = {} as LocalAudioTrack;
+    const createAudioTrack = vi
+      .spyOn(LocalAudioTrack, 'createAudioTrack')
+      .mockReturnValue(fakeTrack);
+    const waitForSubscription = vi.fn(() => new Promise<void>(() => {}));
+    output.options = { trackPublishOptions: new TrackPublishOptions() };
+    output.audioSource = {};
+    output.startedFuture = new Future<void>();
+    output.closedFuture = new Future<void>();
+    output.closed = false;
+    output.room = {
+      localParticipant: { publishTrack: vi.fn(async () => ({ waitForSubscription })) },
+    };
+    const controller = new AbortController();
+
+    try {
+      const publishing = output.publishTrack(controller.signal);
+      await nextTick();
+      controller.abort();
+      await publishing;
+    } finally {
+      createAudioTrack.mockRestore();
+    }
+
+    expect(waitForSubscription).toHaveBeenCalledOnce();
+    expect(output.startedFuture.done).toBe(false);
+  });
+
+  it('releases captures waiting for startup when closed', async () => {
+    const source = new QueuedAudioSource() as QueuedAudioSource & { close: () => Promise<void> };
+    source.close = vi.fn(async () => {});
+    const output = makeTestOutput(source);
+    output.startedFuture = new Future<void>();
+    output.closedFuture = new Future<void>();
+    output.closed = false;
+
+    const capture = output.captureFrame(audioFrame(20));
+    await nextTick();
+    await output.close();
+    await capture;
+
+    expect(source.captured).toEqual([]);
+    expect(source.close).toHaveBeenCalledOnce();
   });
 });
 

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   AudioFrame,
+  AudioStream,
   type FrameProcessor,
   type RemoteTrack,
   type RemoteTrackPublication,
@@ -317,6 +318,61 @@ describe('ParticipantAudioInputStream', () => {
 
     source.controller().close();
     reader.releaseLock();
+    await input.close();
+  });
+
+  it('pins an exact screenshare publication and applies the configured frame size', async () => {
+    const micSource = createAudioStream();
+    const screenSource = createAudioStream();
+    // Only the pinned stream is opened; keep one source available for it.
+    audioStreams.push(screenSource.stream);
+    const micTrack = { sid: 'mic-media' } as RemoteTrack;
+    const screenTrack = { sid: 'screen-media' } as RemoteTrack;
+    const mic = {
+      sid: 'microphone-track',
+      source: TrackSource.SOURCE_MICROPHONE,
+      track: micTrack,
+    } as RemoteTrackPublication;
+    const screen = {
+      sid: 'screenshare-track',
+      source: TrackSource.SOURCE_SCREENSHARE_AUDIO,
+      track: screenTrack,
+    } as RemoteTrackPublication;
+    const participant = {
+      identity: 'caller',
+      trackPublications: new Map([
+        [mic.sid, mic],
+        [screen.sid, screen],
+      ]),
+    };
+    const emitter = new EventEmitter();
+    const room = {
+      remoteParticipants: new Map([[participant.identity, participant]]),
+      on: vi.fn((event, listener) => emitter.on(event, listener)),
+      off: vi.fn((event, listener) => emitter.off(event, listener)),
+    };
+    const input = new ParticipantAudioInputStream({
+      room: room as unknown as Room,
+      sampleRate: 24000,
+      numChannels: 1,
+      frameSizeMs: 30,
+      trackSource: [TrackSource.SOURCE_MICROPHONE, TrackSource.SOURCE_SCREENSHARE_AUDIO],
+    });
+
+    input.setTrackSid('screenshare-track');
+    input.setParticipant('caller');
+
+    expect(Reflect.get(input, 'publication')).toBe(screen);
+    await vi.waitFor(() =>
+      expect(AudioStream).toHaveBeenCalledWith(
+        screenTrack,
+        expect.objectContaining({ frameSizeMs: 30 }),
+      ),
+    );
+    expect(AudioStream).not.toHaveBeenCalledWith(micTrack, expect.anything());
+
+    screenSource.controller().close();
+    micSource.controller().close();
     await input.close();
   });
 });
