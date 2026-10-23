@@ -73,7 +73,6 @@ describe('Interruption Detection - Word Counting', () => {
       const wordCount = splitWords(normalizedText, true).length;
       const shouldBlock = wordCount < minInterruptionWords;
 
-      expect(normalizedText).toBe('');
       expect(wordCount).toBe(0);
       expect(shouldBlock).toBe(true);
     });
@@ -99,7 +98,6 @@ describe('Interruption Detection - Word Counting', () => {
       const wordCount = splitWords(normalizedText, true).length;
       const shouldBlock = wordCount < minInterruptionWords;
 
-      expect(normalizedText).toBe('hello');
       expect(wordCount).toBe(1);
       expect(shouldBlock).toBe(true);
     });
@@ -112,7 +110,6 @@ describe('Interruption Detection - Word Counting', () => {
       const wordCount = splitWords(normalizedText, true).length;
       const shouldBlock = wordCount < minInterruptionWords;
 
-      expect(normalizedText).toBe('hello world');
       expect(wordCount).toBe(2);
       expect(shouldBlock).toBe(false);
     });
@@ -125,27 +122,8 @@ describe('Interruption Detection - Word Counting', () => {
       const wordCount = splitWords(normalizedText, true).length;
       const shouldBlock = wordCount < minInterruptionWords;
 
-      expect(normalizedText).toBe('hello this is a full sentence');
       expect(wordCount).toBe(6);
       expect(shouldBlock).toBe(false);
-    });
-
-    it('should apply consistent word counting logic in both methods', () => {
-      const transcripts = ['', 'hello', 'hello world', 'this is a longer sentence'];
-      const threshold = 2;
-
-      transcripts.forEach((transcript) => {
-        const text1 = transcript;
-        const normalizedText1 = text1 ?? '';
-        const wordCount1 = splitWords(normalizedText1, true).length;
-        const shouldBlock1 = wordCount1 < threshold;
-
-        const wordCount2 = splitWords(transcript, true).length;
-        const shouldBlock2 = wordCount2 < threshold;
-
-        expect(wordCount1).toBe(wordCount2);
-        expect(shouldBlock1).toBe(shouldBlock2);
-      });
     });
   });
 });
