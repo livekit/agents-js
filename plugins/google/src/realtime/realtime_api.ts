@@ -1689,9 +1689,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       generationEvent.userInitiated = true;
       this.pendingGenerationFut.resolve(generationEvent);
       this.pendingGenerationFut = undefined;
-    } else {
+    } else if (!this.manualActivityDetection) {
       // emit input_speech_started event before starting an agent initiated generation
-      // to interrupt the previous audio playout if any
+      // to interrupt the previous audio playout if any. With manual activity it
+      // would open a user activity, and Gemini would cut this reply off.
       this.handleInputSpeechStarted();
     }
 
