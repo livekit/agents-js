@@ -30,6 +30,9 @@ export type {
   InstructionParts,
 } from './workflows/index.js';
 export { Instructions } from '../llm/index.js';
+/** Beta speech-to-speech translation primitives. */
+export * as translation from './translation/index.js';
+export { TranslationModel, TranslationSession } from './translation/index.js';
 export {
   END_CALL_DESCRIPTION,
   createEndCallTool,
