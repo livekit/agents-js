@@ -15,7 +15,7 @@ import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import { basic } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TTS_STARTED_TIME } from '../types.js';
-import { delay } from '../utils.js';
+import { Future, delay } from '../utils.js';
 import { FallbackAdapter } from './fallback_adapter.js';
 import { StreamAdapter } from './stream_adapter.js';
 import { ChunkedStream, SynthesizeStream, TTS, type TTSError } from './tts.js';
@@ -28,6 +28,7 @@ class MockSynthesizeStream extends SynthesizeStream {
   constructor(
     private mockTts: MockTTS,
     private shouldFail: boolean,
+    private blocked: boolean,
     connOptions?: APIConnectOptions,
   ) {
     super(mockTts, connOptions);
@@ -45,6 +46,14 @@ class MockSynthesizeStream extends SynthesizeStream {
   }
 
   protected async run(): Promise<void> {
+    this.mockTts.started.resolve();
+    if (this.blocked) {
+      if (this.abortSignal.aborted) return;
+      await new Promise<void>((resolve) => {
+        this.abortSignal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return;
+    }
     if (this.shouldFail) {
       if (this.mockTts.failAfterInput) {
         // Simulate a provider that receives text but dies before emitting
@@ -101,11 +110,21 @@ class MockChunkedStream extends ChunkedStream {
     private mockTts: MockTTS,
     text: string,
     private shouldFail: boolean,
+    private blocked: boolean,
     connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
   ) {
-    super(text, mockTts, connOptions);
+    super(text, mockTts, connOptions, abortSignal);
   }
   protected async run(): Promise<void> {
+    this.mockTts.started.resolve();
+    if (this.blocked) {
+      if (this.abortSignal.aborted) return;
+      await new Promise<void>((resolve) => {
+        this.abortSignal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return;
+    }
     if (this.shouldFail && !this.mockTts.failAfterAudio) {
       throw this.mockTts.failWith ?? new APIError('mock TTS failed immediately');
     }
@@ -140,6 +159,8 @@ class ScriptedChunkedStream extends ChunkedStream {
 class MockTTS extends TTS {
   label: string;
   shouldFail = false;
+  blocked = false;
+  started = new Future();
   /** When failing, first consume a token (and mark started) before throwing. */
   failAfterInput = false;
   /** When failing, first emit one frame of audio before throwing. */
@@ -151,18 +172,53 @@ class MockTTS extends TTS {
   /** The started time the stream recorded when it "sent" text to the provider. */
   lastMarkedTime?: number;
 
+  closeCount = 0;
+
   constructor(label: string, sampleRate: number = SAMPLE_RATE, streaming = true) {
     super(sampleRate, 1, { streaming });
     this.label = label;
   }
 
-  synthesize(text: string, connOptions?: APIConnectOptions): ChunkedStream {
-    return new MockChunkedStream(this, text, this.shouldFail, connOptions);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    return new MockChunkedStream(
+      this,
+      text,
+      this.shouldFail,
+      this.blocked,
+      connOptions,
+      abortSignal,
+    );
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
-    return new MockSynthesizeStream(this, this.shouldFail, options?.connOptions);
+    return new MockSynthesizeStream(this, this.shouldFail, this.blocked, options?.connOptions);
   }
+
+  override async close(): Promise<void> {
+    this.closeCount++;
+  }
+}
+
+function textInput(text = 'hello test'): ReadableStream<string> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(text);
+      controller.close();
+    },
+  });
+}
+
+async function consume(stream: SynthesizeStream): Promise<number> {
+  stream.updateInputStream(textInput());
+  let frames = 0;
+  for await (const event of stream) {
+    if (event !== SynthesizeStream.END_OF_STREAM) frames++;
+  }
+  return frames;
 }
 
 describe('TTS FallbackAdapter', () => {
@@ -179,6 +235,125 @@ describe('TTS FallbackAdapter', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('closes temporary stream adapters after each request', async () => {
+    const nonStreaming = new MockTTS('non-streaming', SAMPLE_RATE, false);
+    const adapter = new FallbackAdapter({ ttsInstances: [nonStreaming] });
+    const baseline = nonStreaming.listenerCount('metrics_collected');
+
+    try {
+      for (let i = 0; i < 3; i++) {
+        expect(await consume(adapter.stream())).toBeGreaterThan(0);
+        expect(nonStreaming.listenerCount('metrics_collected')).toBe(baseline);
+      }
+      expect(nonStreaming.closeCount).toBe(0);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it('closes a temporary stream adapter after failure and fallback', async () => {
+    const nonStreaming = new MockTTS('non-streaming', SAMPLE_RATE, false);
+    nonStreaming.shouldFail = true;
+    const adapter = new FallbackAdapter({
+      ttsInstances: [nonStreaming, new MockTTS('fallback')],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+    const baseline = nonStreaming.listenerCount('metrics_collected');
+
+    try {
+      expect(await consume(adapter.stream())).toBeGreaterThan(0);
+      expect(nonStreaming.listenerCount('metrics_collected')).toBe(baseline);
+      expect(nonStreaming.closeCount).toBe(0);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  describe.each([true, false])('cancellation with streaming=%s', (streaming) => {
+    it.each(['before synthesis', 'during synthesis'] as const)(
+      'preserves provider health when cancelled %s',
+      async (when) => {
+        const primary = new MockTTS('primary', SAMPLE_RATE, streaming);
+        primary.blocked = true;
+        const secondary = new MockTTS('secondary', SAMPLE_RATE, streaming);
+        const adapter = new FallbackAdapter({
+          ttsInstances: [primary, secondary],
+          maxRetryPerTTS: 0,
+        });
+        const errors: TTSError[] = [];
+        adapter.on('error', (error) => errors.push(error));
+        const primaryStream = vi.spyOn(primary, 'stream');
+        const primarySynthesize = vi.spyOn(primary, 'synthesize');
+        const secondaryStream = vi.spyOn(secondary, 'stream');
+        const secondarySynthesize = vi.spyOn(secondary, 'synthesize');
+        const metricsBaseline = primary.listenerCount('metrics_collected');
+        const errorBaseline = primary.listenerCount('error');
+        const stream = adapter.stream();
+        stream.updateInputStream(textInput());
+
+        try {
+          if (when === 'during synthesis') {
+            await primary.started.await;
+          }
+          stream.close();
+          await delay(50);
+
+          expect(adapter.status.map((status) => status.available)).toEqual([true, true]);
+          expect(adapter.status.every((status) => status.recoveringTask === null)).toBe(true);
+          expect(primaryStream).toHaveBeenCalledTimes(
+            when === 'during synthesis' && streaming ? 1 : 0,
+          );
+          expect(primarySynthesize).toHaveBeenCalledTimes(
+            when === 'during synthesis' && !streaming ? 1 : 0,
+          );
+          expect(secondaryStream).not.toHaveBeenCalled();
+          expect(secondarySynthesize).not.toHaveBeenCalled();
+          expect(errors).toEqual([]);
+          expect(stream.error).toBeUndefined();
+          expect(primary.listenerCount('metrics_collected')).toBe(metricsBaseline);
+          expect(primary.listenerCount('error')).toBe(errorBaseline);
+          expect(primary.closeCount).toBe(0);
+          expect(unhandledRejections).toEqual([]);
+        } finally {
+          stream.close();
+          await adapter.close();
+        }
+      },
+    );
+  });
+
+  it('does not report exhaustion when cancelled while input is still open', async () => {
+    const primary = new MockTTS('primary');
+    primary.shouldFail = true;
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+    const errors: TTSError[] = [];
+    adapter.on('error', (error) => errors.push(error));
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue('hello test');
+        },
+      }),
+    );
+
+    try {
+      await vi.waitFor(() => expect(adapter.status[0]!.available).toBe(false));
+      stream.close();
+      await delay(50);
+      expect(errors).toEqual([]);
+      expect(stream.error).toBeUndefined();
+    } finally {
+      stream.close();
+      await adapter.close();
+    }
   });
 
   it.each(['chunked', 'streaming', 'non-streaming provider', 'stream adapter'] as const)(
@@ -764,7 +939,7 @@ describe('TTS FallbackAdapter', () => {
       options: { statusCode: 401 },
     });
     tts.synthesize = (text, connOptions) =>
-      new MockChunkedStream(tts, text, text.includes('first'), connOptions);
+      new MockChunkedStream(tts, text, text.includes('first'), false, connOptions);
     const adapter = new StreamAdapter(tts, new basic.SentenceTokenizer());
     adapter.on('error', () => {});
 

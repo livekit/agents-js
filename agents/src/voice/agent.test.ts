@@ -1,14 +1,18 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { APIConnectionError } from '../_exceptions.js';
 import { ChatContext, ChatMessage, ToolError, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
-import { SynthesizeStream } from '../tts/index.js';
-import { Task } from '../utils.js';
+import { FakeSTT } from '../stt/testing/fake_stt.js';
+import { ChunkedStream, SynthesizeStream, TTS } from '../tts/index.js';
+import type { APIConnectOptions } from '../types.js';
+import { Future, Task } from '../utils.js';
+import { VAD, VADStream } from '../vad.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
 import { AgentActivity, agentActivityStorage } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
@@ -45,6 +49,80 @@ async function withTimeout<T>(promise: Promise<T>, timeout: number): Promise<T> 
 class TimeoutError extends Error {
   constructor(timeout: number) {
     super(`timed out after ${timeout}ms`);
+  }
+}
+
+class FakeVAD extends VAD {
+  label = 'fake-vad';
+
+  constructor() {
+    super({ updateInterval: 100 });
+  }
+
+  stream(): VADStream {
+    return new (class extends VADStream {})(this);
+  }
+}
+
+class NonStreamingSTT extends FakeSTT {
+  closeCount = 0;
+
+  constructor() {
+    super({ capabilities: { streaming: false, interimResults: false } });
+  }
+
+  override async close(): Promise<void> {
+    this.closeCount++;
+  }
+}
+
+class NonStreamingTTS extends TTS {
+  label = 'non-streaming-tts';
+  closeCount = 0;
+  synthesisStarted = new Future();
+
+  constructor(readonly mode: 'success' | 'failure' | 'blocked' = 'success') {
+    super(24_000, 1, { streaming: false });
+  }
+
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    const { mode, synthesisStarted, sampleRate } = this;
+    return new (class extends ChunkedStream {
+      label = 'test.ChunkedStream';
+
+      protected async run(): Promise<void> {
+        synthesisStarted.resolve();
+        if (mode === 'blocked') {
+          if (!this.abortSignal.aborted) {
+            await new Promise<void>((resolve) =>
+              this.abortSignal.addEventListener('abort', () => resolve(), { once: true }),
+            );
+          }
+          return;
+        }
+        if (mode === 'failure') {
+          throw new APIConnectionError({ message: 'probe failure' });
+        }
+        this.queue.put({
+          requestId: 'test-request',
+          segmentId: 'test-segment',
+          frame: new AudioFrame(new Int16Array(240), sampleRate, 1, 240),
+          final: true,
+        });
+      }
+    })(text, this, connOptions, abortSignal);
+  }
+
+  stream(): SynthesizeStream {
+    throw new Error('non-streaming test TTS');
+  }
+
+  override async close(): Promise<void> {
+    this.closeCount++;
   }
 }
 
@@ -463,6 +541,76 @@ describe('Agent', () => {
       expect(capturedInput).toBeInstanceOf(ReadableStream);
       await expect(collectReadableStream(result!)).resolves.toEqual([frame]);
     });
+  });
+
+  describe('temporary speech stream adapters', () => {
+    it('closes the STT adapter when the session closes', async () => {
+      const stt = new NonStreamingSTT();
+      const baseline = stt.listenerCount('metrics_collected');
+      const agent = new Agent({
+        instructions: 'test',
+        llm: new FakeLLM(),
+        stt,
+        vad: new FakeVAD(),
+      });
+      const session = new AgentSession({ vad: null, turnHandling: { turnDetection: null } });
+
+      await session.start({ agent });
+      try {
+        expect(stt.listenerCount('metrics_collected')).toBeGreaterThan(baseline);
+      } finally {
+        await withTimeout(session.close(), 1_000);
+      }
+      expect(stt.listenerCount('metrics_collected')).toBe(baseline);
+      expect(stt.closeCount).toBe(0);
+    });
+
+    it.each(['success', 'failure', 'blocked'] as const)(
+      'closes the TTS adapter after %s',
+      async (mode) => {
+        const tts = new NonStreamingTTS(mode);
+        const agent = new Agent({ instructions: 'test', llm: new FakeLLM(), tts });
+        const session = new AgentSession({
+          vad: null,
+          turnHandling: { turnDetection: null },
+          connOptions: { ttsConnOptions: { maxRetry: 0, timeoutMs: 120_000 } },
+        });
+        await session.start({ agent });
+        const onMetrics = vi.fn();
+        tts.on('metrics_collected', onMetrics);
+        const baseline = tts.listenerCount('metrics_collected');
+        const errorBaseline = tts.listenerCount('error');
+
+        try {
+          for (let turn = 0; turn < (mode === 'success' ? 3 : 1); turn++) {
+            const input = new ReadableStream<string>({
+              start(controller) {
+                controller.enqueue('Hello world, this is a complete sentence.');
+                controller.close();
+              },
+            });
+            const output = await Agent.default.ttsNode(agent, input, {});
+            expect(output).not.toBeNull();
+
+            if (mode === 'success') {
+              expect(await collectReadableStream(output!)).toHaveLength(1);
+            } else if (mode === 'failure') {
+              await expect(collectReadableStream(output!)).rejects.toThrow('probe failure');
+            } else {
+              await withTimeout(tts.synthesisStarted.await, 1_000);
+              await output!.cancel();
+            }
+
+            expect(tts.listenerCount('metrics_collected')).toBe(baseline);
+            expect(tts.listenerCount('error')).toBe(errorBaseline);
+            expect(tts.closeCount).toBe(0);
+          }
+          if (mode === 'success') expect(onMetrics).toHaveBeenCalledTimes(3);
+        } finally {
+          await withTimeout(session.close(), 1_000);
+        }
+      },
+    );
   });
 
   it('should require AgentTask to run inside task context', async () => {
