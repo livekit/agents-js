@@ -433,6 +433,19 @@ describe('TTS alignedTranscript capability', () => {
     expect(tts.capabilities.alignedTranscript).toBe(true);
   });
 
+  it('reports AssemblyAI aligned transcripts by default unless explicitly disabled', () => {
+    const capabilities = (modelOptions?: Record<string, unknown>) =>
+      makeTts({
+        model: 'assemblyai/assemblyai-tts-1',
+        ...(modelOptions === undefined ? {} : { modelOptions }),
+      }).capabilities.alignedTranscript;
+
+    expect(capabilities()).toBe(true);
+    expect(capabilities({ word_timestamps: true })).toBe(true);
+    expect(capabilities({ word_timestamps: false })).toBe(false);
+    expect(capabilities({ word_timestamps: 'no' })).toBe(true);
+  });
+
   it('recomputes alignedTranscript when updateOptions changes modelOptions', () => {
     const tts = makeTts({ model: 'cartesia/sonic' });
     expect(tts.capabilities.alignedTranscript).toBe(false);

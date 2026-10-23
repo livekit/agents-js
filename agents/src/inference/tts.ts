@@ -189,9 +189,8 @@ export function parseTTSModelString(model: string): [string, string | undefined]
  * Whether the given Inference TTS provider+options combination emits aligned
  * (word- or character-level) timestamps alongside the synthesized audio.
  *
- * Mirrors the Python implementation: support is opt-in through the provider's
- * `extra_kwargs` / `modelOptions` payload — the gateway only emits
- * `output_alignment` events when the provider-specific flag is set.
+ * Mirrors the Python implementation: the gateway only emits `output_alignment`
+ * events when the provider-specific timestamp behavior is enabled.
  */
 export function hasAlignedTranscript(
   model: string | undefined,
@@ -205,6 +204,12 @@ export function hasAlignedTranscript(
   }
   if (provider === 'inworld') {
     return opts.timestamp_type === 'WORD' || opts.timestamp_type === 'CHARACTER';
+  }
+  if (provider === 'assemblyai') {
+    // Word timings are on by default on the service (word_boundaries=true),
+    // and the gateway forwards them as an aligned transcript, so this is
+    // opt-out rather than opt-in: only an explicit false turns them off.
+    return opts.word_timestamps !== false;
   }
   return false;
 }
