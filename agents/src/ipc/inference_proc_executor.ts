@@ -97,9 +97,22 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
           res.resolve(msg.value);
       }
     });
+
+    // no response can arrive once the IPC channel closes, so unblock pending doInference() calls
+    proc.on('disconnect', () => {
+      const error = new Error('inference process exited');
+      for (const [requestId, fut] of Object.entries(this.#activeRequests)) {
+        fut.resolve({ requestId, data: undefined, error });
+      }
+      this.#activeRequests = {};
+    });
   }
 
   async doInference(method: string, data: unknown): Promise<unknown> {
+    if (!this.isAlive) {
+      throw new Error('inference process not running');
+    }
+
     const requestId = shortuuid('inference_req_');
     const fut = new PendingInference();
     this.proc!.send({ case: 'inferenceRequest', value: { requestId, method, data } });
