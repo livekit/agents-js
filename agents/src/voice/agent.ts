@@ -45,6 +45,7 @@ import {
   createAgentTaskV2,
   createAgentV2,
 } from './agent_v2.js';
+import { sttPipelineStorage } from './audio_recognition.js';
 import type { UserTurnExceededEvent } from './events.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
@@ -477,7 +478,22 @@ export class Agent<UserData = any> {
       audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
-      const input = audio instanceof ReadableStream ? audio : toStream(audio);
+      const input =
+        audio instanceof ReadableStream
+          ? audio
+          : (() => {
+              const iterator = audio[Symbol.asyncIterator]();
+              return new ReadableStream<AudioFrame>({
+                async pull(controller) {
+                  const result = await iterator.next();
+                  if (result.done) controller.close();
+                  else controller.enqueue(result.value);
+                },
+                async cancel(reason) {
+                  await iterator.return?.(reason);
+                },
+              });
+            })();
       const activity = agent.getActivityOrThrow();
       if (!activity.stt) {
         throw new Error('sttNode called but no STT node is available');
@@ -497,6 +513,8 @@ export class Agent<UserData = any> {
 
       const connOptions = activity.agentSession.connOptions.sttConnOptions;
       const stream = wrappedStt.stream({ connOptions });
+      const pipeline = sttPipelineStorage.getStore();
+      pipeline?.setRecognizeStream(stream, wrappedStt);
 
       // Set startTimeOffset to provide linear timestamps across reconnections
       const audioInputStartedAt =
@@ -513,7 +531,9 @@ export class Agent<UserData = any> {
       const cleanup = () => {
         if (cleaned) return;
         cleaned = true;
+        pipeline?.clearRecognizeStream(stream);
         stream.detachInputStream();
+        void input.cancel().catch(() => undefined);
         stream.close();
       };
 

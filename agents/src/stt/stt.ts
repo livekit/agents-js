@@ -133,6 +133,11 @@ export interface STTCapabilities {
   streaming: boolean;
   interimResults: boolean;
   /**
+   * Whether the framework can flush this streaming STT at user turn boundaries.
+   * Custom STT nodes that buffer audio must disable this and manage flushing themselves.
+   */
+  manualFlush?: boolean;
+  /**
    * Whether this STT supports aligned transcripts with word/chunk timestamps.
    * - 'word': Provider returns word-level timestamps
    * - 'chunk': Provider returns chunk-level timestamps (e.g., sentence/phrase boundaries)

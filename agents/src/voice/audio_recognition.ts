@@ -11,8 +11,8 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
-import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
-import { TransformStream } from 'node:stream/web';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { ReadableStream, TransformStream, type WritableStreamDefaultWriter } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
 import {
   BaseStreamingTurnDetector,
@@ -37,11 +37,10 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
-import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { type STT, type SpeechEvent, SpeechEventType, type SpeechStream } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
-import type { Future } from '../utils.js';
-import { Task, cancelAndWait, delay, readStream, toError, waitForAbort } from '../utils.js';
+import { Future, Task, cancelAndWait, delay, readStream, toError, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import {
@@ -180,6 +179,9 @@ interface UserTurnTracker {
 
 /** Backoff before recreating the STT stream after its retry budget is exhausted. */
 const STT_RECONNECT_INTERVAL_MS = 500;
+const STT_PIPELINE_FLUSH = Symbol('STT_PIPELINE_FLUSH');
+
+export const sttPipelineStorage = new AsyncLocalStorage<STTPipeline>();
 
 export class STTPipeline {
   static readonly PUMP_TASK_CANCEL_TIMEOUT = 5000;
@@ -187,9 +189,12 @@ export class STTPipeline {
   private sttNode: STTNode;
   private isClosing: () => boolean;
   private onError?: (error: Error) => void;
-  private _audioChannel: StreamChannel<AudioFrame> = createStreamChannel();
+  private _audioChannel: StreamChannel<AudioFrame | typeof STT_PIPELINE_FLUSH> =
+    createStreamChannel();
   private _eventChannel: StreamChannel<SpeechEvent> = createStreamChannel();
   private _pumpTask: Task<void>;
+  private recognizeStream?: SpeechStream;
+  private recognizeStt?: STT;
   /** Wall-clock anchor for this stream, used for STT-derived turn metrics. */
   inputStartedAt?: number;
 
@@ -223,6 +228,59 @@ export class STTPipeline {
     return this._eventChannel;
   }
 
+  get manualFlush(): boolean {
+    return (
+      this.recognizeStream !== undefined && this.recognizeStt?.capabilities.manualFlush === true
+    );
+  }
+
+  /** @internal */
+  setRecognizeStream(stream: SpeechStream, stt: STT): void {
+    this.recognizeStream = stream;
+    this.recognizeStt = stt;
+  }
+
+  /** @internal */
+  clearRecognizeStream(stream: SpeechStream): void {
+    if (this.recognizeStream !== stream) return;
+    this.recognizeStream = undefined;
+    this.recognizeStt = undefined;
+  }
+
+  async flush(): Promise<boolean> {
+    if (!this.manualFlush) return false;
+    await this._audioChannel.write(STT_PIPELINE_FLUSH);
+    return true;
+  }
+
+  private audioInput(): ReadableStream<AudioFrame> {
+    const reader = this._audioChannel.stream().getReader();
+    return new ReadableStream<AudioFrame>({
+      pull: async (controller) => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            controller.close();
+            return;
+          }
+          if (value === STT_PIPELINE_FLUSH) {
+            this.recognizeStream?.flush();
+            continue;
+          }
+          controller.enqueue(value);
+          return;
+        }
+      },
+      cancel: () => {
+        try {
+          reader.releaseLock();
+        } catch {
+          // A pending read is released by the stream implementation.
+        }
+      },
+    });
+  }
+
   /**
    * The pipeline outlives the agent that created it (reused across handoff); a recreated
    * stream must come from the active agent's node, not the torn-down previous one.
@@ -239,8 +297,10 @@ export class STTPipeline {
   private async sttPump(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       let node: Awaited<ReturnType<STTNode>> | undefined;
+      let audioInput: ReadableStream<AudioFrame> | undefined;
       try {
-        node = await this.sttNode(this._audioChannel.stream(), {});
+        audioInput = this.audioInput();
+        node = await sttPipelineStorage.run(this, () => this.sttNode(audioInput!, {}));
         if (node === null) return;
 
         for await (const value of readStream(node, signal)) {
@@ -263,6 +323,7 @@ export class STTPipeline {
         log().warn({ err: e }, 'STT stream ended on an unrecoverable error, recreating');
       } finally {
         await node?.cancel().catch(() => {});
+        await audioInput?.cancel().catch(() => {});
       }
 
       await delay(STT_RECONNECT_INTERVAL_MS, { signal }).catch(() => {});
@@ -273,6 +334,8 @@ export class STTPipeline {
 
   async close(): Promise<void> {
     await cancelAndWait([this._pumpTask], STTPipeline.PUMP_TASK_CANCEL_TIMEOUT);
+    this.recognizeStream = undefined;
+    this.recognizeStt = undefined;
   }
 }
 
@@ -376,6 +439,7 @@ export class AudioRecognition {
    * the eou bounce short-circuits via `onMissingEotPrediction`.
    */
   private turnDetectorFlushed = false;
+  private sttFlushRequested = false;
   /** Warn once per recognition when the eou bounce runs after a flush. */
   private turnDetectorLatePredictionWarned = false;
   /**
@@ -414,6 +478,7 @@ export class AudioRecognition {
   private transcriptionTimeoutTimer?: ReturnType<typeof setTimeout>;
   private turnSpeechDuration = 0;
   private turnTranscriptReceived = false;
+  private finalTranscriptReceived?: Future<void>;
   private sampleRate?: number;
 
   private userTurnSpan?: Span;
@@ -1324,6 +1389,7 @@ export class AudioRecognition {
         const confidence = ev.alternatives?.[0]?.confidence ?? 0;
         const language = ev.alternatives?.[0]?.language;
         this.updateLastLanguage(language, transcript);
+        this.finalTranscriptReceived?.resolve();
 
         if (!transcript) {
           // stt final transcript received but no transcript
@@ -1583,7 +1649,11 @@ export class AudioRecognition {
     }
   }
 
-  private runEOUDetection(chatCtx: ChatContext, trigger: 'vad' | 'stt' | 'manual' = 'vad') {
+  private runEOUDetection(
+    chatCtx: ChatContext,
+    trigger: 'vad' | 'stt' | 'manual' = 'vad',
+    skipReply = false,
+  ) {
     this.logger.debug(
       {
         stt: this.stt,
@@ -1593,7 +1663,13 @@ export class AudioRecognition {
       'running EOU detection',
     );
 
-    if (this.stt && !this.audioTranscript && this.turnDetectionMode !== 'manual') {
+    const autoFlush = this.vadBaseTurnDetection && this.sttPipeline?.manualFlush === true;
+    if (
+      this.stt &&
+      !this.audioTranscript &&
+      this.turnDetectionMode !== 'manual' &&
+      (!autoFlush || this.sttFlushRequested)
+    ) {
       // stt enabled but no transcript yet
       this.logger.debug('skipping EOU detection');
       return;
@@ -1639,6 +1715,7 @@ export class AudioRecognition {
         if (controller.signal.aborted) return;
 
         let endpointingDelay = this.endpointing.minDelay;
+        let negativeEot = false;
 
         // a turn created here (no VAD/start-of-speech opened it) starts at the earliest
         // anchor known, so the eou_wait child back-dated to lastSpeakingTime fits inside
@@ -1749,6 +1826,7 @@ export class AudioRecognition {
                     endOfTurnProbability < unlikelyThreshold
                   ) {
                     endpointingDelay = this.endpointing.maxDelay;
+                    negativeEot = true;
                   }
 
                   this.logger.debug(
@@ -1868,6 +1946,24 @@ export class AudioRecognition {
           eouWaitSpan.setAttribute(traceTypes.ATTR_EOU_DELAY, endpointingDelay / 1000);
         }
 
+        if (autoFlush && !this.sttFlushRequested) {
+          if (negativeEot) {
+            let flushDelay = endpointingDelay / 2;
+            if (lastSpeakingTime !== undefined) flushDelay += lastSpeakingTime - Date.now();
+            if (flushDelay > 0) {
+              try {
+                await delay(flushDelay, {
+                  signal: AbortSignal.any([controller.signal, this.closeWakeController.signal]),
+                });
+              } catch (error) {
+                if (!this.closeWakeController.signal.aborted) throw error;
+              }
+            }
+            if (controller.signal.aborted || this.closeWakeController.signal.aborted) return;
+          }
+          this.sttFlushRequested = (await this.sttPipeline?.flush()) ?? false;
+        }
+
         let extraSleep = endpointingDelay;
         if (lastSpeakingTime !== undefined) {
           extraSleep += lastSpeakingTime - Date.now();
@@ -1928,6 +2024,7 @@ export class AudioRecognition {
           startedSpeakingAt: metrics.startedSpeakingAt,
           stoppedSpeakingAt: metrics.stoppedSpeakingAt,
           backchannelOverAgent: this.turnBackchannelOverAgent,
+          skipReply,
           userTurnSpan,
         };
         const committed = await this.hooks.onEndOfTurn(endOfTurn);
@@ -2160,6 +2257,7 @@ export class AudioRecognition {
             this.turnDetectorStream?.cancelInference();
             this.turnDetectorPredictionFut = undefined;
             this.turnDetectorFlushed = false;
+            this.sttFlushRequested = false;
 
             // Capture sample rate from the first VAD event if not already set
             if (ev.frames.length > 0 && ev.frames[0]) {
@@ -2433,6 +2531,8 @@ export class AudioRecognition {
   }
 
   clearUserTurn() {
+    this.bounceEOUTask?.cancel();
+    this.sttFlushRequested = false;
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
     this.audioPreflightTranscript = '';
@@ -2516,36 +2616,56 @@ export class AudioRecognition {
     });
   }
 
-  commitUserTurn(audioDetached: boolean) {
-    const commitUserTurnTask =
-      (delayDuration: number = 500) =>
-      async (controller: AbortController) => {
-        if (Date.now() - this.lastFinalTranscriptTime > delayDuration) {
-          // flush the stt by pushing silence
-          if (audioDetached && this.sampleRate !== undefined) {
-            const silenceFrame = createSilenceFrame(delayDuration, this.sampleRate);
-            this.silenceAudioWriter.write(silenceFrame);
+  commitUserTurn(
+    audioDetached: boolean,
+    options: { transcriptTimeout?: number; sttFlushDuration?: number; skipReply?: boolean } = {},
+  ): Promise<string> {
+    const { transcriptTimeout = 500, sttFlushDuration = 2000, skipReply = false } = options;
+    let committedTranscript = '';
+    const commitUserTurnTask = async (controller: AbortController) => {
+      const canFlush = this.sttPipeline?.manualFlush === true;
+      this.sttFlushRequested = false;
+      if (canFlush || Date.now() - this.lastFinalTranscriptTime > 500) {
+        const finalTranscriptReceived = new Future<void>();
+        this.finalTranscriptReceived = finalTranscriptReceived;
+
+        // flush the stt by pushing silence
+        if (canFlush) {
+          this.sttFlushRequested = (await this.sttPipeline?.flush()) ?? false;
+        } else if (audioDetached && this.sampleRate !== undefined) {
+          const silenceFrame = createSilenceFrame(sttFlushDuration, this.sampleRate);
+          this.silenceAudioWriter.write(silenceFrame);
+        }
+
+        // wait for the final transcript to be available
+        try {
+          await Promise.race([
+            finalTranscriptReceived.await,
+            delay(transcriptTimeout, { signal: controller.signal }),
+          ]);
+        } finally {
+          if (this.finalTranscriptReceived === finalTranscriptReceived) {
+            this.finalTranscriptReceived = undefined;
           }
-
-          // wait for the final transcript to be available
-          await delay(delayDuration, { signal: controller.signal });
         }
+      }
 
-        if (this.audioInterimTranscript) {
-          // append interim transcript in case the final transcript is not ready
-          this.audioTranscript = `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
-        }
-        this.audioInterimTranscript = '';
+      if (this.audioInterimTranscript) {
+        // append interim transcript in case the final transcript is not ready
+        this.audioTranscript = `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
+      }
+      this.audioInterimTranscript = '';
+      committedTranscript = this.audioTranscript;
 
-        const chatCtx = this.hooks.retrieveChatCtx();
-        this.logger.debug('running EOU detection on commitUserTurn');
-        this.runEOUDetection(chatCtx, 'manual');
-        this.userTurnCommitted = true;
-      };
+      const chatCtx = this.hooks.retrieveChatCtx();
+      this.logger.debug('running EOU detection on commitUserTurn');
+      this.runEOUDetection(chatCtx, 'manual', skipReply);
+      this.userTurnCommitted = true;
+    };
 
     // cancel any existing commit user turn task
     this.commitUserTurnTask?.cancel();
-    this.commitUserTurnTask = Task.from(commitUserTurnTask());
+    this.commitUserTurnTask = Task.from(commitUserTurnTask);
 
     this.commitUserTurnTask.result
       .then(() => {
@@ -2559,6 +2679,8 @@ export class AudioRecognition {
         if (this.closed) return;
         this.logger.error(err, 'Error in user turn commit task:');
       });
+
+    return this.commitUserTurnTask.result.then(() => committedTranscript);
   }
 
   async close() {

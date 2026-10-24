@@ -1836,9 +1836,12 @@ export class AgentActivity implements RecognitionHooks {
     options: {
       audioDetached?: boolean;
       throwIfNotReady?: boolean;
+      transcriptTimeout?: number;
+      sttFlushDuration?: number;
+      skipReply?: boolean;
     } = {},
-  ) {
-    const { audioDetached = false, throwIfNotReady = true } = options;
+  ): Promise<string> | undefined {
+    const { audioDetached = false, throwIfNotReady = true, ...commitOptions } = options;
     if (!this.audioRecognition) {
       if (throwIfNotReady) {
         throw new Error('AudioRecognition is not initialized');
@@ -1846,7 +1849,7 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    this.audioRecognition.commitUserTurn(audioDetached);
+    return this.audioRecognition.commitUserTurn(audioDetached, commitOptions);
   }
 
   clearUserTurn() {

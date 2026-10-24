@@ -1226,12 +1226,22 @@ export class AgentSession<
     }
   }
 
-  commitUserTurn() {
+  /** Commit the current user turn and wait for a final STT transcript when available. */
+  commitUserTurn(
+    options: {
+      /** Maximum time to wait for a final transcript, in milliseconds. */
+      transcriptTimeout?: number;
+      /** Synthetic silence duration for STTs without manual flush support, in milliseconds. */
+      sttFlushDuration?: number;
+      /** Commit the turn without generating an automatic reply. */
+      skipReply?: boolean;
+    } = {},
+  ): Promise<string> {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
 
-    this.activity.commitUserTurn();
+    return this.activity.commitUserTurn(options)!;
   }
 
   clearUserTurn() {

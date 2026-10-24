@@ -1,12 +1,23 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIStatusError, log, mergeFrames, stt as sttLib } from '@livekit/agents';
+import {
+  APIConnectionError,
+  APIStatusError,
+  VAD,
+  VADEventType,
+  VADStream,
+  log,
+  mergeFrames,
+  stt as sttLib,
+  voice,
+} from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { type RequestListener, type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { ReadableStream, type ReadableStreamDefaultController } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT, type STTOptions } from './stt.js';
@@ -219,6 +230,75 @@ function makeIntegrationSpeech(): AudioFrame {
   return mergeFrames(frames);
 }
 
+class IntegrationAudioInput extends voice.AudioInput {
+  #controller!: ReadableStreamDefaultController<AudioFrame>;
+
+  constructor() {
+    super();
+    this.multiStream.addInputStream(
+      new ReadableStream<AudioFrame>({
+        start: (controller) => {
+          this.#controller = controller;
+        },
+      }),
+    );
+  }
+
+  push(frame: AudioFrame): void {
+    this.#controller.enqueue(frame);
+  }
+}
+
+class IntegrationVADStream extends VADStream {
+  emit(type: VADEventType): void {
+    this.sendVADEvent({
+      type,
+      samplesIndex: 0,
+      timestamp: Date.now(),
+      speechDuration: type === VADEventType.END_OF_SPEECH ? 1000 : 0,
+      silenceDuration: type === VADEventType.END_OF_SPEECH ? 300 : 0,
+      frames: [],
+      probability: type === VADEventType.START_OF_SPEECH ? 1 : 0,
+      inferenceDuration: 0,
+      speaking: type === VADEventType.START_OF_SPEECH,
+      rawAccumulatedSilence: type === VADEventType.END_OF_SPEECH ? 300 : 0,
+      rawAccumulatedSpeech: type === VADEventType.START_OF_SPEECH ? 1000 : 0,
+    });
+  }
+}
+
+class IntegrationVAD extends VAD {
+  label = 'test.IntegrationVAD';
+  #stream?: IntegrationVADStream;
+
+  constructor() {
+    super({ updateInterval: 32 });
+  }
+
+  stream(): VADStream {
+    this.#stream = new IntegrationVADStream(this);
+    return this.#stream;
+  }
+
+  startOfSpeech(): void {
+    this.#stream?.emit(VADEventType.START_OF_SPEECH);
+  }
+
+  endOfSpeech(): void {
+    this.#stream?.emit(VADEventType.END_OF_SPEECH);
+  }
+}
+
+function fixedTurnDetector(probability: number) {
+  return {
+    model: 'fixed-test-prediction',
+    provider: 'test',
+    supportsLanguage: async () => true,
+    unlikelyThreshold: async () => 0.5,
+    predictEndOfTurn: async () => probability,
+  };
+}
+
 const hasElevenLabsApiKey = Boolean(process.env.ELEVEN_API_KEY);
 
 describe('ElevenLabs STT integration', () => {
@@ -236,6 +316,72 @@ describe('ElevenLabs STT integration', () => {
       );
     },
     60_000,
+  );
+
+  it.skipIf(!hasElevenLabsApiKey).each(['vad', 'manual', 0.1, 0.9] as const)(
+    'preserves each turn with turn detection %s',
+    async (turnDetection) => {
+      const audio = makeIntegrationSpeech();
+      const eleven = new STT({
+        model: 'scribe_v2_realtime',
+        languageCode: 'en',
+        sampleRate: 24000,
+      });
+      const vad = new IntegrationVAD();
+      const session = new voice.AgentSession({
+        stt: eleven,
+        vad,
+        turnHandling: {
+          turnDetection:
+            typeof turnDetection === 'number' ? fixedTurnDetector(turnDetection) : turnDetection,
+        },
+      });
+      const audioInput = new IntegrationAudioInput();
+      session.input.audio = audioInput;
+      const finals: string[] = [];
+      session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (event) => {
+        if (event.isFinal) finals.push(event.transcript);
+      });
+
+      const feed = async (frame: AudioFrame) => {
+        const samplesPerChunk = Math.floor(frame.sampleRate * 0.02);
+        for (let offset = 0; offset < frame.samplesPerChannel; offset += samplesPerChunk) {
+          const length = Math.min(samplesPerChunk, frame.samplesPerChannel - offset);
+          const data = frame.data.subarray(offset, offset + length * frame.channels);
+          audioInput.push(new AudioFrame(data, frame.sampleRate, frame.channels, length));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      };
+
+      try {
+        await session.start({ agent: new voice.Agent({ instructions: 'Transcription test.' }) });
+        await feed(new AudioFrame(new Int16Array(24000 * 2), 24000, 1, 24000 * 2));
+        expect(finals).toHaveLength(0);
+
+        for (let turn = 0; turn < 2; turn++) {
+          if (turnDetection !== 'manual') vad.startOfSpeech();
+          await feed(audio);
+
+          if (turnDetection === 'manual') {
+            const committed = await session.commitUserTurn({
+              transcriptTimeout: 10_000,
+              skipReply: true,
+            });
+            expect(wordErrorRate(committed, TRANSCRIPT)).toBeLessThanOrEqual(0.25);
+          } else {
+            vad.endOfSpeech();
+          }
+
+          await waitUntil(() => finals.length > 0, 20_000);
+          expect(wordErrorRate(finals.shift() ?? '', TRANSCRIPT)).toBeLessThanOrEqual(0.25);
+          expect(finals).toHaveLength(0);
+        }
+      } finally {
+        await session.close();
+        await eleven.close();
+      }
+    },
+    120_000,
   );
 });
 
@@ -533,6 +679,31 @@ describe('ElevenLabs STT', () => {
     expect(stt.capabilities.streaming).toBe(false);
     expect(stt.capabilities.interimResults).toBe(true);
     expect(stt.capabilities.alignedTranscript).toBe(false);
+    expect(stt.capabilities.manualFlush).toBe(false);
+  });
+
+  it.each([
+    ['scribe_v2_realtime', undefined, true],
+    ['scribe_v2_realtime', null, true],
+    ['scribe_v2_realtime', {}, false],
+    ['scribe_v2', undefined, false],
+  ] as const)(
+    'reports manual flush capability for model %s and server VAD %j',
+    (model, serverVad, expected) => {
+      const eleven = new STT({ apiKey: 'test-key', model, serverVad });
+
+      expect(eleven.capabilities.manualFlush).toBe(expected);
+    },
+  );
+
+  it('tracks manual flush capability across server VAD updates', () => {
+    const eleven = new STT({ apiKey: 'test-key', model: 'scribe_v2_realtime' });
+
+    eleven.updateOptions({ serverVad: {} });
+    expect(eleven.capabilities.manualFlush).toBe(false);
+
+    eleven.updateOptions({ serverVad: null });
+    expect(eleven.capabilities.manualFlush).toBe(true);
   });
 
   it('maps deprecated useRealtime to realtime model capabilities', () => {
@@ -648,6 +819,94 @@ describe('ElevenLabs STT', () => {
       expect(requests).toBe(1);
     } finally {
       await closeHttpServer(server);
+    }
+  });
+
+  it('keeps provider error content in PII log attributes', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const errorLog = vi.spyOn(log(), 'error').mockImplementation(() => undefined);
+    const providerError = {
+      message_type: 'input_error',
+      message: 'customer secret transcript',
+      details: 'sensitive request details',
+    };
+    wss.on('connection', (ws) => {
+      ws.once('message', () => ws.send(JSON.stringify(providerError)));
+    });
+
+    const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+    eleven.on('error', () => {});
+    const stream = eleven.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+
+    try {
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => stream.terminalError !== undefined);
+      expect(stream.terminalError).toBeInstanceOf(APIConnectionError);
+      expect(stream.terminalError?.message).toBe('ElevenLabs STT error [input_error]');
+      expect(stream.terminalError?.message).not.toContain(providerError.message);
+      expect(stream.terminalError?.message).not.toContain(providerError.details);
+      expect(errorLog).toHaveBeenCalledWith(
+        { 'lk.pii.data': expect.objectContaining(providerError) },
+        'ElevenLabs STT error [input_error]',
+      );
+      expect(
+        errorLog.mock.calls.some((call) =>
+          call.some(
+            (value) =>
+              typeof value === 'string' &&
+              (value.includes(providerError.message) || value.includes(providerError.details)),
+          ),
+        ),
+      ).toBe(false);
+    } finally {
+      stream.close();
+      errorLog.mockRestore();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it.each([
+    ['auth_error', false],
+    ['quota_exceeded', false],
+    ['input_error', false],
+    ['transcriber_error', true],
+    ['error', true],
+  ] as const)('surfaces %s provider errors with retryable=%s', async (messageType, retryable) => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let socketClosed = false;
+    wss.on('connection', (ws) => {
+      ws.on('close', () => {
+        socketClosed = true;
+      });
+      ws.once('message', () => {
+        ws.send(
+          JSON.stringify({
+            message_type: messageType,
+            message: 'provider detail',
+            details: 'sensitive detail',
+          }),
+        );
+      });
+    });
+
+    const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+    eleven.on('error', () => {});
+    const stream = eleven.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+
+    try {
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => stream.terminalError !== undefined);
+      expect(stream.terminalError).toBeInstanceOf(APIConnectionError);
+      expect(stream.terminalError).toMatchObject({ retryable });
+      expect(stream.terminalError?.message).toBe(`ElevenLabs STT error [${messageType}]`);
+      await waitUntil(() => socketClosed);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
     }
   });
 
