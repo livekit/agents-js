@@ -65,20 +65,20 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
 }
 
 /**
- * Marks where the user started speaking: `lookback` ms before the end of the
+ * Marks the start of the user turn: `turnDuration` ms before the end of the
  * audio pushed ahead of it. Carried on the audio channel so it stays in order
  * with the frames.
  */
-export interface SpeechStartSentinel {
-  readonly kind: 'speech_start';
-  lookback: number;
+export interface TurnStartedSentinel {
+  readonly kind: 'turn_started';
+  turnDuration: number;
 }
 
-export function isSpeechStartSentinel(value: unknown): value is SpeechStartSentinel {
+export function isTurnStartedSentinel(value: unknown): value is TurnStartedSentinel {
   return (
     typeof value === 'object' &&
     value !== null &&
-    (value as SpeechStartSentinel).kind === 'speech_start'
+    (value as TurnStartedSentinel).kind === 'turn_started'
   );
 }
 
@@ -93,7 +93,7 @@ export interface StreamingTurnDetectionTransport {
   run(): Promise<void>;
   runInference(requestId: string): void;
   pushFrame(frame: AudioFrame): Promise<void>;
-  markSpeechStart(lookback: number): void;
+  onStartOfTurn(turnDuration: number): void;
   flush(sentinel: FlushSentinel): Promise<void>;
   detach(): void;
 }
@@ -196,7 +196,7 @@ export class BaseStreamingTurnDetectorStream {
   private _audioInputSampleRate: number | undefined;
   private _audioInputNumChannels: number | undefined;
   private _audioResampler: AudioResampler | undefined;
-  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel | SpeechStartSentinel> =
+  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel | TurnStartedSentinel> =
     createStreamChannel();
   private _degraded = false;
 
@@ -344,13 +344,15 @@ export class BaseStreamingTurnDetectorStream {
     }
   }
 
-  /** Mark that the user started speaking `lookback` ms before the end of the
-   * audio pushed so far. Only the first mark after a flush starts the turn. */
-  markSpeechStart(lookback: number): void {
+  /** The user turn started at `startedAt` (ms since epoch); it lasts until the next flush. */
+  onStartOfTurn(startedAt: number): void {
     if (this._degraded || this._audioChannel.closed) {
       return;
     }
-    const sentinel: SpeechStartSentinel = { kind: 'speech_start', lookback };
+    const sentinel: TurnStartedSentinel = {
+      kind: 'turn_started',
+      turnDuration: Math.max(0, Date.now() - startedAt),
+    };
     void this._audioChannel.write(sentinel);
   }
 
@@ -516,8 +518,8 @@ export class BaseStreamingTurnDetectorStream {
         if (done) return;
         if (isFlushSentinel(value)) {
           await this._transport.flush(value);
-        } else if (isSpeechStartSentinel(value)) {
-          this._transport.markSpeechStart(value.lookback);
+        } else if (isTurnStartedSentinel(value)) {
+          this._transport.onStartOfTurn(value.turnDuration);
         } else {
           await this._transport.pushFrame(value);
         }

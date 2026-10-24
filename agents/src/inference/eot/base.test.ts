@@ -47,8 +47,8 @@ class FakeTransport implements StreamingTurnDetectionTransport {
   async pushFrame(frame: AudioFrame): Promise<void> {
     this.audioEvents.push(['push_frame', frame.samplesPerChannel]);
   }
-  markSpeechStart(lookback: number): void {
-    this.audioEvents.push(['mark_speech_start', lookback]);
+  onStartOfTurn(turnDuration: number): void {
+    this.audioEvents.push(['on_start_of_turn', turnDuration]);
   }
   async flush(_sentinel: FlushSentinel): Promise<void> {
     this.audioEvents.push(['flush', undefined]);
@@ -113,23 +113,26 @@ const countRunInference = (events: Array<[string, string]>) =>
   events.filter((e) => e[0] === 'run_inference').length;
 
 describe('AudioTurnDetectionRequests', () => {
-  it('speech start reaches the transport in audio order', async () => {
+  it('turn start reaches the transport in audio order, as a duration taken at call time', async () => {
     const s = makeStream();
     try {
       const frame = new AudioFrame(new Int16Array(160), 16000, 1, 160);
       s.pushAudio(frame);
-      s.markSpeechStart(300);
+      s.onStartOfTurn(Date.now() - 300);
       s.pushAudio(frame);
       s.flush();
       for (let i = 0; i < 20 && s.fakeTransport.audioEvents.length < 4; i++) {
         await new Promise((r) => setImmediate(r));
       }
-      expect(s.fakeTransport.audioEvents).toEqual([
-        ['push_frame', 160],
-        ['mark_speech_start', 300],
-        ['push_frame', 160],
-        ['flush', undefined],
+      const events = s.fakeTransport.audioEvents;
+      expect(events.map(([name]) => name)).toEqual([
+        'push_frame',
+        'on_start_of_turn',
+        'push_frame',
+        'flush',
       ]);
+      expect(events[1]![1]).toBeGreaterThanOrEqual(300);
+      expect(events[1]![1]).toBeLessThan(350);
     } finally {
       await s.aclose();
     }

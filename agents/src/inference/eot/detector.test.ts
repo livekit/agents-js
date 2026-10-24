@@ -93,8 +93,8 @@ class ScriptedTransport implements StreamingTurnDetectionTransport {
   async pushFrame(frame: AudioFrame): Promise<void> {
     this.events.push(['push_frame', frame]);
   }
-  markSpeechStart(lookback: number): void {
-    this.events.push(['mark_speech_start', lookback]);
+  onStartOfTurn(turnDuration: number): void {
+    this.events.push(['on_start_of_turn', turnDuration]);
   }
   async flush(sentinel: FlushSentinel): Promise<void> {
     this.events.push(['flush', sentinel]);

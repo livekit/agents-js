@@ -309,11 +309,11 @@ async function predictOnce(local: ReturnType<typeof makeLocal>) {
 }
 
 describe('LocalTransportTurnSamples', () => {
-  it('counts the turn from the speech start, past the window', async () => {
+  it('counts the turn from its start, past the window', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(8000));
     await local.transport.pushFrame(pcmFrame(4000));
-    local.transport.markSpeechStart(250);
+    local.transport.onStartOfTurn(250);
     for (let i = 0; i < 40; i++) {
       await local.transport.pushFrame(pcmFrame(1600));
     }
@@ -324,28 +324,18 @@ describe('LocalTransportTurnSamples', () => {
     });
   });
 
-  it('keeps the first speech start of a turn', async () => {
-    const local = makeLocal();
-    await local.transport.pushFrame(pcmFrame(4000));
-    local.transport.markSpeechStart(0);
-    await local.transport.pushFrame(pcmFrame(4000));
-    local.transport.markSpeechStart(0);
-
-    expect((await predictOnce(local)).turnSamples).toBe(4000);
-  });
-
   it('starts a new turn after a flush', async () => {
     const local = makeLocal();
-    local.transport.markSpeechStart(0);
+    local.transport.onStartOfTurn(0);
     await local.transport.pushFrame(pcmFrame(16000));
     await local.transport.flush({ kind: 'flush' });
     await local.transport.pushFrame(pcmFrame(3200));
-    local.transport.markSpeechStart(100);
+    local.transport.onStartOfTurn(100);
 
     expect(await predictOnce(local)).toEqual({ windowSamples: 3200, turnSamples: 1600 });
   });
 
-  it('counts from the flush when no speech start was marked', async () => {
+  it('counts from the flush when no turn start was given', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(16000));
     await local.transport.flush({ kind: 'flush' });
@@ -354,10 +344,10 @@ describe('LocalTransportTurnSamples', () => {
     expect((await predictOnce(local)).turnSamples).toBe(6000);
   });
 
-  it('clamps a lookback longer than the turn to the flush', async () => {
+  it('clamps a turn longer than the audio to the flush', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(1600));
-    local.transport.markSpeechStart(1000);
+    local.transport.onStartOfTurn(1000);
 
     expect((await predictOnce(local)).turnSamples).toBe(1600);
   });

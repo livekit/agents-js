@@ -20,7 +20,7 @@ import { _getLocalInferenceModule, _shouldPreloadLocalInference } from '../_warm
 export const EOT_INFERENCE_METHOD = 'lk_eot_audio';
 
 /** Request payload: base64-encoded 16 kHz s16le PCM (up to 2.0 s) and the
- * turn length in samples, counted from the user's first speech. */
+ * turn length in samples, counted from the user turn start. */
 export interface EotInferenceInput {
   pcm: string;
   turnSamples?: number;

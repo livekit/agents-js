@@ -140,7 +140,7 @@ class PcmRingBuffer {
  * in the job process (no per-frame IPC); on each inference window the last
  * ~2.0 s is snapshotted, base64-encoded, and sent over IPC to the runner
  * (`inference/eot/runner.ts`) via `executor.doInference(...)`, with the turn
- * length in samples counted from the user's first speech since the last flush.
+ * length in samples counted from the user turn start since the last flush.
  *
  * When no executor is available (binding couldn't load on this platform),
  * predictions resolve to a positive default (1.0) so the session still
@@ -232,11 +232,9 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     this._numSamples += frame.data.length;
   }
 
-  markSpeechStart(lookback: number): void {
-    if (this._turnStart === undefined) {
-      const lookbackSamples = Math.floor((lookback * DEFAULT_SAMPLE_RATE) / 1000);
-      this._turnStart = Math.max(0, this._numSamples - lookbackSamples);
-    }
+  onStartOfTurn(turnDuration: number): void {
+    const turnSamples = Math.floor((turnDuration * DEFAULT_SAMPLE_RATE) / 1000);
+    this._turnStart = Math.max(0, this._numSamples - turnSamples);
   }
 
   async flush(_sentinel: FlushSentinel): Promise<void> {
@@ -354,7 +352,7 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     );
   }
 
-  markSpeechStart(_lookback: number): void {
+  onStartOfTurn(_turnDuration: number): void {
     return;
   }
 
