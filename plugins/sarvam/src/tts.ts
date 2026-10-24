@@ -4,6 +4,7 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIStatusError,
   AudioByteStream,
   log,
   normalizeLanguage,
@@ -16,18 +17,42 @@ import { type RawData, WebSocket } from 'ws';
 import type {
   TTSLanguages,
   TTSModels,
+  TTSOutputAudioBitrate,
   TTSOutputAudioCodec,
   TTSSampleRates,
   TTSSpeakers,
   TTSV2Speakers,
   TTSV3Speakers,
+  TTSV4FlashSpeakers,
 } from './models.js';
+import { MODEL_SPEAKER_COMPATIBILITY } from './models.js';
 
 const SARVAM_TTS_SAMPLE_RATE = 24000;
 const SARVAM_TTS_CHANNELS = 1;
 const SARVAM_BASE_URL = 'https://api.sarvam.ai';
 const SARVAM_WS_URL_PATH = '/text-to-speech/ws';
 const MIN_SENTENCE_LENGTH = 8;
+const ALLOWED_OUTPUT_AUDIO_BITRATES = new Set<TTSOutputAudioBitrate>([
+  '32k',
+  '64k',
+  '96k',
+  '128k',
+  '192k',
+]);
+const V4_STREAM_SAMPLE_RATES = new Set([8000, 16000, 22050, 24000]);
+const PARAM_BOUNDS = {
+  pitch: [-0.75, 0.75],
+  pace: [0.3, 3.0],
+  loudness: [0.5, 2.0],
+  temperature: [0.01, 2.0],
+} as const;
+const V4_PARAM_BOUNDS = {
+  pitch: [-0.5, 0.5],
+  pace: [0.5, 2.0],
+  loudness: [0.1, 2.5],
+  temperature: [0.01, 1.0],
+} as const;
+const MODULE_LOGGER = log();
 
 const CODEC_TO_MIME_TYPE: Record<TTSOutputAudioCodec, string> = {
   wav: 'audio/wav',
@@ -55,7 +80,7 @@ interface TTSBaseOptions {
   streaming?: boolean;
   /** Target language code (BCP-47) */
   targetLanguageCode?: TTSLanguages | string;
-  /** Speech pace. v2: 0.3–3.0, v3: 0.5–2.0 (default 1.0) */
+  /** Speech pace. v2/v3: 0.3–3.0, v4-flash: 0.5–2.0 (default 1.0) */
   pace?: number;
   /** Output sample rate in Hz (default 24000) */
   sampleRate?: TTSSampleRates | number;
@@ -65,6 +90,14 @@ interface TTSBaseOptions {
   baseURL?: string;
   /** Sentence tokenizer for streaming (default: basic sentence tokenizer) */
   sentenceTokenizer?: tokenize.SentenceTokenizer;
+  /** Output audio bitrate. Defaults to `128k`. */
+  outputAudioBitrate?: TTSOutputAudioBitrate;
+  /** Minimum streaming buffer size. Defaults to 50. */
+  minBufferSize?: number;
+  /** Maximum streaming chunk length. Defaults to 150. */
+  maxChunkLength?: number;
+  /** Request a final completion event from the WebSocket. Defaults to true. */
+  sendCompletionEvent?: boolean;
 }
 
 /** Options specific to bulbul:v2 */
@@ -91,8 +124,25 @@ export interface TTSV3Options extends TTSBaseOptions {
   dictId?: string;
 }
 
+/** Options specific to bulbul:v4-flash. */
+export interface TTSV4FlashOptions extends TTSBaseOptions {
+  model: 'bulbul:v4-flash';
+  /** Speaker voice (v4-flash voices). Default: `shubh_en_narration_gentle`. */
+  speaker?: TTSV4FlashSpeakers | string;
+  /** Pitch adjustment, -0.5 to 0.5. */
+  pitch?: number;
+  /** Loudness, 0.1 to 2.5. */
+  loudness?: number;
+  /** Temperature, 0.01 to 1.0. Sarvam currently forces this to 0.6 server-side. */
+  temperature?: number;
+  /** Enable text preprocessing. Sarvam currently forces this on server-side. */
+  enablePreprocessing?: boolean;
+  /** Custom pronunciation dictionary ID. */
+  dictId?: string;
+}
+
 /** Combined options — discriminated by `model` field */
-export type TTSOptions = TTSV2Options | TTSV3Options;
+export type TTSOptions = TTSV2Options | TTSV3Options | TTSV4FlashOptions;
 
 // ---------------------------------------------------------------------------
 // Resolved (internal) options — flat union of all fields
@@ -109,14 +159,18 @@ interface ResolvedTTSOptions {
   outputAudioCodec: TTSOutputAudioCodec;
   baseURL: string;
   sentenceTokenizer: tokenize.SentenceTokenizer;
-  // V2 only
-  pitch?: number;
-  loudness?: number;
-  enablePreprocessing?: boolean;
-  // V3 only
-  temperature?: number;
+  outputAudioBitrate: TTSOutputAudioBitrate;
+  minBufferSize: number;
+  maxChunkLength: number;
+  sendCompletionEvent: boolean;
+  pitch: number;
+  loudness: number;
+  enablePreprocessing: boolean;
+  temperature: number;
   dictId?: string;
 }
+
+const TTS_OPTIONS = new WeakMap<TTS, ResolvedTTSOptions>();
 
 // ---------------------------------------------------------------------------
 // Defaults per model
@@ -136,6 +190,38 @@ const V3_DEFAULTS = {
   temperature: 0.6,
 };
 
+const V4_DEFAULTS = {
+  speaker: 'shubh_en_narration_gentle' as const,
+  pitch: 0,
+  pace: 1.0,
+  loudness: 1.0,
+  temperature: 0.6,
+  enablePreprocessing: false,
+};
+
+type ParamName = keyof typeof PARAM_BOUNDS;
+
+function paramBounds(model: TTSModels, param: ParamName): readonly [number, number] {
+  return model === 'bulbul:v4-flash' ? V4_PARAM_BOUNDS[param] : PARAM_BOUNDS[param];
+}
+
+function validateParam(model: TTSModels, param: ParamName, value: number): void {
+  const [low, high] = paramBounds(model, param);
+  if (value < low || value > high) {
+    throw new Error(`${param} must be between ${low} and ${high} for model '${model}'`);
+  }
+}
+
+function clampPitch(model: TTSModels, pitch: number): number {
+  const [low, high] = paramBounds(model, 'pitch');
+  if (pitch >= low && pitch <= high) return pitch;
+  MODULE_LOGGER.warn(
+    { pitch, model, low, high },
+    'pitch is outside the Sarvam API accepted range; clamping to the nearest bound',
+  );
+  return Math.max(low, Math.min(high, pitch));
+}
+
 // ---------------------------------------------------------------------------
 // Resolve caller options into a fully-populated internal struct
 // ---------------------------------------------------------------------------
@@ -148,31 +234,59 @@ function resolveOptions(opts: Partial<TTSOptions>): ResolvedTTSOptions {
 
   const model: TTSModels = opts.model ?? 'bulbul:v2';
   const isV3 = model === 'bulbul:v3';
+  const isV4 = model === 'bulbul:v4-flash';
+  const modelOpts = opts as Partial<{
+    pitch: number;
+    loudness: number;
+    enablePreprocessing: boolean;
+    temperature: number;
+    dictId: string;
+  }>;
 
   const base: ResolvedTTSOptions = {
     apiKey,
     streaming: opts.streaming ?? true,
     model,
-    speaker: opts.speaker ?? (isV3 ? V3_DEFAULTS.speaker : V2_DEFAULTS.speaker),
+    speaker:
+      opts.speaker ??
+      (isV4 ? V4_DEFAULTS.speaker : isV3 ? V3_DEFAULTS.speaker : V2_DEFAULTS.speaker),
     targetLanguageCode: normalizeLanguage(opts.targetLanguageCode ?? 'en-IN'),
-    pace: opts.pace ?? (isV3 ? V3_DEFAULTS.pace : V2_DEFAULTS.pace),
+    pace: opts.pace ?? (isV4 ? V4_DEFAULTS.pace : isV3 ? V3_DEFAULTS.pace : V2_DEFAULTS.pace),
     sampleRate: opts.sampleRate ?? SARVAM_TTS_SAMPLE_RATE,
     outputAudioCodec: opts.outputAudioCodec ?? 'linear16',
     baseURL: opts.baseURL ?? SARVAM_BASE_URL,
     sentenceTokenizer:
       opts.sentenceTokenizer ??
       new tokenize.basic.SentenceTokenizer({ minSentenceLength: MIN_SENTENCE_LENGTH }),
+    outputAudioBitrate: opts.outputAudioBitrate ?? '128k',
+    minBufferSize: opts.minBufferSize ?? 50,
+    maxChunkLength: opts.maxChunkLength ?? 150,
+    sendCompletionEvent: opts.sendCompletionEvent ?? true,
+    pitch: modelOpts.pitch ?? (isV4 ? V4_DEFAULTS.pitch : V2_DEFAULTS.pitch),
+    loudness: modelOpts.loudness ?? (isV4 ? V4_DEFAULTS.loudness : V2_DEFAULTS.loudness),
+    enablePreprocessing:
+      modelOpts.enablePreprocessing ??
+      (isV4 ? V4_DEFAULTS.enablePreprocessing : V2_DEFAULTS.enablePreprocessing),
+    temperature:
+      modelOpts.temperature ?? (isV4 ? V4_DEFAULTS.temperature : V3_DEFAULTS.temperature),
+    dictId: modelOpts.dictId,
   };
 
-  if (isV3) {
-    const v3 = opts as TTSV3Options;
-    base.temperature = v3.temperature ?? V3_DEFAULTS.temperature;
-    base.dictId = v3.dictId;
-  } else {
-    const v2 = opts as TTSV2Options;
-    base.pitch = v2.pitch ?? V2_DEFAULTS.pitch;
-    base.loudness = v2.loudness ?? V2_DEFAULTS.loudness;
-    base.enablePreprocessing = v2.enablePreprocessing ?? V2_DEFAULTS.enablePreprocessing;
+  if (!MODEL_SPEAKER_COMPATIBILITY[model].includes(base.speaker)) {
+    throw new Error(`Speaker '${base.speaker}' is not compatible with model '${model}'`);
+  }
+  base.pitch = clampPitch(model, base.pitch);
+  validateParam(model, 'pace', base.pace);
+  validateParam(model, 'loudness', base.loudness);
+  validateParam(model, 'temperature', base.temperature);
+  if (!ALLOWED_OUTPUT_AUDIO_BITRATES.has(base.outputAudioBitrate)) {
+    throw new Error('outputAudioBitrate must be one of 32k, 64k, 96k, 128k, or 192k');
+  }
+  if (base.minBufferSize < 30 || base.minBufferSize > 200) {
+    throw new Error('minBufferSize must be between 30 and 200');
+  }
+  if (base.maxChunkLength < 50 || base.maxChunkLength > 500) {
+    throw new Error('maxChunkLength must be between 50 and 500');
   }
 
   return base;
@@ -237,6 +351,24 @@ function isClosedTransportError(error: unknown): boolean {
   return /close|closing|closed|not open/i.test(message);
 }
 
+/** @internal */
+export function extractErrorStatusCode(data: Record<string, unknown> | undefined): number {
+  const code = data?.code;
+  if (typeof code === 'number' && Number.isInteger(code)) return code;
+  if (typeof code === 'string' && /^\s*\d{3}\s*$/.test(code)) return Number(code);
+  const match = /^\s*(\d{3})\s*:/.exec(String(data?.message ?? ''));
+  return match?.[1] ? Number(match[1]) : -1;
+}
+
+function validateStreamingOptions(opts: ResolvedTTSOptions): void {
+  if (opts.model !== 'bulbul:v4-flash') return;
+  if (!V4_STREAM_SAMPLE_RATES.has(opts.sampleRate)) {
+    throw new Error(
+      `sampleRate must be one of ${[...V4_STREAM_SAMPLE_RATES].join(', ')} when streaming bulbul:v4-flash with codec '${opts.outputAudioCodec}'`,
+    );
+  }
+}
+
 function sendWsJson(ws: WebSocket, payload: unknown, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   if (ws.readyState !== WebSocket.OPEN) {
@@ -267,15 +399,19 @@ function buildRequestBody(text: string, opts: ResolvedTTSOptions): Record<string
     pace: opts.pace,
     speech_sample_rate: String(opts.sampleRate),
     output_audio_codec: opts.outputAudioCodec,
+    output_audio_bitrate: opts.outputAudioBitrate,
+    min_buffer_size: opts.minBufferSize,
+    max_chunk_length: opts.maxChunkLength,
   };
 
-  if (opts.model === 'bulbul:v3') {
-    if (opts.temperature != null) body.temperature = opts.temperature;
+  if (opts.model === 'bulbul:v3' || opts.model === 'bulbul:v4-flash') {
+    body.temperature = opts.temperature;
     if (opts.dictId != null) body.dict_id = opts.dictId;
-  } else {
-    if (opts.pitch != null) body.pitch = opts.pitch;
-    if (opts.loudness != null) body.loudness = opts.loudness;
-    if (opts.enablePreprocessing != null) body.enable_preprocessing = opts.enablePreprocessing;
+  }
+  if (opts.model === 'bulbul:v2' || opts.model === 'bulbul:v4-flash') {
+    body.pitch = opts.pitch;
+    body.loudness = opts.loudness;
+    body.enable_preprocessing = opts.enablePreprocessing;
   }
 
   return body;
@@ -295,13 +431,17 @@ function buildWsConfigMessage(opts: ResolvedTTSOptions): Record<string, unknown>
     output_audio_codec: opts.outputAudioCodec,
   };
 
-  if (opts.model === 'bulbul:v3') {
-    if (opts.temperature != null) data.temperature = opts.temperature;
+  if (opts.model === 'bulbul:v3' || opts.model === 'bulbul:v4-flash') {
+    data.temperature = opts.temperature;
     if (opts.dictId != null) data.dict_id = opts.dictId;
-  } else {
-    if (opts.pitch != null) data.pitch = opts.pitch;
-    if (opts.loudness != null) data.loudness = opts.loudness;
-    if (opts.enablePreprocessing != null) data.enable_preprocessing = opts.enablePreprocessing;
+    data.output_audio_bitrate = opts.outputAudioBitrate;
+    data.min_buffer_size = opts.minBufferSize;
+    data.max_chunk_length = opts.maxChunkLength;
+  }
+  if (opts.model === 'bulbul:v2' || opts.model === 'bulbul:v4-flash') {
+    data.pitch = opts.pitch;
+    data.loudness = opts.loudness;
+    data.enable_preprocessing = opts.enablePreprocessing;
   }
 
   return { type: 'config', data };
@@ -326,35 +466,20 @@ export class TTS extends tts.TTS {
     const resolved = resolveOptions(opts);
     super(resolved.sampleRate, SARVAM_TTS_CHANNELS, { streaming: resolved.streaming });
     this.#opts = resolved;
+    TTS_OPTIONS.set(this, resolved);
   }
 
   /**
    * Update TTS options after initialization.
    *
    * @remarks
-   * When the model changes, only truly shared fields (apiKey,
-   * targetLanguageCode, pace, sampleRate, baseURL) carry over.
-   * Model-specific fields (speaker, pitch, loudness, temperature,
-   * dictId, enablePreprocessing) are dropped so resolveOptions re-applies
-   * the correct defaults for the new model.
+   * Updates are validated atomically against the resulting model. A rejected
+   * update leaves the current options unchanged.
    */
   updateOptions(opts: Partial<TTSOptions>) {
-    const modelChanging = opts.model != null && opts.model !== this.#opts.model;
-
-    const base: Partial<TTSOptions> = modelChanging
-      ? {
-          apiKey: this.#opts.apiKey,
-          streaming: this.#opts.streaming,
-          targetLanguageCode: this.#opts.targetLanguageCode as TTSLanguages,
-          pace: this.#opts.pace,
-          sampleRate: this.#opts.sampleRate as TTSSampleRates,
-          outputAudioCodec: this.#opts.outputAudioCodec,
-          baseURL: this.#opts.baseURL,
-          sentenceTokenizer: this.#opts.sentenceTokenizer,
-        }
-      : ({ ...this.#opts } as Partial<TTSOptions>);
-
-    this.#opts = resolveOptions({ ...base, ...opts } as TTSOptions);
+    const resolved = resolveOptions({ ...this.#opts, ...opts } as TTSOptions);
+    this.#opts = resolved;
+    TTS_OPTIONS.set(this, resolved);
   }
 
   /**
@@ -458,12 +583,14 @@ export class ChunkedStream extends tts.ChunkedStream {
 
 export class SynthesizeStream extends tts.SynthesizeStream {
   private opts: ResolvedTTSOptions;
+  private readonly sarvam: TTS;
   private tokenizer: tokenize.SentenceStream;
   #logger = log();
   label = 'sarvam.SynthesizeStream';
 
   constructor(tts: TTS, opts: ResolvedTTSOptions) {
     super(tts);
+    this.sarvam = tts;
     this.opts = opts;
     this.tokenizer = opts.sentenceTokenizer.stream();
   }
@@ -504,14 +631,22 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   protected async run() {
+    this.opts = {
+      ...TTS_OPTIONS.get(this.sarvam)!,
+      sampleRate: this.opts.sampleRate,
+      outputAudioCodec: this.opts.outputAudioCodec,
+    };
+    validateStreamingOptions(this.opts);
     const requestId = shortuuid();
     const segmentId = shortuuid();
 
     // Build WS URL: wss://api.sarvam.ai/text-to-speech/ws?model=...&send_completion_event=true
     const wsBaseUrl = this.opts.baseURL.replace(/^http/, 'ws');
-    const url = new URL(`${wsBaseUrl}${SARVAM_WS_URL_PATH}`);
+    const path =
+      this.opts.model === 'bulbul:v4-flash' ? `${SARVAM_WS_URL_PATH}/v2` : SARVAM_WS_URL_PATH;
+    const url = new URL(`${wsBaseUrl}${path}`);
     url.searchParams.set('model', this.opts.model);
-    url.searchParams.set('send_completion_event', 'true');
+    url.searchParams.set('send_completion_event', String(this.opts.sendCompletionEvent));
 
     const ws = new WebSocket(url, {
       headers: {
@@ -628,9 +763,23 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             }
 
             case 'error': {
-              const errMsg = (msg.data?.message as string) ?? 'Unknown Sarvam WS error';
-              const errCode = msg.data?.code as number | undefined;
-              reject(new Error(`Sarvam WS error ${errCode ?? ''}: ${errMsg}`));
+              const statusCode = extractErrorStatusCode(msg.data);
+              const requestId =
+                typeof msg.data?.request_id === 'string' ? msg.data.request_id : undefined;
+              this.#logger.error(
+                {
+                  error_code: statusCode,
+                  'lk.pii.error_message': msg.data?.message,
+                  'lk.pii.raw_message': msg,
+                },
+                'TTS API error',
+              );
+              reject(
+                new APIStatusError({
+                  message: `TTS API error from Sarvam (status ${statusCode})`,
+                  options: { statusCode, requestId },
+                }),
+              );
               break;
             }
           }
@@ -665,6 +814,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       await Promise.all([inputTask(), sendTask(), recvTask()]);
     } catch (e) {
       if (this.abortController.signal.aborted) return;
+      if (e instanceof APIStatusError) throw e;
       const msg = e instanceof Error ? e.message : String(e);
       throw new APIConnectionError({ message: `Sarvam TTS streaming failed: ${msg}` });
     } finally {
