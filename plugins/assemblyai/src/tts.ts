@@ -109,8 +109,8 @@ type ListenerItem = ServerFrame | APIError;
 
 interface RequestState {
   text: string;
-  segmentOffset?: number;
-  duration: number;
+  segmentOffsetMs?: number;
+  durationMs: number;
   done: boolean;
   transcriptPushed: boolean;
 }
@@ -127,6 +127,9 @@ export class TTS extends tts.TTS {
   #pool: ConnectionPool<AssemblyAIConnection>;
   #streams = new Set<WeakRef<SynthesizeStream>>();
   #closed = false;
+  // Bumped by updateOptions(). The pool only tracks a connection once its handshake finishes,
+  // so invalidate() misses one still connecting; the generation catches it on checkout instead.
+  #optionsGeneration = 0;
   #connectNotBefore = 0;
   #connectingSockets = new Set<WebSocket>();
   #pendingConnections = new Set<Promise<AssemblyAIConnection>>();
@@ -201,6 +204,7 @@ export class TTS extends tts.TTS {
       this.#opts.voice = voice;
       this.#opts.language = language;
       this.#opts.model = model;
+      this.#optionsGeneration += 1;
       this.#pool.invalidate();
     }
   }
@@ -215,7 +219,9 @@ export class TTS extends tts.TTS {
 
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
     const stream = new SynthesizeStream(this, options?.connOptions);
-    this.#streams.add(new WeakRef(stream));
+    const ref = new WeakRef(stream);
+    this.#streams.add(ref);
+    void stream.done.await.then(() => this.#streams.delete(ref));
     return stream;
   }
 
@@ -271,6 +277,10 @@ export class TTS extends tts.TTS {
         );
         throw new Error('aborted');
       }
+      if (connection.optionsGeneration !== this.#optionsGeneration) {
+        this.#pool.remove(connection);
+        continue;
+      }
       if (connection.usable) {
         let released = false;
         return {
@@ -278,8 +288,15 @@ export class TTS extends tts.TTS {
           release: (discard) => {
             if (released) return;
             released = true;
-            if (discard || !connection.usable) this.#pool.remove(connection);
-            else this.#pool.put(connection);
+            if (
+              discard ||
+              !connection.usable ||
+              connection.optionsGeneration !== this.#optionsGeneration
+            ) {
+              this.#pool.remove(connection);
+            } else {
+              this.#pool.put(connection);
+            }
           },
         };
       }
@@ -315,6 +332,7 @@ export class TTS extends tts.TTS {
     }
 
     const opts = { ...this.#opts };
+    const optionsGeneration = this.#optionsGeneration;
     const url = new URL(`${opts.baseUrl}/v1/ws`);
     url.searchParams.set('model_id', opts.model);
     url.searchParams.set('voice_id', opts.voice);
@@ -362,7 +380,7 @@ export class TTS extends tts.TTS {
         });
       }
 
-      const connection = new AssemblyAIConnection(ws, begin);
+      const connection = new AssemblyAIConnection(ws, begin, optionsGeneration);
       log().debug(
         { sessionId: connection.sessionId, configuration: connection.configuration },
         'connected to AssemblyAI TTS',
@@ -619,7 +637,7 @@ class StreamRun {
           this.#connection.send(FLUSH_FRAME);
           this.#requests.push({
             text,
-            duration: 0,
+            durationMs: 0,
             done: false,
             transcriptPushed: false,
           });
@@ -657,15 +675,15 @@ class StreamRun {
 
         if (item.type === 'Audio' && typeof item.audio === 'string') {
           const audio = Buffer.from(item.audio, 'base64');
-          if (request.segmentOffset === undefined) {
-            request.segmentOffset = segmentBytes / this.#bytesPerSecond;
+          if (request.segmentOffsetMs === undefined) {
+            request.segmentOffsetMs = (segmentBytes * 1000) / this.#bytesPerSecond;
           }
           segmentBytes += audio.byteLength;
           this.#pushAudio(audio);
         } else if (item.type === 'FlushDone') {
           request.done = true;
-          request.duration =
-            typeof item.audio_duration_ms === 'number' ? item.audio_duration_ms / 1000 : 0;
+          request.durationMs =
+            typeof item.audio_duration_ms === 'number' ? item.audio_duration_ms : 0;
           this.#numDone += 1;
           progress.set();
           if (!this.#wordTimings) {
@@ -759,16 +777,16 @@ class StreamRun {
   }
 
   #awaitingWords(request: RequestState): boolean {
-    return request.segmentOffset !== undefined && !request.transcriptPushed;
+    return request.segmentOffsetMs !== undefined && !request.transcriptPushed;
   }
 
   #pushWordBoundaries(request: RequestState, item: ServerFrame): void {
-    if (request.transcriptPushed || request.segmentOffset === undefined) return;
+    if (request.transcriptPushed || request.segmentOffsetMs === undefined) return;
     const index = this.#requests.indexOf(request);
     for (const earlier of this.#requests.slice(0, index)) this.#pushUntimed(earlier);
 
-    const audioStart = typeof item.audio_start_ms === 'number' ? item.audio_start_ms / 1000 : 0;
-    const offset = request.segmentOffset - audioStart;
+    const audioStartMs = typeof item.audio_start_ms === 'number' ? item.audio_start_ms : 0;
+    const offsetMs = request.segmentOffsetMs - audioStartMs;
     const words: TimedString[] = [];
     for (const word of item.words ?? []) {
       if (!word.word || typeof word.start !== 'number' || typeof word.end !== 'number') {
@@ -777,8 +795,8 @@ class StreamRun {
       words.push(
         createTimedString({
           text: `${word.word} `,
-          startTime: offset + word.start / 1000,
-          endTime: offset + word.end / 1000,
+          startTime: (offsetMs + word.start) / 1000,
+          endTime: (offsetMs + word.end) / 1000,
           confidence: word.confidence,
         }),
       );
@@ -796,12 +814,12 @@ class StreamRun {
   }
 
   #pushText(request: RequestState): void {
-    if (!this.#opts.wordTimestamps || request.segmentOffset === undefined) return;
+    if (!this.#opts.wordTimestamps || request.segmentOffsetMs === undefined) return;
     this.#pendingTranscripts.push(
       createTimedString({
         text: `${request.text} `,
-        startTime: request.segmentOffset,
-        endTime: request.segmentOffset + request.duration,
+        startTime: request.segmentOffsetMs / 1000,
+        endTime: (request.segmentOffsetMs + request.durationMs) / 1000,
       }),
     );
   }
@@ -864,6 +882,7 @@ class AssemblyAIConnection {
   readonly configuration: Record<string, unknown>;
   readonly expiresAt: number;
   readonly wordBoundaries: boolean;
+  readonly optionsGeneration: number;
   wasUsed = false;
   #ws: WebSocket;
   #expiryMargin: number;
@@ -875,8 +894,9 @@ class AssemblyAIConnection {
   #sendTask: Promise<void>;
   #receiveTask: Promise<void>;
 
-  constructor(ws: WebSocket, begin: ServerFrame) {
+  constructor(ws: WebSocket, begin: ServerFrame, optionsGeneration: number) {
     this.#ws = ws;
+    this.optionsGeneration = optionsGeneration;
     this.sessionId = typeof begin.id === 'string' ? begin.id : null;
     this.configuration = begin.configuration ?? {};
     this.expiresAt =

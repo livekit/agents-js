@@ -748,6 +748,23 @@ describe('AssemblyAI TTS streaming', () => {
     });
   });
 
+  it('drops a prewarmed session when options change during its handshake', async () => {
+    await withServer({ beginDelay: 200 }, async (server) => {
+      const engine = makeTts(server);
+      try {
+        engine.prewarm();
+        await delay(50);
+        engine.updateOptions({ voice: 'aai-paul' });
+        await speak(engine, ['Hello.']);
+        expect(server.sessions.map(({ params }) => params.voice_id)).toEqual([KEEGAN, 'aai-paul']);
+        expect(server.frames('Generate')).toHaveLength(1);
+        expect(server.sessions[0]!.received).toEqual([]);
+      } finally {
+        await engine.close();
+      }
+    });
+  });
+
   it('sends voice and model when connecting', async () => {
     await withServer({}, async (server) => {
       const engine = makeTts(server, { voice: 'clone', model: 'some-model' });
