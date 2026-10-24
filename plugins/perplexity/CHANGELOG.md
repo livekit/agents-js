@@ -1,5 +1,13 @@
 # @livekit/agents-plugin-perplexity
 
+## 1.9.4
+
+### Patch Changes
+
+- Updated dependencies [[`f6a9c65`](https://github.com/livekit/agents-js/commit/f6a9c65072d47455b71a6e82e364aee904902c97), [`9af6d53`](https://github.com/livekit/agents-js/commit/9af6d535f1ff7d3d49ad888ed660eb7ed3b54839), [`0b9cab4`](https://github.com/livekit/agents-js/commit/0b9cab4f0eb7c68088d7ff329edcbd94b1b86dd8), [`b146170`](https://github.com/livekit/agents-js/commit/b14617071c691a15cd77421efd1f263c287503a2), [`fdfb565`](https://github.com/livekit/agents-js/commit/fdfb56537356c8924fbee5d32916a270e122e3c8), [`b05dc11`](https://github.com/livekit/agents-js/commit/b05dc11a72cfac080aae8f197105fbb7e3897351), [`1098fd8`](https://github.com/livekit/agents-js/commit/1098fd8ee2a8e4b0aec6ed02863ff1c42b94b105), [`67e3dd5`](https://github.com/livekit/agents-js/commit/67e3dd5bf8f4ce96ff88da1e2161ddb722be0fe3), [`d2e7d6b`](https://github.com/livekit/agents-js/commit/d2e7d6bbc05f0f70590809b36850f4b9bf4114a8), [`6b81019`](https://github.com/livekit/agents-js/commit/6b81019447f7fd9e96227054ae1157de137858b2), [`9af6d53`](https://github.com/livekit/agents-js/commit/9af6d535f1ff7d3d49ad888ed660eb7ed3b54839), [`9af6d53`](https://github.com/livekit/agents-js/commit/9af6d535f1ff7d3d49ad888ed660eb7ed3b54839), [`9af6d53`](https://github.com/livekit/agents-js/commit/9af6d535f1ff7d3d49ad888ed660eb7ed3b54839), [`2e80241`](https://github.com/livekit/agents-js/commit/2e80241ffd57df30cf877f4497022a842e4f5332), [`767c7cb`](https://github.com/livekit/agents-js/commit/767c7cba771b7adc468bf8b59726c4b46086ff81), [`a686b06`](https://github.com/livekit/agents-js/commit/a686b066e18f4aed6e642743a8af36290b141039), [`095649c`](https://github.com/livekit/agents-js/commit/095649cbd2c30182080b5f6986835b779b39f3c2), [`e3babc6`](https://github.com/livekit/agents-js/commit/e3babc6c41096521931020ad5435b703d19c86c7), [`4b607c8`](https://github.com/livekit/agents-js/commit/4b607c8e2aa9f1f480b8f3a769ef1cafe8af0940), [`4705ed8`](https://github.com/livekit/agents-js/commit/4705ed8f34351e20f787f78225c50b0da77d6a02), [`df96ee8`](https://github.com/livekit/agents-js/commit/df96ee878e5fdc84071440edbc99aa07de4398ab), [`dae2ef2`](https://github.com/livekit/agents-js/commit/dae2ef22c677e250191f1086b6685af90a7725ee), [`96cc921`](https://github.com/livekit/agents-js/commit/96cc921efc57d05c25db68934e418b5fc38eb40c)]:
+  - @livekit/agents@1.9.4
+  - @livekit/agents-plugin-openai@1.9.4
+
 ## 1.9.3
 
 ### Patch Changes
