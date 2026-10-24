@@ -12,7 +12,12 @@ import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
-import { dropBracketCues, sentenceTokenizer } from '../tts/provider_format.js';
+import {
+  convertMarkup,
+  dropBracketCues,
+  normalizeMarkup,
+  sentenceTokenizer,
+} from '../tts/provider_format.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import {
   Event,
@@ -58,7 +63,8 @@ export type FishAudioModels =
   | 'fishaudio'
   | 'fishaudio/s2.1-pro'
   | 'fishaudio/s2.1-pro-free'
-  | 'fishaudio/s2-pro';
+  | 'fishaudio/s2-pro'
+  | 'fishaudio/drama-3';
 
 export interface CartesiaOptions {
   emotion?: string;
@@ -385,6 +391,8 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       return 'inworld';
     } else if (provider === 'inworld') {
       return ''; // older inworld models don't support markup
+    } else if (provider === 'fishaudio' && model.includes('drama')) {
+      return 'fishaudio_drama'; // free-form direction instead of fixed emotions
     }
     return provider;
   }
@@ -444,8 +452,9 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       this.pool.invalidate();
     }
 
+    const { model: _model, ...streamOpts } = this.opts;
     for (const stream of this.streams) {
-      stream.updateOptions(this.opts);
+      stream.updateOptions(streamOpts);
     }
   }
 
@@ -535,6 +544,8 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
    * with the next turn/session mutating the shared TTS instance.
    */
   private expressive: boolean;
+  /** Lower for the model this stream sends, not one selected by a mid-utterance update. */
+  private markupKey: string;
   /**
    * Alignment arrives finer-grained than a cue, so `dropBracketCues` parks the tail of an
    * unclosed span here between messages.
@@ -548,6 +559,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     this.opts = opts;
     this.tts = tts;
     this.expressive = tts.expressive;
+    this.markupKey = tts.markup.providerKey;
   }
 
   get label() {
@@ -637,7 +649,9 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         }
         // only expressive turns can carry markup; without it the text is a plain
         // utterance and must reach the provider byte-for-byte
-        sendTokenizerStream.pushText(this.expressive ? this.tts.markup.normalize(data) : data);
+        sendTokenizerStream.pushText(
+          this.expressive ? normalizeMarkup(this.markupKey, data) : data,
+        );
       }
       // Only call endInput if the stream hasn't been closed by cleanup
       if (!closing) {
@@ -649,9 +663,9 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       for await (const ev of sendTokenizerStream) {
         if (signal.aborted || closing) break;
 
-        // Carry per-utterance generation config so mid-stream voice/model/language
-        // changes ride the gateway's hot path (no reconnect needed on the active
-        // session). The gateway also merges `extra` into the live session.
+        // Carry per-utterance generation config so mid-stream voice/language changes
+        // ride the gateway's hot path. Model stays snapshotted with the stream's dialect.
+        // The gateway also merges `extra` into the live session.
         const generationConfig: Record<string, string> = {};
         if (this.opts.voice) generationConfig.voice = this.opts.voice;
         if (this.opts.model) generationConfig.model = this.opts.model;
@@ -660,7 +674,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         // re-normalize at sentence level: tags split across input chunks aren't caught by
         // the per-chunk normalize in the input task
         const converted = this.expressive
-          ? this.tts.markup.convert(this.tts.markup.normalize(ev.token))
+          ? convertMarkup(this.markupKey, normalizeMarkup(this.markupKey, ev.token))
           : ev.token;
 
         this.markStarted();
