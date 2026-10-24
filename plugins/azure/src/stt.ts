@@ -534,19 +534,19 @@ function pronunciationAssessment(
 
   let best: unknown;
   try {
-    const parsed = JSON.parse(result.json) as { NBest?: unknown[] };
-    best = parsed.NBest?.[0];
+    const nbest = (JSON.parse(result.json) as { NBest?: unknown } | null)?.NBest;
+    if (!Array.isArray(nbest) || nbest.length === 0) throw new Error('missing NBest');
+    best = nbest[0];
   } catch {
     // The payload contains the transcript, so do not include it in the log.
     log().warn('could not read the Azure pronunciation assessment result');
     return undefined;
   }
 
-  if (!best) {
-    log().warn('could not read the Azure pronunciation assessment result');
-    return undefined;
-  }
-  return typeof best === 'object' && 'PronunciationAssessment' in best
+  return typeof best === 'object' &&
+    best !== null &&
+    !Array.isArray(best) &&
+    'PronunciationAssessment' in best
     ? (best as Record<string, unknown>)
     : undefined;
 }

@@ -349,24 +349,32 @@ describe('Azure STT pronunciation assessment', () => {
     }
   });
 
-  it.each([undefined, '', 'not json', '{}', '{"NBest": []}', '{"NBest": [{"Display": "x"}]}'])(
-    'still emits the transcript for an unreadable assessment (%s)',
-    async (json) => {
-      const warn = vi.spyOn((await import('@livekit/agents')).log(), 'warn');
-      const { stream, nextEvent } = await recognizedStream(true);
-      try {
-        stream._onRecognized(recognizedEvent(json));
+  it.each([
+    undefined,
+    '',
+    'not json',
+    'null',
+    '{}',
+    '{"NBest": []}',
+    '{"NBest": {"0": {"PronunciationAssessment": {}}}}',
+    '{"NBest": [null]}',
+    '{"NBest": [42]}',
+    '{"NBest": [{"Display": "x"}]}',
+  ])('still emits the transcript for an unreadable assessment (%s)', async (json) => {
+    const warn = vi.spyOn((await import('@livekit/agents')).log(), 'warn');
+    const { stream, nextEvent } = await recognizedStream(true);
+    try {
+      stream._onRecognized(recognizedEvent(json));
 
-        const event = await nextEvent();
-        expect(event.value?.type).toBe(stt.SpeechEventType.FINAL_TRANSCRIPT);
-        expect(event.value?.alternatives?.[0]?.metadata).toBeUndefined();
-        expect(warn.mock.calls.flat().join(' ')).not.toContain('こんにちは');
-      } finally {
-        warn.mockRestore();
-        stream.close();
-      }
-    },
-  );
+      const event = await nextEvent();
+      expect(event.value?.type).toBe(stt.SpeechEventType.FINAL_TRANSCRIPT);
+      expect(event.value?.alternatives?.[0]?.metadata).toBeUndefined();
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('こんにちは');
+    } finally {
+      warn.mockRestore();
+      stream.close();
+    }
+  });
 
   it('preserves the config across the stream copy and applies it to the recognizer', async () => {
     const config = new speechsdk.PronunciationAssessmentConfig(
