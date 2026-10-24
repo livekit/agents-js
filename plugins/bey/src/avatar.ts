@@ -24,6 +24,8 @@ const AVATAR_JOIN_WAIT_MAX_ATTEMPTS = 5;
 const AVATAR_JOIN_RETRY_DELAY_MS = 2000;
 const STOCK_AVATAR_ID = '694c83e2-8895-4a98-bd16-56332ca3f449';
 const DEFAULT_API_URL = 'https://api.bey.dev';
+// The avatar worker renders and publishes 16 kHz audio.
+const SAMPLE_RATE = 16000;
 const AVATAR_AGENT_IDENTITY = 'bey-avatar-agent';
 const AVATAR_AGENT_NAME = 'bey-avatar-agent';
 
@@ -238,22 +240,24 @@ export class AvatarSession extends voice.AvatarSession {
       room,
       destinationIdentity: this.avatarIdentity,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
+      sampleRate: SAMPLE_RATE,
     });
   }
 
   private async startAgent(livekitUrl: string, livekitToken: string): Promise<void> {
     for (let i = 0; i < this.connOptions.maxRetry; i++) {
       try {
-        const response = await fetch(`${this.apiUrl}/v1/session`, {
+        const response = await fetch(`${this.apiUrl}/v1/sessions`, {
           method: 'POST',
           headers: {
             'x-api-key': this.apiKey,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
+            transport: 'livekit',
             avatar_id: this.avatarId,
-            livekit_url: livekitUrl,
-            livekit_token: livekitToken,
+            url: livekitUrl,
+            token: livekitToken,
           }),
           signal: AbortSignal.timeout(this.connOptions.timeoutMs),
         });
