@@ -13,6 +13,7 @@ const azureHarness = vi.hoisted(() => ({
   maxActiveReaders: 0,
   startupFailure: undefined as 'callback' | 'throw' | undefined,
   closedRecognizers: 0,
+  appliedPronunciationAssessments: [] as string[],
   recognizers: [] as Array<{
     canceled?: (_sender: unknown, event: unknown) => void;
     sessionStarted?: (_sender: unknown, event: unknown) => void;
@@ -67,6 +68,14 @@ vi.mock('microsoft-cognitiveservices-speech-sdk', async (importOriginal) => {
     sessionStarted?: (_sender: unknown, event: unknown) => void;
     sessionStopped?: (_sender: unknown, event: unknown) => void;
     canceled?: (_sender: unknown, event: unknown) => void;
+    internalData = {
+      isSpeakerDiarizationEnabled: false,
+      speechContext: {
+        setPronunciationAssessmentParams: (params: string) => {
+          azureHarness.appliedPronunciationAssessments.push(params);
+        },
+      },
+    };
 
     constructor() {
       azureHarness.recognizers.push(this);
@@ -109,6 +118,9 @@ vi.mock('microsoft-cognitiveservices-speech-sdk', async (importOriginal) => {
       },
     },
     SpeechRecognizer: FakeRecognizer,
+    AutoDetectSourceLanguageResult: {
+      fromResult: () => ({ language: 'ja-JP' }),
+    },
   };
 });
 
@@ -128,6 +140,7 @@ describe('Azure STT cancellation handling', () => {
     azureHarness.maxActiveReaders = 0;
     azureHarness.startupFailure = undefined;
     azureHarness.closedRecognizers = 0;
+    azureHarness.appliedPronunciationAssessments.length = 0;
     azureHarness.recognizers.length = 0;
     azureHarness.streams.length = 0;
   });
@@ -272,6 +285,109 @@ describe('Azure STT cancellation handling', () => {
     } finally {
       stream.close();
       await collectEvents;
+    }
+  });
+});
+
+const assessed = {
+  Display: 'こんにちは',
+  PronunciationAssessment: { AccuracyScore: 92, FluencyScore: 88 },
+  Words: [{ Word: 'こんにちは', PronunciationAssessment: { AccuracyScore: 92 } }],
+};
+
+function recognizedEvent(json?: string): speechsdk.SpeechRecognitionEventArgs {
+  return {
+    result: {
+      text: 'こんにちは',
+      offset: 0,
+      duration: 10_000_000,
+      json,
+    },
+  } as speechsdk.SpeechRecognitionEventArgs;
+}
+
+async function recognizedStream(assessment: boolean) {
+  const provider = new STT({
+    speechHost: 'wss://azure.test',
+    pronunciationAssessment: assessment
+      ? new speechsdk.PronunciationAssessmentConfig('')
+      : undefined,
+  });
+  const stream = provider.stream();
+  return { stream, nextEvent: () => stream.next() };
+}
+
+describe('Azure STT pronunciation assessment', () => {
+  beforeEach(() => {
+    azureHarness.appliedPronunciationAssessments.length = 0;
+  });
+
+  it('attaches pronunciation assessment to the final transcript', async () => {
+    const { stream, nextEvent } = await recognizedStream(true);
+    try {
+      stream._onRecognized(recognizedEvent(JSON.stringify({ NBest: [assessed] })));
+
+      const event = await nextEvent();
+      expect(event.value?.type).toBe(stt.SpeechEventType.FINAL_TRANSCRIPT);
+      expect(event.value?.alternatives?.[0]?.metadata).toEqual({
+        pronunciationAssessment: assessed,
+      });
+    } finally {
+      stream.close();
+    }
+  });
+
+  it('has no metadata when pronunciation assessment is disabled', async () => {
+    const { stream, nextEvent } = await recognizedStream(false);
+    try {
+      stream._onRecognized(recognizedEvent(JSON.stringify({ NBest: [assessed] })));
+
+      const event = await nextEvent();
+      expect(event.value?.alternatives?.[0]?.metadata).toBeUndefined();
+    } finally {
+      stream.close();
+    }
+  });
+
+  it.each([undefined, '', 'not json', '{}', '{"NBest": []}', '{"NBest": [{"Display": "x"}]}'])(
+    'still emits the transcript for an unreadable assessment (%s)',
+    async (json) => {
+      const warn = vi.spyOn((await import('@livekit/agents')).log(), 'warn');
+      const { stream, nextEvent } = await recognizedStream(true);
+      try {
+        stream._onRecognized(recognizedEvent(json));
+
+        const event = await nextEvent();
+        expect(event.value?.type).toBe(stt.SpeechEventType.FINAL_TRANSCRIPT);
+        expect(event.value?.alternatives?.[0]?.metadata).toBeUndefined();
+        expect(warn.mock.calls.flat().join(' ')).not.toContain('こんにちは');
+      } finally {
+        warn.mockRestore();
+        stream.close();
+      }
+    },
+  );
+
+  it('preserves the config across the stream copy and applies it to the recognizer', async () => {
+    const config = new speechsdk.PronunciationAssessmentConfig(
+      '',
+      speechsdk.PronunciationAssessmentGradingSystem.HundredMark,
+      speechsdk.PronunciationAssessmentGranularity.Phoneme,
+    );
+    const provider = new STT({
+      speechKey: 'test-key',
+      speechRegion: 'japaneast',
+      pronunciationAssessment: config,
+    });
+    const stream = provider.stream();
+    try {
+      expect(stream._opts.pronunciationAssessment).toBe(config);
+      await vi.waitFor(() => expect(azureHarness.appliedPronunciationAssessments).toHaveLength(1));
+      expect(JSON.parse(azureHarness.appliedPronunciationAssessments[0]!)).toMatchObject({
+        granularity: 'Phoneme',
+      });
+    } finally {
+      stream.close();
     }
   });
 });

@@ -37,6 +37,7 @@ export interface STTOptions {
   phraseList?: string[] | null;
   explicitPunctuation: boolean;
   trueTextPostProcessing: boolean;
+  pronunciationAssessment?: speechsdk.PronunciationAssessmentConfig;
 }
 
 /** @public */
@@ -62,6 +63,12 @@ export interface STTConstructorOptions extends STTUpdateOptions {
   phraseList?: string[] | null;
   explicitPunctuation?: boolean;
   trueTextPostProcessing?: boolean;
+  /**
+   * Assess pronunciation during streaming recognition. Final transcripts include Azure's scores
+   * and per-word breakdown in `SpeechData.metadata.pronunciationAssessment`.
+   * Leave `referenceText` empty for unscripted assessment.
+   */
+  pronunciationAssessment?: speechsdk.PronunciationAssessmentConfig;
 }
 
 /** @internal */
@@ -167,6 +174,7 @@ export class STT extends stt.STT {
       speechAuthToken,
       speechEndpoint,
       language: normalizeLanguages(opts.language),
+      pronunciationAssessment: opts.pronunciationAssessment,
     };
   }
 
@@ -357,9 +365,17 @@ export class SpeechStream extends stt.SpeechStream {
     const text = evt.result.text.trim();
     if (!text) return;
 
+    const assessment = this._opts.pronunciationAssessment
+      ? pronunciationAssessment(evt.result)
+      : undefined;
     this.queue.put({
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-      alternatives: [this.#speechData(evt, 1)],
+      alternatives: [
+        {
+          ...this.#speechData(evt, 1),
+          metadata: assessment ? { pronunciationAssessment: assessment } : undefined,
+        },
+      ],
     });
   }
 
@@ -504,7 +520,35 @@ function createSpeechRecognizer(
     }
   }
 
+  if (config.pronunciationAssessment) {
+    config.pronunciationAssessment.applyTo(recognizer);
+  }
+
   return recognizer;
+}
+
+function pronunciationAssessment(
+  result: speechsdk.SpeechRecognitionResult,
+): Record<string, unknown> | undefined {
+  if (!result.json) return undefined;
+
+  let best: unknown;
+  try {
+    const parsed = JSON.parse(result.json) as { NBest?: unknown[] };
+    best = parsed.NBest?.[0];
+  } catch {
+    // The payload contains the transcript, so do not include it in the log.
+    log().warn('could not read the Azure pronunciation assessment result');
+    return undefined;
+  }
+
+  if (!best) {
+    log().warn('could not read the Azure pronunciation assessment result');
+    return undefined;
+  }
+  return typeof best === 'object' && 'PronunciationAssessment' in best
+    ? (best as Record<string, unknown>)
+    : undefined;
 }
 
 function createSpeechConfig(config: STTOptions): speechsdk.SpeechConfig {
