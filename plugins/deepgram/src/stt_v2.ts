@@ -567,6 +567,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
         if (!this.#speaking) return;
         this.#sendTranscriptEvent(stt.SpeechEventType.PREFLIGHT_TRANSCRIPT, data);
       } else if (eventType === 'TurnResumed') {
+        // The interim stops the preemptive generation started for the eager end of turn
+        // once the transcript has moved past it.
         this.#sendTranscriptEvent(stt.SpeechEventType.INTERIM_TRANSCRIPT, data);
       } else if (eventType === 'EndOfTurn') {
         if (!this.#speaking) return;

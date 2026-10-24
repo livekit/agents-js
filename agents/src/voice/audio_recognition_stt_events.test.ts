@@ -30,6 +30,10 @@ interface RecognitionInternals {
   runEOUDetection: (chatCtx: ChatContext, trigger: 'manual') => void;
 }
 
+function speechEvent(type: SpeechEventType, text: string): SpeechEvent {
+  return { type, alternatives: [speechData(text)] };
+}
+
 interface SttEventMetadata {
   received_at: number;
   type: string;
@@ -221,5 +225,53 @@ describe.sequential('AudioRecognition STT event traces', () => {
     const [events] = turnEvents(exporter);
     expect(events).toHaveLength(130);
     expect(events?.every((event) => event.transcript_length === 0)).toBe(true);
+  });
+});
+
+describe('AudioRecognition stale preflight', () => {
+  it.each([
+    ['changed transcript', 'I need to cancel my subscription please', 1],
+    ['same transcript', 'I need to cancel my subscription.', 1],
+    ['same words', 'i need to cancel my subscription', 1],
+    ['empty interim', '', 0],
+  ])('forwards the current turn for a %s', async (_name, interim, expectedCalls) => {
+    const onPreflightStale = vi.fn();
+    const hooks: RecognitionHooks = {
+      interruptionByAudioActivityEnabled: false,
+      onOverlapSpeech: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
+      onStartOfSpeech: vi.fn(),
+      onVADInferenceDone: vi.fn(),
+      onEndOfSpeech: vi.fn(),
+      onInterimTranscript: vi.fn(),
+      onFinalTranscript: vi.fn(),
+      onPreemptiveGeneration: vi.fn(),
+      onPreflightStale,
+      onEotPrediction: vi.fn(),
+      onAgentBackchannelOpportunity: vi.fn(),
+      onUserTurnExceeded: vi.fn(),
+      retrieveChatCtx: () => ChatContext.empty(),
+      onEndOfTurn: vi.fn(async () => false),
+    };
+    const recognition = new AudioRecognition({
+      recognitionHooks: hooks,
+      turnDetectionMode: 'stt',
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
+    });
+    const internals = recognition as unknown as RecognitionInternals;
+
+    await internals.onSTTEvent(
+      speechEvent(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'I need to cancel my subscription.'),
+    );
+    await internals.onSTTEvent(speechEvent(SpeechEventType.INTERIM_TRANSCRIPT, interim));
+
+    expect(onPreflightStale).toHaveBeenCalledTimes(expectedCalls);
+    if (expectedCalls) {
+      expect(onPreflightStale).toHaveBeenCalledWith({
+        newTranscript: interim,
+      });
+    }
+    await recognition.close();
   });
 });

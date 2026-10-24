@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ChatContext } from '../llm/chat_context.js';
 import { type ChatChunk, LLM, LLMStream } from '../llm/llm.js';
 import type { ToolChoice, ToolContextLike } from '../llm/tool_context.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { FakeSTT } from '../stt/testing/fake_stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Future } from '../utils.js';
 import { Agent } from './agent.js';
@@ -23,25 +25,40 @@ class GatedStream extends LLMStream {
       toolCtx?: ToolContextLike;
       connOptions: APIConnectOptions;
       gate: Future<void>;
+      cancelled: Future<void>;
     },
   ) {
     super(llm, options);
     this.gate = options.gate;
+    this.cancelled = options.cancelled;
   }
 
   private readonly gate: Future<void>;
+  private readonly cancelled: Future<void>;
 
   protected override async run(): Promise<void> {
     this.queue.put({
       id: 'chunk',
       delta: { role: 'assistant', content: 'one moment' },
     } satisfies ChatChunk);
-    await this.gate.await;
+    const onAbort = () => this.cancelled.resolve();
+    if (this.abortController.signal.aborted) {
+      onAbort();
+      return;
+    }
+    this.abortController.signal.addEventListener('abort', onAbort, { once: true });
+    try {
+      await Promise.race([this.gate.await, this.cancelled.await]);
+    } finally {
+      this.abortController.signal.removeEventListener('abort', onAbort);
+    }
   }
 }
 
 class GatedLLM extends LLM {
   private readonly gate = new Future<void>();
+  readonly started = new Future<void>();
+  readonly cancelled = new Future<void>();
 
   override get model(): string {
     return 'gated';
@@ -71,15 +88,32 @@ class GatedLLM extends LLM {
     toolChoice?: ToolChoice;
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
-    return new GatedStream(this, { chatCtx, toolCtx, connOptions, gate: this.gate });
+    this.started.resolve();
+    return new GatedStream(this, {
+      chatCtx,
+      toolCtx,
+      connOptions,
+      gate: this.gate,
+      cancelled: this.cancelled,
+    });
   }
 }
 
 type ActivityInternals = AgentActivity & {
   _currentSpeech?: SpeechHandle;
-  _preemptiveGeneration?: unknown;
+  _preemptiveGeneration?: { speechHandle: SpeechHandle };
   _userTurnCompletedTask?: { done: boolean };
+  audioRecognition?: {
+    onSTTEvent: (event: SpeechEvent) => Promise<void>;
+  };
 };
+
+function transcriptEvent(type: SpeechEventType, text: string): SpeechEvent {
+  return {
+    type,
+    alternatives: [{ text, language: 'en', confidence: 0.9, startTime: 0, endTime: 0 }],
+  };
+}
 
 function endOfTurn(newTranscript: string): EndOfTurnInfo {
   return {
@@ -114,6 +148,44 @@ function startPreemptiveGeneration(activity: ActivityInternals): void {
 }
 
 describe('AgentActivity parked preemptive generation', () => {
+  it('cancels a preemptive reply when an interim moves past the preflight', async () => {
+    const llm = new GatedLLM();
+    const session = new AgentSession({
+      stt: new FakeSTT(),
+      vad: null,
+      llm,
+      turnHandling: { turnDetection: 'stt' },
+    });
+    session.output.setAudioEnabled(false);
+    await session.start({ agent: new Agent({ instructions: 'help the caller' }) });
+    const activity = session._activity! as ActivityInternals;
+    const recognition = activity.audioRecognition!;
+
+    try {
+      await recognition.onSTTEvent(
+        transcriptEvent(SpeechEventType.PREFLIGHT_TRANSCRIPT, 'I need to cancel my subscription.'),
+      );
+      await llm.started.await;
+      expect(activity._preemptiveGeneration).toBeDefined();
+      const handle = activity._preemptiveGeneration!.speechHandle;
+
+      await recognition.onSTTEvent(
+        transcriptEvent(
+          SpeechEventType.INTERIM_TRANSCRIPT,
+          'I need to cancel my subscription please',
+        ),
+      );
+
+      expect(activity._preemptiveGeneration).toBeUndefined();
+      expect(handle.interrupted).toBe(true);
+      await vi.waitFor(() => expect(llm.cancelled.done).toBe(true), { timeout: TIMEOUT });
+      await vi.waitFor(() => expect(handle.done()).toBe(true), { timeout: TIMEOUT });
+    } finally {
+      llm.release();
+      await session.close().catch(() => {});
+    }
+  });
+
   it('does not hang a handoff after a turn is discarded for uninterruptible speech', async () => {
     const { llm, session, activity } = await startSession();
 

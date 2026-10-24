@@ -628,7 +628,8 @@ export class SpeechStream extends stt.SpeechStream {
 
       case 'turn.resume':
         // turn.resume has no transcript; re-emit the latest cumulative transcript
-        // as an interim event so the pipeline cancels the pending preflight.
+        // as an interim event. It matches the preflight, so the pipeline keeps the
+        // preemptive generation until a turn.update moves the transcript past it.
         if (!this.#speaking || !this.#currentTranscript) return;
         this.#sendTranscriptEvent(stt.SpeechEventType.INTERIM_TRANSCRIPT, this.#currentTranscript);
         return;
