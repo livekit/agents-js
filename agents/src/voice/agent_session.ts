@@ -83,7 +83,7 @@ import {
   type SessionConnectOptions,
   recordingEnabled,
 } from '../types.js';
-import { Event, Task, asError, waitUntilAborted } from '../utils.js';
+import { Event, type Future, Task, asError, waitUntilAborted } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type Agent, AgentTask } from './agent.js';
 import {
@@ -1094,7 +1094,7 @@ export class AgentSession<
       return;
     }
 
-    this.closing = false;
+    this.draining = this.closing = false;
     if (this.closingController.signal.aborted) {
       this.closingController = new AbortController();
     }
@@ -2161,6 +2161,8 @@ export class AgentSession<
   }
 
   /** The part of closing that runs under the `session_close` span. */
+  private draining = false;
+
   private async teardownActivity(
     wasStarted: boolean,
     reason: ShutdownReason,
@@ -2168,6 +2170,7 @@ export class AgentSession<
     traceContext: Context,
   ): Promise<void> {
     this.closing = true;
+    this.draining = drain;
     // Set closingTask before listeners can call close() again.
     await Promise.resolve();
     this.closingController.abort();
@@ -2175,14 +2178,31 @@ export class AgentSession<
     this._onAecWarmupExpired();
 
     let activity = this.activity;
+    let cancelled = false;
     // Let inline tasks finish their handoffs before closing the resumed parent.
     while (wasStarted && activity?.agent instanceof AgentTask) {
       const task = activity.agent;
+      let parentInterrupted: Future<void> | undefined;
+      if (drain) {
+        // cancel interrupts with force, so first play out speech queued by the task.
+        await activity.drain({ traceContext });
+        cancelled ||= !task.done;
+        const parentActivity = task._oldAgent?._agentActivity;
+        if (cancelled && parentActivity) {
+          parentInterrupted = parentActivity.interrupt({ force: true });
+        }
+      }
       activity.interrupt({ force: true });
       if (!task.done) {
         task.complete(new ToolError(`AgentTask ${task.id} is cancelled`));
       }
       await task._waitForInactive();
+      // Parent speech waiting on this task can only finish after the task is cancelled.
+      await parentInterrupted?.await;
+      if (drain && !cancelled) {
+        // Let a completed task's result return through its owner before draining the parent.
+        await task['ownerSpeechHandle']?.waitForPlayout();
+      }
       // A concurrent updateAgent can prevent the task from resuming its parent.
       // In that case its activity still needs the normal exit and close sequence.
       if (task._agentActivity === activity) {
