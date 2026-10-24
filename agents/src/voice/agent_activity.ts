@@ -93,7 +93,6 @@ import {
   delay,
   isDevMode,
   isHosted,
-  isPending,
   waitForAbort,
   waitUntilTimeout,
 } from '../utils.js';
@@ -317,10 +316,11 @@ export interface ForwardOutput {
 
 /**
  * Resolves with `p`, or with `undefined` once `signal` aborts while `p` is
- * still pending. An already-settled `p` always wins, even when the signal has
- * already fired — an {@link AudioOutput} is allowed to report
- * `playbackFinished` synchronously from `clearBuffer()`, and its synchronized
- * transcript must not be discarded in that case. Used where a promise may
+ * still pending. When the signal has already fired, `p` still has until the
+ * next `setImmediate()` to settle — an {@link AudioOutput} may report
+ * `playbackFinished` from `clearBuffer()` synchronously or, like
+ * `ParticipantAudioOutput`, from its flush task a few microtasks later. Its synchronized
+ * transcript must not be discarded in either case. Used where a promise may
  * never settle once the room is gone (e.g. `waitForPlayout()` during
  * shutdown) — parking there would keep the reply task from committing the
  * in-flight assistant turn.
@@ -330,7 +330,10 @@ async function raceWithAbort<T>(
   signal: AbortSignal,
 ): Promise<Throws<T | undefined, Error>> {
   if (signal.aborted) {
-    return (await isPending(p)) ? undefined : ThrowsPromise.fromPromise<T | undefined, Error>(p);
+    return ThrowsPromise.race([
+      ThrowsPromise.fromPromise<T | undefined, Error>(p),
+      new ThrowsPromise<undefined, never>((resolve) => setImmediate(() => resolve(undefined))),
+    ]);
   }
   return ThrowsPromise.race([
     ThrowsPromise.fromPromise<T | undefined, Error>(p),
