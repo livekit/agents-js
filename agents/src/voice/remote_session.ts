@@ -2,12 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Duration, Timestamp } from '@bufbuild/protobuf';
+import { Mutex } from '@livekit/mutex';
 import { SimulationRun, AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
+import { rm, writeFile } from 'node:fs/promises';
 import * as net from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { TOPIC_SESSION_MESSAGES } from '../constants.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
@@ -110,6 +114,7 @@ export class RoomSessionTransport extends SessionTransport {
   private pendingMessages: pb.AgentSessionMessage[] = [];
   private waitingResolve: ((value: IteratorResult<pb.AgentSessionMessage>) => void) | null = null;
   private roomIO: RoomIO;
+  private sendLock = new Mutex();
 
   constructor(room: Room, roomIO: RoomIO) {
     super();
@@ -166,21 +171,30 @@ export class RoomSessionTransport extends SessionTransport {
       throw new Error('room session transport is closed');
     }
 
+    const unlock = await this.sendLock.lock();
+    const name = shortuuid('AS_');
+    const path = join(tmpdir(), name);
     try {
       const data = msg.toBinary();
-      const opts: Record<string, unknown> = {
+      // rtc-node currently exposes one-shot byte streams through its file-backed API.
+      await writeFile(path, data, { flag: 'wx', mode: 0o600 });
+      const opts = {
         topic: TOPIC_SESSION_MESSAGES,
-        name: shortuuid('AS_'),
+        name,
+        destinationIdentities: undefined as string[] | undefined,
       };
       const remoteIdentity = this.getRemoteIdentity();
       if (remoteIdentity) {
         opts.destinationIdentities = [remoteIdentity];
       }
-      const writer = await this.room.localParticipant!.streamBytes(opts);
-      await writer.write(new Uint8Array(data));
-      await writer.close();
+      await this.room.localParticipant!.sendFile(path, opts);
     } catch (e) {
       throw new Error(`failed to send binary stream message: ${e}`, { cause: e });
+    } finally {
+      unlock();
+      await rm(path, { force: true }).catch((e) => {
+        log().warn({ error: e, path }, 'failed to remove temporary session message');
+      });
     }
   }
 

@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AgentSession as pb } from '@livekit/protocol';
 import type { Room } from '@livekit/rtc-node';
+import { readFile } from 'node:fs/promises';
 import * as net from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { TOPIC_SESSION_MESSAGES } from '../constants.js';
 import type { InferenceExecutor } from '../ipc/inference_executor.js';
 import {
   JobContext,
@@ -263,6 +265,85 @@ function createConnectedTransportPair(): [FakeTransport, FakeTransport] {
   host.connect(client);
   return [client, host];
 }
+
+describe('RoomSessionTransport sends', () => {
+  it('serializes concurrent room sends', async () => {
+    let inFlight = 0;
+    let overlapping = false;
+    const sendFile = vi.fn(async () => {
+      inFlight += 1;
+      if (inFlight > 1) overlapping = true;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+    });
+    const room = { isConnected: true, localParticipant: { sendFile } };
+    const transport = new RoomSessionTransport(
+      room as unknown as Room,
+      {
+        linkedParticipant: undefined,
+      } as unknown as RoomIO,
+    );
+
+    await Promise.all(
+      Array.from({ length: 8 }, (_, index) => transport.sendMessage(pingMessage(`r${index}`))),
+    );
+
+    expect(overlapping).toBe(false);
+  });
+
+  it('sends each room message with one one-shot call', async () => {
+    // A one-shot send lets the SDK inline small messages and compress large ones. An
+    // incremental stream always costs a header, chunk, and trailer for each message.
+    let sentData: Uint8Array | undefined;
+    const sendFile = vi.fn(async (path: string) => {
+      sentData = await readFile(path);
+    });
+    const streamBytes = vi.fn();
+    const room = {
+      isConnected: true,
+      localParticipant: { sendFile, streamBytes },
+    };
+    const transport = new RoomSessionTransport(
+      room as unknown as Room,
+      {
+        linkedParticipant: { identity: 'user-1' },
+      } as unknown as RoomIO,
+    );
+
+    const msg = pingMessage('r1');
+    await transport.sendMessage(msg);
+
+    expect(streamBytes).not.toHaveBeenCalled();
+    expect(sendFile).toHaveBeenCalledOnce();
+    expect([...sentData!]).toEqual([...msg.toBinary()]);
+    expect(sendFile).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        topic: TOPIC_SESSION_MESSAGES,
+        destinationIdentities: ['user-1'],
+      }),
+    );
+  });
+
+  it('reports one-shot send failures instead of dropping the message', async () => {
+    const room = {
+      isConnected: true,
+      localParticipant: {
+        sendFile: vi.fn().mockRejectedValue(new Error('stream refused')),
+      },
+    };
+    const transport = new RoomSessionTransport(
+      room as unknown as Room,
+      {
+        linkedParticipant: undefined,
+      } as unknown as RoomIO,
+    );
+
+    await expect(transport.sendMessage(pingMessage('r1'))).rejects.toThrow(
+      /failed to send binary stream message/,
+    );
+  });
+});
 
 // A message that cannot be sent is a request somebody waits out in full, so the
 // transport reports the failure and each caller decides what to do with it, as
