@@ -18,9 +18,23 @@ import { USERDATA_TTS_STARTED_TIME } from '../types.js';
 import { delay } from '../utils.js';
 import { FallbackAdapter } from './fallback_adapter.js';
 import { StreamAdapter } from './stream_adapter.js';
-import { ChunkedStream, SynthesizeStream, TTS, type TTSError } from './tts.js';
+import {
+  ChunkedStream,
+  type FallbackActivatedEvent,
+  SynthesizeStream,
+  TTS,
+  type TTSError,
+} from './tts.js';
 
 const SAMPLE_RATE = 24000;
+const FALLBACK_ACTIVATED_EVENT: FallbackActivatedEvent = {
+  sessionId: 'session-1',
+  fallbackType: 'fallback',
+  provider: 'deepgram',
+  model: 'deepgram/aura-2',
+  voice: 'asteria',
+  cause: 'provider_error',
+};
 
 class MockSynthesizeStream extends SynthesizeStream {
   label = 'mock.SynthesizeStream';
@@ -165,6 +179,46 @@ class MockTTS extends TTS {
   }
 }
 
+/** Emits a notice per request, after the call returns, as an inference TTS does on gateway fallback. */
+class NotifyingTTS extends MockTTS {
+  private notify(voice: string): void {
+    queueMicrotask(() => this.emit('fallback_activated', { ...FALLBACK_ACTIVATED_EVENT, voice }));
+  }
+
+  override synthesize(text: string, connOptions?: APIConnectOptions): ChunkedStream {
+    this.notify(text);
+    return super.synthesize(text, connOptions);
+  }
+
+  override stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
+    this.notify('served');
+    return super.stream(options);
+  }
+}
+
+function streamText(tts: TTS, text: string): SynthesizeStream {
+  const stream = tts.stream();
+  stream.updateInputStream(
+    new ReadableStream<string>({
+      start(controller) {
+        controller.enqueue(text);
+        controller.close();
+      },
+    }),
+  );
+  return stream;
+}
+
+async function drain(stream: ChunkedStream | SynthesizeStream): Promise<void> {
+  try {
+    for await (const event of stream) {
+      if (event === SynthesizeStream.END_OF_STREAM) break;
+    }
+  } finally {
+    stream.close();
+  }
+}
+
 describe('TTS FallbackAdapter', () => {
   const unhandledRejections: unknown[] = [];
 
@@ -251,6 +305,59 @@ describe('TTS FallbackAdapter', () => {
       }
     },
   );
+
+  it.each(['chunked', 'streaming', 'non-streaming provider'] as const)(
+    'forwards fallback activation events only while serving a %s request',
+    async (mode) => {
+      const source = new NotifyingTTS('source', SAMPLE_RATE, mode === 'streaming');
+      const adapter = new FallbackAdapter({ ttsInstances: [source] });
+      const voices: string[] = [];
+      adapter.on('fallback_activated', (event) => voices.push(event.voice));
+
+      await drain(
+        mode === 'chunked' ? adapter.synthesize('served') : streamText(adapter, 'served'),
+      );
+      // a recovery probe runs with no user attempt in flight
+      source.emit('fallback_activated', { ...FALLBACK_ACTIVATED_EVENT, voice: 'idle' });
+      await adapter.close();
+      source.emit('fallback_activated', { ...FALLBACK_ACTIVATED_EVENT, voice: 'after-close' });
+
+      expect(voices).toEqual(['served']);
+    },
+  );
+
+  it('does not forward fallback activation events from recovery probes', async () => {
+    const primary = new NotifyingTTS('primary');
+    primary.shouldFail = true;
+    const synthesize = vi.spyOn(primary, 'synthesize');
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, new MockTTS('secondary')],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+    const voices: string[] = [];
+    adapter.on('fallback_activated', (event) => voices.push(event.voice));
+
+    await drain(adapter.synthesize('served'));
+    await vi.waitFor(() => expect(synthesize).toHaveBeenCalledTimes(2));
+    await delay(0);
+
+    expect(synthesize.mock.calls[1]![0]).toContain('recovery test');
+    expect(voices).toEqual(['served']);
+    await adapter.close();
+  });
+
+  it('forwards fallback activation events through StreamAdapter', async () => {
+    const source = new MockTTS('source');
+    const adapter = new StreamAdapter(source, new basic.SentenceTokenizer());
+    const events: FallbackActivatedEvent[] = [];
+    adapter.on('fallback_activated', (event) => events.push(event));
+
+    source.emit('fallback_activated', FALLBACK_ACTIVATED_EVENT);
+
+    expect(events).toEqual([FALLBACK_ACTIVATED_EVENT]);
+    await adapter.close();
+  });
 
   it('should fall back to the next TTS when the primary stream fails before any pushText', async () => {
     const primary = new MockTTS('primary');
@@ -592,14 +699,17 @@ describe('TTS FallbackAdapter', () => {
     const tts = new MockTTS('primary');
     const onError = () => {};
     const onMetrics = () => {};
+    const onFallbackActivated = () => {};
     tts.on('error', onError);
     tts.on('metrics_collected', onMetrics);
+    tts.on('fallback_activated', onFallbackActivated);
 
     const adapter = new FallbackAdapter({ ttsInstances: [tts], recoveryDelayMs: 60_000 });
     await adapter.close();
 
     expect(tts.listeners('error')).toEqual([onError]);
     expect(tts.listeners('metrics_collected')).toEqual([onMetrics]);
+    expect(tts.listeners('fallback_activated')).toEqual([onFallbackActivated]);
   });
 
   it('falls back from a failing non-streaming instance without leaking a rejection', async () => {
@@ -898,6 +1008,7 @@ describe('TTS FallbackAdapter', () => {
     await vi.waitFor(() => {
       expect(primary.listenerCount('error')).toBe(0);
       expect(primary.listenerCount('metrics_collected')).toBe(0);
+      expect(primary.listenerCount('fallback_activated')).toBe(0);
     });
   });
 
