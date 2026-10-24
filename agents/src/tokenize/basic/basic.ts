@@ -90,21 +90,23 @@ export class SentenceTokenizer extends tokenizer.SentenceTokenizer {
 
 export class WordTokenizer extends tokenizer.WordTokenizer {
   #ignorePunctuation: boolean;
+  #splitCharacter: boolean;
 
-  constructor(ignorePunctuation = true) {
+  constructor(ignorePunctuation = true, splitCharacter = false) {
     super();
     this.#ignorePunctuation = ignorePunctuation;
+    this.#splitCharacter = splitCharacter;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   tokenize(text: string, language?: string): string[] {
-    return splitWords(text, this.#ignorePunctuation).map((tok) => tok[0]);
+    return splitWords(text, this.#ignorePunctuation, this.#splitCharacter).map((tok) => tok[0]);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   stream(language?: string): tokenizer.WordStream {
     return new BufferedWordStream(
-      (text: string) => splitWords(text, this.#ignorePunctuation),
+      (text: string) => splitWords(text, this.#ignorePunctuation, this.#splitCharacter),
       1,
       1,
     );
