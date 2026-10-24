@@ -69,16 +69,16 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
  * audio pushed ahead of it. Carried on the audio channel so it stays in order
  * with the frames.
  */
-export interface TurnStartedSentinel {
-  readonly kind: 'turn_started';
+export interface StartOfTurnSentinel {
+  readonly kind: 'start_of_turn';
   turnDuration: number;
 }
 
-export function isTurnStartedSentinel(value: unknown): value is TurnStartedSentinel {
+export function isStartOfTurnSentinel(value: unknown): value is StartOfTurnSentinel {
   return (
     typeof value === 'object' &&
     value !== null &&
-    (value as TurnStartedSentinel).kind === 'turn_started'
+    (value as StartOfTurnSentinel).kind === 'start_of_turn'
   );
 }
 
@@ -196,7 +196,7 @@ export class BaseStreamingTurnDetectorStream {
   private _audioInputSampleRate: number | undefined;
   private _audioInputNumChannels: number | undefined;
   private _audioResampler: AudioResampler | undefined;
-  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel | TurnStartedSentinel> =
+  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel | StartOfTurnSentinel> =
     createStreamChannel();
   private _degraded = false;
 
@@ -349,8 +349,8 @@ export class BaseStreamingTurnDetectorStream {
     if (this._degraded || this._audioChannel.closed) {
       return;
     }
-    const sentinel: TurnStartedSentinel = {
-      kind: 'turn_started',
+    const sentinel: StartOfTurnSentinel = {
+      kind: 'start_of_turn',
       turnDuration: Math.max(0, Date.now() - startedAt),
     };
     void this._audioChannel.write(sentinel);
@@ -518,7 +518,7 @@ export class BaseStreamingTurnDetectorStream {
         if (done) return;
         if (isFlushSentinel(value)) {
           await this._transport.flush(value);
-        } else if (isTurnStartedSentinel(value)) {
+        } else if (isStartOfTurnSentinel(value)) {
           this._transport.onStartOfTurn(value.turnDuration);
         } else {
           await this._transport.pushFrame(value);
