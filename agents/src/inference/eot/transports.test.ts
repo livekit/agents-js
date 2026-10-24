@@ -16,7 +16,7 @@
  */
 import { AgentInference } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
@@ -308,12 +308,21 @@ async function predictOnce(local: ReturnType<typeof makeLocal>) {
   };
 }
 
+const NOW = 1_000_000;
+
 describe('LocalTransportTurnSamples', () => {
+  beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('counts the turn from its start, past the window', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(8000));
     await local.transport.pushFrame(pcmFrame(4000));
-    local.transport.onStartOfTurn(250);
+    local.transport.onStartOfTurn(NOW - 250);
     for (let i = 0; i < 40; i++) {
       await local.transport.pushFrame(pcmFrame(1600));
     }
@@ -326,11 +335,11 @@ describe('LocalTransportTurnSamples', () => {
 
   it('starts a new turn after a flush', async () => {
     const local = makeLocal();
-    local.transport.onStartOfTurn(0);
+    local.transport.onStartOfTurn(NOW);
     await local.transport.pushFrame(pcmFrame(16000));
     await local.transport.flush({ kind: 'flush' });
     await local.transport.pushFrame(pcmFrame(3200));
-    local.transport.onStartOfTurn(100);
+    local.transport.onStartOfTurn(NOW - 100);
 
     expect(await predictOnce(local)).toEqual({ windowSamples: 3200, turnSamples: 1600 });
   });
@@ -347,7 +356,7 @@ describe('LocalTransportTurnSamples', () => {
   it('clamps a turn longer than the audio to the flush', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(1600));
-    local.transport.onStartOfTurn(1000);
+    local.transport.onStartOfTurn(NOW - 1000);
 
     expect((await predictOnce(local)).turnSamples).toBe(1600);
   });

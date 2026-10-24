@@ -232,7 +232,8 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     this._numSamples += frame.data.length;
   }
 
-  onStartOfTurn(turnDuration: number): void {
+  onStartOfTurn(startedAt: number): void {
+    const turnDuration = Math.max(0, Date.now() - startedAt);
     const turnSamples = Math.floor((turnDuration * DEFAULT_SAMPLE_RATE) / 1000);
     this._turnStart = Math.max(0, this._numSamples - turnSamples);
   }
@@ -352,7 +353,7 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     );
   }
 
-  onStartOfTurn(_turnDuration: number): void {
+  onStartOfTurn(_startedAt: number): void {
     return;
   }
 

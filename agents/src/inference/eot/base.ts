@@ -65,13 +65,12 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
 }
 
 /**
- * Marks the start of the user turn: `turnDuration` ms before the end of the
- * audio pushed ahead of it. Carried on the audio channel so it stays in order
- * with the frames.
+ * Marks the start of the user turn (`startedAt`, ms since epoch). Carried on the
+ * audio channel so it stays in order with the frames.
  */
 export interface StartOfTurnSentinel {
   readonly kind: 'start_of_turn';
-  turnDuration: number;
+  startedAt: number;
 }
 
 export function isStartOfTurnSentinel(value: unknown): value is StartOfTurnSentinel {
@@ -93,7 +92,7 @@ export interface StreamingTurnDetectionTransport {
   run(): Promise<void>;
   runInference(requestId: string): void;
   pushFrame(frame: AudioFrame): Promise<void>;
-  onStartOfTurn(turnDuration: number): void;
+  onStartOfTurn(startedAt: number): void;
   flush(sentinel: FlushSentinel): Promise<void>;
   detach(): void;
 }
@@ -349,10 +348,7 @@ export class BaseStreamingTurnDetectorStream {
     if (this._degraded || this._audioChannel.closed) {
       return;
     }
-    const sentinel: StartOfTurnSentinel = {
-      kind: 'start_of_turn',
-      turnDuration: Math.max(0, Date.now() - startedAt),
-    };
+    const sentinel: StartOfTurnSentinel = { kind: 'start_of_turn', startedAt };
     void this._audioChannel.write(sentinel);
   }
 
@@ -519,7 +515,7 @@ export class BaseStreamingTurnDetectorStream {
         if (isFlushSentinel(value)) {
           await this._transport.flush(value);
         } else if (isStartOfTurnSentinel(value)) {
-          this._transport.onStartOfTurn(value.turnDuration);
+          this._transport.onStartOfTurn(value.startedAt);
         } else {
           await this._transport.pushFrame(value);
         }
