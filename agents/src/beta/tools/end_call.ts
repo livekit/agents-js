@@ -67,7 +67,11 @@ export type EndCallToolOptions<UserData = UnknownUserData> = {
    * Deleting the room disconnects all remote users, including SIP callers.
    */
   deleteRoom?: boolean;
-  /** Tool output to the LLM for generating the tool response. */
+  /**
+   * Tool output to the LLM for generating the tool response. With `null` the session ends once
+   * the turn that called the tool is done, which suits a model that speaks while calling it, such
+   * as GPT-Live.
+   */
   endInstructions?: string | null;
   /** Hide the tool during onEnter so the model can't end the call while greeting. */
   ignoreOnEnter?: boolean;
@@ -125,6 +129,10 @@ export function createEndCallTool<UserData = UnknownUserData>({
           log().debug('end_call tool called');
           const session = ctx.session;
           const llm = session.currentAgent.getActivityOrThrow().llm;
+          let output: ToolCompletedEvent<UserData>['output'] =
+            endInstructions === null
+              ? undefined
+              : ({ type: 'output', value: endInstructions } as const);
 
           // Lifetime of this invocation: aborts when the session closes, and also when the tool
           // call itself is aborted. All listeners/timers below are scoped to it.
@@ -153,7 +161,13 @@ export function createEndCallTool<UserData = UnknownUserData>({
             .catch((error) => log().error({ error }, 'error during end call shutdown'));
 
           ctx.speechHandle.addDoneCallback(() => {
-            if (!(llm instanceof RealtimeModel) || !llm.capabilities.autoToolReplyGeneration) {
+            // An undefined result asks for no reply, so there is nothing to wait for. GPT-Live
+            // answers it anyway, and the answer can be silent.
+            if (
+              !(llm instanceof RealtimeModel) ||
+              !llm.capabilities.autoToolReplyGeneration ||
+              output === undefined
+            ) {
               session.shutdown();
               return;
             }
@@ -167,18 +181,14 @@ export function createEndCallTool<UserData = UnknownUserData>({
             await onToolCalled({ ctx, arguments: {} });
           }
 
-          const completedEvent = {
-            ctx,
-            output:
-              endInstructions === null
-                ? undefined
-                : ({ type: 'output', value: endInstructions } as const),
-          };
+          const completedEvent: ToolCompletedEvent<UserData> = { ctx, output };
           if (onToolCompleted) {
             await onToolCompleted(completedEvent);
           }
 
-          return endInstructions ?? undefined;
+          output = completedEvent.output;
+          if (output?.type === 'error') throw output.value;
+          return output?.value;
         },
       }),
     ],
