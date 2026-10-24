@@ -2567,7 +2567,7 @@ export const CONFIRM_DUPLICATE_PARAM = "lk_agents_confirm_duplicate";
 export class ConnectionPool<T> {
     constructor(options: ConnectionPoolOptions<T>);
     close(): Promise<void>;
-    get(timeout?: number): Promise<T>;
+    get(timeout?: number, signal?: AbortSignal): Promise<T>;
     invalidate(): void;
     prewarm(): void;
     put(conn: T): void;
@@ -2582,7 +2582,7 @@ export class ConnectionPool<T> {
 // @public
 export interface ConnectionPoolOptions<T> {
     closeCb?: (conn: T) => Promise<void>;
-    connectCb: (timeout: number) => Promise<T>;
+    connectCb: (timeout: number, signal?: AbortSignal) => Promise<T>;
     connectTimeout?: number;
     markRefreshedOnGet?: boolean;
     maxSessionDuration?: number;
@@ -6562,10 +6562,14 @@ export class RunContext<UserData = UnknownUserData> {
     _makeUpdatePair(message: unknown, callIdSuffix?: string): [FunctionCall, FunctionCallOutput];
     // (undocumented)
     _recordUpdatePair(pair: [FunctionCall, FunctionCallOutput]): void;
+    // @internal (undocumented)
+    _replyToolChoice?: ToolChoice;
     // (undocumented)
     readonly session: AgentSession<UserData>;
     // (undocumented)
     readonly speechHandle: SpeechHandle;
+    // @internal (undocumented)
+    _suppressReply: boolean;
     // Warning: (ae-forgotten-export) The symbol "RunContextUpdateOptions" needs to be exported by the entry point index.d.ts
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "RunContextUpdateOptions"
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "RunContextUpdateOptions"
