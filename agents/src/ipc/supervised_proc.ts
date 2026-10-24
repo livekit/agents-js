@@ -78,6 +78,24 @@ export abstract class SupervisedProc {
     }
 
     this.proc = this.createProcess();
+    // Attach the 'error' listener right after forking, before initialize() runs.
+    // A child that fails to spawn emits 'error' twice: the spawn error, then EPIPE
+    // for the initializeRequest. The `once()` listeners in initialize() only
+    // consume the first one, so without this listener the second one crashes the
+    // whole worker.
+    this.proc.on('error', (error) => {
+      if (this.#closing) return;
+      if (!this.init.done) {
+        // initialize() settles on its own (first error, child exit, or timeout).
+        this.#logger.child({ error }).warn('job process errored before initialization');
+        return;
+      }
+      this.#logger
+        .child({ error })
+        .warn('job process exited unexpectedly; this likely means the error above caused a crash');
+      this.clearTimers();
+      this.#join.resolve();
+    });
 
     this.#started = true;
     this.#startedAt = performance.now();
@@ -93,6 +111,8 @@ export abstract class SupervisedProc {
 
   async run() {
     await this.init.await;
+    // the 'error' listener attached in start() may have already ended supervision
+    if (this.#join.done) return;
 
     this.#pingInterval = setInterval(() => {
       if (this.proc?.connected) {
@@ -175,14 +195,6 @@ export abstract class SupervisedProc {
       }
     };
     this.proc!.on('message', listener);
-    this.proc!.on('error', (error) => {
-      if (this.#closing) return;
-      this.#logger
-        .child({ error })
-        .warn('job process exited unexpectedly; this likely means the error above caused a crash');
-      this.clearTimers();
-      this.#join.resolve();
-    });
 
     this.proc!.on('exit', () => {
       this.clearTimers();
