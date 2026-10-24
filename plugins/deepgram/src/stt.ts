@@ -276,6 +276,7 @@ export class SpeechStream extends stt.SpeechStream {
   /** @internal */
   _pendingKeyterm: string[] | null = null;
   #audioDurationCollector: PeriodicCollector<number>;
+  #sentDurationInS = 0;
   label = 'deepgram.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
@@ -292,69 +293,82 @@ export class SpeechStream extends stt.SpeechStream {
     const maxRetry = 32;
     let retries = 0;
     let ws: WebSocket;
+    // offset this invocation has added from audio sent; handed back if an error
+    // escapes, since mainTask then re-accounts the whole span by wall-clock
+    let addedInS = 0;
 
-    while (!this.input.closed && !this.closed) {
-      const streamURL = new URL(`${this.#opts.baseUrl}/v1/listen`);
-      const params = {
-        model: this.#opts.model,
-        punctuate: this.#opts.punctuate,
-        smart_format: this.#opts.smartFormat,
-        dictation: this.#opts.dictation,
-        diarize: this.#opts.diarize,
-        numerals: this.#opts.numerals,
-        no_delay: this.#opts.noDelay,
-        interim_results: this.#opts.interimResults,
-        encoding: 'linear16',
-        vad_events: true,
-        sample_rate: this.#opts.sampleRate,
-        channels: this.#opts.numChannels,
-        endpointing: this.#opts.endpointing || false,
-        filler_words: this.#opts.fillerWords,
-        keywords: this.#opts.keywords.map((x) => x.join(':')),
-        keyterm: this.#opts.keyterm,
-        profanity_filter: this.#opts.profanityFilter,
-        utterance_end_ms: this.#opts.utteranceEndMs,
-        replace: this.#opts.replace,
-        search: this.#opts.search,
-        language: this.#opts.language,
-        mip_opt_out: this.#opts.mipOptOut,
-        ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
-      };
-      appendSearchParams(streamURL, params);
+    try {
+      while (!this.input.closed && !this.closed) {
+        this.startTimeOffset += this.#sentDurationInS;
+        addedInS += this.#sentDurationInS;
+        this.#sentDurationInS = 0;
 
-      try {
-        ws = new WebSocket(streamURL, {
-          headers: { Authorization: `Token ${this.#opts.apiKey}` },
-        });
-        await waitForWebSocketOpen(ws, 'Deepgram');
-      } catch (error) {
-        if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
-        throw new APIConnectionError({
-          message: `failed to connect to Deepgram (${errorName(error)})`,
-        });
-      }
+        const streamURL = new URL(`${this.#opts.baseUrl}/v1/listen`);
+        const params = {
+          model: this.#opts.model,
+          punctuate: this.#opts.punctuate,
+          smart_format: this.#opts.smartFormat,
+          dictation: this.#opts.dictation,
+          diarize: this.#opts.diarize,
+          numerals: this.#opts.numerals,
+          no_delay: this.#opts.noDelay,
+          interim_results: this.#opts.interimResults,
+          encoding: 'linear16',
+          vad_events: true,
+          sample_rate: this.#opts.sampleRate,
+          channels: this.#opts.numChannels,
+          endpointing: this.#opts.endpointing || false,
+          filler_words: this.#opts.fillerWords,
+          keywords: this.#opts.keywords.map((x) => x.join(':')),
+          keyterm: this.#opts.keyterm,
+          profanity_filter: this.#opts.profanityFilter,
+          utterance_end_ms: this.#opts.utteranceEndMs,
+          replace: this.#opts.replace,
+          search: this.#opts.search,
+          language: this.#opts.language,
+          mip_opt_out: this.#opts.mipOptOut,
+          ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
+        };
+        appendSearchParams(streamURL, params);
 
-      try {
-        await this.#runWS(ws);
-      } catch (e) {
-        if (!this.closed && !this.input.closed) {
-          if (retries >= maxRetry) {
-            throw e;
+        try {
+          ws = new WebSocket(streamURL, {
+            headers: { Authorization: `Token ${this.#opts.apiKey}` },
+          });
+          await waitForWebSocketOpen(ws, 'Deepgram');
+        } catch (error) {
+          if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+          throw new APIConnectionError({
+            message: `failed to connect to Deepgram (${errorName(error)})`,
+          });
+        }
+
+        try {
+          await this.#runWS(ws);
+        } catch (e) {
+          if (!this.closed && !this.input.closed) {
+            if (retries >= maxRetry) {
+              throw e;
+            }
+
+            const delay = Math.min(retries * 5, 10);
+            retries++;
+
+            this.#logger.warn(
+              `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+          } else {
+            this.#logger.warn(
+              `Deepgram disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            );
           }
-
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-
-          this.#logger.warn(
-            `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
-        } else {
-          this.#logger.warn(
-            `Deepgram disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
-          );
         }
       }
+    } catch (e) {
+      this.startTimeOffset -= addedInS;
+      this.#sentDurationInS = 0;
+      throw e;
     }
 
     this.closed = true;
@@ -383,6 +397,10 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket) {
     this.#resetWS = new Future();
     let closing = false;
+    // Deepgram's word times are positions in the audio this socket was sent, so
+    // its results take the offset as of its open: the dial loop advances the
+    // shared value before the final results of a reset socket have arrived.
+    const startTimeOffsetInS = this.startTimeOffset;
     // Scoped to this connection. An abandoned `input.next()` stays parked inside the
     // queue and shifts the next frame off it for a promise nobody awaits, so a sender
     // left over from a previous attempt steals audio from the current one. The read
@@ -466,6 +484,7 @@ export class SpeechStream extends stt.SpeechStream {
           for await (const frame of frames) {
             const frameDuration = frame.samplesPerChannel / frame.sampleRate;
             this.#audioDurationCollector.push(frameDuration);
+            this.#sentDurationInS += frameDuration;
             ws.send(frame.data.buffer);
           }
 
@@ -525,7 +544,7 @@ export class SpeechStream extends stt.SpeechStream {
                 const alternatives = liveTranscriptionToSpeechData(
                   this.#opts.language!,
                   json,
-                  this.startTimeOffset,
+                  startTimeOffsetInS,
                   this.#opts.punctuate || this.#opts.smartFormat,
                 );
 
