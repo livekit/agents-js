@@ -52,6 +52,7 @@ interface RecognitionInternals {
   turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
   turnDetectorStream?: BaseStreamingTurnDetectorStream;
   turnDetectorPredictionFut?: Future<TurnDetectionEvent>;
+  userTurnStart?: number;
   turnDetectorFlushed: boolean;
   turnDetectorLatePredictionWarned: boolean;
   lastEmittedEotPrediction?: TurnDetectionEvent;
@@ -132,6 +133,7 @@ function makeAudioStream(): BaseStreamingTurnDetectorStream {
   Object.defineProperty(stream, 'predictionTimeout', { value: 10 });
   stream.predict = vi.fn(() => new Future<TurnDetectionEvent>());
   stream.cancelInference = vi.fn();
+  stream.onStartOfTurn = vi.fn();
   stream.flush = vi.fn();
   return stream as BaseStreamingTurnDetectorStream;
 }
@@ -358,6 +360,26 @@ describe('TestResumedSpeechAbortsCommit', () => {
     await task!.result.catch(() => {});
 
     expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe('TestStartOfTurn', () => {
+  it('tells the turn detector the user turn start once per turn', async () => {
+    const { internals } = makeRecognition();
+    const stream = makeAudioStream();
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+
+    const vad = runScriptedVad(internals);
+    try {
+      await vad.feed(startOfSpeech());
+      await vad.feed({ ...startOfSpeech(), speechDuration: 0 });
+    } finally {
+      await vad.stop();
+    }
+
+    expect(stream.onStartOfTurn).toHaveBeenCalledOnce();
+    expect(stream.onStartOfTurn).toHaveBeenCalledWith(internals.userTurnStart);
   });
 });
 

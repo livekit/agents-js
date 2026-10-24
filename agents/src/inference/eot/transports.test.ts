@@ -16,14 +16,20 @@
  */
 import { AgentInference } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError } from '../../_exceptions.js';
+import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import type { Task } from '../../utils.js';
-import { BaseStreamingTurnDetector, type BaseStreamingTurnDetectorOptions } from './base.js';
+import {
+  BaseStreamingTurnDetector,
+  type BaseStreamingTurnDetectorOptions,
+  type BaseStreamingTurnDetectorStream,
+} from './base.js';
 import { TurnDetectorStreamImpl } from './detector.js';
 import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
-import { CloudTransport, type CloudWebSocket } from './transports.js';
+import type { EotInferenceInput } from './runner.js';
+import { CloudTransport, type CloudWebSocket, LocalTransport } from './transports.js';
 
 const { ClientMessage } = AgentInference;
 
@@ -265,5 +271,93 @@ describe('CloudStreamSendOrdering', () => {
     } finally {
       await stream.aclose();
     }
+  });
+});
+
+class RecordingExecutor implements InferenceExecutor {
+  calls: EotInferenceInput[] = [];
+
+  async doInference(_method: string, data: unknown): Promise<unknown> {
+    this.calls.push(data as EotInferenceInput);
+    return { probability: 0.5, inferenceDurationMs: 1 };
+  }
+}
+
+const WINDOW_SAMPLES = 32000;
+
+function makeLocal() {
+  const executor = new RecordingExecutor();
+  const transport = new LocalTransport({
+    opts: { sampleRate: 16000, thresholds: new ThresholdOptions('turn-detector-v1-mini', {}) },
+    executor,
+  });
+  const stream = {
+    _resolvePrediction: () => undefined,
+  } as unknown as BaseStreamingTurnDetectorStream;
+  transport.attach(stream);
+  return { transport, executor, stream };
+}
+
+async function predictOnce(local: ReturnType<typeof makeLocal>) {
+  local.transport.runInference('request');
+  await new Promise((r) => setImmediate(r));
+  const call = local.executor.calls.at(-1)!;
+  return {
+    windowSamples: Buffer.from(call.pcm, 'base64').byteLength / 2,
+    turnSamples: call.turnSamples,
+  };
+}
+
+const NOW = 1_000_000;
+
+describe('LocalTransportTurnSamples', () => {
+  beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('counts the turn from its start, past the window', async () => {
+    const local = makeLocal();
+    await local.transport.pushFrame(pcmFrame(8000));
+    await local.transport.pushFrame(pcmFrame(4000));
+    local.transport.onStartOfTurn(NOW - 250);
+    for (let i = 0; i < 40; i++) {
+      await local.transport.pushFrame(pcmFrame(1600));
+    }
+
+    expect(await predictOnce(local)).toEqual({
+      windowSamples: WINDOW_SAMPLES,
+      turnSamples: 4000 + 40 * 1600,
+    });
+  });
+
+  it('starts a new turn after a flush', async () => {
+    const local = makeLocal();
+    local.transport.onStartOfTurn(NOW);
+    await local.transport.pushFrame(pcmFrame(16000));
+    await local.transport.flush({ kind: 'flush' });
+    await local.transport.pushFrame(pcmFrame(3200));
+    local.transport.onStartOfTurn(NOW - 100);
+
+    expect(await predictOnce(local)).toEqual({ windowSamples: 3200, turnSamples: 1600 });
+  });
+
+  it('counts from the flush when no turn start was given', async () => {
+    const local = makeLocal();
+    await local.transport.pushFrame(pcmFrame(16000));
+    await local.transport.flush({ kind: 'flush' });
+    await local.transport.pushFrame(pcmFrame(6000));
+
+    expect((await predictOnce(local)).turnSamples).toBe(6000);
+  });
+
+  it('clamps a turn longer than the audio to the flush', async () => {
+    const local = makeLocal();
+    await local.transport.pushFrame(pcmFrame(1600));
+    local.transport.onStartOfTurn(NOW - 1000);
+
+    expect((await predictOnce(local)).turnSamples).toBe(1600);
   });
 });

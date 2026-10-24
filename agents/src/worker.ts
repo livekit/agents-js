@@ -396,7 +396,7 @@ export class AgentServer {
     }
 
     // Register the local audio-EOT runner so it runs in the shared inference
-    // process (loaded once per host, ~138 MB) instead of in every job worker.
+    // process (loaded once per host, ~540 MB) instead of in every job worker.
     // Guarded by binding availability: on a platform where
     // `@livekit/local-inference` can't load, skip registration so the worker
     // still starts (local EOT then degrades to a positive-default prediction).

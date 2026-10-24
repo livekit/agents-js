@@ -1177,6 +1177,7 @@ export class AudioRecognition {
     startTime ??= Date.now();
     if (this.userTurnStart === undefined) {
       this.userTurnStart = startTime;
+      this.turnDetectorStream?.onStartOfTurn(startTime);
     }
 
     this.userTurnSpan = tracer.startSpan({
