@@ -2158,6 +2158,7 @@ export class AudioRecognition {
             // Audio EOT: tear down any in-flight inference for the now-stale
             // prior window and re-arm so the next silence tick starts fresh.
             this.turnDetectorStream?.cancelInference();
+            this.turnDetectorStream?.markSpeechStart(ev.speechDuration + ev.inferenceDuration);
             this.turnDetectorPredictionFut = undefined;
             this.turnDetectorFlushed = false;
 

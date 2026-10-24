@@ -14,7 +14,7 @@
  * commits) lives in `AudioRecognition` and is covered by
  * `voice/audio_recognition_turn_detection.test.ts`.
  */
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it } from 'vitest';
 import type { Future } from '../../utils.js';
 import {
@@ -29,6 +29,7 @@ import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
 
 class FakeTransport implements StreamingTurnDetectionTransport {
   events: Array<[string, string]> = [];
+  audioEvents: Array<[string, number | undefined]> = [];
   private _stream: BaseStreamingTurnDetectorStream | undefined;
 
   attach(stream: BaseStreamingTurnDetectorStream): void {
@@ -43,11 +44,14 @@ class FakeTransport implements StreamingTurnDetectionTransport {
   runInference(requestId: string): void {
     this.events.push(['run_inference', requestId]);
   }
-  async pushFrame(_frame: AudioFrame): Promise<void> {
-    // no-op
+  async pushFrame(frame: AudioFrame): Promise<void> {
+    this.audioEvents.push(['push_frame', frame.samplesPerChannel]);
+  }
+  markSpeechStart(lookback: number): void {
+    this.audioEvents.push(['mark_speech_start', lookback]);
   }
   async flush(_sentinel: FlushSentinel): Promise<void> {
-    // no-op
+    this.audioEvents.push(['flush', undefined]);
   }
   detach(): void {
     // no-op
@@ -109,6 +113,28 @@ const countRunInference = (events: Array<[string, string]>) =>
   events.filter((e) => e[0] === 'run_inference').length;
 
 describe('AudioTurnDetectionRequests', () => {
+  it('speech start reaches the transport in audio order', async () => {
+    const s = makeStream();
+    try {
+      const frame = new AudioFrame(new Int16Array(160), 16000, 1, 160);
+      s.pushAudio(frame);
+      s.markSpeechStart(300);
+      s.pushAudio(frame);
+      s.flush();
+      for (let i = 0; i < 20 && s.fakeTransport.audioEvents.length < 4; i++) {
+        await new Promise((r) => setImmediate(r));
+      }
+      expect(s.fakeTransport.audioEvents).toEqual([
+        ['push_frame', 160],
+        ['mark_speech_start', 300],
+        ['push_frame', 160],
+        ['flush', undefined],
+      ]);
+    } finally {
+      await s.aclose();
+    }
+  });
+
   it('predict starts inference', async () => {
     const s = makeStream();
     try {

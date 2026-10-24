@@ -2473,6 +2473,8 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     flush(_sentinel: FlushSentinel_2): Promise<void>;
     // (undocumented)
     protected _logger: Logger;
+    // (undocumented)
+    markSpeechStart(_lookback: number): void;
     // @internal
     get numRetries(): number;
     // (undocumented)
@@ -5150,9 +5152,13 @@ class LocalTransport implements StreamingTurnDetectionTransport {
     // (undocumented)
     protected _logger: Logger;
     // (undocumented)
+    markSpeechStart(lookback: number): void;
+    // (undocumented)
+    protected _numSamples: number;
+    // (undocumented)
     protected _opts: BaseStreamingTurnDetectorOptions;
     // (undocumented)
-    protected _predict(requestId: string, pcmSnapshot: Int16Array): Promise<void>;
+    protected _predict(requestId: string, pcmSnapshot: Int16Array, turnSamples: number): Promise<void>;
     // (undocumented)
     pushFrame(frame: AudioFrame): Promise<void>;
     // (undocumented)
@@ -5163,6 +5169,8 @@ class LocalTransport implements StreamingTurnDetectionTransport {
     protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
     // (undocumented)
     protected _tasks: Set<Promise<void>>;
+    // (undocumented)
+    protected _turnStart: number | undefined;
     // (undocumented)
     protected _warnedNoExecutor: boolean;
 }

@@ -4,7 +4,7 @@
 
 /**
  * Audio EOT inference runner — runs inside the shared `InferenceProcExecutor`
- * so the ~138 MB native model loads once per host instead of once per job
+ * so the ~540 MB native model loads once per host instead of once per job
  * worker. Job-side transports reach it via `executor.doInference(...)`.
  *
  * The inference proc instantiates this with `new Runner()` (no args) and
@@ -19,9 +19,11 @@ import { _getLocalInferenceModule, _shouldPreloadLocalInference } from '../_warm
 /** Inference method id used to register + dispatch the audio EOT runner. */
 export const EOT_INFERENCE_METHOD = 'lk_eot_audio';
 
-/** Request payload: base64-encoded 16 kHz s16le PCM (up to 1.2 s). */
+/** Request payload: base64-encoded 16 kHz s16le PCM (up to 2.0 s) and the
+ * turn length in samples, counted from the user's first speech. */
 export interface EotInferenceInput {
   pcm: string;
+  turnSamples?: number;
 }
 
 export interface EotInferenceOutput {
@@ -45,7 +47,7 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
         'EotRunner: @livekit/local-inference native binding unavailable in the inference process',
       );
     }
-    // Page in the EOT model singleton (~138 MB). During preload this keeps the
+    // Page in the EOT model singleton (~540 MB). During preload this keeps the
     // first request off the hot path; otherwise the first request loads it lazily.
     mod.initEot();
     this.#mod = mod;
@@ -60,7 +62,7 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
     const t0 = performance.now();
     let probability = 0.0;
     try {
-      probability = await mod.predict(pcm);
+      probability = await mod.predict(pcm, data.turnSamples);
     } catch (err) {
       this.#logger.error(
         { err: err instanceof Error ? err.message : String(err) },

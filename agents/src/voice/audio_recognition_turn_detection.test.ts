@@ -132,6 +132,7 @@ function makeAudioStream(): BaseStreamingTurnDetectorStream {
   Object.defineProperty(stream, 'predictionTimeout', { value: 10 });
   stream.predict = vi.fn(() => new Future<TurnDetectionEvent>());
   stream.cancelInference = vi.fn();
+  stream.markSpeechStart = vi.fn();
   stream.flush = vi.fn();
   return stream as BaseStreamingTurnDetectorStream;
 }
@@ -358,6 +359,25 @@ describe('TestResumedSpeechAbortsCommit', () => {
     await task!.result.catch(() => {});
 
     expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe('TestSpeechStartMark', () => {
+  it('marks the speech start at the VAD onset', async () => {
+    const { internals } = makeRecognition();
+    const stream = makeAudioStream();
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+
+    const vad = runScriptedVad(internals);
+    try {
+      await vad.feed({ ...startOfSpeech(), speechDuration: 500, inferenceDuration: 40 });
+    } finally {
+      await vad.stop();
+    }
+
+    expect(stream.markSpeechStart).toHaveBeenCalledOnce();
+    expect(stream.markSpeechStart).toHaveBeenCalledWith(540);
   });
 });
 

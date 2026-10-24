@@ -65,6 +65,24 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
 }
 
 /**
+ * Marks where the user started speaking: `lookback` ms before the end of the
+ * audio pushed ahead of it. Carried on the audio channel so it stays in order
+ * with the frames.
+ */
+export interface SpeechStartSentinel {
+  readonly kind: 'speech_start';
+  lookback: number;
+}
+
+export function isSpeechStartSentinel(value: unknown): value is SpeechStartSentinel {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as SpeechStartSentinel).kind === 'speech_start'
+  );
+}
+
+/**
  * Transport adapter for `BaseStreamingTurnDetectorStream` — owns the I/O (WebSocket
  * session, in-process predict, etc.). The stream calls these methods
  * directly; transports report predictions back via
@@ -75,6 +93,7 @@ export interface StreamingTurnDetectionTransport {
   run(): Promise<void>;
   runInference(requestId: string): void;
   pushFrame(frame: AudioFrame): Promise<void>;
+  markSpeechStart(lookback: number): void;
   flush(sentinel: FlushSentinel): Promise<void>;
   detach(): void;
 }
@@ -177,7 +196,8 @@ export class BaseStreamingTurnDetectorStream {
   private _audioInputSampleRate: number | undefined;
   private _audioInputNumChannels: number | undefined;
   private _audioResampler: AudioResampler | undefined;
-  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel> = createStreamChannel();
+  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel | SpeechStartSentinel> =
+    createStreamChannel();
   private _degraded = false;
 
   /** Id of the in-flight inference request, or `undefined` when idle. */
@@ -322,6 +342,16 @@ export class BaseStreamingTurnDetectorStream {
     for (const resampled of this._resampleAudioFrame(frame)) {
       void this._audioChannel.write(resampled);
     }
+  }
+
+  /** Mark that the user started speaking `lookback` ms before the end of the
+   * audio pushed so far. Only the first mark after a flush starts the turn. */
+  markSpeechStart(lookback: number): void {
+    if (this._degraded || this._audioChannel.closed) {
+      return;
+    }
+    const sentinel: SpeechStartSentinel = { kind: 'speech_start', lookback };
+    void this._audioChannel.write(sentinel);
   }
 
   endInput(): void {
@@ -486,6 +516,8 @@ export class BaseStreamingTurnDetectorStream {
         if (done) return;
         if (isFlushSentinel(value)) {
           await this._transport.flush(value);
+        } else if (isSpeechStartSentinel(value)) {
+          this._transport.markSpeechStart(value.lookback);
         } else {
           await this._transport.pushFrame(value);
         }

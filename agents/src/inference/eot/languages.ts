@@ -19,20 +19,20 @@ export type TurnDetectorModel = 'turn-detector-v1' | 'turn-detector-v1-mini';
 export type TurnDetectorVersion = 'v1' | 'v1-mini';
 
 export const LOCAL_LANGUAGES: Readonly<Record<string, number>> = {
-  ar: 0.35,
-  de: 0.245,
-  en: 0.36,
-  es: 0.35,
-  fr: 0.285,
-  hi: 0.305,
-  id: 0.345,
-  it: 0.23,
-  ja: 0.295,
-  ko: 0.4,
-  nl: 0.2,
-  pt: 0.32,
-  tr: 0.255,
-  zh: 0.355,
+  ar: 0.33,
+  de: 0.36,
+  en: 0.51,
+  es: 0.48,
+  fr: 0.34,
+  hi: 0.46,
+  id: 0.56,
+  it: 0.54,
+  ja: 0.2,
+  ko: 0.34,
+  nl: 0.47,
+  pt: 0.62,
+  tr: 0.58,
+  zh: 0.48,
 };
 
 /**
