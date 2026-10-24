@@ -35,6 +35,13 @@ export interface STTv2Options {
   apiKey?: string;
   model: V2Models | string;
   sampleRate: number;
+  /**
+   * Duration of outgoing PCM audio chunks in milliseconds. Deepgram recommends 80 ms for Flux.
+   * This controls WebSocket audio batching independently of incoming RTC frame size and
+   * endpointing delay. Set at creation time.
+   * @see https://developers.deepgram.com/docs/flux/quickstart
+   */
+  audioChunkDurationMs: number;
   keyterms: string[];
   endpointUrl: string;
   language?: string;
@@ -60,6 +67,7 @@ export interface STTv2Options {
 const defaultSTTv2Options: Omit<STTv2Options, 'apiKey'> = {
   model: 'flux-general-en',
   sampleRate: 16000,
+  audioChunkDurationMs: 50,
   keyterms: [],
   endpointUrl: 'wss://api.deepgram.com/v2/listen',
   language: 'en',
@@ -123,7 +131,8 @@ export class STTv2 extends stt.STT {
    *
    * @param opts - Configuration options. See {@link STTv2Options}.
    *
-   * @throws Error if no API key is provided
+   * @throws Error if no API key is provided or `audioChunkDurationMs` is not a positive integer
+   * that yields at least one audio sample
    */
   constructor(opts: Partial<STTv2Options> = {}) {
     super({
@@ -138,6 +147,16 @@ export class STTv2 extends stt.STT {
       ...opts,
       language: opts.language ? normalizeLanguage(opts.language) : defaultSTTv2Options.language,
     };
+
+    if (
+      !Number.isInteger(this.#opts.audioChunkDurationMs) ||
+      this.#opts.audioChunkDurationMs <= 0 ||
+      Math.floor((this.#opts.sampleRate * this.#opts.audioChunkDurationMs) / 1000) < 1
+    ) {
+      throw new Error(
+        'audioChunkDurationMs must be a positive integer yielding at least one sample',
+      );
+    }
     this.#userKeyterms = [...this.#opts.keyterms];
 
     const apiKey = opts.apiKey || process.env.DEEPGRAM_API_KEY;
@@ -198,7 +217,7 @@ export class STTv2 extends stt.STT {
    *
    * @param opts - Partial options to update
    */
-  updateOptions(opts: Partial<STTv2Options>) {
+  updateOptions(opts: Partial<Omit<STTv2Options, 'audioChunkDurationMs'>>) {
     const nextOpts = { ...opts };
     if (nextOpts.keyterms !== undefined) {
       this.#userKeyterms = [...nextOpts.keyterms];
@@ -305,7 +324,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
     return this.#speaking;
   }
 
-  updateOptions(opts: Partial<STTv2Options>) {
+  updateOptions(opts: Partial<Omit<STTv2Options, 'audioChunkDurationMs'>>) {
     this.#logger.debug('Stream received option update', opts);
     this.#opts = {
       ...this.#opts,
@@ -427,9 +446,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
   async #sendTask() {
     if (!this.#ws) return;
 
-    // Buffer audio into 50ms chunks (Parity)
-    const samples50ms = Math.floor(this.#opts.sampleRate / 20);
-    const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
+    // Repack incoming frames into the configured outgoing PCM chunk duration.
+    const chunkSamples = Math.floor(
+      (this.#opts.sampleRate * this.#opts.audioChunkDurationMs) / 1000,
+    );
+    const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, chunkSamples);
 
     // Manual Iterator to allow racing against Reconnect Signal
     const iterator = this.input[Symbol.asyncIterator]();
@@ -477,26 +498,27 @@ class SpeechStreamv2 extends stt.SpeechStream {
         }
       }
 
+      const frames: AudioFrame[] = [];
+
       // If we broke above, we don't process data. If not, 'result' is IteratorResult
       if (hasEnded && result.value === undefined) {
-        // Process flush below
+        frames.push(...audioBstream.flush());
       } else if ('value' in result) {
         const data = result.value;
-        const frames: AudioFrame[] = [];
 
         if (data === SpeechStreamv2.FLUSH_SENTINEL) {
           frames.push(...audioBstream.flush());
           hasEnded = true;
         } else {
-          frames.push(...audioBstream.write((data as AudioFrame).data.buffer as ArrayBuffer));
+          frames.push(...audioBstream.write((data as AudioFrame).data));
         }
+      }
 
-        for (const frame of frames) {
-          this.#audioDurationCollector.push(calculateAudioDurationSeconds(frame));
+      for (const frame of frames) {
+        this.#audioDurationCollector.push(calculateAudioDurationSeconds(frame));
 
-          if (this.#ws!.readyState === WebSocket.OPEN) {
-            this.#ws!.send(frame.data);
-          }
+        if (this.#ws!.readyState === WebSocket.OPEN) {
+          this.#ws!.send(frame.data);
         }
       }
 
