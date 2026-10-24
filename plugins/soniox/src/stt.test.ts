@@ -418,6 +418,52 @@ describe('processMessage', () => {
     expect(sd.sourceTexts!.join('')).toBe(sd.text);
   });
 
+  it('emits end of speech when an endpoint follows a fully retracted segment', () => {
+    const events = runProcess([
+      {
+        tokens: [finalToken(' 42', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 400,
+      },
+      {
+        tokens: [nonfinalToken(' 42', 'en')],
+        total_audio_proc_ms: 500,
+      },
+      {
+        tokens: [END_TOKEN_FINAL],
+        total_audio_proc_ms: 600,
+      },
+    ]).filter((event) => event.type !== stt.SpeechEventType.RECOGNITION_USAGE);
+
+    expect(events.map((event) => event.type)).toEqual([
+      stt.SpeechEventType.START_OF_SPEECH,
+      stt.SpeechEventType.FINAL_TRANSCRIPT,
+      stt.SpeechEventType.END_OF_SPEECH,
+      stt.SpeechEventType.START_OF_SPEECH,
+      stt.SpeechEventType.INTERIM_TRANSCRIPT,
+      stt.SpeechEventType.END_OF_SPEECH,
+    ]);
+    expect(events.at(-1)?.alternatives).toBeUndefined();
+
+    const nextUtteranceEvents = runProcess([
+      { tokens: [nonfinalToken(' 42', 'en')], total_audio_proc_ms: 100 },
+      { tokens: [END_TOKEN_FINAL], total_audio_proc_ms: 200 },
+      {
+        tokens: [finalToken(' Halo.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 900,
+      },
+    ]).filter((event) => event.type !== stt.SpeechEventType.RECOGNITION_USAGE);
+
+    expect(nextUtteranceEvents.map((event) => event.type)).toEqual([
+      stt.SpeechEventType.START_OF_SPEECH,
+      stt.SpeechEventType.INTERIM_TRANSCRIPT,
+      stt.SpeechEventType.END_OF_SPEECH,
+      stt.SpeechEventType.START_OF_SPEECH,
+      stt.SpeechEventType.FINAL_TRANSCRIPT,
+      stt.SpeechEventType.END_OF_SPEECH,
+    ]);
+    expect(nextUtteranceEvents[4]?.alternatives?.[0]?.text).toBe(' Halo.');
+  });
+
   it('reports recognition usage for silent frames', () => {
     const events = runProcess([{ tokens: [], total_audio_proc_ms: 3000 }]);
 
