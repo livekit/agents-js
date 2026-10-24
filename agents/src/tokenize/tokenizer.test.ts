@@ -253,6 +253,17 @@ describe('tokenizer', () => {
     });
   });
   describe('hyphenateWord', () => {
+    it.each([
+      ['associate', ['as', 'so', 'ciate']],
+      ['declination', ['dec', 'li', 'na', 'tion']],
+      ['philanthropic', ['phil', 'an', 'thropic']],
+      ['recognizance', ['re', 'cog', 'ni', 'zance']],
+      ['table', ['ta', 'ble']],
+      ['ASSOCIATE', ['AS', 'SO', 'CIATE']],
+    ])('uses the declared exception boundaries for %s', (word, expected) => {
+      expect(hyphenateWord(word as string)).toEqual(expected);
+    });
+
     it('should hyphenate correctly', () => {
       HYPHENATOR_TEXT.forEach((x, i) => {
         expect(hyphenateWord(x)).toStrictEqual(HYPHENATOR_EXPECTED[i]);
