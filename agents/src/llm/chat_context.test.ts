@@ -428,6 +428,46 @@ describe('ChatContext._summarize', () => {
     expect(createdAts).toEqual(sorted);
   });
 
+  it('keeps prior summaries', async () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'system', content: 'System prompt.', createdAt: 0 });
+    ctx.addMessage({
+      role: 'assistant',
+      content: '<chat_history_summary>earlier summary</chat_history_summary>',
+      extra: { is_summary: true },
+      createdAt: 1000,
+    });
+    ctx.addMessage({ role: 'user', content: 'msg1', createdAt: 2000 });
+    ctx.addMessage({ role: 'assistant', content: 'reply1', createdAt: 3000 });
+    ctx.addMessage({ role: 'user', content: 'msg2', createdAt: 4000 });
+    ctx.addMessage({ role: 'assistant', content: 'reply2', createdAt: 5000 });
+
+    const llm = new FakeLLM([
+      {
+        input: [
+          'Conversation to summarize:',
+          '',
+          '<user>',
+          'msg1',
+          '</user>',
+          '<assistant>',
+          'reply1',
+          '</assistant>',
+        ].join('\n'),
+        content: 'canned summary',
+      },
+    ]);
+    const result = await ctx._summarize(llm, { keepLastTurns: 1 });
+
+    const summaries = result.items.filter(
+      (item) => item.type === 'message' && item.extra?.is_summary === true,
+    );
+    const texts = summaries.map((item) => (item as ChatMessage).textContent);
+    expect(summaries).toHaveLength(2);
+    expect(texts.some((text) => text?.includes('earlier summary'))).toBe(true);
+    expect(texts.some((text) => text?.includes('canned summary'))).toBe(true);
+  });
+
   it('preserves interleaved tool items that belong to the recent tail', async () => {
     const ctx = new ChatContext();
     ctx.addMessage({ role: 'system', content: 'System prompt', createdAt: 0 });
