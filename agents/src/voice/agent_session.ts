@@ -1540,13 +1540,44 @@ export class AgentSession<
       try {
         const unlock = await this.activityLock.lock();
         unlock();
-        this.generateReply({ userInput, inputModality });
+        if (this._textOnly) {
+          // a text simulation stands in for a live call, where every user turn runs
+          // onUserTurnCompleted
+          await this.replyToCompletedUserTurn(userInput, inputModality);
+          // settles the run when the hook dropped the turn and no reply is watched
+          runState._markDoneIfNeeded();
+        } else {
+          this.generateReply({ userInput, inputModality });
+        }
       } catch (e) {
         runState._reject(asError(e));
       }
     })();
 
     return runState;
+  }
+
+  /**
+   * Run `onUserTurnCompleted` for `userInput`, then reply unless the hook dropped the turn.
+   */
+  private async replyToCompletedUserTurn(
+    userInput: string,
+    inputModality?: 'audio' | 'text',
+  ): Promise<void> {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+
+    const activity = this.activity.schedulingPaused ? this.nextActivity : this.activity;
+    if (!activity) {
+      throw new Error('AgentSession is closing, cannot use generateReply()');
+    }
+
+    const userMessage = ChatMessage.create({ role: 'user', content: userInput });
+    const hookResult = await activity.runUserTurnHook(userMessage, this.rootSpanContext);
+    if (!hookResult) return;
+
+    this.generateReply({ userInput: userMessage, chatCtx: hookResult.chatCtx, inputModality });
   }
 
   /** @internal */
