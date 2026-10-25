@@ -363,6 +363,35 @@ describe('OpenAI STT file transcription context', () => {
     );
     expect(event.alternatives?.[0].language).toBe('fr');
   });
+
+  it('applies a language override to one call', async () => {
+    const create = vi.fn().mockResolvedValue({ text: 'hello' });
+    const client = { audio: { transcriptions: { create } } } as unknown as OpenAI;
+    const openai = new STT({
+      apiKey: 'test-key',
+      client,
+      model: 'whisper-1',
+      language: 'en',
+      useRealtime: false,
+    });
+    const frame = new AudioFrame(new Int16Array(2400), 24000, 1, 2400);
+
+    const overridden = await openai.recognize(frame, { language: 'fr' });
+    const defaulted = await openai.recognize(frame);
+
+    expect(create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ language: 'fr' }),
+      expect.any(Object),
+    );
+    expect(overridden.alternatives?.[0]?.language).toBe('fr');
+    expect(create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ language: 'en' }),
+      expect.any(Object),
+    );
+    expect(defaulted.alternatives?.[0]?.language).toBe('en');
+  });
 });
 
 describe('OpenAI realtime STT context', () => {

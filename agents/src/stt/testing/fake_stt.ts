@@ -16,6 +16,7 @@ import { AsyncIterableQueue, type AudioBuffer, delay } from '../../utils.js';
 import {
   STT,
   type STTCapabilities,
+  type STTRecognizeOptions,
   type SpeechEvent,
   SpeechEventType,
   SpeechStream,
@@ -207,9 +208,15 @@ export class FakeSTT extends STT {
   }
 
   // Ref: python tests/fake_stt.py - 126-134 lines
-  override async recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<SpeechEvent> {
+  override async recognize(
+    frame: AudioBuffer,
+    optionsOrAbortSignal?: AbortSignal | STTRecognizeOptions,
+  ): Promise<SpeechEvent> {
     this._recognizeCh.put(new RecognizeSentinel());
-    return super.recognize(frame, abortSignal);
+    if (optionsOrAbortSignal && 'aborted' in optionsOrAbortSignal) {
+      return super.recognize(frame, optionsOrAbortSignal);
+    }
+    return super.recognize(frame, optionsOrAbortSignal);
   }
 
   // Ref: python tests/fake_stt.py - 136-147 lines

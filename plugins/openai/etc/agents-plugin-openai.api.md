@@ -2045,7 +2045,7 @@ export class STT extends stt_2.STT {
     // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    _recognize(buffer: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt_2.SpeechEvent>;
+    _recognize(buffer: AudioBuffer_2, abortSignal?: AbortSignal, language?: string | string[]): Promise<stt_2.SpeechEvent>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;

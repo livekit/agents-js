@@ -49,20 +49,25 @@ export class StreamAdapter extends STT {
     this.#stt._pushConversationItem(ev);
   }
 
-  stream(options?: { connOptions?: APIConnectOptions }): StreamAdapterWrapper {
-    return new StreamAdapterWrapper(this.#stt, this.#vad, options?.connOptions);
+  stream(options?: {
+    connOptions?: APIConnectOptions;
+    language?: string | string[];
+  }): StreamAdapterWrapper {
+    return new StreamAdapterWrapper(this.#stt, this.#vad, options?.connOptions, options?.language);
   }
 }
 
 export class StreamAdapterWrapper extends SpeechStream {
   #stt: STT;
   #vadStream: VADStream;
+  #language?: string | string[];
   label: string;
 
-  constructor(stt: STT, vad: VAD, connOptions?: APIConnectOptions) {
+  constructor(stt: STT, vad: VAD, connOptions?: APIConnectOptions, language?: string | string[]) {
     super(stt, undefined, connOptions);
     this.#stt = stt;
     this.#vadStream = vad.stream();
+    this.#language = language;
     this.label = `stt.StreamAdapterWrapper<${this.#stt.label}>`;
   }
 
@@ -108,7 +113,10 @@ export class StreamAdapterWrapper extends SpeechStream {
             this.output.put({ type: SpeechEventType.END_OF_SPEECH, speechEndTime });
 
             try {
-              const event = await this.#stt.recognize(ev.frames, this.abortSignal);
+              const event = await this.#stt.recognize(ev.frames, {
+                abortSignal: this.abortSignal,
+                language: this.#language,
+              });
               if (!event.alternatives?.[0]?.text) {
                 continue;
               }

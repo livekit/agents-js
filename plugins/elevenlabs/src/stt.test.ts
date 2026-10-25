@@ -620,6 +620,32 @@ describe('ElevenLabs STT', () => {
     }
   });
 
+  it('applies a recognize language override to one call', async () => {
+    const sentLanguages: string[] = [];
+    const { server, baseURL } = await startHttpServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        sentLanguages.push(/name="language_code"\r\n\r\n([^\r]+)/.exec(body)?.[1] ?? '');
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ text: 'hello', words: [] }));
+      });
+    });
+
+    try {
+      const eleven = new STT({ apiKey: 'test-key', baseURL, languageCode: 'en' });
+      const overridden = await eleven.recognize(makeFrame(), { language: 'fr' });
+      const defaulted = await eleven.recognize(makeFrame());
+
+      expect(sentLanguages).toEqual(['fr', 'en']);
+      expect(overridden.alternatives?.[0]?.language).toBe('fr');
+      expect(defaulted.alternatives?.[0]?.language).toBe('en');
+    } finally {
+      await closeHttpServer(server);
+    }
+  });
+
   it.each([
     {
       body: JSON.stringify({

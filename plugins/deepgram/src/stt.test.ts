@@ -134,6 +134,42 @@ describe('Deepgram streaming flush', () => {
   });
 });
 
+describe('Deepgram option updates', () => {
+  it('forwards diarization and tags to an open stream', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_ws, request) => urls.push(request.url ?? ''));
+    const deepgram = new STT({ apiKey: 'test-key', baseUrl });
+    const stream = deepgram.stream();
+
+    try {
+      await waitUntil(() => urls.length === 1);
+      expect(new URL(urls[0]!, baseUrl).searchParams.has('diarize')).toBe(false);
+
+      deepgram.updateOptions({ diarize: true, tags: ['prod'] });
+
+      await waitUntil(() => urls.length === 2);
+      const query = new URL(urls[1]!, baseUrl).searchParams;
+      expect(query.get('diarize')).toBe('true');
+      expect(query.getAll('tag')).toEqual(['prod']);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('keeps the diarization capability in sync', () => {
+    const deepgram = new STT({ apiKey: 'test-key' });
+    expect(deepgram.capabilities.diarization).toBe(false);
+
+    deepgram.updateOptions({ diarize: true });
+    expect(deepgram.capabilities.diarization).toBe(true);
+
+    deepgram.updateOptions({ diarize: false });
+    expect(deepgram.capabilities.diarization).toBe(false);
+  });
+});
+
 if (hasDeepgramApiKey) {
   describe('Deepgram', async () => {
     await stt(new STT(), await VAD.load(), { nonStreaming: false });
