@@ -196,22 +196,42 @@ export function formatTranscript(
   return lines.join('\n');
 }
 
+const BASE_DECISION_PROTOTYPES: ReadonlySet<object> = new Set([
+  Probability.prototype,
+  Choice.prototype,
+  Score.prototype,
+]);
+
+function copyDecision(name: string, decision: Decision): Decision {
+  let copied: Record<string, unknown>;
+  if (decision.kind === 'choice') {
+    copied = { options: { ...decision.options } };
+  } else if (decision.kind === 'score') {
+    copied = { levels: [...decision.levels] };
+  } else if (decision.kind === 'probability') {
+    copied = {};
+  } else {
+    throw new Error(
+      `decision ${JSON.stringify(name)} has unknown kind ${JSON.stringify((decision as { kind?: unknown }).kind)}`,
+    );
+  }
+  if (BASE_DECISION_PROTOTYPES.has(Object.getPrototypeOf(decision))) {
+    return Object.assign(Object.create(Object.getPrototypeOf(decision)), decision, copied);
+  }
+  // keep subclass fields and methods, like Python's deepcopy; methods run on the
+  // original so private fields still resolve
+  return new Proxy(decision, {
+    get(target, prop) {
+      if (typeof prop === 'string' && Object.hasOwn(copied, prop)) return copied[prop];
+      const value = Reflect.get(target, prop);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 function copyDecisions(decisions: Readonly<Record<string, Decision>>): Record<string, Decision> {
   return Object.fromEntries(
-    Object.entries(decisions).map(([name, decision]) => {
-      if (decision.kind === 'choice') {
-        return [name, new Choice(decision.prompt, { ...decision.options })];
-      }
-      if (decision.kind === 'score') {
-        return [name, new Score(decision.prompt, [...decision.levels])];
-      }
-      if (decision.kind === 'probability') {
-        return [name, new Probability(decision.prompt)];
-      }
-      throw new Error(
-        `decision ${JSON.stringify(name)} has unknown kind ${JSON.stringify((decision as { kind?: unknown }).kind)}`,
-      );
-    }),
+    Object.entries(decisions).map(([name, decision]) => [name, copyDecision(name, decision)]),
   );
 }
 
