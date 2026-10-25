@@ -17,6 +17,10 @@ export interface TTSOptions {
   baseURL?: string;
   client?: OpenAI;
   apiKey?: string;
+  /**
+   * Sample rate of the provider's PCM output, in Hz. Defaults to 24000.
+   * Must be an integer of at least 10. The audio is not resampled.
+   */
   sampleRate?: number;
 }
 
@@ -56,9 +60,9 @@ export class TTS extends tts.TTS {
    */
   constructor(opts: Partial<TTSOptions> = defaultTTSOptions) {
     const sampleRate = opts.sampleRate ?? OPENAI_TTS_SAMPLE_RATE;
-    if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
+    if (!Number.isInteger(sampleRate) || sampleRate < 10) {
       throw new Error(
-        `OpenAI TTS sampleRate must be a positive integer, got ${String(opts.sampleRate)}`,
+        `OpenAI TTS sampleRate must be an integer of at least 10 Hz, got ${String(opts.sampleRate)}`,
       );
     }
     super(sampleRate, OPENAI_TTS_CHANNELS, { streaming: false });
@@ -103,7 +107,6 @@ export class TTS extends tts.TTS {
         },
         { signal },
       ),
-      this.#opts.sampleRate!,
       connOptions,
       signal,
     );
@@ -128,13 +131,12 @@ export class ChunkedStream extends tts.ChunkedStream {
     tts: TTS,
     text: string,
     stream: Promise<any>,
-    sampleRate: number,
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ) {
     super(text, tts, connOptions, abortSignal);
     this.stream = stream;
-    this.sampleRate = sampleRate;
+    this.sampleRate = tts.sampleRate;
   }
 
   protected async run() {
