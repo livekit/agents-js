@@ -58,12 +58,17 @@ function responseBody(): TestResponseBody {
 
 function modelFor(
   body: unknown,
-  { status = 200, jsonError }: { status?: number; jsonError?: Error } = {},
+  {
+    status = 200,
+    jsonError,
+    cancel = vi.fn(async () => {}),
+  }: { status?: number; jsonError?: Error; cancel?: ReturnType<typeof vi.fn> } = {},
 ): [DecisionModel, ReturnType<typeof vi.fn>] {
   const fetchMock = vi.fn(async () => ({
     ok: status < 400,
     status,
     headers: new Headers({ 'x-request-id': 'request-1' }),
+    body: { cancel },
     json: async () => {
       if (jsonError) throw jsonError;
       return body;
@@ -251,6 +256,30 @@ describe('DecisionModel', () => {
     expect(error).toBeInstanceOf(APIError);
     expect((error as APIError).retryable).toBe(false);
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('cancels the body of every error response', async () => {
+    const cancel = vi.fn(async () => {});
+    const [model, fetchMock] = modelFor({}, { status: 503, cancel });
+    await expect(
+      model.evaluate({
+        input: '',
+        decisions: QUESTIONS,
+        connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 1000 },
+      }),
+    ).rejects.toBeInstanceOf(APIStatusError);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(cancel).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps answers for decisions named __proto__', async () => {
+    const decisions = Object.fromEntries([['__proto__', new llm.Probability('Ready?')]]);
+    const [model] = modelFor(
+      JSON.parse('{"answers": {"__proto__": {"type": "noul", "noul": 0.7}}}'),
+    );
+    const response = await model.evaluate({ input: '', decisions });
+    expect(Object.hasOwn(response.results, '__proto__')).toBe(true);
+    expect(response.errors).toEqual({});
   });
 
   it('obeys connection options for retryable errors', async () => {

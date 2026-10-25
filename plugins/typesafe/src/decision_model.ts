@@ -103,6 +103,8 @@ export class DecisionModel extends llm.DecisionModel {
         signal: abortSignal,
       });
       if (!response.ok) {
+        // release the connection back to the pool before retrying
+        await response.body?.cancel().catch(() => {});
         throw new APIStatusError({
           message: 'TypeSafe decision request failed',
           options: {
@@ -119,18 +121,19 @@ export class DecisionModel extends llm.DecisionModel {
         throw new APIError('invalid TypeSafe decision response', { retryable: false });
       }
       const parsed = parseResponse(body);
-      const results: Record<string, llm.DecisionResult> = {};
-      const errors: Record<string, string> = {};
+      // build with fromEntries so names like `__proto__` become own entries
+      const results: [string, llm.DecisionResult][] = [];
+      const errors: [string, string][] = [];
       for (const [name, answer] of Object.entries(parsed.answers)) {
         try {
-          results[name] = decodeAnswer(answer);
+          results.push([name, decodeAnswer(answer)]);
         } catch (error) {
-          errors[name] = isAPIError(error) ? error.message : 'invalid Jev decision answer';
+          errors.push([name, isAPIError(error) ? error.message : 'invalid Jev decision answer']);
         }
       }
       return new llm.DecisionResponse({
-        results,
-        errors,
+        results: Object.fromEntries(results),
+        errors: Object.fromEntries(errors),
         model: parsed.model ?? '',
         provider: this.provider,
         requestId: parsed.id || response.headers.get('x-request-id') || '',
