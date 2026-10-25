@@ -12,7 +12,6 @@ import { AudioTranscriptionConfig } from '@google/genai';
 import { Behavior } from '@google/genai';
 import { Context } from '@opentelemetry/api';
 import { ContextWindowCompressionConfig } from '@google/genai';
-import { default as default_2 } from 'ws';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
 import type { EventMap } from '@livekit/typed-emitter';
@@ -24,7 +23,7 @@ import { HttpOptions } from '@google/genai';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
 import { Logger } from 'pino';
-import { Modality as Modality_2 } from '@google/genai';
+import { Modality } from '@google/genai';
 import { NoiseCancellationOptions } from '@livekit/rtc-node';
 import OpenAI from 'openai';
 import { Participant } from '@livekit/rtc-node';
@@ -32,7 +31,6 @@ import { ParticipantKind } from '@livekit/rtc-node';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
 import { RealtimeInputConfig } from '@google/genai';
-import type { Reasoning as Reasoning_2 } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import { Span } from '@opentelemetry/api';
@@ -348,8 +346,8 @@ declare namespace realtime {
     export {
         ClientEvents,
         LiveAPIModels,
-        Voice_2 as Voice,
-        RealtimeModel_4 as RealtimeModel,
+        Voice,
+        RealtimeModel_2 as RealtimeModel,
         Behavior,
         FunctionResponseScheduling
     }
@@ -359,14 +357,14 @@ export { realtime }
 // Warning: (ae-missing-release-tag) "RealtimeModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-class RealtimeModel_4 extends llm.RealtimeModel {
+class RealtimeModel_2 extends llm.RealtimeModel {
     constructor(options?: {
         instructions?: string;
         model?: LiveAPIModels | string;
         apiKey?: string;
-        voice?: Voice_2 | string;
+        voice?: Voice | string;
         language?: string;
-        modalities?: Modality_2[];
+        modalities?: Modality[];
         vertexai?: boolean;
         project?: string;
         location?: string;
@@ -398,16 +396,16 @@ class RealtimeModel_4 extends llm.RealtimeModel {
     label(): string;
     // (undocumented)
     get model(): string;
-    // Warning: (ae-forgotten-export) The symbol "RealtimeOptions_2" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "RealtimeOptions" needs to be exported by the entry point index.d.ts
     //
     // @internal (undocumented)
-    _options: RealtimeOptions_2;
+    _options: RealtimeOptions;
     // (undocumented)
     get provider(): string;
-    // Warning: (ae-forgotten-export) The symbol "RealtimeSession_4" needs to be exported by the entry point index.d.ts
-    session(): RealtimeSession_4;
+    // Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
+    session(): RealtimeSession_2;
     updateOptions(options: {
-        voice?: Voice_2 | string;
+        voice?: Voice | string;
         temperature?: number;
         toolBehavior?: types.Behavior;
         toolResponseScheduling?: types.FunctionResponseScheduling;
@@ -573,12 +571,12 @@ export interface VertexRAGRetrievalOptions {
 // Warning: (ae-missing-release-tag) "Voice" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-type Voice_2 = 'Achernar' | 'Achird' | 'Algenib' | 'Algieba' | 'Alnilam' | 'Aoede' | 'Autonoe' | 'Callirrhoe' | 'Charon' | 'Despina' | 'Enceladus' | 'Erinome' | 'Fenrir' | 'Gacrux' | 'Iapetus' | 'Kore' | 'Laomedeia' | 'Leda' | 'Orus' | 'Pulcherrima' | 'Puck' | 'Rasalgethi' | 'Sadachbia' | 'Sadaltager' | 'Schedar' | 'Sulafat' | 'Umbriel' | 'Vindemiatrix' | 'Zephyr' | 'Zubenelgenubi';
+type Voice = 'Achernar' | 'Achird' | 'Algenib' | 'Algieba' | 'Alnilam' | 'Aoede' | 'Autonoe' | 'Callirrhoe' | 'Charon' | 'Despina' | 'Enceladus' | 'Erinome' | 'Fenrir' | 'Gacrux' | 'Iapetus' | 'Kore' | 'Laomedeia' | 'Leda' | 'Orus' | 'Pulcherrima' | 'Puck' | 'Rasalgethi' | 'Sadachbia' | 'Sadaltager' | 'Schedar' | 'Sulafat' | 'Umbriel' | 'Vindemiatrix' | 'Zephyr' | 'Zubenelgenubi';
 
 // Warnings were encountered during analysis:
 //
 // src/aiplatform_llm.ts:176:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
-// src/realtime/realtime_api.ts:346:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_api.ts:317:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
