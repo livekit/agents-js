@@ -153,6 +153,11 @@ export interface PreemptiveGenerationInfo {
   startedSpeakingAt: number | undefined;
 }
 
+/** The accumulated user transcript to compare with a pending preflight reply. */
+export interface PreflightStaleInfo {
+  newTranscript: string;
+}
+
 export interface RecognitionHooks {
   interruptionByAudioActivityEnabled: boolean;
   onOverlapSpeech: (ev: OverlappingSpeechEvent) => void;
@@ -167,6 +172,7 @@ export interface RecognitionHooks {
   onEotPrediction: (ev: EotPredictionEvent) => void;
   onAgentBackchannelOpportunity: (ev: _AgentBackchannelOpportunityEvent) => void;
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
+  onPreflightStale: (info: PreflightStaleInfo) => void;
   onUserTurnExceeded: (ev: UserTurnExceededEvent) => void;
 
   retrieveChatCtx: () => ChatContext;
@@ -1446,6 +1452,11 @@ export class AudioRecognition {
           this.vad !== undefined || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
         );
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
+
+        if (this.audioPreflightTranscript && this.audioInterimTranscript) {
+          // The user kept talking after the preflight (e.g. Deepgram Flux TurnResumed).
+          this.hooks.onPreflightStale({ newTranscript: this.currentTranscript });
+        }
         break;
       case SpeechEventType.START_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
