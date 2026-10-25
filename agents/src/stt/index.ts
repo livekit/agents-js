@@ -17,5 +17,6 @@ export {
   STT,
   type STTCallbacks,
   type STTCapabilities,
+  type STTRecognizeOptions,
 } from './stt.js';
 export * as testing from './testing/index.js';

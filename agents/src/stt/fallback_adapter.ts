@@ -13,6 +13,7 @@ import {
   STT,
   type STTCallbacks,
   type STTError,
+  type STTRecognizeOptions,
   type SpeechEvent,
   SpeechEventType,
   SpeechStream,
@@ -273,14 +274,19 @@ export class FallbackAdapter extends STT {
   // Mirrors the streaming path's `monitorMetrics` override.
   override async recognize(
     frame: Parameters<STT['recognize']>[0],
-    abortSignal?: AbortSignal,
+    optionsOrAbortSignal?: AbortSignal | STTRecognizeOptions,
   ): Promise<SpeechEvent> {
-    return this._recognize(frame, abortSignal);
+    const options =
+      optionsOrAbortSignal && 'aborted' in optionsOrAbortSignal
+        ? { abortSignal: optionsOrAbortSignal }
+        : optionsOrAbortSignal ?? {};
+    return this._recognize(frame, options.abortSignal, options.language);
   }
 
   protected async _recognize(
     frame: Parameters<STT['recognize']>[0],
     abortSignal?: AbortSignal,
+    language?: string | string[],
   ): Promise<SpeechEvent> {
     const startTime = Date.now();
     const allFailed = this._status.every((s) => !s.available);
@@ -293,7 +299,7 @@ export class FallbackAdapter extends STT {
       const status = this._status[i]!;
       if (status.available || allFailed) {
         try {
-          const result = await stt.recognize(frame, abortSignal);
+          const result = await stt.recognize(frame, { abortSignal, language });
           return result;
         } catch (e) {
           this._logger.warn(

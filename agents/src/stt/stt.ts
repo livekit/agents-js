@@ -160,6 +160,17 @@ export type STTCallbacks = {
   ['error']: (error: STTError) => void;
 };
 
+export interface STTRecognizeOptions {
+  abortSignal?: AbortSignal;
+  language?: string | string[];
+}
+
+function isAbortSignal(value: unknown): value is AbortSignal {
+  return (
+    typeof value === 'object' && value !== null && 'aborted' in value && 'addEventListener' in value
+  );
+}
+
 /**
  * An instance of a speech-to-text adapter.
  *
@@ -212,9 +223,17 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   }
 
   /** Receives an audio buffer and returns transcription in the form of a {@link SpeechEvent} */
-  async recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<SpeechEvent> {
+  async recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<SpeechEvent>;
+  async recognize(frame: AudioBuffer, options?: STTRecognizeOptions): Promise<SpeechEvent>;
+  async recognize(
+    frame: AudioBuffer,
+    optionsOrAbortSignal?: AbortSignal | STTRecognizeOptions,
+  ): Promise<SpeechEvent> {
+    const options = isAbortSignal(optionsOrAbortSignal)
+      ? { abortSignal: optionsOrAbortSignal }
+      : optionsOrAbortSignal ?? {};
     const startTime = process.hrtime.bigint();
-    const event = await this._recognize(frame, abortSignal);
+    const event = await this._recognize(frame, options.abortSignal, options.language);
     event.createdAt ??= Date.now();
     const durationMs = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
     this.emit('metrics_collected', {
@@ -236,6 +255,7 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   protected abstract _recognize(
     frame: AudioBuffer,
     abortSignal?: AbortSignal,
+    language?: string | string[],
   ): Promise<SpeechEvent>;
 
   /**

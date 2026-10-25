@@ -51,6 +51,8 @@ export interface STTOptions {
   search?: string[] | null;
   dictation: boolean;
   diarize: boolean;
+  /** Tags to add to requests for usage reporting. */
+  tags: string[];
   numerals: boolean;
   mipOptOut: boolean;
   baseUrl: string;
@@ -78,6 +80,7 @@ const defaultSTTOptions: STTOptions = {
   search: null,
   dictation: false,
   diarize: false,
+  tags: [],
   numerals: false,
   mipOptOut: false,
   baseUrl: 'wss://api.deepgram.com',
@@ -106,6 +109,7 @@ export class STT extends stt.STT {
       streaming: true,
       interimResults: opts.interimResults ?? defaultSTTOptions.interimResults,
       alignedTranscript: 'word',
+      diarization: opts.diarize ?? defaultSTTOptions.diarize,
       keyterms: true,
     });
     if (opts.apiKey === undefined && defaultSTTOptions.apiKey === undefined) {
@@ -118,6 +122,7 @@ export class STT extends stt.STT {
       ...defaultSTTOptions,
       ...opts,
       language: opts.language ? normalizeLanguage(opts.language) : defaultSTTOptions.language,
+      tags: validateTags(opts.tags ?? defaultSTTOptions.tags),
     };
 
     if (this.#opts.detectLanguage) {
@@ -185,6 +190,9 @@ export class STT extends stt.STT {
         : this.#opts.model;
 
     const nextOpts = { ...opts };
+    if (nextOpts.tags !== undefined) {
+      nextOpts.tags = validateTags(nextOpts.tags);
+    }
     if (nextOpts.keyterm !== undefined) {
       this.#userKeyterm = [...nextOpts.keyterm];
       nextOpts.keyterm = [...new Set([...this.#userKeyterm, ...this.#sessionKeyterms])];
@@ -196,6 +204,23 @@ export class STT extends stt.STT {
       language,
       model,
     };
+    if (opts.diarize !== undefined) {
+      this.updateCapabilities({ diarization: opts.diarize });
+    }
+    if (opts.diarize !== undefined || opts.tags !== undefined) {
+      const streamOptions = {
+        ...(opts.diarize !== undefined ? { diarize: opts.diarize } : {}),
+        ...(nextOpts.tags !== undefined ? { tags: nextOpts.tags } : {}),
+      };
+      for (const ref of this.#streams) {
+        const stream = ref.deref();
+        if (stream) {
+          stream.updateOptions(streamOptions);
+        } else {
+          this.#streams.delete(ref);
+        }
+      }
+    }
   }
 
   override _updateSessionKeyterms(keyterms: string[]): void {
@@ -300,7 +325,7 @@ export class SpeechStream extends stt.SpeechStream {
         punctuate: this.#opts.punctuate,
         smart_format: this.#opts.smartFormat,
         dictation: this.#opts.dictation,
-        diarize: this.#opts.diarize,
+        ...(this.#opts.diarize ? { diarize: true } : {}),
         numerals: this.#opts.numerals,
         no_delay: this.#opts.noDelay,
         interim_results: this.#opts.interimResults,
@@ -318,6 +343,7 @@ export class SpeechStream extends stt.SpeechStream {
         search: this.#opts.search,
         language: this.#opts.language,
         mip_opt_out: this.#opts.mipOptOut,
+        tag: this.#opts.tags,
         ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
       };
       appendSearchParams(streamURL, params);
@@ -649,6 +675,15 @@ function appendSearchParams(url: URL, params: Record<string, unknown>) {
       url.searchParams.append(key, String(value));
     }
   });
+}
+
+function validateTags(tags: string[]): string[] {
+  for (const tag of tags) {
+    if (tag.length > 128) {
+      throw new Error('tag must be no more than 128 characters');
+    }
+  }
+  return tags;
 }
 
 function createWav(frame: AudioFrame): Buffer {

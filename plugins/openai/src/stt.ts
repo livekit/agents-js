@@ -490,8 +490,14 @@ export class STT extends stt.STT {
     return Buffer.concat([header, Buffer.from(frame.data.buffer)]);
   }
 
-  async _recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent> {
-    const config = this.#opts;
+  async _recognize(
+    buffer: AudioBuffer,
+    abortSignal?: AbortSignal,
+    language?: string | string[],
+  ): Promise<stt.SpeechEvent> {
+    const config =
+      language !== undefined ? { ...this.#opts, languages: asLanguages(language) } : this.#opts;
+    validateContext(config.model, config.languages, config.keywords);
     buffer = mergeFrames(buffer);
     const wavBuffer = this.#createWav(buffer);
     const file = new File([new Uint8Array(wavBuffer)], 'audio.wav', { type: 'audio/wav' });
