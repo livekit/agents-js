@@ -210,7 +210,11 @@ function copyDecision(name: string, decision: Decision): Decision {
     );
   }
   // keep the decision's class and fields, like Python's deepcopy
-  return Object.assign(Object.create(Object.getPrototypeOf(decision)), decision, copied);
+  const descriptors = Object.getOwnPropertyDescriptors(decision);
+  for (const [key, value] of Object.entries(copied)) {
+    descriptors[key] = { ...descriptors[key], value };
+  }
+  return Object.create(Object.getPrototypeOf(decision), descriptors);
 }
 
 function copyDecisions(decisions: Readonly<Record<string, Decision>>): Record<string, Decision> {

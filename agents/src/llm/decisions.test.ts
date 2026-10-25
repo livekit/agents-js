@@ -429,12 +429,15 @@ describe('DecisionModel', () => {
         this.options.booking = 'Updated';
       }
     }
-    const intent = Object.freeze(new TaggedChoice('Intent?', { booking: 'R', other: 'O' }));
+    const intent = new TaggedChoice('Intent?', { booking: 'R', other: 'O' });
+    Object.defineProperty(intent, 'category', { value: 'travel', enumerable: false });
+    Object.freeze(intent);
     const model = new StaticModel(new DecisionResponse({ results: validResults() }));
     await evaluate(model, { decisions: { ...QUESTIONS, intent } });
     const copied = model.requests[0]?.[1].intent as TaggedChoice;
     expect(copied).toBeInstanceOf(TaggedChoice);
     expect(copied.tag).toBe('custom');
+    expect((copied as unknown as { category: string }).category).toBe('travel');
     copied.rename();
     expect(copied.options.booking).toBe('Updated');
     expect(intent.options.booking).toBe('R');
