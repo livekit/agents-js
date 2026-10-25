@@ -196,12 +196,6 @@ export function formatTranscript(
   return lines.join('\n');
 }
 
-const BASE_DECISION_PROTOTYPES: ReadonlySet<object> = new Set([
-  Probability.prototype,
-  Choice.prototype,
-  Score.prototype,
-]);
-
 function copyDecision(name: string, decision: Decision): Decision {
   let copied: Record<string, unknown>;
   if (decision.kind === 'choice') {
@@ -215,18 +209,8 @@ function copyDecision(name: string, decision: Decision): Decision {
       `decision ${JSON.stringify(name)} has unknown kind ${JSON.stringify((decision as { kind?: unknown }).kind)}`,
     );
   }
-  if (BASE_DECISION_PROTOTYPES.has(Object.getPrototypeOf(decision))) {
-    return Object.assign(Object.create(Object.getPrototypeOf(decision)), decision, copied);
-  }
-  // keep subclass fields and methods, like Python's deepcopy; methods run on the
-  // original so private fields still resolve
-  return new Proxy(decision, {
-    get(target, prop) {
-      if (typeof prop === 'string' && Object.hasOwn(copied, prop)) return copied[prop];
-      const value = Reflect.get(target, prop);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
+  // keep the decision's class and fields, like Python's deepcopy
+  return Object.assign(Object.create(Object.getPrototypeOf(decision)), decision, copied);
 }
 
 function copyDecisions(decisions: Readonly<Record<string, Decision>>): Record<string, Decision> {
@@ -399,7 +383,8 @@ export abstract class DecisionModel extends (EventEmitter as new () => TypedEmit
    *
    * @param input - Text to evaluate, sent as-is, or a conversation converted to a
    *   transcript of user and assistant text.
-   * @param decisions - Decisions keyed by name.
+   * @param decisions - Decisions keyed by name. The provider receives copies that keep each
+   *   decision's class and fields; JavaScript private (`#`) fields are not copied.
    * @param connOptions - Retry and per-attempt timeout settings.
    * @param abortSignal - Cancels the in-flight request and any pending retry.
    */

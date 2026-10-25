@@ -424,21 +424,20 @@ describe('DecisionModel', () => {
   it('keeps the class of copied definitions', async () => {
     class TaggedChoice extends Choice {
       readonly tag = 'custom';
-      #secret = 'private';
 
-      reveal(): string {
-        return this.#secret;
+      rename(): void {
+        this.options.booking = 'Updated';
       }
     }
-    const intent = new TaggedChoice('Intent?', { booking: 'R', other: 'O' });
+    const intent = Object.freeze(new TaggedChoice('Intent?', { booking: 'R', other: 'O' }));
     const model = new StaticModel(new DecisionResponse({ results: validResults() }));
     await evaluate(model, { decisions: { ...QUESTIONS, intent } });
     const copied = model.requests[0]?.[1].intent as TaggedChoice;
     expect(copied).toBeInstanceOf(TaggedChoice);
     expect(copied.tag).toBe('custom');
-    expect(copied.reveal()).toBe('private');
-    expect(copied.options).toEqual(intent.options);
-    expect(copied.options).not.toBe(intent.options);
+    copied.rename();
+    expect(copied.options.booking).toBe('Updated');
+    expect(intent.options.booking).toBe('R');
   });
 
   it('skips the provider for an empty batch', async () => {
