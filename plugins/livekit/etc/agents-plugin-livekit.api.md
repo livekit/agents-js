@@ -7,9 +7,10 @@
 import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
-import type { Context } from '@opentelemetry/api';
+import { Context } from '@opentelemetry/api';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
@@ -22,7 +23,7 @@ import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } fro
 import { RemoteParticipant } from '@livekit/rtc-node';
 import type { RepoDesignation } from '@huggingface/hub';
 import { Room } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
+import { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';

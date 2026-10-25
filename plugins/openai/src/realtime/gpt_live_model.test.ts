@@ -185,8 +185,8 @@ describe('GPTLiveModel', () => {
   });
 
   it.each([
-    'aster',
     'beacon',
+    'cedar',
     'cinder',
     'marin',
     'stone',

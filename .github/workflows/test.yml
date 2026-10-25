@@ -15,6 +15,7 @@ on:
       - '.github/workflows/test.yml'
       - 'agents/**'
       - 'package.json'
+      - 'plugins/openai/**'
       - 'plugins/test/**'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -48,6 +49,8 @@ jobs:
         run: pnpm build
       - name: Test agents
         run: pnpm test agents --silent
+      - name: Test OpenAI-compatible realtime models
+        run: pnpm test plugins/openai/src/realtime plugins/xai/src/realtime --silent
       - name: Test LiveKit inference
         env:
           LIVEKIT_INFERENCE_TESTS: '1'
@@ -57,6 +60,7 @@ jobs:
         run: >-
           pnpm test
           agents/src/inference/llm.test.ts
+          agents/src/inference/realtime.test.ts
           agents/src/inference/stt.test.ts
           agents/src/inference/tts.test.ts
           --silent

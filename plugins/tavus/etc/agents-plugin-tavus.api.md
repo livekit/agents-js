@@ -7,9 +7,10 @@
 import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
-import type { Context } from '@opentelemetry/api';
+import { Context } from '@opentelemetry/api';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
@@ -24,7 +25,7 @@ import { RemoteParticipant } from '@livekit/rtc-node';
 import { RemoteTrackPublication } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import { RpcInvocationData } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
+import { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -47,6 +48,7 @@ export class AvatarSession extends voice.AvatarSession {
     conversationId: string | null;
     // (undocumented)
     get provider(): string;
+    setEmotion(emotion: Emotion): Promise<void>;
     // (undocumented)
     start(agentSession: voice.AgentSession, room: Room, options?: StartOptions): Promise<void>;
 }
@@ -94,6 +96,12 @@ export interface CreatePersonaOptions {
 
 // @public (undocumented)
 export const DEFAULT_API_URL = "https://tavusapi.com/v2";
+
+// @public
+export type Emotion = (typeof EMOTIONS)[number];
+
+// @public
+export const EMOTIONS: readonly ["neutral", "happiness", "sadness", "anger", "fear", "surprise", "disgust", "contempt"];
 
 // @public
 export interface StartOptions {

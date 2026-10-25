@@ -7,9 +7,10 @@
 import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
-import type { Context } from '@opentelemetry/api';
+import { Context } from '@opentelemetry/api';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
@@ -22,7 +23,7 @@ import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
+import { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -36,12 +37,14 @@ import { z } from 'zod';
 // Warning: (ae-missing-release-tag) "PhonicConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-type PhonicConfig = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'instructions'>>;
+type PhonicConfig = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions'>>;
 
 // Warning: (ae-missing-release-tag) "PhonicToolConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 interface PhonicToolConfig {
+    // (undocumented)
+    allow_tool_chaining?: boolean;
     // (undocumented)
     forbid_speech_after_tool_call?: boolean;
     // (undocumented)
@@ -105,10 +108,12 @@ class RealtimeModel extends llm.RealtimeModel {
         pronunciationDictionary?: Phonic.ConfigOptions['pronunciation_dictionary'];
         templateVariables?: Phonic.ConfigOptions['template_variables'];
         enableRedaction?: boolean;
+        enableWatermarking?: boolean;
         mcpServers?: string[];
         observabilityIntegrations?: Phonic.ConfigOptions['observability_integrations'];
         configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
         additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
+        externalId?: string;
         configsForTools?: PhonicToolConfig[];
         forbidSpeechAfterToolCall?: string[];
         onConversationCreated?: (conversationId: string) => void;
@@ -163,6 +168,10 @@ interface RealtimeModelOptions {
     enableAssistantBackchannel?: boolean;
     // (undocumented)
     enableRedaction?: boolean;
+    // (undocumented)
+    enableWatermarking?: boolean;
+    // (undocumented)
+    externalId?: string;
     // @deprecated (undocumented)
     forbidSpeechAfterToolCall?: string[];
     // (undocumented)
@@ -232,7 +241,7 @@ type Voice = 'sabrina' | 'grant' | 'virginia' | 'landon' | 'eleanor' | 'shelby' 
 
 // Warnings were encountered during analysis:
 //
-// src/realtime/realtime_model.ts:314:7 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_model.ts:335:7 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

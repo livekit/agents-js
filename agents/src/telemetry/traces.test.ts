@@ -91,6 +91,20 @@ describe('session options report', () => {
     expect(description).toContain('backchannelThresholdOverrides={"en":0.7,"fr":0.6}');
   });
 
+  it('reports disabled local fallback', () => {
+    const detector = new TurnDetector({
+      version: 'v1',
+      localFallback: false,
+      baseUrl: 'https://inference.example.com',
+      apiKey: 'k',
+      apiSecret: 's',
+    });
+    const session = new AgentSession({ turnHandling: { turnDetection: detector } });
+
+    expect(turnDetection(session)).toContain('localFallback=false');
+    expect(detector.toJSON().localFallback).toBe(false);
+  });
+
   it('does not leak turn detector credentials or endpoints', () => {
     const detector = new TurnDetector({
       version: 'v1',
@@ -619,7 +633,7 @@ function fakeClientRequest(): ClientRequest {
 }
 
 function mockSuccessfulFormSubmit() {
-  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit(_opts, cb) {
+  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit() {
     const request = fakeClientRequest();
     const res = new PassThrough() as PassThrough & {
       statusCode: number;
@@ -632,7 +646,7 @@ function mockSuccessfulFormSubmit() {
       process.nextTick(() => res.emit('end'));
       return res;
     };
-    cb?.(null, res as never);
+    queueMicrotask(() => request.emit('response', res));
     return request;
   });
 }
