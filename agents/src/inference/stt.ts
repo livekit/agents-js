@@ -4,7 +4,7 @@
 import { type AudioFrame } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { WebSocket } from 'ws';
-import { APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
 import { ChatMessage } from '../llm/index.js';
@@ -30,6 +30,41 @@ import {
 } from './api_protos.js';
 import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
 import { VAD as InferenceVAD } from './vad.js';
+
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const PONG_TIMEOUT_MS = HEARTBEAT_INTERVAL_MS / 2;
+
+function startWebSocketHeartbeat(ws: WebSocket, onTimeout: (error: Error) => void): () => void {
+  let pongDeadline: NodeJS.Timeout | undefined;
+
+  const clearDeadline = () => {
+    if (!pongDeadline) return;
+    clearTimeout(pongDeadline);
+    pongDeadline = undefined;
+  };
+  const onPong = () => clearDeadline();
+  ws.on('pong', onPong);
+
+  const interval = setInterval(() => {
+    if (ws.readyState !== 1 || pongDeadline) return;
+    try {
+      ws.ping();
+    } catch {
+      return;
+    }
+    pongDeadline = setTimeout(() => {
+      pongDeadline = undefined;
+      onTimeout(new Error(`No PONG received after ${PONG_TIMEOUT_MS / 1000} seconds`));
+      ws.terminate();
+    }, PONG_TIMEOUT_MS);
+  }, HEARTBEAT_INTERVAL_MS);
+
+  return () => {
+    clearInterval(interval);
+    clearDeadline();
+    ws.off('pong', onPong);
+  };
+}
 
 export type DeepgramModels =
   | 'deepgram/nova-3'
@@ -864,6 +899,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let finalizationComplete = false;
       let sessionClosedReceived = false;
       let sessionCloseSent = false;
+      let heartbeatError: Error | undefined;
+      let stopHeartbeat: (() => void) | undefined;
       let finalizationTimeout: ReturnType<typeof setTimeout> | undefined;
       let vadStream: VADStream | null = null;
 
@@ -886,6 +923,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       const resourceCleanup = () => {
         if (cleanedUp) return;
         cleanedUp = true;
+        stopHeartbeat?.();
         if (finalizationTimeout) clearTimeout(finalizationTimeout);
         void eventChannel.close().catch((error) => {
           this.#logger.debug({ error }, 'Failed to close STT event channel');
@@ -969,6 +1007,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (expectedClose) return resolve();
 
             this.#logger.error('WebSocket closed unexpectedly');
+
+            if (heartbeatError) {
+              const error = new APIConnectionError({
+                message: 'LiveKit Inference STT connection lost',
+              });
+              error.cause = heartbeatError;
+              return reject(error);
+            }
 
             reject(
               new APIStatusError({
@@ -1136,6 +1182,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         // otherwise idle until the finalization timeout, holding a gateway concurrency slot.
         if (this.abortController.signal.aborted) break;
         this.activeWs = ws;
+        stopHeartbeat = startWebSocketHeartbeat(ws, (error) => {
+          heartbeatError = error;
+        });
         vadStream = vad?.stream() ?? null;
 
         // Use a per-connection controller so reconnect loops don't inherit a permanently-aborted signal.

@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
-import { APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
@@ -728,6 +728,62 @@ describe('STT VAD handling for Speechmatics models', () => {
 });
 
 describe('Inference STT connection lifecycle', () => {
+  it('raises a retryable error when a half-open socket stops answering pings', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0, autoPong: false });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let resolveConnected!: () => void;
+    const connected = new Promise<void>((resolve) => {
+      resolveConnected = resolve;
+    });
+    server.on('connection', resolveConnected);
+
+    const nativeSetInterval = globalThis.setInterval;
+    const nativeSetTimeout = globalThis.setTimeout;
+    const intervalSpy = vi
+      .spyOn(globalThis, 'setInterval')
+      .mockImplementation((callback, delay) =>
+        nativeSetInterval(callback, delay === 30_000 ? 200 : delay),
+      );
+    const timeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((callback, delay) =>
+        nativeSetTimeout(callback, delay === 15_000 ? 100 : delay),
+      );
+    let stream: ReturnType<STT['stream']> | undefined;
+
+    try {
+      const stt = makeStt({
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const errors: Error[] = [];
+      stt.on('error', ({ error }) => errors.push(error));
+      stream = stt.stream();
+
+      await Promise.race([
+        connected,
+        new Promise<never>((_, reject) =>
+          nativeSetTimeout(() => reject(new Error('WebSocket did not connect')), 2_000),
+        ),
+      ]);
+      await vi.waitFor(() => expect(stream.terminalError).toBeInstanceOf(APIConnectionError));
+
+      const error = stream.terminalError as APIConnectionError;
+      expect(error.message).toBe('LiveKit Inference STT connection lost');
+      expect(error.retryable).toBe(true);
+      expect(error.cause).toEqual(new Error('No PONG received after 15 seconds'));
+      expect(errors).toEqual([error]);
+      expect(intervalSpy).toHaveBeenCalledWith(expect.any(Function), 30_000);
+    } finally {
+      intervalSpy.mockRestore();
+      timeoutSpy.mockRestore();
+      stream?.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('sends session keyterms to speechmatics/linden-1', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
