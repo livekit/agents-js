@@ -5320,6 +5320,17 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
+    // A handoff away from this activity has already started (updateAgent blocks new turns on the
+    // outgoing activity). A later handoff result from the same activity is stale, so applying it
+    // would queue a second transition and run the destination's onEnter again.
+    if (newAgentTask !== null && !ignoreTaskSwitch && this.newTurnsBlocked) {
+      this.logger.warn(
+        { speechId: speechHandle.id },
+        'ignoring agent handoff from a tool call, this agent is already handing off',
+      );
+      ignoreTaskSwitch = true;
+    }
+
     return {
       functionToolsExecutedEvent,
       newAgentTask,
