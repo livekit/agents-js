@@ -473,10 +473,29 @@ export class TTS extends tts.TTS {
    *
    * @remarks
    * Updates are validated atomically against the resulting model. A rejected
-   * update leaves the current options unchanged.
+   * update leaves the current options unchanged. Switching models keeps only the
+   * fields shared by every model; model-specific fields (speaker, pitch, loudness,
+   * temperature, ...) fall back to the new model's defaults unless passed explicitly.
    */
   updateOptions(opts: Partial<TTSOptions>) {
-    const resolved = resolveOptions({ ...this.#opts, ...opts } as TTSOptions);
+    const modelChanging = opts.model != null && opts.model !== this.#opts.model;
+    const base: Partial<TTSOptions> = modelChanging
+      ? {
+          apiKey: this.#opts.apiKey,
+          streaming: this.#opts.streaming,
+          targetLanguageCode: this.#opts.targetLanguageCode as TTSLanguages,
+          pace: this.#opts.pace,
+          sampleRate: this.#opts.sampleRate as TTSSampleRates,
+          outputAudioCodec: this.#opts.outputAudioCodec,
+          baseURL: this.#opts.baseURL,
+          sentenceTokenizer: this.#opts.sentenceTokenizer,
+          outputAudioBitrate: this.#opts.outputAudioBitrate,
+          minBufferSize: this.#opts.minBufferSize,
+          maxChunkLength: this.#opts.maxChunkLength,
+          sendCompletionEvent: this.#opts.sendCompletionEvent,
+        }
+      : ({ ...this.#opts } as Partial<TTSOptions>);
+    const resolved = resolveOptions({ ...base, ...opts } as TTSOptions);
     this.#opts = resolved;
     TTS_OPTIONS.set(this, resolved);
   }

@@ -97,7 +97,9 @@ describe('Sarvam TTS', () => {
   it('commits option updates atomically and revalidates retained values', () => {
     const sarvam = new TTS({ apiKey: 'test', model: 'bulbul:v3', pace: 0.3, temperature: 1.5 });
 
-    expect(() => sarvam.updateOptions({ model: 'bulbul:v4-flash' })).toThrow(/not compatible/);
+    expect(() =>
+      sarvam.updateOptions({ model: 'bulbul:v4-flash', speaker: 'shubh' }),
+    ).toThrow(/not compatible/);
     expect(() =>
       sarvam.updateOptions({ model: 'bulbul:v4-flash', speaker: 'ritu_hi_medical' }),
     ).toThrow(/pace/);
@@ -105,6 +107,13 @@ describe('Sarvam TTS', () => {
     sarvam.updateOptions({ pace: 1, temperature: 0.6 });
     sarvam.updateOptions({ model: 'bulbul:v4-flash', speaker: 'ritu_hi_medical' });
     expect(() => sarvam.updateOptions({ loudness: 2.5 })).not.toThrow();
+  });
+
+  it('resets model-specific options to the new model defaults on a model switch', () => {
+    const sarvam = new TTS({ apiKey: 'test' });
+    sarvam.updateOptions({ model: 'bulbul:v3' });
+    sarvam.updateOptions({ model: 'bulbul:v4-flash' });
+    expect(() => sarvam.updateOptions({ model: 'bulbul:v2' })).not.toThrow();
   });
 
   it('sends v4-flash REST fields without v2-only response caching', async () => {
