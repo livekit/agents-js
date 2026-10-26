@@ -17,7 +17,7 @@
  * - Tasks tested in isolation and as a group.
  * - Regression test for disqualify (analogous to out_of_scope).
  */
-import { Future, asError, beta, initializeLogger, voice } from '@livekit/agents';
+import { Future, asError, initializeLogger, voice, workflows } from '@livekit/agents';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   BehavioralTask,
@@ -28,9 +28,9 @@ import {
   type SurveyUserData,
 } from '../survey_agent.js';
 
-const { TaskGroup } = beta;
-type TaskGroupResult = beta.TaskGroupResult;
-type TaskCompletedEvent = beta.TaskCompletedEvent;
+const { TaskGroup } = workflows;
+type TaskGroupResult = workflows.TaskGroupResult;
+type TaskCompletedEvent = workflows.TaskCompletedEvent;
 
 initializeLogger({ pretty: true, level: 'warn' });
 

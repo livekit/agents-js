@@ -13,21 +13,20 @@ export default defineAgent({
     const logger = log();
 
     const getWeather = llm.tool({
+      name: 'getWeather',
       description: 'Called when the user asks about the weather.',
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }) => {
-        logger.info(`getting weather for ${location}`);
+        logger.info({ 'lk.pii.location': location }, 'getting weather');
         return `The weather in ${location} is sunny, and the temperature is 20 degrees Celsius.`;
       },
     });
 
     const agent = new voice.Agent({
       instructions: 'You are a helpful assistant. Always speak in English.',
-      tools: {
-        getWeather,
-      },
+      tools: [getWeather],
     });
 
     const session = new voice.AgentSession({

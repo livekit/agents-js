@@ -55,19 +55,23 @@ class SchedulingAgent extends voice.Agent {
 
     super({
       instructions,
-      tools: {
-        bookAppointment: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'bookAppointment',
           description: 'Book an appointment.',
           parameters: z.object({
             date: z.string().describe('The date of the appointment in the format YYYY-MM-DD'),
             time: z.string().describe('The time of the appointment in the format HH:MM'),
           }),
           execute: async ({ date, time }) => {
-            log().info(`booking appointment for ${date} at ${time}`);
+            log().info(
+              { 'lk.pii.appointment_date': date, 'lk.pii.appointment_time': time },
+              'booking appointment',
+            );
             return `Appointment booked for ${date} at ${time}`;
           },
         }),
-      },
+      ],
     });
   }
 

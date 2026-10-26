@@ -35,6 +35,7 @@ export default defineAgent({
     logger.info('Connected to room');
 
     const searchWeb = llm.tool({
+      name: 'searchWeb',
       description:
         'Search the web for information based on the given query. Always use this function whenever the user requests a web search',
       parameters: z.object({
@@ -49,9 +50,7 @@ export default defineAgent({
 
     const agent = new voice.Agent({
       instructions: 'You are a helpful assistant',
-      tools: {
-        searchWeb,
-      },
+      tools: [searchWeb],
     });
 
     const session = new voice.AgentSession({

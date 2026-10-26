@@ -16,12 +16,14 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import type { Context } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
 import { type JobContext, getJobContext } from '../../job.js';
 import { RealtimeModel } from '../../llm/index.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
+import { participantAttributes, traceTypes, tracer } from '../../telemetry/index.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { Future, IdleTimeoutError, Task, waitForAbort, waitUntilTimeout } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
@@ -107,7 +109,8 @@ export interface RoomOutputOptions {
   /** Maximum queue size in milliseconds for the audio output buffer.
     When TTS generates audio faster than real-time, a larger queue prevents
     early frames from being discarded by the ring buffer.
-    Defaults to the AudioSource internal default (1000ms).
+    Defaults to 200ms, matching Python. Set a larger value if a bursty TTS
+    provider needs a larger prebuffer.
   */
   queueSizeMs?: number;
   /** Send the transcription as a JSON dict for each chunk on the `lk.transcription`
@@ -136,6 +139,7 @@ const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
   audioEnabled: true,
   syncTranscription: true,
   audioPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+  queueSizeMs: 200,
   jsonFormat: false,
 };
 
@@ -147,6 +151,7 @@ export class RoomIO {
 
   private audioInput?: ParticipantAudioInputStream;
   private participantAudioOutput?: ParticipantAudioOutput;
+  private externalAudioOutput?: AudioOutput;
   private userTranscriptOutput?: ParalellTextOutput;
   private agentTranscriptOutput?: ParalellTextOutput;
   private transcriptionSynchronizer?: TranscriptionSynchronizer;
@@ -163,6 +168,9 @@ export class RoomIO {
   private initTask?: Task<void>;
   private deleteRoomTask?: Task<void>;
   private jobContext?: JobContext;
+  // parent for the startup spans (wait_for_participant, wait_for_audio_track,
+  // publish_audio_output); never made current, since the tasks started here live on
+  private startTraceContext?: Context;
 
   private logger = log();
 
@@ -205,16 +213,35 @@ export class RoomIO {
       return;
     }
 
-    const participant = await Promise.race([
-      this.participantAvailableFuture.await,
-      waitForAbort(signal),
-    ]);
+    const participant = await tracer.detachedSpan(
+      async (span) => {
+        const found = await Promise.race([
+          this.participantAvailableFuture.await,
+          waitForAbort(signal),
+        ]);
+        if (found) span.setAttributes(participantAttributes(found));
+        return found;
+      },
+      {
+        name: 'wait_for_participant',
+        context: this.startTraceContext,
+        attributes: {
+          [traceTypes.ATTR_ROOM_IO_PARTICIPANT_FILTER]: this.participantIdentity !== null,
+        },
+      },
+    );
 
     if (!participant) {
       return;
     }
 
-    this.setParticipant(participant.identity);
+    // the initial track wait belongs to the startup bar; later participant switches don't
+    this.audioInput?.setTraceContext(this.startTraceContext);
+    try {
+      this.setParticipant(participant.identity);
+    } finally {
+      this.audioInput?.setTraceContext(undefined);
+    }
 
     // init agent outputs
     this.updateTranscriptionOutput({
@@ -222,11 +249,15 @@ export class RoomIO {
       participant: this.room.localParticipant?.identity ?? null,
     });
 
-    await this.participantAudioOutput?.start(signal);
+    await this.participantAudioOutput?.start(signal, this.startTraceContext);
+    this.startTraceContext = undefined;
   }
 
   private onConnectionStateChanged = (state: ConnectionState) => {
     this.logger.debug({ state }, 'connection state changed');
+    this.agentSession._addSessionEvent?.('connection_state_changed', {
+      [traceTypes.ATTR_CONNECTION_STATE]: ConnectionState[state] ?? String(state),
+    });
     if (
       state === ConnectionState.CONN_CONNECTED &&
       this.room.isConnected &&
@@ -258,12 +289,19 @@ export class RoomIO {
     }
 
     this.participantAvailableFuture.resolve(participant);
+    this.agentSession._onRoomIOParticipantLinked(participant);
   };
 
   private onParticipantDisconnected = (participant: RemoteParticipant) => {
     if (participant.identity !== this.participantIdentity) {
       return;
     }
+    this.agentSession._addSessionEvent?.('participant_disconnected', {
+      ...(participantAttributes(participant) as Record<string, string>),
+      [traceTypes.ATTR_DISCONNECT_REASON]:
+        DisconnectReason[participant.disconnectReason ?? DisconnectReason.UNKNOWN_REASON] ??
+        'UNKNOWN_REASON',
+    });
     this.participantAvailableFuture = new Future<RemoteParticipant>();
     if (
       this.inputOptions.closeOnDisconnect &&
@@ -272,7 +310,7 @@ export class RoomIO {
     ) {
       this.logger.info(
         {
-          participant: participant.identity,
+          participantIdentity: participant.identity,
           reason: DisconnectReason[participant.disconnectReason],
         },
         'closing agent session due to participant disconnect ' +
@@ -313,7 +351,7 @@ export class RoomIO {
       return;
     }
     this.logger.info(
-      { room: this.room.name },
+      { roomName: this.room.name },
       'deleting room on agent session close ' +
         '(disable via `RoomInputOptions.deleteRoomOnClose=false`)',
     );
@@ -330,11 +368,15 @@ export class RoomIO {
     });
   };
 
-  private onAgentStateChanged = async (ev: AgentStateChangedEvent) => {
+  private onAgentStateChanged = (ev: AgentStateChangedEvent) => {
     if (this.room.isConnected && this.room.localParticipant) {
-      await this.room.localParticipant.setAttributes({
-        [`lk.agent.state`]: ev.newState,
-      });
+      this.room.localParticipant
+        .setAttributes({
+          [`lk.agent.state`]: ev.newState,
+        })
+        .catch((error) => {
+          this.logger.error(error, 'Failed to update agent state attributes');
+        });
     }
   };
 
@@ -392,14 +434,19 @@ export class RoomIO {
     isDeltaStream: boolean;
     participant: Participant | string | null;
   }) {
+    // markup only ever reaches these sinks once expressive has injected its guide; until
+    // then they publish the agent's text verbatim
+    const expressiveEnabled = () => this.agentSession._expressiveEverActive;
     return new ParalellTextOutput([
       new ParticipantLegacyTranscriptionOutput(
         this.room,
         options.isDeltaStream,
         options.participant,
+        { expressiveEnabled },
       ),
       new ParticipantTranscriptionOutput(this.room, options.isDeltaStream, options.participant, {
         jsonFormat: this.outputOptions.jsonFormat,
+        expressiveEnabled,
       }),
     ]);
   }
@@ -427,7 +474,7 @@ export class RoomIO {
 
   get audioOutput(): AudioOutput | undefined {
     if (!this.transcriptionSynchronizer) {
-      return this.participantAudioOutput;
+      return this.participantAudioOutput ?? this.externalAudioOutput;
     }
 
     return this.transcriptionSynchronizer.audioOutput;
@@ -500,7 +547,13 @@ export class RoomIO {
     });
   }
 
-  start() {
+  /**
+   * `traceContext` is the parent for the startup spans (`wait_for_participant`,
+   * `wait_for_audio_track`, `publish_audio_output`); it is never made current here, since the
+   * tasks started below live for the whole session.
+   */
+  start(traceContext?: Context) {
+    this.startTraceContext = traceContext;
     // -- create inputs --
 
     if (this.inputOptions.textEnabled) {
@@ -514,17 +567,22 @@ export class RoomIO {
       }
     }
 
-    if (this.inputOptions.audioEnabled) {
+    // if the user pre-set an input, keep it instead of creating (and later attaching) our own
+    const externalAudioInput = this.agentSession.input.audio ?? undefined;
+    if (this.inputOptions.audioEnabled && !externalAudioInput) {
       this.audioInput = new ParticipantAudioInputStream({
         room: this.room,
         sampleRate: this.inputOptions.audioSampleRate,
         numChannels: this.inputOptions.audioNumChannels,
         noiseCancellation: this.inputOptions.noiseCancellation,
       });
+      // a later participant switch waits for its track under the session, not the startup bar
+      this.audioInput.setDefaultTraceContext(this.agentSession.rootSpanContext);
     }
 
     // -- create outputs --
-    if (this.outputOptions.audioEnabled) {
+    this.externalAudioOutput = this.agentSession.output.audio ?? undefined;
+    if (this.outputOptions.audioEnabled && !this.externalAudioOutput) {
       this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
         sampleRate: this.outputOptions.audioSampleRate,
         numChannels: this.outputOptions.audioNumChannels,
@@ -532,7 +590,11 @@ export class RoomIO {
         queueSizeMs: this.outputOptions.queueSizeMs,
       });
     }
-    if (this.outputOptions.transcriptionEnabled) {
+    // if the user pre-set a transcription output, keep it: skip the room transcription
+    // outputs and the transcript synchronizer entirely (matches the python implementation,
+    // where a pre-set output disables RoomIO's text output)
+    const externalTranscriptionOutput = this.agentSession.output.transcription ?? undefined;
+    if (this.outputOptions.transcriptionEnabled && !externalTranscriptionOutput) {
       this.userTranscriptOutput = this.createTranscriptionOutput({
         isDeltaStream: false,
         participant: this.participantIdentity,
@@ -546,9 +608,7 @@ export class RoomIO {
         participant: null,
       });
 
-      // use the RoomIO's audio output if available, otherwise use the agent's audio output
-      // TODO(AJS-176): check for agent output
-      const audioOutput = this.participantAudioOutput;
+      const audioOutput = this.participantAudioOutput ?? this.externalAudioOutput;
       if (this.outputOptions.syncTranscription && audioOutput) {
         const sessionLlm = this.agentSession.currentAgent?.llm ?? this.agentSession.llm;
         const nativeTranscriptSync =
@@ -556,7 +616,11 @@ export class RoomIO {
         this.transcriptionSynchronizer = new TranscriptionSynchronizer(
           audioOutput,
           this.agentTranscriptOutput,
-          { ...defaultTextSyncOptions, enabled: !nativeTranscriptSync },
+          {
+            ...defaultTextSyncOptions,
+            enabled: !nativeTranscriptSync,
+            expressiveEnabled: () => this.agentSession._expressiveEverActive,
+          },
         );
       }
     }
@@ -631,7 +695,7 @@ export class RoomIO {
         if (!(error instanceof IdleTimeoutError)) {
           throw error;
         }
-        this.logger.warn({ room: this.room.name }, 'automatic room deletion timed out');
+        this.logger.warn({ roomName: this.room.name }, 'automatic room deletion timed out');
       }
     }
   }
