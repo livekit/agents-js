@@ -27,7 +27,6 @@ import {
 } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import type { EndOfTurnInfo } from './audio_recognition.js';
-import { AgentSessionEventTypes } from './events.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export enum AMDCategory {
@@ -61,21 +60,23 @@ export interface AMDOptions {
    * - `LLM` instance: used as-is (caller-owned; AMD will not close it).
    * - `string`: treated as a Cloud Inference model id (e.g. `'openai/gpt-4o-mini'`)
    *   and an inference LLM is constructed (AMD-owned).
+   * - `null`: always reuse the session's LLM.
    * - `undefined` (default): auto-select — if LiveKit Cloud inference credentials
    *   are available in the environment, uses `'google/gemini-3.1-flash-lite'` via
    *   the inference gateway; otherwise falls back to the session's own LLM.
    */
-  llm?: LLM | string;
+  llm?: LLM | string | null;
   /**
    * Dedicated STT used to transcribe call audio for AMD.
    * - `STT` instance: used as-is (caller-owned; AMD will not close it).
    * - `string`: treated as a Cloud Inference model id (e.g. `'cartesia/ink-whisper'`)
    *   and an inference STT is constructed (AMD-owned).
+   * - `null`: always reuse the session's existing STT transcripts.
    * - `undefined` (default): auto-select — if LiveKit Cloud inference credentials
    *   are available in the environment, uses `'cartesia/ink-whisper'` via the
    *   inference gateway; otherwise reuses the session's existing STT transcripts.
    */
-  stt?: STT | string;
+  stt?: STT | string | null;
   interruptOnMachine?: boolean;
   /** If no speech is heard within this window, settle as UNCERTAIN (not a machine, so no interrupt). */
   noSpeechTimeoutMs?: number;
@@ -116,10 +117,9 @@ export interface AMDOptions {
   /** Override the AMD classification system prompt. */
   prompt?: string;
   /**
-   * Restrict AMD to a specific participant. Used to filter the
-   * `waitForTrackPublication` gate (see python detector.py) and span
-   * attribution. When unset, AMD binds to whichever participant the session
-   * is linked to.
+   * Restrict AMD to a specific participant. AMD settles immediately if that
+   * participant disconnects before publishing audio. When unset, AMD binds to
+   * whichever participant the session is linked to.
    */
   participantIdentity?: string;
   /**
@@ -144,6 +144,7 @@ const DEFAULT_AMD_STT_MODEL = 'cartesia/ink-whisper';
 
 const SIP_CALL_STATUS_ATTR = 'sip.callStatus';
 const SIP_CALL_STATUS_ACTIVE = 'active';
+const TRACK_PUBLICATION_TIMEOUT_MS = 5_000;
 
 const EVALUATED_LLM_MODELS: ReadonlySet<string> = new Set([
   'google/gemini-3.1-flash-lite',
@@ -242,6 +243,11 @@ function warnIfNotEvaluated(
  * a result is only emitted when both a **verdict** (from LLM or heuristic) and
  * a **silence gate** (from VAD or timeout) are satisfied.
  *
+ * Start AMD before creating a SIP participant so no audio is missed. The
+ * detection timeout begins only after listening starts; SIP settings bound the
+ * pre-answer phase. If the call ends before audio arrives, AMD settles as
+ * uncertain with `reason = "participant_missing"`.
+ *
  * Emits `'amd_prediction'` once with the final {@link AMDPredictionEvent} when
  * a run settles (mirrors python `AMD(EventEmitter[Literal["amd_prediction"]])`).
  */
@@ -319,6 +325,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private resolveRun: ((value: AMDPredictionEvent) => void) | undefined;
   private rejectRun: ((reason?: unknown) => void) | undefined;
   private span: Span | undefined;
+  private sessionClosingSignal: AbortSignal | undefined;
 
   constructor(
     private readonly session: AgentSession,
@@ -395,7 +402,6 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         this.resetState();
         this.active = true;
         this.span = span;
-        this.session.pauseReplyAuthorization();
 
         span.setAttribute(traceTypes.ATTR_AMD_INTERRUPT_ON_MACHINE, this.interruptOnMachine);
         span.setAttribute(traceTypes.ATTR_GEN_AI_OPERATION_NAME, 'classification');
@@ -410,16 +416,21 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
             this.resolveRun = resolve;
             this.rejectRun = reject;
             this.subscribe();
-            this.startDetectionTimer();
+            if (this.settled) return;
+            this.session.pauseReplyAuthorization();
             this.gateListening();
             this.startSTTPump();
           });
           return result;
         } finally {
           this.cleanup();
-          this.session.resumeReplyAuthorization();
           this.active = false;
           this.span = undefined;
+          try {
+            this.session.resumeReplyAuthorization();
+          } catch (err) {
+            this._log.debug({ err }, 'AMD: could not resume reply authorization');
+          }
         }
       },
       {
@@ -491,18 +502,17 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private subscribe(): void {
-    // Speech boundaries and transcripts are delivered via the public hook
-    // methods ({@link onUserSpeechStarted}/{@link onUserSpeechEnded}/{@link onTranscript}),
-    // which `AgentActivity` invokes from its recognition hooks — mirroring how
-    // python `AudioRecognition` drives `_AMDClassifier`. Only the session-close
-    // lifecycle signal is consumed as an event here.
-    this.session.on(AgentSessionEventTypes.Close, this.handleClose);
+    this.sessionClosingSignal = this.session._closingSignal;
+    this.sessionClosingSignal.addEventListener('abort', this.handleSessionClosing, { once: true });
+    if (this.sessionClosingSignal.aborted) {
+      this.handleSessionClosing();
+    }
   }
 
   /**
-   * Arms the detection-timeout budget. Started in `execute()` as a backstop against a
-   * never-published track, then re-armed in {@link gateListening} at track-up so the
-   * effective budget runs from track-subscribe. Re-armable, hence the clear first.
+   * Arms the detection-timeout budget when listening starts. SIP settings bound
+   * the pre-answer phase, while {@link gateListening} separately bounds waiting
+   * for a participant audio track.
    */
   private startDetectionTimer(): void {
     this.clearTimer('detection');
@@ -524,6 +534,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private startListening(): void {
     if (this.settled || this.listening) return;
     this.listening = true;
+    this.startDetectionTimer();
     this.startNoSpeechTimer();
     this._log.debug('AMD starts listening');
   }
@@ -643,6 +654,12 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     const targetIdentity = this.participantIdentity ?? roomIO?.linkedParticipant?.identity;
 
     this.trackGateAbort = new AbortController();
+    const trackGateAbort = this.trackGateAbort;
+    const publicationTimeout = setTimeout(() => {
+      if (this.trackGateAbort !== trackGateAbort || this.settled) return;
+      this.settleParticipantMissing('timed out waiting for participant audio track');
+      trackGateAbort.abort();
+    }, TRACK_PUBLICATION_TIMEOUT_MS);
     waitForTrackPublication({
       room,
       identity: targetIdentity,
@@ -651,12 +668,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       signal: this.trackGateAbort.signal,
     })
       .then(async (publication) => {
+        clearTimeout(publicationTimeout);
         if (this.settled) {
           return;
         }
-
-        // Re-anchor the budget at track-subscribe so slow subscription doesn't eat it.
-        this.startDetectionTimer();
 
         const publicationSid = publication.sid;
         const participant = targetIdentity
@@ -667,12 +682,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
               )
             : undefined;
         if (!participant) {
-          // Publisher gone (disconnected in the race window): nothing to gate on.
-          // Start listening so the no-speech timer settles AMD instead of stranding
-          // it until the detection timeout.
-          if (!this.settled) {
-            this.startListening();
-          }
+          this.settleParticipantMissing('participant disappeared after track subscription');
           return;
         }
 
@@ -694,10 +704,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           if (this.trackGateAbort?.signal.aborted) {
             return;
           }
-          // Otherwise the SIP participant disconnected before going active: no audio
-          // remains, so fall through and let the no-speech timer settle AMD instead
-          // of stranding it until the detection timeout.
-          this._log.debug({ err }, 'AMD SIP answer wait failed; starting to listen');
+          this.settleParticipantMissing(String(err));
+          return;
         }
 
         if (!this.settled) {
@@ -705,18 +713,18 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         }
       })
       .catch((err) => {
-        // Track gating is best-effort: if waiting for publication fails (e.g.
-        // room disconnected, aborted by `cleanup`, or the function rejects),
-        // fall back to starting the timer so the run still settles within
-        // `noSpeechTimeoutMs`.
         if (this.trackGateAbort?.signal.aborted) {
           return;
         }
-        this._log.debug({ err }, 'AMD listening gate failed; starting immediately');
-        if (!this.settled) {
-          this.startListening();
-        }
-      });
+        this.settleParticipantMissing(String(err));
+      })
+      .finally(() => clearTimeout(publicationTimeout));
+  }
+
+  private settleParticipantMissing(error: string): void {
+    if (this.settled) return;
+    this._log.debug({ error }, 'AMD: call ended before detection could run, settling');
+    this.settle(AMDCategory.UNCERTAIN, 'participant_missing');
   }
 
   private cleanup(): void {
@@ -725,7 +733,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.clearTimer('silence');
     this.clearTimer('eot');
     this.listening = false;
-    this.session.off(AgentSessionEventTypes.Close, this.handleClose);
+    this.sessionClosingSignal?.removeEventListener('abort', this.handleSessionClosing);
+    this.sessionClosingSignal = undefined;
 
     // Detach the track-publication listener — without this, a run that
     // settled via `detectionTimer` before the participant track was ever
@@ -782,8 +791,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   /**
    * Ref: python classifier.py `_try_emit_result` + `_can_emit` — releases a
    * verdict only when the silence gate is open AND, for everything except a
-   * confident human, the end-of-turn gate is open too. Humans release on
-   * silence alone so the agent can respond quickly.
+   * confident human, the end-of-turn gate is open too. When VAD misses speech
+   * end, EOT also opens the silence gate. Humans release on silence alone so
+   * the agent can respond quickly.
    */
   private tryEmitResult(): void {
     if (!this.verdictResult || this.settled) {
@@ -809,6 +819,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       return;
     }
     this.settled = true;
+    this.resolveRun?.(result);
     this.cleanup();
     this.setSpanAttributes(result);
     this._log.info(
@@ -818,15 +829,17 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         isMachine: result.isMachine,
         speechDurationMs: result.speechDurationMs,
         delayMs: result.delayMs,
-        transcript: result.transcript,
+        'lk.pii.transcript': result.transcript,
       },
       'amd prediction',
     );
-    if (result.isMachine && this.interruptOnMachine) {
-      this.session.interrupt({ force: true }).await.catch(() => {});
+    if (result.isMachine && this.interruptOnMachine && !this.session._closing) {
+      try {
+        this.session.interrupt({ force: true }).await.catch(() => {});
+      } catch (err) {
+        this._log.debug({ err }, 'AMD: could not interrupt session');
+      }
     }
-    this.resolveRun?.(result);
-
     // Mirrors python detector.py: forward the prediction to the SessionHost
     // (so a connected `RemoteSession` peer receives an `amd_prediction`
     // event) and then emit on this `AMD` instance for direct listeners.
@@ -869,7 +882,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       return false;
     }
     this._log.debug(
-      { category: this.verdictResult.category, transcript: info.newTranscript },
+      {
+        category: this.verdictResult.category,
+        'lk.pii.transcript': info.newTranscript,
+      },
       'skipping auto reply: AMD already returned a machine verdict',
     );
     return true;
@@ -891,20 +907,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   /**
-   * Ref: python classifier.py `_on_timeout` — a timeout (detection budget,
-   * no-speech, short greeting) fired. Commits a fallback verdict if none exists,
-   * then tries to emit. This only decides *what* the verdict is; {@link canEmit}
-   * decides *when* it is released. End-of-turn is forced here only when there is
-   * nothing left to wait for: no speech was heard, or we are not waiting for the
-   * greeting to finish (`waitUntilFinished` off). When `waitUntilFinished` is set
-   * and speech was heard, the fallback is still committed but its release stays
-   * gated on end-of-turn (the real signal or the backstop timer), so we don't cut
-   * the greeting short with an `uncertain` result.
-   *
-   * Not gated by `listening`: detection_timeout must still fire when the call
-   * never reaches listening (e.g. SIP never answered).
+   * Commit a fallback verdict and attempt emission. This can run before listening
+   * begins. After speech, `waitUntilFinished` keeps emission gated on end-of-turn
+   * so a fallback cannot cut the greeting short.
    */
-  private onTimeout(category: AMDCategory, reason: string, speechDurationMs?: number): void {
+  private settle(category: AMDCategory, reason: string, speechDurationMs?: number): void {
     if (this.settled) return;
     this.clearTimer('silence');
     this.silenceReached = true;
@@ -935,6 +942,12 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private onEotReached(): void {
     if (this.settled) return;
     this.clearTimer('eot');
+    if (this.speechActive || this.speechEndedAt === undefined) {
+      this.speechActive = false;
+      // TODO: Revisit early human verdicts when VAD misses resumed speech after EOT.
+      // New transcripts may reuse this silence; avoid resetting it for delayed finals.
+      this.silenceReached = true;
+    }
     this.eotReached = true;
     this.tryEmitResult();
   }
@@ -947,11 +960,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private settleNoSpeech(): void {
-    this.onTimeout(AMDCategory.UNCERTAIN, 'no_speech_timeout');
+    this.settle(AMDCategory.UNCERTAIN, 'no_speech_timeout');
   }
 
   private settleDetectionTimeout(): void {
-    this.onTimeout(AMDCategory.UNCERTAIN, 'detection_timeout');
+    this.settle(AMDCategory.UNCERTAIN, 'detection_timeout');
   }
 
   // ─── recognition hooks (invoked by AgentActivity, mirroring python AudioRecognition) ───
@@ -1011,7 +1024,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     // classifier can review the words before settling.
     if (speechDurationMs <= this.humanSpeechThresholdMs && this.transcriptParts.length === 0) {
       this.silenceTimer = setTimeout(
-        () => this.onTimeout(AMDCategory.HUMAN, 'short_greeting', speechDurationMs),
+        () => this.settle(AMDCategory.HUMAN, 'short_greeting', speechDurationMs),
         remaining(this.humanSilenceThresholdMs),
       );
       this.silenceTimerTrigger = 'short_speech';
@@ -1067,12 +1080,17 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.scheduleLLMClassification();
   }
 
-  private readonly handleClose = (): void => {
+  private readonly handleSessionClosing = (): void => {
     if (this.settled) return;
     // The session is closing — force a settle regardless of the emission gates
     // (open the end-of-turn gate so a non-human fallback can release immediately).
     this.eotReached = true;
-    this.onTimeout(AMDCategory.UNCERTAIN, 'session_closed');
+    // AbortSignal rethrows listener errors outside the close promise.
+    try {
+      this.settle(AMDCategory.UNCERTAIN, 'session_closed');
+    } catch (err) {
+      this._log.error({ err }, 'AMD: error while handling session shutdown');
+    }
   };
 
   // ─── LLM classification ─────────────────────────────────────────────────────
@@ -1119,9 +1137,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
    * Mirrors python `_resolve_classifier`.
    * - `LLM` instance: caller-owned, used as-is.
    * - string: construct a Cloud Inference LLM (AMD-owned).
-   * - `undefined`: fall back to `session.llm`.
+   * - `null` or `undefined`: fall back to `session.llm`.
    */
-  private resolveLLM(option?: LLM | string): { llm: LLM; owned: boolean } {
+  private resolveLLM(option?: LLM | string | null): { llm: LLM; owned: boolean } {
     if (option instanceof LLM) {
       return { llm: option, owned: false };
     }
@@ -1142,9 +1160,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
    * Mirrors python `_InferenceSTT(stt) if isinstance(stt, str) else stt`.
    * - `STT` instance: caller-owned.
    * - string: AMD-owned Cloud Inference STT.
-   * - `undefined`: listen to session-level STT events.
+   * - `null` or `undefined`: listen to session-level STT events.
    */
-  private resolveSTT(option?: STT | string): {
+  private resolveSTT(option?: STT | string | null): {
     stt: STT | undefined;
     owned: boolean;
   } {
@@ -1174,8 +1192,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.span?.setAttribute(traceTypes.ATTR_AMD_CATEGORY, result.category);
     this.span?.setAttribute(traceTypes.ATTR_AMD_REASON, result.reason);
     this.span?.setAttribute(traceTypes.ATTR_AMD_IS_MACHINE, result.isMachine);
-    this.span?.setAttribute(traceTypes.ATTR_AMD_SPEECH_DURATION, result.speechDurationMs);
-    this.span?.setAttribute(traceTypes.ATTR_AMD_DELAY, result.delayMs);
+    this.span?.setAttribute(traceTypes.ATTR_AMD_SPEECH_DURATION, result.speechDurationMs / 1000);
+    this.span?.setAttribute(traceTypes.ATTR_AMD_DELAY, result.delayMs / 1000);
     this.span?.setAttribute(traceTypes.ATTR_AMD_TRANSCRIPT, result.transcript);
   }
 

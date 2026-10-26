@@ -164,6 +164,8 @@ class SegmentSynchronizerImpl {
   private closedFuture: Future = new Future();
   private playbackCompleted: boolean = false;
   private interrupted: boolean = false;
+  // The audio source failed before covering the segment's text, e.g. a TTS error.
+  audioTruncated: boolean = false;
 
   /**
    * Paces against the visible text only; stateful because a markup tag with spaces in its
@@ -314,6 +316,10 @@ class SegmentSynchronizerImpl {
 
     this.textData.wordStream.pushText(textStr);
     this.textData.pushedText += textStr;
+    if (endTime !== undefined) {
+      // A closed span releases its trailing word while the turn is still open.
+      this.textData.wordStream.flush();
+    }
   }
 
   endTextInput() {
@@ -367,6 +373,8 @@ class SegmentSynchronizerImpl {
       return;
     }
 
+    // A truncated input keeps the transcript to what played, as an interruption does.
+    interrupted ||= this.audioTruncated;
     this.interrupted = interrupted;
     if (!this.textData.done || !this.audioData.done) {
       this.logger.warn(
@@ -874,6 +882,11 @@ class SyncedAudioOutput extends AudioOutput {
 
   clearBuffer() {
     this.nextInChainAudio.clearBuffer();
+  }
+
+  override _markInputTruncated(): void {
+    this.synchronizer._impl.audioTruncated = true;
+    super._markInputTruncated();
   }
 
   async waitForPlayout(): Promise<PlaybackFinishedEvent> {

@@ -116,6 +116,14 @@ const preserveCases = [
   'unterminated ___open',
 ] as const;
 
+const strayDelimiterCases = [
+  'the confirmation went to first_last@example.com and your table is ready.',
+  '10*4 is 40 and that is four tens.',
+  '10 * 4 is 40 and that is four tens.',
+  'rates rose last year [1] and may rise again.',
+  'see ]( broken formatting and please continue.',
+] as const;
+
 const horizontalRuleCases = [
   ['before\n---\nafter', 'before\n\nafter'],
   ['before\n***\nafter', 'before\n\nafter'],
@@ -150,6 +158,40 @@ describe('textTransforms.filterMarkdown', () => {
     }
   }
 
+  for (const text of strayDelimiterCases) {
+    it(`does not hold the stream behind stray delimiters in ${JSON.stringify(text)}`, async () => {
+      const words = text.split(' ');
+      let consumed = 0;
+      const source = new ReadableStream<string>(
+        {
+          pull(controller) {
+            const word = words[consumed];
+            if (word === undefined) {
+              controller.close();
+              return;
+            }
+            consumed += 1;
+            controller.enqueue(`${word} `);
+          },
+        },
+        { highWaterMark: 0 },
+      );
+
+      let output = '';
+      let consumedAtAnd: number | undefined;
+      for await (const chunk of filterMarkdown(source)) {
+        output += chunk;
+        if (consumedAtAnd === undefined && output.includes(' and')) {
+          consumedAtAnd = consumed;
+        }
+      }
+
+      expect(output).toBe(`${text} `);
+      expect(consumedAtAnd).toBeDefined();
+      expect(consumedAtAnd).toBeLessThan(words.length);
+    });
+  }
+
   for (const [text, expected] of horizontalRuleCases) {
     for (const chunkSize of [1, 3, 50]) {
       it(`handles horizontal rule ${JSON.stringify(text)} with chunk size ${chunkSize}`, async () => {
@@ -161,6 +203,7 @@ describe('textTransforms.filterMarkdown', () => {
   for (const text of [
     ...emphasisCases.map(([input]) => input),
     ...preserveCases,
+    ...strayDelimiterCases,
     ...horizontalRuleCases.map(([input]) => input),
   ]) {
     it(`produces chunk-independent output for ${JSON.stringify(text)}`, async () => {

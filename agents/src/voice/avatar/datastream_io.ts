@@ -121,7 +121,7 @@ export class DataStreamAudioOutput extends AudioOutput {
 
       this.#logger.debug(
         {
-          identity: this.destinationIdentity,
+          destinationIdentity: this.destinationIdentity,
         },
         'waiting for the remote participant',
       );
@@ -134,7 +134,7 @@ export class DataStreamAudioOutput extends AudioOutput {
       if (this.waitRemoteTrack) {
         this.#logger.debug(
           {
-            identity: this.destinationIdentity,
+            destinationIdentity: this.destinationIdentity,
             kind: this.waitRemoteTrack,
           },
           'waiting for the remote track',
@@ -149,7 +149,7 @@ export class DataStreamAudioOutput extends AudioOutput {
 
       this.#logger.debug(
         {
-          identity: this.destinationIdentity,
+          destinationIdentity: this.destinationIdentity,
         },
         'remote participant ready',
       );
@@ -212,11 +212,26 @@ export class DataStreamAudioOutput extends AudioOutput {
   clearBuffer(): void {
     if (!this.started) return;
 
-    this.room.localParticipant!.performRpc({
-      destinationIdentity: this.destinationIdentity,
-      method: RPC_CLEAR_BUFFER,
-      payload: '',
-    });
+    // A delayed rejection must not finish audio captured after this call.
+    const playoutTarget = this.capturedPlayoutSegments;
+
+    void this.room
+      .localParticipant!.performRpc({
+        destinationIdentity: this.destinationIdentity,
+        method: RPC_CLEAR_BUFFER,
+        payload: '',
+      })
+      .catch((error) => {
+        this.#logger.warn(
+          { error, destinationIdentity: this.destinationIdentity },
+          'failed to perform clear buffer rpc',
+        );
+
+        const finishedSegments = this.capturedPlayoutSegments - this.pendingPlayoutSegments;
+        for (let segment = finishedSegments; segment < playoutTarget; segment++) {
+          this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+        }
+      });
   }
 
   private handlePlaybackFinished(data: RpcInvocationData): string {

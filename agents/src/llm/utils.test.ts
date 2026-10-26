@@ -16,6 +16,7 @@ import {
 import { ToolContext, tool } from './tool_context.js';
 import {
   ThinkingTokenFilter,
+  _computeLCS,
   computeChatCtxDiff,
   executeToolCall,
   formatChatHistory,
@@ -67,6 +68,44 @@ function createChatContext(messages: ChatMessage[]): ChatContext {
     ctx.items.push(message);
   }
   return ctx;
+}
+
+function dpLCSLength(oldIds: string[], newIds: string[]): number {
+  const dp = Array.from({ length: oldIds.length + 1 }, () => Array(newIds.length + 1).fill(0));
+  for (let i = 1; i <= oldIds.length; i++) {
+    for (let j = 1; j <= newIds.length; j++) {
+      dp[i]![j] =
+        oldIds[i - 1] === newIds[j - 1]
+          ? dp[i - 1]![j - 1]! + 1
+          : Math.max(dp[i - 1]![j]!, dp[i]![j - 1]!);
+    }
+  }
+  return dp[oldIds.length]![newIds.length]!;
+}
+
+function isSubsequence(subsequence: string[], sequence: string[]): boolean {
+  let at = 0;
+  for (const item of sequence) {
+    if (item === subsequence[at]) at++;
+  }
+  return at === subsequence.length;
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed + 1;
+  return () => {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    return state / 0x1_0000_0000;
+  };
+}
+
+function sample<T>(values: T[], length: number, random: () => number): T[] {
+  const shuffled = [...values];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j]!, shuffled[i]!];
+  }
+  return shuffled.slice(0, length);
 }
 
 function createImageContent(
@@ -526,6 +565,47 @@ describe('executeToolCall', () => {
 });
 
 describe('computeChatCtxDiff', () => {
+  it.each(Array.from({ length: 300 }, (_, seed) => seed))(
+    'returns a longest common subsequence for seed %i',
+    (seed) => {
+      const random = seededRandom(seed);
+      const pool = Array.from({ length: Math.floor(random() * 41) }, (_, i) => `id_${i}`);
+      const oldIds = sample(pool, Math.floor(random() * (pool.length + 1)), random);
+      const newIds = sample(pool, Math.floor(random() * (pool.length + 1)), random);
+      if (seed % 3 === 0 && oldIds.length > 0) {
+        for (let i = 0; i < 3; i++) {
+          newIds.push(oldIds[Math.floor(random() * oldIds.length)]!);
+        }
+      }
+
+      const lcsIds = _computeLCS(oldIds, newIds);
+
+      expect(lcsIds).toHaveLength(dpLCSLength(oldIds, newIds));
+      expect(isSubsequence(lcsIds, oldIds)).toBe(true);
+      expect(isSubsequence(lcsIds, newIds)).toBe(true);
+    },
+  );
+
+  it('diffs a long context without building an n-by-m table', () => {
+    const n = 2_000;
+    const oldCtx = new ChatContext();
+    for (let i = 0; i < n; i++) {
+      oldCtx.addMessage({ role: 'user', content: `message ${i}`, id: `item_${i}` });
+    }
+    const newCtx = oldCtx.copy();
+    newCtx.addMessage({ role: 'system', content: 'appended', id: 'appended' });
+
+    const heapBefore = process.memoryUsage().heapUsed;
+    const diff = computeChatCtxDiff(oldCtx, newCtx);
+    const heapGrowth = process.memoryUsage().heapUsed - heapBefore;
+
+    expect(diff.toCreate).toEqual([[`item_${n - 1}`, 'appended']]);
+    expect(diff.toRemove).toEqual([]);
+    expect(diff.toUpdate).toEqual([]);
+    // A 2000 x 2001 number table requires tens of megabytes in V8.
+    expect(heapGrowth).toBeLessThan(10_000_000);
+  });
+
   it('should return empty operations for identical contexts', () => {
     const msg1 = createChatMessage('1', 'Hello', 'user');
     const msg2 = createChatMessage('2', 'Hi there', 'assistant');

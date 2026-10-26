@@ -13,16 +13,23 @@ import {
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
+import { DuplexModel, isDuplexModel } from './duplex.js';
+import { RealtimeModel, isRealtimeModel } from './realtime.js';
 import {
   type AnyString,
   INFERENCE_PRIORITY_HEADER,
   INFERENCE_PROVIDER_HEADER,
+  type InferenceClass,
   buildMetadataHeaders,
   createAccessToken,
   getDefaultInferenceUrl,
+  resolveCredentials,
 } from './utils.js';
 
 export type OpenAIModels =
+  | 'openai/gpt-5.6-luna'
+  | 'openai/gpt-5.6-sol'
+  | 'openai/gpt-5.6-terra'
   | 'openai/gpt-5.5'
   | 'openai/gpt-5.4'
   | 'openai/gpt-5.4-mini'
@@ -44,6 +51,7 @@ export type OpenAIModels =
   | 'openai/gpt-oss-120b';
 
 export type GoogleModels =
+  | 'google/gemini-4-argon'
   | 'google/gemini-3.1-pro'
   | 'google/gemini-3-flash'
   | 'google/gemini-3.1-flash-lite'
@@ -63,7 +71,9 @@ export type XAIModels =
   | 'xai/grok-4-1-fast-reasoning'
   | 'xai/grok-4.20-0309-non-reasoning'
   | 'xai/grok-4.20-0309-reasoning'
-  | 'xai/grok-4.20-multi-agent-0309';
+  | 'xai/grok-4.20-multi-agent-0309'
+  | 'xai/grok-4.3'
+  | 'xai/grok-4.5';
 
 type ChatCompletionPredictionContentParam =
   Expand<OpenAI.Chat.Completions.ChatCompletionPredictionContent>;
@@ -173,8 +183,6 @@ function dropUnsupportedParams(
  * Scheduling class for a request. `low` yields to voice traffic, so it is only
  * appropriate for work no caller is waiting on.
  */
-export type InferenceClass = 'priority' | 'standard' | 'low';
-
 export interface InferenceLLMOptions {
   model: LLMModels;
   provider?: string;
@@ -222,16 +230,7 @@ export class LLM extends llm.LLM {
     } = opts;
 
     const lkBaseURL = baseURL || getDefaultInferenceUrl();
-    const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
-    if (!lkApiKey) {
-      throw new Error('apiKey is required: pass apiKey or set LIVEKIT_API_KEY');
-    }
-
-    const lkApiSecret =
-      apiSecret || process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET;
-    if (!lkApiSecret) {
-      throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
-    }
+    const { apiKey: lkApiKey, apiSecret: lkApiSecret } = resolveCredentials(apiKey, apiSecret);
 
     this.opts = {
       model,
@@ -476,7 +475,6 @@ export class LLMStream extends llm.LLMStream {
       }
 
       const extraHeaders: Record<string, string> = {
-        ...buildMetadataHeaders(),
         ...((requestOptions.extra_headers as Record<string, string> | undefined) ?? {}),
       };
       const extraBody = requestOptions.extra_body as Record<string, unknown> | undefined;
@@ -487,6 +485,9 @@ export class LLMStream extends llm.LLMStream {
       if (this.inferenceClass !== undefined) {
         extraHeaders[INFERENCE_PRIORITY_HEADER] = this.inferenceClass;
       }
+      // Job metadata is merged last so a job's own assertions (e.g. a text
+      // simulation forcing low priority) outrank the model's configured class.
+      Object.assign(extraHeaders, buildMetadataHeaders());
       delete requestOptions.extra_headers;
       delete requestOptions.extra_body;
       delete requestOptions.extra_query;
@@ -540,6 +541,7 @@ export class LLMStream extends llm.LLMStream {
               completionTokens: usage.completion_tokens || 0,
               promptTokens: usage.prompt_tokens || 0,
               promptCachedTokens: usage.prompt_tokens_details?.cached_tokens || 0,
+              reasoningTokens: usage.completion_tokens_details?.reasoning_tokens || 0,
               totalTokens: usage.total_tokens || 0,
             },
           });
@@ -715,4 +717,14 @@ export class LLMStream extends llm.LLMStream {
     }
     return undefined;
   }
+}
+
+/**
+ * Create the inference model an `llm` string names: a {@link DuplexModel} for duplex
+ * models, a {@link RealtimeModel} for realtime models, or an {@link LLM} for everything else.
+ */
+export function llmFromModelString(model: string): LLM | RealtimeModel | DuplexModel {
+  if (isDuplexModel(model)) return DuplexModel.fromModelString(model);
+  if (isRealtimeModel(model)) return RealtimeModel.fromModelString(model);
+  return LLM.fromModelString(model);
 }

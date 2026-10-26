@@ -15,6 +15,9 @@ export default defineConfig(({ mode }) => ({
     environment: 'node',
     // Default timeout for unit tests (5s), integration tests override this per-suite
     testTimeout: 5_000,
+    // only tests marked concurrent are affected: lets the live inference STT suites (4 models x 2
+    // sample rates) stream at the same time instead of two rounds of five
+    maxConcurrency: 8,
     env: loadEnv(mode, process.cwd(), ''),
     setupFiles: ['./vitest.setup.ts'],
   },

@@ -4,13 +4,18 @@
 
 ```ts
 
-import { APIConnectOptions } from '@livekit/agents';
-import { tokenize } from '@livekit/agents';
-import { tts } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler } from '@livekit/rtc-node';
+import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
+import type { TypedEventEmitter } from '@livekit/typed-emitter';
 
+// Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export class ChunkedStream extends tts.ChunkedStream {
     // Warning: (ae-forgotten-export) The symbol "ResolvedTTSOptions" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
     constructor(tts: TTS, text: string, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
     // (undocumented)
     label: string;
@@ -50,6 +55,7 @@ export class TTS extends tts.TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
+    releaseIdleConnections(): Promise<void>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
@@ -78,7 +84,7 @@ export class TTS extends tts.TTS {
 }
 
 // @public (undocumented)
-export type TTSModels = 's1' | 's2-pro' | 's2.1-pro';
+export type TTSModels = 's1' | 's2-pro' | 's2.1-pro' | 'drama-3';
 
 // @public (undocumented)
 export interface TTSOptions {
@@ -93,7 +99,6 @@ export interface TTSOptions {
     latencyMode?: LatencyMode_2;
     maxNewTokens?: number;
     minChunkLength?: number;
-    // (undocumented)
     model?: TTSModels | string;
     mp3Bitrate?: MP3Bitrate;
     normalize?: boolean;
@@ -103,6 +108,8 @@ export interface TTSOptions {
     sampleRate?: number;
     speed?: number;
     temperature?: number;
+    // Warning: (ae-forgotten-export) The symbol "tokenize" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
     tokenizer?: tokenize.SentenceTokenizer;
     topP?: number;

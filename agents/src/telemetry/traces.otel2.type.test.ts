@@ -8,7 +8,9 @@ import {
   type SpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import http from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PIIFilteringSpanProcessor } from './pii.js';
 import {
   type CloudSpanProcessorOptions,
   FanoutSpanProcessor,
@@ -16,6 +18,7 @@ import {
   setupCloudTracer,
   tracer,
 } from './traces.js';
+import { UploadGateTraceExporter } from './upload_gate.js';
 
 // Included in `pnpm typecheck`, this suite verifies that the public telemetry API composes
 // directly with the OpenTelemetry SDK 2.x dependencies shipped by the package.
@@ -55,6 +58,7 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
   });
 
   it('exports spans to both the user exporter and the cloud span processor', async () => {
+    const originalRequest = http.request;
     let cloudOptions: CloudSpanProcessorOptions | undefined;
     setTracerProvider(provider, {
       metadata: { 'livekit.test.custom': true },
@@ -68,7 +72,7 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -80,6 +84,8 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     expect(tracer.getProvider()).toBe(provider);
     expect(cloudOptions?.url).toBe('https://example.livekit.cloud/observability/traces/otlp/v0');
     expect(cloudOptions?.headers.Authorization).toMatch(/^Bearer /);
+    expect(cloudOptions?.exporter).toBeInstanceOf(UploadGateTraceExporter);
+    expect(http.request).toBe(originalRequest);
 
     const cloudSpans = cloudExporter.getFinishedSpans();
     expect(cloudSpans.map((s) => s.name)).toEqual(['otel2-span']);
@@ -103,7 +109,7 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -159,14 +165,16 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
 
     expect(tracer.getProvider()).toBe(provider);
-    // session metadata processor + built-in cloud span processor
-    expect(registered).toHaveLength(2);
-    expect(registered[1]).toBeInstanceOf(BatchSpanProcessor);
+    // PII stripper + the loop monitor's blocked-span tracker + session metadata processor +
+    // built-in cloud span processor
+    expect(registered).toHaveLength(4);
+    expect(registered[0]).toBeInstanceOf(PIIFilteringSpanProcessor);
+    expect(registered[3]).toBeInstanceOf(BatchSpanProcessor);
   });
 });
