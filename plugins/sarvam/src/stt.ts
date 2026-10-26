@@ -778,6 +778,7 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket) {
     this.#resetWS = new Future();
     this.#speaking = false;
+    this.#resetUtteranceState();
     let closing = false;
     const attemptController = new AbortController();
     const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
