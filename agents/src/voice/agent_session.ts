@@ -553,6 +553,7 @@ export class AgentSession<
   private updateActivityTask?: Task<void>;
   private started = false;
   private sessionHost?: SessionHost;
+  private ownsSessionHost = false;
 
   private _chatCtx: ChatContext;
   private _userData: UserData | undefined;
@@ -945,12 +946,10 @@ export class AgentSession<
       consoleInst.acquireIo(this);
 
       if (consoleInst.transport) {
-        this.sessionHost = new SessionHost(
-          consoleInst.transport,
-          consoleInst.audioInput,
-          consoleInst.audioOutput,
+        const transport = consoleInst.transport;
+        this.attachSessionHost(
+          () => new SessionHost(transport, consoleInst.audioInput, consoleInst.audioOutput),
         );
-        this.sessionHost.attach(this);
       }
     } else if (room && !this._roomIO) {
       if (this._textOnly) {
@@ -991,9 +990,8 @@ export class AgentSession<
       // passed, not made current: RoomIO's tasks live for the whole session
       this._roomIO.start(this.sessionStartContext);
 
-      const transport = new RoomSessionTransport(room, this._roomIO);
-      this.sessionHost = new SessionHost(transport);
-      this.sessionHost.attach(this);
+      const roomIO = this._roomIO;
+      this.attachSessionHost(() => new SessionHost(new RoomSessionTransport(room, roomIO)));
     }
 
     const ctx = getJobContext(false);
@@ -2031,6 +2029,21 @@ export class AgentSession<
     }, this.sessionOptions.userAwayTimeout * 1000);
   }
 
+  private attachSessionHost(makeHost: () => SessionHost): void {
+    // under a job, the job owns the host so it outlives this session; without one, the
+    // session is the only owner there is
+    const jobCtx = getJobContext(false);
+    if (jobCtx) {
+      jobCtx._sessionHost ??= makeHost();
+      this.sessionHost = jobCtx._sessionHost;
+      this.ownsSessionHost = false;
+    } else {
+      this.sessionHost = makeHost();
+      this.ownsSessionHost = true;
+    }
+    this.sessionHost.attach(this);
+  }
+
   private _cancelUserAwayTimer(): void {
     if (this.userAwayTimer !== null) {
       clearTimeout(this.userAwayTimer);
@@ -2306,11 +2319,17 @@ export class AgentSession<
           }
         }
         try {
-          await this.sessionHost?.close();
+          if (this.sessionHost?.attachedSession === this) {
+            this.sessionHost.detach();
+          }
+          if (this.ownsSessionHost) {
+            await this.sessionHost?.close();
+          }
         } catch (e) {
           failures.push(e);
         } finally {
           this.sessionHost = undefined;
+          this.ownsSessionHost = false;
         }
         // close room io after the close event is emitted
         try {

@@ -30,6 +30,7 @@ import { type AgentSession } from '../agent_session.js';
 import {
   AgentSessionEventTypes,
   type AgentStateChangedEvent,
+  type CloseEvent,
   CloseReason,
   type ConversationItemAddedEvent,
   type UserInputTranscribedEvent,
@@ -338,7 +339,7 @@ export class RoomIO {
     this.transcriptionSynchronizer.enabled = !nativeTranscriptSync;
   };
 
-  private onAgentSessionClose = () => {
+  private onAgentSessionClose = (ev: CloseEvent) => {
     if (!this.inputOptions.deleteRoomOnClose || this.deleteRoomTask) {
       return;
     }
@@ -348,6 +349,17 @@ export class RoomIO {
       jobContext = getJobContext(false);
     }
     if (!jobContext) {
+      return;
+    }
+    if (jobContext.simulationContext() && jobContext.room === this.room) {
+      // the simulator asks for onSimulationEnd over this room after the session closes; the
+      // job deletes it only once that wait is over
+      const roomName = this.room.name;
+      const jobCtx = jobContext;
+      jobCtx.addShutdownCallback(async () => {
+        await jobCtx.deleteRoom(roomName);
+      });
+      jobCtx.shutdown(String(ev.reason));
       return;
     }
     this.logger.info(

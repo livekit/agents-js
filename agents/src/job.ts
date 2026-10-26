@@ -45,6 +45,7 @@ import {
 import { isCloud } from './utils.js';
 import type { AgentSession, ResolvedRecordingOptions } from './voice/agent_session.js';
 import { AgentsConsole } from './voice/console_io.js';
+import type { SessionHost } from './voice/remote_session.js';
 import { type SessionReport, createSessionReport, sessionReportToJSON } from './voice/report.js';
 
 /**
@@ -201,6 +202,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
   /** @internal */
   _primaryAgentSession?: AgentSession;
+
+  /**
+   * @internal Owned by the job rather than the session, so onSimulationEnd can still be asked
+   * for after the agent ends the call.
+   */
+  _sessionHost?: SessionHost;
 
   /** @internal */
   _sessionDirectory: string;

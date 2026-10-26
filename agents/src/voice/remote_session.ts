@@ -28,7 +28,7 @@ import type {
 } from '../metrics/model_usage.js';
 import { encodeChatItem, msToTimestamp } from '../proto.js';
 import type { SimulationContext } from '../simulation.js';
-import { Future, Task, asError, shortuuid } from '../utils.js';
+import { Event, Future, Task, asError, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
@@ -553,6 +553,16 @@ function protoSerializeOptions(opts: {
 // ===========================================================================
 // SessionHost (protobuf-based server-side handler)
 // ===========================================================================
+export const NO_ACTIVE_SESSION_ERROR = 'no active session';
+
+/**
+ * Serves a `RemoteSession` client for the whole job.
+ *
+ * The host outlives any one `AgentSession`: at most one session is attached at a time, and
+ * none once it has closed. Session requests go to the attached session and fail with
+ * `NO_ACTIVE_SESSION_ERROR` while none is; `finalize_simulation` needs only the job, so
+ * it is answered either way.
+ */
 export class SessionHost {
   private readonly transport: SessionTransport;
   private readonly audioInput: TcpAudioInput | undefined;
@@ -562,6 +572,7 @@ export class SessionHost {
   private started = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
+  private readonly simulationFinalized = new Event();
 
   constructor(
     transport: SessionTransport,
@@ -619,6 +630,11 @@ export class SessionHost {
     this.recvTask = Task.from(async () => this.recvLoop());
   }
 
+  /** @internal Resolves once the simulator has been answered for `finalize_simulation`. */
+  async _waitForSimulationFinalized(): Promise<void> {
+    await this.simulationFinalized.wait();
+  }
+
   async close(): Promise<void> {
     if (!this.started) return;
     this.started = false;
@@ -640,13 +656,9 @@ export class SessionHost {
       for await (const msg of this.transport) {
         switch (msg.message.case) {
           case 'request':
-            if (this.session) {
-              this.trackTask(
-                Task.from(async () =>
-                  this.handleRequestSafe(msg.message.value as pb.SessionRequest),
-                ),
-              );
-            }
+            this.trackTask(
+              Task.from(async () => this.handleRequestSafe(msg.message.value as pb.SessionRequest)),
+            );
             break;
           case 'audioInput':
             this.audioInput?.pushFrame(msg.message.value);
@@ -882,7 +894,15 @@ export class SessionHost {
   }
 
   private async handleRequest(req: pb.SessionRequest): Promise<void> {
-    if (!this.session) return;
+    if (req.request.case === 'finalizeSimulation') {
+      return this.handleFinalizeSimulation(req.requestId, req.request.value);
+    }
+
+    // a detach while this request is in flight must not swap its session out
+    const session = this.session;
+    if (!session) {
+      return this.sendResponse(req.requestId, { case: undefined }, NO_ACTIVE_SESSION_ERROR);
+    }
 
     switch (req.request.case) {
       case 'ping':
@@ -891,13 +911,13 @@ export class SessionHost {
           value: new pb.SessionResponse_Pong(),
         });
       case 'getChatHistory':
-        return this.handleGetChatHistory(req.requestId);
+        return this.handleGetChatHistory(session, req.requestId);
       case 'getAgentInfo':
-        return this.handleGetAgentInfo(req.requestId);
+        return this.handleGetAgentInfo(session, req.requestId);
       case 'runInput':
-        return this.handleRunInput(req.requestId, req.request.value);
+        return this.handleRunInput(session, req.requestId, req.request.value);
       case 'getSessionState':
-        return this.handleGetSessionState(req.requestId);
+        return this.handleGetSessionState(session, req.requestId);
       case 'getRtcStats':
         return this.sendResponse(req.requestId, {
           case: 'getRtcStats',
@@ -907,7 +927,7 @@ export class SessionHost {
           }),
         });
       case 'getSessionUsage':
-        return this.handleGetSessionUsage(req.requestId);
+        return this.handleGetSessionUsage(session, req.requestId);
       case 'getFrameworkInfo':
         return this.sendResponse(req.requestId, {
           case: 'getFrameworkInfo',
@@ -917,9 +937,7 @@ export class SessionHost {
           }),
         });
       case 'updateIo':
-        return this.handleUpdateIo(req.requestId, req.request.value);
-      case 'finalizeSimulation':
-        return this.handleFinalizeSimulation(req.requestId, req.request.value);
+        return this.handleUpdateIo(session, req.requestId, req.request.value);
     }
   }
 
@@ -958,7 +976,7 @@ export class SessionHost {
         reason: simCtx.userVerdict.reason,
       });
     }
-    return this.sendResponse(
+    await this.sendResponse(
       requestId,
       {
         case: 'finalizeSimulation',
@@ -966,13 +984,14 @@ export class SessionHost {
       },
       simError,
     );
+    this.simulationFinalized.set();
   }
 
   private async handleUpdateIo(
+    session: AgentSession,
     requestId: string,
     update: pb.SessionRequest_UpdateIO,
   ): Promise<void> {
-    const session = this.session!;
     // Each field is proto3 `optional`; only apply the ones the peer actually set.
     // JS `AgentInput`/`AgentOutput` expose no video toggle, so video_enabled is ignored.
     if (update.input?.audioEnabled !== undefined) {
@@ -993,16 +1012,16 @@ export class SessionHost {
     });
   }
 
-  private async handleGetChatHistory(requestId: string): Promise<void> {
-    const items = chatItemsToProto(this.session!.history.items);
+  private async handleGetChatHistory(session: AgentSession, requestId: string): Promise<void> {
+    const items = chatItemsToProto(session.history.items);
     return this.sendResponse(requestId, {
       case: 'getChatHistory',
       value: new pb.SessionResponse_GetChatHistoryResponse({ items }),
     });
   }
 
-  private async handleGetAgentInfo(requestId: string): Promise<void> {
-    const agent = this.session!.currentAgent;
+  private async handleGetAgentInfo(session: AgentSession, requestId: string): Promise<void> {
+    const agent = session.currentAgent;
     return this.sendResponse(requestId, {
       case: 'getAgentInfo',
       value: new pb.SessionResponse_GetAgentInfoResponse({
@@ -1015,6 +1034,7 @@ export class SessionHost {
   }
 
   private async handleRunInput(
+    session: AgentSession,
     requestId: string,
     input: pb.SessionRequest_RunInput,
   ): Promise<void> {
@@ -1032,12 +1052,12 @@ export class SessionHost {
       // always return empty responses to the remote driver. This mirrors the
       // Python SessionHost behavior.
       try {
-        await this.session!.interrupt({ force: true }).await;
+        await session.interrupt({ force: true }).await;
       } catch {
         // ignore
       }
 
-      const result = this.session!.run({ userInput: text });
+      const result = session.run({ userInput: text });
       try {
         await result.wait();
       } catch (e) {
@@ -1060,32 +1080,32 @@ export class SessionHost {
     );
   }
 
-  private async handleGetSessionState(requestId: string): Promise<void> {
-    const agent = this.session!.currentAgent;
-    const startedAt = this.session!._startedAt ?? Date.now();
+  private async handleGetSessionState(session: AgentSession, requestId: string): Promise<void> {
+    const agent = session.currentAgent;
+    const startedAt = session._startedAt ?? Date.now();
     return this.sendResponse(requestId, {
       case: 'getSessionState',
       value: new pb.SessionResponse_GetSessionStateResponse({
-        agentState: AGENT_STATE_MAP[this.session!.agentState],
-        userState: USER_STATE_MAP[this.session!.userState],
+        agentState: AGENT_STATE_MAP[session.agentState],
+        userState: USER_STATE_MAP[session.userState],
         agentId: agent.id,
         options: protoSerializeOptions({
-          turnHandling: this.session!.sessionOptions.turnHandling,
-          maxToolSteps: this.session!.sessionOptions.maxToolSteps,
-          userAwayTimeout: this.session!.sessionOptions.userAwayTimeout,
-          transcriptionTimeout: this.session!.sessionOptions.transcriptionTimeout,
-          useTtsAlignedTranscript: this.session!.sessionOptions.useTtsAlignedTranscript,
+          turnHandling: session.sessionOptions.turnHandling,
+          maxToolSteps: session.sessionOptions.maxToolSteps,
+          userAwayTimeout: session.sessionOptions.userAwayTimeout,
+          transcriptionTimeout: session.sessionOptions.transcriptionTimeout,
+          useTtsAlignedTranscript: session.sessionOptions.useTtsAlignedTranscript,
         }),
         createdAt: msToTimestamp(startedAt),
       }),
     });
   }
 
-  private async handleGetSessionUsage(requestId: string): Promise<void> {
+  private async handleGetSessionUsage(session: AgentSession, requestId: string): Promise<void> {
     return this.sendResponse(requestId, {
       case: 'getSessionUsage',
       value: new pb.SessionResponse_GetSessionUsageResponse({
-        usage: sessionUsageToProto(this.session!.usage),
+        usage: sessionUsageToProto(session.usage),
         createdAt: nowTimestamp(),
       }),
     });

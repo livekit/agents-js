@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { EventEmitter } from 'node:events';
 import type { Logger } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type JobContext, getJobContext } from './job.js';
@@ -13,7 +14,9 @@ import {
   waitForEntrypointShutdown,
 } from './job_lifecycle.js';
 import { flushCloudMetrics, flushCloudTraces, flushOtelLogs } from './telemetry/index.js';
+import { ATTRIBUTE_SIMULATOR } from './types.js';
 import type { AgentSession } from './voice/agent_session.js';
+import type { SessionHost } from './voice/remote_session.js';
 
 vi.mock('./telemetry/index.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./telemetry/index.js')>()),
@@ -293,6 +296,86 @@ describe('finalizeSession', () => {
     resolveCleanup();
     await completion;
     expect(completed).toBe(true);
+  });
+});
+
+class FakeRoom extends EventEmitter {
+  isConnected = true;
+  remoteParticipants = new Map<string, { attributes: Record<string, string> }>([
+    ['simulator', { attributes: { [ATTRIBUTE_SIMULATOR]: '1' } }],
+  ]);
+}
+
+function createSimulationJobContext(room: FakeRoom) {
+  let finalize!: () => void;
+  const finalized = new Promise<void>((resolve) => {
+    finalize = resolve;
+  });
+  const sessionHost = {
+    _waitForSimulationFinalized: () => finalized,
+    close: vi.fn(async () => {}),
+  };
+  const ctx = {
+    _onSessionEnd: async () => {},
+    _sessionHost: sessionHost as unknown as SessionHost,
+    room,
+    simulationContext: () => ({}),
+  } as unknown as JobContext;
+  return { ctx, sessionHost, finalize };
+}
+
+describe('finalizeSession under a simulation', () => {
+  it('keeps the session host up until the simulator finalizes', async () => {
+    const { ctx, sessionHost, finalize } = createSimulationJobContext(new FakeRoom());
+    const done = finalizeSession(ctx, undefined, 10_000, createLogger());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sessionHost.close).not.toHaveBeenCalled();
+
+    finalize();
+    await done;
+    expect(sessionHost.close).toHaveBeenCalledOnce();
+  });
+
+  it('stops waiting when the simulator leaves, even if others stay', async () => {
+    const room = new FakeRoom();
+    room.remoteParticipants.set('sip', { attributes: {} });
+    const { ctx, sessionHost } = createSimulationJobContext(room);
+    const done = finalizeSession(ctx, undefined, 10_000, createLogger());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sessionHost.close).not.toHaveBeenCalled();
+
+    room.remoteParticipants.delete('simulator');
+    room.emit('participantDisconnected');
+    await done;
+    expect(sessionHost.close).toHaveBeenCalledOnce();
+  });
+
+  it('does not wait once the room is gone', async () => {
+    const room = new FakeRoom();
+    room.isConnected = false;
+    const { ctx, sessionHost } = createSimulationJobContext(room);
+    await finalizeSession(ctx, undefined, 10_000, createLogger());
+    expect(sessionHost.close).toHaveBeenCalledOnce();
+  });
+
+  it('does not let a session host that never closes hold up shutdown', async () => {
+    vi.useFakeTimers();
+    const room = new FakeRoom();
+    room.isConnected = false;
+    const { ctx, sessionHost } = createSimulationJobContext(room);
+    sessionHost.close.mockReturnValue(new Promise(() => {}));
+    const done = finalizeSession(ctx, undefined, 10_000, createLogger());
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await done;
+  });
+
+  it('gives up after the session end timeout', async () => {
+    const logger = createLogger();
+    const { ctx, sessionHost } = createSimulationJobContext(new FakeRoom());
+    await finalizeSession(ctx, undefined, 50, logger);
+    expect(logger.warn).toHaveBeenCalledWith({ timeout: 50 }, 'simulator did not finalize in time');
+    expect(sessionHost.close).toHaveBeenCalledOnce();
   });
 });
 

@@ -17,6 +17,7 @@ import type { SimulationContext } from '../simulation.js';
 import type { AgentSession } from './agent_session.js';
 import { FinalizeSimulationError } from './index.js';
 import {
+  NO_ACTIVE_SESSION_ERROR,
   RemoteSession,
   RoomSessionTransport,
   SessionHost,
@@ -373,6 +374,51 @@ describe('SessionHost event forwarding', () => {
 
     const unsubscribed = new Set(off.mock.calls.map(([event]) => event));
     expect(unsubscribed).toEqual(FORWARDED_EVENTS);
+  });
+});
+
+describe('SessionHost without an attached session', () => {
+  it('refuses a session request', async () => {
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    await host.start();
+
+    transport.push(pingMessage('p1'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+
+    const resp = transport.sent[0]!.message.value as pb.SessionResponse;
+    expect(resp.requestId).toBe('p1');
+    expect(resp.error).toBe(NO_ACTIVE_SESSION_ERROR);
+    await host.close();
+  });
+
+  it('still answers finalizeSimulation once the session has detached', async () => {
+    const ctx = fakeSimJobContext((simCtx) => simCtx.fail('verdict after hangup'));
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.attach({ on: vi.fn(), off: vi.fn() } as unknown as AgentSession);
+    await runWithJobContextAsync(ctx, async () => host.start());
+    host.detach();
+
+    transport.push(finalizeMessage('f1', true, 'ok'));
+    await host._waitForSimulationFinalized();
+
+    const value = (transport.sent[0]!.message.value as pb.SessionResponse).response
+      .value as pb.SessionResponse_FinalizeSimulationResponse;
+    expect(value.userVerdict?.reason).toBe('verdict after hangup');
+    await host.close();
+  });
+
+  it('stops forwarding a detached session', () => {
+    const off = vi.fn();
+    const session = { on: vi.fn(), off } as unknown as AgentSession;
+    const host = new SessionHost(new FakeTransport());
+
+    host.attach(session);
+    host.detach();
+
+    expect(new Set(off.mock.calls.map(([event]) => event))).toEqual(FORWARDED_EVENTS);
+    expect(host.attachedSession).toBeUndefined();
   });
 });
 
