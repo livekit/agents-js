@@ -18,7 +18,9 @@ about the framework as a whole.
 
 ## WebSocket v1 streaming
 
-Set `RIME_API_KEY` and pass the model endpoint in `websocketURL`:
+WebSocket v1 requires both `websocketURL` and `modelId` at construction. The URL selects
+the deployment. The model sets the plugin's defaults and available options. Set `RIME_API_KEY`
+and pass both options:
 
 ```ts
 import { TTS } from '@livekit/agents-plugin-rime';
@@ -30,13 +32,16 @@ const rime = new TTS({
 });
 ```
 
-Pass the active model WebSocket endpoint explicitly. Public model endpoints use
-port 443 and the `/ws` path. Pass `modelId: 'coda'` for
-`wss://coda.api.rime.ai/ws`, which serves Coda v2. Pass `modelId: 'mistv3'` for
-`wss://mist.api.rime.ai/ws`. The model name is not inferred from the hostname.
+Use `modelId: 'coda'` with `wss://coda.api.rime.ai/ws`, or `modelId: 'mistv3'` with
+`wss://mist.api.rime.ai/ws`. Both public endpoints use port 443.
 
-Dedicated deployment endpoints also require `modelId` when the path is `/ws`.
-The default speaker is `lyra` for Coda and `cove` for Mist.
+If your configuration relied on a model in the URL path, add `modelId` to the constructor.
+The plugin does not read the model from the URL hostname or path.
+
+Custom deployments can use any URL path. Pass the deployment URL and its model in
+`websocketURL` and `modelId`.
+
+For Coda, the default speaker is `lyra`. Mist uses `cove`. Pass `speaker` to use another voice.
 
 `websocketProtocol` defaults to `binary`, with the `rime.v1.binary` subprotocol.
 Set it to `json` for `rime.v1.json` and canonical protobuf JSON. Both modes use
@@ -72,10 +77,6 @@ The default format is `audio/pcm`. WebSocket v1 does not provide word timestamps
 Use `timeScaleFactor` for speed control. Legacy generation controls, `speedAlpha`,
 and WS3-only options are rejected in v1. Mist accepts `pauseBetweenBrackets` and
 `phonemizeBetweenBrackets`.
-
-The old `api.rime.ai/<model>` routes are scheduled for retirement. For compatibility,
-the plugin still reads the model from a path such as `/coda/ws`; omit `modelId` for
-those routes. Use the model hosts above for new configurations.
 
 The plugin sends the API key to the configured endpoint. It trusts `rime.ai` and
 its subdomains. Set `allowCustomEndpoint: true` to use another trusted host.

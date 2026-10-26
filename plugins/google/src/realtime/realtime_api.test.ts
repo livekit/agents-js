@@ -5,7 +5,12 @@ import type { LiveServerContent, UsageMetadata } from '@google/genai';
 import { Behavior, FunctionResponseScheduling, ThinkingLevel } from '@google/genai';
 import { llm, log } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
-import { RealtimeModel, RealtimeSession, toClientContentParams } from './realtime_api.js';
+import {
+  RealtimeModel,
+  RealtimeSession,
+  replyTurns,
+  toClientContentParams,
+} from './realtime_api.js';
 
 const compatibleModels = [
   ['gemini-3.8-live', false],
@@ -254,6 +259,53 @@ function createSessionForTest(
   return session;
 }
 
+describe('Google Realtime instruction updates', () => {
+  it.each([
+    { vertexai: true, expectedRole: 'system' },
+    { vertexai: false, expectedRole: 'model' },
+  ] as const)(
+    'uses role=$expectedRole with vertexai=$vertexai',
+    async ({ vertexai, expectedRole }) => {
+      const never = new Promise<void>(() => {});
+      const closeActiveSession = vi
+        .spyOn(
+          RealtimeSession.prototype as unknown as { closeActiveSession(): Promise<void> },
+          'closeActiveSession',
+        )
+        .mockReturnValue(never);
+      const session = new RealtimeModel({
+        vertexai,
+        apiKey: 'fake-key',
+        project: 'test-project',
+        location: 'eu',
+      }).session();
+      closeActiveSession.mockRestore();
+      const internals = session as unknown as {
+        activeSession: { close(): Promise<void> };
+        sendClientEvent: ReturnType<typeof vi.fn>;
+      };
+      internals.activeSession = { close: vi.fn(async () => {}) };
+      internals.sendClientEvent = vi.fn();
+
+      await session.updateInstructions('replacement instructions');
+
+      expect(internals.sendClientEvent).toHaveBeenCalledWith({
+        type: 'content',
+        value: {
+          turns: [
+            {
+              parts: [{ text: 'replacement instructions' }],
+              role: expectedRole,
+            },
+          ],
+          turnComplete: false,
+        },
+      });
+      await session.close();
+    },
+  );
+});
+
 describe('Google Realtime non-blocking tool scheduling', () => {
   it.each(schedulingModes)(
     'sends %s on the immediate willContinue response',
@@ -292,6 +344,27 @@ describe('Google Realtime non-blocking tool scheduling', () => {
       expect(session.pendingToolCallIds.has('call_123')).toBe(true);
     },
   );
+
+  it.each([
+    { replyRequired: false, expected: FunctionResponseScheduling.SILENT },
+    { replyRequired: true, expected: FunctionResponseScheduling.WHEN_IDLE },
+  ])('schedules a final response from replyRequired', ({ replyRequired, expected }) => {
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(
+      llm.FunctionCallOutput.create({
+        callId: 'call_123',
+        name: 'getWeather',
+        output: 'sunny',
+        isError: false,
+        replyRequired,
+      }),
+    );
+
+    expect(session.getToolResultsForRealtime(ctx, false)?.functionResponses[0]?.scheduling).toBe(
+      expected,
+    );
+  });
 
   it.each(schedulingModes)(
     'sends %s on the final non-blocking tool response',
@@ -433,6 +506,31 @@ describe('Google Realtime non-blocking tool scheduling', () => {
         willContinue: false,
       },
     ]);
+  });
+});
+
+describe('Google Realtime Vertex scheduling', () => {
+  it('warns when tool response scheduling is configured for Vertex AI', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new RealtimeModel({
+      vertexai: true,
+      project: 'p',
+      location: 'us-central1',
+      toolResponseScheduling: FunctionResponseScheduling.SILENT,
+    });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not supported by Vertex AI'));
+    warn.mockRestore();
+  });
+
+  it('does not warn for Gemini API scheduling', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new RealtimeModel({ toolResponseScheduling: FunctionResponseScheduling.SILENT });
+
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('not supported by Vertex AI'));
+    warn.mockRestore();
   });
 });
 
@@ -581,5 +679,34 @@ describe('Google Realtime client content params', () => {
       turns,
       turnComplete: false,
     });
+  });
+});
+
+describe('Google Realtime reply instructions', () => {
+  // Without the placeholder, a trailing model turn is continued rather than answered, and
+  // an unwrapped user turn is later recalled as something the user said.
+  it.each([
+    ['gemini-3.8-live', [['user', '<instructions>\nGreet the guest.\n</instructions>']]],
+    [
+      'gemini-3.1-flash-live-preview',
+      [['user', '<instructions>\nGreet the guest.\n</instructions>']],
+    ],
+    [
+      'gemini-2.5-flash-native-audio-preview-12-2025',
+      [
+        ['model', 'Greet the guest.'],
+        ['user', '.'],
+      ],
+    ],
+  ])('%s', (model, expected) => {
+    const turns = replyTurns(model, 'Greet the guest.');
+    expect(turns.map((t) => [t.role, t.parts?.[0]?.text])).toEqual(expected);
+  });
+
+  it('sends no instruction turn when none are given', () => {
+    expect(replyTurns('gemini-3.8-live')).toEqual([]);
+    expect(replyTurns('gemini-2.5-flash-native-audio-preview-12-2025')).toEqual([
+      { parts: [{ text: '.' }], role: 'user' },
+    ]);
   });
 });

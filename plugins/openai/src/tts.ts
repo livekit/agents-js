@@ -6,8 +6,8 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { OpenAI } from 'openai';
 import type { TTSModels, TTSVoices } from './models.js';
 
-const OPENAI_TTS_SAMPLE_RATE = 24000;
 const OPENAI_TTS_CHANNELS = 1;
+const OPENAI_TTS_SAMPLE_RATE = 24000;
 
 export interface TTSOptions {
   model: TTSModels | string;
@@ -17,6 +17,11 @@ export interface TTSOptions {
   baseURL?: string;
   client?: OpenAI;
   apiKey?: string;
+  /**
+   * Sample rate of the provider's PCM output, in Hz. Defaults to 24000.
+   * Must be an integer of at least 10. The audio is not resampled.
+   */
+  sampleRate?: number;
 }
 
 const defaultTTSOptions: TTSOptions = {
@@ -24,6 +29,7 @@ const defaultTTSOptions: TTSOptions = {
   model: 'tts-1',
   voice: 'alloy',
   speed: 1,
+  sampleRate: OPENAI_TTS_SAMPLE_RATE,
 };
 
 export class TTS extends tts.TTS {
@@ -53,9 +59,15 @@ export class TTS extends tts.TTS {
    * `OPENAI_API_KEY` environment variable.
    */
   constructor(opts: Partial<TTSOptions> = defaultTTSOptions) {
-    super(OPENAI_TTS_SAMPLE_RATE, OPENAI_TTS_CHANNELS, { streaming: false });
+    const sampleRate = opts.sampleRate ?? OPENAI_TTS_SAMPLE_RATE;
+    if (!Number.isInteger(sampleRate) || sampleRate < 10) {
+      throw new Error(
+        `OpenAI TTS sampleRate must be an integer of at least 10 Hz, got ${String(opts.sampleRate)}`,
+      );
+    }
+    super(sampleRate, OPENAI_TTS_CHANNELS, { streaming: false });
 
-    this.#opts = { ...defaultTTSOptions, ...opts };
+    this.#opts = { ...defaultTTSOptions, ...opts, sampleRate };
     if (this.#opts.apiKey === undefined && !this.#opts.client) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -112,6 +124,7 @@ export class TTS extends tts.TTS {
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'openai.ChunkedStream';
   private stream: Promise<any>;
+  private sampleRate: number;
 
   // set Promise<T> to any because OpenAI returns an annoying Response type
   constructor(
@@ -123,14 +136,15 @@ export class ChunkedStream extends tts.ChunkedStream {
   ) {
     super(text, tts, connOptions, abortSignal);
     this.stream = stream;
+    this.sampleRate = tts.sampleRate;
   }
 
   protected async run() {
     try {
       const buffer = await this.stream.then((r) => r.arrayBuffer());
       const requestId = shortuuid();
-      const audioByteStream = new AudioByteStream(OPENAI_TTS_SAMPLE_RATE, OPENAI_TTS_CHANNELS);
-      const frames = audioByteStream.write(buffer);
+      const audioByteStream = new AudioByteStream(this.sampleRate, OPENAI_TTS_CHANNELS);
+      const frames = [...audioByteStream.write(buffer), ...audioByteStream.flush()];
 
       let lastFrame: AudioFrame | undefined;
       const sendLastFrame = (segmentId: string, final: boolean) => {

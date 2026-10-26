@@ -374,7 +374,7 @@ export default defineAgent({
       stt: new deepgram.STT({ model: 'nova-3' }),
       llm: new openai.LLM({ model: 'gpt-4o-mini' }),
       tts: new cartesia.TTS({ 
-        model: 'sonic-2', 
+        model: 'sonic-3.6', 
         voice: 'f786b574-daa5-4673-aa0c-cbe3e8534c02' 
       }),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
