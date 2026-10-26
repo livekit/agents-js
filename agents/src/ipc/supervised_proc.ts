@@ -69,7 +69,7 @@ export abstract class SupervisedProc {
   }
 
   protected loggingFields(): Record<string, unknown> {
-    return { pid: this.proc?.pid };
+    return {};
   }
 
   private get logger(): Logger {
@@ -386,6 +386,7 @@ export abstract class SupervisedProc {
 
   private memoryLoggingFields(memoryMB: number): Record<string, unknown> {
     const fields: Record<string, unknown> = {
+      pid: this.proc?.pid,
       memoryUsageMB: Math.round(memoryMB * 10) / 10,
       memoryWarnMB: this.#opts.memoryWarnMB,
       memoryLimitMB: this.#opts.memoryLimitMB,

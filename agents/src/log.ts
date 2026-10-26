@@ -26,20 +26,24 @@ const CALLSITE_PATTERN = /^\s*at (?:(.*?) \()?(.+?):(\d+):\d+\)?$/;
 const PINO_FRAME_PATTERN = /[\\/]node_modules[\\/]pino[\\/]/;
 
 function codeAttributes(): Record<string, string | number> {
-  const holder: { stack?: string } = {};
-  Error.captureStackTrace(holder, logMixin);
-  const frames = holder.stack?.split('\n').slice(1) ?? [];
-  for (const frame of frames) {
-    const match = CALLSITE_PATTERN.exec(frame);
-    if (!match || PINO_FRAME_PATTERN.test(match[2]!)) continue;
+  try {
+    const holder: { stack?: string } = {};
+    Error.captureStackTrace(holder, logMixin);
+    const frames = holder.stack?.split('\n').slice(1) ?? [];
+    for (const frame of frames) {
+      const match = CALLSITE_PATTERN.exec(frame);
+      if (!match || PINO_FRAME_PATTERN.test(match[2]!)) continue;
 
-    let filePath = match[2]!;
-    if (filePath.startsWith('file:')) filePath = fileURLToPath(filePath);
-    return {
-      'code.file.path': filePath,
-      'code.function.name': match[1] || '<anonymous>',
-      'code.line.number': Number(match[3]),
-    };
+      let filePath = match[2]!;
+      if (filePath.startsWith('file:')) filePath = fileURLToPath(filePath);
+      return {
+        'code.file.path': filePath,
+        'code.function.name': match[1] || '<anonymous>',
+        'code.line.number': Number(match[3]),
+      };
+    }
+  } catch {
+    return {};
   }
   return {};
 }

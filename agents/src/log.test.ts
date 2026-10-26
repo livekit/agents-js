@@ -276,4 +276,34 @@ describe('JSON logging', () => {
       });
     });
   });
+
+  it.each([
+    [
+      'throws',
+      () => {
+        throw new Error('broken hook');
+      },
+    ],
+    ['returns call sites', (_error: Error, callSites: NodeJS.CallSite[]) => callSites],
+  ])('still logs when a global Error.prepareStackTrace %s', async (_name, prepareStackTrace) => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+
+    const original = Error.prepareStackTrace;
+    Error.prepareStackTrace = prepareStackTrace;
+    try {
+      expect(() => log().info('broken stack')).not.toThrow();
+    } finally {
+      Error.prepareStackTrace = original;
+    }
+
+    await vi.waitFor(() => {
+      const record = emitSpy.mock.calls
+        .map(([logObj]) => logObj)
+        .find(({ msg }) => msg === 'broken stack');
+      expect(record).toBeDefined();
+      expect(record).not.toHaveProperty('code.file.path');
+    });
+  });
 });
