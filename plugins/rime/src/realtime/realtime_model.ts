@@ -8,7 +8,7 @@ import { validateEndpoint } from '../options.js';
 import { HistoryUpdateError, PrismHistory } from './history.js';
 import { OutputQueue, SerialQueue } from './streams.js';
 
-/** Prism connection settings. The model copies values and retains a supplied client by reference. */
+/** Connection settings. A supplied SDK client remains caller-owned. */
 export interface RealtimeModelOptions {
   /** API key. The SDK uses RIME_API_KEY when omitted. Cannot be combined with client. */
   apiKey?: string;
@@ -24,11 +24,11 @@ export interface RealtimeModelOptions {
   turnDetection?: r.TurnDetection;
   /** Provider history truncation policy, separate from interrupted audio playback. */
   truncation?: r.Truncation;
-  /** Timeout in milliseconds. Default: 10000. */
+  /** Connection timeout in milliseconds. Default: 10000. */
   connectTimeout?: number;
-  /** Admission timeout in milliseconds. Default: 30000. */
+  /** Timeout waiting for Prism to accept a turn, in milliseconds. Default: 30000. */
   readyTimeout?: number;
-  /** Acknowledgment timeout in milliseconds. Default: 10000. */
+  /** Timeout waiting for a request acknowledgment, in milliseconds. Default: 10000. */
   requestTimeout?: number;
   /** Caller request ID for the connection. */
   requestId?: string;
@@ -140,7 +140,7 @@ export class RealtimeModel extends llm.RealtimeModel {
   override label(): string {
     return 'rime.RealtimeModel';
   }
-  /** Copy of acknowledged session information, available after connection. */
+  /** Snapshot of confirmed session information. Undefined before connection. */
   get sessionInfo(): r.SessionInfo | undefined {
     return this.active?.sessionInfo;
   }
@@ -193,7 +193,7 @@ interface Generation {
   toolsDisabled: boolean;
 }
 
-/** One Prism conversation using the published SDK and the standard LiveKit session. */
+/** One Prism conversation managed through LiveKit's realtime session interface. */
 export class RealtimeSession extends llm.RealtimeSession {
   private sdk?: r.RealtimeSession;
   private sdkTypes?: typeof r;
@@ -247,11 +247,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   get isClosed(): boolean {
     return this.fullyClosed;
   }
-  /** Independent copy of acknowledged SDK session information, available after connection. */
+  /** Snapshot of confirmed session information. Undefined before connection. */
   get sessionInfo(): r.SessionInfo | undefined {
     return this.sdk && structuredClone(this.sdk.info);
   }
-  /** Independent copy of local history, including observed live messages and tool calls. */
+  /** Snapshot of local history, including live messages and tool calls. */
   get chatCtx(): llm.ChatContext {
     return this.history?.chatCtx ?? llm.ChatContext.empty();
   }
@@ -349,7 +349,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   updateTools(tools: llm.ToolContext): Promise<void> {
     return this.applySettings({ tools: tools.copy() });
   }
-  /** Copy provider settings and persist each acknowledged change to this model's settings. */
+  /** Copy provider settings and save each accepted change for future sessions. */
   updateSession(options: SessionOptions): Promise<void> {
     return this.applySettings(structuredClone(options));
   }
@@ -556,8 +556,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   /**
-   * Request a response using the current tool choice and wait for admission.
-   * Cancellation also cancels a response admitted after the caller stops waiting.
+   * Request a response using the current tool choice and wait for Prism to accept it.
+   * Cancellation also stops a response accepted after the caller stops waiting.
    */
   generateReply(
     instructions?: string,
