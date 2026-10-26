@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AgentSession as pb } from '@livekit/protocol';
 import type { ChatContext } from '../llm/chat_context.js';
 import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
 import { msToUnixSeconds } from '../proto.js';
@@ -10,7 +11,7 @@ import type {
   ResolvedRecordingOptions,
   VoiceOptions,
 } from './agent_session.js';
-import type { AgentEvent } from './events.js';
+import { type AgentEvent, CloseReason } from './events.js';
 
 type ReportOptions = AgentSessionOptions &
   Partial<VoiceOptions> & { recordingOptions: ResolvedRecordingOptions };
@@ -19,6 +20,8 @@ export interface SessionReport {
   jobId: string;
   roomId: string;
   room: string;
+  /** Name the agent was dispatched with (if any) */
+  agentName?: string;
   options: ReportOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
@@ -41,6 +44,8 @@ export interface SessionReportOptions {
   jobId: string;
   roomId: string;
   room: string;
+  /** Name the agent was dispatched with (if any) */
+  agentName?: string;
   options: ReportOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
@@ -66,6 +71,7 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     jobId: opts.jobId,
     roomId: opts.roomId,
     room: opts.room,
+    agentName: opts.agentName,
     options: opts.options,
     events: opts.events,
     chatHistory: opts.chatHistory,
@@ -231,11 +237,79 @@ function chatHistoryToStandardJSON(chatHistory: ChatContext): unknown {
   return toSnakeCaseDeep(json);
 }
 
+// Maps an ErrorEvent's error type to its key in the `errors` counts.
+const SUMMARY_ERROR_KEYS: Record<string, string> = {
+  llm_error: 'llm',
+  stt_error: 'stt',
+  tts_error: 'tts',
+  realtime_model_error: 'realtime',
+  interruption_detection_error: 'interruption',
+};
+
+const SDK_CLOSE_REASONS: ReadonlySet<string> = new Set(Object.values(CloseReason));
+
+/** Name of the livekit.agent.CloseReason proto value for an SDK close reason. */
+function closeReasonName(reason: string): string {
+  // The proto calls task completion CR_COMPLETED. Python has that reason; agents-js only gets it
+  // as a shutdown string.
+  if (reason === 'task_completed') {
+    return 'CR_COMPLETED';
+  }
+  // Other custom shutdown strings (e.g. 'completed') must not match a proto value by accident.
+  if (!SDK_CLOSE_REASONS.has(reason)) {
+    return 'CR_UNKNOWN';
+  }
+  const name = `CR_${reason.toUpperCase()}`;
+  return name in pb.CloseReason ? name : 'CR_UNKNOWN';
+}
+
+function countErrors(events: AgentEvent[]): Record<string, number> {
+  const errors: Record<string, number> = {};
+  for (const key of Object.values(SUMMARY_ERROR_KEYS)) {
+    errors[key] = 0;
+  }
+  for (const event of events) {
+    if (event.type !== 'error') {
+      continue;
+    }
+    const key = SUMMARY_ERROR_KEYS[event.error.type];
+    if (key !== undefined) {
+      errors[key] = (errors[key] ?? 0) + 1;
+    }
+  }
+  return errors;
+}
+
+function lastCloseReasonName(events: AgentEvent[]): string | null {
+  let name: string | null = null;
+  for (const event of events) {
+    if (event.type === 'close') {
+      name = closeReasonName(event.reason);
+    }
+  }
+  return name;
+}
+
+export interface SessionReportJSONOptions {
+  /** Include `chat_history`. Defaults to true; false omits the key. */
+  includeChatHistory?: boolean;
+  /** Include `events`. Defaults to true; false omits the key. */
+  includeEvents?: boolean;
+}
+
 //   - header: protobuf MetricsRecordingHeader (room_id, duration, start_time)
 //   - chat_history: JSON serialized chat history (use sessionReportToJSON)
 //   - audio: audio recording file if available (ogg format)
 //   - Uploads to LiveKit Cloud observability endpoint with JWT auth
-export function sessionReportToJSON(report: SessionReport): Record<string, unknown> {
+export function sessionReportToJSON(
+  report: SessionReport,
+  jsonOptions: SessionReportJSONOptions = {},
+): Record<string, unknown> {
+  const includeChatHistory = jsonOptions.includeChatHistory ?? true;
+  const includeEvents = jsonOptions.includeEvents ?? true;
+  const userTurns = report.chatHistory.items.filter(
+    (item) => item.type === 'message' && item.role === 'user',
+  ).length;
   const events: Record<string, unknown>[] = [];
   const options = report.options;
   const interruptionConfig = options.turnHandling?.interruption;
@@ -269,19 +343,21 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
     options.maxEndpointingDelay ??
     options.voiceOptions?.maxEndpointingDelay;
 
-  for (const event of report.events) {
-    if (event.type === 'metrics_collected' || event.type === 'session_usage_updated') {
-      continue; // metrics are too noisy, Cloud is using the chat_history as the source of truth
-    }
+  if (includeEvents) {
+    for (const event of report.events) {
+      if (event.type === 'metrics_collected' || event.type === 'session_usage_updated') {
+        continue; // metrics are too noisy, Cloud is using the chat_history as the source of truth
+      }
 
-    events.push(eventToJSON(event));
+      events.push(eventToJSON(event));
+    }
   }
 
   return {
     job_id: report.jobId,
     room_id: report.roomId,
     room: report.room,
-    events,
+    ...(includeEvents ? { events } : {}),
     audio_recording_path: report.audioRecordingPath ?? null,
     audio_recording_started_at: report.audioRecordingStartedAt ?? null,
     options: {
@@ -296,10 +372,18 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       preemptive_generation: options.turnHandling?.preemptiveGeneration ?? {},
       recording_options: { ...options.recordingOptions },
     },
-    chat_history: chatHistoryToStandardJSON(report.chatHistory),
+    ...(includeChatHistory ? { chat_history: chatHistoryToStandardJSON(report.chatHistory) } : {}),
     enable_user_data_training: report.enableRecording,
     timestamp: report.timestamp,
     usage: report.modelUsage ? report.modelUsage.map(modelUsageToJSON) : null,
     sdk_version: version,
+    agent_name: report.agentName ?? null,
+    // Session length. Not `duration`, which is the recording's length when audio is recorded, and
+    // recording starts during session setup, before `startedAt`.
+    duration_ms: Math.round(report.timestamp - report.startedAt),
+    user_turns: userTurns,
+    // Error and close events are counted even when `events` is omitted, so summaries keep them.
+    errors: countErrors(report.events),
+    close_reason: lastCloseReasonName(report.events),
   };
 }
