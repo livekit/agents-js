@@ -342,7 +342,7 @@ class SpeechStream extends stt.SpeechStream {
   #inputError?: APIError;
   #speaking = false;
   #item?: ItemState;
-  #commit?: { promise: Promise<void>; resolve: () => void };
+  #commit?: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void };
   #committedItemId?: string;
   readonly #finishedItems = new Set<string>();
   readonly #finishedItemOrder: string[] = [];
@@ -501,6 +501,13 @@ class SpeechStream extends stt.SpeechStream {
     } finally {
       this.abortSignal.removeEventListener('abort', abortAttempt);
       attempt.abort();
+      // Release a sender waiting on a commit acknowledgment that can no longer arrive.
+      this.#commit?.reject(
+        new APIConnectionError({
+          message: 'Microsoft AI STT connection ended before commit acknowledgment',
+          options: { retryable: false },
+        }),
+      );
       this.#commit = undefined;
       const ws = this.#ws;
       this.#ws = undefined;
@@ -656,8 +663,12 @@ class SpeechStream extends stt.SpeechStream {
     for (const frame of stream.flush()) await this.#append(ws, frame);
     if (this.#segmentSamples === 0) return;
     let resolve!: () => void;
-    const promise = new Promise<void>((done) => (resolve = done));
-    this.#commit = { promise, resolve };
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    this.#commit = { promise, resolve, reject };
     this.#committedItemId = undefined;
     try {
       await this.#write(ws, { type: 'input_audio_buffer.commit' });
