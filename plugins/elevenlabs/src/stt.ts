@@ -15,6 +15,7 @@ import {
   calculateAudioDurationSeconds,
   createTimedString,
   delay,
+  getBaseLanguage,
   intervalForRetry,
   log,
   mergeFrames,
@@ -22,7 +23,7 @@ import {
   stt,
   waitForAbort,
 } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
 import { PeriodicCollector } from './_utils.js';
 import type { STTRealtimeSampleRates } from './models.js';
@@ -54,12 +55,38 @@ export interface STTOptions {
   tagAudioEvents?: boolean;
   useRealtime?: boolean;
   sampleRate?: STTRealtimeSampleRates;
+  /**
+   * Duration of each outgoing realtime audio chunk in milliseconds. Must be a positive integer.
+   * Defaults to 50. Larger chunks reduce message frequency but increase buffering latency.
+   * Flushes send any shorter remaining chunk before committing. Only used for Scribe v2 realtime.
+   */
+  audioChunkDuration?: number;
   serverVad?: VADOptions | null;
   includeTimestamps?: boolean;
   httpSession?: STTHTTPSession;
+  model?: ElevenLabsSTTModels | string;
+  /** @deprecated Use `model` instead. */
   modelId?: ElevenLabsSTTModels | string;
+  /**
+   * Keywords or phrases to bias transcription towards. Scribe v2 batch accepts up to 1000
+   * keyterms of at most 50 characters each; realtime accepts up to 50 keyterms of at most 20
+   * characters each. Usage incurs additional costs.
+   */
   keyterms?: string[];
+  /**
+   * Language codes to constrain speech prediction to in addition to `languageCode`. Useful for
+   * bilingual applications where audio switches between a primary and a limited set of secondary
+   * languages. Only supported for Scribe v2 realtime. When omitted, the model predicts from its
+   * full set of supported languages.
+   */
+  secondaryLanguages?: string[];
+  /**
+   * Whether committed transcripts report the detected language. Defaults to true when no
+   * `languageCode` is set and false otherwise. Only supported for Scribe v2 realtime.
+   */
+  includeLanguageDetection?: boolean;
   noVerbatim?: boolean;
+  enableLogging?: boolean;
 }
 
 interface ResolvedSTTOptions {
@@ -70,9 +97,13 @@ interface ResolvedSTTOptions {
   tagAudioEvents: boolean;
   includeTimestamps: boolean;
   sampleRate: STTRealtimeSampleRates;
+  audioChunkDuration: number;
   serverVad?: VADOptions | null;
   keyterms?: string[];
+  secondaryLanguages?: string[];
+  includeLanguageDetection?: boolean;
   noVerbatim: boolean;
+  enableLogging: boolean;
 }
 
 export interface STTRecognizeOptions {
@@ -86,6 +117,8 @@ interface ElevenLabsWord {
   start?: number;
   end?: number;
   speaker_id?: string | null;
+  type?: string;
+  logprob?: number;
 }
 
 interface ElevenLabsBatchResponse {
@@ -156,8 +189,24 @@ function asWords(value: unknown): ElevenLabsWord[] {
       start: asNumber(record.start),
       end: asNumber(record.end),
       speaker_id: asString(record.speaker_id) ?? null,
+      type: asString(record.type),
+      logprob: asNumber(record.logprob),
     };
   });
+}
+
+function speechConfidence(words?: ElevenLabsWord[]): number {
+  if (!words) return 0;
+
+  const logprobs = words.flatMap((word) =>
+    word.type === 'word' && word.logprob !== undefined ? [word.logprob] : [],
+  );
+  if (logprobs.length === 0) return 0;
+
+  return Math.min(
+    1,
+    Math.max(0, Math.exp(logprobs.reduce((sum, value) => sum + value, 0) / logprobs.length)),
+  );
 }
 
 function parseBatchResponse(value: unknown): ElevenLabsBatchResponse {
@@ -192,24 +241,55 @@ export class STT extends stt.STT {
   label = 'elevenlabs.STT';
 
   constructor(opts: STTOptions = {}) {
-    let modelId = opts.modelId;
-    if (opts.useRealtime !== undefined) {
-      if (modelId !== undefined) {
+    const audioChunkDuration = opts.audioChunkDuration === undefined ? 50 : opts.audioChunkDuration;
+    if (!Number.isInteger(audioChunkDuration) || audioChunkDuration <= 0) {
+      throw new Error('audioChunkDuration must be a positive integer');
+    }
+
+    let model = opts.model;
+    if (opts.modelId !== undefined) {
+      if (model !== undefined) {
         log().warn(
-          'both `useRealtime` and `modelId` parameters are provided. `useRealtime` will be ignored.',
+          'both `model` and `modelId` parameters are provided. `modelId` will be ignored.',
+        );
+      } else {
+        log().warn('`modelId` parameter is deprecated, use `model` instead.');
+        model = opts.modelId;
+      }
+    }
+    if (opts.useRealtime !== undefined) {
+      if (model !== undefined) {
+        log().warn(
+          'both `useRealtime` and `model` parameters are provided. `useRealtime` will be ignored.',
         );
       } else {
         log().warn(
-          '`useRealtime` parameter is deprecated. Specify a realtime modelId to enable streaming. Defaulting modelId to one based on useRealtime parameter.',
+          '`useRealtime` parameter is deprecated. Specify a realtime model to enable streaming. Defaulting model to one based on useRealtime parameter.',
         );
-        modelId = opts.useRealtime ? 'scribe_v2_realtime' : 'scribe_v1';
+        model = opts.useRealtime ? 'scribe_v2_realtime' : 'scribe_v1';
       }
     }
-    modelId = modelId ?? 'scribe_v1';
+    const modelId = model ?? 'scribe_v1';
     const useRealtime = modelId === 'scribe_v2_realtime';
 
     if (!useRealtime && opts.serverVad !== undefined) {
       log().warn('Server-side VAD is only supported for Scribe v2 realtime model');
+    }
+
+    let secondaryLanguages = opts.secondaryLanguages;
+    if (!useRealtime && secondaryLanguages !== undefined) {
+      log().warn(
+        '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
+      );
+      secondaryLanguages = undefined;
+    }
+
+    let includeLanguageDetection = opts.includeLanguageDetection;
+    if (!useRealtime && includeLanguageDetection !== undefined) {
+      log().warn(
+        '`includeLanguageDetection` is only supported for Scribe v2 realtime model and will be ignored',
+      );
+      includeLanguageDetection = undefined;
     }
 
     const includeTimestamps = opts.includeTimestamps ?? false;
@@ -232,11 +312,15 @@ export class STT extends stt.STT {
       languageCode: opts.languageCode ? normalizeLanguage(opts.languageCode) : undefined,
       tagAudioEvents: opts.tagAudioEvents ?? true,
       sampleRate: opts.sampleRate ?? 16000,
+      audioChunkDuration,
       serverVad: opts.serverVad,
       includeTimestamps,
       modelId,
       keyterms: opts.keyterms,
+      secondaryLanguages: secondaryLanguages?.map(normalizeLanguage),
+      includeLanguageDetection,
       noVerbatim: opts.noVerbatim ?? false,
+      enableLogging: opts.enableLogging ?? true,
     };
     this.#session = opts.httpSession ?? {};
   }
@@ -355,19 +439,35 @@ export class STT extends stt.STT {
 
     try {
       const fetchFn = this.#session.fetch ?? fetch;
-      const response = await fetchFn(`${this.#opts.baseURL}/speech-to-text`, {
-        method: 'POST',
-        headers: { [AUTHORIZATION_HEADER]: this.#opts.apiKey },
-        body: form,
-        signal: abortSignal ?? null,
-      });
-      const responseJson = parseBatchResponse(await response.json());
+      const response = await fetchFn(
+        `${this.#opts.baseURL}/speech-to-text?enable_logging=${String(this.#opts.enableLogging).toLowerCase()}`,
+        {
+          method: 'POST',
+          headers: { [AUTHORIZATION_HEADER]: this.#opts.apiKey },
+          body: form,
+          signal: abortSignal ?? null,
+        },
+      );
       if (response.status !== 200) {
+        const text = await response.text();
+        let body: object | string | number | boolean | null = text;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          // Error responses may be empty or not JSON.
+        }
+        const detail =
+          typeof body === 'object' && body !== null && 'detail' in body ? body.detail : undefined;
+        const message =
+          typeof detail === 'object' && detail !== null && 'message' in detail
+            ? detail.message
+            : detail;
         throw new APIStatusError({
-          message: responseJson.detail ?? 'Unknown ElevenLabs error',
-          options: { statusCode: response.status, requestId: null, body: responseJson },
+          message: String(message || text || 'Unknown ElevenLabs error'),
+          options: { statusCode: response.status, requestId: null, body },
         });
       }
+      const responseJson = parseBatchResponse(await response.json());
 
       const words = responseJson.words ?? [];
       const speakerId = words.length > 0 ? words[0]?.speaker_id ?? null : null;
@@ -390,7 +490,7 @@ export class STT extends stt.STT {
         throw error;
       }
       if (error instanceof APIStatusError) {
-        throw new APIConnectionError({ message: error.message });
+        throw error;
       }
       if (error instanceof Error && error.name === 'AbortError') {
         throw new APITimeoutError({});
@@ -416,7 +516,7 @@ export class STT extends stt.STT {
           speakerId,
           startTime,
           endTime,
-          confidence: 0,
+          confidence: speechConfidence(words),
           words: words?.map((word) =>
             createTimedString({
               text: word.text ?? '',
@@ -433,6 +533,7 @@ export class STT extends stt.STT {
     tagAudioEvents?: boolean;
     serverVad?: VADOptions | null;
     keyterms?: string[];
+    secondaryLanguages?: string[];
     noVerbatim?: boolean;
   }): void {
     if (opts.tagAudioEvents !== undefined) {
@@ -447,6 +548,18 @@ export class STT extends stt.STT {
       this.#opts.keyterms = opts.keyterms;
     }
 
+    let secondaryLanguages = opts.secondaryLanguages;
+    if (secondaryLanguages !== undefined) {
+      if (this.#opts.modelId === 'scribe_v2_realtime') {
+        this.#opts.secondaryLanguages = secondaryLanguages.map(normalizeLanguage);
+      } else {
+        this.#logger.warn(
+          '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
+        );
+        secondaryLanguages = undefined;
+      }
+    }
+
     if (opts.noVerbatim !== undefined) {
       this.#opts.noVerbatim = opts.noVerbatim;
     }
@@ -454,7 +567,12 @@ export class STT extends stt.STT {
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
-        stream.updateOptions({ serverVad: opts.serverVad, noVerbatim: opts.noVerbatim });
+        stream.updateOptions({
+          serverVad: opts.serverVad,
+          noVerbatim: opts.noVerbatim,
+          keyterms: opts.keyterms,
+          secondaryLanguages: secondaryLanguages?.map(normalizeLanguage),
+        });
       } else {
         this.#streams.delete(ref);
       }
@@ -482,6 +600,7 @@ export class SpeechStream extends stt.SpeechStream {
   #session: STTHTTPSession;
   #reconnectEvent = new Future<void>();
   #speaking = false;
+  #lastPartialText = '';
   #audioDurationCollector: PeriodicCollector<number>;
   #logger = log();
 
@@ -504,7 +623,12 @@ export class SpeechStream extends stt.SpeechStream {
     );
   }
 
-  updateOptions(opts: { serverVad?: VADOptions | null; noVerbatim?: boolean }): void {
+  updateOptions(opts: {
+    serverVad?: VADOptions | null;
+    noVerbatim?: boolean;
+    keyterms?: string[];
+    secondaryLanguages?: string[];
+  }): void {
     if (opts.serverVad !== undefined) {
       this.#opts.serverVad = opts.serverVad;
       if (!this.#reconnectEvent.done) {
@@ -513,6 +637,18 @@ export class SpeechStream extends stt.SpeechStream {
     }
     if (opts.noVerbatim !== undefined) {
       this.#opts.noVerbatim = opts.noVerbatim;
+      if (!this.#reconnectEvent.done) {
+        this.#reconnectEvent.resolve();
+      }
+    }
+    if (opts.keyterms !== undefined) {
+      this.#opts.keyterms = opts.keyterms;
+      if (!this.#reconnectEvent.done) {
+        this.#reconnectEvent.resolve();
+      }
+    }
+    if (opts.secondaryLanguages !== undefined) {
+      this.#opts.secondaryLanguages = opts.secondaryLanguages.map(normalizeLanguage);
       if (!this.#reconnectEvent.done) {
         this.#reconnectEvent.resolve();
       }
@@ -526,6 +662,16 @@ export class SpeechStream extends stt.SpeechStream {
     });
   }
 
+  get #languageDetection(): boolean {
+    return this.#opts.includeLanguageDetection ?? !this.#language;
+  }
+
+  get #finalMessageType(): string {
+    return this.#opts.includeTimestamps || this.#languageDetection
+      ? 'committed_transcript_with_timestamps'
+      : 'committed_transcript';
+  }
+
   protected async run(): Promise<void> {
     while (!this.closed && !this.input.closed) {
       let ws: WebSocket | null = null;
@@ -534,6 +680,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         ws = await this.#connectWs();
+        this.#lastPartialText = '';
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
@@ -551,10 +698,16 @@ export class SpeechStream extends stt.SpeechStream {
         }, sessionController);
 
         const sendTask = Task.from(async (controller) => {
-          const samples50Ms = Math.floor(this.#opts.sampleRate / 20);
-          const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samples50Ms);
+          const samplesPerChunk = Math.floor(
+            (this.#opts.sampleRate * this.#opts.audioChunkDuration) / 1000,
+          );
+          const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
           const abortPromise = waitForAbort(controller.signal);
           const streamAbortPromise = waitForAbort(this.abortSignal);
+          // Scribe closes the session on a commit with less than 300ms of audio since the
+          // previous commit or the connect
+          const minCommitSamples = (this.#opts.sampleRate * 3) / 10;
+          let uncommittedSamples = 0;
           let hasEnded = false;
 
           try {
@@ -571,8 +724,13 @@ export class SpeechStream extends stt.SpeechStream {
               let frames: AudioFrame[];
               if (data === SpeechStream.FLUSH_SENTINEL) {
                 frames = audioByteStream.flush();
+                const missing = minCommitSamples - uncommittedSamples;
+                if (missing > 0) {
+                  frames.push(AudioFrame.create(this.#opts.sampleRate, 1, missing));
+                }
                 hasEnded = true;
               } else {
+                uncommittedSamples += data.samplesPerChannel;
                 frames = audioByteStream.write(data.data);
               }
 
@@ -591,11 +749,20 @@ export class SpeechStream extends stt.SpeechStream {
                     sample_rate: this.#opts.sampleRate,
                   }),
                 );
+              }
 
-                if (hasEnded) {
-                  this.#audioDurationCollector.flush();
-                  hasEnded = false;
-                }
+              if (hasEnded) {
+                this.#audioDurationCollector.flush();
+                ws?.send(
+                  JSON.stringify({
+                    message_type: 'input_audio_chunk',
+                    audio_base_64: '',
+                    commit: true,
+                    sample_rate: this.#opts.sampleRate,
+                  }),
+                );
+                uncommittedSamples = 0;
+                hasEnded = false;
               }
             }
           } finally {
@@ -672,9 +839,10 @@ export class SpeechStream extends stt.SpeechStream {
       `model_id=${this.#opts.modelId}`,
       `audio_format=pcm_${this.#opts.sampleRate}`,
       `commit_strategy=${commitStrategy}`,
+      `enable_logging=${String(this.#opts.enableLogging).toLowerCase()}`,
     ];
 
-    if (!this.#language) {
+    if (this.#languageDetection) {
       params.push('include_language_detection=true');
     }
 
@@ -697,7 +865,7 @@ export class SpeechStream extends stt.SpeechStream {
     }
 
     if (this.#language) {
-      params.push(`language_code=${this.#language}`);
+      params.push(`language_code=${encodeURIComponent(getBaseLanguage(this.#language))}`);
     }
 
     if (this.#opts.includeTimestamps) {
@@ -706,6 +874,20 @@ export class SpeechStream extends stt.SpeechStream {
 
     if (this.#opts.noVerbatim) {
       params.push('no_verbatim=true');
+    }
+
+    if (this.#opts.keyterms !== undefined) {
+      params.push(
+        ...this.#opts.keyterms.map((keyterm) => `keyterms=${encodeURIComponent(keyterm)}`),
+      );
+    }
+
+    if (this.#opts.secondaryLanguages !== undefined) {
+      params.push(
+        ...this.#opts.secondaryLanguages.map(
+          (language) => `secondary_languages=${encodeURIComponent(getBaseLanguage(language))}`,
+        ),
+      );
     }
 
     const baseURL = this.#opts.baseURL.replace('https://', 'wss://').replace('http://', 'ws://');
@@ -768,7 +950,7 @@ export class SpeechStream extends stt.SpeechStream {
     const words = data.words ?? [];
     const startTime = words.length > 0 ? words[0]?.start ?? 0 : 0;
     const endTime = words.length > 0 ? words[words.length - 1]?.end ?? 0 : 0;
-    const languageCode = data.language_code ?? this.#language;
+    const languageCode = data.language_code || this.#language;
     const normalizedLanguage = languageCode
       ? normalizeLanguage(languageCode)
       : normalizeLanguage('en');
@@ -778,9 +960,9 @@ export class SpeechStream extends stt.SpeechStream {
       text,
       startTime: startTime + this.startTimeOffset,
       endTime: endTime + this.startTimeOffset,
-      confidence: 0,
+      confidence: speechConfidence(words),
     };
-    if (words.length > 0) {
+    if (words.length > 0 && this.#opts.includeTimestamps) {
       speechData.words = words.map((word) =>
         createTimedString({
           text: word.text ?? '',
@@ -792,8 +974,10 @@ export class SpeechStream extends stt.SpeechStream {
     }
 
     if (messageType === 'partial_transcript') {
-      this.#logger.debug({ data }, 'Received message type partial_transcript');
-      if (text) {
+      this.#logger.debug({ 'lk.pii.data': data }, 'Received message type partial_transcript');
+      if (text && text !== this.#lastPartialText) {
+        this.#lastPartialText = text;
+
         if (!this.#speaking) {
           this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
           this.#speaking = true;
@@ -803,10 +987,9 @@ export class SpeechStream extends stt.SpeechStream {
           alternatives: [speechData],
         });
       }
-    } else if (
-      (messageType === 'committed_transcript' && !this.#opts.includeTimestamps) ||
-      (messageType === 'committed_transcript_with_timestamps' && this.#opts.includeTimestamps)
-    ) {
+    } else if (messageType === this.#finalMessageType) {
+      this.#lastPartialText = '';
+
       if (text) {
         if (!this.#speaking) {
           this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
@@ -824,7 +1007,10 @@ export class SpeechStream extends stt.SpeechStream {
         this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
         this.#speaking = false;
       }
-    } else if (messageType === 'committed_transcript') {
+    } else if (
+      messageType === 'committed_transcript' ||
+      messageType === 'committed_transcript_with_timestamps'
+    ) {
       return;
     } else if (messageType === 'session_started') {
       this.#logger.debug(`Session started with ID: ${data.session_id ?? 'unknown'}`);
@@ -839,13 +1025,14 @@ export class SpeechStream extends stt.SpeechStream {
       const detailsSuffix = data.details ? ` - ${data.details}` : '';
       this.#logger.error(`ElevenLabs STT error [${messageType}]: ${errorMsg}${detailsSuffix}`);
       throw new APIConnectionError({ message: `${messageType}: ${errorMsg}${detailsSuffix}` });
-    } else if (
-      messageType === 'committed_transcript_with_timestamps' &&
-      !this.#opts.includeTimestamps
-    ) {
-      return;
     } else {
-      this.#logger.warn(`ElevenLabs STT unknown message type: ${messageType}, data: ${data}`);
+      this.#logger.warn(
+        {
+          messageType,
+          'lk.pii.data': data,
+        },
+        'ElevenLabs STT returned an unknown message type',
+      );
     }
   }
 }

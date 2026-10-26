@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
+import { createEndCallTool } from '../beta/tools/end_call.js';
 import { voice } from '../index.js';
 import {
   CONFIRM_DUPLICATE_PARAM,
@@ -15,11 +16,24 @@ import {
   type ToolOptions,
   Toolset,
   type ToolsetContext,
+  isFunctionTool,
   tool,
 } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('tools object compatibility', () => {
+  it('preserves metadata on named tools and through anonymous tool normalization', () => {
+    const meta = { guardrails: { requiresApproval: true }, tags: ['orders'] };
+    const options = { description: 'Look up an order', meta, execute: async () => 'found' };
+    const namedTool = tool({ name: 'lookup', ...options });
+    const anonymousTool = tool(options);
+
+    expect(namedTool.meta).toEqual(meta);
+    expect(anonymousTool.meta).toEqual(meta);
+    const toolCtx = new ToolContext({ lookup: anonymousTool });
+    expect(toolCtx.copy().getFunctionTool('lookup')?.meta).toEqual(meta);
+  });
+
   it('normalizes object tools into named function tools', () => {
     const getWeather = tool({
       description: 'Get the weather',
@@ -701,6 +715,32 @@ describe('ToolContext', () => {
     expect(ctx.getFunctionTool('b')).toBe(b);
   });
 
+  it('_exclude hides a toolset member but keeps the toolset', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const direct = makeFn('direct');
+    const ts = new Toolset({ id: 'set', tools: [a, b] });
+    const ctx = new ToolContext([ts, direct]);
+
+    ctx._exclude([a]);
+
+    expect(ctx.getFunctionTool('a')).toBeUndefined();
+    expect(ctx.flatten()).not.toContain(a);
+    expect(ctx.getFunctionTool('b')).toBe(b);
+    expect(ctx.getFunctionTool('direct')).toBe(direct);
+    expect(ctx.toolsets).toEqual([ts]);
+  });
+
+  it('_exclude with no tools is a no-op', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ctx = new ToolContext([a, b]);
+
+    ctx._exclude([]);
+
+    expect(Object.keys(ctx.functionTools).sort()).toEqual(['a', 'b']);
+  });
+
   it('copy() yields an independent context with the same tools', () => {
     const a = makeFn('a');
     const ctx = new ToolContext([a]);
@@ -765,6 +805,22 @@ describe('ToolContext', () => {
     const ctx = new ToolContext([b, provider, a]);
 
     expect(ctx.flatten()).toEqual([b, a, provider]);
+  });
+});
+
+describe('createEndCallTool', () => {
+  it('sets IGNORE_ON_ENTER only when requested', () => {
+    const [defaultTool] = createEndCallTool().tools;
+    expect(defaultTool).toBeDefined();
+    expect(isFunctionTool(defaultTool)).toBe(true);
+    expect(isFunctionTool(defaultTool) && defaultTool.flags & ToolFlag.IGNORE_ON_ENTER).toBe(0);
+
+    const [ignoredTool] = createEndCallTool({ ignoreOnEnter: true }).tools;
+    expect(ignoredTool).toBeDefined();
+    expect(isFunctionTool(ignoredTool)).toBe(true);
+    expect(
+      isFunctionTool(ignoredTool) && ignoredTool.flags & ToolFlag.IGNORE_ON_ENTER,
+    ).toBeTruthy();
   });
 });
 
@@ -841,7 +897,7 @@ describe('Toolset', () => {
   it('lets setup push tools after activation via ctx.updateTools', async () => {
     const a = makeFn('a');
     const b = makeFn('b');
-    let push!: (tools: readonly Tool[]) => void;
+    let push!: ToolsetContext['updateTools'];
     const ts = Toolset.create({
       id: 'mcp',
       setup: async ({ updateTools }) => {

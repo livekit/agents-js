@@ -98,14 +98,26 @@ export abstract class AudioInput {
     await this.multiStream.close();
   }
 
+  /**
+   * Framework-owned attach-state transition used by {@link AgentInput.setAudioEnabled}.
+   * Subclasses that gate frames (or wrap another {@link AudioInput}) should override
+   * this — not only {@link onAttached}/{@link onDetached} — so mute still works when
+   * lifecycle hooks omit `super`.
+   * @internal
+   */
+  setAttached(_attached: boolean): void {}
+
+  /** Lifecycle hook invoked after {@link setAttached}(true). */
   onAttached(): void {}
 
+  /** Lifecycle hook invoked after {@link setAttached}(false). */
   onDetached(): void {}
 }
 
 export abstract class AudioOutput extends EventEmitter {
   static readonly EVENT_PLAYBACK_STARTED = 'playbackStarted';
   static readonly EVENT_PLAYBACK_FINISHED = 'playbackFinished';
+  static readonly EVENT_PLAYBACK_PROGRESSED = 'playbackProgressed';
 
   private playbackFinishedFuture: Future<void> = new Future();
   private _capturing: boolean = false;
@@ -132,6 +144,9 @@ export abstract class AudioOutput extends EventEmitter {
       );
       this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (ev: PlaybackFinishedEvent) =>
         this.onPlaybackFinished(ev),
+      );
+      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_PROGRESSED, (ev: PlaybackProgressedEvent) =>
+        this.onPlaybackProgressed(ev),
       );
     }
   }
@@ -196,6 +211,16 @@ export abstract class AudioOutput extends EventEmitter {
   }
 
   /**
+   * Report a stretch of the current segment that has played.
+   *
+   * Sinks that own their playback device report one run at a time; one that reports nothing is
+   * described by its segment endpoints instead.
+   */
+  onPlaybackProgressed(ev: PlaybackProgressedEvent): void {
+    this.emit(AudioOutput.EVENT_PLAYBACK_PROGRESSED, ev);
+  }
+
+  /**
    * Developers building audio sinks must call this method when a playback/segment is finished.
    * Segments are segmented by calls to flush() or clearBuffer()
    */
@@ -212,6 +237,24 @@ export abstract class AudioOutput extends EventEmitter {
   }
 
   flush(): void {
+    this._capturing = false;
+  }
+
+  /** @internal */
+  _markInputTruncated(): void {
+    this.nextInChain?._markInputTruncated();
+  }
+
+  /**
+   * Forget the segment currently being captured, without treating it as a flush boundary.
+   *
+   * For an output whose open segment was abandoned rather than flushed — e.g. a capture threw and
+   * the segment has already been reported finished. Without this the output keeps believing a
+   * segment is open, so the next `captureFrame` silently joins a segment that no longer exists
+   * instead of counting a new one.
+   * @internal
+   */
+  abandonOpenSegment(): void {
     this._capturing = false;
   }
 
@@ -268,6 +311,20 @@ export interface PlaybackStartedEvent {
   createdAt: number;
 }
 
+/**
+ * A stretch of the current segment that has played.
+ *
+ * Reported once the audio can no longer be discarded, so it is never revised.
+ */
+export interface PlaybackProgressedEvent {
+  /** The timestamp (Date.now()) at which this stretch began to play */
+  startedAt: number;
+  /** Where it starts in the audio captured for the current segment, in milliseconds */
+  offset: number;
+  /** How much of it played, in milliseconds */
+  duration: number;
+}
+
 export abstract class TextOutput {
   constructor(protected readonly nextInChain?: TextOutput) {}
 
@@ -296,7 +353,10 @@ export class AgentInput {
   // enabled by default
   private _audioEnabled: boolean = true;
 
-  constructor(private readonly audioChanged: () => void) {}
+  constructor(
+    private readonly audioChanged: () => void,
+    private readonly audioEnabledChanged?: (enabled: boolean) => void,
+  ) {}
 
   setAudioEnabled(enable: boolean): void {
     if (enable === this._audioEnabled) {
@@ -304,16 +364,13 @@ export class AgentInput {
     }
 
     this._audioEnabled = enable;
+    this.audioEnabledChanged?.(enable);
 
     if (!this._audioStream) {
       return;
     }
 
-    if (enable) {
-      this._audioStream.onAttached();
-    } else {
-      this._audioStream.onDetached();
-    }
+    this.applyAudioAttachState(this._audioStream, enable);
   }
 
   get audioEnabled(): boolean {
@@ -325,8 +382,29 @@ export class AgentInput {
   }
 
   set audio(stream: AudioInput | null) {
+    if (stream === this._audioStream) {
+      return;
+    }
+
+    if (this._audioStream) {
+      this.applyAudioAttachState(this._audioStream, false);
+    }
+
     this._audioStream = stream;
     this.audioChanged();
+
+    if (this._audioStream) {
+      this.applyAudioAttachState(this._audioStream, this._audioEnabled);
+    }
+  }
+
+  private applyAudioAttachState(stream: AudioInput, attached: boolean): void {
+    stream.setAttached(attached);
+    if (attached) {
+      stream.onAttached();
+    } else {
+      stream.onDetached();
+    }
   }
 }
 

@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
+import type { LLMMetrics } from '../metrics/base.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { delay } from '../utils.js';
+import { Future, Task, delay } from '../utils.js';
 import { ChatContext, FunctionCall } from './chat_context.js';
 import { type ChatChunk, LLM, LLMStream } from './llm.js';
 import type { ToolChoice, ToolCtxInput } from './tool_context.js';
@@ -58,6 +59,143 @@ class MockLLM extends LLM {
     );
   }
 }
+
+class PrewarmLLM extends MockLLM {
+  constructor(private readonly prewarmImpl: (signal: AbortSignal) => Promise<void>) {
+    super([]);
+  }
+
+  protected override _prewarmImpl(signal: AbortSignal): Promise<void> {
+    return this.prewarmImpl(signal);
+  }
+}
+
+const waitForTasks = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+async function collectMetrics(llm: MockLLM): Promise<LLMMetrics> {
+  const metrics = new Promise<LLMMetrics>((resolve) => llm.once('metrics_collected', resolve));
+  await llm.chat({ chatCtx: new ChatContext() }).collect();
+  return metrics;
+}
+
+describe('LLMStream metrics', () => {
+  it('defaults cache creation tokens to zero', async () => {
+    const metrics = await collectMetrics(new MockLLM([]));
+
+    expect(metrics.cacheCreationTokens).toBe(0);
+  });
+
+  it('carries cache creation tokens', async () => {
+    const metrics = await collectMetrics(
+      new MockLLM([
+        {
+          id: '1',
+          usage: {
+            completionTokens: 10,
+            promptTokens: 100,
+            promptCachedTokens: 20,
+            cacheCreationTokens: 42,
+            totalTokens: 110,
+          },
+        },
+      ]),
+    );
+
+    expect(metrics.cacheCreationTokens).toBe(42);
+  });
+});
+
+describe('LLM prewarm lifecycle', () => {
+  it('is a no-op when the provider does not override _prewarmImpl', async () => {
+    const taskFrom = vi.spyOn(Task, 'from');
+    const llm = new MockLLM([]);
+
+    try {
+      llm.prewarm();
+      await llm.aclose();
+
+      expect(taskFrom).not.toHaveBeenCalled();
+    } finally {
+      taskFrom.mockRestore();
+    }
+  });
+
+  it('schedules fire-and-forget work without surfacing provider rejection', async () => {
+    const unhandledRejection = vi.fn();
+    process.on('unhandledRejection', unhandledRejection);
+    const llm = new PrewarmLLM(async () => {
+      throw new Error('provider unavailable');
+    });
+
+    try {
+      expect(() => llm.prewarm()).not.toThrow();
+      await waitForTasks();
+
+      expect(unhandledRejection).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandledRejection);
+    }
+  });
+
+  it('invokes the provider hook once across repeated calls, including after failure', async () => {
+    const prewarmImpl = vi.fn(async () => {
+      throw new Error('provider unavailable');
+    });
+    const llm = new PrewarmLLM(prewarmImpl);
+
+    llm.prewarm();
+    llm.prewarm();
+    await waitForTasks();
+    llm.prewarm();
+    await waitForTasks();
+
+    expect(prewarmImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts an in-flight prewarm and waits for provider cleanup during close', async () => {
+    const started = new Future<void>();
+    let signal: AbortSignal | undefined;
+    let cleanedUp = false;
+    const llm = new PrewarmLLM(
+      (prewarmSignal) =>
+        new Promise<void>((resolve) => {
+          signal = prewarmSignal;
+          started.resolve();
+          prewarmSignal.addEventListener(
+            'abort',
+            () => {
+              setImmediate(() => {
+                cleanedUp = true;
+                resolve();
+              });
+            },
+            { once: true },
+          );
+        }),
+    );
+
+    llm.prewarm();
+    await started.await;
+    const closing = llm.aclose();
+
+    expect(signal?.aborted).toBe(true);
+    expect(cleanedUp).toBe(false);
+
+    await closing;
+    expect(cleanedUp).toBe(true);
+  });
+
+  it('does not start prewarm work after close wins the lifecycle race', async () => {
+    const prewarmImpl = vi.fn(async () => {});
+    const llm = new PrewarmLLM(prewarmImpl);
+
+    await llm.aclose();
+    llm.prewarm();
+    await waitForTasks();
+
+    expect(prewarmImpl).not.toHaveBeenCalled();
+  });
+});
 
 describe('LLMStream.collect', () => {
   beforeAll(() => {

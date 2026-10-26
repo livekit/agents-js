@@ -16,7 +16,9 @@ export const logMetrics = (metrics: AgentMetrics) => {
         ttftMs: roundTwoDecimals(metrics.ttftMs),
         inputTokens: metrics.promptTokens,
         promptCachedTokens: metrics.promptCachedTokens,
+        cacheCreationTokens: metrics.cacheCreationTokens ?? 0,
         outputTokens: metrics.completionTokens,
+        reasoningTokens: metrics.reasoningTokens ?? 0,
         tokensPerSecond: roundTwoDecimals(metrics.tokensPerSecond),
       })
       .info('LLM metrics');
@@ -27,6 +29,7 @@ export const logMetrics = (metrics: AgentMetrics) => {
         input_tokens: metrics.inputTokens,
         cached_input_tokens: metrics.inputTokenDetails.cachedTokens,
         output_tokens: metrics.outputTokens,
+        reasoning_tokens: metrics.reasoningTokens ?? 0,
         total_tokens: metrics.totalTokens,
         tokens_per_second: roundTwoDecimals(metrics.tokensPerSecond),
       })

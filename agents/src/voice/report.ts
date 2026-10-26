@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext } from '../llm/chat_context.js';
 import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
+import { msToUnixSeconds } from '../proto.js';
 import { version } from '../version.js';
 import type {
   AgentSessionOptions,
@@ -11,7 +12,8 @@ import type {
 } from './agent_session.js';
 import type { AgentEvent } from './events.js';
 
-type ReportOptions = AgentSessionOptions & Partial<VoiceOptions>;
+type ReportOptions = AgentSessionOptions &
+  Partial<VoiceOptions> & { recordingOptions: ResolvedRecordingOptions };
 
 export interface SessionReport {
   jobId: string;
@@ -21,8 +23,6 @@ export interface SessionReport {
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableRecording: boolean;
-  /** Resolved per-category recording options for this session. */
-  recordingOptions: ResolvedRecordingOptions;
   /** Timestamp when the session started (milliseconds) */
   startedAt: number;
   /** Timestamp when the session report was created (milliseconds), typically at the end of the session */
@@ -45,8 +45,6 @@ export interface SessionReportOptions {
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableRecording?: boolean;
-  /** Resolved per-category recording options for this session. */
-  recordingOptions?: ResolvedRecordingOptions;
   /** Timestamp when the session started (milliseconds) */
   startedAt?: number;
   /** Timestamp when the session report was created (milliseconds) */
@@ -61,6 +59,7 @@ export interface SessionReportOptions {
 
 export function createSessionReport(opts: SessionReportOptions): SessionReport {
   const timestamp = opts.timestamp ?? Date.now();
+  const startedAt = opts.startedAt ?? Date.now();
   const audioRecordingStartedAt = opts.audioRecordingStartedAt;
 
   return {
@@ -71,18 +70,16 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     events: opts.events,
     chatHistory: opts.chatHistory,
     enableRecording: opts.enableRecording ?? false,
-    recordingOptions: opts.recordingOptions ?? {
-      audio: false,
-      traces: false,
-      logs: false,
-      transcript: false,
-    },
-    startedAt: opts.startedAt ?? Date.now(),
+    startedAt,
     timestamp,
     audioRecordingPath: opts.audioRecordingPath,
     audioRecordingStartedAt,
     duration:
-      audioRecordingStartedAt !== undefined ? timestamp - audioRecordingStartedAt : undefined,
+      audioRecordingStartedAt !== undefined
+        ? timestamp - audioRecordingStartedAt
+        : opts.startedAt !== undefined
+          ? timestamp - startedAt
+          : undefined,
     modelUsage: opts.modelUsage,
   };
 }
@@ -112,7 +109,7 @@ function jsToPythonFieldName(key: string): string {
  * through; `extra` dicts are emitted verbatim (Python keeps `extra` as a free-form dict, so its
  * provider-supplied keys must not be converted).
  *
- * @internal Exported so other Python-facing serialization boundaries (e.g. the `lk.chat_ctx`
+ * @internal Exported so other Python-facing serialization boundaries (e.g. the `lk.pii.chat_ctx`
  * span attribute) can emit the same snake_case wire shape as the session report.
  */
 export function toSnakeCaseDeep(value: unknown): unknown {
@@ -177,6 +174,11 @@ function eventToJSON(event: AgentEvent): Record<string, unknown> {
       // Raw PCM is not part of the wire format.
       delete e.speechInput;
       break;
+    case 'function_tools_executed':
+      // Derived from the outputs' replyRequired, so Python's model_dump() omits them.
+      delete e.hasToolReply;
+      delete e.cancelToolReply;
+      break;
     case 'error':
       e.source = serializeEventSource(e.source);
       e.error = serializeEventError(e.error);
@@ -211,6 +213,22 @@ function modelUsageToJSON(usage: ModelUsage): Record<string, unknown> {
     }
   }
   return out;
+}
+
+function chatHistoryToStandardJSON(chatHistory: ChatContext): unknown {
+  const json = chatHistory.toJSON({ excludeTimestamp: false }) as {
+    items?: Array<Record<string, unknown>>;
+  };
+
+  for (const item of json.items ?? []) {
+    if (typeof item.createdAt === 'number') {
+      // Direct OTLP logs use msToTimestamp(). The redaction collector rebuilds that same
+      // protobuf from standard report JSON, where created_at is Unix seconds.
+      item.createdAt = msToUnixSeconds(item.createdAt);
+    }
+  }
+
+  return toSnakeCaseDeep(json);
 }
 
 //   - header: protobuf MetricsRecordingHeader (room_id, duration, start_time)
@@ -276,8 +294,9 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       max_tool_steps: options.maxToolSteps,
       user_away_timeout: options.userAwayTimeout ?? null,
       preemptive_generation: options.turnHandling?.preemptiveGeneration ?? {},
+      recording_options: { ...options.recordingOptions },
     },
-    chat_history: toSnakeCaseDeep(report.chatHistory.toJSON({ excludeTimestamp: false })),
+    chat_history: chatHistoryToStandardJSON(report.chatHistory),
     enable_user_data_training: report.enableRecording,
     timestamp: report.timestamp,
     usage: report.modelUsage ? report.modelUsage.map(modelUsageToJSON) : null,

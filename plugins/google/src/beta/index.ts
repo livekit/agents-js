@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as realtime from '../realtime/index.js';
 
+export { STT as GeminiSTT, type STTOptions as GeminiSTTOptions } from './gemini_stt.js';
 export {
   TTS,
   type CustomPronunciationParams,
