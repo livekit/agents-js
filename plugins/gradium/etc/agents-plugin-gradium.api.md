@@ -105,7 +105,7 @@ export class TTS extends tts.TTS {
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
     // (undocumented)
-    updateOptions(opts: Partial<Pick<TTSOptions, 'voice' | 'jsonConfig'>>): void;
+    updateOptions(opts: Partial<Pick<TTSOptions, 'voice' | 'voiceId' | 'jsonConfig'>>): void;
 }
 
 // @public (undocumented)
