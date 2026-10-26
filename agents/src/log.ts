@@ -16,17 +16,34 @@ type GlobalState = {
 
 const globals = globalThis as typeof globalThis & GlobalState;
 
+// LiveKit Cloud injects this into deployed agents. Child processes inherit it.
+const deployedRegion = process.env.LIVEKIT_REGION_NAME || undefined;
+
 export { log, loggerOptions, type LoggerOptions };
 
 const createLogger = ({ pretty, level }: LoggerOptions): Logger => {
   const logLevel = level || 'info';
   const streams: { stream: DestinationStream; level: string }[] = [
-    { stream: pretty ? pinoPretty({ colorize: true }) : process.stdout, level: logLevel },
+    {
+      stream: pretty
+        ? pinoPretty({
+            colorize: true,
+            ...(process.platform === 'win32' && process.stdout.isTTY
+              ? { destination: process.stdout }
+              : {}),
+          })
+        : process.stdout,
+      level: logLevel,
+    },
     { stream: new OtelDestination(), level: 'debug' },
   ];
 
   return pino(
-    { level: logLevel, serializers: { error: pino.stdSerializers.err } },
+    {
+      level: logLevel,
+      serializers: { error: pino.stdSerializers.err },
+      ...(deployedRegion && { mixin: () => ({ region: deployedRegion }) }),
+    },
     multistream(streams),
   );
 };

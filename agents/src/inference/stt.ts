@@ -4,9 +4,10 @@
 import { type AudioFrame } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { WebSocket } from 'ws';
-import { APIError, APIStatusError } from '../_exceptions.js';
+import { APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
+import { ChatMessage } from '../llm/index.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import {
@@ -17,8 +18,9 @@ import {
   SpeechEventType,
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
+import { type AudioBuffer, Task, cancelAndWait, shortuuid, waitUntilAborted } from '../utils.js';
 import { type VAD, VADEventType, type VADStream } from '../vad.js';
+import type { ConversationItemAddedEvent } from '../voice/events.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type SttServerEvent,
@@ -48,15 +50,19 @@ export type AssemblyaiModels =
   | 'assemblyai/universal-streaming'
   | 'assemblyai/universal-streaming-multilingual'
   | 'assemblyai/u3-rt-pro'
-  | 'assemblyai/universal-3-5-pro';
-
-export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
+  | 'assemblyai/universal-3-5-pro'
+  | 'assemblyai/universal-3-6-pro';
 
 export type XaiSTTModels = 'xai/stt-1';
 
-export type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard';
+export type SpeechmaticsModels =
+  | 'speechmatics/enhanced'
+  | 'speechmatics/standard'
+  | 'speechmatics/linden-1';
 
 export type InworldSTTModels = 'inworld/inworld-stt-1';
+
+export type GoogleSTTModels = 'google/gemini-3.5-transcribe-live';
 
 export interface CartesiaOptions {
   /** Minimum volume threshold. Ink Whisper only. Default: not specified. */
@@ -96,7 +102,7 @@ export interface DeepgramOptions {
   profanity_filter?: boolean;
   /** Convert spoken numbers to numerals. */
   numerals?: boolean;
-  /** Opt out of model improvement program. */
+  /** Always true for LiveKit Inference; the passed value is ignored. */
   mip_opt_out?: boolean;
   /** Enable speaker diarization. Default: false. */
   diarize?: boolean;
@@ -111,7 +117,7 @@ export interface DeepgramFluxOptions {
   eot_timeout_ms?: number;
   /** Key terms for recognition. */
   keyterm?: string | string[];
-  /** Opt out of model improvement program. Default: false. */
+  /** Always true for LiveKit Inference; the passed value is ignored. */
   mip_opt_out?: boolean;
   /** Language hint. */
   language_hint?: string;
@@ -130,10 +136,21 @@ export interface AssemblyAIOptions {
   max_turn_silence?: number;
   /** Key terms prompt for recognition. Default: not specified. */
   keyterms_prompt?: string[];
+  /**
+   * Include `language_code` and `language_confidence` on final transcripts.
+   * Default: true for multilingual and U3 Pro models, false for Universal-Streaming English.
+   */
+  language_detection?: boolean;
+  /** Seconds of inactivity before AssemblyAI closes the session. Default: not specified. */
+  inactivity_timeout?: number;
+  /** Context describing the audio. Only supported with U3 Pro models; works alongside keyterms_prompt. */
+  prompt?: string;
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
-  /** Context to bias recognition. Only supported with u3-rt-pro. Max 1500 chars. */
+  /** Context to bias recognition. Only supported with U3 Pro models. Max 1750 chars. */
   agent_context?: string;
+  /** Prior turns carried as context; 0 disables carryover. Only supported with U3 Pro models. */
+  previous_context_n_turns?: number;
   /** Isolate the primary voice. Only supported with u3-rt-pro. */
   voice_focus?: 'near-field' | 'far-field';
   /** Background suppression strength. Only supported with u3-rt-pro. */
@@ -158,9 +175,9 @@ export interface SpeechmaticsOptions {
   domain?: string;
   /** BCP-47 locale for output formatting. */
   output_locale?: string;
-  /** Maximum delay in seconds. Valid range is 0.7-4.0. Default: 1.0. */
+  /** Maximum delay in seconds. Valid range is 0.7-4.0. Default: 1.0. RT only. */
   max_delay?: number;
-  /** Maximum delay mode. */
+  /** Maximum delay mode. RT only. */
   max_delay_mode?: 'flexible' | 'fixed' | string;
   /** Enable diarization for modes other than "none". */
   diarization?:
@@ -178,15 +195,15 @@ export interface SpeechmaticsOptions {
   prefer_current_speaker?: boolean;
   /** Enable partial results. Default: true, overridden by the gateway. */
   enable_partials?: boolean;
-  /** Enable entity recognition. */
+  /** Enable entity recognition. RT only. */
   enable_entities?: boolean;
   /** Punctuation override configuration. */
   punctuation_overrides?: Record<string, unknown>;
-  /** Additional vocabulary entries for custom dictionary support. */
+  /** Additional vocabulary entries in the form `{ content, sounds_like? }`. */
   additional_vocab?: Array<Record<string, unknown>>;
-  /** Seconds of silence before finalizing an utterance. */
+  /** Seconds of silence before finalizing an utterance. RT only. */
   end_of_utterance_silence_trigger?: number;
-  /** Audio filtering configuration. */
+  /** Audio filtering configuration. RT only. */
   audio_filtering_config?: Record<string, unknown>;
   /** Transcript filtering configuration. */
   transcript_filtering_config?: Record<string, unknown>;
@@ -213,6 +230,13 @@ export interface InworldSTTOptions {
   vad_threshold?: number;
 }
 
+export interface GoogleSTTOptions {
+  /** BCP-47 language codes. Omit or pass an empty list to detect the language. */
+  language_codes?: string[];
+  /** Up to 1000 terms that bias recognition. */
+  custom_vocabulary?: string[];
+}
+
 export type STTLanguages =
   | 'multi'
   | 'en'
@@ -234,6 +258,19 @@ function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): b
     if (!value) return false;
     return !(typeof value === 'string' && value.toLowerCase() === 'none');
   });
+}
+
+// AssemblyAI U3 Pro models accept `agent_context`, so assistant replies can be carried over.
+const ASSEMBLYAI_CARRYOVER_MODELS = new Set([
+  'assemblyai/u3-rt-pro',
+  'assemblyai/universal-3-5-pro',
+  'assemblyai/universal-3-6-pro',
+]);
+
+const ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS = 1750;
+
+function supportsChatContext(model: string | undefined): boolean {
+  return model !== undefined && ASSEMBLYAI_CARRYOVER_MODELS.has(model);
 }
 
 /**
@@ -298,7 +335,7 @@ const WORD_ALIGNED_MODELS = new Set([
   'assemblyai/universal-streaming-multilingual',
   'assemblyai/u3-rt-pro',
   'assemblyai/universal-3-5-pro',
-  'elevenlabs/scribe_v2_realtime',
+  'assemblyai/universal-3-6-pro',
   'xai/stt-1',
   'speechmatics/enhanced',
   'speechmatics/standard',
@@ -320,10 +357,10 @@ type _STTModels =
   | DeepgramFluxModels
   | CartesiaModels
   | AssemblyaiModels
-  | ElevenlabsSTTModels
   | XaiSTTModels
   | SpeechmaticsModels
-  | InworldSTTModels;
+  | InworldSTTModels
+  | GoogleSTTModels;
 
 export type STTModels = _STTModels | 'auto' | AnyString;
 
@@ -343,7 +380,9 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxMo
             ? SpeechmaticsOptions
             : TModel extends InworldSTTModels
               ? InworldSTTOptions
-              : Record<string, unknown>;
+              : TModel extends GoogleSTTModels
+                ? GoogleSTTOptions
+                : Record<string, unknown>;
 
 /** Inference Fallback Adapter: configuration for a fallback STT model that runs server-side in LiveKit Inference, providing automatic fallback between providers. Extra fields are passed through to the provider. */
 export interface STTFallbackModel {
@@ -382,18 +421,18 @@ export function normalizeSTTFallback(
   return [makeFallback(fallback)];
 }
 
-function isSpeechmaticsModel(model: string | undefined): boolean {
-  return model?.startsWith('speechmatics/') ?? false;
+function isSpeechmaticsRTModel(model: string | undefined): boolean {
+  return (model?.startsWith('speechmatics/') && model !== 'speechmatics/linden-1') ?? false;
 }
 
 function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VAD | undefined {
-  const speechmatics = isSpeechmaticsModel(model);
-  if (vad && !speechmatics) {
+  const speechmaticsRT = isSpeechmaticsRTModel(model);
+  if (vad && !speechmaticsRT) {
     log().warn({ model }, '`vad` will be ignored: model handles endpointing server-side');
     return undefined;
   }
-  if (speechmatics && vad === undefined) {
-    // Speechmatics doesn't endpoint server-side, so fall back to the in-tree
+  if (speechmaticsRT && vad === undefined) {
+    // Speechmatics RT doesn't endpoint server-side, so fall back to the in-tree
     // local inference VAD rather than the deprecated silero plugin.
     return new InferenceVAD();
   }
@@ -405,6 +444,9 @@ export type STTEncoding = 'pcm_s16le';
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_CANCEL_TIMEOUT = 5000;
+const INACTIVITY_TIMEOUT_ERROR_CODE = 2007;
+const FINALIZATION_TIMEOUT_MS = 30_000;
+const FINAL_TRANSCRIPT_INACTIVITY_TIMEOUT_MS = 3_000;
 
 export interface InferenceSTTOptions<TModel extends STTModels> {
   model?: TModel;
@@ -470,9 +512,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       interimResults: true,
       alignedTranscript,
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
-      keyterms:
-        keytermsExtraForModel(typeof opts?.model === 'string' ? opts.model : undefined) !==
-        undefined,
+      keyterms: keytermsExtraForModel(initialModel) !== undefined,
+      chatContext: supportsChatContext(initialModel),
     });
 
     const {
@@ -586,6 +627,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       ];
       this.updateCapabilities({
         keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
+        chatContext: supportsChatContext(this.opts.model),
         alignedTranscript: alignmentModels.every(alignedTranscriptForModel) ? 'word' : false,
       });
     }
@@ -640,6 +682,22 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       } else {
         stream.updateOptions({ modelOptions: keytermExtra as STTOptions<TModel> });
       }
+    }
+  }
+
+  override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    const chatItem = ev.item;
+    if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
+      // count code points, not UTF-16 units, to match the provider's character limit
+      const chars = Array.from(chatItem.textContent);
+      if (chars.length > ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS) {
+        this.#logger.debug(
+          { fromChars: chars.length, toChars: ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS },
+          'truncating agent_context carryover',
+        );
+      }
+      const agentContext = chars.slice(-ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS).join('');
+      this.updateOptions({ modelOptions: { agent_context: agentContext } as STTOptions<TModel> });
     }
   }
 
@@ -706,7 +764,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
 
     const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
-    const url = `${baseURL}/stt`;
+    const url = `${baseURL}/stt?model=${encodeURIComponent(this.model)}`;
     const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
 
     const socket = await connectWs(url, headers, timeout);
@@ -726,7 +784,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   /** @internal */
   _pendingExtra?: Record<string, unknown>;
   private speechDuration = 0;
-  private reconnectEvent = new Event();
   private stt: STT<TModel>;
   private connOptions: APIConnectOptions;
   private activeWs?: WebSocket;
@@ -801,18 +858,71 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       const vad = await this.stt.vadPromise;
       // Create fresh resources for each connection attempt
       let ws: WebSocket | null = null;
-      let closing = false;
-      let finalReceived = false;
+      let inputEnded = false;
+      let cleanedUp = false;
+      let finalTranscriptReceived = false;
+      let finalizationComplete = false;
+      let sessionClosedReceived = false;
+      let sessionCloseSent = false;
+      let finalizationTimeout: ReturnType<typeof setTimeout> | undefined;
       let vadStream: VADStream | null = null;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
 
+      const sendSessionClose = (socket: WebSocket) => {
+        if (sessionCloseSent || sessionClosedReceived || socket.readyState !== 1) return;
+        sessionCloseSent = true;
+        if (finalizationTimeout) {
+          clearTimeout(finalizationTimeout);
+          finalizationTimeout = undefined;
+        }
+        socket.send(JSON.stringify({ type: 'session.close' }));
+      };
+
+      const sendSessionFinalize = (socket: WebSocket) => {
+        socket.send(JSON.stringify({ type: 'session.finalize' }));
+      };
+
       const resourceCleanup = () => {
-        if (closing) return;
-        closing = true;
-        eventChannel.close();
-        ws?.removeAllListeners();
-        ws?.close();
+        if (cleanedUp) return;
+        cleanedUp = true;
+        if (finalizationTimeout) clearTimeout(finalizationTimeout);
+        void eventChannel.close().catch((error) => {
+          this.#logger.debug({ error }, 'Failed to close STT event channel');
+        });
+        if (ws) {
+          try {
+            sendSessionClose(ws);
+          } catch (error) {
+            this.#logger.debug({ error }, 'Failed to send session.close');
+          }
+          ws.close();
+        }
+      };
+
+      const finishFinalization = () => {
+        if (finalizationComplete) return;
+        finalizationComplete = true;
+        resourceCleanup();
+      };
+
+      const scheduleFinalizationTimeout = () => {
+        if (
+          !inputEnded ||
+          finalizationComplete ||
+          sessionCloseSent ||
+          sessionClosedReceived ||
+          cleanedUp
+        ) {
+          return;
+        }
+        if (finalizationTimeout) clearTimeout(finalizationTimeout);
+        // Lifecycle acknowledgments are optional and may precede trailing transcripts.
+        // ponytail: Add an interim-specific deadline only if shutdown latency requires it.
+        const timeout = finalTranscriptReceived
+          ? FINAL_TRANSCRIPT_INACTIVITY_TIMEOUT_MS
+          : FINALIZATION_TIMEOUT_MS;
+        finalizationTimeout = setTimeout(finishFinalization, timeout);
       };
 
       const createWsListener = async (ws: WebSocket, signal: AbortSignal) => {
@@ -826,7 +936,23 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           ws.on('message', (data) => {
             const json = JSON.parse(data.toString()) as SttServerEvent;
-            eventChannel.write(json);
+            if (json.type === 'final_transcript') {
+              finalTranscriptReceived = true;
+            }
+            // a transcript keeps the finalization wait open; an interim with no text is not one
+            // (xai/stt-1 sends an empty interim every second after session.finalized, for as
+            // long as the socket is open, and the stream would never end)
+            const transcriptText = (json as { transcript?: string }).transcript;
+            if (
+              json.type === 'final_transcript' ||
+              json.type === 'preflight_transcript' ||
+              (json.type === 'interim_transcript' && Boolean(transcriptText))
+            ) {
+              scheduleFinalizationTimeout();
+            }
+            void eventChannel.write(json).catch((error) => {
+              this.#logger.debug({ error }, 'Failed to queue STT server event');
+            });
           });
 
           ws.on('error', (e) => {
@@ -836,15 +962,18 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           });
 
           ws.on('close', (code: number) => {
+            const expectedClose =
+              signal.aborted || inputEnded || finalizationComplete || sessionCloseSent;
             resourceCleanup();
 
-            if (!closing) return this.#logger.error('WebSocket closed unexpectedly');
-            if (finalReceived) return resolve();
+            if (expectedClose) return resolve();
+
+            this.#logger.error('WebSocket closed unexpectedly');
 
             reject(
               new APIStatusError({
                 message: 'LiveKit STT connection closed unexpectedly',
-                options: { statusCode: code },
+                options: { statusCode: code, retryable: !inputEnded },
               }),
             );
           });
@@ -858,74 +987,56 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           Math.floor(this.opts.sampleRate / 20), // 50ms
         );
 
-        // Create abort promise once to avoid memory leak
-        const abortPromise = new ThrowsPromise<never, Error>((_, reject) => {
-          if (signal.aborted) {
-            return reject(new Error('Send aborted'));
+        const nextInput = async () => {
+          try {
+            return await this.input.next({ signal });
+          } catch (e) {
+            if (signal.aborted) return undefined;
+            throw e;
           }
-          const onAbort = () => reject(new Error('Send aborted'));
-          signal.addEventListener('abort', onAbort, { once: true });
-        });
-
-        // Manual iteration to support cancellation
-        const iterator = this.input[Symbol.asyncIterator]();
-        try {
-          while (true) {
-            const result = await ThrowsPromise.race([iterator.next(), abortPromise]);
-
-            if (result.done) break;
-            const ev = result.value;
-
-            let frames: AudioFrame[];
-            if (ev === SpeechStream.FLUSH_SENTINEL) {
-              frames = audioStream.flush();
-            } else {
-              const frame = ev as AudioFrame;
-              vadStream?.pushFrame(frame);
-              frames = audioStream.write(new Int16Array(frame.data).buffer);
-            }
-
-            for (const frame of frames) {
-              this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
-              const base64 = Buffer.from(frame.data.buffer).toString('base64');
-              const msg = { type: 'input_audio', audio: base64 };
-              socket.send(JSON.stringify(msg));
-            }
-          }
-
-          closing = true;
-          vadStream?.endInput();
-          socket.send(JSON.stringify({ type: 'session.finalize' }));
-        } catch (e) {
-          if ((e as Error).message === 'Send aborted') {
+        };
+        while (true) {
+          const result = await nextInput();
+          if (result === undefined) {
             // Expected abort, don't log
             return;
           }
-          throw e;
+          if (result.done) break;
+          const ev = result.value;
+
+          let frames: AudioFrame[];
+          if (ev === SpeechStream.FLUSH_SENTINEL) {
+            frames = audioStream.flush();
+          } else {
+            const frame = ev as AudioFrame;
+            vadStream?.pushFrame(frame);
+            frames = audioStream.write(new Int16Array(frame.data).buffer);
+          }
+
+          for (const frame of frames) {
+            this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
+            const base64 = Buffer.from(frame.data.buffer).toString('base64');
+            const msg = { type: 'input_audio', audio: base64 };
+            socket.send(JSON.stringify(msg));
+          }
         }
+
+        inputEnded = true;
+        vadStream?.endInput();
+        sendSessionFinalize(socket);
+        scheduleFinalizationTimeout();
       };
 
       const processVAD = async (stream: VADStream, socket: WebSocket, signal: AbortSignal) => {
-        const abortPromise = new ThrowsPromise<never, Error>((_, reject) => {
-          if (signal.aborted) {
-            return reject(new Error('VAD aborted'));
-          }
-          const onAbort = () => reject(new Error('VAD aborted'));
-          signal.addEventListener('abort', onAbort, { once: true });
-        });
-
+        // VADStream.next() does not support cancellation.
         const iterator = stream[Symbol.asyncIterator]();
-        try {
-          while (true) {
-            const result = await ThrowsPromise.race([iterator.next(), abortPromise]);
-            if (result.done) break;
-            if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
-            if (socket.readyState !== 1) return;
-            socket.send(JSON.stringify({ type: 'session.finalize' }));
-          }
-        } catch (e) {
-          if ((e as Error).message === 'VAD aborted') return;
-          throw e;
+        while (true) {
+          const { result, isAborted } = await waitUntilAborted(iterator.next(), signal);
+          if (isAborted) return;
+          if (result.done) break;
+          if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
+          if (socket.readyState !== 1) return;
+          sendSessionFinalize(socket);
         }
       };
 
@@ -962,11 +1073,18 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
             switch (event.type) {
               case 'session.created':
+                break;
               case 'session.finalized':
                 break;
               case 'session.closed':
-                finalReceived = true;
-                resourceCleanup();
+                if (!inputEnded && !sessionCloseSent) {
+                  throw new APIStatusError({
+                    message: 'LiveKit STT session closed before input ended',
+                    options: { statusCode: -1, retryable: true },
+                  });
+                }
+                sessionClosedReceived = true;
+                finishFinalization();
                 break;
               case 'start_of_speech':
                 this.processStartOfSpeech();
@@ -981,9 +1099,25 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 this.processTranscript(event, SpeechEventType.PREFLIGHT_TRANSCRIPT);
                 break;
               case 'error':
-                this.#logger.error({ error: event }, 'Received error from LiveKit STT');
+                this.#logger.error({ 'lk.pii.event': event }, 'Received error from LiveKit STT');
                 resourceCleanup();
-                throw new APIError(`LiveKit STT returned error: ${JSON.stringify(event)}`);
+                if (event.code === INACTIVITY_TIMEOUT_ERROR_CODE) {
+                  throw new APIStatusError({
+                    message: 'LiveKit STT returned an error',
+                    options: {
+                      statusCode: event.code,
+                      body: { code: event.code },
+                      retryable: false,
+                    },
+                  });
+                }
+                throw new APIStatusError({
+                  message: `LiveKit Inference STT returned error: ${event.message}`,
+                  options: {
+                    statusCode: event.code ?? -1,
+                    body: event,
+                  },
+                });
             }
           }
         } finally {
@@ -998,6 +1132,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       try {
         ws = await this.stt.connectWs(this.connOptions.timeoutMs);
+        // An abort that landed during connectWs has no listener yet: the socket would
+        // otherwise idle until the finalization timeout, holding a gateway concurrency slot.
+        if (this.abortController.signal.aborted) break;
         this.activeWs = ws;
         vadStream = vad?.stream() ?? null;
 
@@ -1016,28 +1153,19 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         const vadTask = activeVADStream
           ? Task.from(({ signal }) => processVAD(activeVADStream, ws!, signal), connController)
           : undefined;
-        const waitReconnectTask = Task.from(
-          ({ signal }) => ThrowsPromise.race([this.reconnectEvent.wait(), waitForAbort(signal)]),
-          connController,
-        );
 
         try {
           const taskResults = [sendTask.result, wsListenerTask.result, recvTask.result];
           if (vadTask) taskResults.push(vadTask.result);
 
-          await ThrowsPromise.race([ThrowsPromise.all(taskResults), waitReconnectTask.result]);
-
-          // If reconnect didn't trigger, tasks finished - exit loop
-          if (!waitReconnectTask.done) break;
-
-          // Reconnect triggered - clear event and continue loop
-          this.reconnectEvent.clear();
+          await ThrowsPromise.all(taskResults);
+          break;
         } finally {
           connController.abort();
           this.abortController.signal.removeEventListener('abort', onStreamAbort);
           this.activeWs = undefined;
           vadStream?.close();
-          const tasks = [sendTask, wsListenerTask, recvTask, waitReconnectTask];
+          const tasks = [sendTask, wsListenerTask, recvTask];
           if (vadTask) tasks.push(vadTask);
           await cancelAndWait(tasks, DEFAULT_CANCEL_TIMEOUT);
           resourceCleanup();
