@@ -49,6 +49,8 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
+// Gemini Live reuses 1007 (RFC 6455: invalid frame payload data) to signal that the session
+// context is exhausted.
 const WS_CLOSE_CONTEXT_EXHAUSTED = 1007;
 
 const KNOWN_VERTEXAI_MODELS = new Set(['gemini-3.8-live', 'gemini-live-2.5-flash-native-audio']);
