@@ -4436,6 +4436,10 @@ export class AgentActivity implements RecognitionHooks {
     if (!ignoreTaskSwitch && newAgentTask !== null) {
       this.agentSession.updateAgent(newAgentTask);
       schedulingPaused = true;
+    } else if (newAgentTask !== null && this.newTurnsBlocked) {
+      // a stale handoff was ignored because this agent is already handing off: its reply must
+      // not call tools either
+      schedulingPaused = true;
     }
 
     const toolMessages = [
@@ -5076,6 +5080,10 @@ export class AgentActivity implements RecognitionHooks {
     let schedulingPaused = this.schedulingPaused;
     if (!ignoreTaskSwitch && newAgentTask !== null) {
       this.agentSession.updateAgent(newAgentTask);
+      schedulingPaused = true;
+    } else if (newAgentTask !== null && this.newTurnsBlocked) {
+      // a stale handoff was ignored because this agent is already handing off: its reply must
+      // not call tools either
       schedulingPaused = true;
     }
 
