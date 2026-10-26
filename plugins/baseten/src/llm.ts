@@ -58,6 +58,7 @@ export class OpenAILLM extends llm.LLM {
       this.#opts.client ||
       new OpenAI({
         baseURL: opts.baseURL,
+        maxRetries: 0,
         apiKey: opts.apiKey,
       });
   }
@@ -79,7 +80,7 @@ export class OpenAILLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolCtxInput;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;

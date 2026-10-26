@@ -5,16 +5,105 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
+import { createEndCallTool } from '../beta/tools/end_call.js';
+import { voice } from '../index.js';
 import {
+  CONFIRM_DUPLICATE_PARAM,
   ProviderTool,
   type Tool,
   ToolContext,
+  ToolFlag,
   type ToolOptions,
   Toolset,
   type ToolsetContext,
+  isFunctionTool,
   tool,
 } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
+
+describe('tools object compatibility', () => {
+  it('preserves metadata on named tools and through anonymous tool normalization', () => {
+    const meta = { guardrails: { requiresApproval: true }, tags: ['orders'] };
+    const options = { description: 'Look up an order', meta, execute: async () => 'found' };
+    const namedTool = tool({ name: 'lookup', ...options });
+    const anonymousTool = tool(options);
+
+    expect(namedTool.meta).toEqual(meta);
+    expect(anonymousTool.meta).toEqual(meta);
+    const toolCtx = new ToolContext({ lookup: anonymousTool });
+    expect(toolCtx.copy().getFunctionTool('lookup')?.meta).toEqual(meta);
+  });
+
+  it('normalizes object tools into named function tools', () => {
+    const getWeather = tool({
+      description: 'Get the weather',
+      execute: async () => 'sunny',
+    });
+
+    const toolCtx = new ToolContext({
+      getWeather,
+    });
+
+    const namedTool = toolCtx.getFunctionTool('getWeather');
+    expect(namedTool).toBeDefined();
+    expect(namedTool?.name).toBe('getWeather');
+    expect(namedTool?.id).toBe('getWeather');
+    expect(namedTool?.description).toBe('Get the weather');
+    expect(toolCtx.tools).toEqual([namedTool]);
+  });
+
+  it('accepts object tools in agent and session construction APIs', () => {
+    const tools = {
+      lookupOrder: tool({
+        description: 'Look up an order',
+        execute: async () => ({ ok: true }),
+      }),
+    };
+
+    const agent = new voice.Agent({ instructions: 'help', tools });
+    const createdAgent = voice.Agent.create({ instructions: 'help', tools });
+    const task = new voice.AgentTask({ instructions: 'help', tools });
+    const createdTask = voice.AgentTask.create({ instructions: 'help', tools });
+    const session = new voice.AgentSession({ tools, vad: null });
+
+    expect(agent.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
+    expect(createdAgent.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
+    expect(task.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
+    expect(createdTask.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
+    expect(session.tools[0]?.name).toBe('lookupOrder');
+  });
+
+  it('keeps rejecting duplicate named function tools in array syntax', () => {
+    const first = tool({
+      name: 'duplicate',
+      description: 'First tool',
+      execute: async () => 'first',
+    });
+    const second = tool({
+      name: 'duplicate',
+      description: 'Second tool',
+      execute: async () => 'second',
+    });
+
+    expect(() => new ToolContext([first, second])).toThrow('duplicate function name');
+  });
+
+  it('rejects named tools and toolsets in object syntax', () => {
+    const namedTool = tool({
+      name: 'alreadyNamed',
+      description: 'Already named',
+      execute: async () => 'ok',
+    });
+    const toolset = new Toolset({ id: 'group', tools: [] });
+
+    expect(() => new ToolContext({ alreadyNamed: namedTool })).toThrow(
+      'tools object entry "alreadyNamed" must be anonymous',
+    );
+    expect(() => new ToolContext({ group: toolset })).toThrow(
+      'tools object entry "group" must be an anonymous function tool',
+    );
+  });
+});
 
 describe('Tool Context', () => {
   describe('oaiParams', () => {
@@ -100,6 +189,97 @@ describe('Tool Context', () => {
         createToolOptions('123', { name: 'John' }),
       );
       expect(result).toBe('The weather in San Francisco is sunny, John');
+    });
+
+    it('defaults to allow duplicate calls and no flags', () => {
+      const testFunction = tool({
+        name: 'defaultDuplicatePolicy',
+        description: 'Test default duplicate policy',
+        execute: async () => 'ok',
+      });
+
+      expect(testFunction.onDuplicate).toBe('allow');
+      expect(testFunction.flags).toBe(ToolFlag.NONE);
+    });
+
+    it('stores cancellable flag and duplicate policy', () => {
+      const testFunction = tool({
+        name: 'cancellableDuplicatePolicy',
+        description: 'Test duplicate policy',
+        execute: async () => 'ok',
+        flags: ToolFlag.CANCELLABLE,
+        onDuplicate: 'replace',
+      });
+
+      expect(testFunction.onDuplicate).toBe('replace');
+      expect(testFunction.flags & ToolFlag.CANCELLABLE).toBeTruthy();
+    });
+
+    it('injects and strips confirm duplicate parameter for zod schemas', async () => {
+      let receivedArgs: Record<string, unknown> | undefined;
+      const testFunction = tool({
+        name: 'confirmDuplicateZod',
+        description: 'Test confirm duplicate with zod',
+        parameters: z.object({
+          query: z.string(),
+        }),
+        onDuplicate: 'confirm',
+        execute: async (args) => {
+          receivedArgs = args;
+          return 'ok';
+        },
+      });
+
+      const params = oaiParams(testFunction.parameters);
+      expect(params.properties).toHaveProperty(CONFIRM_DUPLICATE_PARAM);
+      expect(params.required).toContain(CONFIRM_DUPLICATE_PARAM);
+
+      const result = await testFunction.execute(
+        { query: 'flights', [CONFIRM_DUPLICATE_PARAM]: true },
+        createToolOptions('confirm-zod'),
+      );
+
+      expect(result).toBe('ok');
+      expect(receivedArgs).toEqual({ query: 'flights' });
+    });
+
+    it('injects and strips confirm duplicate parameter for raw JSON schemas', async () => {
+      let receivedArgs: Record<string, unknown> | undefined;
+      const testFunction = tool({
+        name: 'confirmDuplicateRaw',
+        description: 'Test confirm duplicate with raw schema',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+          },
+          required: ['query'],
+        },
+        onDuplicate: 'confirm',
+        execute: async (args) => {
+          receivedArgs = args;
+          return 'ok';
+        },
+      });
+
+      expect(testFunction.parameters).toMatchObject({
+        properties: {
+          [CONFIRM_DUPLICATE_PARAM]: {
+            type: ['boolean', 'null'],
+          },
+        },
+      });
+      expect((testFunction.parameters as { required: string[] }).required).toContain(
+        CONFIRM_DUPLICATE_PARAM,
+      );
+
+      const result = await testFunction.execute(
+        { query: 'flights', [CONFIRM_DUPLICATE_PARAM]: true },
+        createToolOptions('confirm-raw'),
+      );
+
+      expect(result).toBe('ok');
+      expect(receivedArgs).toEqual({ query: 'flights' });
     });
 
     it('should properly type a callable function', async () => {
@@ -428,14 +608,15 @@ describe('Tool Context', () => {
 });
 
 describe('tool() name requirement', () => {
-  it('throws when name is missing', () => {
-    expect(() =>
-      // @ts-expect-error - name is required
-      tool({
-        description: 'no name',
-        execute: async () => 'x',
-      }),
-    ).toThrow('requires a non-empty name');
+  it('creates an anonymous function tool when name is missing', () => {
+    const t = tool({
+      description: 'no name',
+      execute: async () => 'x',
+    });
+
+    expect(t.description).toBe('no name');
+    expect('name' in t).toBe(false);
+    expect('id' in t).toBe(false);
   });
 
   it('throws when name is empty', () => {
@@ -534,6 +715,32 @@ describe('ToolContext', () => {
     expect(ctx.getFunctionTool('b')).toBe(b);
   });
 
+  it('_exclude hides a toolset member but keeps the toolset', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const direct = makeFn('direct');
+    const ts = new Toolset({ id: 'set', tools: [a, b] });
+    const ctx = new ToolContext([ts, direct]);
+
+    ctx._exclude([a]);
+
+    expect(ctx.getFunctionTool('a')).toBeUndefined();
+    expect(ctx.flatten()).not.toContain(a);
+    expect(ctx.getFunctionTool('b')).toBe(b);
+    expect(ctx.getFunctionTool('direct')).toBe(direct);
+    expect(ctx.toolsets).toEqual([ts]);
+  });
+
+  it('_exclude with no tools is a no-op', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ctx = new ToolContext([a, b]);
+
+    ctx._exclude([]);
+
+    expect(Object.keys(ctx.functionTools).sort()).toEqual(['a', 'b']);
+  });
+
   it('copy() yields an independent context with the same tools', () => {
     const a = makeFn('a');
     const ctx = new ToolContext([a]);
@@ -598,6 +805,22 @@ describe('ToolContext', () => {
     const ctx = new ToolContext([b, provider, a]);
 
     expect(ctx.flatten()).toEqual([b, a, provider]);
+  });
+});
+
+describe('createEndCallTool', () => {
+  it('sets IGNORE_ON_ENTER only when requested', () => {
+    const [defaultTool] = createEndCallTool().tools;
+    expect(defaultTool).toBeDefined();
+    expect(isFunctionTool(defaultTool)).toBe(true);
+    expect(isFunctionTool(defaultTool) && defaultTool.flags & ToolFlag.IGNORE_ON_ENTER).toBe(0);
+
+    const [ignoredTool] = createEndCallTool({ ignoreOnEnter: true }).tools;
+    expect(ignoredTool).toBeDefined();
+    expect(isFunctionTool(ignoredTool)).toBe(true);
+    expect(
+      isFunctionTool(ignoredTool) && ignoredTool.flags & ToolFlag.IGNORE_ON_ENTER,
+    ).toBeTruthy();
   });
 });
 
@@ -674,7 +897,7 @@ describe('Toolset', () => {
   it('lets setup push tools after activation via ctx.updateTools', async () => {
     const a = makeFn('a');
     const b = makeFn('b');
-    let push!: (tools: readonly Tool[]) => void;
+    let push!: ToolsetContext['updateTools'];
     const ts = Toolset.create({
       id: 'mcp',
       setup: async ({ updateTools }) => {

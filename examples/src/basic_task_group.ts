@@ -3,21 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
-  beta,
   cli,
   defineAgent,
   inference,
   llm,
   voice,
+  workflows,
 } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-const taskTts = 'elevenlabs/eleven_turbo_v2_5';
+const taskTts = 'deepgram/aura-2';
 
 class CollectNameTask extends voice.AgentTask<string> {
   constructor() {
@@ -90,7 +88,7 @@ class TaskGroupDemoAgent extends voice.Agent {
           description: 'Start a two-step onboarding flow (name then email).',
           parameters: z.object({}),
           execute: async () => {
-            const tg = new beta.TaskGroup({
+            const tg = new workflows.TaskGroup({
               summarizeChatCtx: true,
               onTaskCompleted: async ({ taskId }) => {
                 await this.session.say(`Completed task with id ${taskId}`);
@@ -123,12 +121,8 @@ class TaskGroupDemoAgent extends voice.Agent {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3' }),
       llm: new openai.responses.LLM({
         model: 'gpt-5.2',

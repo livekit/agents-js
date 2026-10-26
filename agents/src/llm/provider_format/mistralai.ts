@@ -16,8 +16,8 @@ export interface MistralFormatData {
  * - Assistant messages become `MessageOutputEntry` items (`message.output`, role `assistant`).
  * - Function calls become `FunctionCallEntry` items (`function.call`).
  * - Function call outputs become `FunctionResultEntry` items (`function.result`).
- * - If entries would be empty (e.g. only system messages), a dummy user message is injected
- *   so the API has a non-empty `inputs` array.
+ * - If entries would be empty (e.g. only system messages), or the final entry is an assistant
+ *   message, a dummy user message is injected so the API receives a valid `inputs` array.
  */
 export function toChatCtx(
   chatCtx: ChatContext,
@@ -58,6 +58,8 @@ export function toChatCtx(
 
   if (entries.length === 0 && injectDummyUserMessage) {
     entries.push({ type: 'message.input', role: 'user', content: '.' });
+  } else if (injectDummyUserMessage && entries.at(-1)?.role === 'assistant') {
+    entries.push({ type: 'message.input', role: 'user', content: '(empty)' });
   }
 
   return [entries, { instructions: instructionParts.join('\n') }];
