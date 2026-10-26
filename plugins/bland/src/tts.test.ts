@@ -5,6 +5,7 @@ import {
   type APIConnectOptions,
   APIError,
   APIStatusError,
+  ConnectionPool,
   DEFAULT_API_CONNECT_OPTIONS,
   initializeLogger,
 } from '@livekit/agents';
@@ -595,13 +596,15 @@ describe('Bland TTS websocket', () => {
     const instance = new TTS({ apiKey: 'k', baseUrl: server.baseUrl });
     try {
       instance.on('error', () => {});
+      const put = vi.spyOn(ConnectionPool.prototype, 'put');
       const stream = instance.stream({ connOptions: TEST_OPTIONS });
       stream.pushText('hello');
       await server.speakReceived.promise;
       const contextId = server.ofType('speak')[0]?.context_id;
       stream.close();
       await server.cancelReceived.promise;
-      await new Promise((resolve) => setImmediate(resolve));
+      // the drained socket returns to the pool only after the cancel ack round-trips
+      await vi.waitFor(() => expect(put).toHaveBeenCalledTimes(1));
       await streamTurn(instance, ['replacement']);
       expect(server.ofType('cancel')).toEqual([{ type: 'cancel', context_id: contextId }]);
       expect(server.sessions).toBe(1);
