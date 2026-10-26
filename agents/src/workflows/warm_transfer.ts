@@ -391,7 +391,7 @@ export function createWarmTransferTask({
   const cancelForCallerHangup = (participantIdentity?: string): void => {
     if (task.done) return;
     logger.info(
-      { 'lk.pii.participant_identity': participantIdentity },
+      { participantIdentity },
       'caller hung up before the transfer completed, cancelling transfer',
     );
     cancellationFut.resolve();
@@ -441,7 +441,7 @@ export function createWarmTransferTask({
     }
 
     logger.info(
-      { 'lk.pii.participant_identity': participant.identity },
+      { participantIdentity: participant.identity },
       'participant disconnected from caller room, closing',
     );
 
@@ -485,8 +485,8 @@ export function createWarmTransferTask({
 
     logger.debug(
       {
-        'lk.pii.participant_identity': humanAgentIdentity,
-        'lk.pii.room_name': callerRoom.name,
+        humanAgentIdentity,
+        callerRoom: callerRoom.name,
       },
       'moving human agent to caller room',
     );
@@ -541,10 +541,7 @@ export function createWarmTransferTask({
         canSubscribe: true,
       } as VideoGrant);
 
-      logger.debug(
-        { wsUrl: ctx.info.url, 'lk.pii.room_name': humanAgentRoomName },
-        'connecting to human agent room',
-      );
+      logger.debug({ wsUrl: ctx.info.url, humanAgentRoomName }, 'connecting to human agent room');
       const jwt = await token.toJwt();
 
       room.on(RoomEvent.Disconnected, onHumanAgentRoomClose);

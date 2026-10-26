@@ -802,6 +802,7 @@ describe.sequential('eou_wait span', () => {
           logs: false,
           transcript: false,
           redaction: true,
+          inputDelta: false,
         };
       });
       expect(session._redactionEnabled).toBe(true);

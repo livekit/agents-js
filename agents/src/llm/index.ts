@@ -92,6 +92,22 @@ export {
 } from './llm.js';
 
 export {
+  Choice,
+  ChoiceResult,
+  DecisionModel,
+  DecisionResponse,
+  Probability,
+  ProbabilityResult,
+  Score,
+  ScoreResult,
+  type Decision,
+  type DecisionCapabilities,
+  type DecisionKind,
+  type DecisionModelCallbacks,
+  type DecisionResult,
+} from './decisions.js';
+
+export {
   RealtimeError,
   RealtimeModel,
   RealtimeSession,
@@ -112,7 +128,6 @@ export {
   createToolOptions,
   executeToolCall,
   formatChatHistory,
-  oaiBuildFunctionInfo,
   oaiParams,
   serializeImage,
   toJsonSchema,
@@ -130,3 +145,21 @@ export {
   type AvailabilityChangedEvent,
   type FallbackAdapterOptions,
 } from './fallback_adapter.js';
+
+export {
+  MCPServer,
+  MCPServerHTTP,
+  MCPServerStdio,
+  MCPToolset,
+  type MCPHTTPTransportType,
+  type MCPServerHTTPOptions,
+  type MCPServerOptions,
+  type MCPServerStdioOptions,
+  type MCPToolCallResult,
+  type MCPToolContent,
+  type MCPToolDescriptor,
+  type MCPToolResultContext,
+  type MCPToolResultResolver,
+  type MCPToolOptions,
+  type MCPToolsetOptions,
+} from './mcp.js';

@@ -34,6 +34,17 @@ export const cartesiaTimestampsMessageSchema = z.object({
   word_timestamps: cartesiaWordTimestampsSchema,
 });
 
+/** Phoneme timestamps message - type: "phoneme_timestamps" with phoneme timing data */
+export const cartesiaPhonemeTimestampsMessageSchema = z.object({
+  type: z.literal('phoneme_timestamps'),
+  context_id: z.string(),
+  phoneme_timestamps: z.object({
+    phonemes: z.array(z.string()),
+    start: z.array(z.number()),
+    end: z.array(z.number()),
+  }),
+});
+
 /** Done message - type: "done" indicates completion */
 export const cartesiaDoneMessageSchema = z.object({
   type: z.literal('done'),
@@ -65,6 +76,7 @@ export const cartesiaErrorMessageSchema = z.object({
 export const cartesiaServerMessageSchema = z.discriminatedUnion('type', [
   cartesiaChunkMessageSchema,
   cartesiaTimestampsMessageSchema,
+  cartesiaPhonemeTimestampsMessageSchema,
   cartesiaDoneMessageSchema,
   cartesiaFlushDoneMessageSchema,
 ]);
@@ -82,6 +94,9 @@ export const cartesiaMessageSchema = z.union([
 export type CartesiaWordTimestamps = z.infer<typeof cartesiaWordTimestampsSchema>;
 export type CartesiaChunkMessage = z.infer<typeof cartesiaChunkMessageSchema>;
 export type CartesiaTimestampsMessage = z.infer<typeof cartesiaTimestampsMessageSchema>;
+export type CartesiaPhonemeTimestampsMessage = z.infer<
+  typeof cartesiaPhonemeTimestampsMessageSchema
+>;
 export type CartesiaDoneMessage = z.infer<typeof cartesiaDoneMessageSchema>;
 export type CartesiaFlushDoneMessage = z.infer<typeof cartesiaFlushDoneMessageSchema>;
 export type CartesiaErrorMessage = z.infer<typeof cartesiaErrorMessageSchema>;
@@ -97,6 +112,12 @@ export function isChunkMessage(msg: CartesiaServerMessage): msg is CartesiaChunk
 
 export function isTimestampsMessage(msg: CartesiaServerMessage): msg is CartesiaTimestampsMessage {
   return 'type' in msg && msg.type === 'timestamps';
+}
+
+export function isPhonemeTimestampsMessage(
+  msg: CartesiaServerMessage,
+): msg is CartesiaPhonemeTimestampsMessage {
+  return 'type' in msg && msg.type === 'phoneme_timestamps';
 }
 
 export function isDoneMessage(msg: CartesiaServerMessage): msg is CartesiaDoneMessage {

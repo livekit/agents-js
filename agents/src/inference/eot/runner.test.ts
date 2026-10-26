@@ -8,7 +8,20 @@ import EotRunner from './runner.js';
 describe('EotRunner', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
+
+  it.each(['0', 'false', 'no', 'off', 'FALSE', ' off '])(
+    'skips model initialization when local inference preload is disabled with %j',
+    async (value) => {
+      vi.stubEnv(warmup.ENV_PRELOAD_LOCAL_INFERENCE, value);
+      const load = vi.spyOn(warmup, '_getLocalInferenceModule');
+
+      await new EotRunner().initialize();
+
+      expect(load).not.toHaveBeenCalled();
+    },
+  );
 
   it('initializes the native EOT model and predicts on decoded PCM', async () => {
     const received: Int16Array[] = [];

@@ -9,6 +9,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { Logger } from 'pino';
 import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
@@ -319,7 +320,7 @@ export class TTSv2 extends tts.TTS {
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream;
     // (undocumented)
-    updateOptions(opts: Partial<Pick<TTSv2Options, 'model' | 'encoding' | 'sampleRate'>>): void;
+    updateOptions(opts: Partial<Pick<TTSv2Options, 'model' | 'encoding' | 'sampleRate' | 'speed'>>): void;
 }
 
 // Warning: (ae-missing-release-tag) "TTSv2Options" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -332,6 +333,7 @@ export interface TTSv2Options {
     mipOptOut: boolean;
     model: FluxTTSModels | string;
     sampleRate: number;
+    speed?: number | null;
     wordTokenizer: tokenize.WordTokenizer;
 }
 

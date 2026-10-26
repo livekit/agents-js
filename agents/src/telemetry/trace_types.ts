@@ -32,6 +32,7 @@ export const ATTR_PROVIDER_REQUEST_IDS = 'lk.provider_request_ids';
 
 export const ATTR_PARTICIPANT_ID = 'lk.participant_id';
 export const ATTR_PARTICIPANT_IDENTITY = 'lk.pii.participant_identity';
+export const ATTR_DESTINATION_IDENTITY = 'lk.pii.destination_identity';
 export const ATTR_PARTICIPANT_KIND = 'lk.participant_kind';
 
 // session start
@@ -145,6 +146,19 @@ export const ATTR_RESPONSE_FUNCTION_CALLS = 'lk.pii.response.function_calls';
 /** Time to first token in seconds. */
 export const ATTR_RESPONSE_TTFT = 'lk.response.ttft';
 
+// input deltas (`record: { inputDelta: true }`); see telemetry/input_delta.ts
+/**
+ * The span's record (`lk.pii.chat_ctx` on `llm_node`, `gen_ai.input.messages` on `llm_request`)
+ * continues the one on its parent, `lk.input.base_span_id`.
+ */
+export const ATTR_INPUT_DELTA = 'lk.input.delta';
+export const ATTR_INPUT_BASE_SPAN_ID = 'lk.input.base_span_id';
+/**
+ * Rebuild: the parent's full record without its last N entries, followed by this span's. Without
+ * `gen_ai.system_instructions` on an `llm_request` span, the parent's apply.
+ */
+export const ATTR_INPUT_DROPPED_FROM_BASE = 'lk.input.dropped_from_base';
+
 // function tool
 export const ATTR_FUNCTION_TOOL_ID = 'lk.function_tool.id';
 export const ATTR_FUNCTION_TOOL_NAME = 'lk.function_tool.name';
@@ -190,6 +204,10 @@ export const ATTR_ON_USER_TURN_COMPLETED_DELAY = 'lk.on_user_turn_completed_dela
 /** Seconds a speech handle waited in the queue before generation was authorized. */
 export const ATTR_SPEECH_QUEUE_WAIT = 'lk.speech.queue_wait';
 export const ATTR_USER_TRANSCRIPT = 'lk.pii.user_transcript';
+/** JSON list of transcript events on user_turn, in arrival order. Each entry has
+ * received_at (SpeechEvent.createdAt, Unix milliseconds), type, and transcript_length
+ * (Unicode code points in the first alternative). */
+export const ATTR_STT_EVENTS = 'lk.stt.events';
 export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
 /** Seconds from the end of the user's speech to the final transcript. */
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';
