@@ -206,12 +206,13 @@ export class SpeechStream extends stt.SpeechStream {
       this.#reconnectEvent = new Future<void>();
       const ws = await this.#connectWS();
       const sessionController = new AbortController();
+      const state = { closing: false };
 
       try {
         const result = await Promise.race([
           Promise.all([
-            this.#sendAudio(ws, sessionController.signal),
-            this.#receiveEvents(ws, sessionController.signal),
+            this.#sendAudio(ws, sessionController.signal, state),
+            this.#receiveEvents(ws, sessionController.signal, state),
           ]).then(() => 'done' as const),
           this.#reconnectEvent.await.then(() => 'reconnect' as const),
           waitForAbort(this.abortSignal).then(() => 'abort' as const),
@@ -280,7 +281,11 @@ export class SpeechStream extends stt.SpeechStream {
     return ws;
   }
 
-  async #sendAudio(ws: WebSocket, abortSignal: AbortSignal): Promise<void> {
+  async #sendAudio(
+    ws: WebSocket,
+    abortSignal: AbortSignal,
+    state: { closing: boolean },
+  ): Promise<void> {
     const samplesPerChunk = Math.floor(this.#opts.sampleRate / 20);
     const audioStream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS, samplesPerChunk);
 
@@ -302,10 +307,16 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }
 
-    if (!abortSignal.aborted) ws.send(CLOSE_STREAM_MESSAGE);
+    if (abortSignal.aborted) return;
+    state.closing = true;
+    ws.send(CLOSE_STREAM_MESSAGE);
   }
 
-  async #receiveEvents(ws: WebSocket, abortSignal: AbortSignal): Promise<void> {
+  async #receiveEvents(
+    ws: WebSocket,
+    abortSignal: AbortSignal,
+    state: { closing: boolean },
+  ): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const onMessage = (raw: RawData) => {
         let data: Record<string, unknown>;
@@ -320,8 +331,22 @@ export class SpeechStream extends stt.SpeechStream {
         if (data.is_last === true) resolve();
       };
       ws.on('message', onMessage);
-      ws.once('error', reject);
-      ws.once('close', () => resolve());
+      // persistent: a failed send after the socket dies must not emit an unhandled 'error'
+      ws.on('error', reject);
+      ws.once('close', (code, reason) => {
+        if (state.closing) {
+          resolve();
+          return;
+        }
+        // the server dropped the connection mid-session; fail so the sender is
+        // aborted and the framework can retry
+        reject(
+          new APIStatusError({
+            message: 'SmallestAI STT connection closed unexpectedly',
+            options: { statusCode: code || -1, body: { reason: reason.toString() } },
+          }),
+        );
+      });
       abortSignal.addEventListener('abort', () => resolve(), { once: true });
     });
   }
