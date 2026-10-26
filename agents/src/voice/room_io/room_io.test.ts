@@ -172,6 +172,76 @@ describe('RoomIO participant disconnect event', () => {
   });
 });
 
+it('keeps a selected participant disconnect before linking on the existing close path', async () => {
+  const room = createFakeRoom();
+  const session = createFakeSession();
+  const events: ParticipantDisconnectedEvent[] = [];
+  session.on(AgentSessionEventTypes.ParticipantDisconnected, (event) =>
+    events.push(event as ParticipantDisconnectedEvent),
+  );
+  const roomIO = new RoomIO({
+    agentSession: session as unknown as RoomIOArgs['agentSession'],
+    room: room as unknown as RoomIOArgs['room'],
+    inputOptions: { audioEnabled: false, textEnabled: false, participantIdentity: 'linked' },
+    outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+  });
+
+  roomIO.start();
+  const disconnectListener = room.on.mock.calls.find(
+    ([event]) => event === RoomEvent.ParticipantDisconnected,
+  )?.[1];
+  (disconnectListener as (participant: unknown) => void)({
+    identity: 'linked',
+    disconnectReason: DisconnectReason.CLIENT_INITIATED,
+  });
+
+  expect(events).toHaveLength(0);
+  expect(session._closeSoon).toHaveBeenCalledWith({
+    reason: CloseReason.PARTICIPANT_DISCONNECTED,
+  });
+  expect(Reflect.get(roomIO, 'participantAvailableFuture').done).toBe(false);
+  await roomIO.close();
+});
+
+it('allows a disconnect listener to select an already-connected replacement', async () => {
+  const room = createFakeRoom();
+  const bob = { identity: 'bob', info: { kind: 0 }, attributes: {} };
+  room.remoteParticipants.set('bob', bob);
+  const session = createFakeSession();
+  const roomIO = new RoomIO({
+    agentSession: session as unknown as RoomIOArgs['agentSession'],
+    room: room as unknown as RoomIOArgs['room'],
+    inputOptions: {
+      audioEnabled: false,
+      textEnabled: false,
+      participantIdentity: 'alice',
+      closeOnDisconnect: false,
+    },
+    outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+  });
+  session.on(AgentSessionEventTypes.ParticipantDisconnected, () => roomIO.setParticipant('bob'));
+
+  roomIO.start();
+  const connectListener = room.on.mock.calls.find(
+    ([event]) => event === RoomEvent.ParticipantConnected,
+  )?.[1];
+  const disconnectListener = room.on.mock.calls.find(
+    ([event]) => event === RoomEvent.ParticipantDisconnected,
+  )?.[1];
+  (connectListener as (participant: unknown) => void)({
+    identity: 'alice',
+    info: { kind: 0 },
+    attributes: {},
+  });
+  (disconnectListener as (participant: unknown) => void)({
+    identity: 'alice',
+    disconnectReason: DisconnectReason.CLIENT_INITIATED,
+  });
+
+  expect(roomIO.linkedParticipant?.identity).toBe('bob');
+  await roomIO.close();
+});
+
 it('runs disconnect cleanup and close behavior before notifying throwing listeners', async () => {
   const room = createFakeRoom();
   const session = createFakeSession();

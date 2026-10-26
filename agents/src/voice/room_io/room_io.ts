@@ -297,22 +297,16 @@ export class RoomIO {
     if (participant.identity !== this.participantIdentity) {
       return;
     }
-    if (this.linkedParticipant?.identity === participant.identity) {
-      try {
-        this.agentSession.emit(
-          AgentSessionEventTypes.ParticipantDisconnected,
-          createParticipantDisconnectedEvent({
+    const disconnectEvent =
+      this.linkedParticipant?.identity === participant.identity
+        ? createParticipantDisconnectedEvent({
             participantIdentity: participant.identity,
             disconnectReason: participant.disconnectReason ?? DisconnectReason.UNKNOWN_REASON,
             participantAttributes: {
               ...(participantAttributes(participant) as Record<string, string | number | boolean>),
             },
-          }),
-        );
-      } catch (error) {
-        this.logger.error({ error }, 'ParticipantDisconnected listener threw an error');
-      }
-    }
+          })
+        : undefined;
     this.agentSession._addSessionEvent?.('participant_disconnected', {
       ...(participantAttributes(participant) as Record<string, string>),
       [traceTypes.ATTR_DISCONNECT_REASON]:
@@ -336,6 +330,14 @@ export class RoomIO {
       this.agentSession._closeSoon({
         reason: CloseReason.PARTICIPANT_DISCONNECTED,
       });
+    }
+    if (!disconnectEvent) {
+      return;
+    }
+    try {
+      this.agentSession.emit(AgentSessionEventTypes.ParticipantDisconnected, disconnectEvent);
+    } catch (error) {
+      this.logger.error({ error }, 'ParticipantDisconnected listener threw an error');
     }
   };
 
