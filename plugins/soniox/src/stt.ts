@@ -8,6 +8,8 @@ import {
   APIStatusError,
   APITimeoutError,
   type AudioBuffer,
+  DEFAULT_API_CONNECT_OPTIONS,
+  WebSocketMonitor,
   log,
   stt,
   waitForAbort,
@@ -143,11 +145,14 @@ export class STT extends stt.STT {
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
   #logger = log();
+  readonly #livenessTimeoutMs: number;
   label = 'soniox.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
   }
 
   protected async run(): Promise<void> {
@@ -198,7 +203,8 @@ export class SpeechStream extends stt.SpeechStream {
       clearTimeout(timeout);
     }
 
-    ws.send(JSON.stringify(this.#config()));
+    new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
+    await this.#send(ws, JSON.stringify(this.#config()), 'configuration');
     return ws;
   }
 
@@ -234,11 +240,14 @@ export class SpeechStream extends stt.SpeechStream {
       startTimeOffset: this.startTimeOffset,
     };
 
-    const keepalive = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(KEEPALIVE_MESSAGE);
-      }
-    }, 5000);
+    let keepalive: ReturnType<typeof setInterval> | undefined;
+    const keepaliveTask = new Promise<never>((_, reject) => {
+      keepalive = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          void this.#send(ws, KEEPALIVE_MESSAGE, 'keepalive').catch(reject);
+        }
+      }, 5000);
+    });
 
     const listenTask = new Promise<void>((resolve, reject) => {
       ws.on('message', (msg) => {
@@ -246,6 +255,9 @@ export class SpeechStream extends stt.SpeechStream {
           const content = JSON.parse(msg.toString()) as SonioxMessage;
           for (const event of processMessage(state, content, options)) {
             this.#put(event);
+          }
+          if (!content.error_code && !content.error_message && !content.finished) {
+            this.markProviderProgress();
           }
           if (content.error_code || content.error_message) {
             const statusCode = parseStatusCode(content.error_code);
@@ -282,12 +294,12 @@ export class SpeechStream extends stt.SpeechStream {
     // let `listenTask` observe that final response rather than tearing down the
     // moment the input runs dry.
     const sendTask = this.#sendAudio(ws);
-    const finalize = sendTask.then(() => {
+    const finalize = sendTask.then(async () => {
       if (this.abortSignal.aborted || ws.readyState !== WebSocket.OPEN) {
         return;
       }
       closing = true;
-      ws.send(END_OF_AUDIO_MESSAGE);
+      await this.#send(ws, END_OF_AUDIO_MESSAGE, 'end-of-audio');
     });
 
     try {
@@ -296,12 +308,13 @@ export class SpeechStream extends stt.SpeechStream {
       // driven by the server's `finished`/close (listenTask) or by abort.
       await Promise.race([
         listenTask,
+        keepaliveTask,
         waitForAbort(this.abortSignal),
         finalize.then(() => new Promise<void>(() => {})),
       ]);
     } finally {
       closing = true;
-      clearInterval(keepalive);
+      if (keepalive) clearInterval(keepalive);
       ws.close();
     }
   }
@@ -322,7 +335,24 @@ export class SpeechStream extends stt.SpeechStream {
       // ArrayBuffer (non-zero byteOffset / partial span), so `.buffer` alone
       // would transmit the wrong bytes; honor byteOffset/byteLength (mirrors
       // Python's `frame.data.tobytes()`).
-      ws.send(Buffer.from(data.data.buffer, data.data.byteOffset, data.data.byteLength));
+      await this.#send(
+        ws,
+        Buffer.from(data.data.buffer, data.data.byteOffset, data.data.byteLength),
+        'audio',
+      );
+    }
+  }
+
+  async #send(ws: WebSocket, data: string | Buffer, kind: string): Promise<void> {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.send(data, (error) => (error ? reject(error) : resolve()));
+      });
+    } catch (cause) {
+      if (this.abortSignal.aborted || (this.input.closed && kind !== 'end-of-audio')) return;
+      const error = new APIConnectionError({ message: `Soniox STT ${kind} write failed` });
+      error.cause = cause;
+      throw error;
     }
   }
 

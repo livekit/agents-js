@@ -9,7 +9,12 @@ import type { APIConnectOptions } from '../types.js';
 import { type AudioBuffer, delay } from '../utils.js';
 import { FallbackAdapter } from './fallback_adapter.js';
 import { STT, type SpeechEvent, SpeechEventType, SpeechStream } from './stt.js';
-import { FakeSTT, RecognizeSentinel, emptyAudioFrame } from './testing/fake_stt.js';
+import {
+  FakeRecognizeStream,
+  FakeSTT,
+  RecognizeSentinel,
+  emptyAudioFrame,
+} from './testing/fake_stt.js';
 
 type RetryTimelineMode = 'outer' | 'child';
 
@@ -287,6 +292,85 @@ describe('FallbackSpeechStream (streaming path)', () => {
   beforeAll(() => {
     initializeLogger({ pretty: false });
     process.on('unhandledRejection', () => {});
+  });
+
+  it.each([0, 1, 3])(
+    'exhausts %i retries after slow failures before falling back',
+    async (maxRetryPerSTT) => {
+      class FailingStream extends FakeRecognizeStream {
+        runs = 0;
+
+        protected override async run(): Promise<void> {
+          this.runs += 1;
+          await delay(6_000);
+          throw new APIConnectionError({ message: 'liveness timeout' });
+        }
+      }
+
+      class FailingSTT extends FakeSTT {
+        streams: FailingStream[] = [];
+
+        override stream(options?: { connOptions?: APIConnectOptions }): FailingStream {
+          const stream = new FailingStream(this, options?.connOptions);
+          this.streams.push(stream);
+          return stream;
+        }
+      }
+
+      vi.useFakeTimers();
+      const primary = new FailingSTT();
+      const backup = new FakeSTT({ fakeTranscript: 'backup' });
+      const fallback = new FallbackAdapter({
+        sttInstances: [primary, backup],
+        attemptTimeoutMs: 3_000,
+        maxRetryPerSTT,
+        retryIntervalMs: 0,
+      });
+      const stream = fallback.stream();
+      stream.endInput();
+      try {
+        await vi.runAllTimersAsync();
+        const events: SpeechEvent[] = [];
+        for await (const event of stream) events.push(event);
+
+        expect(events.find((event) => event.alternatives)?.alternatives?.[0]?.text).toBe('backup');
+        expect(primary.streams[0]?.runs).toBe(maxRetryPerSTT + 1);
+      } finally {
+        stream.close();
+        await fallback.close();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('propagates provider progress to reset the fallback retry budget', async () => {
+    class ProgressStream extends FakeRecognizeStream {
+      protected override async run(): Promise<void> {
+        this.markProviderProgress();
+      }
+    }
+
+    class ProgressSTT extends FakeSTT {
+      override stream(options?: { connOptions?: APIConnectOptions }): ProgressStream {
+        return new ProgressStream(this, options?.connOptions);
+      }
+    }
+
+    const fallback = new FallbackAdapter({ sttInstances: [new ProgressSTT()] });
+    const stream = fallback.stream({
+      connOptions: { maxRetry: 3, retryIntervalMs: 2_000, timeoutMs: 10_000 },
+    });
+    (stream as unknown as { _numRetries: number })._numRetries = 2;
+    stream.endInput();
+    try {
+      for await (const _ of stream) {
+        /* drain */
+      }
+      expect((stream as unknown as { _numRetries: number })._numRetries).toBe(0);
+    } finally {
+      stream.close();
+      await fallback.close();
+    }
   });
 
   it('forwards events from the primary without triggering fallback when it succeeds', async () => {

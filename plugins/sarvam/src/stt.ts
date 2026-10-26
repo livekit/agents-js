@@ -4,12 +4,13 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
-  APIError,
   APIStatusError,
   type AudioBuffer,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   Future,
   Task,
+  WebSocketMonitor,
   log,
   mergeFrames,
   normalizeLanguage,
@@ -556,11 +557,14 @@ export class SpeechStream extends stt.SpeechStream {
   #speaking = false;
   #resetWS = new Future();
   #requestId = '';
+  readonly #livenessTimeoutMs: number;
   label = 'sarvam.SpeechStream';
 
   constructor(sttInstance: STT, opts: ResolvedSTTOptions, connOptions?: APIConnectOptions) {
     super(sttInstance, SAMPLE_RATE, connOptions);
     this.#opts = opts;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
     this.closed = false;
   }
 
@@ -585,9 +589,6 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run() {
-    const maxRetry = 32;
-    let retries = 0;
-
     while (!this.input.closed && !this.closed) {
       const wsUrl = buildWsUrl(this.#opts);
       this.#logger.info(`Sarvam STT connecting to: ${wsUrl}`);
@@ -595,38 +596,9 @@ export class SpeechStream extends stt.SpeechStream {
         headers: { 'api-subscription-key': this.#opts.apiKey },
       });
 
-      let sessionStart = 0;
-      try {
-        await waitForWebSocketOpen(ws, 'Sarvam');
-
-        sessionStart = Date.now();
-        await this.#runWS(ws);
-        retries = 0;
-      } catch (e) {
-        if (!this.closed && !this.input.closed) {
-          // If the session ran for a meaningful duration (>5s), this was a working
-          // session that ended normally (e.g. server idle timeout ~20s). Reset retries
-          // so expected idle-timeout reconnections don't accumulate toward the fatal limit.
-          if (sessionStart > 0 && Date.now() - sessionStart > 5000) {
-            retries = 0;
-          }
-          if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
-            throw e;
-          }
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-          this.#logger.warn(
-            { error: e, retryDelayMs: delay * 1000, attempt: retries, maxRetry },
-            'Failed to connect to Sarvam STT, retrying',
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
-        } else {
-          this.#logger.warn(
-            { error: e, inputClosed: this.input.closed, isClosed: this.closed },
-            'Sarvam STT disconnected, connection is closed',
-          );
-        }
-      }
+      await waitForWebSocketOpen(ws, 'Sarvam');
+      new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
+      await this.#runWS(ws);
     }
 
     this.closed = true;
@@ -763,23 +735,32 @@ export class SpeechStream extends stt.SpeechStream {
             );
             const json = JSON.parse(raw);
             const msgType: string = json['type'] ?? '';
+            const nested = json['data'] as Record<string, unknown> | undefined;
+            const hasError =
+              json['error'] != null ||
+              nested?.['error'] != null ||
+              nested?.['event_type'] === 'error' ||
+              nested?.['event'] === 'error';
 
             if (msgType === 'events') {
               const eventData = (json['data'] as SarvamWSEventData | undefined) ?? {};
               const signalType = eventData.signal_type;
 
-              if (signalType === 'START_SPEECH') {
+              if (!hasError && signalType === 'START_SPEECH') {
+                this.markProviderProgress();
                 if (!this.#speaking) {
                   this.#speaking = true;
                   putMessage({ type: stt.SpeechEventType.START_OF_SPEECH });
                 }
-              } else if (signalType === 'END_SPEECH') {
+              } else if (!hasError && signalType === 'END_SPEECH') {
+                this.markProviderProgress();
                 if (this.#speaking) {
                   this.#speaking = false;
                   putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
                 }
               }
             } else if (msgType === 'data') {
+              if (!hasError) this.markProviderProgress();
               const td = (json['data'] as SarvamWSTranscriptData | undefined) ?? {};
               const transcript = td.transcript ?? '';
               const language = normalizeLanguage(

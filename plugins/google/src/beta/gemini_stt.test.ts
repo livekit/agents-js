@@ -176,4 +176,24 @@ describe('Gemini STT', () => {
   ])('classifies session-duration close %#', (error, expected) => {
     expect(_isSessionDurationClose(error)).toBe(expected);
   });
+
+  it.each([
+    [false, 2],
+    [true, 0],
+  ] as const)(
+    'resets retries on turn completion without a transcript (%s)',
+    async (turnComplete, expectedRetries) => {
+      live.messages = [message({ turnComplete })];
+      const stream = new STT({ apiKey: 'test-key' }).stream();
+      const internal = stream as unknown as { _numRetries: number };
+      internal._numRetries = 2;
+      stream.endInput();
+
+      for await (const _event of stream) {
+        // Drain the stream.
+      }
+
+      expect(internal._numRetries).toBe(expectedRetries);
+    },
+  );
 });

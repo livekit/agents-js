@@ -7,7 +7,9 @@ import {
   APIError,
   APIStatusError,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   Event,
+  WebSocketMonitor,
   calculateAudioDurationSeconds,
   createTimedString,
   log,
@@ -18,7 +20,7 @@ import {
 import type { AudioFrame } from '@livekit/rtc-node';
 import * as queryString from 'node:querystring';
 import { WebSocket } from 'ws';
-import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
+import { PeriodicCollector } from './_utils.js';
 import type { V2Models } from './models.js';
 
 const _CLOSE_MSG = JSON.stringify({ type: 'CloseStream' });
@@ -272,6 +274,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
   #audioDurationCollector: PeriodicCollector<number>;
   #requestId = '';
   #speaking = false;
+  readonly #livenessTimeoutMs: number;
 
   // Parity: _reconnect_event - using existing Event class from @livekit/agents
   #reconnectEvent = new Event();
@@ -293,6 +296,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
   ) {
     super(sttInstance, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
 
     this.#audioDurationCollector = new PeriodicCollector(
       (duration) => this.#onAudioDurationReport(duration),
@@ -337,7 +342,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
   protected async run() {
     // Outer Loop: Handles reconnections (Configuration updates)
     while (!this.closed) {
-      let stopHeartbeat: (() => void) | undefined;
       let sendPromise: Promise<void> | undefined;
       try {
         this.#reconnectEvent.clear();
@@ -360,9 +364,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
           });
         }
 
-        stopHeartbeat = startWebSocketHeartbeat(this.#ws, () =>
-          this.#logger.warn('Deepgram did not answer a ping in time, terminating the socket'),
-        );
+        new WebSocketMonitor(this.#ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
 
         // #recvTask resolves on close while #sendTask runs until its input ends, so
         // Promise.all cannot settle when the socket goes away mid-session: the stream
@@ -411,7 +413,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
         this.#logger.error({ errorType: errorName(error) }, 'Deepgram stream error');
         throw error; // Let Base Class handle retry logic
       } finally {
-        stopHeartbeat?.();
         // settle this attempt's sender before the loop opens the next socket, or its
         // abandoned queue read will steal a frame from the next one
         this.#attempt.abort();
@@ -523,6 +524,14 @@ class SpeechStreamv2 extends stt.SpeechStream {
         try {
           const msg = JSON.parse(data.toString());
           this.#processStreamEvent(msg);
+          if (
+            msg.type === 'TurnInfo' &&
+            ['StartOfTurn', 'Update', 'EagerEndOfTurn', 'TurnResumed', 'EndOfTurn'].includes(
+              msg.event,
+            )
+          ) {
+            this.markProviderProgress();
+          }
         } catch (error) {
           if (error instanceof APIError) {
             reject(error);

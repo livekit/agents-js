@@ -399,6 +399,7 @@ class SpeechStream extends stt.SpeechStream {
 
     const interim = serverContent.interimInputTranscription;
     if (interim) {
+      this.markProviderProgress();
       if (interim.languageCode) state.language = normalizeLanguage(interim.languageCode);
       const text = interim.text?.trim();
       if (text) {
@@ -409,6 +410,7 @@ class SpeechStream extends stt.SpeechStream {
 
     const transcription = serverContent.inputTranscription;
     if (transcription) {
+      this.markProviderProgress();
       if (transcription.languageCode) {
         state.language = normalizeLanguage(transcription.languageCode);
       }
@@ -421,6 +423,7 @@ class SpeechStream extends stt.SpeechStream {
     }
 
     if (serverContent.generationComplete || serverContent.turnComplete) {
+      this.markProviderProgress();
       if (state.pendingInterim) {
         this.#put(
           this.#speechEvent(

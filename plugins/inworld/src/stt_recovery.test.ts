@@ -154,9 +154,6 @@ describe('inworld STT recovery', () => {
       const message = typeof args[0] === 'string' ? args[0] : args[1];
       expect(message).not.toContain(sensitive);
     }
-    expect(warnLog).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.objectContaining({ body }) }),
-      expect.any(String),
-    );
+    expect(warnLog).not.toHaveBeenCalled();
   });
 });

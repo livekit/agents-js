@@ -644,6 +644,41 @@ async function consumeSpeechStream(stream: AsyncIterable<stt.SpeechEvent>): Prom
 }
 
 describe('SpeechStream server errors', () => {
+  it('exhausts the configured retry budget when the provider stops responding', async () => {
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0, autoPong: false });
+    await once(wss, 'listening');
+    const address = wss.address() as AddressInfo;
+    let connections = 0;
+    wss.on('connection', () => connections++);
+
+    const soniox = new STT({
+      apiKey: 'test-key',
+      baseUrl: `ws://127.0.0.1:${address.port}`,
+    });
+    const errorEvent = once(soniox, 'error') as Promise<Parameters<stt.STTCallbacks['error']>>;
+    const stream = soniox.stream({
+      connOptions: {
+        maxRetry: 1,
+        retryIntervalMs: 1,
+        timeoutMs: 1000,
+        livenessTimeoutMs: 50,
+      },
+    });
+    const drain = consumeSpeechStream(stream);
+
+    try {
+      const [{ error, recoverable }] = await errorEvent;
+      expect(error).toBeInstanceOf(APIConnectionError);
+      expect(recoverable).toBe(false);
+      expect(connections).toBe(2);
+      await drain;
+    } finally {
+      stream.close();
+      for (const client of wss.clients) client.terminate();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('surfaces a Soniox error frame as a non-retryable APIStatusError', async () => {
     const { wss, baseUrl } = await startWebSocketServer();
 

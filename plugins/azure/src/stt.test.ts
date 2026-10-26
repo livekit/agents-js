@@ -289,6 +289,26 @@ describe('Azure STT cancellation handling', () => {
   });
 });
 
+describe('Azure STT provider progress', () => {
+  it.each(['_onRecognized', '_onRecognizing', '_onSpeechStart', '_onSpeechEnd'] as const)(
+    'resets retries on %s without a transcript',
+    (callback) => {
+      const stream = Object.create(SpeechStream.prototype) as SpeechStream;
+      const internal = stream as unknown as { _numRetries: number };
+      internal._numRetries = 2;
+      stream._speaking = callback === '_onSpeechStart';
+
+      if (callback === '_onRecognized' || callback === '_onRecognizing') {
+        stream[callback]({ result: { text: '' } } as speechsdk.SpeechRecognitionEventArgs);
+      } else {
+        stream[callback]({} as speechsdk.RecognitionEventArgs);
+      }
+
+      expect(internal._numRetries).toBe(0);
+    },
+  );
+});
+
 const assessed = {
   Display: 'こんにちは',
   PronunciationAssessment: { AccuracyScore: 92, FluencyScore: 88 },

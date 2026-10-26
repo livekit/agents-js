@@ -7,8 +7,10 @@ import {
   APIStatusError,
   type AudioBuffer,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   Future,
   Task,
+  WebSocketMonitor,
   createTimedString,
   getBaseLanguage,
   log,
@@ -21,7 +23,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
+import { PeriodicCollector } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
 export interface STTOptions {
@@ -276,11 +278,14 @@ export class SpeechStream extends stt.SpeechStream {
   /** @internal */
   _pendingKeyterm: string[] | null = null;
   #audioDurationCollector: PeriodicCollector<number>;
+  readonly #livenessTimeoutMs: number;
   label = 'deepgram.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
     this.closed = false;
     this.#audioDurationCollector = new PeriodicCollector(
       (duration) => this.onAudioDurationReport(duration),
@@ -289,8 +294,6 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run() {
-    const maxRetry = 32;
-    let retries = 0;
     let ws: WebSocket;
 
     while (!this.input.closed && !this.closed) {
@@ -334,27 +337,7 @@ export class SpeechStream extends stt.SpeechStream {
         });
       }
 
-      try {
-        await this.#runWS(ws);
-      } catch (e) {
-        if (!this.closed && !this.input.closed) {
-          if (retries >= maxRetry) {
-            throw e;
-          }
-
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-
-          this.#logger.warn(
-            `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
-        } else {
-          this.#logger.warn(
-            `Deepgram disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
-          );
-        }
-      }
+      await this.#runWS(ws);
     }
 
     this.closed = true;
@@ -388,6 +371,7 @@ export class SpeechStream extends stt.SpeechStream {
     // left over from a previous attempt steals audio from the current one. The read
     // has to be cancelled, not merely raced against.
     const attempt = new AbortController();
+    new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
 
     const keepalive = setInterval(() => {
       try {
@@ -397,13 +381,6 @@ export class SpeechStream extends stt.SpeechStream {
         return;
       }
     }, 5000);
-
-    // the KeepAlive above is an application-level message: it keeps Deepgram from
-    // timing the session out, but it cannot tell us whether the socket is still
-    // there. Only a ping that goes unanswered can.
-    const stopHeartbeat = startWebSocketHeartbeat(ws, () =>
-      this.#logger.warn('Deepgram did not answer a ping in time, terminating the socket'),
-    );
 
     // gets cancelled also when sendTask is complete
     const wsMonitor = Task.from(async (controller) => {
@@ -583,6 +560,10 @@ export class SpeechStream extends stt.SpeechStream {
               }
             }
 
+            if (['SpeechStarted', 'Results', 'UtteranceEnd'].includes(json['type'])) {
+              this.markProviderProgress();
+            }
+
             if (this.closed || closing) {
               resolve();
             }
@@ -612,7 +593,6 @@ export class SpeechStream extends stt.SpeechStream {
       closing = true;
       ws.close();
       clearInterval(keepalive);
-      stopHeartbeat();
       // settle this attempt's sender before the caller opens the next socket
       attempt.abort();
       await sendPromise.catch(() => {});

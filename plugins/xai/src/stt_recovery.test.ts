@@ -9,7 +9,7 @@ import {
   AgentSession,
   AgentSessionEventTypes,
   log,
-  type stt,
+  stt,
 } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
@@ -73,6 +73,39 @@ afterEach(async () => {
 });
 
 describe('xai STT recovery', () => {
+  it('reconnects when the provider stops sending any inbound traffic', async () => {
+    await startServer({ autoPong: false });
+    let connections = 0;
+    server.on('connection', () => connections++);
+    const provider = new STT({ apiKey: 'test' });
+    provider.on('error', vi.fn());
+    stream = provider.stream({
+      connOptions: { ...connOptions, maxRetry: 1, livenessTimeoutMs: 30 },
+    });
+
+    await vi.waitFor(() => expect(connections).toBeGreaterThanOrEqual(2));
+  });
+
+  it('marks only transcript provider progress events', async () => {
+    await startServer();
+    const markProviderProgress = vi.spyOn(
+      stt.SpeechStream.prototype as unknown as { markProviderProgress(): void },
+      'markProviderProgress',
+    );
+    server.on('connection', (socket) => {
+      socket.once('pong', () => {
+        socket.send(JSON.stringify({ type: 'connected' }));
+        socket.send(JSON.stringify({ type: 'transcript.created' }));
+        socket.send(JSON.stringify({ type: 'transcript.partial', text: '' }));
+        socket.send(JSON.stringify({ type: 'transcript.done', text: '' }));
+      });
+      socket.ping();
+    });
+    startStream();
+
+    await vi.waitFor(() => expect(markProviderProgress).toHaveBeenCalledTimes(3));
+  });
+
   it('closes while waiting for the server to become ready', async () => {
     await startServer();
     const connected = once(server, 'connection');
@@ -178,17 +211,14 @@ describe('xai STT recovery', () => {
       const message = typeof args[0] === 'string' ? args[0] : args[1];
       expect(message).not.toContain(sensitive);
     }
-    expect(warnLog).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.objectContaining({ body }) }),
-      expect.any(String),
-    );
+    expect(warnLog).not.toHaveBeenCalled();
   });
 
-  it('resumes session transcripts after exhausting plugin retries', async () => {
+  it('resumes session transcripts after the framework replaces a failed stream', async () => {
     await startServer();
     let connections = 0;
     server.on('connection', (socket) => {
-      if (++connections <= 33) {
+      if (++connections === 1) {
         socket.close(1011);
         return;
       }

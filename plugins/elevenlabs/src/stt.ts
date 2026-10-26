@@ -12,6 +12,7 @@ import {
   DEFAULT_API_CONNECT_OPTIONS,
   Future,
   Task,
+  WebSocketMonitor,
   calculateAudioDurationSeconds,
   createTimedString,
   delay,
@@ -603,6 +604,7 @@ export class SpeechStream extends stt.SpeechStream {
   #lastPartialText = '';
   #audioDurationCollector: PeriodicCollector<number>;
   #logger = log();
+  readonly #livenessTimeoutMs: number;
 
   label = 'elevenlabs.SpeechStream';
 
@@ -617,6 +619,8 @@ export class SpeechStream extends stt.SpeechStream {
     this.#opts = opts;
     this.#language = language;
     this.#session = httpSession;
+    this.#livenessTimeoutMs =
+      connOptions.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
     this.#audioDurationCollector = new PeriodicCollector(
       (duration) => this.#onAudioDurationReport(duration),
       { duration: 5.0 },
@@ -680,6 +684,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         ws = await this.#connectWs();
+        new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
         this.#lastPartialText = '';
 
         const keepaliveTask = Task.from(async (controller) => {
@@ -778,7 +783,15 @@ export class SpeechStream extends stt.SpeechStream {
                 return;
               }
               try {
-                this.#processStreamEvent(parseStreamEvent(JSON.parse(msg.toString())));
+                const event = parseStreamEvent(JSON.parse(msg.toString()));
+                this.#processStreamEvent(event);
+                if (
+                  event.message_type === 'partial_transcript' ||
+                  event.message_type === 'committed_transcript' ||
+                  event.message_type === 'committed_transcript_with_timestamps'
+                ) {
+                  this.markProviderProgress();
+                }
               } catch (error) {
                 this.#logger.error({ error }, 'failed to process ElevenLabs STT message');
               }

@@ -362,6 +362,7 @@ export class SpeechStream extends stt.SpeechStream {
 
   /** @internal */
   _onRecognized(evt: speechsdk.SpeechRecognitionEventArgs): void {
+    this.markProviderProgress();
     const text = evt.result.text.trim();
     if (!text) return;
 
@@ -381,6 +382,7 @@ export class SpeechStream extends stt.SpeechStream {
 
   /** @internal */
   _onRecognizing(evt: speechsdk.SpeechRecognitionEventArgs): void {
+    this.markProviderProgress();
     const text = evt.result.text.trim();
     if (!text) return;
 
@@ -392,6 +394,7 @@ export class SpeechStream extends stt.SpeechStream {
 
   /** @internal */
   _onSpeechStart(_evt: speechsdk.RecognitionEventArgs): void {
+    this.markProviderProgress();
     if (this._speaking) return;
     this._speaking = true;
     this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
@@ -399,6 +402,7 @@ export class SpeechStream extends stt.SpeechStream {
 
   /** @internal */
   _onSpeechEnd(_evt: speechsdk.RecognitionEventArgs): void {
+    this.markProviderProgress();
     if (!this._speaking) return;
     this._speaking = false;
     this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });

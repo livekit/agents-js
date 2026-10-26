@@ -4,8 +4,8 @@
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { WebSocketServer } from 'ws';
-import { APIStatusError } from '../_exceptions.js';
+import { type WebSocket, WebSocketServer } from 'ws';
+import { APIStatusError, APITimeoutError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
@@ -728,6 +728,205 @@ describe('STT VAD handling for Speechmatics models', () => {
 });
 
 describe('Inference STT connection lifecycle', () => {
+  it.each([
+    ['start_of_speech', true],
+    ['interim_transcript', true],
+    ['preflight_transcript', true],
+    ['final_transcript', true],
+    ['session.finalized', true],
+    ['session.created', false],
+    ['unknown', false],
+    ['pong', false],
+  ] as const)('classifies provider event %s as progress: %s', async (message, progress) => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    let resolveSessionCreated!: (socket: WebSocket) => void;
+    const sessionCreated = new Promise<WebSocket>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type === 'session.create') resolveSessionCreated(socket);
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${port}`,
+      connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    try {
+      const socket = await sessionCreated;
+      const retryState = stream as unknown as { _numRetries: number };
+      retryState._numRetries = 2;
+
+      if (message === 'pong') {
+        socket.pong();
+      } else {
+        socket.send(JSON.stringify({ type: message, transcript: 'words', language: 'en' }));
+      }
+
+      if (progress) {
+        await vi.waitFor(() => expect(retryState._numRetries).toBe(0));
+      } else {
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+        expect(retryState._numRetries).toBe(2);
+      }
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it.each(['error', 'session.closed'] as const)(
+    'does not count provider failure event %s as progress',
+    async (message) => {
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const { port } = server.address() as AddressInfo;
+      let resolveSessionCreated!: (socket: WebSocket) => void;
+      const sessionCreated = new Promise<WebSocket>((resolve) => {
+        resolveSessionCreated = resolve;
+      });
+
+      server.on('connection', (socket) => {
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as { type: string };
+          if (event.type === 'session.create') resolveSessionCreated(socket);
+        });
+      });
+
+      const stt = makeStt({
+        baseURL: `http://127.0.0.1:${port}`,
+        connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      stt.on('error', () => {});
+      const stream = stt.stream();
+
+      try {
+        const socket = await sessionCreated;
+        const retryState = stream as unknown as { _numRetries: number };
+        retryState._numRetries = 3;
+        socket.send(
+          JSON.stringify({
+            type: message,
+            code: 500,
+            message: 'provider failed',
+          }),
+        );
+
+        await vi.waitFor(() => expect(stream.terminalError).toBeDefined());
+        expect(retryState._numRetries).toBe(3);
+      } finally {
+        stream.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+
+  it('raises a retryable timeout for a half-open socket', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0, autoPong: false });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    let connectionCount = 0;
+    server.on('connection', () => {
+      connectionCount += 1;
+    });
+
+    const stt = makeStt({ baseURL: `http://127.0.0.1:${port}` });
+    stt.on('error', () => {});
+    const stream = stt.stream({
+      connOptions: {
+        maxRetry: 0,
+        retryIntervalMs: 1,
+        timeoutMs: 1_000,
+        livenessTimeoutMs: 150,
+      },
+    });
+
+    try {
+      for await (const _ of stream) {
+        /* drain */
+      }
+
+      expect(connectionCount).toBe(1);
+      expect(stream.terminalError).toBeInstanceOf(APITimeoutError);
+      expect(stream.terminalError).toMatchObject({ retryable: true });
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('recovers from a half-open socket while retries remain', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0, autoPong: false });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    let connectionCount = 0;
+    let resolveSecondConnection!: () => void;
+    const secondConnection = new Promise<void>((resolve) => {
+      resolveSecondConnection = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      const connection = connectionCount;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (connection === 2 && event.type === 'session.create') resolveSecondConnection();
+        if (connection === 2 && event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'final_transcript',
+              transcript: 'recovered words',
+              language: 'en',
+            }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    const stt = makeStt({ baseURL: `http://127.0.0.1:${port}` });
+    const stream = stt.stream({
+      connOptions: {
+        maxRetry: 1,
+        retryIntervalMs: 1,
+        timeoutMs: 1_000,
+        livenessTimeoutMs: 150,
+      },
+    });
+    const transcripts: string[] = [];
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+        }
+      }
+    })();
+
+    try {
+      await secondConnection;
+      stream.endInput();
+      await outputTask;
+
+      expect(connectionCount).toBe(2);
+      expect(transcripts).toEqual(['recovered words']);
+      expect(stream.terminalError).toBeUndefined();
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('sends session keyterms to speechmatics/linden-1', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');

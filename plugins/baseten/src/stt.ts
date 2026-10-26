@@ -4,10 +4,11 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
-  APIError,
   type AudioBuffer,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   Task,
+  WebSocketMonitor,
   log,
   normalizeLanguage,
   stt,
@@ -92,11 +93,14 @@ export class SpeechStream extends stt.SpeechStream {
   #logger = log();
   #speaking = false;
   #requestId = '';
+  readonly #livenessTimeoutMs: number;
   label = 'baseten.SpeechStream';
 
   constructor(stt: STT, opts: BasetenSttOptions, connOptions?: APIConnectOptions) {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
     this.closed = false;
   }
 
@@ -109,9 +113,6 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run() {
-    const maxRetry = 32;
-    let retries = 0;
-
     while (!this.input.closed && !this.closed) {
       const url = this.getWsUrl();
       const headers = {
@@ -120,29 +121,8 @@ export class SpeechStream extends stt.SpeechStream {
 
       const ws = new WebSocket(url, { headers });
 
-      try {
-        await waitForWebSocketOpen(ws, 'Baseten');
-
-        await this.#runWS(ws);
-      } catch (e) {
-        if (!this.closed && !this.input.closed) {
-          if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
-            throw e;
-          }
-
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-
-          this.#logger.warn(
-            `failed to connect to Baseten, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
-        } else {
-          this.#logger.warn(
-            `Baseten disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
-          );
-        }
-      }
+      await waitForWebSocketOpen(ws, 'Baseten');
+      await this.#runWS(ws);
     }
 
     this.closed = true;
@@ -152,6 +132,7 @@ export class SpeechStream extends stt.SpeechStream {
     let closing = false;
     const attemptController = new AbortController();
     const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
+    new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
 
     // Send initial metadata
     // Note: Baseten server expects 'vad_params' and 'streaming_whisper_params' field names
@@ -234,6 +215,13 @@ export class SpeechStream extends stt.SpeechStream {
             }
 
             const msg = JSON.parse(jsonString);
+            if (
+              msg.type === 'transcription' ||
+              Object.hasOwn(msg, 'transcript') ||
+              Object.hasOwn(msg, 'segments')
+            ) {
+              this.markProviderProgress();
+            }
             const isFinal = msg.is_final ?? true;
             const segments = msg.segments ?? [];
             const transcript = msg.transcript ?? '';

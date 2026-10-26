@@ -343,7 +343,9 @@ export class SpeechStream extends stt.SpeechStream {
         if (langEvent.audioLanguage) {
           this.#detectedLanguage = langEvent.audioLanguage;
         }
+        this.markProviderProgress();
       } else if (eventType === 'transcription.text.delta') {
+        this.markProviderProgress();
         const deltaEvent = event as TranscriptionStreamTextDelta;
         currentText += deltaEvent.text ?? '';
         this.queue.put({
@@ -360,6 +362,7 @@ export class SpeechStream extends stt.SpeechStream {
           ],
         });
       } else if (eventType === 'transcription.done') {
+        this.markProviderProgress();
         const doneEvent = event as TranscriptionStreamDone;
         currentText = '';
 

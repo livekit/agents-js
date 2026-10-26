@@ -65,3 +65,39 @@ it('sends all PCM through long silence and flushes the final partial frame', asy
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+it('marks only speech and transcript messages as provider progress', async () => {
+  const server = new ws.WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(server, 'listening');
+  const address = server.address();
+  if (address === null || typeof address === 'string') {
+    throw new Error('expected a TCP address');
+  }
+  endpoint.url = `ws://127.0.0.1:${address.port}`;
+
+  const connected = new Promise<ws.WebSocket>((resolve) => server.once('connection', resolve));
+  const stream = new STT({ apiKey: 'test' }).stream();
+  const markProviderProgress = vi.spyOn(
+    stream as unknown as { markProviderProgress(): void },
+    'markProviderProgress',
+  );
+
+  try {
+    const socket = await connected;
+    socket.ping();
+    await once(socket, 'pong');
+    socket.send(JSON.stringify({ type: 'events', data: { signal_type: 'CONTROL' } }));
+    socket.send(JSON.stringify({ type: 'config.updated' }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(markProviderProgress).not.toHaveBeenCalled();
+
+    socket.send(JSON.stringify({ type: 'events', data: { signal_type: 'START_SPEECH' } }));
+    socket.send(JSON.stringify({ type: 'events', data: { signal_type: 'END_SPEECH' } }));
+    socket.send(JSON.stringify({ type: 'data', data: { transcript: '' } }));
+    await vi.waitFor(() => expect(markProviderProgress).toHaveBeenCalledTimes(3));
+  } finally {
+    stream.close();
+    for (const client of server.clients) client.terminate();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

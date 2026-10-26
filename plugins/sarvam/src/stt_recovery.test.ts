@@ -157,10 +157,7 @@ describe('sarvam STT recovery', () => {
         expect(message).not.toContain(sensitive);
       }
       if (code === '500') {
-        expect(warnLog).toHaveBeenCalledWith(
-          expect.objectContaining({ error: expect.objectContaining({ body }) }),
-          expect.any(String),
-        );
+        expect(warnLog).not.toHaveBeenCalled();
       }
     },
   );

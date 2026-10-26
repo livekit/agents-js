@@ -22,6 +22,7 @@ import { type AudioBuffer, Task, cancelAndWait, shortuuid, waitUntilAborted } fr
 import { type VAD, VADEventType, type VADStream } from '../vad.js';
 import type { ConversationItemAddedEvent } from '../voice/events.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
+import { WebSocketMonitor } from '../websocket_monitor.js';
 import {
   type SttServerEvent,
   type SttTranscriptEvent,
@@ -926,8 +927,12 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       const createWsListener = async (ws: WebSocket, signal: AbortSignal) => {
+        const monitor = new WebSocketMonitor(ws, {
+          livenessTimeoutMs: this.connOptions.livenessTimeoutMs,
+        });
         return new ThrowsPromise<void, Error | APIStatusError>((resolve, reject) => {
           const onAbort = () => {
+            monitor.close();
             resourceCleanup();
             reject(new Error('WebSocket connection aborted'));
           };
@@ -956,12 +961,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           });
 
           ws.on('error', (e) => {
+            monitor.close();
             this.#logger.error({ error: e }, 'WebSocket error');
             resourceCleanup();
             reject(e);
           });
 
           ws.on('close', (code: number) => {
+            monitor.close();
             const expectedClose =
               signal.aborted || inputEnded || finalizationComplete || sessionCloseSent;
             resourceCleanup();
@@ -1075,6 +1082,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               case 'session.created':
                 break;
               case 'session.finalized':
+                this.markProviderProgress();
                 break;
               case 'session.closed':
                 if (!inputEnded && !sessionCloseSent) {
@@ -1087,15 +1095,19 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 finishFinalization();
                 break;
               case 'start_of_speech':
+                this.markProviderProgress();
                 this.processStartOfSpeech();
                 break;
               case 'interim_transcript':
+                this.markProviderProgress();
                 this.processTranscript(event, SpeechEventType.INTERIM_TRANSCRIPT);
                 break;
               case 'final_transcript':
+                this.markProviderProgress();
                 this.processTranscript(event, SpeechEventType.FINAL_TRANSCRIPT);
                 break;
               case 'preflight_transcript':
+                this.markProviderProgress();
                 this.processTranscript(event, SpeechEventType.PREFLIGHT_TRANSCRIPT);
                 break;
               case 'error':

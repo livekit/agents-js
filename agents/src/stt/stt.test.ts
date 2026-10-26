@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
@@ -12,10 +12,16 @@ import { STT, type SpeechEvent, SpeechEventType, SpeechStream } from './stt.js';
  * Emits one final transcript per attempt, then closes the socket the way a provider with a
  * fixed session cap does (Gemini Live sends a GoAway roughly every 10 minutes).
  */
-class DurationCapSTT extends STT {
-  label = 'duration-cap-stt';
+class FlappingSTT extends STT {
+  label = 'flapping-stt';
 
-  constructor(private readonly failuresBeforeIdle: number) {
+  constructor(
+    private readonly uptimeMs: number,
+    private readonly drops: number,
+    private readonly emitTranscript: (runCount: number) => boolean,
+    private readonly reportProgress = false,
+    private readonly eventType?: SpeechEventType,
+  ) {
     super({ streaming: true, interimResults: false });
   }
 
@@ -23,18 +29,30 @@ class DurationCapSTT extends STT {
     throw new APIConnectionError({ message: 'not used' });
   }
 
-  override stream(options?: { connOptions?: APIConnectOptions }): DurationCapStream {
-    return new DurationCapStream(this, this.failuresBeforeIdle, options?.connOptions);
+  override stream(options?: { connOptions?: APIConnectOptions }): FlappingStream {
+    return new FlappingStream(
+      this,
+      this.uptimeMs,
+      this.drops,
+      this.emitTranscript,
+      this.reportProgress,
+      this.eventType,
+      options?.connOptions,
+    );
   }
 }
 
-class DurationCapStream extends SpeechStream {
-  label = 'duration-cap-stream';
+class FlappingStream extends SpeechStream {
+  label = 'flapping-stream';
   runCount = 0;
 
   constructor(
     stt: STT,
-    private readonly failuresBeforeIdle: number,
+    private readonly uptimeMs: number,
+    private readonly drops: number,
+    private readonly emitTranscript: (runCount: number) => boolean,
+    private readonly reportProgress: boolean,
+    private readonly eventType?: SpeechEventType,
     connOptions?: APIConnectOptions,
   ) {
     super(stt, undefined, connOptions);
@@ -43,26 +61,30 @@ class DurationCapStream extends SpeechStream {
   protected async run(): Promise<void> {
     this.runCount += 1;
 
-    if (this.runCount > this.failuresBeforeIdle) {
-      for await (const _ of this.input) {
-        /* drain */
-      }
-      return;
+    if (this.reportProgress) {
+      this.markProviderProgress();
     }
 
-    this.queue.put({
-      type: SpeechEventType.FINAL_TRANSCRIPT,
-      alternatives: [{ text: `turn ${this.runCount}`, startTime: 0, endTime: 0, confidence: 1 }],
-    });
+    if (this.eventType !== undefined) {
+      this.queue.put({
+        type: this.eventType,
+        recognitionUsage:
+          this.eventType === SpeechEventType.RECOGNITION_USAGE ? { audioDuration: 1 } : undefined,
+      });
+    }
 
-    // Let monitorMetrics() drain the queue so the successful turn is observed before the
-    // socket drops, matching the ordering a real provider produces.
-    await delay(5);
+    if (this.emitTranscript(this.runCount)) {
+      this.queue.put({
+        type: SpeechEventType.FINAL_TRANSCRIPT,
+        alternatives: [{ text: `turn ${this.runCount}`, startTime: 0, endTime: 0, confidence: 1 }],
+      });
+    }
 
-    throw new APIStatusError({
-      message: 'GoAway: session duration limit reached',
-      options: { statusCode: 1008, body: null, retryable: true },
-    });
+    await delay(this.uptimeMs);
+
+    if (this.runCount <= this.drops) {
+      throw new APIConnectionError({ message: 'socket dropped' });
+    }
   }
 }
 
@@ -124,58 +146,6 @@ class AlwaysFailingStream extends SpeechStream {
   }
 }
 
-/**
- * Connects, stays up past the connect timeout without ever hearing speech, then drops — the
- * shape of Cartesia's `1001 Idle timeout` on a muted or silent caller.
- */
-class IdleDropSTT extends STT {
-  label = 'idle-drop-stt';
-
-  constructor(
-    private readonly drops: number,
-    private readonly uptimeMs: number,
-  ) {
-    super({ streaming: true, interimResults: false });
-  }
-
-  protected async _recognize(_buffer: AudioBuffer): Promise<SpeechEvent> {
-    throw new APIConnectionError({ message: 'not used' });
-  }
-
-  override stream(options?: { connOptions?: APIConnectOptions }): IdleDropStream {
-    return new IdleDropStream(this, this.drops, this.uptimeMs, options?.connOptions);
-  }
-}
-
-class IdleDropStream extends SpeechStream {
-  label = 'idle-drop-stream';
-  runCount = 0;
-
-  constructor(
-    stt: STT,
-    private readonly drops: number,
-    private readonly uptimeMs: number,
-    connOptions?: APIConnectOptions,
-  ) {
-    super(stt, undefined, connOptions);
-  }
-
-  protected async run(): Promise<void> {
-    this.runCount += 1;
-    await delay(this.uptimeMs);
-    if (this.runCount > this.drops) {
-      for await (const _ of this.input) {
-        /* drain */
-      }
-      return;
-    }
-    throw new APIConnectionError({
-      message: 'connection closed unexpectedly (code=1001)',
-      options: { retryable: true },
-    });
-  }
-}
-
 const connOptions: APIConnectOptions = { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 10_000 };
 
 describe('SpeechStream retry budget', () => {
@@ -184,46 +154,98 @@ describe('SpeechStream retry budget', () => {
     process.on('unhandledRejection', () => {});
   });
 
-  it('reconnects past maxRetry when each attempt produced a final transcript', async () => {
-    // 8 session drops with maxRetry: 3 — a lifetime counter would give up after 4 attempts.
-    const stream = new DurationCapSTT(8).stream({ connOptions });
-
-    const texts: string[] = [];
-    for await (const event of stream) {
-      if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
-        texts.push(event.alternatives![0].text);
-        if (texts.length === 8) break;
+  it.each([1_000, 6_000, 180_000])(
+    'keeps a finite retry budget without recognition progress at %ims uptime',
+    async (uptimeMs) => {
+      vi.useFakeTimers();
+      const stt = new FlappingSTT(uptimeMs, 100, () => false);
+      stt.on('error', () => {});
+      const stream = stt.stream({ connOptions });
+      try {
+        await vi.runAllTimersAsync();
+        for await (const _ of stream) {
+          /* drain */
+        }
+        expect(stream.runCount).toBe(connOptions.maxRetry + 1);
+        expect(stream.terminalError).toBeInstanceOf(APIConnectionError);
+      } finally {
+        stream.close();
+        vi.useRealTimers();
       }
+    },
+  );
+
+  it('resets the retry budget after successful recognition', async () => {
+    vi.useFakeTimers();
+    const drops = connOptions.maxRetry * 3;
+    const stream = new FlappingSTT(6_000, drops, () => true).stream({ connOptions });
+    try {
+      await vi.runAllTimersAsync();
+      for await (const _ of stream) {
+        /* drain */
+      }
+      expect(stream.runCount).toBe(drops + 1);
+    } finally {
+      stream.close();
+      vi.useRealTimers();
     }
-
-    expect(texts).toEqual([
-      'turn 1',
-      'turn 2',
-      'turn 3',
-      'turn 4',
-      'turn 5',
-      'turn 6',
-      'turn 7',
-      'turn 8',
-    ]);
-    expect(stream.runCount).toBe(8);
-
-    await stream.close();
   });
 
-  it('resets after an attempt that outlived the connect timeout, without any transcript', async () => {
-    const stt = new IdleDropSTT(8, 30);
-    const stream = stt.stream({ connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 10 } });
-
-    const errors: { error: Error; recoverable: boolean }[] = [];
-    stt.on('error', (ev) => errors.push({ error: ev.error, recoverable: ev.recoverable }));
-
-    while (stream.runCount < 9) {
-      await delay(5);
+  it('keeps a finite recovery budget after previously useful connections', async () => {
+    vi.useFakeTimers();
+    const usefulRuns = connOptions.maxRetry * 2;
+    const stt = new FlappingSTT(6_000, 100, (run) => run <= usefulRuns);
+    stt.on('error', () => {});
+    const stream = stt.stream({ connOptions });
+    try {
+      await vi.runAllTimersAsync();
+      for await (const _ of stream) {
+        /* drain */
+      }
+      expect(stream.runCount).toBe(usefulRuns + connOptions.maxRetry);
+      expect(stream.terminalError).toBeInstanceOf(APIConnectionError);
+    } finally {
+      stream.close();
+      vi.useRealTimers();
     }
+  });
 
-    expect(errors).toEqual([]);
-    await stream.close();
+  it('resets the retry budget on provider progress without a transcript', async () => {
+    vi.useFakeTimers();
+    const drops = connOptions.maxRetry * 3;
+    const stream = new FlappingSTT(6_000, drops, () => false, true).stream({ connOptions });
+    try {
+      await vi.runAllTimersAsync();
+      for await (const _ of stream) {
+        /* drain */
+      }
+      expect(stream.runCount).toBe(drops + 1);
+    } finally {
+      stream.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    SpeechEventType.START_OF_SPEECH,
+    SpeechEventType.END_OF_SPEECH,
+    SpeechEventType.RECOGNITION_USAGE,
+  ])('does not reset the retry budget for local event type %s', async (eventType) => {
+    vi.useFakeTimers();
+    const stream = new FlappingSTT(6_000, 100, () => false, false, eventType).stream({
+      connOptions,
+    });
+    (stream as unknown as { _numRetries: number })._numRetries = 2;
+    try {
+      await vi.runAllTimersAsync();
+      for await (const _ of stream) {
+        /* drain */
+      }
+      expect(stream.runCount).toBe(2);
+    } finally {
+      stream.close();
+      vi.useRealTimers();
+    }
   });
 
   it('still gives up after maxRetry consecutive failures with no transcript', async () => {

@@ -886,6 +886,7 @@ export class APIConnectionError extends APIError {
 
 // @public
 export interface APIConnectOptions {
+    livenessTimeoutMs?: number;
     maxRetry: number;
     retryIntervalMs: number;
     timeoutMs: number;
@@ -2957,7 +2958,9 @@ interface DeepgramTTSOptions {
 type DeepSeekModels = 'deepseek-ai/deepseek-v3' | 'deepseek-ai/deepseek-v3.2';
 
 // @public (undocumented)
-export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions;
+export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions & {
+    livenessTimeoutMs: number;
+};
 
 // @public (undocumented)
 const DEFAULT_ERROR_THRESHOLD = 500;
@@ -7547,12 +7550,15 @@ abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
     protected input: AsyncIterableQueue<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
     // (undocumented)
     abstract label: string;
+    protected markProviderProgress(): void;
     // (undocumented)
     protected monitorMetrics(): Promise<void>;
     // (undocumented)
     protected neededSampleRate?: number;
     // (undocumented)
     next(): Promise<IteratorResult<SpeechEvent>>;
+    // @internal
+    _onProviderProgress?: () => void;
     // Warning: (ae-incompatible-release-tags) The symbol "output" is marked as @public, but its signature references "AsyncIterableQueue" which is marked as @internal
     // Warning: (ae-incompatible-release-tags) The symbol "output" is marked as @public, but its signature references "AsyncIterableQueue" which is marked as @internal
     //
@@ -9426,6 +9432,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     protected vad: VAD;
 }
 
+// @internal (undocumented)
+export function _validateAPIConnectOptions(connOptions: APIConnectOptions): void;
+
 // @public
 export function validateChatContextStructure(chatCtx: ChatContext): ChatContextValidationResult;
 
@@ -9457,6 +9466,7 @@ declare namespace voice {
         resolveExpressiveOptions,
         NonverbalOptions,
         SpeechSteeringOptions,
+        SessionConnectOptions,
         AgentsConsole,
         TcpAudioInput,
         TcpAudioOutput,
@@ -9714,6 +9724,19 @@ interface WarmTransferTaskOptions {
 }
 
 // @public
+export class WebSocketMonitor {
+    constructor(ws: WebSocket_2, options?: WebSocketMonitorOptions);
+    // (undocumented)
+    close: () => void;
+}
+
+// @public (undocumented)
+export interface WebSocketMonitorOptions {
+    // (undocumented)
+    livenessTimeoutMs?: number;
+}
+
+// @public
 function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T, options?: {
     onRecorded?: () => void;
 }): T;
@@ -9864,7 +9887,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:226:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/stt/stt.ts:386:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts

@@ -63,6 +63,7 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
   maxRetry: 0,
   timeoutMs: DEFAULT_API_CONNECT_OPTIONS.timeoutMs,
   retryIntervalMs: DEFAULT_API_CONNECT_OPTIONS.retryIntervalMs,
+  livenessTimeoutMs: DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs,
 };
 
 /**
@@ -349,10 +350,12 @@ class FallbackSpeechStream extends SpeechStream {
   private recoveringStreams = new Map<SpeechStream, Task<void>>();
   private inputEnded = false;
   private _logger = log();
+  private connOptions: APIConnectOptions;
 
   constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
     super(adapter, undefined, connOptions);
     this.fallbackAdapter = adapter;
+    this.connOptions = connOptions;
   }
 
   // Skip `metrics_collected` emission in the adapter stream — children's
@@ -386,6 +389,7 @@ class FallbackSpeechStream extends SpeechStream {
     try {
       probe = sttInstance.stream({
         connOptions: {
+          ...this.connOptions,
           maxRetry: 0,
           timeoutMs: this.fallbackAdapter.attemptTimeoutMs,
           retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
@@ -574,11 +578,13 @@ class FallbackSpeechStream extends SpeechStream {
         try {
           const child = sttInstance.stream({
             connOptions: {
+              ...this.connOptions,
               maxRetry: this.fallbackAdapter.maxRetryPerSTT,
               timeoutMs: this.fallbackAdapter.attemptTimeoutMs,
               retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
             },
           });
+          child._onProviderProgress = () => this.markProviderProgress();
           // Keep child timestamps anchored to the parent stream's current retry attempt.
           child.startTimeOffset = this.startTimeOffset + (Date.now() - startTime) / 1000;
           mainRef.current = child;
