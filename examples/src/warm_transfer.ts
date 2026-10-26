@@ -62,6 +62,7 @@ Examples on when the tool should be called:
                 // `ringingTimeout: 25000`.
                 instructions: { extra: SUMMARY_INSTRUCTIONS },
                 greetingSpeech: (session) => session.generateReply({ toolChoice: 'none' }),
+                callerHangupSpeech: 'The caller has disconnected. I am ending this call now.',
               }).run();
 
               logger.info(
@@ -146,6 +147,8 @@ You are a customer support agent for LiveKit.
 
 In some cases, the user may ask to speak to a human agent. This could happen when you are unable to answer their question.
 When such is requested, you would always confirm with the user before initiating the transfer.
+If the transfer fails, tell the user that they could not be connected and offer further help.
+Only announce a successful connection after the transfer succeeds.
 `;
 
 const SUMMARY_INSTRUCTIONS = `
@@ -162,5 +165,8 @@ Brief summary in 100-200 characters from a first-person perspective
 // including the human agent room that WarmTransferTask creates — which puts a
 // second agent on the line with the human agent and produces overlapping voices.
 cli.runApp(
-  new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'warm-transfer' }),
+  new ServerOptions({
+    agent: fileURLToPath(import.meta.url),
+    agentName: process.env.AGENT_DISPATCH_NAME ?? 'warm-transfer',
+  }),
 );

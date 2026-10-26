@@ -190,6 +190,12 @@ export function createAgentV2<UserData>(
       );
     }
 
+    // the override above always exists; without an sttNode hook it is the default node, so the
+    // STT pipeline must still be reusable across a handoff
+    override _usesDefaultSttNode(): boolean {
+      return !this.hookAdapter.hasSttNodeHook;
+    }
+
     override async llmNode(
       chatCtx: ChatContext,
       toolCtx: ToolContext,
@@ -295,6 +301,12 @@ export function createAgentTaskV2<ResultT, UserData>(
       );
     }
 
+    // the override above always exists; without an sttNode hook it is the default node, so the
+    // STT pipeline must still be reusable across a handoff
+    override _usesDefaultSttNode(): boolean {
+      return !this.hookAdapter.hasSttNodeHook;
+    }
+
     override async llmNode(
       chatCtx: ChatContext,
       toolCtx: ToolContext,
@@ -341,6 +353,10 @@ class AgentHookAdapter<UserData, ContextT extends AgentContext<UserData>> {
     private readonly hooks: AgentHooks<UserData, ContextT>,
     private readonly context: ContextT,
   ) {}
+
+  get hasSttNodeHook(): boolean {
+    return this.hooks.sttNode !== undefined;
+  }
 
   async onEnter(fallback: () => Promise<void>): Promise<void> {
     if (!this.hooks.onEnter) {

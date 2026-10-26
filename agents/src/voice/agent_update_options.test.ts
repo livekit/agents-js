@@ -189,7 +189,6 @@ type RecognitionInternals = AudioRecognition & {
   turnDetector: unknown;
   sttModel: string | undefined;
   sttProvider: string | undefined;
-  hasUserVad: boolean;
   transcriptBuffer: string[];
   sttRequestIds: string[];
   lastLanguage: string | undefined;
@@ -383,12 +382,12 @@ describe('Agent.updateOptions', () => {
         tts: new FakeTTS(),
       });
       expect(activity.usingDefaultVad).toBe(true);
-      expect(rec.hasUserVad).toBe(false);
+      expect(rec.vad).toBeDefined();
 
       await agent.updateOptions({ vad: new FakeVAD() });
 
       expect(activity.usingDefaultVad).toBe(false);
-      expect(rec.hasUserVad).toBe(true);
+      expect(rec.vad).toBeInstanceOf(FakeVAD);
     });
 
     it('uses session fallbacks when omitted and suppresses all four with null', async () => {

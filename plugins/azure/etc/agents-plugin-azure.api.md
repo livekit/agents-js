@@ -99,6 +99,7 @@ export interface STTConstructorOptions extends STTUpdateOptions {
     phraseList?: string[] | null;
     // (undocumented)
     profanity?: speechsdk.ProfanityOption;
+    pronunciationAssessment?: speechsdk.PronunciationAssessmentConfig;
     // (undocumented)
     sampleRate?: number;
     // (undocumented)
@@ -127,6 +128,8 @@ export interface STTOptions {
     phraseList?: string[] | null;
     // (undocumented)
     profanity?: speechsdk.ProfanityOption;
+    // (undocumented)
+    pronunciationAssessment?: speechsdk.PronunciationAssessmentConfig;
     // (undocumented)
     sampleRate: number;
     // (undocumented)

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { APIStatusError, DEFAULT_API_CONNECT_OPTIONS } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { AudioFrame } from '@livekit/rtc-node';
@@ -53,6 +54,38 @@ describe('Deepgram streaming language detection', () => {
     const stream = stt.stream();
     // Close immediately so the connection loop never starts (no network in unit tests).
     stream.close();
+  });
+});
+
+describe('Deepgram WebSocket handshake', () => {
+  it('redacts API keys from rejected handshakes', async () => {
+    const secret = 'secret-api-key-do-not-log';
+    const wss = new WebSocketServer({
+      host: '127.0.0.1',
+      port: 0,
+      verifyClient: (_info, done) => done(false, 401, 'Unauthorized'),
+    });
+    await once(wss, 'listening');
+    const address = wss.address() as AddressInfo;
+    const deepgram = new STT({
+      apiKey: secret,
+      baseUrl: `ws://127.0.0.1:${address.port}`,
+    });
+    const errorEvent = once(deepgram, 'error');
+    const stream = deepgram.stream({
+      connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 },
+    });
+
+    try {
+      const [{ error }] = await errorEvent;
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect((error as APIStatusError).statusCode).toBe(401);
+      expect(error.message).not.toContain(secret);
+      expect(error.toString()).not.toContain(secret);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
   });
 });
 

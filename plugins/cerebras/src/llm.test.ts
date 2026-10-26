@@ -9,6 +9,7 @@ import { assert, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { LLMOptions } from './llm.js';
 import { LLM } from './llm.js';
+import type { CerebrasChatModels } from './models.js';
 
 assert(process.env.CEREBRAS_API_KEY, 'CEREBRAS_API_KEY must be set');
 
@@ -104,6 +105,20 @@ class WeatherAgent extends voice.Agent {
 }
 
 describe('Cerebras', { timeout: 30_000 }, () => {
+  it('instantiates all Cerebras chat models', () => {
+    const modelNames = [
+      'gpt-oss-120b',
+      'qwen-3.8-27b',
+      'zai-glm-4.7',
+      'gemma-4-31b',
+    ] satisfies CerebrasChatModels[];
+
+    for (const modelName of modelNames) {
+      const model = new LLM({ model: modelName, apiKey: 'test-key' });
+      expect(model.model).toBe(modelName);
+    }
+  });
+
   it('basic chat completion returns a non-empty assistant message', async () => {
     const session = new voice.AgentSession({ llm: cerebrasLLM() });
     await session.start({

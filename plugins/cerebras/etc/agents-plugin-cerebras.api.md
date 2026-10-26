@@ -25,6 +25,7 @@ import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
+import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { TrackPublishOptions } from '@livekit/rtc-node';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
@@ -36,7 +37,7 @@ import { z } from 'zod';
 // Warning: (ae-missing-release-tag) "CerebrasChatModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type CerebrasChatModels = 'gpt-oss-120b' | 'zai-glm-4.7' | 'gemma-4-31b';
+export type CerebrasChatModels = 'gpt-oss-120b' | 'qwen-3.8-27b' | 'zai-glm-4.7' | 'gemma-4-31b';
 
 // Warning: (ae-missing-release-tag) "LLM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //

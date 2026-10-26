@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
-import { recordException, traceTypes, tracer } from '../telemetry/index.js';
+import { genAI, inputDelta, recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, Task, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
@@ -31,6 +31,13 @@ export interface CompletionUsage {
   promptCachedTokens: number;
   /** Tokens used to write to the prompt cache. */
   cacheCreationTokens?: number;
+  /**
+   * Completion tokens spent on hidden reasoning.
+   *
+   * Already counted in `completionTokens`; do not add it to totals. Not all providers break
+   * reasoning out separately, and it is 0 when they don't.
+   */
+  reasoningTokens?: number;
   totalTokens: number;
   /** The service tier used for processing (e.g. 'default', 'priority', 'flex'). */
   serviceTier?: string;
@@ -217,11 +224,16 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       this.closed = true;
     });
 
+    // tells an enclosing `llm_node` span that this call is instrumented, so it does not
+    // record the convention's attributes a second time. Read here rather than in mainTask,
+    // which startSoon defers out of the node's context.
+    genAI.markInferenceSpanRecorded();
+
     // this is a hack to immitate asyncio.create_task so that mainTask
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(async () => {
+    const runMainTask = async () => {
       try {
         await this.mainTask();
       } catch {
@@ -229,12 +241,69 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       } finally {
         this.queue.close();
       }
+    };
+    startSoon(() => {
+      void runMainTask();
     });
+  }
+
+  /** The `llm_request` span of this stream, once the main task has opened it. */
+  /**
+   * The model named on the response side of the request span. The LLM's own model by default;
+   * a fallback adapter's stream reports the instance that actually served.
+   */
+  protected get responseModel(): string {
+    return this.#llm.model;
+  }
+
+  /** The provider named on the response side and in the usage metrics (see {@link responseModel}). */
+  protected get responseProvider(): string {
+    return this.#llm.provider;
+  }
+
+  /**
+   * The convention's operation for the request span: `chat` for a provider request. An adapter
+   * that delegates to another stream has none, or a backend counting inference spans would see
+   * two calls for one.
+   */
+  protected get genAIOperationName(): string | undefined {
+    return traceTypes.GenAIOperationName.CHAT;
+  }
+
+  protected get llmRequestSpan(): Span | undefined {
+    return this.#llmRequestSpan;
+  }
+
+  /** The GenAI inference span's request side, per the OTel GenAI conventions. */
+  private recordGenAIRequest(span: Span) {
+    genAI.setRequestAttributes(span, {
+      operation: this.genAIOperationName,
+      provider: this.#llm.provider,
+      model: this.#llm.model,
+      stream: true,
+      outputType: traceTypes.GenAIOutputType.TEXT,
+    });
+    // no input is recorded, so this span must not become the parent of a later delta either
+    if (!genAI.captureContentEnabled() || !span.isRecording()) return;
+    if (this.genAIOperationName === undefined && inputDelta.active()) {
+      genAI.setContentAttributes(span, {
+        toolDefinitions: this.#toolCtx ? genAI.toToolDefinitions(this.#toolCtx.functionTools) : [],
+      });
+      return;
+    }
+    const delta = inputDelta.compute(inputDelta.LLM_REQUEST, this.#chatCtx, span);
+    genAI.setContentAttributes(span, {
+      systemInstructions: delta.systemInstructions(),
+      inputMessages: delta.inputMessages(),
+      toolDefinitions: this.#toolCtx ? genAI.toToolDefinitions(this.#toolCtx.functionTools) : [],
+    });
+    inputDelta.setAttributes(span, delta);
   }
 
   private _mainTaskImpl = async (span: Span) => {
     this.#llmRequestSpan = span;
     span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
+    this.recordGenAIRequest(span);
 
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
@@ -292,11 +361,12 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     }
   };
 
-  private mainTask = async () =>
-    tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
+  private mainTask = async () => {
+    return tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
       name: 'llm_request',
       endOnExit: false,
     });
+  };
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
     this.#llm.emit('error', {
@@ -314,6 +384,9 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     let requestId = '';
     let usage: CompletionUsage | undefined;
     let completionStartTime: string | undefined;
+    // accumulated for `gen_ai.output.messages`
+    let responseContent = '';
+    const toolCalls: FunctionCall[] = [];
 
     for await (const ev of this.queue) {
       if (this.abortController.signal.aborted) {
@@ -329,6 +402,12 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       if (ttft === BigInt(-1) && hasResponse(ev)) {
         ttft = process.hrtime.bigint() - startTime;
         completionStartTime = new Date().toISOString();
+      }
+      if (ev.delta?.content) {
+        responseContent += ev.delta.content;
+      }
+      if (ev.delta?.toolCalls?.length) {
+        toolCalls.push(...ev.delta.toolCalls);
       }
       if (ev.usage) {
         usage = ev.usage;
@@ -350,6 +429,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       promptTokens: usage?.promptTokens || 0,
       promptCachedTokens: usage?.promptCachedTokens || 0,
       cacheCreationTokens: usage?.cacheCreationTokens || 0,
+      reasoningTokens: usage?.reasoningTokens || 0,
       totalTokens: usage?.totalTokens || 0,
       tokensPerSecond: (() => {
         if (durationMs <= 0) {
@@ -358,17 +438,33 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         return (usage?.completionTokens || 0) / (durationMs / 1000);
       })(),
       metadata: {
-        modelProvider: this.#llm.provider,
-        modelName: this.#llm.model,
+        modelProvider: this.responseProvider,
+        modelName: this.responseModel,
       },
     };
 
     if (this.#llmRequestSpan) {
       this.#llmRequestSpan.setAttribute(traceTypes.ATTR_LLM_METRICS, JSON.stringify(metrics));
 
-      this.#llmRequestSpan.setAttributes({
-        [traceTypes.ATTR_GEN_AI_USAGE_INPUT_TOKENS]: metrics.promptTokens,
-        [traceTypes.ATTR_GEN_AI_USAGE_OUTPUT_TOKENS]: metrics.completionTokens,
+      // the GenAI response side; the request side was recorded at span creation
+      genAI.setUsageAttributes(this.#llmRequestSpan, metrics);
+
+      const finishReason = genAI.finishReasonFor({
+        functionCalls: toolCalls,
+        interrupted: metrics.cancelled,
+      });
+      genAI.setResponseAttributes(this.#llmRequestSpan, {
+        responseId: requestId || undefined,
+        model: this.responseModel,
+        finishReasons: [finishReason],
+        timeToFirstChunk: metrics.ttftMs >= 0 ? metrics.ttftMs / 1000 : undefined,
+      });
+      genAI.setContentAttributes(this.#llmRequestSpan, {
+        outputMessages: genAI.toOutputMessages({
+          text: responseContent,
+          functionCalls: toolCalls,
+          finishReason,
+        }),
       });
 
       if (completionStartTime) {

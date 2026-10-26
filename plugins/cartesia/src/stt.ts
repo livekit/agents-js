@@ -14,7 +14,6 @@ import {
   log,
   normalizeLanguage,
   stt,
-  waitForAbort,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { IncomingMessage } from 'node:http';
@@ -422,12 +421,17 @@ export class SpeechStream extends stt.SpeechStream {
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
 
     let hasEnded = false;
-    const iterator = this.input[Symbol.asyncIterator]();
-    const abortPromise = waitForAbort(abortSignal);
+    const nextInput = async () => {
+      try {
+        return await this.input.next({ signal: abortSignal });
+      } catch (e) {
+        if (abortSignal.aborted) return undefined;
+        throw e;
+      }
+    };
 
     while (true) {
-      const result = await Promise.race([iterator.next(), abortPromise]);
-
+      const result = await nextInput();
       if (result === undefined) return; // aborted
 
       if (result.done) {

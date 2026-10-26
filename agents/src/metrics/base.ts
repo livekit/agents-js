@@ -12,6 +12,7 @@ export type MetricsMetadata = {
 export type AgentMetrics =
   | STTMetrics
   | LLMMetrics
+  | DecisionMetrics
   | TTSMetrics
   | VADMetrics
   | EOUMetrics
@@ -19,6 +20,18 @@ export type AgentMetrics =
   | RealtimeModelMetrics
   | InterruptionMetrics
   | AvatarMetrics;
+
+export type DecisionMetrics = {
+  type: 'decision_metrics';
+  label: string;
+  requestId: string;
+  timestamp: number;
+  /** Duration of the request in milliseconds. */
+  durationMs: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  metadata?: MetricsMetadata;
+};
 
 export type LLMMetrics = {
   type: 'llm_metrics';
@@ -35,6 +48,13 @@ export type LLMMetrics = {
   promptCachedTokens: number;
   /** Tokens used to write to the prompt cache. Not all providers report this. */
   cacheCreationTokens?: number;
+  /**
+   * The number of completion tokens spent on hidden reasoning.
+   *
+   * Already counted in `completionTokens`; do not add it to totals. Not all providers break
+   * reasoning out separately, and it is 0 when they don't.
+   */
+  reasoningTokens?: number;
   totalTokens: number;
   tokensPerSecond: number;
   speechId?: string;
@@ -164,6 +184,10 @@ export type RealtimeModelMetrics = {
    * The duration of the session connection in milliseconds (for session-based billing like xAI).
    */
   sessionDurationMs?: number;
+  /** Time to acquire the realtime connection, in milliseconds. */
+  acquireTimeMs?: number;
+  /** Whether an existing realtime connection was reused. */
+  connectionReused?: boolean;
   /**
    * Time to first audio token in milliseconds. -1 if no audio token was sent.
    */
@@ -180,6 +204,14 @@ export type RealtimeModelMetrics = {
    * The number of output tokens sent in the Response, including text and audio tokens.
    */
   outputTokens: number;
+  /**
+   * The number of output tokens spent on hidden reasoning, as reported by the provider
+   * (e.g. Gemini Live's `thoughtsTokenCount`).
+   *
+   * Already counted in `outputTokens`; do not add it to totals. Left `undefined` when the
+   * provider did not report it, so a reported zero stays distinguishable from a missing field.
+   */
+  reasoningTokens?: number;
   /**
    * The total number of tokens in the Response.
    */

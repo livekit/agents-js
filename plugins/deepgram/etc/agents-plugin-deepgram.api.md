@@ -9,6 +9,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { Logger } from 'pino';
 import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
@@ -26,6 +27,32 @@ export class ChunkedStream extends tts.ChunkedStream {
     // (undocumented)
     protected run(): Promise<void>;
 }
+
+// Warning: (ae-missing-release-tag) "ChunkedStreamv2" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class ChunkedStreamv2 extends tts.ChunkedStream {
+    constructor(tts: TTSv2, text: string, opts: TTSv2Options, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
+
+// Warning: (ae-missing-release-tag) "FluxRedaction" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type FluxRedaction = 'numbers' | 'aggressive_numbers';
+
+// Warning: (ae-missing-release-tag) "FluxTTSEncoding" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type FluxTTSEncoding = 'linear16';
+
+// Warning: (ae-missing-release-tag) "FluxTTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type FluxTTSModels = 'flux-alexis-en';
 
 // Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -139,14 +166,6 @@ export interface STTOptions {
 //
 // @public
 export class STTv2 extends stt.STT {
-    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
-    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
-    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
-    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
-    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
-    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
-    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
-    // Warning: (tsdoc-param-tag-with-invalid-name) The @param block should be followed by a valid parameter name: The identifier cannot non-word characters
     constructor(opts?: Partial<STTv2Options>);
     // (undocumented)
     readonly label = "deepgram.STTv2";
@@ -185,6 +204,9 @@ export interface STTv2Options {
     mipOptOut?: boolean;
     // (undocumented)
     model: V2Models | string;
+    numerals: boolean;
+    profanityFilter: boolean;
+    redact?: FluxRedaction;
     // (undocumented)
     sampleRate: number;
     // (undocumented)
@@ -196,6 +218,17 @@ export interface STTv2Options {
 // @public (undocumented)
 export class SynthesizeStream extends tts.SynthesizeStream {
     constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions);
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
+
+// Warning: (ae-missing-release-tag) "SynthesizeStreamv2" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class SynthesizeStreamv2 extends tts.SynthesizeStream {
+    constructor(tts: TTSv2, opts: TTSv2Options, connOptions?: APIConnectOptions);
     // (undocumented)
     label: string;
     // (undocumented)
@@ -261,6 +294,47 @@ export interface TTSOptions {
     sentenceTokenizer: tokenize.SentenceTokenizer;
     // (undocumented)
     speed?: number;
+}
+
+// Warning: (ae-missing-release-tag) "TTSv2" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class TTSv2 extends tts.TTS {
+    constructor(opts?: Partial<TTSv2Options>);
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    get model(): string;
+    prewarm(): void;
+    // (undocumented)
+    get provider(): string;
+    releaseIdleConnections(): Promise<void>;
+    // (undocumented)
+    get sampleRate(): number;
+    // (undocumented)
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): tts.SynthesizeStream;
+    // (undocumented)
+    synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream;
+    // (undocumented)
+    updateOptions(opts: Partial<Pick<TTSv2Options, 'model' | 'encoding' | 'sampleRate' | 'speed'>>): void;
+}
+
+// Warning: (ae-missing-release-tag) "TTSv2Options" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface TTSv2Options {
+    apiKey?: string;
+    baseUrl: string;
+    encoding: FluxTTSEncoding;
+    mipOptOut: boolean;
+    model: FluxTTSModels | string;
+    sampleRate: number;
+    speed?: number | null;
+    wordTokenizer: tokenize.WordTokenizer;
 }
 
 // Warning: (ae-missing-release-tag) "V2Models" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

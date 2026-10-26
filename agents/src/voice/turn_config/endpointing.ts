@@ -91,7 +91,7 @@ export class BaseEndpointing {
     this._overlapping = overlapping;
   }
 
-  onEndOfSpeech(_endedAt: number, _shouldIgnore = false): void {
+  onEndOfSpeech(_endedAt: number, _interruption?: boolean): void {
     this._overlapping = false;
   }
 
@@ -106,6 +106,7 @@ export class DynamicEndpointing extends BaseEndpointing {
   #utteranceEndedAt?: number;
   #agentSpeechStartedAt?: number;
   #agentSpeechEndedAt?: number;
+  #agentSpeaking = false;
   #speaking = false;
 
   constructor({
@@ -152,19 +153,29 @@ export class DynamicEndpointing extends BaseEndpointing {
   }
 
   override onStartOfAgentSpeech(startedAt: number): void {
+    // Agent speech started before the current user utterance ended, so the stored end still
+    // belongs to the previous utterance. Move it just before agent speech to exclude this overlap.
+    if (
+      !this.#agentSpeaking &&
+      this.#speaking &&
+      this.#utteranceStartedAt !== undefined &&
+      this.#utteranceEndedAt !== undefined &&
+      this.#utteranceEndedAt < this.#utteranceStartedAt
+    ) {
+      this.#utteranceEndedAt = startedAt - 1;
+    }
+
     this.#agentSpeechStartedAt = startedAt;
     this.#agentSpeechEndedAt = undefined;
+    this.#agentSpeaking = true;
     this._overlapping = this.#speaking;
   }
 
   override onEndOfAgentSpeech(endedAt: number): void {
-    if (
-      this.#agentSpeechStartedAt !== undefined &&
-      (this.#agentSpeechEndedAt === undefined ||
-        this.#agentSpeechEndedAt < this.#agentSpeechStartedAt)
-    ) {
+    if (this.#agentSpeaking) {
       this.#agentSpeechEndedAt = endedAt;
     }
+    this.#agentSpeaking = false;
     this._overlapping = false;
   }
 
@@ -173,26 +184,13 @@ export class DynamicEndpointing extends BaseEndpointing {
       return;
     }
 
-    // Audio-activity interruption can arrive before the previous utterance's end timestamp is
-    // finalized. In that case the stored end appears earlier than its start, so pin it just before
-    // agent speech to keep the immediate-interruption pause calculation meaningful.
-    if (
-      this.#utteranceStartedAt !== undefined &&
-      this.#utteranceEndedAt !== undefined &&
-      this.#agentSpeechStartedAt !== undefined &&
-      this.#utteranceEndedAt < this.#utteranceStartedAt &&
-      overlapping
-    ) {
-      this.#utteranceEndedAt = this.#agentSpeechStartedAt - 1;
-    }
-
     this.#utteranceStartedAt = startedAt;
     this._overlapping = overlapping;
     this.#speaking = true;
   }
 
-  override onEndOfSpeech(endedAt: number, shouldIgnore = false): void {
-    if (shouldIgnore && this._overlapping) {
+  override onEndOfSpeech(endedAt: number, interruption?: boolean): void {
+    if (interruption === false && this._overlapping) {
       if (
         this.#utteranceStartedAt === undefined ||
         this.#agentSpeechStartedAt === undefined ||
@@ -236,8 +234,11 @@ export class DynamicEndpointing extends BaseEndpointing {
     }
 
     this.#utteranceEndedAt = endedAt;
-    this.#agentSpeechStartedAt = undefined;
-    this.#agentSpeechEndedAt = undefined;
+    // Preserve an active agent interval until its end is recorded.
+    if (!this.#agentSpeaking) {
+      this.#agentSpeechStartedAt = undefined;
+      this.#agentSpeechEndedAt = undefined;
+    }
     this.#speaking = false;
     this._overlapping = false;
   }

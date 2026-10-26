@@ -29,3 +29,15 @@ describe('defineAgent onSimulationEnd', () => {
     expect(agent.onSimulationEnd).toBe(onSimulationEnd);
   });
 });
+
+describe('defineAgent onSessionEnd', () => {
+  it('carries the callback through the definition', () => {
+    const onSessionEnd = () => {};
+    const agent = defineAgent({
+      entry: async () => {},
+      onSessionEnd,
+    });
+    expect(isAgent(agent)).toBe(true);
+    expect(agent.onSessionEnd).toBe(onSessionEnd);
+  });
+});

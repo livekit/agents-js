@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   type AudioBuffer,
   AudioByteStream,
-  AudioEnergyFilter,
   Future,
   Task,
   createTimedString,
@@ -15,10 +16,12 @@ import {
   normalizeLanguage,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
+  waitUntilAborted,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { PeriodicCollector } from './_utils.js';
+import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
 export interface STTOptions {
@@ -265,7 +268,6 @@ export class STT extends stt.STT {
 
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
-  #audioEnergyFilter: AudioEnergyFilter;
   #logger = log();
   #speaking = false;
   #resetWS = new Future();
@@ -280,7 +282,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
     this.closed = false;
-    this.#audioEnergyFilter = new AudioEnergyFilter();
     this.#audioDurationCollector = new PeriodicCollector(
       (duration) => this.onAudioDurationReport(duration),
       { duration: 5.0 },
@@ -321,22 +322,24 @@ export class SpeechStream extends stt.SpeechStream {
       };
       appendSearchParams(streamURL, params);
 
-      ws = new WebSocket(streamURL, {
-        headers: { Authorization: `Token ${this.#opts.apiKey}` },
-      });
+      try {
+        ws = new WebSocket(streamURL, {
+          headers: { Authorization: `Token ${this.#opts.apiKey}` },
+        });
+        await waitForWebSocketOpen(ws, 'Deepgram');
+      } catch (error) {
+        if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+        throw new APIConnectionError({
+          message: `failed to connect to Deepgram (${errorName(error)})`,
+        });
+      }
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
-        });
-
         await this.#runWS(ws);
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           if (retries >= maxRetry) {
-            throw new Error(`failed to connect to Deepgram after ${retries} attempts: ${e}`);
+            throw e;
           }
 
           const delay = Math.min(retries * 5, 10);
@@ -380,6 +383,11 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket) {
     this.#resetWS = new Future();
     let closing = false;
+    // Scoped to this connection. An abandoned `input.next()` stays parked inside the
+    // queue and shifts the next frame off it for a promise nobody awaits, so a sender
+    // left over from a previous attempt steals audio from the current one. The read
+    // has to be cancelled, not merely raced against.
+    const attempt = new AbortController();
 
     const keepalive = setInterval(() => {
       try {
@@ -390,13 +398,29 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }, 5000);
 
+    // the KeepAlive above is an application-level message: it keeps Deepgram from
+    // timing the session out, but it cannot tell us whether the socket is still
+    // there. Only a ping that goes unanswered can.
+    const stopHeartbeat = startWebSocketHeartbeat(ws, () =>
+      this.#logger.warn('Deepgram did not answer a ping in time, terminating the socket'),
+    );
+
     // gets cancelled also when sendTask is complete
     const wsMonitor = Task.from(async (controller) => {
-      const closed = new Promise<void>(async (_, reject) => {
-        ws.once('close', (code, reason) => {
+      const closed = new Promise<void>((_, reject) => {
+        ws.once('close', (code) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            this.#logger.error({ code }, 'Deepgram WebSocket closed unexpectedly');
+            reject(new APIConnectionError({ message: 'Deepgram WebSocket closed unexpectedly' }));
+          }
+        });
+        ws.once('error', (error) => {
+          if (!closing) {
+            reject(
+              new APIConnectionError({
+                message: `Deepgram WebSocket failed (${errorName(error)})`,
+              }),
+            );
           }
         });
       });
@@ -412,15 +436,13 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      // waitForAbort internally sets up an abort listener on the abort signal
-      // we need to put it outside loop to avoid constant re-registration of the listener
-      const abortPromise = waitForAbort(this.abortSignal);
-
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
-
-          if (result === undefined) return; // aborted
+          const { result, isAborted } = await waitUntilAborted(
+            this.input.next({ signal: attempt.signal }),
+            this.abortSignal,
+          );
+          if (isAborted) return;
           if (result.done) {
             break;
           }
@@ -442,11 +464,9 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           for await (const frame of frames) {
-            if (this.#audioEnergyFilter.pushFrame(frame)) {
-              const frameDuration = frame.samplesPerChannel / frame.sampleRate;
-              this.#audioDurationCollector.push(frameDuration);
-              ws.send(frame.data.buffer);
-            }
+            const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+            this.#audioDurationCollector.push(frameDuration);
+            ws.send(frame.data.buffer);
           }
 
           if (hasEnded) {
@@ -454,9 +474,14 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(JSON.stringify({ type: 'Finalize' }));
           }
         }
+      } catch (e) {
+        if (attempt.signal.aborted) return; // teardown, not a failure of this send
+        throw e;
       } finally {
         closing = true;
-        ws.send(JSON.stringify({ type: 'CloseStream' }));
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'CloseStream' }));
+        }
         wsMonitor.cancel();
       }
     };
@@ -574,13 +599,24 @@ export class SpeechStream extends stt.SpeechStream {
       await Promise.race([listenMessage, waitForAbort(controller.signal)]);
     }, this.abortController);
 
-    await Promise.race([
-      this.#resetWS.await,
-      Promise.all([sendTask(), listenTask.result, wsMonitor]),
-    ]);
-    closing = true;
-    ws.close();
-    clearInterval(keepalive);
+    const sendPromise = sendTask();
+    try {
+      await Promise.race([
+        this.#resetWS.await,
+        // wsMonitor.result, not wsMonitor: Task is not thenable, so passing the
+        // object made Promise.all resolve it instantly and the monitor's rejection
+        // was never observed. A dropped socket could not reach the retry below.
+        Promise.all([sendPromise, listenTask.result, wsMonitor.result]),
+      ]);
+    } finally {
+      closing = true;
+      ws.close();
+      clearInterval(keepalive);
+      stopHeartbeat();
+      // settle this attempt's sender before the caller opens the next socket
+      attempt.abort();
+      await sendPromise.catch(() => {});
+    }
   }
 
   private onAudioDurationReport(duration: number) {
@@ -593,6 +629,10 @@ export class SpeechStream extends stt.SpeechStream {
     };
     this.queue.put(usageEvent);
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 function appendSearchParams(url: URL, params: Record<string, unknown>) {

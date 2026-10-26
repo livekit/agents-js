@@ -280,19 +280,17 @@ export function createWsTransport(
               ? (performance.now() - existing.requestStartedAt) / 1000
               : (performance.now() - createdAt) / 1000;
 
-          const entry = state.cache.setOrUpdate(
-            createdAt,
-            () => new InterruptionCacheEntry({ createdAt }),
-            {
-              speechInput: existing?.speechInput,
-              requestStartedAt: existing?.requestStartedAt,
-              totalDurationInS,
-              probabilities: message.probabilities,
-              isInterruption: true,
-              predictionDurationInS: message.prediction_duration,
-              detectionDelayInS: (Date.now() - overlapSpeechStartedAt) / 1000,
-            },
-          );
+          const entry = state.cache.updateValue(createdAt, {
+            totalDurationInS,
+            probabilities: message.probabilities,
+            isInterruption: true,
+            predictionDurationInS: message.prediction_duration,
+            detectionDelayInS: (Date.now() - overlapSpeechStartedAt) / 1000,
+          });
+          if (!entry) {
+            logger.trace({ createdAt }, 'ignoring interruption verdict outside the current speech');
+            break;
+          }
 
           if (updateUserSpeakingSpan) {
             updateUserSpeakingSpan(entry);
@@ -346,19 +344,17 @@ export function createWsTransport(
             existing?.requestStartedAt !== undefined
               ? (performance.now() - existing.requestStartedAt) / 1000
               : (performance.now() - createdAt) / 1000;
-          const entry = state.cache.setOrUpdate(
-            createdAt,
-            () => new InterruptionCacheEntry({ createdAt }),
-            {
-              speechInput: existing?.speechInput,
-              requestStartedAt: existing?.requestStartedAt,
-              totalDurationInS,
-              predictionDurationInS: message.prediction_duration,
-              probabilities: message.probabilities,
-              isInterruption: message.is_bargein ?? false,
-              detectionDelayInS: (Date.now() - overlapSpeechStartedAt) / 1000,
-            },
-          );
+          const entry = state.cache.updateValue(createdAt, {
+            totalDurationInS,
+            predictionDurationInS: message.prediction_duration,
+            probabilities: message.probabilities,
+            isInterruption: message.is_bargein ?? false,
+            detectionDelayInS: (Date.now() - overlapSpeechStartedAt) / 1000,
+          });
+          if (!entry) {
+            logger.trace({ createdAt }, 'ignoring interruption result outside the current speech');
+            break;
+          }
 
           logger.debug(
             {
