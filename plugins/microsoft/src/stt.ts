@@ -738,7 +738,11 @@ class SpeechStream extends stt.SpeechStream {
           if (segmentAbort.signal.aborted) return;
           throw error;
         }
-        if (result.done) break;
+        if (result.done) {
+          // Only a drained, closed queue ends input; frames may remain queued after a flush.
+          inputEnded = true;
+          break;
+        }
         const item = result.value;
         this.#queuedItems--;
         if (this.#inputError) throw this.#inputError;
@@ -749,7 +753,6 @@ class SpeechStream extends stt.SpeechStream {
         vadStream.pushFrame(item);
       }
       if (this.#inputError) throw this.#inputError;
-      inputEnded = this.input.closed;
       feedEnded = true;
       vadStream.endInput();
     };
