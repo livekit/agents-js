@@ -175,8 +175,12 @@ type Role = 'user' | 'assistant';
 interface Speech {
   messageId: string;
   text: string;
+  startMs?: number;
   endMs?: number;
   startedAt: number;
+  /** Where on the model's clock the model began answering the user's turn. */
+  replyMs?: number;
+  /** Input audio pushed since the user's last fragment, once the model has answered. */
   quietMs: number;
 }
 
@@ -648,16 +652,35 @@ export class GPTLiveSession extends llm.DuplexSession<{
   ): void {
     if (!event.delta) return;
     let speech = this.speech.get(role);
-    if (
-      speech?.endMs !== undefined &&
-      event.start_ms != null &&
-      event.start_ms - speech.endMs > MIN_SILENCE_DURATION
-    ) {
+    const startMs = event.start_ms ?? 0;
+    let ends: boolean;
+    if (role === 'user') {
+      // the caller's turn is everything they say before the model answers, however long
+      // they pause: a fragment from after the answer began starts the next one
+      ends = speech?.replyMs !== undefined && startMs >= speech.replyMs;
+    } else {
+      const user = this.speech.get('user');
+      if (user && user.replyMs === undefined && startMs >= (user.startMs ?? 0)) {
+        user.replyMs = startMs;
+      }
+      // a pause on the model's clock ends its message even when its fragments arrived together
+      ends =
+        speech?.endMs !== undefined &&
+        event.start_ms != null &&
+        event.start_ms - speech.endMs > MIN_SILENCE_DURATION;
+    }
+    if (ends) {
       this.endSpeech(role);
       speech = undefined;
     }
     if (!speech) {
-      speech = { messageId: shortuuid('speech_'), text: '', startedAt: Date.now(), quietMs: 0 };
+      speech = {
+        messageId: shortuuid('speech_'),
+        text: '',
+        startMs: event.start_ms ?? undefined,
+        startedAt: Date.now(),
+        quietMs: 0,
+      };
       this.speech.set(role, speech);
       this.history.insert(
         new llm.ChatMessage({
@@ -852,8 +875,11 @@ export class GPTLiveSession extends llm.DuplexSession<{
   /** Buffer microphone audio, mixing to mono and resampling to 24 kHz as needed. */
   pushAudio(frame: AudioFrame): void {
     if (this.closing) return;
+    // once the model answers, the caller's turn ends on their own audio: this much pushed
+    // since their last fragment. the caller's transcript runs behind the model's, so their
+    // last words can still arrive after the answer began
     const speech = this.speech.get('user');
-    if (speech) {
+    if (speech?.replyMs !== undefined) {
       speech.quietMs += Math.round((frame.samplesPerChannel / frame.sampleRate) * 1000);
       if (speech.quietMs >= MIN_SILENCE_DURATION) this.endSpeech('user');
     }

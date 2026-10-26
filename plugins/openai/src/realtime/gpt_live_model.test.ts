@@ -913,7 +913,7 @@ describe('GPTLiveModel', () => {
     ]);
   });
 
-  it('ends a caller turn after 800 ms of input audio without new fragments', async () => {
+  it('ends a caller turn on 800 ms of their audio without new fragments once the model answers', async () => {
     const session = create();
     const events: { name: string; data: object }[] = [];
     for (const name of [
@@ -931,27 +931,39 @@ describe('GPTLiveModel', () => {
       'input_audio_transcription_completed',
       'input_audio_transcription_completed',
     ]);
-    for (let i = 0; i < 7; i++) session.pushAudio(pcm());
+    for (let i = 0; i < 30; i++) session.pushAudio(pcm());
     expect(events).toHaveLength(3);
+    await server.send(session, transcript('assistant', 'Let me', 5600));
+    await server.send(session, transcript('user', ' weather', 2200));
+    expect(events).toHaveLength(4);
+    for (let i = 0; i < 7; i++) session.pushAudio(pcm());
+    expect(events).toHaveLength(4);
     session.pushAudio(pcm());
     expect(events.slice(-2).map((event) => event.name)).toEqual([
       'input_audio_transcription_completed',
       'input_speech_stopped',
     ]);
-    expect(events[3]?.data).toEqual({ ...events[2]?.data, isFinal: true });
-    expect(events[3]?.data).toMatchObject({ transcript: ' What is the' });
+    expect(events[4]?.data).toEqual({ ...events[3]?.data, isFinal: true });
+    expect(events[4]?.data).toMatchObject({ transcript: ' What is the weather' });
   });
 
-  it('splits bursty transcript delivery on gaps in the model timeline', async () => {
+  it('splits caller turns on the model answering, not on a pause', async () => {
     const session = create();
     const finals: string[] = [];
+    let started = 0;
     session.on('input_audio_transcription_completed', (event) => {
       if (event.isFinal) finals.push(event.transcript);
     });
+    session.on('input_speech_started', () => started++);
     await ready(session);
     await server.send(session, transcript('user', 'Hello', 1000));
-    await server.send(session, transcript('user', 'Again', 4000));
-    expect(finals).toEqual(['Hello']);
+    // began before the caller did, so it answers nothing they said
+    await server.send(session, transcript('assistant', 'So', 500));
+    await server.send(session, transcript('user', ' again', 4000));
+    await server.send(session, transcript('assistant', 'Hi', 4500));
+    await server.send(session, transcript('user', 'Next', 6000));
+    expect(finals).toEqual(['Hello again']);
+    expect(started).toBe(2);
   });
 
   it.each(['responses', 'client'] as const)(
@@ -1530,6 +1542,7 @@ describe('GPT-Live AgentSession integration', () => {
       await vi.waitFor(() => expect(live.sessionId).toBeDefined());
       const start = Date.now();
       await server.send(live, transcript('user', 'Where is my order?', 1000));
+      await server.send(live, transcript('assistant', 'Let me check.', 1500));
       live.pushAudio(pcm(800));
       await vi.waitFor(() =>
         expect(
