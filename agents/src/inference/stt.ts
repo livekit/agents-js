@@ -119,8 +119,8 @@ export interface DeepgramFluxOptions {
   keyterm?: string | string[];
   /** Always true for LiveKit Inference; the passed value is ignored. */
   mip_opt_out?: boolean;
-  /** Language hint. */
-  language_hint?: string;
+  /** Bias recognition toward these languages without restricting detection. Only supported by flux-general-multi. Takes precedence over `language`. */
+  language_hint?: string | string[];
   /** Enable automatic language detection. */
   detect_language?: boolean;
 }

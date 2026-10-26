@@ -2923,7 +2923,7 @@ interface DeepgramFluxOptions {
     eot_threshold?: number;
     eot_timeout_ms?: number;
     keyterm?: string | string[];
-    language_hint?: string;
+    language_hint?: string | string[];
     mip_opt_out?: boolean;
 }
 
