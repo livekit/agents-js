@@ -4,10 +4,16 @@
 
 ```ts
 
-import { APIConnectOptions } from '@livekit/agents';
-import { AudioBuffer as AudioBuffer_2 } from '@livekit/agents';
-import { stt } from '@livekit/agents';
-import { tts } from '@livekit/agents';
+import { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler } from '@livekit/rtc-node';
+import { Logger } from 'pino';
+import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
+import { TransformStream as TransformStream_2 } from 'node:stream/web';
+import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 
 // @public (undocumented)
 export type ChunkedStream = RESTChunkedStream | SSEChunkedStream | WebSocketChunkedStream;
@@ -77,11 +83,15 @@ export interface ResolvedTTSOptions {
     voice: string;
 }
 
+// Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export class RESTChunkedStream extends tts.ChunkedStream {
+    // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
     constructor(ttsInstance: TTS, text: string, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
     // (undocumented)
     label: string;
+    protected get responseModel(): string;
     // (undocumented)
     protected run(): Promise<void>;
 }
@@ -92,6 +102,8 @@ export const SAMPLE_RATE_16K = 16000;
 // @public (undocumented)
 export const SAMPLE_RATE_8K = 8000;
 
+// Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export class SpeechStream extends stt.SpeechStream {
     constructor(sttInstance: STT, opts: ResolvedSTTOptions, connOptions?: APIConnectOptions);
@@ -110,6 +122,7 @@ export class SSEChunkedStream extends tts.ChunkedStream {
     constructor(ttsInstance: TTS, text: string, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
     // (undocumented)
     label: string;
+    protected get responseModel(): string;
     // (undocumented)
     protected run(): Promise<void>;
 }
@@ -125,6 +138,8 @@ export class STT extends stt.STT {
     _opts: ResolvedSTTOptions;
     // (undocumented)
     get provider(): string;
+    // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
     protected _recognize(buffer: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>;
     // (undocumented)
@@ -152,6 +167,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     buildWsUrl(): string;
     // (undocumented)
     label: string;
+    protected get responseModel(): string;
     // (undocumented)
     protected run(): Promise<void>;
 }
@@ -204,6 +220,7 @@ export class WebSocketChunkedStream extends tts.ChunkedStream {
     buildWsUrl(): string;
     // (undocumented)
     label: string;
+    protected get responseModel(): string;
     // (undocumented)
     protected run(): Promise<void>;
 }

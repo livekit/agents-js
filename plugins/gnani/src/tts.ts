@@ -458,6 +458,11 @@ export class RESTChunkedStream extends tts.ChunkedStream {
   private readonly timeoutMs: number;
   label = 'gnani.RESTChunkedStream';
 
+  /** Attribute metrics to the model this request was sent with, not a later `updateOptions`. */
+  protected override get responseModel(): string {
+    return this.opts.model;
+  }
+
   constructor(
     ttsInstance: TTS,
     text: string,
@@ -524,6 +529,11 @@ export class SSEChunkedStream extends tts.ChunkedStream {
   private opts: ResolvedTTSOptions;
   private readonly timeoutMs: number;
   label = 'gnani.SSEChunkedStream';
+
+  /** Attribute metrics to the model this request was sent with, not a later `updateOptions`. */
+  protected override get responseModel(): string {
+    return this.opts.model;
+  }
 
   constructor(
     ttsInstance: TTS,
@@ -634,6 +644,11 @@ export class WebSocketChunkedStream extends tts.ChunkedStream {
   private readonly timeoutMs: number;
   label = 'gnani.WebSocketChunkedStream';
 
+  /** Attribute metrics to the model this request was sent with, not a later `updateOptions`. */
+  protected override get responseModel(): string {
+    return this.opts.model;
+  }
+
   constructor(
     ttsInstance: TTS,
     text: string,
@@ -671,6 +686,11 @@ export class WebSocketChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   private opts: ResolvedTTSOptions;
   label = 'gnani.SynthesizeStream';
+
+  /** Attribute metrics to the model this request was sent with, not a later `updateOptions`. */
+  protected override get responseModel(): string {
+    return this.opts.model;
+  }
 
   constructor(ttsInstance: TTS, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions) {
     super(ttsInstance, connOptions);
