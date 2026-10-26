@@ -189,6 +189,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const ws = await connectWS(this.#opts, this.connOptions, this.abortSignal);
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     let pendingTimedTranscripts: tts.SynthesizedAudio['timedTranscripts'] = [];
+    let closeCode = 0;
+    ws.once('close', (code) => {
+      closeCode = code;
+    });
 
     try {
       ws.send(JSON.stringify({ ...toSmallestOptions(this.#opts), text }));
@@ -240,6 +244,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           });
         }
       }
+
+      // the socket closed before the server sent `complete`
+      throw new APIStatusError({
+        message: 'SmallestAI WebSocket closed unexpectedly',
+        options: { statusCode: closeCode || -1 },
+      });
     } finally {
       ws.close();
     }
@@ -355,5 +365,6 @@ class AsyncQueue<T> implements AsyncIterable<T> {
       const item = this.#items.shift();
       if (item !== undefined) yield item;
     }
+    if (this.#error) throw this.#error;
   }
 }

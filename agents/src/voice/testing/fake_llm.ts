@@ -73,6 +73,9 @@ class FakeLLMStream extends BaseLLMStream {
 
   protected async run(): Promise<void> {
     const input = this.getInputText();
+    if (input === undefined) {
+      return;
+    }
     const decision = this.fake.lookup(input);
     if (!decision) {
       return;
@@ -113,7 +116,7 @@ class FakeLLMStream extends BaseLLMStream {
     }
   }
 
-  private getInputText(): string {
+  private getInputText(): string | undefined {
     const items = this.chatCtx.items;
     if (items.length === 0) {
       throw new Error('No input text found');
@@ -131,8 +134,16 @@ class FakeLLMStream extends BaseLLMStream {
     }
 
     const last = items[items.length - 1]!;
-    if (last.type === 'message' && last.role === 'user') return last.textContent ?? '';
+    if (last.type === 'message') {
+      return last.role === 'user' ? last.textContent ?? '' : undefined;
+    }
     if (last.type === 'function_call_output') return last.output;
-    throw new Error('No input text found');
+    if (
+      last.type === 'function_call' ||
+      last.type === 'agent_handoff' ||
+      last.type === 'agent_config_update'
+    ) {
+      return undefined;
+    }
   }
 }

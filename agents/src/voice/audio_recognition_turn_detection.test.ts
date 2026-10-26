@@ -10,9 +10,8 @@
  * VAD events only, awaits the future with the model `predictionTimeout` in the
  * eou bounce, and flushes the stream on turn commits. Covered here:
  *
- * 1. The speaking-guard race in `runEOUDetection`: setting `userSpeakingEvent`
- *    mid-bounce must abort the commit so a late-arriving SOS doesn't ship the
- *    prior turn.
+ * 1. Resumed speech during the endpointing window: a `START_OF_SPEECH`
+ *    mid-bounce cancels the in-flight eou task so the prior turn doesn't ship.
  * 2. `onEotPrediction` dedup across the vad-EOS and stt-final triggers that
  *    share one resolved prediction future.
  * 3. The prediction-future lifecycle against VAD events: requests start
@@ -31,6 +30,7 @@ import {
   MIN_SILENCE_DURATION_MS,
   type TurnDetectionEvent,
 } from '../inference/eot/base.js';
+import { type LanguageCode, asLanguageCode } from '../language.js';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { Future } from '../utils.js';
@@ -56,11 +56,11 @@ interface RecognitionInternals {
   turnDetectorLatePredictionWarned: boolean;
   lastEmittedEotPrediction?: TurnDetectionEvent;
   lastSpeakingTime?: number;
+  lastLanguage?: LanguageCode;
   audioTranscript: string;
   audioInterimTranscript: string;
   audioPreflightTranscript: string;
   sttRequestIds: string[];
-  userSpeakingEvent: { isSet: boolean; set: () => void; clear: () => void };
   bounceEOUTask?: {
     result: Promise<void>;
     cancel: () => void;
@@ -70,13 +70,16 @@ interface RecognitionInternals {
   runEOUDetection: (chatCtx: ChatContext, trigger?: 'vad' | 'stt' | 'manual') => void;
   createVadTask: (vad: VAD | undefined, signal: AbortSignal) => Promise<void>;
   checkVadSilenceRequirement: (detector?: _TurnDetector | BaseStreamingTurnDetector) => void;
+  updateLastLanguage: (language: LanguageCode, transcript: string) => void;
   updateTurnDetector: (detector: _TurnDetector | BaseStreamingTurnDetector | undefined) => void;
   clearUserTurn: () => void;
 }
 
 function makeHooks(): RecognitionHooks {
   return {
-    onInterruption: vi.fn(),
+    interruptionByAudioActivityEnabled: false,
+    onOverlapSpeech: vi.fn(),
+    onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
     onEndOfSpeech: vi.fn(),
@@ -222,6 +225,35 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+describe('TestLanguageTracking', () => {
+  it('does not replace a concrete language with a non-specific language', () => {
+    const { internals } = makeRecognition();
+    internals.lastLanguage = asLanguageCode('en');
+
+    internals.updateLastLanguage(asLanguageCode('multi'), 'ambiguous phrase');
+
+    expect(internals.lastLanguage).toBe(asLanguageCode('en'));
+  });
+
+  it('does not initialize language with a non-specific language', () => {
+    const { internals } = makeRecognition();
+    internals.lastLanguage = undefined;
+
+    internals.updateLastLanguage(asLanguageCode('multi'), 'we');
+
+    expect(internals.lastLanguage).toBeUndefined();
+  });
+
+  it('still updates concrete language after a long transcript', () => {
+    const { internals } = makeRecognition();
+    internals.lastLanguage = asLanguageCode('en');
+
+    internals.updateLastLanguage(asLanguageCode('fr'), 'bonjour');
+
+    expect(internals.lastLanguage).toBe(asLanguageCode('fr'));
+  });
+});
+
 /**
  * Drive `createVadTask` against a scripted VAD stream so VAD events flow
  * through the real handler. `feed()` resolves once the event has been processed
@@ -285,8 +317,23 @@ function runScriptedVad(internals: RecognitionInternals): {
   };
 }
 
-describe('TestSpeakingGuardRace', () => {
-  it('cancels the in-flight bounce when speaking starts during endpointing', async () => {
+describe('VAD task lifecycle', () => {
+  it('ends speech when the VAD task closes mid-speech', async () => {
+    const { internals, hooks } = makeRecognition();
+    const vad = runScriptedVad(internals);
+
+    await vad.feed(startOfSpeech());
+    expect(internals.speaking).toBe(true);
+
+    await vad.stop();
+
+    expect(hooks.onEndOfSpeech).toHaveBeenCalledWith(undefined);
+    expect(internals.speaking).toBe(false);
+  });
+});
+
+describe('TestResumedSpeechAbortsCommit', () => {
+  it('cancels the in-flight bounce when VAD start-of-speech arrives during endpointing', async () => {
     const { internals, hooks } = makeRecognition();
     const stream = makeAudioStream();
     internals.turnDetectorStream = stream;
@@ -295,34 +342,22 @@ describe('TestSpeakingGuardRace', () => {
     internals.turnDetectorPredictionFut = resolvedPrediction(0.2).fut;
 
     internals.runEOUDetection(ChatContext.empty(), 'vad');
+    const task = internals.bounceEOUTask;
+    expect(task).toBeDefined();
 
-    // The bounce is parked in the ~500ms endpointing delay. Fire the speaking
-    // event well inside that window: the guard's race resolves with the
-    // speaking branch and the bounce is aborted before it can commit.
+    // The bounce is parked in the ~500ms endpointing delay. Resumed speech
+    // well inside that window tears the bounce down via the VAD SOS handler.
     await new Promise((r) => setTimeout(r, 50));
-    internals.userSpeakingEvent.set();
+    const vad = runScriptedVad(internals);
+    try {
+      await vad.feed(startOfSpeech());
+    } finally {
+      await vad.stop();
+    }
 
-    expect(internals.bounceEOUTask).toBeDefined();
-    await internals.bounceEOUTask!.result.catch(() => {});
-
-    expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
-  });
-
-  it('short-circuits without spawning the bounce when already speaking', async () => {
-    const { internals, hooks } = makeRecognition();
-    const stream = makeAudioStream();
-    internals.turnDetectorStream = stream;
-    internals.turnDetector = makeAudioDetector(stream);
-    internals.speaking = true;
-
-    internals.runEOUDetection(ChatContext.empty(), 'vad');
-
-    expect(internals.bounceEOUTask).toBeDefined();
-    await internals.bounceEOUTask!.result.catch(() => {});
+    await task!.result.catch(() => {});
 
     expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
-    // The guard bailed before the bounce body ran, so no request was awaited.
-    expect(predictMock(stream).mock.calls.length).toBe(0);
   });
 });
 

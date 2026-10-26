@@ -14,7 +14,7 @@ import {
   logMetrics,
   tool,
 } from '@livekit/agents';
-import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
+import * as krisp from '@livekit/agents-plugin-krisp';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -59,10 +59,7 @@ export default defineAgent({
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
-        fallback: [
-          { model: 'elevenlabs/eleven_flash_v2', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' },
-          'rime/arcana',
-        ],
+        fallback: [{ model: 'rime/coda', voice: 'luna' }],
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
@@ -88,6 +85,14 @@ export default defineAgent({
           enabled: true,
         },
       },
+      // automatically detect keyterms and apply them to the STT per user turn
+      keytermsOptions: {
+        keyterms: ['LiveKit'],
+        keytermDetection: {
+          enabled: true,
+          turnInterval: 1, // increase to reduce LLM API calls
+        },
+      },
       useTtsAlignedTranscript: true,
       aecWarmupDuration: 3000,
       connOptions: {
@@ -102,6 +107,9 @@ export default defineAgent({
 
     // Log metrics as they are emitted
     session.on(AgentSessionEventTypes.MetricsCollected, (ev) => {
+      if (ev.metrics.type === 'stt_metrics') {
+        return;
+      }
       logMetrics(ev.metrics);
     });
 
@@ -124,7 +132,7 @@ export default defineAgent({
       room: ctx.room,
       inputOptions: {
         deleteRoomOnClose: true,
-        noiseCancellation: BackgroundVoiceCancellation(),
+        noiseCancellation: krisp.voiceIsolation(),
       },
     });
 
