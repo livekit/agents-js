@@ -19,6 +19,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it } from 'vitest';
 import { APIConnectionError } from '../../_exceptions.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
+import type { Task } from '../../utils.js';
 import { BaseStreamingTurnDetector, type BaseStreamingTurnDetectorOptions } from './base.js';
 import { TurnDetectorStreamImpl } from './detector.js';
 import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
@@ -65,6 +66,7 @@ function makeStream(opts: {
   connectScript?: Array<Error | null>;
   maxRetry?: number;
   retryIntervalMs?: number;
+  localFallback?: boolean;
 }): MakeStreamResult {
   const fakeWs = new FakeWS();
   const script = [...(opts.connectScript ?? [])];
@@ -100,6 +102,7 @@ function makeStream(opts: {
     cloudOpts,
     model: 'turn-detector-v1',
     transport,
+    localFallback: opts.localFallback,
   });
   return { stream, fakeWs, transport };
 }
@@ -108,10 +111,11 @@ async function tick(): Promise<void> {
   await new Promise<void>((r) => setImmediate(r));
 }
 
-async function waitUntilConnected(transport: CloudTransport, ticks = 50): Promise<void> {
-  for (let i = 0; i < ticks; i++) {
+async function waitUntilConnected(transport: CloudTransport, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     if (transport.transportReady()) return;
-    await tick();
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
   }
   throw new Error('transport did not connect within timeout');
 }
@@ -137,14 +141,18 @@ function pcmFrame(samples = 320): AudioFrame {
 describe('CloudStreamRetry', () => {
   it('num retries resets after a successful connect', async () => {
     const { stream, transport } = makeStream({
-      connectScript: [new APIConnectionError({ message: 'transient' }), null],
+      connectScript: [
+        new APIConnectionError({ message: 'transient' }),
+        new APIConnectionError({ message: 'transient' }),
+        null,
+      ],
       maxRetry: 3,
-      retryIntervalMs: 0,
+      retryIntervalMs: 10,
     });
     try {
       await waitUntilConnected(transport);
-      // Two attempts: first raised (counter 0→1), second succeeded → reset to 0.
-      expect(transport.connectCalls).toBe(2);
+      // Three attempts: two failures increment the counter, then success resets it to 0.
+      expect(transport.connectCalls).toBe(3);
       expect(transport.numRetries).toBe(0);
     } finally {
       await stream.aclose();
@@ -179,6 +187,35 @@ describe('CloudToLocalFallback', () => {
       // local failure flagged.
       for (let i = 0; i < 10; i++) await tick();
       expect(stream.warnedLocalFailure).toBe(false);
+    } finally {
+      await stream.aclose();
+    }
+  });
+});
+
+describe('CloudWithoutLocalFallback', () => {
+  it('releases the audio reader and defaults predictions when the socket closes', async () => {
+    const { stream, transport, fakeWs } = makeStream({ localFallback: false });
+    try {
+      await waitUntilConnected(transport);
+      stream.pushAudio(pcmFrame());
+      await drainSendQueue(transport);
+      expect(fakeWs.sent.some((m) => m.message.case === 'inputAudio')).toBe(true);
+
+      const prediction = stream.predict();
+      fakeWs.close();
+      expect((await prediction.await).endOfTurnProbability).toBe(1);
+      await (stream as unknown as { _mainTask: Task<void> })._mainTask.result;
+
+      expect(stream.model).toBe('turn-detector-v1');
+      expect(stream.isFallback).toBe(false);
+      expect(transport.connectCalls).toBe(1);
+      const sentBefore = fakeWs.sent.length;
+      stream.pushAudio(pcmFrame());
+      stream.flush();
+      expect((await stream.predict().await).endOfTurnProbability).toBe(1);
+      await stream._drainAudioChannel();
+      expect(fakeWs.sent).toHaveLength(sentBefore);
     } finally {
       await stream.aclose();
     }

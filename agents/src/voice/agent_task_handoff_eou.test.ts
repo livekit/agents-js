@@ -7,16 +7,13 @@
 // silences, minimal repro contributed by the affected customer).
 //
 // Mechanism: across a task handoff the STT pipeline is reused, so provider
-// transcript timestamps (`SpeechData.endTime`) stay cumulative from the STREAM
-// start, while the new activity re-stamps `_inputStartedAt` at handoff time.
-// If VAD misses the user's speech, `lastSpeakingTime` falls back to
-// `endTime * 1000 + _inputStartedAt`, which lands in the future by the stream's
-// age at the handoff, and the end-of-turn timer waits out the difference. The
-// path is only armed under adaptive interruption, the sole stamper of
-// `_inputStartedAt`.
+// transcript timestamps (`SpeechData.endTime`) stay cumulative from the stream
+// start. If the input anchor is re-stamped at handoff time and VAD misses the
+// user's speech, `lastSpeakingTime` falls into the future by the stream's age at
+// handoff, and the end-of-turn timer waits out the difference.
 //
-// Guarded fixes: `inputStartedAt` carried across handoffs (agent_activity) and
-// `lastSpeakingTime` clamped to wall clock (audio_recognition). Without both,
+// Guarded fixes: `inputStartedAt` lives on the reused STT pipeline and
+// `lastSpeakingTime` is clamped to wall clock. Without both,
 // the three steps below stall by ~2s/~3s/~8s instead of committing within the
 // endpointing window.
 import { AudioFrame } from '@livekit/rtc-node';
@@ -37,8 +34,7 @@ import { FakeLLM } from './testing/fake_llm.js';
 // Mock `ws` so adaptive interruption connects to an in-memory socket instead of
 // the real LiveKit inference gateway. It opens cleanly and never returns any
 // inference events (so no interruption is ever detected), but the audio
-// forwarding loop still runs — which is all we need, since that loop is what
-// stamps `_inputStartedAt`. This keeps the test hermetic and avoids the noisy
+// forwarding loop still runs. This keeps the test hermetic and avoids the noisy
 // unhandled rejections a dead network address would produce.
 vi.mock('ws', async () => {
   const { EventEmitter } = await import('node:events');
@@ -159,7 +155,7 @@ describe('AgentTask handoff end-of-turn timing', () => {
 
   it('commits end-of-turn promptly after each task handoff when VAD misses the user speech', async () => {
     // Adaptive interruption needs LiveKit credentials to construct (else the
-    // detector is silently disabled and `_inputStartedAt` is never stamped).
+    // detector is silently disabled and the regression path is not exercised).
     // The `ws` mock above means the URL is never actually dialed.
     const savedEnv = {
       LIVEKIT_API_KEY: process.env.LIVEKIT_API_KEY,
@@ -170,9 +166,8 @@ describe('AgentTask handoff end-of-turn timing', () => {
     process.env.LIVEKIT_API_SECRET = 'test-api-secret';
     process.env.LIVEKIT_INFERENCE_URL = 'ws://127.0.0.1:1';
 
-    // Streaming STT with aligned transcripts — required for adaptive
-    // interruption (which is what stamps `_inputStartedAt`). We inject
-    // transcript events with provider-cumulative timestamps directly.
+    // Streaming STT with aligned transcripts. We inject transcript events with
+    // provider-cumulative timestamps directly.
     const stt = new FakeSTT({
       label: 'scripted-stt',
       capabilities: { streaming: true, interimResults: true, alignedTranscript: 'word' },
@@ -279,8 +274,7 @@ describe('AgentTask handoff end-of-turn timing', () => {
     }
 
     // The STT pipeline should be reused (a single stream) across all handoffs;
-    // that reuse is what makes `endTime` cumulative while `_inputStartedAt`
-    // resets per activity.
+    // that reuse is what makes `endTime` cumulative across activities.
     expect(sttStreams.length).toBe(1);
 
     // every step must commit within the endpointing window — no step may

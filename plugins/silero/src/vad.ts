@@ -6,7 +6,6 @@ import {
   VADEventType,
   VADStream as baseStream,
   VAD as baseVAD,
-  inference,
   log,
   mergeFrames,
 } from '@livekit/agents';
@@ -100,31 +99,6 @@ export class VAD extends baseVAD {
    */
   static async load(opts: Partial<VADOptions> = {}): Promise<baseVAD> {
     const mergedOpts: VADOptions = { ...defaultVADOptions, ...opts };
-
-    // When the requested settings are compatible with the bundled native
-    // implementation in `@livekit/local-inference`, delegate to
-    // `inference.VAD({ model: 'silero' })` so existing call sites transparently
-    // get the faster, COW-shared native path as part of the silero deprecation.
-    // The native lib only ships the 16 kHz model, so any other sample rate
-    // falls back to the legacy onnxruntime path below.
-    if (mergedOpts.sampleRate === 16000) {
-      if (!mergedOpts.forceCPU) {
-        log().warn(
-          'forceCPU=false is ignored when using the bundled native VAD; the ' +
-            'model runs CPU-only. Use a non-16kHz sampleRate to keep the legacy ' +
-            'onnxruntime path that honors forceCPU.',
-        );
-      }
-      return new inference.VAD({
-        model: 'silero',
-        minSpeechDuration: mergedOpts.minSpeechDuration,
-        minSilenceDuration: mergedOpts.minSilenceDuration,
-        prefixPaddingDuration: mergedOpts.prefixPaddingDuration,
-        maxBufferedSpeech: mergedOpts.maxBufferedSpeech,
-        activationThreshold: mergedOpts.activationThreshold,
-      });
-    }
-
     const session = await newInferenceSession(mergedOpts.forceCPU);
     return new VAD(session, mergedOpts);
   }
@@ -149,6 +123,7 @@ export class VADStream extends baseStream {
   #model: OnnxModel;
   #inputSampleRate: number;
   #speechBuffer: Int16Array | null;
+  #speechBufferIndex: number;
   #speechBufferMaxReached: boolean;
   #prefixPaddingSamples: number;
   #task: Promise<void>;
@@ -162,14 +137,13 @@ export class VADStream extends baseStream {
     this.#model = model;
     this.#inputSampleRate = 0;
     this.#speechBuffer = null;
+    this.#speechBufferIndex = 0;
     this.#speechBufferMaxReached = false;
     this.#prefixPaddingSamples = 0;
 
-    this.#task = new Promise(async () => {
+    let resampler: AudioResampler | null = null;
+    const runInference = async () => {
       let inferenceData = new Float32Array(this.#model.windowSizeSamples);
-
-      // a copy is exposed to the user in END_OF_SPEECH
-      let speechBufferIndex = 0;
 
       // "pub" means public, these values are exposed to the users through events
       let pubSpeaking = false;
@@ -182,7 +156,6 @@ export class VADStream extends baseStream {
 
       let inputFrames: AudioFrame[] = [];
       let inferenceFrames: AudioFrame[] = [];
-      let resampler: AudioResampler | null = null;
 
       // used to avoid drift when the sampleRate ratio is not an integer
       let inputCopyRemainingFrac = 0.0;
@@ -191,7 +164,7 @@ export class VADStream extends baseStream {
         this.#model.reset();
         this.#expFilter = new ExpFilter(0.35);
 
-        speechBufferIndex = 0;
+        this.#speechBufferIndex = 0;
         this.#speechBufferMaxReached = false;
         this.#speechBuffer?.fill(0);
 
@@ -295,11 +268,14 @@ export class VADStream extends baseStream {
           inputCopyRemainingFrac = toCopy - toCopyInt;
 
           // copy the inference window to the speech buffer
-          const availableSpace = this.#speechBuffer.length - speechBufferIndex;
+          const availableSpace = this.#speechBuffer.length - this.#speechBufferIndex;
           const toCopyBuffer = Math.min(toCopyInt, availableSpace);
           if (toCopyBuffer > 0) {
-            this.#speechBuffer.set(inputFrame.data.subarray(0, toCopyBuffer), speechBufferIndex);
-            speechBufferIndex += toCopyBuffer;
+            this.#speechBuffer.set(
+              inputFrame.data.subarray(0, toCopyBuffer),
+              this.#speechBufferIndex,
+            );
+            this.#speechBufferIndex += toCopyBuffer;
           } else if (!this.#speechBufferMaxReached) {
             this.#speechBufferMaxReached = true;
             this.#logger.warn(
@@ -315,7 +291,7 @@ export class VADStream extends baseStream {
           if (this.#extraInferenceTime > SLOW_INFERENCE_THRESHOLD) {
             this.#logger
               .child({ delay: this.#extraInferenceTime })
-              .warn('inference is slower than realtime');
+              .warn('VAD inference is slower than realtime');
           }
 
           if (pubSpeaking) {
@@ -351,26 +327,26 @@ export class VADStream extends baseStream {
 
           const resetWriteCursor = () => {
             if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
-            if (speechBufferIndex <= this.#prefixPaddingSamples) {
+            if (this.#speechBufferIndex <= this.#prefixPaddingSamples) {
               return;
             }
 
             const paddingData = this.#speechBuffer.subarray(
-              speechBufferIndex - this.#prefixPaddingSamples,
-              speechBufferIndex,
+              this.#speechBufferIndex - this.#prefixPaddingSamples,
+              this.#speechBufferIndex,
             );
             this.#speechBuffer.set(paddingData, 0);
-            speechBufferIndex = this.#prefixPaddingSamples;
+            this.#speechBufferIndex = this.#prefixPaddingSamples;
             this.#speechBufferMaxReached = false;
           };
 
           const copySpeechBuffer = (): AudioFrame => {
             if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
             return new AudioFrame(
-              this.#speechBuffer.subarray(0, speechBufferIndex),
+              this.#speechBuffer.slice(0, this.#speechBufferIndex),
               this.#inputSampleRate,
               1,
-              speechBufferIndex,
+              this.#speechBufferIndex,
             );
           };
 
@@ -440,20 +416,21 @@ export class VADStream extends baseStream {
 
           if (inputFrame.data.length > toCopyInt) {
             const data = inputFrame.data.subarray(toCopyInt);
-            inputFrames.push(
-              new AudioFrame(data, this.#inputSampleRate, 1, Math.trunc(data.length / 2)),
-            );
+            inputFrames.push(new AudioFrame(data, this.#inputSampleRate, 1, data.length));
           }
           if (inferenceFrame.data.length > this.#model.windowSizeSamples) {
             const data = inferenceFrame.data.subarray(this.#model.windowSizeSamples);
-            inferenceFrames.push(
-              new AudioFrame(data, this.#opts.sampleRate, 1, Math.trunc(data.length / 2)),
-            );
+            inferenceFrames.push(new AudioFrame(data, this.#opts.sampleRate, 1, data.length));
           }
         }
       }
-      resampler?.close();
-    });
+    };
+    this.#task = runInference()
+      .catch((error) => {
+        this.#logger.error(error, 'Error in VAD inference task');
+        if (!this.closed) this.close();
+      })
+      .finally(() => resampler?.close());
   }
 
   /**
@@ -483,6 +460,9 @@ export class VADStream extends baseStream {
         this.#speechBuffer.subarray(0, Math.min(this.#speechBuffer.length, bufferSize)),
       );
       this.#speechBuffer = resizedBuffer;
+
+      // Resizing may discard samples that the write cursor still counted.
+      this.#speechBufferIndex = Math.min(this.#speechBufferIndex, this.#speechBuffer.length);
 
       // Determine if max has been reached
       if (this.#opts.maxBufferedSpeech > oldMaxBufferedSpeech) {

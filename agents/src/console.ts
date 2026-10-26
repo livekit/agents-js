@@ -5,10 +5,16 @@ import { Job, JobType, Room as RoomModel } from '@livekit/protocol';
 import { Room } from '@livekit/rtc-node';
 import { pathToFileURL } from 'node:url';
 import { type Agent, isAgent } from './generator.js';
-import { InferenceRunner } from './inference_runner.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from './job.js';
+import {
+  DEFAULT_SESSION_END_TIMEOUT,
+  finalizeSession,
+  flushJobLogs,
+  runShutdownCallbacks,
+  validateSessionEndTimeout,
+} from './job_lifecycle.js';
 import { log } from './log.js';
 import { Future, shortuuid } from './utils.js';
 import { AgentsConsole, TcpAudioInput, TcpAudioOutput } from './voice/console_io.js';
@@ -57,11 +63,14 @@ export async function runConsole({
   agentPath,
   connectAddr,
   record,
+  sessionEndTimeout = DEFAULT_SESSION_END_TIMEOUT,
 }: {
   agentPath: string;
   connectAddr: string;
   record: boolean;
+  sessionEndTimeout?: number;
 }): Promise<void> {
+  validateSessionEndTimeout(sessionEndTimeout);
   const logger = log();
 
   const sep = connectAddr.lastIndexOf(':');
@@ -129,19 +138,8 @@ export async function runConsole({
     // worker path. Without any runners the fallback executor just raises if
     // reached.
     let inferenceExecutor: InferenceExecutor = new ConsoleInferenceExecutor();
-    if (Object.keys(InferenceRunner.registeredRunners).length > 0) {
-      inferenceProc = new InferenceProcExecutor({
-        runners: InferenceRunner.registeredRunners,
-        // 5 minutes, matching python: loading model files into the child can
-        // be slow on first run.
-        initializeTimeout: 5 * 60 * 1000,
-        closeTimeout: 5000,
-        memoryWarnMB: 2000,
-        memoryLimitMB: 0,
-        pingInterval: 5000,
-        pingTimeout: 60000,
-        highPingThreshold: 2500,
-      });
+    inferenceProc = InferenceProcExecutor.createIfNeeded();
+    if (inferenceProc) {
       try {
         await inferenceProc.start();
         await inferenceProc.initialize();
@@ -156,6 +154,7 @@ export async function runConsole({
     }
 
     const jobCtx = new JobContext(proc, info, room, () => {}, onShutdown, inferenceExecutor);
+    jobCtx._simulationEndFnc = agent.onSimulationEnd;
     ctx = jobCtx;
     await runWithJobContextAsync(jobCtx, async () => agent.entry(jobCtx));
     await shutdown.await;
@@ -173,26 +172,22 @@ export async function runConsole({
       }
     };
 
-    const session = ctx?._primaryAgentSession;
-    if (session) {
-      await guarded('AgentSession.close', () => session.close());
-    }
     const jobCtx = ctx;
     if (jobCtx) {
-      await guarded('ctx._onSessionEnd', () => jobCtx._onSessionEnd());
+      await finalizeSession(jobCtx, agent.onSessionEnd, sessionEndTimeout, logger);
     }
-    await guarded('transport.close', () => transport.close());
-    await guarded('room.disconnect', () => room.disconnect());
 
-    if (jobCtx) {
-      // Run job shutdown callbacks (e.g. AvatarSession.aclose) like the normal
-      // worker path does; runConsole bypasses the ProcPool so it must drain them.
-      const results = await Promise.allSettled(jobCtx.shutdownCallbacks.map((cb) => cb()));
-      for (const result of results) {
-        if (result.status === 'rejected') {
-          logger.error({ error: result.reason }, 'error while running shutdown callback');
-        }
+    try {
+      await guarded('transport.close', () => transport.close());
+      await guarded('room.disconnect', () => room.disconnect());
+
+      if (jobCtx) {
+        // Run job shutdown callbacks (e.g. AvatarSession.aclose) like the normal
+        // worker path does; runConsole bypasses the ProcPool so it must drain them.
+        await runShutdownCallbacks(jobCtx.shutdownCallbacks, logger);
       }
+    } finally {
+      await flushJobLogs(logger);
     }
 
     const proc_ = inferenceProc;

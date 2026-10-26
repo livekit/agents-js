@@ -47,11 +47,11 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
         localFileOnly: true,
       });
 
-      // TODO(brian): support session config once onnxruntime-node supports it
       const sessOptions: InferenceSession.SessionOptions = {
         intraOpNumThreads: Math.max(1, Math.floor(os.cpus().length / 2)),
         interOpNumThreads: 1,
         executionProviders: [{ name: 'cpu' }],
+        extra: { session: { dynamic_block_base: '4' } },
       };
 
       this.session = await InferenceSession.create(onnxModelPath, sessOptions);
@@ -93,7 +93,13 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
     const text = this.formatChatCtx(data);
 
     const inputs = this.tokenizer!.encode(text, { add_special_tokens: false });
-    this.#logger.debug({ inputs: JSON.stringify(inputs), text }, 'EOU inputs');
+    this.#logger.debug(
+      {
+        'lk.pii.inputs': inputs,
+        'lk.pii.text': text,
+      },
+      'EOU inputs',
+    );
 
     const outputs = await this.session!.run(
       { input_ids: new Tensor('int64', inputs, [1, inputs.length]) },
@@ -111,7 +117,13 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
       duration: (endTime - startTime) / 1000,
     };
 
-    this.#logger.child({ result }).debug('eou prediction');
+    this.#logger
+      .child({
+        eouProbability: result.eouProbability,
+        duration: result.duration,
+        'lk.pii.input': result.input,
+      })
+      .debug('eou prediction');
     return result;
   }
 
@@ -244,13 +256,12 @@ export abstract class EOUModel {
         continue;
       }
 
-      for (const content of message.content) {
-        if (typeof content === 'string') {
-          messages.push({
-            role: message.role === 'assistant' ? 'assistant' : 'user',
-            content: content,
-          });
-        }
+      const content = message.textContent;
+      if (content) {
+        messages.push({
+          role: message.role === 'assistant' ? 'assistant' : 'user',
+          content,
+        });
       }
     }
 

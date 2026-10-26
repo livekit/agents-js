@@ -21,6 +21,7 @@ import type { ThresholdOptions, TurnDetectorModel } from './languages.js';
 
 export const DEFAULT_SAMPLE_RATE = 16000;
 export const MIN_SILENCE_DURATION_MS = 200;
+export const DEFAULT_PREDICTION_TIMEOUT_MS = 1000;
 
 /**
  * Options shared by the audio EOT stream and every transport.
@@ -177,6 +178,7 @@ export class BaseStreamingTurnDetectorStream {
   private _audioInputNumChannels: number | undefined;
   private _audioResampler: AudioResampler | undefined;
   private _audioChannel: StreamChannel<AudioFrame | FlushSentinel> = createStreamChannel();
+  private _degraded = false;
 
   /** Id of the in-flight inference request, or `undefined` when idle. */
   protected _requestId: string | undefined;
@@ -236,6 +238,10 @@ export class BaseStreamingTurnDetectorStream {
     return this._opts.thresholds.supports(language);
   }
 
+  get predictionTimeout(): number {
+    return DEFAULT_PREDICTION_TIMEOUT_MS;
+  }
+
   // endregion
 
   // region: inference requests
@@ -243,7 +249,7 @@ export class BaseStreamingTurnDetectorStream {
   /** Start a new inference request and return its future, superseding any
    * previous request. */
   predict(): Future<TurnDetectionEvent> {
-    if (this._audioChannel.closed) {
+    if (this._degraded || this._audioChannel.closed) {
       const fut = new Future<TurnDetectionEvent>();
       fut.resolve(BaseStreamingTurnDetectorStream._defaultEvent(1.0));
       return fut;
@@ -283,7 +289,7 @@ export class BaseStreamingTurnDetectorStream {
   flush(reason?: string): void {
     // Idempotent: a second call sends another sentinel that transports
     // treat as a no-op (cloud: redundant session_flush; local: empty trim).
-    if (this._audioChannel.closed) {
+    if (this._degraded || this._audioChannel.closed) {
       return;
     }
     for (const resampled of this._flushAudioResampler()) {
@@ -310,7 +316,7 @@ export class BaseStreamingTurnDetectorStream {
   // region: audio ingress
 
   pushAudio(frame: AudioFrame): void {
-    if (this._audioChannel.closed) {
+    if (this._degraded || this._audioChannel.closed) {
       return;
     }
     for (const resampled of this._resampleAudioFrame(frame)) {
@@ -498,6 +504,16 @@ export class BaseStreamingTurnDetectorStream {
   // endregion
 
   // region: subclass hooks
+
+  /** Stop detection after a terminal failure and release buffered audio. */
+  protected async _disableDetection(): Promise<void> {
+    this._degraded = true;
+    this._transport.detach();
+    // Let pending writes finish before cancel discards the readable backlog.
+    await this._audioChannel.close();
+    await this._audioChannel.stream().cancel();
+    this._audioResampler = undefined;
+  }
 
   /** Default: hand control to the transport. Subclasses override for
    * cross-transport orchestration (e.g. cloud→local fallback). */

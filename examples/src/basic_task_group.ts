@@ -4,18 +4,18 @@
 import {
   type JobContext,
   ServerOptions,
-  beta,
   cli,
   defineAgent,
   inference,
   llm,
   voice,
+  workflows,
 } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-const taskTts = 'elevenlabs/eleven_turbo_v2_5';
+const taskTts = 'deepgram/aura-2';
 
 class CollectNameTask extends voice.AgentTask<string> {
   constructor() {
@@ -88,7 +88,7 @@ class TaskGroupDemoAgent extends voice.Agent {
           description: 'Start a two-step onboarding flow (name then email).',
           parameters: z.object({}),
           execute: async () => {
-            const tg = new beta.TaskGroup({
+            const tg = new workflows.TaskGroup({
               summarizeChatCtx: true,
               onTaskCompleted: async ({ taskId }) => {
                 await this.session.say(`Completed task with id ${taskId}`);

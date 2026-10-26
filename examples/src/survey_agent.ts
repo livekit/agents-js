@@ -4,11 +4,11 @@
 import {
   type JobContext,
   ServerOptions,
-  beta,
   cli,
   defineAgent,
   llm,
   voice,
+  workflows,
 } from '@livekit/agents';
 // import * as phonic from '@livekit/agents-plugin-phonic';
 import { open } from 'node:fs/promises';
@@ -319,7 +319,7 @@ export class SurveyAgent extends voice.Agent<SurveyUserData> {
   }
 
   async onEnter() {
-    const group = new beta.TaskGroup({
+    const group = new workflows.TaskGroup({
       summarizeChatCtx: false,
     });
 

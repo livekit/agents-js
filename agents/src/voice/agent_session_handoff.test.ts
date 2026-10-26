@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
-import { AgentHandoffItem, ChatContext } from '../llm/chat_context.js';
+import { AgentHandoffItem } from '../llm/chat_context.js';
 import { Agent } from './agent.js';
 import { AgentActivity, type ReusableResources } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
@@ -21,25 +21,10 @@ function createFakeSession() {
     activity: undefined,
     nextActivity: undefined,
     _globalRunState: undefined,
-    _chatCtx: ChatContext.empty(),
     _conversationItemAdded: vi.fn(),
-    emit: vi.fn(),
     logger: {
       debug: vi.fn(),
       warn: vi.fn(),
-    },
-    sessionOptions: {
-      turnHandling: {
-        interruption: {
-          enabled: true,
-          minDuration: 0,
-          minWords: 0,
-        },
-        endpointing: {
-          minDelay: 0,
-          maxDelay: 0,
-        },
-      },
     },
     interruptionDetection: undefined,
     turnDetection: undefined,
@@ -61,14 +46,13 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => resources),
     };
     const nextActivity = {
       agent: nextAgent,
       resume: vi.fn(async () => {}),
-      start: vi.fn(async () => {}),
       attachAudioInput: vi.fn(),
       _onEnterTask: undefined,
     };
@@ -82,8 +66,15 @@ describe('AgentSession reusable resources handoff', () => {
       waitOnEnter: false,
     });
 
-    expect(previousActivity.drain).toHaveBeenCalledWith({ newActivity: nextActivity });
-    expect(nextActivity.resume).toHaveBeenCalledWith({ reuseResources: resources });
+    // the handoff runs under an update_agent span: drain and resume are parented to it
+    expect(previousActivity.drain).toHaveBeenCalledWith({
+      newActivity: nextActivity,
+      traceContext: expect.anything(),
+    });
+    expect(nextActivity.resume).toHaveBeenCalledWith({
+      reuseResources: resources,
+      traceContext: expect.anything(),
+    });
   });
 
   it('cleans up reusable resources if the next activity fails to start', async () => {
@@ -95,16 +86,15 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => resources),
     };
     const nextActivity = {
       agent: nextAgent,
       resume: vi.fn(async () => {
         throw new Error('resume failed');
       }),
-      start: vi.fn(async () => {}),
       attachAudioInput: vi.fn(),
       _onEnterTask: undefined,
     };
@@ -132,14 +122,13 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => resources),
     };
     const nextActivity = {
       agent: nextAgent,
       resume: vi.fn(async () => {}),
-      start: vi.fn(async () => {}),
       attachAudioInput: vi.fn(() => {
         throw new Error('attach failed');
       }),
@@ -158,7 +147,10 @@ describe('AgentSession reusable resources handoff', () => {
       }),
     ).rejects.toThrow('attach failed');
 
-    expect(nextActivity.resume).toHaveBeenCalledWith({ reuseResources: resources });
+    expect(nextActivity.resume).toHaveBeenCalledWith({
+      reuseResources: resources,
+      traceContext: expect.anything(),
+    });
     // pipeline was already transferred, so cleanup should NOT have been called
     expect(closeFn).not.toHaveBeenCalled();
   });
@@ -171,7 +163,6 @@ describe('AgentSession reusable resources handoff', () => {
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => undefined),
       resume: vi.fn(async () => {}),
-      start: vi.fn(async () => {}),
       attachAudioInput: vi.fn(),
       _onEnterTask: undefined,
     };
@@ -187,7 +178,10 @@ describe('AgentSession reusable resources handoff', () => {
 
     expect(activity.drain).not.toHaveBeenCalled();
     expect(activity.pause).not.toHaveBeenCalled();
-    expect(activity.resume).toHaveBeenCalledWith({ reuseResources: undefined });
+    expect(activity.resume).toHaveBeenCalledWith({
+      reuseResources: undefined,
+      traceContext: expect.anything(),
+    });
   });
 
   it('emits ConversationItemAdded with an AgentHandoffItem on handoff', async () => {
@@ -195,14 +189,13 @@ describe('AgentSession reusable resources handoff', () => {
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
+      blockNewTurns: vi.fn(),
       drain: vi.fn(async () => undefined),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => undefined),
     };
     const nextActivity = {
       agent: nextAgent,
       resume: vi.fn(async () => {}),
-      start: vi.fn(async () => {}),
       attachAudioInput: vi.fn(),
       _onEnterTask: undefined,
     };
@@ -223,18 +216,14 @@ describe('AgentSession reusable resources handoff', () => {
     expect(item.newAgentId).toBe(nextAgent.id);
   });
 
-  it('skips starting a new activity while the session is closing and cleans up resources', async () => {
-    const closeFn = vi.fn(async () => {});
-    const resources: ReusableResources = {
-      sttPipeline: { close: closeFn } as any,
-    };
+  it('skips starting a new activity while the session is closing', async () => {
     const previousAgent = new Agent({ instructions: 'old' });
     const nextAgent = new Agent({ instructions: 'new' });
     const previousActivity = {
       agent: previousAgent,
-      drain: vi.fn(async () => resources),
+      blockNewTurns: vi.fn(),
+      drain: vi.fn(async () => undefined),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => resources),
     };
 
     const startSpy = vi.spyOn(AgentActivity.prototype, 'start').mockResolvedValue(undefined);
@@ -249,11 +238,10 @@ describe('AgentSession reusable resources handoff', () => {
         waitOnEnter: false,
       });
 
-      expect(previousActivity.drain).toHaveBeenCalledTimes(1);
-      expect(previousActivity.close).toHaveBeenCalledTimes(1);
-      expect(closeFn).toHaveBeenCalledTimes(1);
+      expect(previousActivity.drain).not.toHaveBeenCalled();
+      expect(previousActivity.close).not.toHaveBeenCalled();
       expect(startSpy).not.toHaveBeenCalled();
-      expect((session as any).activity).toBeUndefined();
+      expect((session as any).activity).toBe(previousActivity);
       expect((session as any).nextActivity).toBeUndefined();
     } finally {
       startSpy.mockRestore();

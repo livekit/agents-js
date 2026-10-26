@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import type { ToolChoice } from '../llm/tool_context.js';
 import type { Future } from '../utils.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession } from './agent_session.js';
@@ -24,6 +25,12 @@ export interface UpdatePromptArgs {
 
 export interface RunContextUpdateOptions {
   template?: PromptTemplate<UpdatePromptArgs>;
+  /**
+   * Whether the user hears anything about this update. The message is recorded for the model
+   * either way; `true` keeps it to the model alone, and on the first update releases control
+   * without speaking. A realtime model that cannot keep a tool result silent may still answer it.
+   */
+  silent?: boolean;
 }
 
 export type FillerSource = string | ((step: number) => SpeechHandle | string | null | undefined);
@@ -49,20 +56,36 @@ export interface AttachedToolExecutor<UserData = UnknownUserData> {
   toolOptions: {
     updateTemplate: PromptTemplate<UpdatePromptArgs>;
   };
-  enqueueReply(ctx: RunContext<UserData>, items: [FunctionCall, FunctionCallOutput]): Promise<void>;
+  enqueueReply(
+    ctx: RunContext<UserData>,
+    items: [FunctionCall, FunctionCallOutput],
+    options?: { silent?: boolean; toolChoice?: ToolChoice },
+  ): Promise<void>;
   replyTask?: Promise<void>;
 }
 
 export class RunContext<UserData = UnknownUserData> {
   private readonly initialStepIdx: number;
   private _executor?: AttachedToolExecutor<UserData>;
+  private _executorAttachment?: object;
   private _firstUpdateFuture?: Future<unknown>;
+  // set by the first update(): whether anything voices its output, and what the step that
+  // answers it may call
+  /** @internal */
+  _suppressReply = false;
+  /** @internal */
+  _replyToolChoice?: ToolChoice;
   private _updates: Array<[FunctionCall, FunctionCallOutput]> = [];
   private _fillerSchedulers: FillerScheduler<UserData>[] = [];
+  /**
+   * @param activity - Owning activity supplied by the framework to resume paused speech when
+   * interruptions are disabled. Omit this parameter when constructing a context manually.
+   */
   constructor(
     public readonly session: AgentSession<UserData>,
     public readonly speechHandle: SpeechHandle,
     public readonly functionCall: FunctionCall,
+    private readonly activity?: AgentActivity,
   ) {
     this.initialStepIdx = speechHandle.numSteps - 1;
   }
@@ -86,8 +109,13 @@ export class RunContext<UserData = UnknownUserData> {
     return this._updates;
   }
 
+  /** Disable interruptions and release an active false-interruption pause for this speech. */
   disallowInterruptions(): void {
-    this.speechHandle.allowInterruptions = false;
+    if (this.activity) {
+      this.activity._disallowInterruptions(this.speechHandle);
+    } else {
+      this.speechHandle.allowInterruptions = false;
+    }
   }
 
   /**
@@ -145,13 +173,18 @@ export class RunContext<UserData = UnknownUserData> {
       return;
     }
 
+    const silent = options.silent ?? false;
     if (this._firstUpdateFuture && !this._firstUpdateFuture.done) {
+      this._suppressReply = silent;
+      // a report is not a result: a model free to call tools can answer
+      // "still searching" by calling the same tool again
+      this._replyToolChoice = 'none';
       this._firstUpdateFuture.resolve(renderedMessage);
       this.functionCall.extra.__livekit_agents_tool_non_blocking = true;
       return;
     }
 
-    await this._executor.enqueueReply(this, pair);
+    await this._executor.enqueueReply(this, pair, { silent, toolChoice: 'none' });
   }
 
   async foreground<T>(fn: (activity: AgentActivity) => Promise<T> | T): Promise<T> {
@@ -206,16 +239,21 @@ export class RunContext<UserData = UnknownUserData> {
   _attachExecutor(
     executor: AttachedToolExecutor<UserData>,
     firstUpdateFuture: Future<unknown>,
-  ): void {
+  ): object {
     if (this._firstUpdateFuture !== undefined) {
       throw new Error('Executor already attached');
     }
+    const attachment = {};
     this._executor = executor;
+    this._executorAttachment = attachment;
     this._firstUpdateFuture = firstUpdateFuture;
+    return attachment;
   }
 
-  _detachExecutor(): void {
+  _detachExecutor(attachment: object): void {
+    if (this._executorAttachment !== attachment) return;
     this._executor = undefined;
+    this._executorAttachment = undefined;
     this._firstUpdateFuture = undefined;
   }
 

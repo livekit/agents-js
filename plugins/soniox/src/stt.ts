@@ -76,6 +76,8 @@ export interface STTOptions {
   maxEndpointDelayMs: number;
   /** How readily the model emits speech endpoints. Range: -1.0 to 1.0. */
   endpointSensitivity?: number;
+  /** How aggressively the model reduces endpoint latency. Range: 0 to 3. */
+  endpointLatencyAdjustmentLevel?: number;
   clientReferenceId?: string;
   translation?: TranslationConfig;
 }
@@ -105,10 +107,17 @@ export class STT extends stt.STT {
     if (merged.maxEndpointDelayMs < 500 || merged.maxEndpointDelayMs > 3000) {
       throw new Error('maxEndpointDelayMs must be between 500 and 3000');
     }
-    if (merged.endpointSensitivity !== undefined) {
-      if (merged.endpointSensitivity < -1.0 || merged.endpointSensitivity > 1.0) {
-        throw new Error('endpointSensitivity must be between -1.0 and 1.0');
-      }
+    if (
+      merged.endpointSensitivity !== undefined &&
+      (merged.endpointSensitivity < -1.0 || merged.endpointSensitivity > 1.0)
+    ) {
+      throw new Error('endpointSensitivity must be between -1.0 and 1.0');
+    }
+    if (
+      merged.endpointLatencyAdjustmentLevel !== undefined &&
+      (merged.endpointLatencyAdjustmentLevel < 0 || merged.endpointLatencyAdjustmentLevel > 3)
+    ) {
+      throw new Error('endpointLatencyAdjustmentLevel must be between 0 and 3');
     }
 
     super({
@@ -167,7 +176,9 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   async #connectWS(): Promise<WebSocket> {
-    const ws = new WebSocket(this.#opts.baseUrl);
+    const ws = new WebSocket(this.#opts.baseUrl, {
+      headers: { Authorization: `Bearer ${this.#opts.apiKey}` },
+    });
     let timedOut = false;
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -201,7 +212,6 @@ export class SpeechStream extends stt.SpeechStream {
 
   #config(): Record<string, unknown> {
     const config: Record<string, unknown> = {
-      api_key: this.#opts.apiKey,
       model: this.#opts.model,
       audio_format: 'pcm_s16le',
       num_channels: this.#opts.numChannels,
@@ -215,6 +225,7 @@ export class SpeechStream extends stt.SpeechStream {
       client_reference_id: this.#opts.clientReferenceId,
       max_endpoint_delay_ms: this.#opts.maxEndpointDelayMs,
       endpoint_sensitivity: this.#opts.endpointSensitivity,
+      endpoint_latency_adjustment_level: this.#opts.endpointLatencyAdjustmentLevel,
     };
 
     if (this.#opts.translation) {
