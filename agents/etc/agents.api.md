@@ -8871,6 +8871,8 @@ abstract class TTS extends TTS_base {
     }): SynthesizeStream;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "ChunkedStream"
     abstract synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
+    // (undocumented)
+    protected updateCapabilities(caps: Partial<TTSCapabilities>): void;
     // @internal
     get _wrappedTts(): readonly TTS[];
 }
