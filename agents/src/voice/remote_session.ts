@@ -557,9 +557,9 @@ export class SessionHost {
   private readonly transport: SessionTransport;
   private readonly audioInput: TcpAudioInput | undefined;
   private readonly audioOutput: TcpAudioOutput | undefined;
+  // the attached session is exactly the one whose events are subscribed
   private session: AgentSession | undefined;
   private started = false;
-  private eventsRegistered = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
 
@@ -573,22 +573,43 @@ export class SessionHost {
     this.audioOutput = audioOutput;
   }
 
-  registerSession(session: AgentSession): void {
+  /** The session this host currently serves, if any. */
+  get attachedSession(): AgentSession | undefined {
+    return this.session;
+  }
+
+  /** Serve `session`: forward its events and route session requests to it. */
+  attach(session: AgentSession): void {
+    this.detach();
     this.session = session;
-    if (!this.eventsRegistered) {
-      this.eventsRegistered = true;
-      session.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
-      session.on(AgentSessionEventTypes.UserStateChanged, this.onUserStateChanged);
-      session.on(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
-      session.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
-      session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
-      session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
-      session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
-      session.on(AgentSessionEventTypes.AgentFalseInterruption, this.onAgentFalseInterruption);
-      session.on(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
-      session.on(AgentSessionEventTypes.Error, this.onHostError);
-      session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
-    }
+    session.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+    session.on(AgentSessionEventTypes.UserStateChanged, this.onUserStateChanged);
+    session.on(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
+    session.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
+    session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
+    session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+    session.on(AgentSessionEventTypes.AgentFalseInterruption, this.onAgentFalseInterruption);
+    session.on(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
+    session.on(AgentSessionEventTypes.Error, this.onHostError);
+    session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
+  }
+
+  /** Stop serving the attached session; the host itself stays up. */
+  detach(): void {
+    if (!this.session) return;
+    this.session.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+    this.session.off(AgentSessionEventTypes.UserStateChanged, this.onUserStateChanged);
+    this.session.off(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
+    this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
+    this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
+    this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+    this.session.off(AgentSessionEventTypes.AgentFalseInterruption, this.onAgentFalseInterruption);
+    this.session.off(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
+    this.session.off(AgentSessionEventTypes.Error, this.onHostError);
+    this.session.off(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
+    this.session = undefined;
   }
 
   async start(): Promise<void> {
@@ -602,23 +623,7 @@ export class SessionHost {
     if (!this.started) return;
     this.started = false;
 
-    if (this.session && this.eventsRegistered) {
-      this.eventsRegistered = false;
-      this.session.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
-      this.session.off(AgentSessionEventTypes.UserStateChanged, this.onUserStateChanged);
-      this.session.off(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
-      this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
-      this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
-      this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
-      this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
-      this.session.off(
-        AgentSessionEventTypes.AgentFalseInterruption,
-        this.onAgentFalseInterruption,
-      );
-      this.session.off(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
-      this.session.off(AgentSessionEventTypes.Error, this.onHostError);
-      this.session.off(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
-    }
+    this.detach();
 
     if (this.recvTask) {
       this.recvTask.cancel();

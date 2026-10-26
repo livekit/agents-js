@@ -356,7 +356,7 @@ describe('SessionHost event forwarding', () => {
     const session = { on, off: vi.fn() } as unknown as AgentSession;
     const host = new SessionHost(new FakeTransport());
 
-    host.registerSession(session);
+    host.attach(session);
 
     const subscribed = new Set(on.mock.calls.map(([event]) => event));
     expect(subscribed).toEqual(FORWARDED_EVENTS);
@@ -367,7 +367,7 @@ describe('SessionHost event forwarding', () => {
     const session = { on: vi.fn(), off } as unknown as AgentSession;
     const host = new SessionHost(new FakeTransport());
 
-    host.registerSession(session);
+    host.attach(session);
     await host.start();
     await host.close();
 
@@ -418,7 +418,7 @@ async function startConnectedClientHost(ctx: JobContext) {
   const [clientTransport, hostTransport] = createConnectedTransportPair();
   const remote = new RemoteSession(clientTransport);
   const host = new SessionHost(hostTransport);
-  host.registerSession(fakeAgentSession());
+  host.attach(fakeAgentSession());
   await runWithJobContextAsync(ctx, async () => host.start());
   await remote.start();
 
@@ -551,7 +551,7 @@ describe('SessionHost updateIo', () => {
 
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeSession);
+    host.attach(fakeSession);
     await host.start();
 
     transport.push(
@@ -605,7 +605,7 @@ describe('SessionHost updateIo', () => {
 
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeSession);
+    host.attach(fakeSession);
     await host.start();
 
     transport.push(
@@ -705,7 +705,7 @@ describe('SessionHost finalizeSimulation', () => {
 
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeAgentSession());
+    host.attach(fakeAgentSession());
     await runWithJobContextAsync(ctx, async () => host.start());
 
     transport.push(finalizeMessage('f1', true, 'all good'));
@@ -727,7 +727,7 @@ describe('SessionHost finalizeSimulation', () => {
     const ctx = fakeSimJobContext(() => {});
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeAgentSession());
+    host.attach(fakeAgentSession());
     await runWithJobContextAsync(ctx, async () => host.start());
 
     transport.push(finalizeMessage('f2', false, 'agent never answered'));
@@ -746,7 +746,7 @@ describe('SessionHost finalizeSimulation', () => {
     });
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeAgentSession());
+    host.attach(fakeAgentSession());
     await runWithJobContextAsync(ctx, async () => host.start());
 
     transport.push(finalizeMessage('f3', true, 'fine'));
@@ -766,7 +766,7 @@ describe('SessionHost finalizeSimulation', () => {
     });
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeAgentSession());
+    host.attach(fakeAgentSession());
     await runWithJobContextAsync(ctx, async () => host.start());
 
     transport.push(finalizeMessage('f4', true, 'fine'));
@@ -785,7 +785,7 @@ describe('SessionHost finalizeSimulation', () => {
   it('responds without a job context (no simulation)', async () => {
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeAgentSession());
+    host.attach(fakeAgentSession());
     await host.start();
 
     transport.push(finalizeMessage('f5', true, 'fine'));

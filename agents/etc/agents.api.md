@@ -6645,14 +6645,15 @@ export interface SessionConnectOptions {
 // @public (undocumented)
 export class SessionHost {
     constructor(transport: SessionTransport, audioInput?: TcpAudioInput, audioOutput?: TcpAudioOutput);
+    attach(session: AgentSession): void;
+    get attachedSession(): AgentSession | undefined;
     // (undocumented)
     close(): Promise<void>;
+    detach(): void;
     // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
     // @internal
     _onEotPrediction(event: EotPredictionEvent): void;
-    // (undocumented)
-    registerSession(session: AgentSession): void;
     // (undocumented)
     start(): Promise<void>;
 }

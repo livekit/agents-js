@@ -950,7 +950,7 @@ export class AgentSession<
           consoleInst.audioInput,
           consoleInst.audioOutput,
         );
-        this.sessionHost.registerSession(this);
+        this.sessionHost.attach(this);
       }
     } else if (room && !this._roomIO) {
       if (this._textOnly) {
@@ -993,7 +993,7 @@ export class AgentSession<
 
       const transport = new RoomSessionTransport(room, this._roomIO);
       this.sessionHost = new SessionHost(transport);
-      this.sessionHost.registerSession(this);
+      this.sessionHost.attach(this);
     }
 
     const ctx = getJobContext(false);
