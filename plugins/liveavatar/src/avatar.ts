@@ -639,10 +639,10 @@ export class AvatarSession extends voice.AvatarSession {
         this.#logger.debug({ type: eventType }, `LiveAvatar ${eventType}`);
         break;
       case 'error':
-        this.#logger.error({ error: event.error ?? event }, 'LiveAvatar error');
+        this.#logger.error({ 'lk.pii.error': event.error ?? event }, 'LiveAvatar error');
         break;
       case 'warning':
-        this.#logger.warn({ warning: event.warning ?? event }, 'LiveAvatar warning');
+        this.#logger.warn({ 'lk.pii.warning': event.warning ?? event }, 'LiveAvatar warning');
         break;
       default:
         this.#logger.debug({ type: eventType }, 'Unhandled LiveAvatar event');

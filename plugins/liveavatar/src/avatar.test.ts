@@ -158,7 +158,7 @@ describe('LiveAvatar WebSocket event dispatch', () => {
     const [, avatar, buffer] = createAvatar();
     const error = { type: 'invalid_request_error', message: 'bad audio' };
     avatar.handleServerEvent({ type: 'error', error });
-    expect(logger.error).toHaveBeenCalledWith({ error }, 'LiveAvatar error');
+    expect(logger.error).toHaveBeenCalledWith({ 'lk.pii.error': error }, 'LiveAvatar error');
     expect(avatar.avatarSpeaking).toBe(false);
     expect(buffer.started).toBe(0);
   });
