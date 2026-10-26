@@ -339,10 +339,13 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   private async eotWatchdog(signal: AbortSignal): Promise<void> {
+    // One abort listener for the whole loop; a fresh waitForAbort per poll would leave a
+    // listener behind every time the timer wins.
+    const aborted = waitForAbort(signal);
     while (!signal.aborted) {
       await Promise.race([
         new Promise((resolve) => setTimeout(resolve, WATCHDOG_POLL_MS)),
-        waitForAbort(signal),
+        aborted,
       ]);
       if (signal.aborted) return;
 
