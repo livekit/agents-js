@@ -87,10 +87,14 @@ describe('ProcPool warmed process lock handling', () => {
     } as unknown as RunningJobInfo;
 
     await pool.warmedProcQueue.put({ proc: executor, unlock });
+    const before = Date.now();
     await pool.launchJob(jobInfo);
 
     expect(unlock).toHaveBeenCalledTimes(1);
     expect(executor.launchJob).toHaveBeenCalledWith(jobInfo);
+    // dispatch timeline: the pool stamps when a process took the job
+    expect(jobInfo.launchedAt).toBeGreaterThanOrEqual(before);
+    expect(jobInfo.launchedAt).toBeLessThanOrEqual(Date.now());
   });
 
   it('releases queued lock tokens during close', async () => {

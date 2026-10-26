@@ -9,6 +9,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { Logger } from 'pino';
 import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
@@ -87,6 +88,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     updateOptions(opts: Partial<TTSOptions>): void;
 }
 
+// @internal (undocumented)
+export const _toCartesiaOptions: (opts: TTSOptions, streaming?: boolean) => {
+    [id: string]: unknown;
+};
+
 // Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -101,6 +107,7 @@ export class TTS extends tts.TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
+    releaseIdleConnections(): Promise<void>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
@@ -115,6 +122,7 @@ export class TTS extends tts.TTS {
 //
 // @public (undocumented)
 export interface TTSOptions {
+    addPhonemeTimestamps: boolean;
     // (undocumented)
     apiKey?: string;
     // (undocumented)
@@ -144,6 +152,7 @@ export interface TTSOptions {
     //
     // (undocumented)
     speed?: TTSVoiceSpeed | number;
+    useNormalizedTimestamps: boolean;
     // (undocumented)
     voice: string | number[];
     volume?: number;
@@ -152,7 +161,7 @@ export interface TTSOptions {
 
 // Warnings were encountered during analysis:
 //
-// src/stt.ts:152:3 - (ae-forgotten-export) The symbol "STTModel" needs to be exported by the entry point index.d.ts
+// src/stt.ts:151:3 - (ae-forgotten-export) The symbol "STTModel" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
