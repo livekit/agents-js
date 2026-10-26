@@ -176,6 +176,16 @@ export abstract class RealtimeSession extends EventEmitter {
     options?: { signal?: AbortSignal },
   ): Promise<GenerationCreatedEvent>;
 
+  /**
+   * Speak scripted text through the realtime model's own voice, without a separate TTS model.
+   *
+   * Only sessions whose model reports `capabilities.supportsSay` implement this; the default
+   * implementation throws.
+   *
+   * @param _text - The text to speak, either complete or as a stream of chunks.
+   * @param _options - `signal` aborts the request and cancels the scripted response.
+   * @returns The generation created for the scripted response.
+   */
   say(
     _text: string | ReadableStream<string>,
     _options: { signal?: AbortSignal } = {},

@@ -156,6 +156,12 @@ export class RealtimeSession extends OpenAIRealtimeSession {
     return event;
   }
 
+  /**
+   * Speak scripted text via an xAI `force_message` item (no `response.create` is sent).
+   *
+   * Streamed text is collected in full before it is sent. Rejects if aborted, if the session
+   * closes, or if xAI does not create the response within 10 seconds.
+   */
   override async say(
     text: string | ReadableStream<string>,
     options: { signal?: AbortSignal } = {},

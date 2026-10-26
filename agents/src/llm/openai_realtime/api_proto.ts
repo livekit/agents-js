@@ -401,6 +401,7 @@ export interface AssistantItemCreate {
   content: TextContent[];
 }
 
+/** xAI scripted assistant message, spoken verbatim without generating a response. */
 export interface ForceMessageItemCreate {
   type: 'force_message';
   role: 'assistant';
@@ -433,6 +434,7 @@ export interface ConversationItemCreateEvent extends BaseClientEvent {
   item: ConversationItemCreateContent;
 }
 
+/** `conversation.item.create` event carrying an xAI {@link ForceMessageItemCreate}. */
 export interface ForceMessageCreateEvent extends BaseClientEvent {
   type: 'conversation.item.create';
   item: ForceMessageItemCreate;
