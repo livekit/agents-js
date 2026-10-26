@@ -28,7 +28,7 @@ import { type RawData, WebSocket } from 'ws';
 
 const DEFAULT_BASE_URL = 'wss://tts.us.assemblyai.com';
 const DEFAULT_MODEL = 'assemblyai-tts-1';
-const DEFAULT_VOICE = '987db62e-a2c2-569a-9c4d-82460cdea1bd'; // Keegan
+const DEFAULT_VOICE = '49c443a4-8a1d-5f7e-b70b-98bdbd9823c3'; // Audrey
 const SUPPORTED_SAMPLE_RATES = [8000, 16000, 22050, 24000, 44100, 48000] as const;
 
 const MAX_REQUEST_CODEPOINTS = 2000;
@@ -50,7 +50,7 @@ export const _WORD_BOUNDARIES_GRACE = WORD_BOUNDARIES_GRACE_MS;
 
 /** Options for AssemblyAI Streaming TTS. */
 export interface TTSOptions {
-  /** Catalog voice UUID or slug. Defaults to Keegan. */
+  /** Catalog voice UUID or slug. Defaults to Audrey. */
   voice?: string;
   /** Language code or English language name. Omit to use the voice's default language. */
   language?: string | null;

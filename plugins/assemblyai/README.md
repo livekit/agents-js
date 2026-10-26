@@ -34,7 +34,7 @@ const session = new voice.AgentSession({
   stt: new assemblyai.STT({ speechModel: 'universal-3-6-pro', mode: 'balanced' }),
   tts: new assemblyai.TTS({
     model: 'assemblyai-tts-1',
-    voice: '987db62e-a2c2-569a-9c4d-82460cdea1bd', // Keegan
+    voice: '49c443a4-8a1d-5f7e-b70b-98bdbd9823c3', // Audrey
   }),
   // Let AssemblyAI decide when the user has finished speaking.
   turnHandling: { turnDetection: 'stt' },
@@ -61,7 +61,7 @@ const session = new voice.AgentSession({
 interrupts. Useful options:
 
 - `voice`: a voice's id, from the [voice library](https://www.assemblyai.com/docs/tts/voices)
-  or a custom (cloned) voice; defaults to Keegan. Slugs such as `"aai-linda-3"` also work, but
+  or a custom (cloned) voice; defaults to Audrey. Slugs such as `"aai-linda-3"` also work, but
   can change, while ids don't.
 - `language`: a code such as `"es"`, set independently of the voice.
 - `model`: defaults to `assemblyai-tts-1`.

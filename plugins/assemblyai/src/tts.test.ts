@@ -23,7 +23,7 @@ import {
   _splitRequestText,
 } from './tts.js';
 
-const KEEGAN = '987db62e-a2c2-569a-9c4d-82460cdea1bd';
+const AUDREY = '49c443a4-8a1d-5f7e-b70b-98bdbd9823c3';
 const SAMPLE_RATE = 24000;
 // 80 ms per Audio frame at 24 kHz pcm_s16le, as the service sends.
 const FRAME_BYTES = (SAMPLE_RATE * 2 * 80) / 1000;
@@ -442,7 +442,7 @@ describe('AssemblyAI TTS configuration', () => {
   it('normalizes voice and language', () => {
     let engine = new TTS({ apiKey: 'k' });
     expect([optionsOf(engine).voice, optionsOf(engine).language, engine.model]).toEqual([
-      KEEGAN,
+      AUDREY,
       undefined,
       'assemblyai-tts-1',
     ]);
@@ -739,7 +739,7 @@ describe('AssemblyAI TTS streaming', () => {
         engine.updateOptions({ voice: 'aai-paul', language: 'it' });
         await speak(engine, ['Ciao.']);
         expect(server.sessions.map(({ params }) => [params.voice_id, params.language])).toEqual([
-          [KEEGAN, undefined],
+          [AUDREY, undefined],
           ['aai-paul', 'italian'],
         ]);
       } finally {
@@ -756,7 +756,7 @@ describe('AssemblyAI TTS streaming', () => {
         await delay(50);
         engine.updateOptions({ voice: 'aai-paul' });
         await speak(engine, ['Hello.']);
-        expect(server.sessions.map(({ params }) => params.voice_id)).toEqual([KEEGAN, 'aai-paul']);
+        expect(server.sessions.map(({ params }) => params.voice_id)).toEqual([AUDREY, 'aai-paul']);
         expect(server.frames('Generate')).toHaveLength(1);
         expect(server.sessions[0]!.received).toEqual([]);
       } finally {
