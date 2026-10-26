@@ -85,6 +85,7 @@ export function encodeChatItem(item: ChatItem): pb.ChatContext_ChatItem {
             callId: item.callId,
             name: item.name,
             arguments: item.args,
+            extra: Object.fromEntries(Object.entries(item.extra).map(([k, v]) => [k, String(v)])),
             createdAt: msToTimestamp(item.createdAt),
           }),
         },

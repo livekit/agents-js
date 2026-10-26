@@ -1,5 +1,77 @@
 # @livekit/agents
 
+## 1.9.4
+
+### Patch Changes
+
+- Watch an async tool's deferred reply as a `Task`, so `session.run()` settles after the reply instead of hanging on `handle.addDoneCallback is not a function`. - [#2781](https://github.com/livekit/agents-js/pull/2781) ([@longcw](https://github.com/longcw))
+
+- Record final completion when an async tool returns null or undefined after reporting progress without requesting a follow-up reply. Cancel pending replies during shutdown so foreground work cannot leave the run waiting after close. - [#2492](https://github.com/livekit/agents-js/pull/2492) ([@paulheinrichs-jb](https://github.com/paulheinrichs-jb))
+
+- Add `tokenize.blingfire.SentenceTokenizer` (backed by `@livekit/blingfire`) and make it the default sentence tokenizer, matching the Python agents. The framework TTS adapters now also retain formatting like Python. - [#2709](https://github.com/livekit/agents-js/pull/2709) ([@davidzhao](https://github.com/davidzhao))
+
+- Send session keyterms to the Speechmatics Linden inference model. - [#2740](https://github.com/livekit/agents-js/pull/2740) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add Cartesia sonic-3.6 to the model lists and remove the sunset sonic, sonic-2 and sonic-turbo ids. - [#2743](https://github.com/livekit/agents-js/pull/2743) ([@cartesia-amarat](https://github.com/cartesia-amarat))
+
+- Clarify that realtime providers append chat history items when their preceding item is unknown. - [#2767](https://github.com/livekit/agents-js/pull/2767) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Correct the inference Deepgram `mip_opt_out` docs: it is always true for LiveKit Inference, and the passed value is ignored. - [#2742](https://github.com/livekit/agents-js/pull/2742) ([@shawnfeldman](https://github.com/shawnfeldman))
+
+- Treat an `away` user as inactive in `AgentActivity.waitForInactive`, so `userAwayTimeout` no longer blocks the activity's idle wait. A user who went quiet after `userAwayTimeout` kept the wait loop spinning on `delay(0)`, and the deferred result of a non-blocking tool (`ToolExecutor.deliverReply`, which awaits `waitForIdle()`) was never spoken. Only a `speaking` user holds the activity busy now, which matches the Python `wait_for_idle`. - [#2569](https://github.com/livekit/agents-js/pull/2569) ([@nhodges](https://github.com/nhodges))
+
+- Reject idle waits with `AbortError` when session shutdown starts or their activity closes so pending foreground callbacks cannot run during shutdown or handoff. - [#2822](https://github.com/livekit/agents-js/pull/2822) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add `language_detection`, `inactivity_timeout` and `prompt` to the inference `AssemblyAIOptions` type, matching the Python SDK. - [#2779](https://github.com/livekit/agents-js/pull/2779) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+- Add MCP toolset refresh and persistent filtering, support HTTP header updates, and preserve intentional resolver errors. Require finite connection and request timeouts in milliseconds. Keep realtime tools in sync when discovery or filters change during an agent greeting. Retain refreshes queued during discovery or publication, and allow shutdown while SSE startup is stalled. - [#2492](https://github.com/livekit/agents-js/pull/2492) ([@paulheinrichs-jb](https://github.com/paulheinrichs-jb))
+
+- Preserve MCP tool metadata as `FunctionTool.meta` so applications can inspect it during tool filtering and execution. Omit empty MCP metadata and keep application metadata out of provider tool schemas. - [#2492](https://github.com/livekit/agents-js/pull/2492) ([@paulheinrichs-jb](https://github.com/paulheinrichs-jb))
+
+- feat(mcp): add MCP (Model Context Protocol) server integration - [#2492](https://github.com/livekit/agents-js/pull/2492) ([@paulheinrichs-jb](https://github.com/paulheinrichs-jb))
+
+  Tools exposed by an MCP server are fetched by `MCPToolset` during activation.
+  Both stdio and HTTP transports (SSE + streamable HTTP) are supported.
+
+  ```ts
+  const tools = [
+    new llm.MCPToolset({
+      id: 'mcp',
+      mcpServer: new llm.MCPServerHTTP({ url: 'https://docs.livekit.io/mcp/' }),
+    }),
+  ];
+  ```
+
+  HTTP transports require TLS by default. Set `allowInsecureHttp: true` only when connecting to a
+  trusted local development server.
+
+  `@modelcontextprotocol/client` (2.3.1 or newer, Node.js 20+) is an optional peer dependency:
+  install it with `pnpm add @modelcontextprotocol/client` to use this feature.
+
+  Protocol auto-negotiation supports the stateless MCP 2026-07-28 protocol and older servers.
+  Stateless HTTP servers can return JSON responses without sessions, notifications, or persistent
+  connections. Set `transportType: 'streamable_http'` explicitly for endpoints that do not end in `/mcp`.
+
+- Remove the abort listener `waitForOrAbort` adds once its race settles, so `waitForIdle` and `ctx.filler` no longer pile listeners on the activity's close signal. - [#2727](https://github.com/livekit/agents-js/pull/2727) ([@Apeksha9389](https://github.com/Apeksha9389))
+
+- Add `inference.TurnDetector({ localFallback: false })` to disable cloud-to-local fallback, matching Python. Prediction timeouts keep cloud detection active. A terminal cloud failure disables detection for the stream and lets endpointing commit turns. Fallback remains enabled by default. - [#2726](https://github.com/livekit/agents-js/pull/2726) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Allow pooled connection attempts to receive an abort signal. - [#2837](https://github.com/livekit/agents-js/pull/2837) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Cancel pending TTS and transcript stream reads when speech is interrupted so cleanup does not delay the next reply. - [#2784](https://github.com/livekit/agents-js/pull/2784) ([@devp19](https://github.com/devp19))
+
+- Answer every completed tool call, including interrupted, silent, and invalid calls, and keep realtime providers quiet when supported. A tool can return a handoff inside a list, and a handoff batched with another tool now applies even when that tool finishes last. - [#2289](https://github.com/livekit/agents-js/pull/2289) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix a crash when a session recording upload fails while reading the response, such as on a socket reset. Also retry the same DNS and connection errors as the Python SDK, such as `EPIPE` and `EAI_FAIL`. - [#2350](https://github.com/livekit/agents-js/pull/2350) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Set the session report duration when audio recording is disabled. - [#2829](https://github.com/livekit/agents-js/pull/2829) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Text simulations no longer warn about a missing VAD for the turn detector or adaptive interruption detection; both are disabled directly since there is no audio. - [#2746](https://github.com/livekit/agents-js/pull/2746) ([@u9g](https://github.com/u9g))
+
+- Add `silent` to `ctx.update()`. A silent update is recorded for the model with no reply. The reply to an update still uses `toolChoice: 'none'`, and the reply to an async tool's final result now uses the model's default tool choice instead of `'none'`. - [#2783](https://github.com/livekit/agents-js/pull/2783) ([@longcw](https://github.com/longcw))
+
+- Stop `waitForIdle` from spinning on `delay(0)` while the agent or the user is speaking. It now waits for the current speech to end or for the user state to change, which also cuts the calls that leave abort listeners on the activity's close signal. - [#2782](https://github.com/livekit/agents-js/pull/2782) ([@longcw](https://github.com/longcw))
+
 ## 1.9.3
 
 ### Patch Changes
