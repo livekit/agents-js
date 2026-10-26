@@ -127,7 +127,7 @@ import {
   resolveKeytermsOptions,
 } from './keyterm_detection.js';
 import { releaseTts, retainTts } from './model_refs.js';
-import { RecorderIO } from './recorder_io/index.js';
+import { RecorderIO, _validateBitRate } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
@@ -188,10 +188,24 @@ export interface RecordingOptions {
    * instructions are inherited from the base span. Defaults to `false`.
    */
   inputDelta?: boolean;
+  /**
+   * Target bit rate of the session-audio Opus encoder, in bits per second, between 500 and
+   * 512000. When omitted, the encoder's own default is used. Only affects audio recording.
+   */
+  bitRate?: number;
+  /**
+   * Encode session audio at a constant bit rate instead of a variable one. Defaults to `false`.
+   * Players that estimate an Ogg Opus duration from file size only get it right at a constant
+   * bit rate.
+   */
+  constantBitRate?: boolean;
 }
 
 /** @internal Recording options with every category resolved to a boolean. */
-export type ResolvedRecordingOptions = Required<RecordingOptions>;
+export type ResolvedRecordingOptions = Required<
+  Omit<RecordingOptions, 'bitRate' | 'constantBitRate'>
+> &
+  Pick<RecordingOptions, 'bitRate' | 'constantBitRate'>;
 
 const RECORDING_ALL_ON: ResolvedRecordingOptions = {
   audio: true,
@@ -226,6 +240,7 @@ export function resolveRecordingOptions(
   if (typeof record === 'boolean') {
     return { ...(record ? RECORDING_ALL_ON : RECORDING_ALL_OFF) };
   }
+  _validateBitRate(record.bitRate);
   return { ...RECORDING_ALL_ON, ...record };
 }
 
@@ -1012,7 +1027,11 @@ export class AgentSession<
         this.output.audio &&
         (this.sessionOptions.recordingOptions.audio || consoleForcesRecord)
       ) {
-        this._recorderIO = new RecorderIO({ agentSession: this });
+        this._recorderIO = new RecorderIO({
+          agentSession: this,
+          bitRate: this.sessionOptions.recordingOptions.bitRate,
+          constantBitRate: this.sessionOptions.recordingOptions.constantBitRate ?? false,
+        });
         this.input.audio = this._recorderIO.recordInput(this.input.audio);
         this.output.audio = this._recorderIO.recordOutput(this.output.audio);
 

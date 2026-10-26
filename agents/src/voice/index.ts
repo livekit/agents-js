@@ -22,6 +22,7 @@ export {
   type AgentSessionUpdateOptions,
   type AgentSessionUsage,
   type ExpressiveOptions,
+  type RecordingOptions,
   type VoiceOptions,
   DEFAULT_EXPRESSIVE_OPTIONS,
   TTS_INSTRUCTIONS_PLACEHOLDER,

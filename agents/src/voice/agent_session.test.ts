@@ -4,11 +4,13 @@
 import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
-import { type JobContext, runWithJobContext } from '../job.js';
+import { type JobContext, runWithJobContext, runWithJobContextAsync } from '../job.js';
 import type { STTError } from '../stt/stt.js';
 import { Future } from '../utils.js';
+import { Agent } from './agent.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
 import { AgentSessionEventTypes, CloseReason, createUserInputTranscribedEvent } from './events.js';
+import { AudioInput, AudioOutput } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
 
 type AgentSessionInternals = AgentSession & {
@@ -23,6 +25,31 @@ type AgentSessionCloseInternals = {
   closingTask: Promise<void> | null;
   sessionHost?: { close: () => Promise<void> };
 };
+
+class RecordingTestAudioInput extends AudioInput {
+  constructor() {
+    super();
+    this.multiStream.addInputStream(new ReadableStream());
+  }
+}
+
+class RecordingTestAudioOutput extends AudioOutput {
+  constructor() {
+    super(48000);
+  }
+
+  clearBuffer(): void {}
+}
+
+function recordingJobContext(): JobContext {
+  return {
+    job: { enableRecording: false },
+    initRecording: vi.fn(async () => {}),
+    simulationContext: () => undefined,
+    sessionDirectory: undefined,
+    _primaryAgentSession: undefined,
+  } as unknown as JobContext;
+}
 
 describe('AgentSession close', () => {
   it('waits for an internal close already in progress', async () => {
@@ -298,6 +325,66 @@ describe('AgentSession recording state', () => {
     session.sessionOptions.recordingOptions = resolveRecordingOptions(false);
     expect(session._enableRecording).toBe(false);
   });
+
+  it('forwards bit rate options from the record object to RecorderIO', async () => {
+    const session = new AgentSession({ vad: null, turnDetection: 'manual' });
+    session.input.audio = new RecordingTestAudioInput();
+    session.output.audio = new RecordingTestAudioOutput();
+
+    await runWithJobContextAsync(recordingJobContext(), () =>
+      session.start({
+        agent: new Agent({ instructions: 'help the user' }),
+        record: { audio: true, bitRate: 32_000, constantBitRate: true },
+      }),
+    );
+
+    const recorder = session._recorderIO as unknown as {
+      bitRate?: number;
+      constantBitRate: boolean;
+    };
+    expect(recorder.bitRate).toBe(32_000);
+    expect(recorder.constantBitRate).toBe(true);
+    await session.close();
+  });
+
+  it('leaves RecorderIO bit rate defaults unchanged for record true', async () => {
+    const session = new AgentSession({ vad: null, turnDetection: 'manual' });
+    session.input.audio = new RecordingTestAudioInput();
+    session.output.audio = new RecordingTestAudioOutput();
+
+    await runWithJobContextAsync(recordingJobContext(), () =>
+      session.start({ agent: new Agent({ instructions: 'help the user' }), record: true }),
+    );
+
+    const recorder = session._recorderIO as unknown as {
+      bitRate?: number;
+      constantBitRate: boolean;
+    };
+    expect(recorder.bitRate).toBeUndefined();
+    expect(recorder.constantBitRate).toBe(false);
+    await session.close();
+  });
+
+  it.each([true, false])(
+    'rejects an invalid recorder bit rate before startup when audio is %s',
+    async (audio) => {
+      const session = new AgentSession({ vad: null, turnDetection: 'manual' });
+      const ctx = recordingJobContext();
+
+      await expect(
+        runWithJobContextAsync(ctx, () =>
+          session.start({
+            agent: new Agent({ instructions: 'help the user' }),
+            record: { audio, bitRate: 1_000_000 },
+          }),
+        ),
+      ).rejects.toThrow(/bitRate/);
+
+      expect(ctx._primaryAgentSession).toBeUndefined();
+      expect(session._roomIO).toBeUndefined();
+      expect(session._started).toBe(false);
+    },
+  );
 });
 
 describe('AgentSession user input transcription', () => {
