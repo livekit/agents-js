@@ -36,6 +36,8 @@ export class SpeechStream extends stt.SpeechStream {
     label: string;
     // (undocumented)
     protected run(): Promise<void>;
+    // (undocumented)
+    updateOptions(opts: Partial<Omit<STTOptions, 'apiKey' | 'baseUrl'>>): void;
 }
 
 // @public (undocumented)
@@ -75,13 +77,19 @@ export interface STTOptions {
     diarize: boolean;
     // (undocumented)
     encoding: STTEncoding | string;
+    endpointing: boolean;
     eouTimeoutMs: number;
+    format: boolean;
+    keywords: [string, number][];
     // (undocumented)
     language: string;
     // (undocumented)
     model: STTModels | string;
+    redactPci: boolean;
+    redactPii: boolean;
     // (undocumented)
     sampleRate: number;
+    sentenceTimestamps: boolean;
     // (undocumented)
     wordTimestamps: boolean;
 }
