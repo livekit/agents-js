@@ -18,7 +18,8 @@ interface AudioRecognitionTestState {
 
 function createHooks() {
   const hooks: RecognitionHooks = {
-    onInterruption: vi.fn(),
+    interruptionByAudioActivityEnabled: false,
+    onOverlapSpeech: vi.fn(),
     onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
@@ -120,6 +121,9 @@ describe('AudioRecognition STT pipeline handoff', () => {
 
       expect(first.hooks.onFinalTranscript).not.toHaveBeenCalled();
       expect(second.hooks.onFinalTranscript).toHaveBeenCalledTimes(1);
+      expect(second.hooks.onFinalTranscript.mock.calls[0]![0].createdAt).toEqual(
+        expect.any(Number),
+      );
     } finally {
       controller?.close();
       await first.recognition.close();
@@ -141,13 +145,11 @@ describe('AudioRecognition STT pipeline handoff', () => {
     (recognition as any).transcriptBuffer = [
       { type: SpeechEventType.FINAL_TRANSCRIPT, alternatives: [{ text: 'stale transcript' }] },
     ];
-    (recognition as any).ignoreUserTranscriptUntil = Date.now();
 
     try {
       await recognition.start({ sttPipeline: pipeline });
 
       expect((recognition as any).transcriptBuffer).toEqual([]);
-      expect((recognition as any).ignoreUserTranscriptUntil).toBeUndefined();
       expect(recognition.inputStartedAt).toBe(pipeline.inputStartedAt);
     } finally {
       await recognition.close();

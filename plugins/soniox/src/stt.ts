@@ -170,7 +170,9 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   async #connectWS(): Promise<WebSocket> {
-    const ws = new WebSocket(this.#opts.baseUrl);
+    const ws = new WebSocket(this.#opts.baseUrl, {
+      headers: { Authorization: `Bearer ${this.#opts.apiKey}` },
+    });
     let timedOut = false;
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -204,7 +206,6 @@ export class SpeechStream extends stt.SpeechStream {
 
   #config(): Record<string, unknown> {
     const config: Record<string, unknown> = {
-      api_key: this.#opts.apiKey,
       model: this.#opts.model,
       audio_format: 'pcm_s16le',
       num_channels: this.#opts.numChannels,
