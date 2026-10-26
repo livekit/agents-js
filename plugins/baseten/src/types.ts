@@ -47,7 +47,6 @@ export interface BasetenSttOptions {
   environment?: string;
   encoding?: string;
   sampleRate?: number;
-  bufferSizeSeconds?: number;
   vadThreshold?: number;
   vadMinSilenceDurationMs?: number;
   vadSpeechPadMs?: number;
@@ -58,8 +57,6 @@ export interface BasetenSttOptions {
   /** Restrict Whisper automatic language detection. Requires runtime v0.5.0 or newer. */
   languageOptions?: string[];
   showWordTimestamps?: boolean;
-  prompt?: string;
-  languageDetectionOnly?: boolean;
 }
 
 /**

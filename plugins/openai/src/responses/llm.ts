@@ -226,7 +226,6 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       );
 
       for await (const event of stream) {
-        retryable = false;
         let chunk: llm.ChatChunk | undefined;
 
         switch (event.type) {
@@ -248,10 +247,18 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
           case 'response.failed':
             this.handleResponseFailed(event);
             break;
+          case 'response.incomplete':
+            this.handleResponseIncomplete(event);
+            break;
         }
 
         if (chunk) {
           this.queue.put(chunk);
+          // a retry only duplicates output the caller has already seen; the
+          // stream-opening event and the usage-bearing one are neither
+          if (llm.hasResponse(chunk)) {
+            retryable = false;
+          }
         }
       }
     } catch (error) {
@@ -295,6 +302,13 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
   private handleResponseFailed(event: OpenAI.Responses.ResponseFailedEvent): void {
     throw new APIStatusError({
       message: event.response.error?.message ?? 'Response failed',
+      options: { statusCode: -1, retryable: false },
+    });
+  }
+
+  private handleResponseIncomplete(event: OpenAI.Responses.ResponseIncompleteEvent): void {
+    throw new APIStatusError({
+      message: `response incomplete: ${event.response.incomplete_details?.reason ?? 'reason unavailable'}`,
       options: { statusCode: -1, retryable: false },
     });
   }

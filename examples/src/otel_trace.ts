@@ -80,7 +80,7 @@ const lookupWeather = llm.tool({
     location: z.string().describe('The location they are asking for'),
   }),
   execute: async ({ location }) => {
-    logger().info({ location }, 'Looking up weather');
+    logger().info({ 'lk.pii.location': location }, 'Looking up weather');
     return 'sunny with a temperature of 70 degrees.';
   },
 });
@@ -168,7 +168,7 @@ export default defineAgent({
       tts: new tts.FallbackAdapter({
         ttsInstances: [
           new inference.TTS({ model: 'cartesia/sonic-3' }),
-          new inference.TTS({ model: 'rime/arcana' }),
+          new inference.TTS({ model: 'rime/coda', voice: 'luna' }),
         ],
       }),
     });

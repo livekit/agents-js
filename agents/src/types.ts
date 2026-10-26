@@ -27,6 +27,12 @@ export const ATTRIBUTE_SIMULATOR_DISPATCH = 'lk.simulator.dispatch';
 /** Telemetry metadata key marking the session as a simulation. */
 export const ATTRIBUTE_SIMULATION_ENABLED = 'lk.simulation.enabled';
 
+/** Telemetry metadata key naming the simulation run this session belongs to. */
+export const ATTRIBUTE_SIMULATION_RUN_ID = 'lk.simulation.run_id';
+
+/** Telemetry metadata key naming the simulation run job behind this session. */
+export const ATTRIBUTE_SIMULATION_JOB_ID = 'lk.simulation.job_id';
+
 /** Telemetry metadata key requesting PII redaction for the session. */
 export const ATTRIBUTE_REDACTION_ENABLED = 'lk.redaction.enabled';
 
@@ -60,14 +66,17 @@ export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions = {
   timeoutMs: 10000,
 };
 
+/** Matches agents (Python), whose _interval_for_retry returns 0.1 seconds here. */
+const FIRST_RETRY_INTERVAL_MS = 100;
+
 /**
- * Return the interval for the given number of retries.
- * The first retry is immediate, and then uses specified retryIntervalMs.
+ * Return the interval before the given retry, in milliseconds.
+ * The first retry comes quickly, and every one after uses retryIntervalMs.
  * @internal
  */
 export function intervalForRetry(connOptions: APIConnectOptions, numRetries: number): number {
   if (numRetries === 0) {
-    return 0.1;
+    return FIRST_RETRY_INTERVAL_MS;
   }
   return connOptions.retryIntervalMs;
 }
@@ -83,7 +92,7 @@ export interface SessionConnectOptions {
   llmConnOptions?: Partial<APIConnectOptions>;
   /** Connection options for text-to-speech. */
   ttsConnOptions?: Partial<APIConnectOptions>;
-  /** Maximum number of consecutive unrecoverable errors from LLM or TTS before closing the session. Default: 3 */
+  /** Maximum number of consecutive unrecoverable errors from STT, LLM, or TTS before closing the session. Default: 3 */
   maxUnrecoverableErrors?: number;
 }
 

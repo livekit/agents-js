@@ -10,7 +10,7 @@ import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
 import { JobStatus } from './job_executor.js';
 import type { IPCMessage } from './message.js';
-import { SupervisedProc } from './supervised_proc.js';
+import { type ProcOpts, SupervisedProc } from './supervised_proc.js';
 
 const currentFileExtension = extname(import.meta.url);
 
@@ -23,26 +23,15 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   #inferenceTasks: Promise<void>[] = [];
   #logger = log();
 
-  constructor(
-    agent: string,
-    inferenceExecutor: InferenceExecutor | undefined,
-    initializeTimeout: number,
-    closeTimeout: number,
-    memoryWarnMB: number,
-    memoryLimitMB: number,
-    pingInterval: number,
-    pingTimeout: number,
-    highPingThreshold: number,
-  ) {
-    super(
-      initializeTimeout,
-      closeTimeout,
-      memoryWarnMB,
-      memoryLimitMB,
-      pingInterval,
-      pingTimeout,
-      highPingThreshold,
-    );
+  constructor({
+    agent,
+    inferenceExecutor,
+    ...opts
+  }: ProcOpts & {
+    agent: string;
+    inferenceExecutor?: InferenceExecutor;
+  }) {
+    super(opts);
     this.#agent = agent;
     this.#inferenceExecutor = inferenceExecutor;
   }

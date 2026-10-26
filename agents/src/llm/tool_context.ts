@@ -203,6 +203,9 @@ export interface FunctionTool<
    */
   description: string;
 
+  /** Application metadata, including MCP tool `_meta`. Not sent to the language model. */
+  meta?: Record<string, unknown>;
+
   /**
    * The schema of the input that the tool expects. The language model will use this to generate the input.
    * It is also used to validate the output of the language model.
@@ -251,8 +254,9 @@ export interface ToolsetContext {
   /**
    * Replace the toolset's tools. Useful for dynamic sources
    * (e.g. an MCP server) whose tools are discovered after `setup` or change at runtime.
+   * Await the result to wait for tool changes to reach the active session.
    */
-  updateTools(tools: readonly ToolContextEntry[]): void;
+  updateTools(tools: readonly ToolContextEntry[]): void | Promise<void>;
 }
 
 /**
@@ -674,6 +678,7 @@ export function tool<
 >({
   name,
   description,
+  meta,
   parameters,
   execute,
   flags,
@@ -683,6 +688,8 @@ export function tool<
   name: string;
   /** Natural-language description that tells the model when to use this tool. */
   description: string;
+  /** Application metadata. Not included in provider tool schemas. */
+  meta?: Record<string, unknown>;
   /**
    * Input schema for the tool's arguments — either a Zod object schema (args
    * are type-inferred) or a raw JSON Schema. Omit for a tool that takes no
@@ -718,6 +725,7 @@ export function tool<
   Result = unknown,
 >({
   description,
+  meta,
   parameters,
   execute,
   flags,
@@ -727,6 +735,8 @@ export function tool<
   name?: never;
   /** Natural-language description that tells the model when to use this tool. */
   description: string;
+  /** Application metadata. Not included in provider tool schemas. */
+  meta?: Record<string, unknown>;
   /**
    * Input schema for the tool's arguments — either a Zod object schema (args
    * are type-inferred) or a raw JSON Schema. Omit for a tool that takes no
@@ -783,6 +793,7 @@ export function tool(tool: any): any {
   const functionTool = {
     type: 'function',
     description: tool.description,
+    ...(tool.meta !== undefined ? { meta: tool.meta } : {}),
     parameters,
     execute,
     flags: tool.flags ?? ToolFlag.NONE,

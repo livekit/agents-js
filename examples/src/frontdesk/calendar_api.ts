@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { log } from '@livekit/agents';
 import { createHash } from 'crypto';
 
 export class SlotUnavailableError extends Error {
@@ -134,14 +135,11 @@ export class CalComCalendar implements Calendar {
   private tz: string;
   private _apiKey: string;
   private _lkEventId?: number;
-  private _logger: { info: (message: string) => void };
+  private _logger = log().child({ provider: 'cal.com' });
 
   constructor(options: { apiKey: string; timezone: string }) {
     this.tz = options.timezone;
     this._apiKey = options.apiKey;
-    this._logger = {
-      info: (message: string) => console.info(`[cal.com] ${message}`),
-    };
   }
 
   async initialize(): Promise<void> {
@@ -155,7 +153,7 @@ export class CalComCalendar implements Calendar {
 
     const meData = await meResponse.json();
     const username = meData.data.username;
-    this._logger.info(`using cal.com username: ${username}`);
+    this._logger.info({ 'lk.pii.username': username }, 'using cal.com username');
 
     const params = new URLSearchParams({ username });
     const eventTypesResponse = await fetch(`${_BASE_URL}event-types/?${params}`, {
@@ -195,12 +193,15 @@ export class CalComCalendar implements Calendar {
         );
       }
 
-      this._logger.info(`successfully added ${_CAL_COM_EVENT_TYPE} event type`);
+      this._logger.info(
+        { eventType: _CAL_COM_EVENT_TYPE },
+        'successfully added cal.com event type',
+      );
       const createData = await createResponse.json();
       this._lkEventId = createData.data.id;
     }
 
-    this._logger.info(`event type id: ${this._lkEventId}`);
+    this._logger.info({ eventTypeId: this._lkEventId }, 'cal.com event type found');
   }
 
   async scheduleAppointment(options: { startTime: Date; attendeeEmail: string }): Promise<void> {

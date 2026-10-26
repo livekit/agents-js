@@ -14,11 +14,14 @@ import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
+import type { IncomingMessage } from 'node:http';
 import {
   ReadableStream,
   TransformStream,
   type TransformStreamDefaultController,
 } from 'node:stream/web';
+import type { WebSocket } from 'ws';
+import { APIConnectionError, APIStatusError } from './_exceptions.js';
 import { log } from './log.js';
 
 /**
@@ -42,6 +45,52 @@ export type Expand<T> = T extends Function
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
 export const noop = () => {};
+
+/** @internal */
+export async function waitForWebSocketOpen(ws: WebSocket, provider: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      ws.off('open', onOpen);
+      ws.off('unexpected-response', onUnexpectedResponse);
+      ws.off('error', onError);
+      ws.off('close', onClose);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+      cleanup();
+      response.resume();
+      ws.on('error', noop);
+      ws.close();
+      const statusCode = response.statusCode ?? -1;
+      reject(
+        new APIStatusError({
+          message: `${provider} WebSocket connection rejected with status ${statusCode}`,
+          options: { statusCode },
+        }),
+      );
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(
+        new APIConnectionError({
+          message: `failed to connect to ${provider} (${error.name})`,
+        }),
+      );
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new APIConnectionError({ message: `failed to connect to ${provider} (CloseEvent)` }));
+    };
+
+    ws.once('open', onOpen);
+    ws.once('unexpected-response', onUnexpectedResponse);
+    ws.once('error', onError);
+    ws.once('close', onClose);
+  });
+}
 
 export const isPending = async (promise: Promise<unknown>): Promise<Throws<boolean, Error>> => {
   const sentinel = Symbol('sentinel');
@@ -103,9 +152,12 @@ export class Queue<T> {
   }
 
   async get(options: { signal?: AbortSignal } = {}): Promise<T> {
+    // Cancelled readers must leave buffered items for the next reader.
+    options.signal?.throwIfAborted();
     while (this.items.length === 0) {
       await once(this.#events, 'put', { signal: options.signal });
     }
+    options.signal?.throwIfAborted();
 
     const item = this.items.shift();
     this.#events.emit('get');
@@ -226,91 +278,6 @@ export class Event {
 
   clear(): void {
     this.#isSet = false;
-  }
-}
-
-/** @internal */
-export class CancellablePromise<T, E extends Error = Error> {
-  #promise: ThrowsPromise<T, E>;
-  #cancelFn: () => void;
-  #isCancelled: boolean = false;
-  #error: E | null = null;
-
-  constructor(
-    executor: (
-      resolve: (value: T | PromiseLike<T>) => void,
-      reject: (reason: E) => void,
-      onCancel: (cancelFn: () => void) => void,
-    ) => void,
-  ) {
-    let cancel: () => void;
-
-    this.#promise = new ThrowsPromise<T, E>((resolve, reject) => {
-      executor(
-        resolve,
-        (reason) => {
-          this.#error = reason;
-          reject(reason);
-        },
-        (cancelFn) => {
-          cancel = () => {
-            this.#isCancelled = true;
-            cancelFn();
-          };
-        },
-      );
-    });
-
-    this.#cancelFn = cancel!;
-  }
-
-  get isCancelled(): boolean {
-    return this.#isCancelled;
-  }
-
-  get error(): Error | null {
-    return this.#error;
-  }
-
-  then<TResult1 = T, TResult2 = never>(
-    onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null,
-    onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null,
-  ): Promise<TResult1 | TResult2> {
-    return this.#promise.then(onfulfilled, onrejected);
-  }
-
-  catch<TResult = never>(
-    onrejected?: ((reason: E) => TResult | Promise<TResult>) | null,
-  ): Promise<Throws<T | TResult | undefined, E>> {
-    return this.#promise.catch(onrejected);
-  }
-
-  finally(onfinally?: (() => void) | null): Promise<Throws<T, E>> {
-    return this.#promise.finally(onfinally);
-  }
-
-  cancel(): void {
-    this.#cancelFn();
-  }
-
-  static from<T, E extends Error = Error>(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>;
-  static from<T>(promise: Promise<T>): CancellablePromise<T>;
-  static from<T>(promise: Promise<T>): CancellablePromise<T> {
-    return new CancellablePromise<T>((resolve, reject) => {
-      promise.then(resolve).catch(reject);
-    });
-  }
-}
-
-/** @internal */
-export async function gracefullyCancel<T>(promise: CancellablePromise<T>): Promise<void> {
-  if (!promise.isCancelled) {
-    promise.cancel();
-  }
-  try {
-    await promise;
-  } catch (error) {
-    // Ignore the error, as it's expected due to cancellation
   }
 }
 
@@ -497,6 +464,8 @@ export class Task<T> {
   private static readonly currentTaskStorage = new AsyncLocalStorage<Task<unknown>>();
   private resultFuture: Future<T>;
   private doneCallbacks: Set<() => void> = new Set();
+  /** Snapshot of the cancellation disposition, taken once at settlement. See {@link cancelled}. */
+  private settledCancelled = false;
 
   #logger = log();
 
@@ -558,10 +527,18 @@ export class Task<T> {
     return Task.currentTaskStorage
       .run(this as Task<unknown>, run)
       .then((value) => {
+        // Snapshot before resolving: `done` flips synchronously inside resolve(), so the
+        // disposition has to be in place before any observer can see the task as settled.
+        this.settledCancelled = this.controller.signal.aborted;
         this.resultFuture.resolve(value);
         return value;
       })
       .catch((error) => {
+        // Failing for a reason unrelated to the abort is an exceptional completion, not a
+        // cancellation — asyncio reports the same when a task swallows CancelledError and
+        // raises something else.
+        this.settledCancelled =
+          this.controller.signal.aborted && (error as Error | undefined)?.name === 'AbortError';
         this.resultFuture.reject(error);
       })
       .finally(() => {
@@ -625,6 +602,34 @@ export class Task<T> {
    */
   get done(): boolean {
     return this.resultFuture.done;
+  }
+
+  /**
+   * Whether this task settled under a cancellation, the near-equivalent of asyncio's
+   * `Task.cancelled()`. Needed because a cancelled body usually observes the abort signal and
+   * returns normally rather than rejecting, so {@link result} alone cannot distinguish a task
+   * that was torn down from one that ran to a real answer.
+   *
+   * Guarantees exactly: `true` if and only if the task is {@link done}, its controller was
+   * already aborted at the instant it settled, and it did not fail with an error unrelated to
+   * that abort (it either returned a value or rejected with an `AbortError`). The value is
+   * captured once at settlement, so it is immutable afterwards — aborting the controller later
+   * cannot reclassify a task that already finished.
+   *
+   * Does *not* guarantee:
+   * - that the body was actually interrupted. A body that observes the abort and returns
+   *   normally anyway still reports `true`; the abort, not the return, is the disposition.
+   * - that this task specifically was the cancellation target. Controllers are intentionally
+   *   shareable (see the class example), so an abort raised for a sibling before this task
+   *   settles also marks it cancelled. Read this as "a cancellation was in effect for this
+   *   task when it settled", not "someone called cancel() on this task".
+   *
+   * `false` while a cancelled task is still winding down, matching asyncio.
+   *
+   * @internal
+   */
+  get cancelled(): boolean {
+    return this.done && this.settledCancelled;
   }
 
   addDoneCallback(callback: () => void) {
@@ -960,6 +965,9 @@ export type Aborted<T> =
  * otherwise it resolves `{ result, isAborted: false }`. A rejection of the
  * underlying promise is propagated. The abort listener is always cleaned up.
  *
+ * Each call uses a separate listener to avoid retaining prior results on a
+ * shared abort promise.
+ *
  * An already-aborted signal short-circuits immediately to the abort result.
  *
  * Note: the underlying promise is not cancelled — it keeps running; this only
@@ -1230,7 +1238,9 @@ export async function waitForTrackPublication({
   /**
    * Restrict matching to a specific participant identity. When omitted (or
    * `undefined`), matches whichever remote participant publishes a matching
-   * track first. Pass `''` to match no one (rare, use `undefined` instead).
+   * track first. Rejects if the requested participant disconnects before a
+   * matching publication is found. Pass `''` to match no one (rare, use
+   * `undefined` instead).
    */
   identity?: string;
   kind: TrackKind;
@@ -1320,6 +1330,14 @@ export async function waitForTrackPublication({
     }
   };
 
+  const onParticipantDisconnected = (participant: RemoteParticipant) => {
+    if (participant.identity === identity && !fut.done) {
+      fut.reject(
+        new Error(`Participant ${identity} disconnected while waiting for track publication`),
+      );
+    }
+  };
+
   if (waitForSubscription) {
     room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
   } else {
@@ -1327,6 +1345,9 @@ export async function waitForTrackPublication({
   }
   if (includeLocal) {
     room.on(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
+  }
+  if (identity !== undefined) {
+    room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
   }
 
   const onAbort = () => {
@@ -1370,6 +1391,9 @@ export async function waitForTrackPublication({
     }
     if (includeLocal) {
       room.off(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
+    }
+    if (identity !== undefined) {
+      room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
     }
     signal?.removeEventListener('abort', onAbort);
   }

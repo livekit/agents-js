@@ -57,7 +57,6 @@ export class SimulationContext {
 
   #jobCtx: JobContext;
   #run?: SimulationRun;
-  #job?: SimulationRun_Job;
   #simulatorVerdict?: SimulationVerdict;
   #userVerdict?: SimulationVerdict;
 
@@ -80,12 +79,24 @@ export class SimulationContext {
     return this._dispatch.mode;
   }
 
-  get simulationRun(): SimulationRun | undefined {
-    return this.#run;
+  /** The run this session belongs to. Available as soon as the entrypoint runs,
+   * unlike {@link SimulationContext.simulationRun}, which the framework only fills in at the end. */
+  get simulationRunId(): string {
+    return this._dispatch.simulationRunId;
   }
 
-  get simulationJob(): SimulationRun_Job | undefined {
-    return this.#job;
+  /** The run job (one scenario) behind this session, likewise available up front. */
+  get simulationJobId(): string {
+    return this._dispatch.jobId;
+  }
+
+  /** The run, or `undefined` before the simulation ends.
+   *
+   * Carries only its `id` today, so every other field reads as its protobuf
+   * default rather than the run's real state. Prefer {@link SimulationContext.simulationRunId},
+   * which is the same ID and is available from the entrypoint. */
+  get simulationRun(): SimulationRun | undefined {
+    return this.#run;
   }
 
   /** The simulator's verdict (its LLM judgment of the conversation). Read-only;
@@ -109,14 +120,9 @@ export class SimulationContext {
   }
 
   /** @internal Populate the simulator verdict / run before `onSimulationEnd`. */
-  _beginFinalize(opts: {
-    simulatorVerdict: SimulationVerdict;
-    run?: SimulationRun;
-    job?: SimulationRun_Job;
-  }): void {
+  _beginFinalize(opts: { simulatorVerdict: SimulationVerdict; run?: SimulationRun }): void {
     this.#simulatorVerdict = opts.simulatorVerdict;
     this.#run = opts.run;
-    this.#job = opts.job;
   }
 
   /** The scenario's `userdata` decoded from its JSON string (`{}` if empty). */

@@ -4,15 +4,16 @@
 import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { FunctionCall, ToolContext, ToolError, tool } from '../llm/index.js';
+import { FunctionCall, ToolContext, ToolError, handoff, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
-import { AgentTask } from './agent.js';
+import { Agent, AgentTask, StopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import {
   type _TextOut,
   _waitForToolExecutionResult,
+  createToolOutput,
   performTextForwarding,
   performToolExecutions,
 } from './generation.js';
@@ -58,6 +59,80 @@ describe('Generation + Tool Execution', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it.each([
+    { output: () => Symbol('invalid'), errorText: 'invalid output' },
+    {
+      output: () => [
+        handoff({ agent: new Agent({ instructions: 'first' }) }),
+        handoff({ agent: new Agent({ instructions: 'second' }) }),
+      ],
+      errorText: 'more than one agent',
+    },
+  ])('answers an unusable tool result as an error', ({ output, errorText }) => {
+    const result = createToolOutput({
+      toolCall: FunctionCall.create({ callId: 'call_unusable', name: 'doTheThing', args: '{}' }),
+      output: output(),
+    });
+
+    expect(result.agentTask).toBeUndefined();
+    expect(result.toolCallOutput.isError).toBe(true);
+    expect(result.toolCallOutput.output).toContain(errorText);
+  });
+
+  it('answers StopResponse and asks the realtime model for no reply', () => {
+    const result = createToolOutput({
+      toolCall: FunctionCall.create({ callId: 'call_stop', name: 'doTheThing', args: '{}' }),
+      exception: new StopResponse(),
+    });
+
+    expect(result.toolCallOutput).toMatchObject({
+      output: '',
+      isError: false,
+      replyRequired: false,
+    });
+  });
+
+  it('answers a bare handoff and asks the realtime model for no reply', () => {
+    const nextAgent = new Agent({ instructions: 'next' });
+    const result = createToolOutput({
+      toolCall: FunctionCall.create({ callId: 'call_handoff', name: 'transfer', args: '{}' }),
+      output: handoff({ agent: nextAgent }),
+    });
+
+    expect(result.agentTask).toBe(nextAgent);
+    expect(result.toolCallOutput).toMatchObject({
+      output: '',
+      isError: false,
+      replyRequired: false,
+    });
+  });
+
+  it.each([
+    {
+      label: 'alone',
+      output: (agent: Agent) => [handoff({ agent, returns: 'ok' })],
+      expected: 'ok',
+    },
+    {
+      label: 'with other values',
+      output: (agent: Agent) => ['first', handoff({ agent, returns: 'second' })],
+      expected: ['first', 'second'],
+    },
+  ])('keeps the returns of a handoff in a list $label', ({ output, expected }) => {
+    const nextAgent = new Agent({ instructions: 'next' });
+    const result = createToolOutput({
+      toolCall: FunctionCall.create({ callId: 'call_handoff', name: 'transfer', args: '{}' }),
+      output: output(nextAgent),
+    });
+
+    expect(result.agentTask).toBe(nextAgent);
+    expect(result.toolCallOutput).toMatchObject({
+      output: JSON.stringify(expected),
+      isError: false,
+      replyRequired: true,
+    });
   });
 
   it('should not abort tool when preamble forwarders are cleaned up', async () => {
@@ -382,6 +457,34 @@ describe('Generation + Tool Execution', () => {
     await task1.result;
   }, 20_000);
 
+  it('normalizes and commits an unknown tool call before its error output', async () => {
+    const events: string[] = [];
+    const fc = FunctionCall.create({
+      callId: 'call_unknown',
+      name: 'missing',
+      args: 'definitely not json',
+    });
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as AgentSession,
+      speechHandle: { id: 'speech_unknown', _itemAdded: () => {} } as unknown as SpeechHandle,
+      toolCtx: ToolContext.empty(),
+      toolCallStream: createFunctionCallStream(fc),
+      controller: new AbortController(),
+      onToolExecutionStarted: (call) => events.push(`call:${call.callId}`),
+      onToolExecutionCompleted: (output) => events.push(`output:${output.toolCall.callId}`),
+    });
+
+    await execTask.result;
+
+    expect(events).toEqual(['call:call_unknown', 'output:call_unknown']);
+    expect(fc.args).toBe('{}');
+    expect(toolOutput.firstToolStartedFuture.done).toBe(true);
+    expect(toolOutput.output[0]?.toolCallOutput).toMatchObject({
+      callId: 'call_unknown',
+      isError: true,
+    });
+  });
+
   it('should surface zod validation errors to the LLM with field-level detail', async () => {
     const replyAbortController = new AbortController();
 
@@ -399,6 +502,7 @@ describe('Generation + Tool Execution', () => {
       args: JSON.stringify({ msg: 123 }),
     });
     const toolCallStream = createFunctionCallStream(fc);
+    const onToolExecutionStarted = vi.fn();
 
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
@@ -406,9 +510,12 @@ describe('Generation + Tool Execution', () => {
       toolCtx: new ToolContext([echo]) as any,
       toolCallStream,
       controller: replyAbortController,
+      onToolExecutionStarted,
     });
 
     await execTask.result;
+    expect(onToolExecutionStarted).toHaveBeenCalledWith(fc);
+    expect(JSON.parse(fc.args)).toEqual({ msg: 123 });
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);
@@ -448,6 +555,7 @@ describe('Generation + Tool Execution', () => {
     });
 
     await execTask.result;
+    expect(fc.args).toBe('{}');
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);

@@ -15,6 +15,7 @@ on:
       - '.github/workflows/test.yml'
       - 'agents/**'
       - 'package.json'
+      - 'plugins/openai/**'
       - 'plugins/test/**'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -25,7 +26,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           lfs: true
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -37,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Cache turbo
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: .turbo
           key: turbo-${{ runner.os }}-node24-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.run_id }}
@@ -48,6 +49,8 @@ jobs:
         run: pnpm build
       - name: Test agents
         run: pnpm test agents --silent
+      - name: Test OpenAI-compatible realtime models
+        run: pnpm test plugins/openai/src/realtime plugins/xai/src/realtime --silent
       - name: Test LiveKit inference
         env:
           LIVEKIT_INFERENCE_TESTS: '1'
@@ -57,6 +60,7 @@ jobs:
         run: >-
           pnpm test
           agents/src/inference/llm.test.ts
+          agents/src/inference/realtime.test.ts
           agents/src/inference/stt.test.ts
           agents/src/inference/tts.test.ts
           --silent
