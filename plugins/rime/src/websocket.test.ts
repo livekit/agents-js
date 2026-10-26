@@ -104,7 +104,9 @@ async function server(
   const requests: WebSocketRequest[] = [];
   const sockets: WebSocket[] = [];
   const headers: string[] = [];
+  const paths: (string | undefined)[] = [];
   wss.on('connection', (socket, request) => {
+    paths.push(request.url);
     sockets.push(socket);
     headers.push(request.headers.authorization!);
     const binary = socket.protocol === 'rime.v1.binary';
@@ -155,10 +157,11 @@ async function server(
     });
   });
   return {
-    url: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}/coda/ws`,
+    url: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}/custom/stream`,
     requests,
     sockets,
     headers,
+    paths,
   };
 }
 
@@ -170,6 +173,7 @@ function client(
   const value = new TTS({
     apiKey: 'test-key',
     websocketURL: url,
+    modelId: 'coda',
     websocketProtocol: protocol,
     ...extra,
   });
@@ -190,6 +194,17 @@ async function collect(stream: tts.SynthesizeStream, onFrame?: () => void) {
 }
 
 describe.each(['binary', 'json'] as const)('Rime v1 %s', (protocol) => {
+  it('connects to the supplied custom path', async () => {
+    const peer = await server();
+    const { value, errors } = client(peer.url + '?deployment=custom', protocol);
+    const stream = value.stream({ connOptions: options });
+    stream.pushText('Hello.');
+    stream.endInput();
+    expect((await collect(stream)).length).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+    expect(peer.paths).toEqual(['/custom/stream?deployment=custom']);
+  });
+
   it('handles tokenizer rejection while input remains open', async () => {
     const peer = await server();
     const tokenizer = new tokenize.basic.SentenceTokenizer();
@@ -665,7 +680,8 @@ describe.each(['binary', 'json'] as const)('Rime v1 %s', (protocol) => {
     const first = value.stream({ connOptions: options });
     const second = value.stream({ connOptions: options });
     value.updateOptions({
-      websocketURL: b.url.replace('/coda/', '/mist/'),
+      websocketURL: b.url,
+      modelId: 'mistv3',
       samplingRate: 16000,
       speaker: 'cove',
       pauseBetweenBrackets: false,
@@ -698,7 +714,7 @@ describe.each(['binary', 'json'] as const)('Rime v1 %s', (protocol) => {
       const metrics: TTSMetrics[] = [];
       value.on('metrics_collected', (event) => metrics.push(event));
       const old = value.stream({ connOptions: options });
-      value.updateOptions({ websocketURL: b.url.replace('/coda/', '/mist/'), samplingRate: 16000 });
+      value.updateOptions({ websocketURL: b.url, modelId: 'mistv3', samplingRate: 16000 });
       const next = value.stream({ connOptions: options });
       const streams = [
         { stream: old, model: 'coda', sampleRate: 24000 },

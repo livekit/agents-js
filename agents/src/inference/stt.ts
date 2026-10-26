@@ -102,7 +102,7 @@ export interface DeepgramOptions {
   profanity_filter?: boolean;
   /** Convert spoken numbers to numerals. */
   numerals?: boolean;
-  /** Opt out of model improvement program. */
+  /** Always true for LiveKit Inference; the passed value is ignored. */
   mip_opt_out?: boolean;
   /** Enable speaker diarization. Default: false. */
   diarize?: boolean;
@@ -117,7 +117,7 @@ export interface DeepgramFluxOptions {
   eot_timeout_ms?: number;
   /** Key terms for recognition. */
   keyterm?: string | string[];
-  /** Opt out of model improvement program. Default: false. */
+  /** Always true for LiveKit Inference; the passed value is ignored. */
   mip_opt_out?: boolean;
   /** Language hint. */
   language_hint?: string;
@@ -136,6 +136,15 @@ export interface AssemblyAIOptions {
   max_turn_silence?: number;
   /** Key terms prompt for recognition. Default: not specified. */
   keyterms_prompt?: string[];
+  /**
+   * Include `language_code` and `language_confidence` on final transcripts.
+   * Default: true for multilingual and U3 Pro models, false for Universal-Streaming English.
+   */
+  language_detection?: boolean;
+  /** Seconds of inactivity before AssemblyAI closes the session. Default: not specified. */
+  inactivity_timeout?: number;
+  /** Context describing the audio. Only supported with U3 Pro models; works alongside keyterms_prompt. */
+  prompt?: string;
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
   /** Context to bias recognition. Only supported with U3 Pro models. Max 1750 chars. */
@@ -190,13 +199,13 @@ export interface SpeechmaticsOptions {
   enable_entities?: boolean;
   /** Punctuation override configuration. */
   punctuation_overrides?: Record<string, unknown>;
-  /** Additional vocabulary entries for custom dictionary support. RT only. */
+  /** Additional vocabulary entries in the form `{ content, sounds_like? }`. */
   additional_vocab?: Array<Record<string, unknown>>;
   /** Seconds of silence before finalizing an utterance. RT only. */
   end_of_utterance_silence_trigger?: number;
   /** Audio filtering configuration. RT only. */
   audio_filtering_config?: Record<string, unknown>;
-  /** Transcript filtering configuration. RT only. */
+  /** Transcript filtering configuration. */
   transcript_filtering_config?: Record<string, unknown>;
 }
 
@@ -284,10 +293,6 @@ function keytermsExtraForModel(
 
   const extraKwargs = opts?.extraKwargs ?? {};
   const sessionKeyterms = opts?.sessionKeyterms ?? [];
-
-  if (model === 'speechmatics/linden-1') {
-    return undefined;
-  }
 
   if (model.startsWith('speechmatics/')) {
     // keep existing entries as-is (they may carry sounds_like etc.); append new session terms
