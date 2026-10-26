@@ -194,7 +194,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #logger = log();
-  #tokenizer = new tokenize.basic.SentenceTokenizer({
+  #tokenizer = new tokenize.blingfire.SentenceTokenizer({
     minSentenceLength: BUFFERED_WORDS_COUNT,
   }).stream();
   #websocket: WebSocket | null = null;

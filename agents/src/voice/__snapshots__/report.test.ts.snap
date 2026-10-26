@@ -30,6 +30,7 @@ exports[`sessionReportToJSON > serializes the full chat history to the Python sn
       "is_error": false,
       "name": "get_weather",
       "output": "{"temperature": 22, "condition": "partly cloudy"}",
+      "reply_required": true,
       "type": "function_call_output",
     },
     {

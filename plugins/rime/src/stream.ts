@@ -89,7 +89,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     if (this.inputTask) return;
     const tokenizer = (
       this.opts.tokenizer ??
-      new tokenize.basic.SentenceTokenizer(
+      new tokenize.blingfire.SentenceTokenizer(
         this.opts.websocketURL ? { minSentenceLength: 1, streamContextLength: 1 } : undefined,
       )
     ).stream(this.opts.lang);

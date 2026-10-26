@@ -5,12 +5,13 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
 import {
-  LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
   type LLMModels,
+  type RealtimeModels,
   type STTModelString,
   type TTSModelString,
+  llmFromModelString,
 } from '../inference/index.js';
 import { type Instructions, ReadonlyChatContext } from '../llm/chat_context.js';
 import { DuplexModel, type DuplexSession } from '../llm/duplex.js';
@@ -30,7 +31,7 @@ import {
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
-import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
+import { SentenceTokenizer as BlingfireSentenceTokenizer } from '../tokenize/blingfire.js';
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
@@ -108,27 +109,7 @@ export function _setActivityTaskInfo<T>(
 export function _getActivityTaskInfo<T>(task: Task<T>): _ActivityTaskInfo | undefined {
   return activityTaskInfoStorage.get(task);
 }
-export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
-
-export class StopResponse extends Error {
-  constructor() {
-    super();
-    this.name = 'StopResponse';
-
-    Object.defineProperty(this, STOP_RESPONSE_SYMBOL, {
-      value: true,
-    });
-  }
-}
-
-export function isStopResponse(value: unknown): value is StopResponse {
-  return (
-    value !== undefined &&
-    value !== null &&
-    typeof value === 'object' &&
-    STOP_RESPONSE_SYMBOL in value
-  );
-}
+export { STOP_RESPONSE_SYMBOL, StopResponse, isStopResponse } from './stop_response.js';
 
 export interface ModelSettings {
   /** The tool choice to use when calling the LLM. */
@@ -155,7 +136,7 @@ export interface AgentUpdateOptions {
    * Swapping to or from one while running throws because it replaces the whole pipeline.
    * Use `AgentSession.updateAgent()` for that.
    */
-  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
   /** New TTS model. Pass `null` to disable the agent TTS and override any session TTS. */
   tts?: TTS | TTSModelString | null;
   /** Expressive TTS delivery. Pass `false` to override and disable the session setting. */
@@ -169,7 +150,7 @@ export interface AgentOptions<UserData> {
   tools?: ToolContextLike<UserData>;
   stt?: STT | STTModelString | null;
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
   tts?: TTS | TTSModelString | null;
   /** Expressive TTS delivery. When set, overrides the session value for this agent. */
   expressive?: boolean | ExpressiveOptions;
@@ -275,12 +256,11 @@ export class Agent<UserData = any> {
       this._stt = stt;
     }
 
-    if (typeof llm === 'string') {
-      this._llm = InferenceLLM.fromModelString(llm);
-    } else if (llm instanceof DuplexModel) {
-      this._llm = new DuplexRealtimeAdapter(llm);
+    const resolvedLLM = typeof llm === 'string' ? llmFromModelString(llm) : llm;
+    if (resolvedLLM instanceof DuplexModel) {
+      this._llm = new DuplexRealtimeAdapter(resolvedLLM);
     } else {
-      this._llm = llm;
+      this._llm = resolvedLLM;
     }
 
     if (typeof tts === 'string') {
@@ -456,8 +436,9 @@ export class Agent<UserData = any> {
       resolved.stt = InferenceSTT.fromModelString(resolved.stt);
     }
     if (typeof resolved.llm === 'string') {
-      resolved.llm = InferenceLLM.fromModelString(resolved.llm);
-    } else if (resolved.llm instanceof DuplexModel) {
+      resolved.llm = llmFromModelString(resolved.llm);
+    }
+    if (resolved.llm instanceof DuplexModel) {
       resolved.llm = new DuplexRealtimeAdapter(resolved.llm);
     }
     if (typeof resolved.tts === 'string') {
@@ -627,11 +608,11 @@ export class Agent<UserData = any> {
       if (!activity.tts.capabilities.streaming) {
         wrappedTts = new TTSStreamAdapter(
           wrappedTts,
-          // markup only exists in the stream when expressive is active. Python also
-          // passes retain_format here, but that predates expressive mode and is a
-          // separate gap — turning it on would change tokenization for every
-          // non-streaming TTS plugin.
-          new BasicSentenceTokenizer({ xmlAware: expressiveActive }),
+          new BlingfireSentenceTokenizer({
+            retainFormat: true,
+            // markup only exists in the stream when expressive is active
+            xmlAware: expressiveActive,
+          }),
         );
       }
 

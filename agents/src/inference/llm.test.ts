@@ -507,7 +507,10 @@ describeLiveKitInference('LiveKit Inference LLM integration', agents, async (har
     'openai/gpt-oss-120b',
   ] as const) {
     describe(model, async () => {
-      await harness.llm(withLiveConnOptions(new LLM({ model })), false);
+      await harness.llm(
+        withLiveConnOptions(new LLM({ model })),
+        model === 'google/gemini-2.5-flash',
+      );
     });
   }
 

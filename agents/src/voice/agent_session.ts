@@ -21,14 +21,15 @@ import type { z } from 'zod';
 import { isAPIError } from '../_exceptions.js';
 import type { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import {
-  LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
   TurnDetector as InferenceTurnDetector,
   VAD as InferenceVAD,
   type LLMModels,
+  type RealtimeModels,
   type STTModelString,
   type TTSModelString,
+  llmFromModelString,
 } from '../inference/index.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
@@ -309,7 +310,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * one as absent). Pass `null` to opt out entirely.
    */
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
@@ -321,6 +322,11 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   /** @deprecated use top-level SessionOptions fields instead */
   voiceOptions?: Partial<VoiceOptions>;
 
+  /**
+   * Maximum consecutive tool calls per LLM turn. Not enforced for realtime models that generate
+   * the tool reply server-side.
+   * @defaultValue 3
+   */
   maxToolSteps?: number;
   /**
    * @deprecated Use `turnHandling.preemptiveGeneration` instead.
@@ -566,6 +572,7 @@ export class AgentSession<
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
   private readonly _aecWarmupDurationExplicit: boolean;
+  private _isSimulation = false;
 
   /**
    * The session's expressive setting, as the user passed it.
@@ -624,6 +631,13 @@ export class AgentSession<
    * @internal
    */
   _usingDefaultVad: boolean = false;
+
+  /**
+   * True when the caller chose turn detection, as opposed to the eager default TurnDetector.
+   *
+   * @internal
+   */
+  _turnDetectionExplicit: boolean = false;
 
   /** @internal True when the current job is a text simulation. */
   get _textOnly(): boolean {
@@ -757,12 +771,11 @@ export class AgentSession<
       this.stt = stt;
     }
 
-    if (typeof llm === 'string') {
-      this.llm = InferenceLLM.fromModelString(llm);
-    } else if (llm instanceof DuplexModel) {
-      this.llm = new DuplexRealtimeAdapter(llm);
+    const resolvedLLM = typeof llm === 'string' ? llmFromModelString(llm) : llm;
+    if (resolvedLLM instanceof DuplexModel) {
+      this.llm = new DuplexRealtimeAdapter(resolvedLLM);
     } else {
-      this.llm = llm;
+      this.llm = resolvedLLM;
     }
 
     // Eagerly establish DNS/TLS to the LLM provider so the first inference request is faster.
@@ -786,6 +799,7 @@ export class AgentSession<
       configuredTurnDetection === null
         ? undefined
         : configuredTurnDetection ?? new InferenceTurnDetector();
+    this._turnDetectionExplicit = configuredTurnDetection !== undefined;
     // The session report serializes `sessionOptions`, so record the effective detector there
     // (Python keeps the eager default in `AgentSessionOptions.turn_handling` the same way).
     resolvedSessionOptions.turnHandling.turnDetection =
@@ -906,6 +920,7 @@ export class AgentSession<
     const tasks: Promise<void>[] = [];
 
     const jobCtx = getJobContext(false);
+    this._isSimulation = jobCtx?.simulationContext() !== undefined;
     if (jobCtx) {
       span.setAttributes({
         [traceTypes.ATTR_ROOM_NAME]: jobCtx.job.room?.name ?? '',
@@ -1388,6 +1403,7 @@ export class AgentSession<
     if (hasTurnDetection) {
       this.turnDetection = normalizedTurnDetection;
       this.sessionOptions.turnHandling.turnDetection = normalizedTurnDetection;
+      this._turnDetectionExplicit = turnDetection !== null;
     }
 
     if (this.activity) {
@@ -2061,10 +2077,15 @@ export class AgentSession<
 
     const isOutboundSip =
       participant.info.kind === ParticipantKind.SIP && !participant.attributes[SIP_RULE_ID_ATTR];
-    this.sessionOptions.aecWarmupDuration = isOutboundSip ? null : DEFAULT_AEC_WARMUP_DURATION;
+    // A simulator publishes synthesized audio, so the agent's speech never echoes back.
+    const noWarmup =
+      isOutboundSip ||
+      this._isSimulation ||
+      getJobContext(false)?.simulationContext() !== undefined;
+    this.sessionOptions.aecWarmupDuration = noWarmup ? null : DEFAULT_AEC_WARMUP_DURATION;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
 
-    if (isOutboundSip && this._aecWarmupTimer !== null) {
+    if (noWarmup && this._aecWarmupTimer !== null) {
       clearTimeout(this._aecWarmupTimer);
       this._aecWarmupTimer = null;
     }

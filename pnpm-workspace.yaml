@@ -7,6 +7,8 @@ minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
   # Explicitly approved Rime protocol release.
   - '@rimelabs/api@0.0.1'
+  # Gemini 4 continuation support.
+  - '@google/genai@2.29.1'
   - '@livekit/*'
   # phonic_model realtime config option
   - phonic@0.32.28
@@ -24,8 +26,8 @@ minimumReleaseAgeExclude:
   - brace-expansion@5.0.8
   # Renovate security update: js-yaml@4.3.1
   - js-yaml@4.3.1
-  # Renovate security update: sharp@0.35.4
-  - sharp@0.35.4
+  # Renovate security update: sharp@0.35.4 || 0.35.5
+  - sharp@0.35.4 || 0.35.5
 
 catalog:
   '@livekit/rtc-node': ^1.1.0
@@ -60,6 +62,7 @@ overrides:
 
 allowBuilds:
   '@google/genai': true
+  '@livekit/blingfire': false
   '@livekit/local-inference': true
   esbuild: true
   onnxruntime-node: true

@@ -728,6 +728,57 @@ describe('STT VAD handling for Speechmatics models', () => {
 });
 
 describe('Inference STT connection lifecycle', () => {
+  it('sends session keyterms to speechmatics/linden-1', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let extra: Record<string, unknown> = {};
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          extra = event.settings?.extra ?? {};
+        } else if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const userEntry = { content: 'gnocchi', sounds_like: ['nyohki'] };
+      const stt = makeStt({
+        model: 'speechmatics/linden-1',
+        modelOptions: { additional_vocab: [userEntry] },
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      expect(stt.capabilities.keyterms).toBe(true);
+      stt._updateSessionKeyterms(['gnocchi', 'LiveKit']);
+      const stream = stt.stream();
+
+      try {
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(extra.additional_vocab).toEqual([userEntry, { content: 'LiveKit' }]);
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('keeps receiving transcripts after session.finalized', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
