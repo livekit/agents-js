@@ -2923,7 +2923,7 @@ interface DeepgramFluxOptions {
     eot_threshold?: number;
     eot_timeout_ms?: number;
     keyterm?: string | string[];
-    language_hint?: string;
+    language_hint?: string | string[];
     mip_opt_out?: boolean;
 }
 
@@ -2938,6 +2938,7 @@ interface DeepgramOptions {
     interim_results?: boolean;
     keyterm?: string | string[];
     keywords?: Array<[string, number]>;
+    language_hint?: string | string[];
     mip_opt_out?: boolean;
     numerals?: boolean;
     profanity_filter?: boolean;
@@ -7867,6 +7868,8 @@ class STT_2<TModel extends STTModels> extends STT {
     // (undocumented)
     _updateSessionKeyterms(keyterms: string[]): void;
     get vadPromise(): Promise<VAD | undefined>;
+    // @internal
+    _warnLanguageHintIgnored(model: string | undefined, language: string | undefined): void;
 }
 
 declare namespace stt_2 {
