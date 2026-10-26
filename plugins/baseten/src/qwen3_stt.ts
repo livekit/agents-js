@@ -480,6 +480,9 @@ async function connectWebSocket(
   const ws = new WebSocket(endpoint, {
     headers: { Authorization: `Api-Key ${apiKey}` },
   });
+  // Keep an error listener for the socket's whole lifetime. Handshake and session
+  // listeners are removed between phases, and an unhandled 'error' would crash the process.
+  ws.on('error', () => {});
 
   return await new Promise<WebSocket>((resolve, reject) => {
     let settled = false;

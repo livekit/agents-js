@@ -881,6 +881,9 @@ async function connectWebSocket({
     maxPayload: WS_MAX_PAYLOAD,
     perMessageDeflate: false,
   });
+  // Keep an error listener for the socket's whole lifetime. Handshake and session
+  // listeners are removed between phases, and an unhandled 'error' would crash the process.
+  ws.on('error', () => {});
 
   return await new Promise((resolve, reject) => {
     let timer: NodeJS.Timeout | undefined;
