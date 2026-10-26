@@ -181,6 +181,43 @@ describe('Boson AvatarSession', () => {
     await expect(avatar.start(agentSession, fakeRoom())).rejects.toThrow(/called twice/);
   });
 
+  it('start resolves identity and room from the job before the room connects', async () => {
+    vi.spyOn(voice.AvatarSession.prototype, 'start').mockResolvedValue(undefined);
+    const startSession = vi
+      .spyOn(BosonAvatarAPI.prototype, 'startSession')
+      .mockResolvedValue({ id: 'provider-session-1', avatarIdentity: 'avatar-1' });
+    const agentSession = fakeAgentSession();
+    const avatar = new AvatarSession({
+      avatarId: 'asset-1',
+      apiKey: 'boson-key',
+      avatarParticipantIdentity: 'avatar-1',
+    });
+    const room = {
+      ...fakeRoom(),
+      name: '',
+      isConnected: false,
+      localParticipant: undefined,
+    } as unknown as Room;
+    const context = {
+      job: { id: 'AJ_test', participant: { identity: 'voice-1' }, room: { name: 'room-1' } },
+      agent: undefined,
+    } as unknown as JobContext;
+    await expect(
+      runWithJobContextAsync(context, () =>
+        avatar.start(agentSession, room, {
+          livekitUrl: 'wss://tenant.livekit.cloud',
+          livekitApiKey: 'livekit-key',
+          livekitApiSecret: 'livekit-secret-with-enough-entropy',
+        }),
+      ),
+    ).resolves.toBe('provider-session-1');
+    const call = startSession.mock.calls[0]![0];
+    expect(call).toMatchObject({ publisherIdentity: 'voice-1', livekitRoom: 'room-1' });
+    const claims = decodeJwt(call.livekitToken);
+    expect(claims.video).toMatchObject({ room: 'room-1' });
+    expect(claims.attributes).toMatchObject({ 'lk.publish_on_behalf': 'voice-1' });
+  });
+
   it('start rejects avatar identity matching the agent', async () => {
     for (const [avatarIdentity, localIdentity, jobIdentity] of [
       ['voice-1', 'voice-1', null],

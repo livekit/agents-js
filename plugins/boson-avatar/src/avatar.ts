@@ -140,14 +140,15 @@ export class AvatarSession extends voice.AvatarSession {
       );
     }
     const publisherIdentity = localParticipantIdentity(room);
-    const roomName = room.name ?? '';
+    // The job assignment carries the room before the job connects.
+    const roomName = room.name || getJobContext(false)?.job?.room?.name || '';
     if (publisherIdentity === this.avatarParticipantIdentity) {
       throw new BosonAvatarException(
         'avatarParticipantIdentity must differ from the local agent participant identity',
       );
     }
     const livekitToken = await this.mintAvatarToken({
-      room,
+      roomName,
       publisherIdentity,
       livekitApiKey,
       livekitApiSecret,
@@ -360,12 +361,12 @@ export class AvatarSession extends voice.AvatarSession {
   }
 
   private async mintAvatarToken({
-    room,
+    roomName,
     publisherIdentity,
     livekitApiKey,
     livekitApiSecret,
   }: {
-    room: Room;
+    roomName: string;
     publisherIdentity: string;
     livekitApiKey: string;
     livekitApiSecret: string;
@@ -380,7 +381,7 @@ export class AvatarSession extends voice.AvatarSession {
     token.attributes = { [ATTRIBUTE_PUBLISH_ON_BEHALF]: publisherIdentity };
     token.addGrant({
       roomJoin: true,
-      room: room.name ?? '',
+      room: roomName,
       canSubscribe: false,
       canPublish: true,
       canPublishData: true,
@@ -391,7 +392,10 @@ export class AvatarSession extends voice.AvatarSession {
 }
 
 function localParticipantIdentity(room: Room): string {
-  const jobIdentity = getJobContext(false)?.agent?.identity?.trim();
+  // Like python's JobContext.local_participant_identity: the job's participant identity is
+  // known before the room connects, so the Avatar can start ahead of AgentSession.start().
+  const jobCtx = getJobContext(false);
+  const jobIdentity = (jobCtx?.job?.participant?.identity || jobCtx?.agent?.identity)?.trim();
   if (jobIdentity) return jobIdentity;
   const roomIdentity = room.isConnected ? room.localParticipant?.identity.trim() : '';
   if (roomIdentity) return roomIdentity;
