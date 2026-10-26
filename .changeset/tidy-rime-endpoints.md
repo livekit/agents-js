@@ -2,4 +2,4 @@
 '@livekit/agents-plugin-rime': patch
 ---
 
-Use Rime's model-specific WebSocket endpoints in documentation and live-test coverage.
+Cover Rime's model-specific WebSocket endpoints in tests and use the Coda endpoint for live TTS coverage.
