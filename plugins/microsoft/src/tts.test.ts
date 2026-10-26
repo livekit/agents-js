@@ -467,8 +467,9 @@ describe('Microsoft AI TTS', () => {
       fetch.mock.calls.map((call) => new TextDecoder().decode(call[1]?.body as Uint8Array)),
     ).toEqual([
       expect.stringContaining('>The first sentence is long enough to tokenize on its own.</voice>'),
+      // The blingfire sentence tokenizer keeps the separating space on later sentences.
       expect.stringContaining(
-        '>The second sentence is also long enough to tokenize on its own.</voice>',
+        'The second sentence is also long enough to tokenize on its own.</voice>',
       ),
     ]);
     expect(adapter.capabilities.streaming).toBe(true);
