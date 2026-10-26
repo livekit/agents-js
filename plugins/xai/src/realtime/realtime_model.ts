@@ -213,7 +213,12 @@ export class RealtimeSession extends OpenAIRealtimeSession {
       return generation;
     } catch (error) {
       delete this.responseCreatedFutures[eventId];
-      if (!forceMessageSent) this.dropPendingSayTag(eventId);
+      // python keeps the tag only for a discarded say (abort/timeout), so a late
+      // response.created is still matched and cancelled; any other failure (e.g. the
+      // session reconnected) drops it so it cannot steal a later say's reply
+      if (!forceMessageSent || !this.discardedEventIds.has(eventId)) {
+        this.dropPendingSayTag(eventId);
+      }
       if (doneFut.done) return await doneFut.await;
       throw error;
     } finally {

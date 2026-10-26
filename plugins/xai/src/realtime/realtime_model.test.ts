@@ -276,6 +276,23 @@ describe('xAI realtime turn state', () => {
     expect(sent).toEqual([]);
   });
 
+  it('drops a sent say tag when its future is rejected by a reconnect', async () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const realtimeSession = model.session();
+    const session = realtimeSession as unknown as SessionInternals;
+    session.sendEvent = () => {};
+
+    const generationPromise = realtimeSession.say('before reconnect');
+    await Promise.resolve();
+    const sayId = session.pendingSayEventIds[0]!;
+    const handle = session.responseCreatedFutures[sayId] as { doneFut: Future<unknown> };
+    session.responseCreatedFutures = {};
+    handle.doneFut.reject(new Error('Session reconnected'));
+    await expect(generationPromise).rejects.toThrow('Session reconnected');
+
+    expect(session.pendingSayEventIds).toEqual([]);
+  });
+
   it('settles a pending say when the session closes', async () => {
     const model = new RealtimeModel({ apiKey: 'test-key' });
     const realtimeSession = model.session();
