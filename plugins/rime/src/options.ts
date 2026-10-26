@@ -73,7 +73,7 @@ export function validateEndpoint(value: string, allowCustom = false, websocket =
 
 export function resolveOptions(opts: Partial<TTSOptions>, previous?: TTSOptions): TTSOptions {
   const v1 = previous?.websocketURL !== undefined || opts.websocketURL !== undefined;
-  let model = opts.modelId ?? previous?.modelId ?? 'coda';
+  const model = opts.modelId ?? previous?.modelId ?? 'coda';
   if (v1) {
     if (previous && !previous.websocketURL)
       throw new Error('websocketURL requires a TTS constructed with websocketURL');
@@ -100,20 +100,7 @@ export function resolveOptions(opts: Partial<TTSOptions>, previous?: TTSOptions)
       opts.allowCustomEndpoint ?? previous?.allowCustomEndpoint,
       true,
     );
-    const parts = url.pathname.replace(/\/+$/, '').split('/');
-    if (parts.pop() !== 'ws') throw new Error('Rime websocketURL path must end with /ws');
-    const pathModel = parts.pop();
-    if (pathModel) {
-      if (opts.modelId !== undefined)
-        throw new Error('modelId is derived from websocketURL; omit modelId');
-      try {
-        model = decodeURIComponent(pathModel);
-      } catch {
-        throw new Error('Invalid Rime model path');
-      }
-      if (model === 'mist') model = 'mistv3';
-    } else if (!opts.modelId && !previous)
-      throw new Error('modelId is required for a dedicated /ws endpoint');
+    if (!previous && !opts.modelId) throw new Error('modelId is required when using websocketURL');
     if (
       previous &&
       model !== previous.modelId &&
@@ -195,6 +182,10 @@ export interface TTSOptions {
   /** Allow sending the API key to a host outside rime.ai. */
   allowCustomEndpoint?: boolean;
   speaker: string;
+  /**
+   * Required at construction when websocketURL is set.
+   * The plugin does not read the model from the URL.
+   */
   modelId: TTSModels | string;
   baseURL?: string;
   apiKey?: string;

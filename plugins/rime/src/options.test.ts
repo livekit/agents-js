@@ -7,8 +7,12 @@ import { TTS } from './tts.js';
 
 afterEach(() => vi.restoreAllMocks());
 
-it('derives v1 models and uses model-specific defaults', () => {
-  const coda = resolveOptions({ apiKey: 'key', websocketURL: 'wss://api.rime.ai/coda/ws' });
+it('uses explicit v1 models and model-specific defaults', () => {
+  const coda = resolveOptions({
+    apiKey: 'key',
+    websocketURL: 'wss://coda.api.rime.ai/ws',
+    modelId: 'coda',
+  });
   expect(coda).toMatchObject({
     modelId: 'coda',
     speaker: 'lyra',
@@ -22,16 +26,47 @@ it('derives v1 models and uses model-specific defaults', () => {
   expect(
     resolveOptions({
       apiKey: 'key',
-      websocketURL: 'wss://api.rime.ai/coda/ws',
+      websocketURL: 'wss://coda.api.rime.ai/ws',
+      modelId: 'coda',
       speaker: 'astra',
     }),
   ).toMatchObject({ modelId: 'coda', speaker: 'astra' });
   const mist = resolveOptions({
     apiKey: 'key',
-    websocketURL: 'wss://api.rime.ai/mist/ws',
+    websocketURL: 'wss://mist.api.rime.ai/ws',
+    modelId: 'mistv3',
     pauseBetweenBrackets: false,
   });
   expect(mist).toMatchObject({ modelId: 'mistv3', speaker: 'cove' });
+});
+
+it.each([
+  'wss://coda.api.rime.ai/ws',
+  'wss://mist.api.rime.ai/ws',
+  'wss://dedicated.rime.ai/ws',
+  'wss://api.rime.ai/coda/ws',
+  'wss://api.rime.ai/mist/ws',
+  'wss://voice.rime.ai/custom/stream',
+])('requires an explicit v1 model for %s', (websocketURL) => {
+  expect(() => resolveOptions({ apiKey: 'key', websocketURL })).toThrow(
+    'modelId is required when using websocketURL',
+  );
+});
+
+it.each([
+  'wss://api.rime.ai/coda/ws',
+  'wss://api.rime.ai/mist/ws',
+  'wss://voice.customer.example/custom/stream?token=value',
+  'wss://voice.customer.example/tts/%ZZ/stream',
+])('passes custom paths through without selecting a model: %s', (websocketURL) => {
+  expect(
+    resolveOptions({
+      apiKey: 'key',
+      websocketURL,
+      modelId: 'mistv3',
+      allowCustomEndpoint: true,
+    }),
+  ).toMatchObject({ websocketURL, modelId: 'mistv3', speaker: 'cove' });
 });
 
 it.each([
@@ -44,7 +79,7 @@ it.each([
   'reduceLatency',
   'inlineSpeedAlpha',
 ])('rejects unsupported v1 control %s during construction and update', (key) => {
-  const opts = { apiKey: 'key', websocketURL: 'wss://api.rime.ai/coda/ws' };
+  const opts = { apiKey: 'key', websocketURL: 'wss://coda.api.rime.ai/ws', modelId: 'coda' };
   expect(() => resolveOptions({ ...opts, [key]: 1 })).toThrow('not supported');
   expect(() => resolveOptions({ [key]: 1 }, resolveOptions(opts))).toThrow('not supported');
 });
@@ -106,13 +141,12 @@ it('keeps sample rates coherent after updates and preserves explicit rates', asy
 });
 
 it.each([
-  { websocketURL: 'wss://api.rime.ai/coda/ws', modelId: 'coda' },
   { websocketURL: 'wss://api.rime.ai/ws' },
-  { websocketURL: 'wss://api.rime.ai/coda/ws', baseURL: 'https://api.rime.ai' },
-  { websocketURL: 'wss://api.rime.ai/coda/ws', useWebsocket: true },
-  { websocketURL: 'wss://api.rime.ai/coda/ws', pauseBetweenBrackets: true },
-  { websocketURL: 'wss://api.rime.ai/coda/ws', audioFormat: 'audio/mp3' },
-  { websocketURL: 'wss://api.rime.ai/coda/ws', websocketProtocol: 'other' },
+  { websocketURL: 'wss://coda.api.rime.ai/ws', modelId: 'coda', baseURL: 'https://api.rime.ai' },
+  { websocketURL: 'wss://coda.api.rime.ai/ws', modelId: 'coda', useWebsocket: true },
+  { websocketURL: 'wss://coda.api.rime.ai/ws', modelId: 'coda', pauseBetweenBrackets: true },
+  { websocketURL: 'wss://coda.api.rime.ai/ws', modelId: 'coda', audioFormat: 'audio/mp3' },
+  { websocketURL: 'wss://coda.api.rime.ai/ws', modelId: 'coda', websocketProtocol: 'other' },
   { audioFormat: 'audio/pcm' },
   { modelId: 'mistv2', timeScaleFactor: 1 },
   { samplingRate: -1 },

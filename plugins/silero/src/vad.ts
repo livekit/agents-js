@@ -416,15 +416,11 @@ export class VADStream extends baseStream {
 
           if (inputFrame.data.length > toCopyInt) {
             const data = inputFrame.data.subarray(toCopyInt);
-            inputFrames.push(
-              new AudioFrame(data, this.#inputSampleRate, 1, Math.trunc(data.length / 2)),
-            );
+            inputFrames.push(new AudioFrame(data, this.#inputSampleRate, 1, data.length));
           }
           if (inferenceFrame.data.length > this.#model.windowSizeSamples) {
             const data = inferenceFrame.data.subarray(this.#model.windowSizeSamples);
-            inferenceFrames.push(
-              new AudioFrame(data, this.#opts.sampleRate, 1, Math.trunc(data.length / 2)),
-            );
+            inferenceFrames.push(new AudioFrame(data, this.#opts.sampleRate, 1, data.length));
           }
         }
       }

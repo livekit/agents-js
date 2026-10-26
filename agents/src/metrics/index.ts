@@ -5,6 +5,7 @@
 export type {
   AgentMetrics,
   AvatarMetrics,
+  DecisionMetrics,
   EOTInferenceMetrics,
   EOUMetrics,
   InterruptionMetrics,

@@ -130,6 +130,9 @@ importers:
       '@livekit/av':
         specifier: ^10.0.0
         version: 10.0.0
+      '@livekit/blingfire':
+        specifier: ^1.2.0
+        version: 1.2.0
       '@livekit/local-inference':
         specifier: ^0.2.7
         version: 0.2.7
@@ -242,6 +245,9 @@ importers:
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@22.19.1)
+      '@modelcontextprotocol/client':
+        specifier: ^2.3.1
+        version: 2.3.1
       '@types/fluent-ffmpeg':
         specifier: ^2.1.28
         version: 2.1.28
@@ -796,8 +802,8 @@ importers:
   plugins/google:
     dependencies:
       '@google/genai':
-        specifier: ^2.24.0
-        version: 2.27.0
+        specifier: ^2.29.1
+        version: 2.29.1
       '@livekit/mutex':
         specifier: ^1.1.1
         version: 1.1.1
@@ -1157,9 +1163,6 @@ importers:
 
   plugins/openai:
     dependencies:
-      '@livekit/mutex':
-        specifier: ^1.1.1
-        version: 1.1.1
       openai:
         specifier: ^6.8.1
         version: 6.8.1(ws@8.21.3)(zod@4.3.6)
@@ -1226,8 +1229,8 @@ importers:
   plugins/phonic:
     dependencies:
       phonic:
-        specifier: ^0.32.28
-        version: 0.32.28
+        specifier: ^0.32.30
+        version: 0.32.30
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -2110,8 +2113,8 @@ packages:
     resolution: {integrity: sha512-Ys+3g2TaW7gADOJzPt83SJtCDhMjndcDMFVQ/Tj9iA1BfJzFKD9mAUXT3OenpuPHbI6P/myECxRJrofUsDx/5g==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
 
-  '@google/genai@2.27.0':
-    resolution: {integrity: sha512-W6F9Y9d4h7cVQNa85IPCOVVP9PiUzve/ZQPBvQnBmnBJcLvxstEw+R2X/RyCH0SOe0HVDQzeKDpDUf6ZRtbmdQ==}
+  '@google/genai@2.29.1':
+    resolution: {integrity: sha512-keU+JsY11fT4ykdFA6Q8iQHBgOAAVssFLxPtXRjCIEr5Zt2GzE75c22bBmq87XbhgtpuKaObnSgsrG60rj0ZMA==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.2
@@ -2386,6 +2389,49 @@ packages:
     resolution: {integrity: sha512-i39au9JY9qqZ9b0yKa5+2E3BQD9JtbGlCxqDbSvFjxprdHTdP96NgsLHOViwLk84J+eCLIyNzcGw5G3zIK2ZhQ==}
     engines: {node: '>=18.0.0'}
 
+  '@livekit/blingfire-darwin-arm64@1.2.0':
+    resolution: {integrity: sha512-T5VutjrRGhDjYlPGMpfTbu1FQ+fX+kne/Q6iXp+wjwlcslauxzc5fhjdhO4jfjC240vZy/51psWxxHW9YD1hyQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@livekit/blingfire-darwin-x64@1.2.0':
+    resolution: {integrity: sha512-85gLmr16ZF/7fKWzx3t2x+BSfWp6KebMH9k70pUFqzmfPxaw95ykiHME4Xh5tgbbBqe7RLF4gFIOGcfUZi9hGQ==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@livekit/blingfire-linux-arm64-gnu@1.2.0':
+    resolution: {integrity: sha512-ByYgnLPKE6PFFNwLKMmTaNPVo3daGl006nNCyIIP7PFTVQ7GUnP2nC6a42GlquSj1bKtaXI9JA/rUWbcVRT1JQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@livekit/blingfire-linux-arm64-musl@1.2.0':
+    resolution: {integrity: sha512-i52nJN3DxrJA0H7F0vIs7gsDKpxwuNqvc3/w/6SxpPJuV9X0UfvtZ5GcYKmcKUfLIZBk1pxW2ukRW3KagBcPaQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@livekit/blingfire-linux-x64-gnu@1.2.0':
+    resolution: {integrity: sha512-9GA+RaNikYlLhQd4i3aJQGAICd3kSFKN3xr8JZhi3YirhbU4GsPLC6FIdTC44QgOtciR/4tUGS1fCM/SkIJowg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@livekit/blingfire-linux-x64-musl@1.2.0':
+    resolution: {integrity: sha512-/Phblzva6LsWYgFrk3niZq4sBIDY9/3fFMCJo8lF65B2Rkz1BWNoxSCEjmyFeYdfjmgsDClRtR1lymGZrjT5hA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@livekit/blingfire-win32-x64-msvc@1.2.0':
+    resolution: {integrity: sha512-VAz0sr5ogT11CsviPSdbaGV0A7onGH9oW+vtN8XP1hwP5Mm1Dgz7rfG2ZYVi1pRuNqJfF2zmEVm9/Qmb6EYvDA==}
+    cpu: [x64]
+    os: [win32]
+
+  '@livekit/blingfire@1.2.0':
+    resolution: {integrity: sha512-NBkAm31MpXyatfstI5YlaPlU2TCcvwoyghgODeieZU63TjhGM9tTHDsh10P8FP5nJ67nJLN+ZqbH3L1Pkdvpjg==}
+    engines: {node: '>=18.0.0'}
+
   '@livekit/changesets-changelog-github@0.2.0':
     resolution: {integrity: sha512-HWgR0biITeIaLeBRIUpqYJ0Wacmx7JJjlqhiJtqYrGItqw0kRUe6tTB6vN0fU7tK1oh08hlgr3iYdGLNLNbrNQ==}
 
@@ -2572,6 +2618,14 @@ packages:
 
   '@mistralai/mistralai@2.2.1':
     resolution: {integrity: sha512-uKU8CZmL2RzYKmplsU01hii4p3pe4HqJefpWNRWXm1Tcm0Sm4xXfwSLIy4k7ZCPlbETCGcp69E7hZs+WOJ5itQ==}
+
+  '@modelcontextprotocol/client@2.3.1':
+    resolution: {integrity: sha512-mIGZXpHsjnZ6lD+gD/WCMpR5k8yVQQ8nNFH1N0Srf7AvnwTUMYD6pvTY8ng2+He5FfV7YMZLmrjL7cLa/cc3dQ==}
+    engines: {node: '>=20'}
+
+  '@modelcontextprotocol/core@2.3.1':
+    resolution: {integrity: sha512-laVmIhPGpWi7rG9q+0UigblRN0Hws/Yjlb6qLFtVqryXVLkc4h+yN8z731POD2LnAGQlFe7/tXhUm7Bi0YB91g==}
+    engines: {node: '>=20'}
 
   '@msgpack/msgpack@3.1.3':
     resolution: {integrity: sha512-47XIizs9XZXvuJgoaJUIE2lFoID8ugvc0jzSHP+Ptfk8nTbnR8g788wv48N03Kx0UkAv559HWRQ3yzOgzlRNUA==}
@@ -3895,6 +3949,14 @@ packages:
     resolution: {integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==}
     engines: {node: '>=0.8.x'}
 
+  eventsource-parser@3.1.1:
+    resolution: {integrity: sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ==}
+    engines: {node: '>=18.0.0'}
+
+  eventsource@3.0.7:
+    resolution: {integrity: sha512-CRT1WTyuQoD771GW56XEZFQ/ZoSfWid1alKGDYMmkt2yl8UXrVR4pspqWNEcqKvVIzg6PAltWjxcSSPrboA4iA==}
+    engines: {node: '>=18.0.0'}
+
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
@@ -4386,6 +4448,9 @@ packages:
   jose@5.2.4:
     resolution: {integrity: sha512-6ScbIk2WWCeXkmzF6bRPmEuaqy1m8SbsRFMa/FLrSCkGIhj8OLVG/IH+XHVmNMx/KUo8cVWEE6oKR4dJ+S0Rkg==}
 
+  jose@6.2.12:
+    resolution: {integrity: sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==}
+
   joycon@3.1.1:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
     engines: {node: '>=10'}
@@ -4800,8 +4865,8 @@ packages:
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
 
-  phonic@0.32.28:
-    resolution: {integrity: sha512-Xf2ro6ngBLoM1ngHwXzjcNd9xrKgdH8r3Owts+K1qeHBS+fp/6VEz+Pl7ABzOgpXptNIOt8HIU8Fz3XCb0uqgg==}
+  phonic@0.32.30:
+    resolution: {integrity: sha512-eRUqgUGFRNXwIy+61LPcLIoj5ajfnIjJ6p+5sbgCTSMDgi593lLWCULaQbCXRpW4Z+6zKG/7tvXuoSV+WtWBTg==}
     engines: {node: '>=18.0.0'}
 
   picocolors@1.1.1:
@@ -4850,6 +4915,10 @@ packages:
   pirates@4.0.6:
     resolution: {integrity: sha512-saLsH7WeYYPiD25LDuLRRY/i+6HaPYr6G1OUlN39otzkSTxKnubR9RTxS3/Kk50s1g2JTgFwWQDQyplC5/SHZg==}
     engines: {node: '>= 6'}
+
+  pkce-challenge@5.0.1:
+    resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
+    engines: {node: '>=16.20.0'}
 
   platform@1.3.6:
     resolution: {integrity: sha512-fnWVljUchTro6RiCFvCXBbNhJc2NijN7oIQxbwsyL0buWJPG85v81ehlHI9fXrJsMNgTofEoWIQeClKpgxFLrg==}
@@ -6042,7 +6111,7 @@ snapshots:
 
   '@eslint/js@8.57.0': {}
 
-  '@google/genai@2.27.0':
+  '@google/genai@2.29.1':
     dependencies:
       google-auth-library: 10.6.2
       p-retry: 4.6.2
@@ -6254,6 +6323,39 @@ snapshots:
       '@livekit/av-linux-arm64': 10.0.0
       '@livekit/av-linux-x64': 10.0.0
       '@livekit/av-win32-x64': 10.0.0
+
+  '@livekit/blingfire-darwin-arm64@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-darwin-x64@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-linux-arm64-gnu@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-linux-arm64-musl@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-linux-x64-gnu@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-linux-x64-musl@1.2.0':
+    optional: true
+
+  '@livekit/blingfire-win32-x64-msvc@1.2.0':
+    optional: true
+
+  '@livekit/blingfire@1.2.0':
+    dependencies:
+      node-gyp-build: 4.8.4
+    optionalDependencies:
+      '@livekit/blingfire-darwin-arm64': 1.2.0
+      '@livekit/blingfire-darwin-x64': 1.2.0
+      '@livekit/blingfire-linux-arm64-gnu': 1.2.0
+      '@livekit/blingfire-linux-arm64-musl': 1.2.0
+      '@livekit/blingfire-linux-x64-gnu': 1.2.0
+      '@livekit/blingfire-linux-x64-musl': 1.2.0
+      '@livekit/blingfire-win32-x64-msvc': 1.2.0
 
   '@livekit/changesets-changelog-github@0.2.0':
     dependencies:
@@ -6496,6 +6598,20 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@modelcontextprotocol/client@2.3.1':
+    dependencies:
+      '@modelcontextprotocol/core': 2.3.1
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.1.1
+      jose: 6.2.12
+      pkce-challenge: 5.0.1
+      zod: 4.3.6
+
+  '@modelcontextprotocol/core@2.3.1':
+    dependencies:
+      zod: 4.3.6
 
   '@msgpack/msgpack@3.1.3': {}
 
@@ -8013,6 +8129,12 @@ snapshots:
 
   events@3.3.0: {}
 
+  eventsource-parser@3.1.1: {}
+
+  eventsource@3.0.7:
+    dependencies:
+      eventsource-parser: 3.1.1
+
   expect-type@1.4.0: {}
 
   extend@3.0.2: {}
@@ -8533,6 +8655,8 @@ snapshots:
 
   jose@5.2.4: {}
 
+  jose@6.2.12: {}
+
   joycon@3.1.1: {}
 
   js-tokens@10.0.0: {}
@@ -8929,7 +9053,7 @@ snapshots:
 
   pathe@2.0.3: {}
 
-  phonic@0.32.28:
+  phonic@0.32.30:
     dependencies:
       ws: 8.21.3
     transitivePeerDependencies:
@@ -9021,6 +9145,8 @@ snapshots:
       thread-stream: 3.1.0
 
   pirates@4.0.6: {}
+
+  pkce-challenge@5.0.1: {}
 
   platform@1.3.6: {}
 
