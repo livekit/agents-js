@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TTSMetrics } from '../metrics/base.js';
-import { type SentenceStream, type SentenceTokenizer, basic } from '../tokenize/index.js';
+import { type SentenceStream, type SentenceTokenizer, blingfire } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Task } from '../utils.js';
@@ -30,7 +30,8 @@ export class StreamAdapter extends TTS {
     super(tts.sampleRate, tts.numChannels, { streaming: true, alignedTranscript: true });
     this.#tts = tts;
     this.#explicitTokenizer = sentenceTokenizer !== undefined;
-    this.#sentenceTokenizer = sentenceTokenizer ?? new basic.SentenceTokenizer();
+    this.#sentenceTokenizer =
+      sentenceTokenizer ?? new blingfire.SentenceTokenizer({ retainFormat: true });
     this.label = this.#tts.label;
     this.label = `tts.StreamAdapter<${this.#tts.label}>`;
 
@@ -70,7 +71,10 @@ export class StreamAdapter extends TTS {
     if (!options.lowering || this.#explicitTokenizer) {
       return this.#sentenceTokenizer;
     }
-    this.#markupTokenizer ??= new basic.SentenceTokenizer({ xmlAware: true });
+    this.#markupTokenizer ??= new blingfire.SentenceTokenizer({
+      retainFormat: true,
+      xmlAware: true,
+    });
     return this.#markupTokenizer;
   }
 

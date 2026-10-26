@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
-import { AgentHandoffItem, ChatContext } from '../llm/chat_context.js';
+import { AgentHandoffItem } from '../llm/chat_context.js';
 import { Agent } from './agent.js';
 import { AgentActivity, type ReusableResources } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
@@ -21,25 +21,10 @@ function createFakeSession() {
     activity: undefined,
     nextActivity: undefined,
     _globalRunState: undefined,
-    _chatCtx: ChatContext.empty(),
     _conversationItemAdded: vi.fn(),
-    emit: vi.fn(),
     logger: {
       debug: vi.fn(),
       warn: vi.fn(),
-    },
-    sessionOptions: {
-      turnHandling: {
-        interruption: {
-          enabled: true,
-          minDuration: 0,
-          minWords: 0,
-        },
-        endpointing: {
-          minDelay: 0,
-          maxDelay: 0,
-        },
-      },
     },
     interruptionDetection: undefined,
     turnDetection: undefined,
@@ -64,12 +49,10 @@ describe('AgentSession reusable resources handoff', () => {
       blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => resources),
     };
     const nextActivity = {
       agent: nextAgent,
       resume: vi.fn(async () => {}),
-      start: vi.fn(async () => {}),
       attachAudioInput: vi.fn(),
       _onEnterTask: undefined,
     };
@@ -106,14 +89,12 @@ describe('AgentSession reusable resources handoff', () => {
       blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => resources),
     };
     const nextActivity = {
       agent: nextAgent,
       resume: vi.fn(async () => {
         throw new Error('resume failed');
       }),
-      start: vi.fn(async () => {}),
       attachAudioInput: vi.fn(),
       _onEnterTask: undefined,
     };
@@ -144,12 +125,10 @@ describe('AgentSession reusable resources handoff', () => {
       blockNewTurns: vi.fn(),
       drain: vi.fn(async () => resources),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => resources),
     };
     const nextActivity = {
       agent: nextAgent,
       resume: vi.fn(async () => {}),
-      start: vi.fn(async () => {}),
       attachAudioInput: vi.fn(() => {
         throw new Error('attach failed');
       }),
@@ -184,7 +163,6 @@ describe('AgentSession reusable resources handoff', () => {
       close: vi.fn(async () => {}),
       pause: vi.fn(async () => undefined),
       resume: vi.fn(async () => {}),
-      start: vi.fn(async () => {}),
       attachAudioInput: vi.fn(),
       _onEnterTask: undefined,
     };
@@ -214,12 +192,10 @@ describe('AgentSession reusable resources handoff', () => {
       blockNewTurns: vi.fn(),
       drain: vi.fn(async () => undefined),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => undefined),
     };
     const nextActivity = {
       agent: nextAgent,
       resume: vi.fn(async () => {}),
-      start: vi.fn(async () => {}),
       attachAudioInput: vi.fn(),
       _onEnterTask: undefined,
     };
@@ -248,7 +224,6 @@ describe('AgentSession reusable resources handoff', () => {
       blockNewTurns: vi.fn(),
       drain: vi.fn(async () => undefined),
       close: vi.fn(async () => {}),
-      pause: vi.fn(async () => undefined),
     };
 
     const startSpy = vi.spyOn(AgentActivity.prototype, 'start').mockResolvedValue(undefined);
