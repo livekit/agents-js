@@ -94,7 +94,7 @@ export type DirectorNotes = {
 };
 
 // @public (undocumented)
-export function mintAvatarJoinToken({ roomName, avatarIdentity, publishOnBehalf, apiKey, apiSecret, ttl, }: {
+export function mintAvatarJoinToken(input: {
     roomName: string;
     avatarIdentity: string;
     publishOnBehalf: string;
