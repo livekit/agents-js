@@ -460,6 +460,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         const markInputEnded = sendTask().then(() => {
           inputEnded = true;
         });
+        // Awaited after the receive loop; if that loop rejects first, a later send failure
+        // must not surface as an unhandled rejection.
+        markInputEnded.catch(() => {});
 
         await new Promise<void>((resolve, reject) => {
           const cleanup = () => {
