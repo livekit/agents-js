@@ -4,8 +4,18 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as logModule from '../../log.js';
-import { AudioOutput, TextOutput } from '../io.js';
-import { SpeakingRateData, TranscriptionSynchronizer } from './synchronizer.js';
+import {
+  AudioOutput,
+  TextOutput,
+  type TimedString,
+  createTimedString,
+  isTimedString,
+} from '../io.js';
+import {
+  SpeakingRateData,
+  TranscriptionSynchronizer,
+  defaultTextSyncOptions,
+} from './synchronizer.js';
 
 describe('SpeakingRateData', () => {
   describe('constructor', () => {
@@ -223,12 +233,53 @@ class MockAudioOutput extends AudioOutput {
 class MockTextOutput extends TextOutput {
   captured: string[] = [];
 
-  async captureText(text: string): Promise<void> {
-    this.captured.push(text);
+  async captureText(text: string | TimedString): Promise<void> {
+    this.captured.push(isTimedString(text) ? text.text : text);
   }
 
   flush(): void {}
 }
+
+describe('TranscriptionSynchronizer enabled behavior', () => {
+  it.each([
+    ['It is', ' sunny'],
+    ['It is curren', 'tly sunny'],
+  ])(
+    'releases trailing words of timed spans before text input ends: %s + %s',
+    async (first, second) => {
+      const downstream = new MockTextOutput();
+      const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream);
+      await synchronizer.barrier();
+      const impl = synchronizer._impl;
+      try {
+        impl.pushAudio(new AudioFrame(new Int16Array(6400), 16_000, 1, 6400));
+        impl.endAudioInput();
+        impl.onPlaybackStarted(Date.now());
+        impl.pushText(createTimedString({ text: first, startTime: 0, endTime: 0.2 }));
+        impl.pushText(createTimedString({ text: second, startTime: 0.2, endTime: 0.4 }));
+        await vi.waitFor(() => expect(downstream.captured.join('')).toBe(first + second), {
+          timeout: 2000,
+        });
+        expect(impl.textInputEnded).toBe(false);
+      } finally {
+        await synchronizer.close();
+      }
+    },
+  );
+
+  it('directly forwards text when synchronization is disabled', async () => {
+    const downstream = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream, {
+      ...defaultTextSyncOptions,
+      enabled: false,
+    });
+
+    await synchronizer.textOutput.captureText('hello');
+
+    expect(downstream.captured).toEqual(['hello']);
+    await synchronizer.close();
+  });
+});
 
 describe('TranscriptionSynchronizer attachment warnings', () => {
   const textDetachedWarning =
@@ -322,6 +373,54 @@ describe('TranscriptionSynchronizer playback-counter drift on a dropped frame', 
     ]);
 
     expect(result).toBe('resolved');
+    await synchronizer.close();
+  });
+
+  it('does not let a synthetic drift finish consume a rotated segment awaiting its real finish', async () => {
+    // downstream that accepts segment A, then drops segment B at its
+    // pause/interrupt gate (bails before counting it)
+    class GateDroppingAudioOutput extends AudioOutput {
+      dropping = false;
+      constructor() {
+        super(8000);
+      }
+      async captureFrame(frame: AudioFrame): Promise<void> {
+        if (this.dropping) return;
+        await super.captureFrame(frame);
+      }
+      clearBuffer(): void {}
+    }
+
+    const downstream = new GateDroppingAudioOutput();
+    const synchronizer = new TranscriptionSynchronizer(downstream, new MockTextOutput());
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    // segment A: text + audio accepted downstream; its real finish stays in flight
+    await synchronizer.textOutput.captureText('alpha');
+    synchronizer.textOutput.flush();
+    await synchronizer.audioOutput.captureFrame(frame);
+    synchronizer.audioOutput.flush();
+
+    // the next reply's text arrives before A's playback_finished -> A is rotated out and queued
+    await synchronizer.textOutput.captureText('bravo');
+    await synchronizer.barrier();
+    expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+    // segment B: dropped at the downstream gate -> drift of 1
+    downstream.dropping = true;
+    await synchronizer.audioOutput.captureFrame(frame);
+    synchronizer.audioOutput.flush();
+
+    // drift reconciliation must settle B (never accepted downstream) and leave
+    // A's queue entry for the real finish that is still coming
+    const playout = synchronizer.audioOutput.waitForPlayout();
+    expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+    // A's real finish arrives and settles A's queued segment
+    downstream.onPlaybackFinished({ playbackPosition: 1, interrupted: true });
+    await playout;
+    expect(synchronizer._pendingRotatedSegments).toHaveLength(0);
+
     await synchronizer.close();
   });
 

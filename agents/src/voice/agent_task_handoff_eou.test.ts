@@ -208,15 +208,16 @@ describe('AgentTask handoff end-of-turn timing', () => {
     const makeStepTask = (step: number): AgentTask<{ step: number }> => {
       const task: AgentTask<{ step: number }> = new AgentTask<{ step: number }>({
         instructions: `You are handling step ${step}. Wait for the caller to finish it.`,
-        tools: {
-          completeStep: tool({
+        tools: [
+          tool({
+            name: 'completeStep',
             description: `Record that step ${step} is complete.`,
             execute: async () => {
               toolExecutedAt[step] = Date.now();
               task.complete({ step });
             },
           }),
-        },
+        ],
       });
       return task;
     };

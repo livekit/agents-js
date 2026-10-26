@@ -54,8 +54,8 @@ export class InterruptionStreamSentinel {
     return { type: 'overlap-speech-started', speechDuration, startedAt, userSpeakingSpan };
   }
 
-  static overlapSpeechEnded(endedAt: number): OverlapSpeechEnded {
-    return { type: 'overlap-speech-ended', endedAt };
+  static overlapSpeechEnded(endedAt: number, agentEnded = false): OverlapSpeechEnded {
+    return { type: 'overlap-speech-ended', endedAt, agentEnded };
   }
 
   static flush(): Flush {
@@ -272,8 +272,8 @@ export class InterruptionStreamBase {
             }
             cache.clear();
           } else if (chunk.type === 'overlap-speech-ended') {
-            this.logger.debug('overlap speech ended');
             if (overlapSpeechStarted) {
+              this.logger.debug('overlap speech ended');
               this.userSpeakingSpan = undefined;
               let latestEntry = cache.pop(
                 (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
@@ -287,6 +287,7 @@ export class InterruptionStreamBase {
                 type: 'overlapping_speech',
                 detectedAt: chunk.endedAt,
                 isInterruption: false,
+                agentEnded: chunk.agentEnded,
                 overlapStartedAt: this.overlapSpeechStartedAt,
                 speechInput: e.speechInput,
                 probabilities: e.probabilities,
@@ -336,7 +337,7 @@ export class InterruptionStreamBase {
           predictionDuration: chunk.predictionDurationInS * 1000,
           detectionDelay: chunk.detectionDelayInS * 1000,
           numInterruptions: chunk.isInterruption ? 1 : 0,
-          numBackchannels: chunk.isInterruption ? 0 : 1,
+          numBackchannels: !chunk.isInterruption && !chunk.agentEnded ? 1 : 0,
           numRequests: chunk.numRequests,
           metadata: {
             modelProvider: this.model.provider,
@@ -374,6 +375,11 @@ export class InterruptionStreamBase {
     return this.resampler;
   }
 
+  private resetResampler(): void {
+    this.resampler?.close();
+    this.resampler = undefined;
+  }
+
   stream(): ReadableStream<OverlappingSpeechEvent> {
     return this.eventStream;
   }
@@ -381,6 +387,9 @@ export class InterruptionStreamBase {
   async pushFrame(frame: InterruptionSentinel | AudioFrame): Promise<void> {
     this.ensureStreamsNotEnded();
     if (!(frame instanceof AudioFrame)) {
+      if (frame.type === 'agent-speech-started' || frame.type === 'agent-speech-ended') {
+        this.resetResampler();
+      }
       return this.inputStream.write(frame);
     } else if (this.options.sampleRate !== frame.sampleRate) {
       const resampler = this.getResamplerFor(frame.sampleRate);
