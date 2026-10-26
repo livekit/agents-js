@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIError,
+  APIStatusError,
   AudioByteStream,
   Event,
   calculateAudioDurationSeconds,
@@ -10,16 +13,20 @@ import {
   log,
   normalizeLanguage,
   stt,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import * as queryString from 'node:querystring';
 import { WebSocket } from 'ws';
-import { PeriodicCollector } from './_utils.js';
+import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
 import type { V2Models } from './models.js';
 
 const _CLOSE_MSG = JSON.stringify({ type: 'CloseStream' });
 
 // --- Configuration ---
+
+/** Redaction modes supported by the Deepgram Flux API. */
+export type FluxRedaction = 'numbers' | 'aggressive_numbers';
 
 /**
  * Configuration options for STTv2 (Deepgram Flux model).
@@ -35,6 +42,12 @@ export interface STTv2Options {
   eotThreshold?: number;
   eotTimeoutMs?: number;
   mipOptOut?: boolean;
+  /** Whether to convert spoken numbers into numerical formats. */
+  numerals: boolean;
+  /** Whether to filter profanity from the transcription. Applied at connection time. */
+  profanityFilter: boolean;
+  /** Redact numbers at connection time. Flux does not support entity redaction. */
+  redact?: FluxRedaction;
   tags?: string[];
   /**
    * List of language hints to bias the model for improved accuracy.
@@ -51,6 +64,8 @@ const defaultSTTv2Options: Omit<STTv2Options, 'apiKey'> = {
   endpointUrl: 'wss://api.deepgram.com/v2/listen',
   language: 'en',
   mipOptOut: false,
+  numerals: false,
+  profanityFilter: false,
 };
 
 function validateTags(tags: string[]): string[] {
@@ -106,16 +121,7 @@ export class STTv2 extends stt.STT {
   /**
    * Create a new Deepgram STTv2 instance.
    *
-   * @param opts - Configuration options
-   * @param opts.apiKey - Deepgram API key (defaults to `DEEPGRAM_API_KEY` env var)
-   * @param opts.model - Model to use (default: `flux-general-en`)
-   * @param opts.eagerEotThreshold - Threshold (0.3-0.9) for preemptive generation
-   * @param opts.eotThreshold - End-of-turn detection threshold (default: 0.7)
-   * @param opts.eotTimeoutMs - End-of-turn timeout in ms (default: 3000)
-   * @param opts.keyterms - List of key terms to improve recognition
-   * @param opts.tags - Tags for usage reporting (max 128 chars each)
-   * @param opts.languageHint - List of language hints to bias the model for improved accuracy.
-   *   Only usable with `flux-general-multi`.
+   * @param opts - Configuration options. See {@link STTv2Options}.
    *
    * @throws Error if no API key is provided
    */
@@ -188,7 +194,7 @@ export class STTv2 extends stt.STT {
   }
 
   /**
-   * Update STT options. Changes will take effect on the next stream.
+   * Update STT options.
    *
    * @param opts - Partial options to update
    */
@@ -205,6 +211,16 @@ export class STTv2 extends stt.STT {
         opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
     };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
+
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (stream) {
+        stream.updateOptions(nextOpts);
+      } else {
+        this.#streams.delete(ref);
+      }
+    }
+
     // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 244-249 lines
     if (
       this.#opts.languageHint &&
@@ -259,6 +275,12 @@ class SpeechStreamv2 extends stt.SpeechStream {
 
   // Parity: _reconnect_event - using existing Event class from @livekit/agents
   #reconnectEvent = new Event();
+  // set once we have sent CloseStream, so the close that follows is expected
+  #closingWs = false;
+  // Scoped to the current connection. An abandoned `input.next()` stays parked inside
+  // the queue and shifts the next frame off it for a promise nobody awaits, so a
+  // sender left over from a previous attempt steals audio from the current one.
+  #attempt = new AbortController();
 
   // keyterms set while the user is speaking; applied at END_OF_SPEECH (latest wins)
   /** @internal */
@@ -300,6 +322,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
     this.#reconnectEvent.set();
   }
 
+  /** @internal */
+  get _reconnectPending(): boolean {
+    return this.#reconnectEvent.isSet;
+  }
+
   #onEndOfSpeech() {
     if (this._pendingKeyterm !== null) {
       this.updateOptions({ keyterms: this._pendingKeyterm });
@@ -310,42 +337,66 @@ class SpeechStreamv2 extends stt.SpeechStream {
   protected async run() {
     // Outer Loop: Handles reconnections (Configuration updates)
     while (!this.closed) {
+      let stopHeartbeat: (() => void) | undefined;
+      let sendPromise: Promise<void> | undefined;
       try {
         this.#reconnectEvent.clear();
+        this.#closingWs = false;
+        this.#attempt = new AbortController();
 
-        const url = this.#getDeepgramUrl();
-        this.#logger.debug(`Connecting to Deepgram: ${url}`);
+        const baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
+        const url = `${baseUrl}?${queryString.stringify(this._liveConfig())}`;
+        this.#logger.debug('connecting to Deepgram');
 
-        this.#ws = new WebSocket(url, {
-          headers: { Authorization: `Token ${this.#opts.apiKey}` },
-        });
+        try {
+          this.#ws = new WebSocket(url, {
+            headers: { Authorization: `Token ${this.#opts.apiKey}` },
+          });
+          await waitForWebSocketOpen(this.#ws, 'Deepgram');
+        } catch (error) {
+          if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+          throw new APIConnectionError({
+            message: `failed to connect to Deepgram (${errorName(error)})`,
+          });
+        }
 
-        // 1. Wait for Connection Open
-        await new Promise<void>((resolve, reject) => {
-          if (!this.#ws) return reject(new Error('WebSocket not initialized'));
+        stopHeartbeat = startWebSocketHeartbeat(this.#ws, () =>
+          this.#logger.warn('Deepgram did not answer a ping in time, terminating the socket'),
+        );
 
-          const onOpen = () => {
-            this.#ws?.off('error', onError);
-            resolve();
-          };
-          const onError = (err: Error) => {
-            this.#ws?.off('open', onOpen);
-            reject(err);
-          };
-
-          this.#ws.once('open', onOpen);
-          this.#ws.once('error', onError);
+        // #recvTask resolves on close while #sendTask runs until its input ends, so
+        // Promise.all cannot settle when the socket goes away mid-session: the stream
+        // would sit there dropping audio. Surface the close as a rejection instead and
+        // let the base class retry, the way the v1 stream's wsMonitor does.
+        const socketFailed = new Promise<never>((_, reject) => {
+          this.#ws!.once('close', (code) => {
+            if (this.closed || this.#closingWs || this.#reconnectEvent.isSet) return;
+            reject(
+              new APIConnectionError({
+                message: `Deepgram WebSocket closed unexpectedly (${code})`,
+              }),
+            );
+          });
+          this.#ws!.once('error', (error) => {
+            if (this.closed || this.#closingWs || this.#reconnectEvent.isSet) return;
+            reject(
+              new APIConnectionError({
+                message: `Deepgram WebSocket failed (${errorName(error)})`,
+              }),
+            );
+          });
         });
 
         // 2. Run Concurrent Tasks (Send & Receive)
-        const sendPromise = this.#sendTask();
+        sendPromise = this.#sendTask();
         const recvPromise = this.#recvTask();
         const reconnectWait = this.#reconnectEvent.wait();
 
-        // 3. Race: Normal Completion vs Reconnect Signal
+        // 3. Race: Normal Completion vs Reconnect Signal vs the socket dying
         const result = await Promise.race([
           Promise.all([sendPromise, recvPromise]),
           reconnectWait.then(() => 'RECONNECT'),
+          socketFailed,
         ]);
 
         if (result === 'RECONNECT') {
@@ -357,9 +408,14 @@ class SpeechStreamv2 extends stt.SpeechStream {
           break;
         }
       } catch (error) {
-        this.#logger.error('Deepgram stream error', { error });
+        this.#logger.error({ errorType: errorName(error) }, 'Deepgram stream error');
         throw error; // Let Base Class handle retry logic
       } finally {
+        stopHeartbeat?.();
+        // settle this attempt's sender before the loop opens the next socket, or its
+        // abandoned queue read will steal a frame from the next one
+        this.#attempt.abort();
+        await sendPromise?.catch(() => {});
         if (this.#ws?.readyState === WebSocket.OPEN) {
           this.#ws.close();
         }
@@ -375,13 +431,35 @@ class SpeechStreamv2 extends stt.SpeechStream {
     const samples50ms = Math.floor(this.#opts.sampleRate / 20);
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
 
-    let hasEnded = false;
-
     // Manual Iterator to allow racing against Reconnect Signal
     const iterator = this.input[Symbol.asyncIterator]();
+    const attempt = this.#attempt;
+
+    try {
+      await this.#pumpAudio(iterator, attempt, audioBstream);
+    } catch (e) {
+      if (attempt.signal.aborted) return; // teardown cancelled the queue read
+      throw e;
+    }
+
+    // Only send CloseStream if we are exiting normally (not reconnecting)
+    if (!this.#reconnectEvent.isSet && this.#ws!.readyState === WebSocket.OPEN) {
+      this.#logger.debug('Sending CloseStream message to Deepgram');
+      this.#closingWs = true;
+      this.#ws!.send(_CLOSE_MSG);
+    }
+  }
+
+  async #pumpAudio(
+    iterator: AsyncIterator<AudioFrame | typeof stt.SpeechStream.FLUSH_SENTINEL>,
+    attempt: AbortController,
+    audioBstream: AudioByteStream,
+  ) {
+    let hasEnded = false;
+    let inputEnded = false;
 
     while (true) {
-      const nextPromise = iterator.next();
+      const nextPromise = iterator.next({ signal: attempt.signal });
       // If reconnect signal fires, abort the wait
       const abortPromise = this.#reconnectEvent.wait().then(() => ({ abort: true }) as const);
 
@@ -392,6 +470,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         if (!('abort' in result) && result.done) {
           // Normal stream end
           hasEnded = true;
+          inputEnded = true;
         } else {
           // Reconnect triggered - break loop immediately
           break;
@@ -418,28 +497,22 @@ class SpeechStreamv2 extends stt.SpeechStream {
           if (this.#ws!.readyState === WebSocket.OPEN) {
             this.#ws!.send(frame.data);
           }
-
-          if (hasEnded) {
-            this.#audioDurationCollector.flush();
-            hasEnded = false;
-          }
         }
       }
 
-      if (hasEnded) break;
-    }
+      if (hasEnded) {
+        this.#audioDurationCollector.flush();
+        hasEnded = false;
+      }
 
-    // Only send CloseStream if we are exiting normally (not reconnecting)
-    if (!this.#reconnectEvent.isSet && this.#ws!.readyState === WebSocket.OPEN) {
-      this.#logger.debug('Sending CloseStream message to Deepgram');
-      this.#ws!.send(_CLOSE_MSG);
+      if (inputEnded) break;
     }
   }
 
   async #recvTask() {
     if (!this.#ws) return;
 
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
       if (!this.#ws) return resolve();
 
       this.#ws.on('message', (data: Buffer, isBinary: boolean) => {
@@ -451,6 +524,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
           const msg = JSON.parse(data.toString());
           this.#processStreamEvent(msg);
         } catch (error) {
+          if (error instanceof APIError) {
+            reject(error);
+            return;
+          }
           this.#logger.error('Failed to parse Deepgram message', { error });
         }
       });
@@ -504,9 +581,9 @@ class SpeechStreamv2 extends stt.SpeechStream {
         this.#onEndOfSpeech();
       }
     } else if (data.type === 'Error') {
-      this.#logger.warn('deepgram sent an error', { data });
+      this.#logger.warn({ 'lk.pii.data': data }, 'deepgram sent an error');
       const desc = (data.description as string) || 'unknown error from deepgram';
-      throw new Error(`Deepgram API Error: ${desc}`);
+      throw new APIStatusError({ message: `Deepgram API Error: ${desc}`, options: { body: data } });
     }
   }
 
@@ -533,8 +610,9 @@ class SpeechStreamv2 extends stt.SpeechStream {
     this.queue.put(usageEvent);
   }
 
-  #getDeepgramUrl(): string {
-    const params: Record<string, string | string[]> = {
+  /** @internal */
+  _liveConfig(): Record<string, string | string[] | boolean> {
+    const params: Record<string, string | string[] | boolean> = {
       model: this.#opts.model,
       sample_rate: this.#opts.sampleRate.toString(),
       encoding: 'linear16',
@@ -555,15 +633,21 @@ class SpeechStreamv2 extends stt.SpeechStream {
       params.language_hint = this.#opts.languageHint;
     }
 
-    const baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
-    const qs = queryString.stringify(params);
-    return `${baseUrl}?${qs}`;
+    if (this.#opts.numerals) params.numerals = this.#opts.numerals;
+    if (this.#opts.profanityFilter) params.profanity_filter = this.#opts.profanityFilter;
+    if (this.#opts.redact !== undefined) params.redact = this.#opts.redact;
+
+    return params;
   }
 
   override close() {
     super.close();
     this.#ws?.close();
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 // --- Helpers ---

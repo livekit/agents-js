@@ -28,7 +28,13 @@ import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
+import { DEFAULT_SESSION_END_TIMEOUT, validateSessionEndTimeout } from './job_lifecycle.js';
 import { log } from './log.js';
+import {
+  type EventLoopMonitor,
+  startMonitoring,
+  stopMonitoring,
+} from './telemetry/loop_monitor.js';
 import { Future, rejectOnAbort } from './utils.js';
 import { version } from './version.js';
 
@@ -37,6 +43,10 @@ const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 const DRAIN_TIMEOUT = 60 * 60 * 1000;
 const PROJECT_TYPE = 'nodejs';
+// Mirrors CurrentWorkerProtocol in livekit/protocol. LiveKit Cloud reads this off
+// the /worker endpoint to decide whether the SDK supports agent deployments; a
+// worker that omits it is treated as legacy and registered without its deployment.
+const WORKER_PROTOCOL_VERSION = 1;
 
 let localEotRunnerRegistered = false;
 /**
@@ -162,6 +172,10 @@ export class ServerOptions {
   numIdleProcesses: number;
   drainTimeout: number;
   shutdownProcessTimeout: number;
+  /**
+   * Maximum time to wait for `onSessionEnd`. Defaults to five minutes.
+   */
+  sessionEndTimeout: number;
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
@@ -189,6 +203,7 @@ export class ServerOptions {
     numIdleProcesses = undefined,
     drainTimeout = DRAIN_TIMEOUT,
     shutdownProcessTimeout = 60 * 1000,
+    sessionEndTimeout = DEFAULT_SESSION_END_TIMEOUT,
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
     agentName = '',
@@ -221,6 +236,10 @@ export class ServerOptions {
     /** Number of milliseconds to wait for current jobs to finish upon shutdown. */
     drainTimeout?: number;
     shutdownProcessTimeout?: number;
+    /**
+     * Maximum number of milliseconds to wait for `onSessionEnd`.
+     */
+    sessionEndTimeout?: number;
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
     /**
@@ -261,6 +280,7 @@ export class ServerOptions {
     this.numIdleProcesses = numIdleProcesses || Default.numIdleProcesses(production);
     this.drainTimeout = drainTimeout;
     this.shutdownProcessTimeout = shutdownProcessTimeout;
+    this.sessionEndTimeout = validateSessionEndTimeout(sessionEndTimeout);
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
     // agentNameIsEnv may be passed explicitly when ServerOptions is re-constructed (e.g.
@@ -318,6 +338,7 @@ export class AgentServer {
   #opts: ServerOptions;
   #procPool: ProcPool;
 
+  #deployment = process.env.LIVEKIT_AGENT_DEPLOYMENT || '';
   #id = 'unregistered';
   #closed = true;
   #draining = false;
@@ -331,6 +352,7 @@ export class AgentServer {
   #httpServer?: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
+  #loopMonitor?: EventLoopMonitor;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: ServerOptions) {
@@ -382,15 +404,16 @@ export class AgentServer {
 
     this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded();
 
-    this.#procPool = new ProcPool(
-      opts.agent,
-      opts.numIdleProcesses,
-      opts.initializeProcessTimeout,
-      opts.shutdownProcessTimeout,
-      this.#inferenceExecutor,
-      opts.jobMemoryWarnMB,
-      opts.jobMemoryLimitMB,
-    );
+    this.#procPool = new ProcPool({
+      agent: opts.agent,
+      numIdleProcesses: opts.numIdleProcesses,
+      initializeTimeout: opts.initializeProcessTimeout,
+      closeTimeout: opts.shutdownProcessTimeout,
+      sessionEndTimeout: opts.sessionEndTimeout,
+      inferenceExecutor: this.#inferenceExecutor,
+      memoryWarnMB: opts.jobMemoryWarnMB,
+      memoryLimitMB: opts.jobMemoryLimitMB,
+    });
 
     this.#opts = opts;
 
@@ -419,10 +442,12 @@ export class AgentServer {
       const getWorkerInfo = () => ({
         agent_name: opts.agentName,
         agent_name_is_env: opts.agentNameIsEnv,
+        deployment: this.#deployment,
         worker_type: JobType[opts.serverType],
         active_jobs: this.activeJobs.length,
         sdk_version: version,
         project_type: PROJECT_TYPE,
+        protocol_version: WORKER_PROTOCOL_VERSION,
       });
 
       this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
@@ -442,6 +467,7 @@ export class AgentServer {
 
     this.#logger.info('starting worker');
     this.#closed = false;
+    this.#loopMonitor = startMonitoring({ name: 'worker', emitSpans: false });
     this.#procPool.start();
 
     const workerWS = async () => {
@@ -497,8 +523,15 @@ export class AgentServer {
     if (this.#httpServer) {
       tasks.push(this.#httpServer.run());
     }
-    await ThrowsPromise.all(tasks);
-    this.#close.resolve();
+    try {
+      await ThrowsPromise.all(tasks);
+      this.#close.resolve();
+    } catch (e) {
+      if (!this.#close.done) {
+        this.#close.reject(e instanceof Error ? e : new Error(String(e)));
+      }
+      throw e;
+    }
   }
 
   get id(): string {
@@ -644,7 +677,10 @@ export class AgentServer {
           wsData = `${wsData.slice(0, 128)}...(+${wsData.length - 128} more)`;
         }
         const type = typeof event.data;
-        this.#logger.warn({ type, ws_data: wsData }, `unexpected message type: ${type}`);
+        this.#logger.warn(
+          { type, 'lk.pii.ws_data': wsData },
+          'received unexpected worker message type',
+        );
         return;
       }
 
@@ -665,6 +701,7 @@ export class AgentServer {
               id: this.id,
               agentName: this.#opts.agentName,
               agentNameIsEnv: this.#opts.agentNameIsEnv,
+              deployment: this.#deployment,
               server_info: msg.message.value.serverInfo,
             })
             .info('registered worker');
@@ -678,7 +715,8 @@ export class AgentServer {
         }
         case 'availability': {
           if (!msg.message.value.job) return;
-          const task = this.#availability(msg.message.value);
+          // receipt is now, not when the handler gets to run: that delay is dispatch latency
+          const task = this.#availability(msg.message.value, Date.now());
           this.#tasks.push(task);
           task.finally(() => {
             const taskIndex = this.#tasks.indexOf(task);
@@ -726,6 +764,7 @@ export class AgentServer {
           value: {
             type: this.#opts.serverType,
             agentName: this.#opts.agentName,
+            deployment: this.#deployment,
             allowedPermissions: new ParticipantPermission({
               canPublish: this.#opts.permissions.canPublish,
               canSubscribe: this.#opts.permissions.canSubscribe,
@@ -805,7 +844,7 @@ export class AgentServer {
     }
   }
 
-  async #availability(msg: AvailabilityRequest) {
+  async #availability(msg: AvailabilityRequest, receivedAt: number = Date.now()) {
     let answered = false;
 
     const onReject = async () => {
@@ -826,6 +865,7 @@ export class AgentServer {
 
     const onAccept = async (args: JobAcceptArguments) => {
       answered = true;
+      const acceptedAt = Date.now();
 
       this.event.emit(
         'worker_msg',
@@ -871,6 +911,9 @@ export class AgentServer {
             workerId: this.id,
             apiKey: this.#opts.apiKey,
             apiSecret: this.#opts.apiSecret,
+            receivedAt,
+            acceptedAt,
+            assignedAt: Date.now(),
           });
         } catch (e) {
           this.#logger.child({ requestId: req.id }).error(e, 'error launching job');
@@ -882,12 +925,22 @@ export class AgentServer {
 
     const req = new JobRequest(msg.job!, onReject, onAccept);
     this.#logger
-      .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+      .child({
+        jobId: msg.job?.id,
+        room_id: msg.job?.room?.sid,
+        resuming: msg.resuming,
+        agentName: this.#opts.agentName,
+      })
       .info('received job request');
 
     if (this.#draining) {
       this.#logger
-        .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+        .child({
+          jobId: msg.job?.id,
+          room_id: msg.job?.room?.sid,
+          resuming: msg.resuming,
+          agentName: this.#opts.agentName,
+        })
         .info('Worker is draining and no longer available, rejecting job');
       await req.reject();
       return;
@@ -933,13 +986,15 @@ export class AgentServer {
 
   async close() {
     if (this.#closed) {
-      await this.#close.await;
+      await this.#close.await.catch(() => undefined);
       return;
     }
 
     this.#logger.debug('shutting down worker');
 
     this.#closed = true;
+    if (this.#loopMonitor) stopMonitoring(this.#loopMonitor);
+    this.#loopMonitor = undefined;
 
     await this.#inferenceExecutor?.close();
     await this.#procPool.close();
@@ -947,7 +1002,7 @@ export class AgentServer {
     await ThrowsPromise.allSettled(this.#tasks);
 
     this.#session?.close();
-    await this.#close.await;
+    await this.#close.await.catch(() => undefined);
   }
 }
 

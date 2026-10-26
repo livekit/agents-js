@@ -3,9 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
+import { encodeChatItem } from '../proto.js';
 import { INSTRUCTIONS_MESSAGE_ID, applyInstructionsModality } from '../voice/generation.js';
 import { FakeLLM } from '../voice/testing/fake_llm.js';
 import {
+  AgentConfigUpdate,
+  AgentHandoffItem,
   type AudioContent,
   ChatContext,
   type ChatItem,
@@ -15,6 +18,7 @@ import {
   type ImageContent,
   Instructions,
   ReadonlyChatContext,
+  chatItemFingerprint,
   concatInstructions,
   isInstructions,
   renderInstructions,
@@ -305,6 +309,56 @@ describe('ChatContext.toJSON', () => {
   });
 });
 
+describe('ChatMessage text content', () => {
+  const mixed =
+    '<expr type="expression" label="happy"/> Press [Enter] to see <b>bold</b>, ' +
+    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+    '<expr type="prosody" label="whisper">keep it secret</expr>';
+  const mixedClean =
+    'Press [Enter] to see <b>bold</b>, ' +
+    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+    'keep it secret';
+
+  it('strips only expr markup from assistant textContent', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [mixed] });
+
+    expect(msg.textContent).toBe(mixedClean);
+    expect(msg.rawTextContent).toBe(mixed);
+  });
+
+  it.each(['user', 'system', 'developer'] as const)('keeps %s textContent raw', (role) => {
+    const msg = ChatMessage.create({ role, content: [mixed] });
+
+    expect(msg.textContent).toBe(mixed);
+    expect(msg.rawTextContent).toBe(mixed);
+  });
+
+  it('returns undefined without text content', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [] });
+
+    expect(msg.textContent).toBeUndefined();
+    expect(msg.rawTextContent).toBeUndefined();
+  });
+
+  it('toJSON stripMarkup is expr-only and assistant-only', () => {
+    const chatCtx = new ChatContext();
+    chatCtx.addMessage({ role: 'user', content: [mixed] });
+    chatCtx.addMessage({ role: 'assistant', content: [mixed] });
+
+    const stripped = chatCtx.toJSON({ stripMarkup: true });
+    expect(stripped.items).toEqual([
+      expect.objectContaining({ content: [mixed], role: 'user' }),
+      expect.objectContaining({ content: [mixedClean], role: 'assistant' }),
+    ]);
+
+    const raw = chatCtx.toJSON();
+    expect(raw.items).toEqual([
+      expect.objectContaining({ content: [mixed], role: 'user' }),
+      expect.objectContaining({ content: [mixed], role: 'assistant' }),
+    ]);
+  });
+});
+
 describe('ChatContext._summarize', () => {
   it('includes function calls in the summarization source and keeps chronological order', async () => {
     const ctx = new ChatContext();
@@ -466,6 +520,38 @@ describe('ChatContext._summarize', () => {
     expect(result).toBe(ctx);
     expect(llm.chatCalls).toBe(0);
     expect(ctx.items.map((item) => item.id)).toEqual(originalIds);
+  });
+});
+
+describe('ChatContext.remove', () => {
+  it('removes an item by id', () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'system', content: 'system' });
+    const target = ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+
+    ctx.remove(target.id);
+
+    expect(ctx.getById(target.id)).toBeUndefined();
+  });
+
+  it('removes an item by item', () => {
+    const ctx = new ChatContext();
+    const target = ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+    ctx.addMessage({ role: 'user', content: 'user again' });
+
+    ctx.remove(target);
+
+    expect(ctx.items).toHaveLength(2);
+  });
+
+  it('throws when removing a nonexistent item', () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+
+    expect(() => ctx.remove('nonexistent_id')).toThrow('Item not found: nonexistent_id');
   });
 });
 
@@ -1546,5 +1632,165 @@ describe('ChatContext.copy with toolCtx filter', () => {
 
     const filtered = ctx.copy({ toolCtx: new ToolContext([provider]) });
     expect(filtered.items.map((i) => ('name' in i ? i.name : ''))).toEqual(['code_runner']);
+  });
+});
+
+describe('AgentConfigUpdate.toJSON', () => {
+  it('renders Instructions to the same string as the proto encoder', () => {
+    const instructions = new Instructions({ audio: 'keep it short', text: 'use markdown' });
+    const item = new AgentConfigUpdate({ id: 'item_acu', instructions, createdAt: 1 });
+
+    const json = item.toJSON() as { instructions: unknown };
+    expect(json.instructions).toBe('keep it short');
+
+    const encoded = encodeChatItem(item);
+    expect(encoded.item.case).toBe('agentConfigUpdate');
+    if (encoded.item.case === 'agentConfigUpdate') {
+      expect(encoded.item.value.instructions).toBe(json.instructions);
+    }
+  });
+
+  it('passes a plain string through and omits an unset field', () => {
+    const withString = new AgentConfigUpdate({ instructions: 'be nice' }).toJSON() as {
+      instructions?: unknown;
+    };
+    expect(withString.instructions).toBe('be nice');
+
+    const withoutInstructions = new AgentConfigUpdate({ toolsAdded: ['x'] }).toJSON() as {
+      instructions?: unknown;
+    };
+    expect(withoutInstructions).not.toHaveProperty('instructions');
+  });
+});
+
+function equivalenceItems(): ChatItem[] {
+  return [
+    new ChatMessage({ id: 'm', role: 'user', content: ['hi'] }),
+    new FunctionCall({ id: 'c', callId: '1', name: 'f', args: '{}' }),
+    new FunctionCallOutput({ id: 'o', callId: '1', name: 'f', output: 'ok', isError: false }),
+    new AgentHandoffItem({ id: 'h', newAgentId: 'b' }),
+  ];
+}
+
+describe('ChatItem essential fields and fingerprints', () => {
+  it.each([
+    [0, { role: 'assistant' }],
+    [0, { content: ['hello'] }],
+    [0, { interrupted: true }],
+    [1, { args: '{"x": 1}' }],
+    [1, { name: 'g' }],
+    [1, { thoughtSignature: 'signature' }],
+    [1, { groupId: 'g' }],
+    [1, { extra: { k: 1 } }],
+    [2, { output: 'nope' }],
+    [2, { isError: true }],
+  ] as const)(
+    'essential field change at item %i breaks equivalence and fingerprint',
+    (index, update) => {
+      const items = equivalenceItems();
+      const changed = [...items];
+      changed[index] = Object.assign(
+        Object.create(Object.getPrototypeOf(items[index]!)),
+        items[index],
+        update,
+      );
+
+      expect(new ChatContext(items).isEquivalent(new ChatContext(changed))).toBe(false);
+      expect(chatItemFingerprint(items[index]!)).not.toBe(chatItemFingerprint(changed[index]!));
+    },
+  );
+
+  it('metadata does not affect equivalence or fingerprints', () => {
+    const items = equivalenceItems();
+    const changed = items.map((item) =>
+      Object.assign(Object.create(Object.getPrototypeOf(item)), item),
+    );
+    Object.assign(changed[0]!, { createdAt: 0, transcriptConfidence: 0.5, extra: { k: 1 } });
+    Object.assign(changed[1]!, { createdAt: 0 });
+    Object.assign(changed[2]!, { createdAt: 0 });
+    Object.assign(changed[3]!, { newAgentId: 'c' });
+
+    expect(new ChatContext(items).isEquivalent(new ChatContext(changed))).toBe(true);
+    expect(items.map(chatItemFingerprint)).toEqual(changed.map(chatItemFingerprint));
+  });
+
+  it('detects changed inline image data without keeping it', () => {
+    const image = (id: string, data: string): ImageContent => ({
+      id,
+      type: 'image_content',
+      image: data,
+      inferenceDetail: 'auto',
+      _cache: {},
+    });
+    const message = (content: ImageContent) =>
+      new ChatMessage({ role: 'user', content: [content] });
+    const original = image('img', 'data:image/png;base64,AA');
+    const fingerprint = chatItemFingerprint(message(original));
+
+    // the same id and length with different data
+    expect(chatItemFingerprint(message(image('img', 'data:image/png;base64,BB')))).not.toBe(
+      fingerprint,
+    );
+    // the same data in another object
+    expect(chatItemFingerprint(message(image('img', 'data:image/png;base64,AA')))).toBe(
+      fingerprint,
+    );
+    // the data edited in place
+    original.image = 'data:image/png;base64,CC';
+    expect(chatItemFingerprint(message(original))).not.toBe(fingerprint);
+    expect(fingerprint).not.toContain('base64');
+  });
+
+  it('compares audio frames by identity', () => {
+    const audio = (frame: object): AudioContent =>
+      ({ type: 'audio_content', frame: [frame] }) as unknown as AudioContent;
+    const frame = {};
+    const message = (content: AudioContent) =>
+      new ChatMessage({ id: 'm', role: 'user', content: [content] });
+
+    expect(
+      new ChatContext([message(audio(frame))]).isEquivalent(
+        new ChatContext([message(audio(frame))]),
+      ),
+    ).toBe(true);
+    expect(
+      new ChatContext([message(audio(frame))]).isEquivalent(new ChatContext([message(audio({}))])),
+    ).toBe(false);
+  });
+
+  it('fingerprints function-call extra as plain data', () => {
+    // an object that looks like chat content, but is not in a message's content
+    const call = new FunctionCall({
+      callId: '1',
+      name: 'f',
+      args: '{}',
+      extra: { metadata: { type: 'audio_content' } },
+    });
+    expect(() => chatItemFingerprint(call)).not.toThrow();
+  });
+
+  it('tracks image URLs and inference settings', () => {
+    const image = (
+      url: string,
+      inferenceDetail: ImageContent['inferenceDetail'],
+    ): ImageContent => ({
+      id: 'img',
+      type: 'image_content',
+      image: url,
+      inferenceDetail,
+      _cache: {},
+    });
+    const a = new ChatMessage({ role: 'user', content: [image('https://a.example/img', 'auto')] });
+    const changedUrl = new ChatMessage({
+      role: 'user',
+      content: [image('https://b.example/img', 'auto')],
+    });
+    const changedDetail = new ChatMessage({
+      role: 'user',
+      content: [image('https://a.example/img', 'high')],
+    });
+
+    expect(chatItemFingerprint(a)).not.toBe(chatItemFingerprint(changedUrl));
+    expect(chatItemFingerprint(a)).not.toBe(chatItemFingerprint(changedDetail));
   });
 });

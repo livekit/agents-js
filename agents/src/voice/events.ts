@@ -24,6 +24,7 @@ import type { SpeechHandle } from './speech_handle.js';
 
 export enum AgentSessionEventTypes {
   UserInputTranscribed = 'user_input_transcribed',
+  UserTranscriptionTimeout = 'user_transcription_timeout',
   AgentStateChanged = 'agent_state_changed',
   UserStateChanged = 'user_state_changed',
   ConversationItemAdded = 'conversation_item_added',
@@ -37,6 +38,7 @@ export enum AgentSessionEventTypes {
   /** Audio EOT detector emitted a per-turn prediction. */
   EotPrediction = 'eot_prediction',
   Error = 'error',
+  /** Emitted after activity teardown, when the session is no longer running. */
   Close = 'close',
 }
 
@@ -127,6 +129,30 @@ export const createUserInputTranscribedEvent = ({
   createdAt,
 });
 
+export type UserTranscriptionTimeoutEvent = {
+  type: 'user_transcription_timeout';
+  /** Total VAD-detected speech in the turn that produced no transcript, in milliseconds. */
+  speechDuration: number;
+  /** When VAD first detected speech for this untranscribed turn, in milliseconds since epoch. */
+  vadSpeechStartedAt: number;
+  createdAt: number;
+};
+
+export const createUserTranscriptionTimeoutEvent = ({
+  speechDuration,
+  vadSpeechStartedAt,
+  createdAt = Date.now(),
+}: {
+  speechDuration: number;
+  vadSpeechStartedAt: number;
+  createdAt?: number;
+}): UserTranscriptionTimeoutEvent => ({
+  type: 'user_transcription_timeout',
+  speechDuration,
+  vadSpeechStartedAt,
+  createdAt,
+});
+
 export type MetricsCollectedEvent = {
   type: 'metrics_collected';
   metrics: AgentMetrics;
@@ -188,6 +214,13 @@ export type FunctionToolsExecutedEvent = {
   functionCalls: FunctionCall[];
   functionCallOutputs: FunctionCallOutput[];
   createdAt: number;
+  /** Whether any output in this batch asks the model to reply. */
+  readonly hasToolReply: boolean;
+  /**
+   * Ask the model not to reply to this batch. Each output is still delivered, since a realtime
+   * model holds the call open until it is answered.
+   */
+  cancelToolReply(): void;
 };
 
 export const createFunctionToolsExecutedEvent = ({
@@ -204,6 +237,12 @@ export const createFunctionToolsExecutedEvent = ({
     functionCalls,
     functionCallOutputs,
     createdAt,
+    get hasToolReply() {
+      return functionCallOutputs.some((output) => output.replyRequired);
+    },
+    cancelToolReply() {
+      for (const output of functionCallOutputs) output.replyRequired = false;
+    },
   };
 };
 
@@ -438,6 +477,7 @@ export const createAgentFalseInterruptionEvent = ({
 
 export type AgentEvent =
   | UserInputTranscribedEvent
+  | UserTranscriptionTimeoutEvent
   | UserStateChangedEvent
   | AgentStateChangedEvent
   | MetricsCollectedEvent

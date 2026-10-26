@@ -4,6 +4,7 @@
 //
 import {
   type APIConnectOptions,
+  APIConnectionError,
   type AudioBuffer,
   AudioByteStream,
   ChatMessage,
@@ -12,6 +13,7 @@ import {
   Task,
   createTimedString,
   delay,
+  getBaseLanguage,
   log,
   normalizeLanguage,
   stt,
@@ -20,13 +22,102 @@ import {
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { RawData } from 'ws';
 import { WebSocket } from 'ws';
-import type { STTEncoding, STTModels, VoiceFocus } from './models.js';
+import type { PiiRedactionSubstitution, STTEncoding, STTModels, VoiceFocus } from './models.js';
 
 // Speech models in the Universal-3 Pro family, which share the same parameter support.
-const U3_PRO_MODELS = ['u3-rt-pro', 'u3-rt-pro-beta-1', 'universal-3-5-pro'] as const;
+const U3_PRO_MODELS = [
+  'u3-rt-pro',
+  'u3-rt-pro-beta-1',
+  'universal-3-5-pro',
+  'universal-3-6-pro',
+] as const;
+
+const U3_PRO_ONLY_PARAMS = [
+  'prompt',
+  'agentContext',
+  'previousContextNTurns',
+  'continuousPartials',
+  'interruptionDelay',
+  'voiceFocus',
+  'voiceFocusThreshold',
+  'mode',
+  'languageCodes',
+] as const;
+
+const MAX_LANGUAGE_CODES = 10;
+const MAX_AGENT_CONTEXT_CHARS = 1750;
 
 function isU3ProModel(model: STTModels): boolean {
   return U3_PRO_MODELS.includes(model as (typeof U3_PRO_MODELS)[number]);
+}
+
+function validateModelOptions(opts: Partial<STTOptions>, speechModel: STTModels): void {
+  if (isU3ProModel(speechModel)) return;
+  for (const param of U3_PRO_ONLY_PARAMS) {
+    if (opts[param] !== undefined) {
+      throw new Error(
+        `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
+      );
+    }
+  }
+}
+
+function normalizeLanguageCodes(languageCodes: string | string[]): string[] {
+  const codes =
+    typeof languageCodes === 'string' ? (languageCodes ? [languageCodes] : []) : languageCodes;
+  const normalized = [...new Set(codes.map(getBaseLanguage))];
+  if (normalized.length > MAX_LANGUAGE_CODES) {
+    throw new Error(
+      `languageCodes accepts at most ${MAX_LANGUAGE_CODES} codes (got ${normalized.length} after normalization)`,
+    );
+  }
+  if (normalized.includes('multi') && normalized.length > 1) {
+    throw new Error(
+      "'multi' routes to the unsteered multilingual model and cannot be combined with other language codes",
+    );
+  }
+  return normalized;
+}
+
+function validateAgentContext(agentContext: string | undefined): void {
+  const length = agentContext === undefined ? 0 : Array.from(agentContext).length;
+  if (length > MAX_AGENT_CONTEXT_CHARS) {
+    throw new Error(
+      `agentContext exceeds maximum length of ${MAX_AGENT_CONTEXT_CHARS} characters (got ${length})`,
+    );
+  }
+}
+
+function validateRedactionOptions(opts: Partial<STTOptions>): void {
+  if (opts.redactPii) return;
+  for (const param of ['redactPiiPolicies', 'redactPiiSub'] as const) {
+    if (opts[param] !== undefined) {
+      throw new Error(`The '${param}' parameter requires 'redactPii' to be enabled.`);
+    }
+  }
+}
+
+function emitsPartialTurns(opts: Pick<STTOptions, 'includePartialTurns' | 'redactPii'>): boolean {
+  return opts.includePartialTurns ?? opts.redactPii !== true;
+}
+
+function normalizeUpdateOptions(
+  opts: Partial<STTOptions>,
+  speechModel: STTModels,
+): Partial<STTOptions> {
+  const nextOpts = { ...opts };
+  if (nextOpts.speechModel === 'u3-pro') nextOpts.speechModel = 'universal-3-5-pro';
+  // UpdateConfiguration cannot change the model of an existing provider session.
+  if (nextOpts.speechModel !== undefined && nextOpts.speechModel !== speechModel) {
+    throw new Error('speechModel cannot be changed via updateOptions; create a new STT instead.');
+  }
+  delete nextOpts.speechModel;
+  validateModelOptions(nextOpts, speechModel);
+  validateAgentContext(nextOpts.agentContext);
+  if (nextOpts.languageCodes !== undefined) {
+    nextOpts.languageCodes = normalizeLanguageCodes(nextOpts.languageCodes);
+  }
+  return nextOpts;
 }
 
 // AssemblyAI Universal-Streaming (v3) message envelope. All fields are optional
@@ -64,6 +155,12 @@ function speechDataMetadata(data: StreamEventMessage): stt.SpeechData['metadata'
     assemblyai.languageConfidence = data.language_confidence;
   }
 
+  // Universal-3 Pro models ramp this from 0 toward 1 while holding a turn open,
+  // allowing callers to trigger eager generation before the final transcript.
+  if (typeof data.end_of_turn_confidence === 'number') {
+    assemblyai.endOfTurnConfidence = data.end_of_turn_confidence;
+  }
+
   if (Object.keys(assemblyai).length === 0) return undefined;
 
   return { assemblyai };
@@ -79,6 +176,7 @@ export interface STTOptions {
    */
   bufferSizeMs: number;
   encoding: STTEncoding;
+  /** Model selected at construction. Create a new STT to switch models. */
   speechModel: STTModels;
   languageDetection?: boolean;
   /**
@@ -92,6 +190,10 @@ export interface STTOptions {
   /** Maximum silence (ms) before end-of-turn is forced regardless of confidence. */
   maxTurnSilence?: number;
   formatTurns?: boolean;
+  /** Emit additional partial transcripts during long turns. Universal-3 Pro only. */
+  continuousPartials?: boolean;
+  /** Delay before the first early partial is emitted, in milliseconds. Universal-3 Pro only. */
+  interruptionDelay?: number;
   keytermsPrompt?: string[];
   /** Only supported with the Universal-3 Pro model family. */
   prompt?: string;
@@ -100,14 +202,7 @@ export interface STTOptions {
   /** Only supported with the Universal-3 Pro model family. Set at connection time only. */
   previousContextNTurns?: number;
   vadThreshold?: number;
-  /**
-   * Enable speaker diarization. Note: AssemblyAI will return per-word speaker
-   * labels, but the JS framework's `stt.SpeechData` type does not yet expose
-   * a `speakerId` field (unlike the Python framework), so the labels are not
-   * currently surfaced on emitted events. Setting this to `true` still has
-   * effect server-side. Once the base `SpeechData` interface gains speaker
-   * support, `#processStreamEvent` should forward `data.words[].speaker` too.
-   */
+  /** Enable speaker diarization; the turn's speaker label is surfaced as `speakerId`. */
   speakerLabels?: boolean;
   maxSpeakers?: number;
   domain?: string;
@@ -120,11 +215,35 @@ export interface STTOptions {
    * or `max_accuracy`. Explicit turn-silence values still take precedence over mode defaults.
    */
   mode?: 'min_latency' | 'balanced' | 'max_accuracy';
+  /** Languages to steer transcription toward. Universal-3 Pro only. */
+  languageCodes?: string | string[];
+  /**
+   * Redact PII from final turns. AssemblyAI disables partial turns when this is enabled unless
+   * `includePartialTurns` is set; partials are never redacted. Connect-time only.
+   */
+  redactPii?: boolean;
+  /**
+   * PII policies to redact, such as `person_name` or `phone_number`. Redacts all detected PII
+   * when unset. Requires `redactPii`. Connect-time only.
+   */
+  redactPiiPolicies?: string[];
+  /**
+   * Replacement for redacted PII: `hash` (AssemblyAI default) or `entity_name`, which writes
+   * `[PERSON_NAME]`-style placeholders. Requires `redactPii`. Connect-time only.
+   */
+  redactPiiSub?: PiiRedactionSubstitution;
+  /**
+   * Emit partial (non-final) turns. AssemblyAI defaults this to true, or false when `redactPii`
+   * is enabled. Connect-time only.
+   */
+  includePartialTurns?: boolean;
+  /** Filter profanity from transcripts. Connect-time only. */
+  filterProfanity?: boolean;
   /**
    * When the model supports it, let an `AgentSession` push each assistant reply into
-   * `agentContext` so it is carried into the model's conversation context. Defaults to false;
-   * set true to enable. Prior user turns are carried automatically by the model regardless of
-   * this flag. Ignored on models without context support.
+   * `agentContext` so it is carried into the model's conversation context. Defaults to true for
+   * Universal-3 Pro models; set false to disable. Prior user turns are carried automatically by
+   * the model regardless of this flag. Ignored on models without context support.
    */
   agentContextCarryover?: boolean;
   baseUrl: string;
@@ -156,6 +275,13 @@ export class STT extends stt.STT {
   }
 
   constructor(opts: Partial<STTOptions> = {}) {
+    validateAgentContext(opts.agentContext);
+    validateRedactionOptions(opts);
+    if (opts.languageCodes !== undefined) {
+      const languageCodes = normalizeLanguageCodes(opts.languageCodes);
+      opts.languageCodes = languageCodes.length > 0 ? languageCodes : undefined;
+    }
+
     // u3-rt-pro family — "u3-pro" is normalized below — and is opt-in via the user)
     const rawModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
@@ -166,10 +292,11 @@ export class STT extends stt.STT {
     }
     super({
       streaming: true,
-      interimResults: true,
+      interimResults: emitsPartialTurns(opts),
       alignedTranscript: 'word',
       keyterms: true,
-      chatContext: (opts.agentContextCarryover ?? false) && supportsCarryover,
+      diarization: opts.speakerLabels === true,
+      chatContext: (opts.agentContextCarryover ?? true) && supportsCarryover,
     });
 
     if (opts.speechModel === 'u3-pro') {
@@ -178,22 +305,7 @@ export class STT extends stt.STT {
     }
 
     const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;
-    if (!isU3ProModel(speechModel)) {
-      for (const param of [
-        'prompt',
-        'agentContext',
-        'previousContextNTurns',
-        'voiceFocus',
-        'voiceFocusThreshold',
-        'mode',
-      ] as const) {
-        if (opts[param] !== undefined) {
-          throw new Error(
-            `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
-          );
-        }
-      }
-    }
+    validateModelOptions(opts, speechModel);
 
     const apiKey = opts.apiKey ?? defaultSTTOptions.apiKey;
     if (!apiKey) {
@@ -220,13 +332,14 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    // session keyterms so a user update doesn't drop them)
-    const nextOpts = { ...opts };
+    const nextOpts = normalizeUpdateOptions(opts, this.#opts.speechModel);
+    validateRedactionOptions({ ...this.#opts, ...nextOpts });
     if (nextOpts.keytermsPrompt !== undefined) {
       this.#userKeyterms = [...nextOpts.keytermsPrompt];
       nextOpts.keytermsPrompt = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
     }
     this.#opts = { ...this.#opts, ...nextOpts };
+    this.updateCapabilities({ interimResults: emitsPartialTurns(this.#opts) });
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
@@ -259,9 +372,12 @@ export class STT extends stt.STT {
   }
 
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    if (!this.capabilities.chatContext) return;
     const chatItem = ev.item;
     if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
-      this.updateOptions({ agentContext: chatItem.textContent });
+      this.updateOptions({
+        agentContext: Array.from(chatItem.textContent).slice(-MAX_AGENT_CONTEXT_CHARS).join(''),
+      });
     }
   }
 
@@ -309,18 +425,27 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
+    opts = normalizeUpdateOptions(opts, this.#opts.speechModel);
+    validateRedactionOptions({ ...this.#opts, ...opts });
     this.#opts = { ...this.#opts, ...opts };
 
     const configMsg: Record<string, unknown> = { type: 'UpdateConfiguration' };
     if (opts.prompt !== undefined) configMsg.prompt = opts.prompt;
     if (opts.agentContext !== undefined) configMsg.agent_context = opts.agentContext;
     if (opts.keytermsPrompt !== undefined) configMsg.keyterms_prompt = opts.keytermsPrompt;
+    if (opts.languageCodes !== undefined) configMsg.language_codes = opts.languageCodes;
     if (opts.maxTurnSilence !== undefined) configMsg.max_turn_silence = opts.maxTurnSilence;
     if (opts.minTurnSilence !== undefined) configMsg.min_turn_silence = opts.minTurnSilence;
     if (opts.endOfTurnConfidenceThreshold !== undefined) {
       configMsg.end_of_turn_confidence_threshold = opts.endOfTurnConfidenceThreshold;
     }
     if (opts.vadThreshold !== undefined) configMsg.vad_threshold = opts.vadThreshold;
+    if (opts.continuousPartials !== undefined) {
+      configMsg.continuous_partials = opts.continuousPartials;
+    }
+    if (opts.interruptionDelay !== undefined) {
+      configMsg.interruption_delay = opts.interruptionDelay;
+    }
 
     // Only send if any actual fields (besides `type`) were specified.
     if (Object.keys(configMsg).length > 1) {
@@ -350,7 +475,7 @@ export class SpeechStream extends stt.SpeechStream {
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           if (retries >= maxRetry) {
-            throw new Error(`failed to connect to AssemblyAI after ${retries} attempts: ${e}`);
+            throw e;
           }
 
           const retryDelaySeconds = Math.min(retries * 5, 10);
@@ -379,7 +504,7 @@ export class SpeechStream extends stt.SpeechStream {
     let maxSilence = this.#opts.maxTurnSilence;
     if (isU3ProModel(this.#opts.speechModel)) {
       if (minSilence === undefined && this.#opts.mode === undefined) minSilence = 100;
-      if (maxSilence === undefined) maxSilence = minSilence;
+      if (maxSilence === undefined && this.#opts.mode === undefined) maxSilence = minSilence;
     }
 
     // Default language_detection to true for multilingual / u3-rt-pro-family models, false otherwise.
@@ -392,6 +517,8 @@ export class SpeechStream extends stt.SpeechStream {
       encoding: this.#opts.encoding,
       speech_model: this.#opts.speechModel,
       format_turns: this.#opts.formatTurns,
+      continuous_partials: this.#opts.continuousPartials,
+      interruption_delay: this.#opts.interruptionDelay,
       end_of_turn_confidence_threshold: this.#opts.endOfTurnConfidenceThreshold,
       min_turn_silence: minSilence,
       max_turn_silence: maxSilence,
@@ -400,6 +527,10 @@ export class SpeechStream extends stt.SpeechStream {
           ? JSON.stringify(this.#opts.keytermsPrompt)
           : undefined,
       language_detection: languageDetection,
+      language_codes:
+        this.#opts.languageCodes !== undefined && this.#opts.languageCodes.length > 0
+          ? JSON.stringify(this.#opts.languageCodes)
+          : undefined,
       inactivity_timeout: this.#opts.inactivityTimeout,
       prompt: this.#opts.prompt,
       agent_context: this.#opts.agentContext,
@@ -411,6 +542,14 @@ export class SpeechStream extends stt.SpeechStream {
       voice_focus: this.#opts.voiceFocus,
       voice_focus_threshold: this.#opts.voiceFocusThreshold,
       mode: this.#opts.mode,
+      redact_pii: this.#opts.redactPii,
+      redact_pii_policies:
+        this.#opts.redactPiiPolicies !== undefined && this.#opts.redactPiiPolicies.length > 0
+          ? JSON.stringify(this.#opts.redactPiiPolicies)
+          : undefined,
+      redact_pii_sub: this.#opts.redactPiiSub,
+      include_partial_turns: this.#opts.includePartialTurns,
+      filter_profanity: this.#opts.filterProfanity,
     };
 
     const url = new URL(`${this.#opts.baseUrl}/v3/ws`);
@@ -434,8 +573,16 @@ export class SpeechStream extends stt.SpeechStream {
 
     await new Promise<void>((resolve, reject) => {
       ws.on('open', () => resolve());
-      ws.on('error', (error) => reject(error));
-      ws.on('close', (code) => reject(new Error(`WebSocket returned ${code}`)));
+      ws.on('error', (error) =>
+        reject(
+          new APIConnectionError({ message: `AssemblyAI connection failed: ${error.message}` }),
+        ),
+      );
+      ws.on('close', (code) =>
+        reject(
+          new APIConnectionError({ message: `AssemblyAI WebSocket closed with code ${code}` }),
+        ),
+      );
     });
 
     return ws;
@@ -451,7 +598,11 @@ export class SpeechStream extends stt.SpeechStream {
         ws.once('close', (code, reason) => {
           if (!closing) {
             this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            reject(
+              new APIConnectionError({
+                message: `AssemblyAI WebSocket closed unexpectedly with code ${code}`,
+              }),
+            );
           }
         });
       });
@@ -517,7 +668,13 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`AssemblyAI: error processing message: ${msg}`);
+            this.#logger.error(
+              {
+                error: err,
+                'lk.pii.message': msg.toString(),
+              },
+              'AssemblyAI failed to process message',
+            );
             reject(err);
           }
         };
@@ -602,6 +759,9 @@ export class SpeechStream extends stt.SpeechStream {
     const transcript = data.transcript ?? '';
     const language = normalizeLanguage(data.language_code ?? 'en');
     const metadata = speechDataMetadata(data);
+    // AssemblyAI labels speakers "A", "B", ... and uses "UNKNOWN" when it can't attribute one.
+    const speakerId =
+      data.speaker_label && data.speaker_label !== 'UNKNOWN' ? data.speaker_label : null;
 
     // Word timestamps are in milliseconds:
     // https://www.assemblyai.com/docs/api-reference/streaming-api/streaming-api#receive.receiveTurn.words
@@ -615,13 +775,18 @@ export class SpeechStream extends stt.SpeechStream {
       }),
     );
 
+    // AssemblyAI only guarantees redaction of `transcript`, so redacted final turns emit no
+    // per-word or utterance text; turn timing and confidence still come from `words`.
+    const redactFinal = this.#opts.redactPii === true && endOfTurn;
+    const emittedWords = redactFinal ? [] : timedWords;
+
     let startTime = 0;
     let endTime = 0;
     let confidence = 0;
 
     // `words` are cumulative for the turn — emit as an interim transcript.
     if (timedWords.length > 0) {
-      const interimText = timedWords.map((w) => w.text).join(' ');
+      const interimText = redactFinal ? transcript : timedWords.map((w) => w.text).join(' ');
       startTime = timedWords[0]!.startTime ?? 0;
       endTime = timedWords[timedWords.length - 1]!.endTime ?? 0;
       confidence = this.#averageConfidence(timedWords);
@@ -635,7 +800,8 @@ export class SpeechStream extends stt.SpeechStream {
             startTime,
             endTime,
             confidence,
-            words: timedWords,
+            words: emittedWords,
+            speakerId,
             ...(metadata ? { metadata } : {}),
           },
         ],
@@ -649,8 +815,10 @@ export class SpeechStream extends stt.SpeechStream {
         this.#lastPreflightStartTime = startTime;
       }
 
+      // A redacted final preflight carries the cumulative transcript, so it spans the whole turn.
+      const preflightStartTime = redactFinal ? startTime : this.#lastPreflightStartTime;
       const utteranceWords = timedWords.filter(
-        (w) => w.startTime !== undefined && w.startTime >= this.#lastPreflightStartTime,
+        (w) => w.startTime !== undefined && w.startTime >= preflightStartTime,
       );
       const utteranceConfidence = this.#averageConfidence(utteranceWords);
 
@@ -659,11 +827,12 @@ export class SpeechStream extends stt.SpeechStream {
         alternatives: [
           {
             language,
-            text: utterance,
-            startTime: this.#lastPreflightStartTime,
+            text: redactFinal ? transcript : utterance,
+            startTime: preflightStartTime,
             endTime,
             confidence: utteranceConfidence,
-            words: utteranceWords,
+            words: redactFinal ? [] : utteranceWords,
+            speakerId,
             ...(metadata ? { metadata } : {}),
           },
         ],
@@ -684,7 +853,8 @@ export class SpeechStream extends stt.SpeechStream {
             startTime,
             endTime,
             confidence,
-            words: timedWords,
+            words: emittedWords,
+            speakerId,
             ...(metadata ? { metadata } : {}),
           },
         ],

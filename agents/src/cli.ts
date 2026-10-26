@@ -31,6 +31,14 @@ const runServer = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
   const logger = log();
 
+  if (!args.production && !args.room && !args.cliAddr) {
+    logger.warn(
+      'dev mode is deprecated and will be removed in a future release; ' +
+        'use `lk agent dev` instead ' +
+        '(https://docs.livekit.io/reference/developer-tools/livekit-cli/#setup)',
+    );
+  }
+
   // though `production` is defined in ServerOptions, it will always be overridden by CLI.
   const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
   const serverOptions = new ServerOptions({ ...opts, production: args.production });
@@ -50,7 +58,7 @@ const runServer = async (args: CliArgs) => {
     });
   }
 
-  process.once('SIGINT', async () => {
+  const onSigint = async () => {
     logger.debug('SIGINT received in CLI');
     // allow C-c C-c for force interrupt
     process.once('SIGINT', () => {
@@ -68,9 +76,15 @@ const runServer = async (args: CliArgs) => {
     await server.close();
     logger.debug('worker closed due to SIGINT.');
     process.exit(130); // SIGINT exit code
+  };
+  process.once('SIGINT', () => {
+    onSigint().catch((error) => {
+      logger.error(error, 'failed to close worker after SIGINT');
+      process.exit(1);
+    });
   });
 
-  process.once('SIGTERM', async () => {
+  const onSigterm = async () => {
     logger.debug('SIGTERM received in CLI.');
     if (args.production) {
       try {
@@ -83,6 +97,12 @@ const runServer = async (args: CliArgs) => {
     await server.close();
     logger.debug('worker closed due to SIGTERM.');
     process.exit(143); // SIGTERM exit code
+  };
+  process.once('SIGTERM', () => {
+    onSigterm().catch((error) => {
+      logger.error(error, 'failed to close worker after SIGTERM');
+      process.exit(1);
+    });
   });
 
   try {
@@ -176,7 +196,11 @@ export const runApp = (opts: ServerOptions) => {
 
   program
     .command('dev')
-    .description('Start the worker in development mode')
+    .description(
+      'Start the worker in development mode\n\n' +
+        'Deprecated: use lk agent dev instead ' +
+        '(https://docs.livekit.io/reference/developer-tools/livekit-cli/#setup).',
+    )
     .addOption(logLevelOption('debug'))
     .addOption(
       // Set by `lk agent dev`: address of the CLI's dev channel the agent reports
@@ -239,6 +263,7 @@ export const runApp = (opts: ServerOptions) => {
         agentPath: opts.agent,
         connectAddr: commandOptions.connectAddr,
         record: commandOptions.record === true,
+        sessionEndTimeout: opts.sessionEndTimeout,
       }).catch((error) => {
         log().fatal(`console mode failed: ${formatErrorMessage(error)}`);
         process.exit(1);

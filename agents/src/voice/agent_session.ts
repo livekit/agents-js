@@ -4,8 +4,13 @@
 import { type JsonObject, Struct } from '@bufbuild/protobuf';
 import { Mutex } from '@livekit/mutex';
 import { AgentSession as pb } from '@livekit/protocol';
-import type { AudioFrame, Room } from '@livekit/rtc-node';
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import {
+  type AudioFrame,
+  ParticipantKind,
+  type RemoteParticipant,
+  type Room,
+} from '@livekit/rtc-node';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { context as otelContext, trace } from '@opentelemetry/api';
@@ -13,16 +18,18 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
+import { isAPIError } from '../_exceptions.js';
 import type { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import {
-  LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
   TurnDetector as InferenceTurnDetector,
   VAD as InferenceVAD,
   type LLMModels,
+  type RealtimeModels,
   type STTModelString,
   type TTSModelString,
+  llmFromModelString,
 } from '../inference/index.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
@@ -32,6 +39,7 @@ import {
   ChatContext,
   ChatMessage,
   type Instructions,
+  concatInstructions,
 } from '../llm/chat_context.js';
 import type {
   LLM,
@@ -41,23 +49,43 @@ import type {
   ToolContextEntry,
   ToolContextLike,
 } from '../llm/index.js';
-import { ToolContext, toToolContext } from '../llm/index.js';
+import {
+  DuplexModel,
+  DuplexRealtimeAdapter,
+  ToolContext,
+  ToolError,
+  toToolContext,
+} from '../llm/index.js';
+import { LLM as BaseLLM } from '../llm/llm.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
+import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
-import { traceTypes, tracer } from '../telemetry/index.js';
+import {
+  genAI,
+  participantAttributes,
+  recordException,
+  traceTypes,
+  tracer,
+} from '../telemetry/index.js';
+import {
+  DEFAULT_SPEECH_STEERING_OPTIONS,
+  type SpeechSteeringOptions,
+  steeringInstructions,
+} from '../tts/provider_format.js';
 import type { TTS, TTSError } from '../tts/tts.js';
 import {
   DEFAULT_API_CONNECT_OPTIONS,
   DEFAULT_SESSION_CONNECT_OPTIONS,
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
+  recordingEnabled,
 } from '../types.js';
-import { Event, Task, asError } from '../utils.js';
+import { Event, Task, asError, waitUntilAborted } from '../utils.js';
 import type { VAD } from '../vad.js';
-import type { Agent } from './agent.js';
+import { type Agent, AgentTask } from './agent.js';
 import {
   AgentActivity,
   type ReusableResources,
@@ -86,6 +114,7 @@ import {
   type UserInputTranscribedEvent,
   type UserState,
   type UserStateChangedEvent,
+  type UserTranscriptionTimeoutEvent,
   createAgentStateChangedEvent,
   createCloseEvent,
   createConversationItemAddedEvent,
@@ -97,6 +126,7 @@ import {
   type KeytermsOptions,
   resolveKeytermsOptions,
 } from './keyterm_detection.js';
+import { releaseTts, retainTts } from './model_refs.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
@@ -118,6 +148,10 @@ import type {
 import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
+const SIP_RULE_ID_ATTR = 'sip.ruleID';
+const DEFAULT_AEC_WARMUP_DURATION = 3000;
+const LOOP_STALL_EVENT = 'event_loop_blocked';
+
 export interface AgentSessionUsage {
   /** List of usage summaries, one per model/provider combination. */
   modelUsage: Array<Partial<ModelUsage>>;
@@ -126,12 +160,15 @@ export interface AgentSessionUsage {
 /**
  * Granular control over which recording features are active.
  *
- * All keys default to `true` when omitted, so `{ logs: false }` means "record
- * everything except logs". Pass to {@link AgentSession.start} as `record`:
+ * Content recording keys default to `true` when omitted, so `{ logs: false }` means "record
+ * everything except logs". Input deltas are opt-in. Redaction defaults to the project setting;
+ * `false` is ignored when redaction is enabled globally for the project. Pass to
+ * {@link AgentSession.start} as `record`:
  *
  * - `record: true` — all on (backward compatible)
  * - `record: false` — all off (backward compatible)
  * - `record: { audio: true, traces: false }` — granular
+ * - `record: { redaction: true }` — enable redaction for the session
  */
 export interface RecordingOptions {
   /** Record session audio. Defaults to `true`. */
@@ -142,6 +179,15 @@ export interface RecordingOptions {
   logs?: boolean;
   /** Upload the conversation transcript (chat history). Defaults to `true`. */
   transcript?: boolean;
+  /** Enable redaction. `false` does not disable project redaction. */
+  redaction?: boolean;
+  /**
+   * Record only input changes on successive LLM trace spans. The model still receives the full
+   * input. Delta spans link to `lk.input.base_span_id`; reconstruct the record by removing its
+   * last `lk.input.dropped_from_base` entries and appending the delta. Unchanged system
+   * instructions are inherited from the base span. Defaults to `false`.
+   */
+  inputDelta?: boolean;
 }
 
 /** @internal Recording options with every category resolved to a boolean. */
@@ -152,6 +198,8 @@ const RECORDING_ALL_ON: ResolvedRecordingOptions = {
   traces: true,
   logs: true,
   transcript: true,
+  redaction: false,
+  inputDelta: false,
 };
 
 const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
@@ -159,14 +207,16 @@ const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
   traces: false,
   logs: false,
   transcript: false,
+  redaction: false,
+  inputDelta: false,
 };
 
 const idleHoldStorage = new AsyncLocalStorage<boolean>();
 
 /**
  * Resolve a `record` argument into explicit per-category flags. A boolean turns
- * every category on or off; a partial object is merged onto all-on so omitted
- * keys default to `true`.
+ * every content category on or off; a partial object is merged onto those defaults.
+ * Input deltas remain off unless explicitly enabled.
  *
  * @internal
  */
@@ -184,20 +234,25 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   useTtsAlignedTranscript: boolean;
   maxToolSteps: number;
   userAwayTimeout: number | null;
+  transcriptionTimeout: number | null;
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
   ttsTextTransforms: readonly TextTransform[] | null;
+  /** Resolved per-category recording options for this session. */
+  recordingOptions: ResolvedRecordingOptions;
 }
 
 export const defaultAgentSessionOptions = {
   maxToolSteps: 3,
   userAwayTimeout: 15.0,
+  transcriptionTimeout: null,
   aecWarmupDuration: 3000,
   ttsReadIdleTimeout: 10_000,
   forwardAudioIdleTimeout: 10_000,
   turnHandling: {},
   useTtsAlignedTranscript: true,
   ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
+  expressive: false,
 } as const satisfies AgentSessionOptions;
 
 /** @deprecated {@link VoiceOptions} has been flattened onto to {@link AgentSessionOptions} */
@@ -230,6 +285,7 @@ export type TurnDetectionMode =
 
 export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
+  [AgentSessionEventTypes.UserTranscriptionTimeout]: (ev: UserTranscriptionTimeoutEvent) => void;
   [AgentSessionEventTypes.AgentStateChanged]: (ev: AgentStateChangedEvent) => void;
   [AgentSessionEventTypes.UserStateChanged]: (ev: UserStateChangedEvent) => void;
   [AgentSessionEventTypes.ConversationItemAdded]: (ev: ConversationItemAddedEvent) => void;
@@ -254,7 +310,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * one as absent). Pass `null` to opt out entirely.
    */
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
@@ -266,6 +322,11 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   /** @deprecated use top-level SessionOptions fields instead */
   voiceOptions?: Partial<VoiceOptions>;
 
+  /**
+   * Maximum consecutive tool calls per LLM turn. Not enforced for realtime models that generate
+   * the tool reply server-side.
+   * @defaultValue 3
+   */
   maxToolSteps?: number;
   /**
    * @deprecated Use `turnHandling.preemptiveGeneration` instead.
@@ -281,9 +342,20 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   userAwayTimeout?: number | null;
 
   /**
+   * Emit `user_transcription_timeout` when VAD detects user speech during the user's turn but no
+   * non-empty final transcript arrives within this many milliseconds after the speech ends. This
+   * can happen because STT failed or because audio was intentionally withheld from STT, such as
+   * during AEC warmup or uninterruptible agent speech. A non-empty final transcript satisfies the
+   * timeout for the current turn even if adaptive interruption detection later discards it as a
+   * backchannel. Requires both VAD and STT. Set to `null` to disable.
+   * @defaultValue null
+   */
+  transcriptionTimeout?: number | null;
+
+  /**
    * Duration in milliseconds for AEC (Acoustic Echo Cancellation) warmup, during which
    * interruptions from audio activity are suppressed. Set to `null` to disable.
-   * @defaultValue 3000
+   * Defaults to 3000, or `null` for outbound SIP calls.
    */
   aecWarmupDuration?: number | null;
 
@@ -323,9 +395,96 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * and `filter_emoji`; pass `null` to disable text transforms.
    */
   ttsTextTransforms?: readonly TextTransform[] | null;
+
+  /**
+   * Let the LLM steer how the agent sounds.
+   *
+   * When enabled, the provider's markup guide is injected into the LLM prompt so it can
+   * emit inline delivery tags (emotion, pacing, non-verbal sounds), which are rendered by
+   * the TTS and stripped from the transcript. Pass an {@link ExpressiveOptions} object to
+   * steer or override the injected instructions. Requires an
+   * {@link inference.TTS | inference TTS} with a model that declares a markup dialect; it
+   * stays off otherwise.
+   *
+   * @defaultValue false
+   */
+  expressive?: boolean | ExpressiveOptions;
 };
 
+/**
+ * Configuration for the expressive pipeline, passed as `AgentSession({ expressive: ... })`.
+ *
+ * Controls how TTS markup instructions are injected into the LLM when expressive is
+ * enabled. All keys are optional; common shapes:
+ *
+ * - `{ speechSteering: {...} }` — steer delivery and non-verbal sounds on top of the
+ *   provider-agnostic default instructions.
+ * - `{ ttsInstructionsTemplate: '...' }` — a fully custom prompt.
+ * - `{ ttsInstructionsAppend: '...' }` — your own rules appended to the template.
+ *
+ * Any explicit template overrides the default; unset parts fall back to the
+ * provider-agnostic default.
+ */
+export interface ExpressiveOptions {
+  speechSteering?: SpeechSteeringOptions;
+  ttsInstructionsTemplate?: Instructions | string;
+  ttsInstructionsAppend?: string;
+}
+
+/** The placeholder the expressive template substitutes the provider's markup guide into. */
+export const TTS_INSTRUCTIONS_PLACEHOLDER = '{tts.markup.llm_instructions}';
+
+export const DEFAULT_EXPRESSIVE_OPTIONS: ExpressiveOptions = {
+  ttsInstructionsTemplate:
+    'You can control how you speak using the following formatting tags. ' +
+    'Use them when appropriate to make your speech more expressive and natural:\n\n' +
+    TTS_INSTRUCTIONS_PLACEHOLDER,
+  speechSteering: DEFAULT_SPEECH_STEERING_OPTIONS,
+};
+
+function appendInstructions(template: Instructions | string, extra: string): Instructions | string {
+  // concatenate the *raw* template text so any {placeholders} survive until render
+  return concatInstructions(template, '\n\n' + extra);
+}
+
+/**
+ * Resolve a user {@link ExpressiveOptions} to a concrete options object for a provider.
+ *
+ * Starts from `defaults`, renders `speechSteering` into per-provider delivery guidelines
+ * appended to the template, then applies any explicit `ttsInstructionsTemplate` override
+ * and `ttsInstructionsAppend` (last, so the user's free-form rules always win). Steering
+ * fields the user doesn't set fall back to `defaults`' `speechSteering`, so an explicit
+ * value always wins over a default. The returned object always has
+ * `ttsInstructionsTemplate` and `speechSteering` (never `ttsInstructionsAppend`);
+ * `speechSteering` passes through so injection can filter the advertised markup vocabulary
+ * (`TTSMarkup.llmInstructions`) with it.
+ */
+export function resolveExpressiveOptions(
+  expr: ExpressiveOptions,
+  options: { providerKey: string; defaults: ExpressiveOptions },
+): ExpressiveOptions {
+  const { providerKey, defaults } = options;
+  let ttsTemplate = expr.ttsInstructionsTemplate ?? defaults.ttsInstructionsTemplate!;
+
+  const steering: SpeechSteeringOptions = {
+    ...(defaults.speechSteering ?? {}),
+    ...(expr.speechSteering ?? {}),
+  };
+  const fragment = steeringInstructions(providerKey, steering);
+  if (fragment) {
+    ttsTemplate = appendInstructions(ttsTemplate, fragment);
+  }
+
+  if (expr.ttsInstructionsAppend) {
+    ttsTemplate = appendInstructions(ttsTemplate, expr.ttsInstructionsAppend);
+  }
+
+  return { ttsInstructionsTemplate: ttsTemplate, speechSteering: steering };
+}
+
 export type AgentSessionUpdateOptions = {
+  /** Change expressive TTS delivery for subsequent replies. */
+  expressive?: boolean | ExpressiveOptions;
   /** Configuration updates for turn handling. */
   turnHandling?: {
     /**
@@ -360,7 +519,17 @@ type ActivityTransitionOptions = {
   newActivity?: 'start' | 'resume';
   blockedTasks?: Task<any>[];
   waitOnEnter?: boolean;
+  /** Parent for the new activity's `start_agent_activity` span (the session's startup bar). */
+  traceContext?: Context;
 };
+
+/** True when the surrounding job runs under a text simulation (the simulated
+ * user interacts over text streams only). */
+function resolveTextOnly(): boolean {
+  const jobCtx = getJobContext(false);
+  const simCtx = jobCtx?.simulationContext();
+  return simCtx !== undefined && simCtx.simulationMode === SimulationMode.TEXT;
+}
 
 export class AgentSession<
   UserData = UnknownUserData,
@@ -395,22 +564,62 @@ export class AgentSession<
   private _output: AgentOutput;
 
   private closing = false;
+  private closingController = new AbortController();
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
   private idleHolds = 0;
   private idleReleased = new Event();
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
+  private readonly _aecWarmupDurationExplicit: boolean;
+  private _isSimulation = false;
+
+  /**
+   * The session's expressive setting, as the user passed it.
+   * @internal
+   */
+  _expressive: boolean | ExpressiveOptions = false;
+
+  /**
+   * Whether the markup guide has been injected at least once this session.
+   *
+   * Latches on: it is what licenses the history scrub on a later expressive-off turn
+   * (a handoff to a TTS without a markup dialect builds a fresh `AgentActivity`, so the
+   * flag has to outlive it). Sessions that never enabled expressive keep it `false` and
+   * are never scrubbed.
+   *
+   * @internal
+   */
+  _expressiveEverActive = false;
+
+  /**
+   * Whether the "template has no markup-guide placeholder" warning has been emitted.
+   *
+   * Session-scoped so a misconfigured template warns once rather than once per turn, and
+   * survives a handoff (which builds a fresh `AgentActivity`).
+   *
+   * @internal
+   */
+  _warnedExpressiveTemplate = false;
 
   // Connection options for STT, LLM, and TTS
   private _connOptions: ResolvedSessionConnectOptions;
 
-  // Unrecoverable error counts, reset after agent speaking
+  // Unrecoverable error counts; stt resets on a user transcript, llm/tts on agent speaking
+  private sttErrorCounts = 0;
   private llmErrorCounts = 0;
   private ttsErrorCounts = 0;
 
   private sessionSpan?: Span;
   private agentSpeakingSpan?: Span;
+  /**
+   * Parent for the startup spans while `start()` runs; passed explicitly, never made current.
+   * @internal
+   */
+  sessionStartContext?: Context;
+  private loopStallCount = 0;
+  private loopStallTotal = 0;
+  private loopStallMax = 0;
 
   private _interruptionDetection?: InterruptionOptions['mode'];
 
@@ -422,6 +631,18 @@ export class AgentSession<
    * @internal
    */
   _usingDefaultVad: boolean = false;
+
+  /**
+   * True when the caller chose turn detection, as opposed to the eager default TurnDetector.
+   *
+   * @internal
+   */
+  _turnDetectionExplicit: boolean = false;
+
+  /** @internal True when the current job is a text simulation. */
+  get _textOnly(): boolean {
+    return resolveTextOnly();
+  }
 
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
@@ -451,9 +672,6 @@ export class AgentSession<
   /** @internal */
   _recordedEvents: AgentEvent[] = [];
 
-  /** @internal Resolved per-category recording options for this session. */
-  _recordingOptions: ResolvedRecordingOptions = { ...RECORDING_ALL_OFF };
-
   /** @internal */
   _asyncToolOptions: AsyncToolOptions = resolveAsyncToolOptions();
 
@@ -462,13 +680,14 @@ export class AgentSession<
 
   /** @internal True when any recording category is enabled. */
   get _enableRecording(): boolean {
-    return (
-      this._recordingOptions.audio ||
-      this._recordingOptions.traces ||
-      this._recordingOptions.logs ||
-      this._recordingOptions.transcript
-    );
+    return recordingEnabled(this.sessionOptions.recordingOptions);
   }
+
+  /** @internal True when project or session redaction is enabled. */
+  _redactionEnabled = false;
+
+  /** @internal Whether the realtime audio-redaction warning was emitted for this session. */
+  _warnedRealtimeAudioRedaction = false;
 
   /** @internal - Timestamp when the session started (milliseconds) */
   _startedAt?: number;
@@ -483,6 +702,17 @@ export class AgentSession<
     return this.closing;
   }
 
+  /**
+   * Aborted when shutdown starts, before the activity drains or Agent.onExit() runs.
+   * Use this signal to release work that activity teardown can await.
+   * The Close event fires after activity teardown and cannot release those waits.
+   * The signal stays aborted after close; read it again when starting a new run.
+   * @internal
+   */
+  get _closingSignal(): AbortSignal {
+    return this.closingController.signal;
+  }
+
   /** @internal - Current run state for testing */
   _globalRunState?: RunResult;
 
@@ -494,6 +724,7 @@ export class AgentSession<
   constructor(options: AgentSessionOptions<UserData> = {}) {
     super();
 
+    this._aecWarmupDurationExplicit = options.aecWarmupDuration !== undefined;
     const { agentSessionOptions: opts, legacyVoiceOptions } =
       migrateLegacyOptions<UserData>(options);
 
@@ -506,8 +737,10 @@ export class AgentSession<
       connOptions,
       tools,
       toolHandling,
+      expressive,
       ...resolvedSessionOptions
     } = opts;
+    this._expressive = expressive ?? false;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
@@ -538,10 +771,16 @@ export class AgentSession<
       this.stt = stt;
     }
 
-    if (typeof llm === 'string') {
-      this.llm = InferenceLLM.fromModelString(llm);
+    const resolvedLLM = typeof llm === 'string' ? llmFromModelString(llm) : llm;
+    if (resolvedLLM instanceof DuplexModel) {
+      this.llm = new DuplexRealtimeAdapter(resolvedLLM);
     } else {
-      this.llm = llm;
+      this.llm = resolvedLLM;
+    }
+
+    // Eagerly establish DNS/TLS to the LLM provider so the first inference request is faster.
+    if (this.llm instanceof BaseLLM) {
+      this.llm.prewarm();
     }
 
     if (typeof tts === 'string') {
@@ -560,13 +799,20 @@ export class AgentSession<
       configuredTurnDetection === null
         ? undefined
         : configuredTurnDetection ?? new InferenceTurnDetector();
+    this._turnDetectionExplicit = configuredTurnDetection !== undefined;
+    // The session report serializes `sessionOptions`, so record the effective detector there
+    // (Python keeps the eager default in `AgentSessionOptions.turn_handling` the same way).
+    resolvedSessionOptions.turnHandling.turnDetection =
+      configuredTurnDetection === null ? null : this.turnDetection;
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
     this._toolCtx = toToolContext(tools) ?? ToolContext.empty<UserData>();
     this._asyncToolOptions = resolveAsyncToolOptions(toolHandling?.asyncOptions);
 
     // configurable IO
-    this._input = new AgentInput(this.onAudioInputChanged);
+    this._input = new AgentInput(this.onAudioInputChanged, (enabled) =>
+      this.onAudioEnabledChanged(enabled),
+    );
     this._output = new AgentOutput(this.onAudioOutputChanged, this.onTextOutputChanged);
 
     // This is the "global" chat context, it holds the entire conversation history
@@ -673,6 +919,21 @@ export class AgentSession<
 
     const tasks: Promise<void>[] = [];
 
+    const jobCtx = getJobContext(false);
+    this._isSimulation = jobCtx?.simulationContext() !== undefined;
+    if (jobCtx) {
+      span.setAttributes({
+        [traceTypes.ATTR_ROOM_NAME]: jobCtx.job.room?.name ?? '',
+        [traceTypes.ATTR_JOB_ID]: jobCtx.job.id,
+        [traceTypes.ATTR_AGENT_NAME]: jobCtx.job.agentName,
+        // join keys shared with server, SIP and client traces
+        [traceTypes.ATTR_ROOM_SID]: jobCtx.job.room?.sid ?? '',
+        [traceTypes.ATTR_DISPATCH_ID]: jobCtx.job.dispatchId,
+        [traceTypes.ATTR_WORKER_ID]: jobCtx.workerId,
+        [traceTypes.ATTR_JOB_AGENT_ID]: jobCtx.job.state?.agentId ?? '',
+      });
+    }
+
     const consoleInst = AgentsConsole.getInstance();
     if (consoleInst.enabled && !consoleInst.ioAcquired) {
       if (this.input.audio || this.output.audio) {
@@ -692,22 +953,31 @@ export class AgentSession<
         this.sessionHost.registerSession(this);
       }
     } else if (room && !this._roomIO) {
+      if (this._textOnly) {
+        // Under a text simulation the simulated user interacts over text
+        // streams only: no audio I/O. STT/TTS/VAD are dropped in the
+        // constructor.
+        this.logger.info('text simulation: disabling STT/TTS/VAD and audio I/O');
+        inputOptions = { ...inputOptions, audioEnabled: false };
+        outputOptions = { ...outputOptions, audioEnabled: false };
+      }
+
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
-          'RoomIO audio input is enabled but input.audio is already set, ignoring..',
+          'RoomIO audio input is enabled; preserving and using the existing input.audio',
         );
       }
 
       if (this.output.audio && outputOptions?.audioEnabled !== false) {
         this.logger.warn(
-          'RoomIO audio output is enabled but output.audio is already set, ignoring..',
+          'RoomIO audio output is enabled; preserving and using the existing output.audio',
         );
       }
 
       if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
         this.logger.warn(
-          'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
+          'RoomIO transcription output is enabled; preserving and using the existing output.transcription',
         );
       }
 
@@ -718,7 +988,8 @@ export class AgentSession<
         outputOptions,
       });
 
-      this._roomIO.start();
+      // passed, not made current: RoomIO's tasks live for the whole session
+      this._roomIO.start(this.sessionStartContext);
 
       const transport = new RoomSessionTransport(room, this._roomIO);
       this.sessionHost = new SessionHost(transport);
@@ -739,7 +1010,7 @@ export class AgentSession<
       if (
         this.input.audio &&
         this.output.audio &&
-        (this._recordingOptions.audio || consoleForcesRecord)
+        (this.sessionOptions.recordingOptions.audio || consoleForcesRecord)
       ) {
         this._recorderIO = new RecorderIO({ agentSession: this });
         this.input.audio = this._recorderIO.recordInput(this.input.audio);
@@ -758,13 +1029,26 @@ export class AgentSession<
 
     // TODO(AJS-265): add shutdown callback to job context
     // Initial start does not wait on onEnter
-    tasks.push(this._updateActivity(this.agent, { waitOnEnter: false }));
+    tasks.push(
+      this._updateActivity(this.agent, {
+        waitOnEnter: false,
+        traceContext: this.sessionStartContext,
+      }),
+    );
 
-    await ThrowsPromise.allSettled(tasks);
+    const startup = await waitUntilAborted(
+      ThrowsPromise.allSettled(tasks),
+      this.closingController.signal,
+    );
+    if (startup.isAborted) throw asError(this.closingController.signal.reason);
+    for (const result of startup.result) {
+      if (result.status === 'rejected') throw result.reason;
+    }
 
     if (this.sessionHost) {
       await this.sessionHost.start();
     }
+    this.closingController.signal.throwIfAborted();
 
     // Log used IO configuration
     this.logger.debug(
@@ -811,7 +1095,13 @@ export class AgentSession<
     }
 
     this.closing = false;
+    if (this.closingController.signal.aborted) {
+      this.closingController = new AbortController();
+    }
     this._usageCollector = new ModelUsageCollector();
+    this.loopStallCount = 0;
+    this.loopStallTotal = 0;
+    this.loopStallMax = 0;
 
     const ctx = getJobContext(false);
 
@@ -822,41 +1112,72 @@ export class AgentSession<
         record = ctx.job.enableRecording;
       }
 
-      this._recordingOptions = resolveRecordingOptions(record);
+      this.sessionOptions.recordingOptions = resolveRecordingOptions(record);
+      if (this._textOnly) {
+        this.sessionOptions.recordingOptions.audio = false;
+      }
 
       // Only one AgentSession per job can be the primary (and therefore record).
       // Designate the primary before initRecording so a demoted secondary session
       // never configures cloud recording. Mirrors Python's start() ordering.
       if (ctx._primaryAgentSession === undefined || ctx._primaryAgentSession === this) {
         ctx._primaryAgentSession = this;
-      } else if (this._enableRecording) {
+      } else if (recordingEnabled(this.sessionOptions.recordingOptions)) {
         if (recordIsGiven) {
           throw new Error(
             'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
           );
         }
         // record was not given: silently disable recording for the secondary session
-        this._recordingOptions = resolveRecordingOptions(false);
+        this.sessionOptions.recordingOptions = resolveRecordingOptions(false);
       }
 
       if (this._enableRecording) {
-        await ctx.initRecording(this._recordingOptions);
+        await ctx.initRecording(this.sessionOptions.recordingOptions);
       }
     }
+
+    this._redactionEnabled = Boolean(
+      ctx?.job.enableRedaction || this.sessionOptions.recordingOptions.redaction,
+    );
 
     this.sessionSpan = tracer.startSpan({
       name: 'agent_session',
     });
+    // the session is the convention's workflow: agent turns (`invoke_agent`), inference
+    // (`chat`) and tool spans (`execute_tool`) nest underneath it
+    genAI.setWorkflowAttributes(this.sessionSpan, { name: 'agent_session' });
 
     this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 
-    await this._startImpl({
-      agent,
-      room,
-      inputOptions,
-      outputOptions,
-      span: this.sessionSpan,
+    // startup as one bar: room connect, participant wait, model prewarm, on_enter. Parented
+    // explicitly to the spans it groups, never made current (see telemetry/session_context)
+    const sessionStartSpan = tracer.startSpan({
+      name: 'session_start',
+      context: this.rootSpanContext,
     });
+    this.sessionStartContext = trace.setSpan(this.rootSpanContext, sessionStartSpan);
+
+    // retained inside the guarded start: a failure below schedules close(), which releases it
+    retainTts(this.tts);
+    try {
+      await this._startImpl({
+        agent,
+        room,
+        inputOptions,
+        outputOptions,
+        span: this.sessionSpan,
+      });
+    } catch (error) {
+      recordException(sessionStartSpan, error instanceof Error ? error : new Error(String(error)));
+      sessionStartSpan.end();
+      this.sessionStartContext = undefined;
+      this._closeSoon({ reason: CloseReason.ERROR });
+      await this.closingTask;
+      throw error;
+    }
+    sessionStartSpan.end();
+    this.sessionStartContext = undefined;
   }
 
   updateAgent(agent: Agent): void {
@@ -879,7 +1200,15 @@ export class AgentSession<
         }
       }
 
-      await this._updateActivity(agent);
+      await this._updateActivity(agent, { waitOnEnter: false });
+
+      // Watch onEnter so run() captures its output without awaiting long-lived
+      // onEnter flows that need a future user turn to complete.
+      const onEnterTask = this.activity?._onEnterTask;
+      const runState = this._globalRunState;
+      if (onEnterTask && runState && !runState.done()) {
+        runState._watchHandle(onEnterTask);
+      }
     };
 
     const oldTask = this.updateActivityTask;
@@ -929,6 +1258,8 @@ export class AgentSession<
         if (!nextActivity) {
           throw new Error('AgentSession is closing, cannot use say()');
         }
+        // Keep Python parity: the queued activity creates the refused speech, then its paused
+        // scheduler interrupts the handle so the speech task can settle.
         return nextActivity.say(text, options);
       }
       return activity.say(text, options);
@@ -954,6 +1285,16 @@ export class AgentSession<
     return handle;
   }
 
+  /**
+   * Interrupt the current speech generation.
+   *
+   * A queued speech created with `allowInterruptions: false` keeps playing, along with the ones
+   * behind it, unless `force` is set.
+   *
+   * @returns A future that completes when the interruption is fully processed.
+   * @throws Error if the session is not running, or if the speech currently playing disallows
+   * interruptions and `force` is false.
+   */
   interrupt(options?: { force?: boolean }) {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
@@ -1017,15 +1358,22 @@ export class AgentSession<
     this.activity.pauseReplyAuthorization();
   }
 
-  resumeReplyAuthorization(): void {
+  /**
+   * Resume automatic replies after pauseReplyAuthorization().
+   * @throws Error if the session is not running.
+   */
+  resumeReplyAuthorization(): Throws<void, Error> {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
 
-    this.activity.resumeReplyAuthorization();
+    return this.activity.resumeReplyAuthorization();
   }
 
-  updateOptions(options: AgentSessionUpdateOptions): void {
+  updateOptions(options: AgentSessionUpdateOptions = {}): void {
+    if (options.expressive !== undefined) {
+      this._expressive = options.expressive;
+    }
     if (options.keyterms !== undefined) {
       this._keytermDetector.setStaticKeyterms(options.keyterms);
     }
@@ -1055,6 +1403,7 @@ export class AgentSession<
     if (hasTurnDetection) {
       this.turnDetection = normalizedTurnDetection;
       this.sessionOptions.turnHandling.turnDetection = normalizedTurnDetection;
+      this._turnDetectionExplicit = turnDetection !== null;
     }
 
     if (this.activity) {
@@ -1209,8 +1558,15 @@ export class AgentSession<
       const unlock = await this.activityLock.lock();
       let onEnterTask: Task<void> | undefined;
       let reusableResources: ReusableResources | undefined;
+      let handoffSpan: Span | undefined;
+      let handoffCtx: Context | undefined;
 
       try {
+        if (this.closing && newActivity === 'start') {
+          this.logger.warn({ agentId: agent.id }, 'Session is closing, skipping start of activity');
+          return;
+        }
+
         this.agent = agent;
         const prevActivityObj = this.activity;
 
@@ -1231,15 +1587,36 @@ export class AgentSession<
           this.nextActivity = agent._agentActivity;
         }
 
+        // one span for the handoff: the old agent's drain/pause and on_exit, then the new one's
+        // start/resume and on_enter nest under it. Passed explicitly to the calls that spawn
+        // long-lived tasks, made current only around the ones that do not
+        if (prevActivityObj && this.nextActivity) {
+          handoffSpan = tracer.startSpan({
+            name: 'update_agent',
+            context: this.rootSpanContext,
+            attributes: {
+              [traceTypes.ATTR_PREVIOUS_AGENT_LABEL]: prevActivityObj.agent.id,
+              [traceTypes.ATTR_AGENT_LABEL]: this.nextActivity.agent.id,
+            },
+          });
+          handoffCtx = trace.setSpan(this.rootSpanContext ?? otelContext.active(), handoffSpan);
+        }
+
         if (prevActivityObj && prevActivityObj !== this.nextActivity) {
           if (previousActivity === 'pause') {
-            reusableResources = await prevActivityObj.pause({
-              blockedTasks,
-              newActivity: this.nextActivity,
-            });
+            const pause = () =>
+              prevActivityObj.pause({
+                blockedTasks,
+                newActivity: this.nextActivity,
+              });
+            reusableResources = handoffCtx
+              ? await otelContext.with(handoffCtx, pause)
+              : await pause();
           } else {
+            prevActivityObj.blockNewTurns();
             reusableResources = await prevActivityObj.drain({
               newActivity: this.nextActivity,
+              traceContext: handoffCtx,
             });
             await prevActivityObj.close();
           }
@@ -1282,19 +1659,27 @@ export class AgentSession<
           'Agent handoff inserted into chat context',
         );
 
+        const activity = this.activity!;
         if (newActivity === 'start') {
-          await this.activity!.start({ reuseResources: reusableResources });
+          await activity.start({
+            reuseResources: reusableResources,
+            // the initial start is not a handoff: it lives under session_start
+            traceContext: handoffCtx ?? options.traceContext,
+          });
         } else {
-          await this.activity!.resume({ reuseResources: reusableResources });
+          await activity.resume({ reuseResources: reusableResources, traceContext: handoffCtx });
         }
         reusableResources = undefined;
 
-        onEnterTask = this.activity!._onEnterTask;
+        onEnterTask = activity._onEnterTask;
 
         if (this._input.audio) {
-          this.activity!.attachAudioInput(this._input.audio.stream);
+          activity.attachAudioInput(this._input.audio.stream);
         }
       } catch (error) {
+        if (handoffSpan && error instanceof Error) {
+          recordException(handoffSpan, error);
+        }
         // JS safeguard: session cleanup owns the detached resources until the next activity
         // starts successfully, preventing leaks when handoff fails mid-transition.
         if (reusableResources) {
@@ -1302,6 +1687,7 @@ export class AgentSession<
         }
         throw error;
       } finally {
+        handoffSpan?.end();
         unlock();
       }
 
@@ -1398,7 +1784,8 @@ export class AgentSession<
   }
 
   async close(): Promise<void> {
-    await this.closeImpl(CloseReason.USER_INITIATED);
+    this._closeSoon({ reason: CloseReason.USER_INITIATED });
+    await this.closingTask;
   }
 
   shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): void {
@@ -1435,7 +1822,16 @@ export class AgentSession<
     }
 
     // Track error counts per type to implement max_unrecoverable_errors logic
-    if (error.type === 'llm_error') {
+    if (error.type === 'stt_error') {
+      this.sttErrorCounts += 1;
+      // The STT pipeline only recreates streams after API errors.
+      if (
+        isAPIError(error.error) &&
+        this.sttErrorCounts <= this._connOptions.maxUnrecoverableErrors
+      ) {
+        return;
+      }
+    } else if (error.type === 'llm_error') {
       this.llmErrorCounts += 1;
       if (this.llmErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
         return;
@@ -1450,6 +1846,13 @@ export class AgentSession<
     this.logger.error(error, 'AgentSession is closing due to an unrecoverable error');
 
     this.closingTask = (async () => {
+      this.closing = true;
+      // Publish closingTask before abort callbacks can call close() again.
+      await Promise.resolve();
+      this.closingController.abort(error.error);
+      // Wait for activity creation, without waiting for the room connection.
+      const unlock = await this.activityLock.lock();
+      unlock();
       await this.closeImpl(CloseReason.ERROR, error);
     })().then(() => {
       this.closingTask = null;
@@ -1505,6 +1908,10 @@ export class AgentSession<
 
     const oldState = this._agentState;
     this._agentState = state;
+    this._addSessionEvent('agent_state_changed', {
+      [traceTypes.ATTR_OLD_STATE]: oldState,
+      [traceTypes.ATTR_NEW_STATE]: state,
+    });
 
     // Handle user away timer based on state changes
     if (state === 'listening' && this._userState === 'listening') {
@@ -1546,6 +1953,11 @@ export class AgentSession<
 
     const oldState = this._userState;
     this._userState = state;
+    this._addSessionEvent(
+      'user_state_changed',
+      { [traceTypes.ATTR_OLD_STATE]: oldState, [traceTypes.ATTR_NEW_STATE]: state },
+      options?.lastSpeakingTime,
+    );
 
     // Handle user away timer based on state changes
     if (state === 'listening' && this._agentState === 'listening') {
@@ -1568,6 +1980,16 @@ export class AgentSession<
 
     if (this.activity && this._input.audio) {
       this.activity.attachAudioInput(this._input.audio.stream);
+    }
+  }
+
+  private onAudioEnabledChanged(enabled: boolean): void {
+    if (!enabled && this._userState === 'speaking') {
+      if (this.activity) {
+        this.activity.onEndOfSpeech(undefined);
+      } else {
+        this._updateUserState('listening');
+      }
     }
   }
 
@@ -1629,10 +2051,98 @@ export class AgentSession<
     }
   }
 
+  /** @internal */
+  _onRoomIOParticipantLinked(participant: RemoteParticipant): void {
+    const span = this.sessionSpan;
+    if (span?.isRecording()) {
+      span.addEvent('participant_linked', participantAttributes(participant));
+      if (participant.info.kind === ParticipantKind.SIP) {
+        // join keys with the telephony trace; only the end user's number is PII
+        const sipAttrs: Record<string, string> = {};
+        for (const [key, value] of Object.entries(participant.attributes ?? {})) {
+          if (!key.startsWith('sip.')) continue;
+          sipAttrs[
+            key === 'sip.phoneNumber'
+              ? traceTypes.ATTR_SIP_PHONE_NUMBER
+              : traceTypes.ATTR_SIP_PREFIX + key.slice('sip.'.length)
+          ] = value;
+        }
+        span.setAttributes(sipAttrs);
+      }
+    }
+
+    if (this._aecWarmupDurationExplicit) {
+      return;
+    }
+
+    const isOutboundSip =
+      participant.info.kind === ParticipantKind.SIP && !participant.attributes[SIP_RULE_ID_ATTR];
+    // A simulator publishes synthesized audio, so the agent's speech never echoes back.
+    const noWarmup =
+      isOutboundSip ||
+      this._isSimulation ||
+      getJobContext(false)?.simulationContext() !== undefined;
+    this.sessionOptions.aecWarmupDuration = noWarmup ? null : DEFAULT_AEC_WARMUP_DURATION;
+    this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
+
+    if (noWarmup && this._aecWarmupTimer !== null) {
+      clearTimeout(this._aecWarmupTimer);
+      this._aecWarmupTimer = null;
+    }
+  }
+
+  /**
+   * Timestamped marker on the agent_session span (state changes, room events).
+   * @internal
+   */
+  _addSessionEvent(
+    name: string,
+    attributes: Record<string, string | number | boolean>,
+    timestampMs?: number,
+  ): void {
+    const span = this.sessionSpan;
+    if (!span?.isRecording()) return;
+    span.addEvent(name, attributes, timestampMs);
+  }
+
+  /** @internal */
+  _recordLoopStall(durationInS: number, timestampMs: number, cause: string): void {
+    const span = this.sessionSpan;
+    if (!span?.isRecording()) {
+      return;
+    }
+
+    this.loopStallCount += 1;
+    this.loopStallTotal += durationInS;
+    this.loopStallMax = Math.max(this.loopStallMax, durationInS);
+    span.addEvent(
+      LOOP_STALL_EVENT,
+      {
+        [traceTypes.ATTR_BLOCKING_DURATION]: durationInS,
+        [traceTypes.ATTR_BLOCKING_CAUSE]: cause,
+      },
+      timestampMs,
+    );
+    span.setAttributes({
+      [traceTypes.ATTR_BLOCKING_COUNT]: this.loopStallCount,
+      [traceTypes.ATTR_BLOCKING_TOTAL_DURATION]: this.loopStallTotal,
+      [traceTypes.ATTR_BLOCKING_MAX_DURATION]: this.loopStallMax,
+    });
+  }
+
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
-    if (this._userState === 'away' && ev.isFinal) {
-      this.logger.debug('User returned from away state due to speech input');
-      this._updateUserState('listening');
+    if (ev.transcript) {
+      // a transcript means stt recovered; reset its error tolerance
+      this.sttErrorCounts = 0;
+    }
+    if (this.closing) return;
+    if (ev.isFinal && this._userState !== 'speaking') {
+      if (this._userState === 'away') {
+        this.logger.debug('User returned from away state due to speech input');
+        this._updateUserState('listening');
+      } else if (this._userState === 'listening' && this._agentState === 'listening') {
+        this._setUserAwayTimer();
+      }
     }
   }
 
@@ -1650,39 +2160,65 @@ export class AgentSession<
     return this.closeImplInner(reason, error, drain);
   }
 
-  private async closeImplInner(
+  /** The part of closing that runs under the `session_close` span. */
+  private async teardownActivity(
+    wasStarted: boolean,
     reason: ShutdownReason,
-    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
-    drain: boolean = false,
+    drain: boolean,
+    traceContext: Context,
   ): Promise<void> {
-    if (!this.started) {
-      return;
-    }
-
     this.closing = true;
+    // Set closingTask before listeners can call close() again.
+    await Promise.resolve();
+    this.closingController.abort();
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
-    this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
-    if (this.activity) {
+    let activity = this.activity;
+    // Let inline tasks finish their handoffs before closing the resumed parent.
+    while (wasStarted && activity?.agent instanceof AgentTask) {
+      const task = activity.agent;
+      activity.interrupt({ force: true });
+      if (!task.done) {
+        task.complete(new ToolError(`AgentTask ${task.id} is cancelled`));
+      }
+      await task._waitForInactive();
+      // A concurrent updateAgent can prevent the task from resuming its parent.
+      // In that case its activity still needs the normal exit and close sequence.
+      if (task._agentActivity === activity) {
+        await activity.drain({ traceContext });
+        await activity.close();
+      }
+      if (!task._oldAgent) break;
+      activity = task._oldAgent._agentActivity;
+    }
+
+    // each step runs whatever the previous one raised: a recorder that will not close must not
+    // leave the activity live, nor the activity its TTS. The first failure is rethrown at the end
+    const failures: unknown[] = [];
+    if (wasStarted && activity) {
       if (!drain) {
         try {
-          await this.activity.interrupt({ force: true }).await;
+          await activity.interrupt({ force: true }).await;
         } catch (error) {
           this.logger.warn({ error }, 'Error interrupting activity');
         }
       }
 
-      await this.activity.drain();
-      // wait any uninterruptible speech to finish
-      await this.activity.currentSpeech?.waitForPlayout();
+      try {
+        await activity.drain({ traceContext });
+        // wait any uninterruptible speech to finish
+        await activity.currentSpeech?.waitForPlayout();
 
-      if (reason !== CloseReason.ERROR) {
-        this.activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
+        if (reason !== CloseReason.ERROR) {
+          activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
+        }
+      } catch (e) {
+        failures.push(e);
       }
 
       try {
-        this.activity.detachAudioInput();
+        activity.detachAudioInput();
       } catch (error) {
         // Ignore detach errors during cleanup - source may not have been set
       }
@@ -1690,7 +2226,11 @@ export class AgentSession<
 
     // Close recorder before detaching inputs/outputs (keep reference for session report)
     if (this._recorderIO) {
-      await this._recorderIO.close();
+      try {
+        await this._recorderIO.close();
+      } catch (e) {
+        failures.push(e);
+      }
     }
 
     // detach the inputs and outputs
@@ -1698,42 +2238,117 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await this.activity?.close();
+    try {
+      await activity?.close();
+    } catch (e) {
+      failures.push(e);
+    }
     this.activity = undefined;
+
+    // the session's own use of its TTS is over; other sessions sharing it keep it alive
+    try {
+      await releaseTts(this.tts);
+    } catch (e) {
+      failures.push(e);
+    }
 
     const sessionToolsets = this._toolCtx.toolsets;
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
+    this._sessionToolsetsSetup = false;
+    if (failures.length) throw failures[0];
+  }
 
-    if (this.sessionSpan) {
-      this.sessionSpan.end();
-      this.sessionSpan = undefined;
+  private async closeImplInner(
+    reason: ShutdownReason,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+    drain: boolean = false,
+  ): Promise<void> {
+    const wasStarted = this.started;
+    if (!wasStarted && !this.activity && !this.sessionSpan) {
+      return;
     }
 
-    if (this._userSpeakingSpan) {
-      this._userSpeakingSpan.end();
-      this._userSpeakingSpan = undefined;
+    // the whole close as one bar under agent_session: activity teardown, the close event's
+    // handlers, the session host and room io. What any of it emits (a handler's spans, a stall
+    // in a plugin's teardown) nests here, and agent_session ends only after all of it
+    const closeSpan = tracer.startSpan({
+      name: 'session_close',
+      context: this.rootSpanContext,
+      attributes: {
+        [traceTypes.ATTR_CLOSE_REASON]: String(reason),
+        [traceTypes.ATTR_CLOSE_DRAIN]: drain,
+      },
+    });
+    if (error?.type) {
+      closeSpan.setAttribute(traceTypes.ATTR_EXCEPTION_TYPE, error.type);
     }
+    const closeContext = trace.setSpan(this.rootSpanContext ?? otelContext.active(), closeSpan);
+    try {
+      await otelContext.with(closeContext, async () => {
+        // each step runs whatever the previous one did: a failing teardown (a recorder or a
+        // plugin that will not close) or a throwing Close listener must not leave the
+        // transports open, since the session counts as closed after this. The first failure
+        // is rethrown once all of it ran
+        const failures: unknown[] = [];
+        try {
+          await this.teardownActivity(wasStarted, reason, drain, closeContext);
+        } catch (e) {
+          failures.push(e);
+        }
 
-    if (this.agentSpeakingSpan) {
-      this.agentSpeakingSpan.end();
-      this.agentSpeakingSpan = undefined;
+        this.started = false;
+
+        if (wasStarted) {
+          try {
+            this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
+          } catch (e) {
+            failures.push(e);
+          }
+        }
+        try {
+          await this.sessionHost?.close();
+        } catch (e) {
+          failures.push(e);
+        } finally {
+          this.sessionHost = undefined;
+        }
+        // close room io after the close event is emitted
+        try {
+          await this._roomIO?.close();
+        } catch (e) {
+          failures.push(e);
+        } finally {
+          this._roomIO = undefined;
+        }
+        if (failures.length) throw failures[0];
+      });
+    } finally {
+      // the session is closed whatever the teardown raised
+      this.started = false;
+      this._cancelUserAwayTimer();
+      this._userState = 'listening';
+      this._agentState = 'initializing';
+      this.sttErrorCounts = 0;
+      this.llmErrorCounts = 0;
+      this.ttsErrorCounts = 0;
+
+      if (this._userSpeakingSpan) {
+        this._userSpeakingSpan.end();
+        this._userSpeakingSpan = undefined;
+      }
+
+      if (this.agentSpeakingSpan) {
+        this.agentSpeakingSpan.end();
+        this.agentSpeakingSpan = undefined;
+      }
+
+      closeSpan.end();
+      if (this.sessionSpan) {
+        this.sessionSpan.end();
+        this.sessionSpan = undefined;
+      }
+      this.rootSpanContext = undefined;
     }
-
-    this.started = false;
-
-    this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
-
-    this._userState = 'listening';
-    this._agentState = 'initializing';
-    this.rootSpanContext = undefined;
-    this.llmErrorCounts = 0;
-    this.ttsErrorCounts = 0;
-
-    await this.sessionHost?.close();
-    this.sessionHost = undefined;
-
-    await this._roomIO?.close();
-    this._roomIO = undefined;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }

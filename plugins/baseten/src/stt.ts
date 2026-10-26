@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  type APIConnectOptions,
+  APIConnectionError,
+  APIError,
   type AudioBuffer,
   AudioByteStream,
   Task,
@@ -9,6 +12,7 @@ import {
   normalizeLanguage,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
@@ -18,12 +22,8 @@ const defaultSTTOptions: Partial<BasetenSttOptions> = {
   environment: 'production',
   encoding: 'pcm_s16le',
   sampleRate: 16000,
-  bufferSizeSeconds: 0.032,
   enablePartialTranscripts: true,
-  partialTranscriptIntervalS: 0.5,
-  finalTranscriptMaxDurationS: 5,
   audioLanguage: 'en',
-  languageDetectionOnly: false,
   vadThreshold: 0.5,
   vadMinSilenceDurationMs: 300,
   vadSpeechPadMs: 30,
@@ -82,8 +82,8 @@ export class STT extends stt.STT {
     };
   }
 
-  stream(): SpeechStream {
-    return new SpeechStream(this, this.#opts);
+  stream(options: { connOptions?: APIConnectOptions } = {}): SpeechStream {
+    return new SpeechStream(this, this.#opts, options.connOptions);
   }
 }
 
@@ -94,8 +94,8 @@ export class SpeechStream extends stt.SpeechStream {
   #requestId = '';
   label = 'baseten.SpeechStream';
 
-  constructor(stt: STT, opts: BasetenSttOptions) {
-    super(stt, opts.sampleRate);
+  constructor(stt: STT, opts: BasetenSttOptions, connOptions?: APIConnectOptions) {
+    super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
     this.closed = false;
   }
@@ -121,17 +121,13 @@ export class SpeechStream extends stt.SpeechStream {
       const ws = new WebSocket(url, { headers });
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
-        });
+        await waitForWebSocketOpen(ws, 'Baseten');
 
         await this.#runWS(ws);
       } catch (e) {
         if (!this.closed && !this.input.closed) {
-          if (retries >= maxRetry) {
-            throw new Error(`failed to connect to Baseten after ${retries} attempts: ${e}`);
+          if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
+            throw e;
           }
 
           const delay = Math.min(retries * 5, 10);
@@ -154,6 +150,8 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #runWS(ws: WebSocket) {
     let closing = false;
+    const attemptController = new AbortController();
+    const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
 
     // Send initial metadata
     // Note: Baseten server expects 'vad_params' and 'streaming_whisper_params' field names
@@ -182,7 +180,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         while (!this.closed) {
-          const result = await this.input.next();
+          const result = await this.input.next({ signal: attemptSignal });
           if (result.done) {
             break;
           }
@@ -211,13 +209,15 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(buffer);
           }
         }
+      } catch (error) {
+        if (!attemptSignal.aborted) throw error;
       } finally {
         closing = true;
         ws.close();
       }
     };
 
-    const listenTask = Task.from(async (controller) => {
+    const listenTask = Task.from(async () => {
       const listenMessage = new Promise<void>((resolve, reject) => {
         ws.on('message', (data) => {
           try {
@@ -242,7 +242,7 @@ export class SpeechStream extends stt.SpeechStream {
 
             // Skip if no transcript text
             if (!transcript) {
-              this.#logger.debug('Received non-transcript message:', msg);
+              this.#logger.debug({ 'lk.pii.message': msg }, 'Received non-transcript message');
               return;
             }
 
@@ -307,29 +307,49 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`STT: Error processing message: ${data}`);
+            this.#logger.error(
+              {
+                error: err,
+                'lk.pii.message': String(data),
+              },
+              'Baseten STT failed to process message',
+            );
             reject(err);
           }
         });
 
         ws.on('error', (err) => {
           if (!closing) {
-            reject(err);
+            reject(
+              new APIConnectionError({ message: `Baseten STT WebSocket failed (${err.name})` }),
+            );
           }
         });
 
-        ws.on('close', () => {
-          if (!closing) {
-            resolve();
+        ws.on('close', (code) => {
+          if (closing || attemptSignal.aborted) resolve();
+          else {
+            reject(
+              new APIConnectionError({
+                message: `Baseten STT WebSocket closed unexpectedly (${code})`,
+              }),
+            );
           }
         });
       });
 
-      await Promise.race([listenMessage, waitForAbort(controller.signal)]);
-    }, this.abortController);
+      await Promise.race([listenMessage, waitForAbort(attemptSignal)]);
+    });
 
-    await Promise.all([sendTask(), listenTask.result]);
-    closing = true;
-    ws.close();
+    const sendPromise = sendTask();
+    try {
+      await Promise.all([sendPromise, listenTask.result]);
+    } finally {
+      closing = true;
+      attemptController.abort();
+      ws.close();
+      await Promise.allSettled([sendPromise, listenTask.result]);
+      ws.removeAllListeners('message');
+    }
   }
 }
