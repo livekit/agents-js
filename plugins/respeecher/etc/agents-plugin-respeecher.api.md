@@ -4,12 +4,17 @@
 
 ```ts
 
-import { APIConnectOptions } from '@livekit/agents';
-import { tokenize } from '@livekit/agents';
-import { tts } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler } from '@livekit/rtc-node';
+import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
+import type { TypedEventEmitter } from '@livekit/typed-emitter';
 
+// Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export class ChunkedStream extends tts.ChunkedStream {
+    // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
     constructor(tts: TTS, text: string, opts: TTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
     // (undocumented)
     label: string;
@@ -72,6 +77,7 @@ export interface TTSOptions {
     encoding?: TTSEncoding;
     model?: TTSModels | string;
     sampleRate?: number;
+    // Warning: (ae-forgotten-export) The symbol "tokenize" needs to be exported by the entry point index.d.ts
     sentenceTokenizer?: tokenize.SentenceTokenizer;
     voiceId?: string;
     voiceSettings?: VoiceSettings;
